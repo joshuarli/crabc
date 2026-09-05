@@ -703,7 +703,13 @@ mod mkdirat;
 mod mkfifoat;
 #[path = "extended_attributes.rs"]
 mod extended_attributes;
+// Installed commands have a complete typed variadic dispatch; retain the
+// frozen private descriptor/status/record whitelist as its own artifact.
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[path = "descriptor_control.rs"]
+mod descriptor_control;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_descriptor_control.rs"]
 mod descriptor_control;
 #[path = "record_locks.rs"]
 mod record_locks;

@@ -43,6 +43,7 @@ CASES = {
     "atfork-registry": ("run_owned_atfork_registry.sh", None),
     "pthread-scheduling": ("run_owned_pthread_scheduling.sh", None),
     "signal-helpers": ("run_owned_signal_helpers.sh", None),
+    "fcntl": ("run_owned_fcntl.sh", None),
     "pthread-getattr": ("run_owned_pthread_getattr.sh", None),
     "pthread-join-cancel": ("run_owned_pthread_join_cancel.sh", None),
     "pthread-cond-cancel": ("run_owned_pthread_cond_cancel.sh", None),

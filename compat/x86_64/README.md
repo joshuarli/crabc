@@ -188,3 +188,11 @@ dynamic product for aggregate qualification. The [component contract](owned-pthr
 records source mapping, lifecycle ownership, failure reclamation and the GNU/C11
 default rules. This component is registered in the dynamic product matrix; it
 does not itself complete the pthread family or qualify a public platform.
+
+## Installed descriptor control
+
+`./scripts/dev-x86_64.sh owned-fcntl` checks the installed command/variadic ABI
+against pinned musl, including duplication, pipe/owner/signal/seal/lease/hint
+controls and POSIX/OFD locking/cancellation. The [component contract](owned-fcntl.md)
+records argument categories, source mapping and the frozen-private distinction.
+The same-object runner is also a required dynamic product qualification case.
