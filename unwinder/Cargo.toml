@@ -1,0 +1,21 @@
+[package]
+name = "crabc-unwinder"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+build = false
+
+[workspace]
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+unwinding = { version = "=0.2.10", default-features = false, features = ["unwinder", "fde-phdr-dl", "dwarf-expr"] }
+gimli = { version = "=0.34.0", default-features = false, features = ["read-core"] }
+libc = { version = "=0.2.186", default-features = false }
+
+[profile.release]
+opt-level = 3
+panic = "abort"
+codegen-units = 1
