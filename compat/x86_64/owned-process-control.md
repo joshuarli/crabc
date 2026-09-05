@@ -1,7 +1,7 @@
 # Installed residual POSIX process control
 
 The installed native Linux/x86-64 products already compose selected C process
-providers from distinct source leaves. This evidence binds the **32 residual**
+providers from distinct source leaves. This evidence binds the **31 residual**
 names below to one installed-header workload object; it does not reinterpret
 that object as a general process runtime. The implementation follows pinned
 musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417` under
@@ -14,7 +14,7 @@ the musl MIT license recorded in `COPYRIGHT`.
 | `src/unistd/{setpgid,setpgrp,setsid}.c` | `setpgid`, `setpgrp`, `setsid` |
 | `src/process/{wait,waitpid,waitid}.c` | `wait`, `waitpid`, `waitid` |
 | `src/linux/{wait3,wait4}.c` | `wait3`, `wait4` |
-| `src/process/posix_spawnattr_{init,destroy,getflags,setflags,getpgroup,setpgroup,getsigmask,setsigmask,getsigdefault,setsigdefault}.c` and `posix_spawnattr_sched.c` | the 15 `posix_spawnattr_*` init/destroy/get/set entries |
+| `src/process/posix_spawnattr_{init,destroy,getflags,setflags,getpgroup,setpgroup,getsigmask,setsigmask,getsigdefault,setsigdefault}.c` and `posix_spawnattr_sched.c` | the 14 `posix_spawnattr_*` init/destroy/get/set entries |
 
 The source providers remain separately named in
 `libc/src/c_abi/x86_64/process_exec.rs`, `process_exec_env.rs`,
@@ -31,7 +31,9 @@ runner compiles exactly one C object with the supplied installed dynamic
 driver, links that same object to pinned musl, owned static, static-PIE,
 dynamic PIE, and dynamic non-PIE products, and runs both kernel and direct
 interpreter entry for the dynamic forms. It checks archive and shared-provider
-symbols; dynamic consumer receipts bind the object, manifest, owned runtime
+symbols. Static receipts bind the one object, selected CRT, owned archive and
+builtins hashes, manifest-recognized static payload, link trace/map, and final
+consumer. Dynamic consumer receipts bind the object, manifest, owned runtime
 inputs, interpreter, and `libc.so` dependency to the supplied product.
 
 The workload performs each image replacement in a raw fixture child. It checks
@@ -58,13 +60,14 @@ difference generic musl parity.
 
 ## Composite accounting
 
-This runner executes the residual 32 names only. The documented
+This runner executes the residual 31 names only. The documented
 **44-name composite** also depends on the existing independent evidence for
-`fork`, `clone`, `vfork`, `daemon`, `posix_spawn`, `posix_spawnp`, and the six
-POSIX spawn file-action entries in `owned-process-trio`, the dynamic fork
-case, and `owned-dynamic-spawn`. It does not execute the other 12 names, and
-those existing matrices do not become part of this object merely because their
-union is useful accounting.
+`clone`, `vfork`, and `daemon` in `owned-process-trio`; `fork` in the dynamic
+fork case; and `posix_spawn`, `posix_spawnp`, and the seven POSIX spawn
+file-action entries (`posix_spawn_file_actions_{init,destroy,addchdir_np,
+addclose,adddup2,addfchdir_np,addopen}`) in `owned-dynamic-spawn`.
+It does not execute the other 13 names, and those existing matrices do not
+become part of this object merely because their union is useful accounting.
 
 `process-control` is a required dynamic-product qualification case, so the
 same residual workload replays on each clean product and the extracted product.

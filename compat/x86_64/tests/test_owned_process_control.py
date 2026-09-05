@@ -5,13 +5,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
+import tomllib
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]
 CARGO = ROOT / "libc" / "Cargo.toml"
+COVERAGE = ROOT / "compat" / "crabc-rs" / "coverage.toml"
 STATIC_ROOT = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
 PROCESS_EXEC = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_exec.rs"
 PROCESS_CONTEXT = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "process_context.rs"
@@ -104,7 +107,7 @@ class OwnedProcessControlTests(unittest.TestCase):
         for required in (
             "RESIDUAL_SYMBOLS",
             "assert_static_symbols",
-            "assert_static_elf",
+            "assert_static_receipt_and_elf",
             "assert_dynamic_symbols",
             "assert_dynamic_receipt_and_elf",
             '"$work/workload.o"',
@@ -117,6 +120,51 @@ class OwnedProcessControlTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
 
+    def test_static_links_bind_the_object_to_the_sealed_runtime_receipt(self) -> None:
+        runner = RUNNER.read_text(encoding="utf-8")
+        for required in (
+            "--link-receipt",
+            "assert_static_receipt_and_elf",
+            "assert_static_receipt_tampering_rejected",
+            "assert_static_manifest_tampering_rejected",
+            "manifest/runtime identity",
+            "owned_link_contract",
+            "input_receipts",
+        ):
+            self.assertIn(required, runner)
+
+    def test_residual_and_reused_spellings_partition_the_frozen_control_roster(self) -> None:
+        coverage = tomllib.loads(COVERAGE.read_text(encoding="utf-8"))
+        control = next(
+            row["symbols"] for row in coverage["capability"] if row["id"] == "process.control"
+        )
+        runner = RUNNER.read_text(encoding="utf-8")
+        match = re.search(r"^readonly RESIDUAL_SYMBOLS='([^']*)'$", runner, re.MULTILINE)
+        self.assertIsNotNone(match)
+        residual_items = match.group(1).split() if match else []
+        residual = frozenset(residual_items)
+        reused = frozenset((
+            "clone",
+            "daemon",
+            "fork",
+            "posix_spawn",
+            "posix_spawnp",
+            "vfork",
+            "posix_spawn_file_actions_addchdir_np",
+            "posix_spawn_file_actions_addclose",
+            "posix_spawn_file_actions_adddup2",
+            "posix_spawn_file_actions_addfchdir_np",
+            "posix_spawn_file_actions_addopen",
+            "posix_spawn_file_actions_destroy",
+            "posix_spawn_file_actions_init",
+        ))
+        self.assertEqual(len(control), 44)
+        self.assertEqual(len(residual_items), len(residual))
+        self.assertEqual(len(residual), 31)
+        self.assertEqual(len(reused), 13)
+        self.assertTrue(residual.isdisjoint(reused))
+        self.assertEqual(residual | reused, frozenset(control))
+
     def test_qualification_and_documentation_retain_the_composite_boundary(self) -> None:
         self.assertIn(
             '"process-control": ("run_owned_process_control.sh", None)',
@@ -124,9 +172,9 @@ class OwnedProcessControlTests(unittest.TestCase):
         )
         document = DOCUMENT.read_text(encoding="utf-8")
         for required in (
-            "32 residual",
+            "31 residual",
             "44-name composite",
-            "does not execute the other 12",
+            "does not execute the other 13",
             "`fexecve`'s direct",
             "`execveat(2)` `ENOSYS`",
             "ENOSYS",

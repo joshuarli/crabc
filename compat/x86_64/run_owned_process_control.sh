@@ -3,7 +3,8 @@
 #
 # One object compiled by the supplied owned dynamic driver is linked first to
 # pinned musl and then through each installed static and dynamic mode.  The
-# workload owns the residual exec/nice/group-session/wait/spawnattr names;
+# 31-name workload owns the residual exec/nice/group-session/wait/spawnattr
+# names;
 # `run_owned_process_trio.sh` and `run_owned_dynamic_spawn.sh` retain their
 # already-qualified clone/vfork/daemon and spawn/file-action matrices.  This
 # case is one contribution to `process.control`, never a family transition or
@@ -86,26 +87,205 @@ assert_static_symbols() {
     done
 }
 
-assert_static_elf() {
-    local consumer="$1" mode="$2"
+assert_static_receipt_and_elf() {
+    local product="$1" consumer="$2" mode="$3" object="$4" receipt="$5"
     readelf -hW "$consumer" >"${consumer}.header"
     readelf -lW "$consumer" >"${consumer}.segments"
     readelf -dW "$consumer" >"${consumer}.dynamic"
-    python3 -B - "$consumer" "$mode" <<'PY_STATIC'
+    python3 -B - "$product" "$consumer" "$mode" "$object" "$receipt" <<'PY_STATIC'
+from hashlib import sha256
+import json
 from pathlib import Path
+import re
 import sys
 
-consumer = Path(sys.argv[1])
-mode = sys.argv[2]
+def digest(path):
+    return sha256(path.read_bytes()).hexdigest()
+
+
+def fail(message):
+    raise SystemExit("process-control static receipt " + message)
+
+
+root = Path(sys.argv[1]).resolve()
+consumer = Path(sys.argv[2]).resolve()
+mode = sys.argv[3]
+object_path = Path(sys.argv[4]).resolve()
+receipt_path = Path(sys.argv[5]).resolve()
+expected = {
+    "static": ("static-et-exec", "ET_EXEC", "EXEC", "crt1.o", False),
+    "static-pie": ("static-pie", "ET_DYN", "DYN", "rcrt1.o", True),
+}[mode]
+manifest_path = root / "share/crabc/manifest.json"
+try:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+except (OSError, json.JSONDecodeError) as error:
+    fail(f"is unreadable: {error}")
+if manifest_path.is_symlink() or not isinstance(manifest, dict):
+    fail("manifest identity drifted")
+if (manifest.get("format") != "crabc-x86-64-owned-static-sysroot-v1" or
+        manifest.get("target") != "x86_64-unknown-linux-musl"):
+    fail("manifest identity drifted")
+installed = manifest.get("installed")
+payload = installed.get("files") if isinstance(installed, dict) else None
+if not isinstance(payload, dict):
+    fail("manifest payload roster drifted")
+if not isinstance(receipt, dict):
+    fail("is not an object")
+if (receipt.get("schema") != 1 or
+        receipt.get("format") != "crabc-x86-64-sealed-static-driver-v1" or
+        receipt.get("target") != "x86_64-unknown-linux-musl"):
+    fail("schema or format drifted")
+selected = receipt.get("mode")
+if not isinstance(selected, dict) or (
+        selected.get("id"), selected.get("elf_type"),
+        selected.get("crt_object"), selected.get("interpreter")
+    ) != (expected[0], expected[1], expected[3], "absent"):
+    fail("mode drifted")
+
+library = root / "usr/lib"
+runtime = (
+    ("crt-entry", library / expected[3]),
+    ("crt-prologue", library / "crti.o"),
+    ("libc", library / "libc.a"),
+    ("builtins", library / "libcrabc-builtins.a"),
+    ("crt-epilogue", library / "crtn.o"),
+)
+for role, path in runtime:
+    relative = path.relative_to(root).as_posix()
+    if not path.is_file() or path.is_symlink() or payload.get(relative) != digest(path):
+        fail(f"manifest/runtime identity drifted: {role}")
+if not object_path.is_file() or object_path.is_symlink():
+    fail("workload object identity drifted")
+expected_records = [
+    {"role": role, "path": path.relative_to(root).as_posix(), "sha256": digest(path)}
+    for role, path in runtime
+] + [{"role": "application", "path": str(object_path), "sha256": digest(object_path)}]
+if receipt.get("input_receipts") != expected_records:
+    fail("runtime or workload input receipt drifted")
+
+linker = receipt.get("resolved_linker")
+if not isinstance(linker, dict):
+    fail("lacks resolved linker identity")
+linker_path = Path(linker.get("path", ""))
+if (linker_path.name != "ld.lld" or not linker_path.is_file() or
+        linker_path.is_symlink() or linker.get("sha256") != digest(linker_path)):
+    fail("resolved linker identity drifted")
+expected_contract = [
+    "ld.lld", "-static", *(["-pie"] if expected[4] else []),
+    "--no-dynamic-linker", "--no-undefined", "--gc-sections", "-z", "relro",
+    "-z", "now", "-e", "_start", str(library / expected[3]),
+    str(library / "crti.o"), "<application-objects>", str(library / "libc.a"),
+    str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", "<output>",
+]
+if receipt.get("owned_link_contract") != expected_contract:
+    fail("owned link contract drifted")
+if receipt.get("output") != {"path": str(consumer), "sha256": digest(consumer)}:
+    fail("output identity drifted")
+for field, suffix in (("map", ".map"), ("trace", ".trace")):
+    sidecar = receipt_path.with_suffix(suffix)
+    if receipt.get(field) != {"path": sidecar.name, "sha256": digest(sidecar)}:
+        fail(f"{field} identity drifted")
+
+trace = [line for line in receipt_path.with_suffix(".trace").read_text(encoding="utf-8").splitlines()
+         if line]
+direct_inputs = {str(path) for _, path in runtime if path.name not in ("libc.a", "libcrabc-builtins.a")}
+direct_inputs.add(str(object_path))
+archives = {str(library / "libc.a"), str(library / "libcrabc-builtins.a")}
+seen = set()
+for line in trace:
+    if line in direct_inputs:
+        seen.add(line)
+    elif any(line == archive or (line.startswith(archive + "(") and line.endswith(")"))
+             for archive in archives):
+        seen.add(next(archive for archive in archives
+                      if line == archive or (line.startswith(archive + "(") and line.endswith(")"))))
+    else:
+        fail(f"trace escaped the owned inputs: {line}")
+if seen != direct_inputs | archives:
+    fail("trace omitted an owned or workload input")
+map_text = receipt_path.with_suffix(".map").read_text(encoding="utf-8")
+for pattern in (r"/opt/musl-", r"/usr/lib/(gcc|clang)", r"/lib/ld-",
+                r"crt(begin|end)", r"lib(gcc|ssp|atomic)", r"compiler-rt", r"libc\.so"):
+    if re.search(pattern, "\n".join(trace) + "\n" + map_text, flags=re.IGNORECASE):
+        fail(f"evidence contains an ambient target runtime input: {pattern}")
+
 header = Path(str(consumer) + ".header").read_text(encoding="utf-8")
 segments = Path(str(consumer) + ".segments").read_text(encoding="utf-8")
 dynamic = Path(str(consumer) + ".dynamic").read_text(encoding="utf-8")
-expected_type = "EXEC" if mode == "static" else "DYN"
-if expected_type not in header or "Advanced Micro Devices X86-64" not in header:
-    raise SystemExit("process-control static consumer ELF type or machine drifted")
+if (not re.search(r"Type:\s+" + expected[2] + r"\s", header) or
+        "Advanced Micro Devices X86-64" not in header):
+    fail("consumer ELF type or machine drifted")
 if "INTERP" in segments or "Shared library:" in dynamic:
-    raise SystemExit("process-control static consumer acquired a dynamic runtime")
+    fail("consumer acquired a dynamic runtime")
 PY_STATIC
+}
+
+assert_static_receipt_tampering_rejected() {
+    local product="$1" consumer="$2" mode="$3" object="$4" receipt="$5"
+    local forged_root="$work/forged-static-receipts-$mode" label
+    python3 -B - "$receipt" "$forged_root" <<'PY_TAMPER'
+from copy import deepcopy
+from hashlib import sha256
+import json
+from pathlib import Path
+import shutil
+import sys
+
+receipt_path = Path(sys.argv[1])
+forged_root = Path(sys.argv[2])
+record = json.loads(receipt_path.read_text(encoding="utf-8"))
+source_map = receipt_path.with_suffix(".map")
+source_trace = receipt_path.with_suffix(".trace")
+
+for label in ("application", "runtime", "output"):
+    destination = forged_root / label
+    destination.mkdir(parents=True)
+    forged = destination / receipt_path.name
+    forged_map = forged.with_suffix(".map")
+    forged_trace = forged.with_suffix(".trace")
+    shutil.copyfile(source_map, forged_map)
+    shutil.copyfile(source_trace, forged_trace)
+    changed = deepcopy(record)
+    changed["map"] = {"path": forged_map.name, "sha256": sha256(forged_map.read_bytes()).hexdigest()}
+    changed["trace"] = {"path": forged_trace.name, "sha256": sha256(forged_trace.read_bytes()).hexdigest()}
+    if label == "application":
+        changed["input_receipts"][-1]["sha256"] = "0" * 64
+    elif label == "runtime":
+        changed["input_receipts"][0]["path"] = "usr/lib/forged-crt.o"
+    else:
+        changed["output"]["sha256"] = "0" * 64
+    forged.write_text(json.dumps(changed, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+PY_TAMPER
+    for label in application runtime output; do
+        if assert_static_receipt_and_elf "$product" "$consumer" "$mode" "$object" \
+            "$forged_root/$label/$(basename "$receipt")" >/dev/null 2>&1; then
+            printf 'process-control static receipt audit accepted %s tampering\n' "$label" >&2
+            return 1
+        fi
+    done
+}
+
+assert_static_manifest_tampering_rejected() {
+    local product="$1" consumer="$2" mode="$3" object="$4" receipt="$5"
+    local forged_product="$work/forged-static-manifest"
+    cp -a "$product" "$forged_product"
+    python3 -B - "$forged_product/share/crabc/manifest.json" <<'PY_MANIFEST'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+manifest = json.loads(path.read_text(encoding="utf-8"))
+manifest["installed"]["files"]["usr/lib/libc.a"] = "0" * 64
+path.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+PY_MANIFEST
+    if assert_static_receipt_and_elf "$forged_product" "$consumer" "$mode" "$object" "$receipt" \
+        >/dev/null 2>&1; then
+        printf 'process-control static receipt audit accepted manifest tampering\n' >&2
+        return 1
+    fi
 }
 
 assert_dynamic_symbols() {
@@ -201,8 +381,20 @@ if [ -z "${1:-}" ]; then
     assert_static_symbols "$work/static-sysroot/usr/lib/libc.a"
     for mode in static static-pie; do
         consumer="$work/consumer-$mode"
-        "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$consumer"
-        assert_static_elf "$consumer" "$mode"
+        receipt="$work/consumer-$mode.receipt.json"
+        (
+            cd "$work"
+            "$work/static-sysroot/bin/crabc-cc" "-$mode" \
+                --link-receipt "$(basename "$receipt")" "$work/workload.o" -o "$consumer"
+        )
+        assert_static_receipt_and_elf "$work/static-sysroot" "$consumer" "$mode" \
+            "$work/workload.o" "$receipt"
+        assert_static_receipt_tampering_rejected "$work/static-sysroot" "$consumer" "$mode" \
+            "$work/workload.o" "$receipt"
+        if [ "$mode" = static ]; then
+            assert_static_manifest_tampering_rejected "$work/static-sysroot" "$consumer" "$mode" \
+                "$work/workload.o" "$receipt"
+        fi
         mkdir "$work/$mode-root"
         cp "$consumer" "$work/$mode-root/consumer"
         run_in_root "$work/$mode-root" "$work/$mode.stdout" /consumer

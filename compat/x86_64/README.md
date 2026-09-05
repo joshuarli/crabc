@@ -233,7 +233,7 @@ and remaining scope.
 installed-header object for the residual exec, priority, group/session, wait,
 and spawn-attribute providers through pinned musl, static/static-PIE, and
 dynamic PIE/non-PIE kernel and direct-interpreter products. The
-[component contract](owned-process-control.md) identifies its 32-name scope,
+[component contract](owned-process-control.md) identifies its 31-name scope,
 the separate 44-name composite accounting, lifecycle invariants,
 cancellation-point boundary, and explicit `fexecve` direct `execveat(2)`
 `ENOSYS` difference.

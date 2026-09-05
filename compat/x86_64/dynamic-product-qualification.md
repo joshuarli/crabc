@@ -87,7 +87,7 @@ linkage matrix with `./scripts/dev-x86_64.sh owned-process-trio`.
 
 The `process-control` catalog case runs one installed-header workload for the
 residual exec, priority, group/session, wait, and spawn-attribute names in
-both dynamic forms and by direct interpreter entry. Its 32-name source mapping,
+both dynamic forms and by direct interpreter entry. Its 31-name source mapping,
 real child lifecycle checks, cancellation-point distinction, and stated
 `fexecve` direct `execveat(2)` `ENOSYS` difference are in
 [`owned-process-control.md`](owned-process-control.md). The documented 44-name

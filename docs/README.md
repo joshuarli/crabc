@@ -24,7 +24,7 @@ them; this router should explain ownership, not duplicate command contracts.
   — source-mapped installed Unix C ABI slice across owned products;
   neither POSIX-family completion nor public support.
 - [Installed residual POSIX process-control evidence](../compat/x86_64/owned-process-control.md)
-  — source-mapped 32-name C ABI workload across owned products; its 44-name
+  — source-mapped 31-name C ABI workload across owned products; its 44-name
   process-control accounting remains composite and non-promoting.
 - [Owned C11 quick-termination evidence](../compat/x86_64/owned-quick-exit.md)
   — fixed-capacity `at_quick_exit`/`quick_exit` behavior across the installed

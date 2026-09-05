@@ -554,7 +554,7 @@ static-PIE entry, child thread identity/lifecycle, and process-error rollback.
 The residual installed POSIX process-control providers have separate
 same-object evidence in [`owned-process-control.md`](owned-process-control.md):
 exec aliases, `nice`, group/session mutation, wait spellings, and spawn
-attributes run across musl and every owned linkage mode. Its 32-name workload
+attributes run across musl and every owned linkage mode. Its 31-name workload
 is only one part of the 44-name process-control accounting; existing trio,
 fork, spawn, and file-action workloads remain separate evidence.
 

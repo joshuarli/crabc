@@ -9,9 +9,9 @@
  *
  * `owned_process_trio_probe.c` separately owns installed clone/vfork/daemon
  * behavior, and `owned_spawn_probe.c` separately owns posix_spawn/p plus its
- * file-action and child-execution matrix.  This workload deliberately does
- * not repeat either matrix.  Together the three cases cover the documented
- * 44-name process-control roster.
+ * seven file-action and child-execution matrix. This workload deliberately does
+ * not repeat either matrix: its 31 names plus those 12 and the separate
+ * dynamic-fork result partition the documented 44-name process-control roster.
  *
  * Every process-state change and every blocking wait here lives in a raw
  * fixture child with a pipe handshake.  The raw plumbing is test control, not
