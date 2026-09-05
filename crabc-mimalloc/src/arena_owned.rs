@@ -32,18 +32,29 @@ const RETAINED: u8 = 3;
 struct ArenaMappingSlot {
     state: AtomicU8,
     value: UnsafeCell<MaybeUninit<OwnedArenaMapping>>,
+    #[cfg(test)]
+    initializing_reads: core::sync::atomic::AtomicUsize,
 }
 
 impl ArenaMappingSlot {
     const fn new() -> Self {
-        Self { state: AtomicU8::new(EMPTY), value: UnsafeCell::new(MaybeUninit::uninit()) }
+        Self { state: AtomicU8::new(EMPTY), value: UnsafeCell::new(MaybeUninit::uninit()),
+            #[cfg(test)]
+            initializing_reads: core::sync::atomic::AtomicUsize::new(0),
+        }
     }
 
-    /// The callback is installed only after the complete immutable value has
-    /// entered its final slot. INITIALIZING admits that synchronous metadata
-    /// commit; arena readers can discover it only after registry publication.
+    /// # Safety
+    ///
+    /// PUBLISHED and RETAINED values are immutable for process lifetime.
+    /// INITIALIZING requires the reserve lock or the callback capability for
+    /// this exact slot: another arena's publication never protects it against
+    /// initialization failure moving the mapping out or reusing the slot.
     unsafe fn initialized(&self) -> Option<&OwnedArenaMapping> {
-        if self.state.load(Ordering::Acquire) == EMPTY { return None; }
+        let state = self.state.load(Ordering::Acquire);
+        if state == EMPTY { return None; }
+        #[cfg(test)]
+        if state == INITIALIZING { self.initializing_reads.fetch_add(1, Ordering::Relaxed); }
         Some(unsafe { (&*self.value.get()).assume_init_ref() })
     }
 }
@@ -226,14 +237,24 @@ impl ProcessArenaBacking {
         if !self.registry.is_bound_to_subprocess(arena.subprocess) { return None; }
         let parent = if arena.parent.is_null() { arena } else { unsafe { &*arena.parent } };
         let memory = parent.memid.os_memory()?;
+        if let Some(owner) = self.published_mapping(memory.base, memory.size) {
+            return Some(owner);
+        }
+        // Source registry publication can precede this target slot's final
+        // PUBLISHED store. On this miss only, wait for the one initializing
+        // publisher to finish and recheck. Never borrow unrelated temporary
+        // slots: their failed manage may move/drop/reuse the contained owner.
+        let _guard = self.reserve_lock.lock().ok()?;
+        self.published_mapping(memory.base, memory.size)
+    }
+
+    fn published_mapping(&self, base: *mut u8, size: usize) -> Option<&OwnedArenaMapping> {
         self.slots.iter().find_map(|slot| {
-            // The arena's own Release publication also proves that an
-            // INITIALIZING slot is fully written and can no longer fail
-            // without publication; this closes the registry/slot-store window.
-            if slot.state.load(Ordering::Acquire) == EMPTY { return None; }
+            if slot.state.load(Ordering::Acquire) != PUBLISHED { return None; }
+            // SAFETY: a PUBLISHED slot is never moved, replaced or released.
             let owner = unsafe { slot.initialized()? };
             let stored = owner.memory.os_memory()?;
-            (stored.base == memory.base && stored.size == memory.size).then_some(owner)
+            (stored.base == base && stored.size == size).then_some(owner)
         })
     }
 
@@ -553,6 +574,64 @@ mod tests {
         assert!(core::ptr::eq(pair.subprocess(), foreign.subprocess()));
         mapping.unmap_for_process(pair, 0, false).unwrap();
         assert_eq!(backing.registry().count(), 2);
+    }
+
+    #[test]
+    fn live_arena_lookup_does_not_borrow_an_unrelated_initializing_mapping_slot() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let backing = backing();
+        let process = process();
+        let first = install(backing, process, MapAccess::Reserved);
+        let second = install(backing, process, MapAccess::Reserved);
+        let view = unsafe { ArenaView::from_ptr(second.as_ptr()) }.unwrap();
+        let slot = &backing.slots[0];
+        let _guard = backing.reserve_lock.lock().unwrap();
+        // Model an unrelated prepublication slot ahead of the live target.
+        // Its fully written value stays stable in this isolated witness, so
+        // the old bug is observed as a forbidden borrow without executing a
+        // Rust data race or moving bytes underneath an actual reference.
+        // The lock also proves that the successful hot lookup must not take
+        // a global lock just because an unrelated slot is initializing.
+        assert_eq!(unsafe { slot.initialized() }.unwrap().memory.os_memory().unwrap().base,
+            unsafe { first.area() }.unwrap().0);
+        let before = slot.initializing_reads.load(Ordering::Relaxed);
+        slot.state.store(INITIALIZING, Ordering::Release);
+        let found = unsafe { backing.mapping_for_arena(view.arena()) };
+        slot.state.store(PUBLISHED, Ordering::Release);
+        assert!(found.is_some());
+        assert_eq!(slot.initializing_reads.load(Ordering::Relaxed), before,
+            "the target publication never authorizes borrowing another initializing slot");
+    }
+
+    #[test]
+    fn target_arena_publication_window_rechecks_under_reserve_lock_before_borrowing() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let backing = backing();
+        let process = process();
+        let id = install(backing, process, MapAccess::Reserved);
+        let address = id.as_ptr() as usize;
+        let expected_base = unsafe { id.area() }.unwrap().0 as usize;
+        let slot = &backing.slots[0];
+        let guard = backing.reserve_lock.lock().unwrap();
+        let before = slot.initializing_reads.load(Ordering::Relaxed);
+        // Represent the actual source publication window: arena metadata is
+        // already visible, but its publisher still owns the reserve lock and
+        // has not made the mapping slot immutable for general readers.
+        slot.state.store(INITIALIZING, Ordering::Release);
+        let reader = std::thread::spawn(move || {
+            let arena = unsafe { &*(address as *const Arena) };
+            unsafe { backing.mapping_for_arena(arena) }.map(|owner| owner.mapping.base().unwrap() as usize)
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !backing.reserve_lock.test_is_contended() {
+            assert!(std::time::Instant::now() < deadline, "publication miss must synchronize with its publisher");
+            std::thread::yield_now();
+        }
+        assert_eq!(slot.initializing_reads.load(Ordering::Relaxed), before);
+        slot.state.store(PUBLISHED, Ordering::Release);
+        guard.unlock().unwrap();
+        assert_eq!(reader.join().unwrap(), Some(expected_base));
+        assert_eq!(slot.initializing_reads.load(Ordering::Relaxed), before);
     }
 
     #[test]
