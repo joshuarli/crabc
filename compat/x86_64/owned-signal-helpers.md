@@ -39,14 +39,42 @@ errno only on formatting success. The formatter retains its temporary
 `psiginfo` forwards only `si_signo`, as musl does. These routines are not
 async-signal-safe. Locale scope remains C, POSIX and C.UTF-8.
 
-Run `./scripts/dev-x86_64.sh owned-signal-helpers`. The runner compiles one
-ordinary installed-header application object and links that exact object
-against pinned musl and the owned static, static-PIE, dynamic PIE and dynamic
-non-PIE products. Both dynamic modes run through kernel and direct interpreter
-entry. The optional `DYNAMIC_SYSROOT` argument qualifies a supplied checkout
-`.work` product; `owned_dynamic_qualification.py` registers this leaf as
-`signal-helpers` for every dynamic product. Driver receipts and paired stdout
-and stderr remain under the reported `.work/x86_64/tmp` evidence directory.
+Run `./scripts/dev-x86_64.sh owned-signal-helpers [DYNAMIC_SYSROOT]` for the
+existing dispatcher interface. Inside the pinned native environment,
+`run_owned_signal_helpers.sh [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`
+also accepts a supplied static product. Both supplied products invoke neither
+producer. Static-only builds the dynamic product that owns compilation;
+no arguments builds both products; dynamic-only retains its four dynamic cells.
+Supplied paths and complete product payloads are validated before any evidence
+output or build. Invalid arguments exit 2; product and runtime failures exit 1.
+
+The selected installed `crabc-cc-dynamic` compiles one ordinary application
+object with installed headers, `--dynamic-pie -std=c11 -fno-builtin`, and its
+implicit `-fPIE -fstack-protector-strong` policy. Previously the standalone path
+compiled through the static-PIE driver, whose implicit stack-protection policy
+was `-fno-stack-protector`; supplied dynamic runs already used strong protection.
+All invocation forms now share the latter policy. There are no fixture macros
+that select different oracle, candidate or linkage behavior. A separate header
+dependency audit uses the installed compiler and exact compilation flags without
+replacing the application object. `compile.json` records the actual driver
+command and compiler, source, driver, manifest, installed-header and object hashes.
+
+That immutable object links to pinned musl and the supplied owned static,
+static-PIE, dynamic PIE and dynamic non-PIE products. Static and oracle scenarios
+retain their ordinary execution; dynamic forms run through kernel and direct
+interpreter entry in a disposable root. Each link passes the shared
+`owned_posix_product_evidence.validate_link` audit for its exact product,
+receipt, runtime inputs, trace and ELF contract. All eight scenarios retain and
+compare raw status, stdout and stderr. The `signal-helpers.json` receipt records
+the link identities, object identity, oracle hashes and all 48 comparisons when
+static cells are selected (32 in dynamic-only mode). Input identities are
+checked again after replay. Existing ELF weak-alias address/size checks remain.
+
+`owned_dynamic_qualification.py` registers `signal-helpers` for each dynamic
+product. The family collector separately owns replay across primary,
+reproduction and extracted static products and the cross-product object check.
+This runner supports those six static cells without asserting family closure.
+Artifacts remain under the reported `.work/x86_64/tmp` evidence directory.
 
 The eight isolated scenarios cover alias identity and restart flags; queued
 signal delivery and disposition/mask transitions; invalid and reserved signal
