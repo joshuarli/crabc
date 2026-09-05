@@ -32,7 +32,9 @@ restart completed leaf implementations or treat private evidence as closure.
   suppression window; ordinary FILE backends, `pclose`, `wait3/wait4`, empty
   `sendmmsg`, and nonblocking fcntl retain source non-CP behavior. SIGCANCEL is
   **33**, timer signal is 32; FS+32 publication and target leases precede signal
-  delivery. `system` wait cancellation remains an active separate slice.
+  delivery. `system` uses the public cancelable child wait while `pclose`
+  preserves its raw wait; contained musl/owned protocol fixtures distinguish
+  enabled, disabled and masked cancellation and verify child ownership.
 - Scalar and binary80 math completion probes, owned `pthread_sigmask`,
   child-contained `chroot`, and positive 65-live-thread pthread/C11 registry
   growth are integrated. The default export roster includes the three
@@ -60,6 +62,11 @@ restart completed leaf implementations or treat private evidence as closure.
   checks pass 303 tests. Individual cancellation slices also pass the static
   56-test/24-job installed/extracted/reproducibility gate. Successful static
   scratch products are cleaned; retain their logs.
+- `system`/`pclose` cancellation at `e3624732` passes both static modes and
+  dynamic PIE/non-PIE through kernel and direct interpreter entry, including
+  supervisor cleanup after success, injected failure and timeout. Log:
+  `.work/x86_64/system-cancellation-integrated.log`; product:
+  `.work/x86_64/tmp/owned-system-cancellation.8Vba55`.
 - Dynamic Lua passes installed/extracted source execution and artifact
   reproducibility: `.work/x86_64/lua-dynamic-source-integrated.log`, report
   `.work/x86_64/lua-dynamic-source-build/run-0t1zwhlc/report.json`.
@@ -81,10 +88,10 @@ historical dirty worktrees; no uncommitted checkpoint is a completed feature.
 | Worktree | Current task |
 | --- | --- |
 | `owned_dynamic_sysroot` | Replace impossible planned-only RuntimeV1/product predicates with current source/manifest-bound materialization and fresh per-case receipts. Building alone must not qualify a product; historical foundations and full-family/public promotion remain separate. Root owns the three-product runner and final integration. |
-| `owned_pthread_lifecycle` | Timed/clock-selected and process-shared condition waits with their source-required mutex dependencies; reconcile remaining legacy machine-code evidence without imposing incidental symbol layout on runtime code. |
-| `owned_stdio_engine` | `system` child-wait cancellation with source `pclose` separation and deterministic child/wait ownership evidence. |
+| `owned_pthread_lifecycle` | Timed/clock-selected and process-shared condition waits with their source-required mutex dependencies. Legacy condition machine-code evidence is repaired in `44f1684b`, with exact owned-helper/syscall edges and its native gate passing. |
+| `owned_stdio_engine` | `system` child-wait cancellation is integrated and qualified as a component. Complete independently runnable qualification prefixes and source/tool/runtime-bound execution receipts; preserve the full ordered final qualification chain. |
 | `header_declaration_parity` | Generic matrices pass; complete the native aggregate/provider audit and qualify the header family only when its executable predicates pass. |
-| `native_resolver_network` | Controlled same-source/object musl/owned resolver differential across static/dynamic installed/extracted products. Build in the ordinary pinned container, then execute with no external network and private conventional files. |
+| `native_resolver_network` | Installed/extracted 12-entry resolver differential is implemented in `fce59ece`, with separate ordinary build and network-isolated execution. Rerun canonically after pending source integrations: the first root attempt correctly rejected a concurrent source change during dynamic preparation. Audit remaining resolver family predicates against current providers. |
 | `qualification_execution_boundary` | Pinned execution boundary is integrated as `255ec048`; source/tool/runtime-bound completed receipts and independently runnable qualification prefixes still need completion. Private five-case admission remains private. |
 | `rust_std_unwinder` | Automatic tool review paused the task. Initial provider `d3ca0e79` and unfinished producer/driver/metadata changes remain isolated and unqualified; resolve the restriction before resuming. |
 | `allocator_m2_metadata` | Automatic tool review paused quiescent arena-destruction ownership work. Preserve partial uncommitted snapshot/destruction files and resolve the restriction before resuming. |
