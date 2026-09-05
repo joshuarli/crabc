@@ -1,84 +1,88 @@
 # Combined native x86-64 completion goal
 
-## Restart handoff — 2026-09-05
+## Active integration — 2026-09-05
 
-The user requested a deliberate wind-down for a Codex restart. The combined
-goal is **not complete**. Resume from the retained work below, not a new plan
-or implementation from scratch. AArch64 remains paused; C mimalloc remains
-the production backend; x86 public promotion remains false.
+The combined goal is **not complete**. AArch64 remains paused; C mimalloc
+remains the production backend; x86 public promotion remains false. Resume
+from the integrated runtime and allocator work below rather than restarting
+implementation or the earlier leaf queue.
 
-### Settled main and evidence
+### Integrated baseline and evidence
 
-Runtime baseline `6ff4c0d1` includes installed static/static-PIE wide and byte
-stdio, filesystem/IPC, spawn/wordexp, selected fork/exit and normal robust
-mutexes; dynamic PIE/non-PIE startup, runtime-new dependency graphs, retained
-close/scope, all-thread TLS growth, and constructor-exit repair. The FS+32
-cancellation-state handoff is installed, but syscall cancellation activation
-is **not** integrated. Allocator VM option retries and published-range commit
-are integrated; M2 remains partial.
+Runtime revision `3369c153` includes the previous installed stdio, filesystem,
+IPC, spawn/wordexp, robust-mutex and runtime-loader work, plus:
 
-Retained root checks (logs under `.work/`):
+- `05e491dd`: deferred GOT/PLT transactions, all-thread TLS publication before
+  atomic pointer stores, permission rollback and RELRO restoration before
+  callbacks. The pinned musl GOT/RELRO fault is a documented safety correction,
+  not a parity claim.
+- `04bc4f3e`: `dladdr` reports the first mapped page for kernel-owned PIE and
+  non-PIE executables without making their mappings rollback eligible.
+- `7461c67b` and `3369c153`: mapping leases and per-target kill locks,
+  SIGCANCEL syscall-PC-window delivery for public `read/readv/write/writev`,
+  cleanup/TSD composition, fork state preservation, and explicit FILE-lock
+  retirement before FS+32 clearing. Ordinary FILE descriptor I/O remains
+  non-canceling. SIGCANCEL is **33**; signal 32 is musl's timer signal. The
+  creator blocks SIG33 across clone and the worker publishes FS+32 before
+  unmasking it.
+- `6d52a714`: incremental arena and OS metadata commitment. The OS-only
+  on-demand correction commits backing before publishing capacity and keeps
+  failed-page ownership and exact committed-prefix release accounting.
+  M2 remains partial.
 
-- `owned-static-restart-checkpoint.log`: `./scripts/dev-x86_64.sh
-  owned-static-sysroot` passed at `6ff4c0d1`: 84 binaries, 24 isolated jobs,
-  four workers, installed/extracted modes and two-build reproducibility.
-- `owned-wordexp-restart-checkpoint.log`: `libc-owned-wordexp` passed at that
-  revision, including private normal/missing/inaccessible/invalid shells and
-  parent-errno preservation against pinned musl.
-- `materialized-dynamic-nonpie-robust-integrated.log`: the dynamic product
-  gate passed at `e78c166e`, before the cancellation cache handoff: 43 loader,
-  16 driver/package and two CRT-mode tests, installed/extracted consumers,
-  41-module worker TLS, scope/rollback, constructor exit and reproducibility.
-- `allocator-unit-vm-retry-integrated.log`: allocator unit tests passed
-  938/938 after `b537d2a4`; no allocator source changed on main afterward.
-- `owned-providers-wordexp-host-integrated.log`: 59 focused Python tests
-  passed. An agent's separate unsharded accounting/parity run timed out after
-  95/96 tests; it is not a pass. Use the normal sharded runner when broadening.
+Both installed-product component gates pass together at `3369c153`:
 
-These are component/integration results, not final same-revision qualification.
+- `./scripts/dev-x86_64.sh owned-static-sysroot`: 56 harness tests, all 24
+  isolated consumer jobs with four workers, installed/extracted ET_EXEC and
+  static-PIE modes, and two-build reproducibility. Log:
+  `.work/x86_64/resume-cancellation-static-integrated.log`; evidence:
+  `.work/x86_64/tmp/crabc-x86-64-owned-static-sysroot.th91gC`.
+- `./scripts/dev-x86_64.sh materialized-dynamic-sysroot`: 46 loader tests,
+  18 driver/package tests, two CRT-mode tests, installed/extracted PIE and
+  non-PIE consumers, deferred binding, 41-module worker TLS, constructor exit,
+  scope/rollback and reproducibility. Log:
+  `.work/x86_64/resume-cancellation-dynamic-integrated.log`; evidence:
+  `.work/x86_64/tmp/materialized-dynamic.Gcawm6`.
 
-### Retained batches: review these first
+The allocator metadata candidate `358a369e` passed 943 unit tests,
+`allocator --quick`, and the 23-value on-demand differential in
+`.work/worktrees/allocator_m2_metadata/.work/`. Root integration `6d52a714`
+adds source-header provenance corrections with no further implementation
+change. Its target reports live under that worktree's
+`.work/allocator-x86_64/reports/allocator/x86_64/`. This is component evidence,
+not native M2 closure or final same-revision qualification.
 
-All paths below are relative to `.work/worktrees/`. Checkpoint commits are
-intentionally incomplete and must not be cherry-picked as finished features.
+### Current independent work
 
-| Worktree / branch | Commit | Restart action |
-| --- | --- | --- |
-| `allocator_m2_metadata` / `allocator/m2-native-metadata` | `ca601ad5` | Review/integrate incremental arena and OS metadata commitment. Its prerequisite `9b436f20` duplicates main's published-range commit `c9cd534f`; do not reapply that prerequisite or overwrite newer `os.rs`. Worker unit tests: 932 passed; bounded perf smoke passed. Full on-demand differential remains to run. |
-| `owned_dynamic_sysroot` / `x86/owned-dynamic-sysroot` | `79c536b1` | Review/integrate deferred PLT/GOT transaction. Cold combined gate passed: 46 loader, 18 boundary, two CRT tests, installed/extracted PIE/non-PIE and lazy cases. Evidence: `.work/x86_64/tmp/materialized-dynamic.YyaCVL` in this worktree. Preserve root constructor-exit/spawn calls when merging. |
-| `owned_pthread_lifecycle` / `x86/owned-pthread-lifecycle` | `257b9e74` | **Uncompiled checkpoint:** signal-target lock/lease scaffold in `pthread_create_join.rs`; fields still need initialization and lifecycle integration. |
-| `owned_stdio_engine` / `owned-stdio-closure` | `a4f0aefe` | **Uncompiled checkpoint:** public I/O cancellation, SIGCANCEL/PC-window assembly, explicit FILE-lock cleanup and regression. Depends on the preceding target-lifetime work; candidate stops at missing `with_selected_pthread_signal_target`. |
-| `provider_roster_accounting` / `x86/provider-roster-accounting` | `1ef6fa14` | **Test-only checkpoint:** scalar `fma/fmaf`, `hypot/hypotf`, `log1p/log1pf` raw-bit/fenv consumer. No leaf/generator/runner yet. Fix the test's overly broad `fmal` substring check before using it as a judge. Reuse existing pinned-musl generation/PIC and installed-driver machinery; binary80 is separate. |
+All worktrees below are beneath `.work/worktrees/`. Inspect branch and dirty
+state before integrating; ongoing work is not a completed feature merely
+because an earlier checkpoint is committed.
 
-Important integration contracts:
+| Worktree / branch | Current task |
+| --- | --- |
+| `allocator_m2_metadata` / `allocator/m2-native-metadata` | Distinct huge allocation backing in the same `ProcessArenaBacking` registry, preserving source ownership and partial-failure cleanup. The incremental metadata candidate is already integrated; do not reapply its duplicate prerequisite. |
+| `owned_dynamic_sysroot` / `x86/owned-dynamic-sysroot` | Complete source search policy: environment, first-load dependency ancestry, RPATH/RUNPATH and ORIGIN, with authenticated installed-driver options and ordinary consumers. Pinned musl `dlopen` roots lookup at the main object; do not invent return-address caller semantics. |
+| `owned_pthread_lifecycle` / `x86/owned-pthread-lifecycle` | Dynamic initial/last-thread exit using the existing shared logical task accounting and the dynamic ordinary-exit owner; qualify cancellation, surviving-worker TLS and DSO finalization. |
+| `owned_stdio_engine` / `owned-stdio-closure` | Extend the proven syscall cancellation protocol to the next source-defined descriptor cancellation points. The first public-I/O and FILE-retirement batch is already integrated. |
+| `provider_roster_accounting` / `x86/provider-roster-accounting` | Complete the retained scalar `fma/fmaf`, `hypot/hypotf`, `log1p/log1pf` raw-bit/fenv component using pinned-musl generation/PIC and installed-driver machinery. Binary80 is separate. |
+| `header_declaration_parity` / `x86/header-declaration-parity` | Reconcile declaration identity, source forms and named/prototype declarations against the compiler-derived header matrices, then qualify the first family. Deferred callable providers remain a separate C-ABI obligation. |
 
-- Incremental metadata corrects a reproduced pinned-v3.5.0 OS-only on-demand
-  fault: never publish committed capacity before backing is accessible. Its
-  source evidence and intentional difference live in the batch's allocator
-  design/known-differences updates. Next VM work is a distinct huge allocation
-  owner in the **same** `ProcessArenaBacking` registry, not an ordinary
-  `Mapping` impersonation or invented capacity limit; preserve failed-page
-  ownership and source cleanup/startup order. `allocator_m1_native` is clean
-  at `b537d2a4` and has no additional huge implementation to recover.
-- Deferred GOT retry deliberately repairs pinned musl's write into sealed
-  RELRO (oracle SIGSEGV), not a parity claim. Review its permission rollback,
-  atomic pointer publication after all-thread TLS, and RO restoration before
-  callbacks. Complete search policy, dynamic fork/main-thread exit, and an
-  untested main-executable `dladdr` base remain follow-ons.
-- Cancellation target lookup must acquire a mapping lease under the registry
-  lock, release that lock, then use the per-target kill lock around pending/TID/
-  `tgkill`; exit and reclamation must retire TIDs and drain leases safely.
-  The callback needs `(tgid, tid, *const SelectedWorkerCancellation)`; main
-  needs persistent live/kill state. Publish FS+32 before SIG32 unmask. Preserve
-  inherited state across fork. Run orphaned explicit FILE-lock repair before
-  nonfinal FS-cache clearing. Ordinary FILE raw reads/writes are **not** musl
-  cancellation points; public `read/readv/write/writev` are. The checkpoint's
-  expanded musl probe passes, but candidate runtime tests have not run.
+Dynamic fork still needs an explicit loader transaction covering both graph
+mutation and constructor/finalizer ownership, followed by surviving-thread TLS
+registry adoption and libc lifecycle repair. A copied callback-owner TID or
+vanished worker token must not remain live in the child. Preserve recursive
+constructor/fork behavior, FS+24/32/40 state and source unlock/callback ordering.
+Do not treat enabling the static fork branch as dynamic fork qualification.
 
-Current-batch unfinished work is committed on its own branches, not promoted
-to main. Preserve unrelated historical dirty worktrees. No new work or test
-jobs should survive this wind-down. Resume independent allocator/runtime work
-under the current `orchestrate` skill, with integration owned by the root.
+Allocator follow-ons must retain a distinct huge owner, not an ordinary
+`Mapping` impersonation or an invented capacity limit. Full metadata lifecycle,
+cross-thread publication and publication/cleanup failure matrices remain open,
+as do the other unqualified M2 components. Keep source cleanup/startup order.
+
+Preserve unrelated historical dirty worktrees. Use the normal sharded Python
+runner for broad accounting checks; the retained 95/96 unsharded timeout is
+not a pass. Continue independent runtime and allocator work under the current
+`orchestrate` skill, with integration and final qualification owned by root.
 
 ## Goal prompt
 
