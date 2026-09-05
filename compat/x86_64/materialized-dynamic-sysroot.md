@@ -5,6 +5,7 @@ shared runtime. `run_materialized_dynamic_sysroot.sh` builds and executes
 ordinary C consumers through the installed `bin/crabc-cc-dynamic`, repeats
 through an extracted package, and compares two fresh builds byte for byte.
 This is an initial-graph component, not completion of `dynamic-product.toml`.
+Run it from the host with `./scripts/dev-x86_64.sh materialized-dynamic-sysroot`.
 
 ## One owner per runtime state
 

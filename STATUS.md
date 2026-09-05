@@ -47,6 +47,10 @@ planning checkpoints, not runtime or allocator completion.
    Installed static/static-PIE allocator, TLS, POSIX, and stdio consumers pass, including
    extracted-package and two-clean-build checks. Complete runtime composition
    and allocator lifecycle remain open; this is not static-product completion.
+   The shared runtime now executes installed/extracted PIE and initial TLS DSO
+   consumers with reproducible builds. General runtime module loading, worker
+   DTV growth, and dynamic process lifecycle remain open; see
+   [`materialized-dynamic-sysroot.md`](compat/x86_64/materialized-dynamic-sysroot.md).
 4. Recovery: inspect existing worktrees before duplicating work. The legacy
    `x86/reboot-feature-20260904` branch still has unfinished uncommitted work
    outside the checkout; preserve and reconcile it. Create no new external

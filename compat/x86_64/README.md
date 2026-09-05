@@ -49,8 +49,10 @@ duplicate it or define alternate host paths.
 
 For Python-only iteration, `python3 -B scripts/test_python.py --directory
 compat/x86_64/tests --jobs 4` runs isolated modules with immediate failure
-diagnostics and per-module logs under `.work/python-test-runs/`. Select the
-nearest module while developing; reserve the full campaign for integration.
+diagnostics and private logs under `.work/python-test-runs/`. The large parity
+ledger module is automatically split into exact test-ID shards, with live test
+progress and fail-closed completion accounting. Select the nearest module
+while developing; reserve the full campaign for integration.
 
 `./scripts/dev-x86_64.sh core --cached` reuses a checkout-local Cargo target for
 development. Each invocation copies Cargo's exact current test binary into
@@ -67,6 +69,12 @@ by default. Set `CRABC_X86_64_OWNED_STATIC_CONSUMER_WORKERS=1` for a serial repl
 producer reproducibility checks remain mandatory. Failed jobs retain private
 logs and artifacts; timed-out or interrupted jobs have their process groups
 terminated and reaped.
+
+`./scripts/dev-x86_64.sh materialized-dynamic-sysroot` builds the real shared
+runtime twice and tests installed and extracted PIE/DSO consumers. See
+[materialized-dynamic-sysroot.md](materialized-dynamic-sysroot.md) for the
+initial-graph boundary and remaining loader work. The older
+`owned-dynamic-sysroot` command is a plan-only seed, not this executing gate.
 
 ## Boundary and caveats
 
@@ -103,7 +111,7 @@ tests from an extracted sysroot.
 
 The owned dynamic product must use the installed interpreter/shared libc and
 general loader, with relocation, symbol scope, RuntimeV1 handoff, initial-exec
-and dynamic TLS, DTV/module lifecycle, DSO init/fini, dl*, locking, unload,
+and dynamic TLS, DTV/module lifecycle, DSO init/fini, dl*, locking, retained close/reopen,
 and admitted reentrancy covered by its contracts. Fixed graphs and isolated
 artifacts are not equivalent.
 

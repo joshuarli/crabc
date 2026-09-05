@@ -527,7 +527,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
   owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
-  owned-dynamic-sysroot  run the x86 owned dynamic-product gate when materialized
+  owned-dynamic-sysroot  inspect the legacy plan-only dynamic-product gate
+  materialized-dynamic-sysroot  build and test the installed initial-graph shared runtime
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
   crt-dynamic-link-contract  audit the closed x86 Rust CRT dynamic-PIE link boundary
@@ -5473,6 +5474,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-static-sysroot) ;;
     owned-dynamic-sysroot) ;;
+    materialized-dynamic-sysroot) ;;
     crt-object-bundle) ;;
     crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto) ;;
     linux-5-10-uapi) ;;
@@ -7470,6 +7472,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-dynamic-sysroot takes no arguments"
         ensure_image
         run_owned_dynamic_sysroot_probe
+        ;;
+    materialized-dynamic-sysroot)
+        [ "$#" -eq 0 ] || fail "materialized-dynamic-sysroot takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh
         ;;
     crt-object-bundle)
         [ "$#" -eq 0 ] || fail "crt-object-bundle takes no arguments"
