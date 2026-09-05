@@ -198,12 +198,18 @@ Other chroot consumers use the existing narrower container helper.
 `tests/test_dynamic_loader_dispatch.py` observes actual Docker arguments for
 the dynamic product, wordexp, and CRT dispatches to guard that boundary.
 
-`run_general_dynamic_pthread_signal.sh` reuses the ordinary pthread/C11 signal
-consumer under installed and extracted PIE/non-PIE entries. Its read-only proc
-mount observes completed kernel tasks before checking still-valid joinable
-handles, and is unmounted by the runner's exit trap. The integrated dynamic
-gate passed with search policy, pure-TBSS, live pthread attributes, signal
-transactions and existing cancellation/lifecycle consumers; retained log:
+`run_general_dynamic_pthread_signal.sh` remains the one-argument
+qualification launcher for `run_owned_pthread_signal.sh`. The canonical runner
+compiles one installed-header workload object, records its installed-header
+dependency closure, links that object to a pinned-musl static reference and to
+the supplied dynamic PIE/non-PIE products, and retains raw status, stdout and
+stderr for both kernel and direct-loader entries. An explicitly supplied static
+sysroot additionally links the same object through static ET_EXEC and static
+PIE with sealed receipts and ELF evidence. Its read-only proc mount observes
+completed kernel tasks before checking still-valid joinable handles, and is
+unmounted by the runner's exit trap. The integrated dynamic gate passed with
+search policy, pure-TBSS, live pthread attributes, signal transactions and
+existing cancellation/lifecycle consumers; retained log:
 `.work/x86_64/pthread-signals-getattr-search-integrated.log`, product:
 `.work/x86_64/tmp/materialized-dynamic.irVBKA`. This is component evidence,
 not final same-revision platform qualification.
