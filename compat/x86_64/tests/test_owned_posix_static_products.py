@@ -86,6 +86,8 @@ class StaticPreparationTests(unittest.TestCase):
             lambda r: r["source"].update(revision="0" * 40),
             lambda r: r["products"]["primary"].update(path="/outside"),
             lambda r: r["steps"].pop("extract"),
+            lambda r: r["steps"]["extract"].update(exit_status=False),
+            lambda r: r["archives"]["primary"].update(size=float(r["archives"]["primary"]["size"])),
         ):
             with self.subTest(mutate=mutate):
                 record = copy.deepcopy(original)
@@ -98,6 +100,35 @@ class StaticPreparationTests(unittest.TestCase):
         (self.root / "source").write_text("dirty\n")
         with self.assertRaisesRegex(preparation.PreparationError, "clean"):
             self.validate()
+
+    def test_duplicate_json_keys_rejected(self):
+        for path in (self.receipt, self.work / "source-before.json"):
+            original = path.read_text()
+            key, value = next(iter(json.loads(original).items()))
+            path.write_text("{" + json.dumps(key) + ":" + json.dumps(value) + "," + original[1:])
+            with self.assertRaises(preparation.PreparationError):
+                self.validate()
+            path.write_text(original)
+
+    def test_retention_makes_private_archives_readable_without_changing_write_or_execute_bits(self):
+        archive = self.work / "archives/primary.tar.xz"
+        archive.chmod(0o600)
+        directory = self.work / "archives"
+        directory.chmod(0o700)
+        preparation.make_retained_evidence_readable(self.work)
+        self.assertEqual(archive.stat().st_mode & 0o777, 0o644)
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
+        self.validate()
+
+    def test_retention_does_not_follow_symlinks(self):
+        outside = self.root / ".work/outside"
+        outside.write_bytes(b"unrelated")
+        outside.chmod(0o600)
+        retained = self.root / ".work/retained"
+        retained.mkdir()
+        (retained / "alias").symlink_to(outside)
+        preparation.make_retained_evidence_readable(retained)
+        self.assertEqual(outside.stat().st_mode & 0o777, 0o600)
 
     def test_new_committed_source_rejected(self):
         (self.root / "source").write_text("new revision\n")

@@ -55,7 +55,39 @@ def write_new(path: Path, value: object) -> None:
 
 def read(path: Path) -> object:
     package.require_regular_file(path, "preparation record")
-    return json.loads(path.read_text())
+    def unique_pairs(pairs: list[tuple[str, object]]) -> dict:
+        result = {}
+        for key, value in pairs:
+            require(key not in result, f"duplicate JSON key in {path}: {key}")
+            result[key] = value
+        return result
+    def invalid_constant(value: str) -> None:
+        raise PreparationError(f"non-JSON numeric constant in {path}: {value}")
+    return json.loads(path.read_text(), object_pairs_hook=unique_pairs, parse_constant=invalid_constant)
+
+
+def same_json(left: object, right: object) -> bool:
+    # Python equality equates False with 0 and 1.0 with 1. A preparation
+    # receipt must retain JSON scalar types as well as their values.
+    return json.dumps(left, sort_keys=True, allow_nan=False) == json.dumps(right, sort_keys=True, allow_nan=False)
+
+
+def make_retained_evidence_readable(work: Path) -> None:
+    """Add only read/traverse bits after execution; never follow symlinks.
+
+    The pinned container may own package archives initially published as
+    0600. Retention must allow the host checkout owner to inspect them, while
+    preserving all write and regular-file executable bits.
+    """
+    pending = [work]
+    while pending:
+        path = pending.pop()
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            path.chmod(stat.S_IMODE(mode) | 0o555, follow_symlinks=False)
+            pending.extend(path.iterdir())
+        elif stat.S_ISREG(mode):
+            path.chmod(stat.S_IMODE(mode) | 0o444, follow_symlinks=False)
 
 
 def source_identity(root: Path) -> dict:
@@ -139,13 +171,13 @@ def collect(root: Path, work: Path) -> dict:
     """Recompute a preparation record from live source, products and raw steps.
 
     Extraction verification delegates to the existing bounded package parser.
-    Its temporary materialization stays below this run and is removed before
+    Its temporary materialization stays in checkout scratch and is removed before
     returning; no product, command log, or successful receipt is rewritten.
     """
     work = physical(root, work)
     source = source_identity(root)
     for name in ("source-before.json", "source-after.json"):
-        require(read(work / name) == source, f"source seal changed: {name}")
+        require(same_json(read(work / name), source), f"source seal changed: {name}")
     exact_children(work / "products", {"primary", "reproduction", "extracted"})
     exact_children(work / "products/extracted", {package.ARCHIVE_ROOT})
     exact_children(work / "archives", {"primary.tar.xz", "reproduction.tar.xz"})
@@ -155,7 +187,7 @@ def collect(root: Path, work: Path) -> dict:
     steps = {}
     for step, command in expected_commands.items():
         prefix = work / "steps" / step
-        require(read(prefix.with_suffix(".command.json")) == command, f"command changed: {step}")
+        require(same_json(read(prefix.with_suffix(".command.json")), command), f"command changed: {step}")
         require(prefix.with_suffix(".status").read_bytes() == b"0\n", f"unsuccessful step: {step}")
         steps[step] = {"command": command, "exit_status": 0,
             "artifacts": {suffix: file_identity(root, prefix.with_suffix(f".{suffix}"))
@@ -178,7 +210,11 @@ def collect(root: Path, work: Path) -> dict:
                 for label in ("primary", "reproduction")}
     require(filecmp.cmp(work / "archives/primary.tar.xz", work / "archives/reproduction.tar.xz", shallow=False),
             "independent package archive bytes differ")
-    with tempfile.TemporaryDirectory(prefix=".verify-static-package.", dir=work) as temporary:
+    # A completed run may be container-root-owned and intentionally not
+    # host-writable. Only new disposable validation scratch needs write access.
+    scratch = physical(root, root / ".work/x86_64/tmp")
+    scratch.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".verify-static-package.", dir=scratch) as temporary:
         extracted = package.extract_archive(work / "archives/primary.tar.xz", Path(temporary) / "extraction")
         require(tree_identity(extracted) == primary["tree"], "archive payload differs from primary")
     require(source_identity(root) == source, "source changed during preparation validation")
@@ -208,9 +244,12 @@ def prepare(root: Path, work: Path) -> Path:
             write_new(work / "source-after.json", source_identity(root))
         except PreparationError as error:
             write_new(work / "source-after-error.json", {"error": str(error)})
+        finally:
+            make_retained_evidence_readable(work)
     record = collect(root, work)
     destination = work / "preparation.json"
     write_new(destination, record)
+    make_retained_evidence_readable(work)
     return destination
 
 
@@ -219,7 +258,7 @@ def validate_receipt(root: Path, path: Path) -> dict:
     require(path.name == "preparation.json", "expected preparation.json receipt")
     record = read(path)
     observed = collect(root, path.parent)
-    require(record == observed, "preparation receipt differs from recomputed evidence")
+    require(same_json(record, observed), "preparation receipt differs from recomputed evidence")
     return observed
 
 

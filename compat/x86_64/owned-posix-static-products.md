@@ -56,10 +56,18 @@ python3 -B compat/x86_64/owned_posix_static_products.py validate \
   .work/x86_64/posix-static-run/preparation.json
 ```
 
+The validator runs on native Linux/x86-64, including the host outside the
+pinned image; the existing package API requires Linux `renameat2`. Preparation
+adds regular-file read and directory read/traverse bits to retained evidence
+without changing write or executable bits, so container-owned archives remain
+host-readable. It does not change installed product behavior or package bytes.
+
 Validation reconstructs the exact receipt from current clean source, logs,
 products, and archives. Missing or extra product cells, rewritten fields,
-unsuccessful steps, or changed source/artifacts are rejected. Temporary archive
-verification remains under the run directory and is removed afterwards.
+unsuccessful steps, or changed source/artifacts are rejected. JSON duplicate
+keys and scalar-type substitutions are rejected. Temporary archive
+verification remains under physical checkout `.work/x86_64/tmp` and is removed
+afterwards; the original run directory need not be writable by the validator.
 Failed preparation retains each attempted command and its raw output/status;
 it writes no successful preparation receipt. A dirty final source is recorded
 in `source-after-error.json` instead of a success seal.
