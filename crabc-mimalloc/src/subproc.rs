@@ -24,9 +24,10 @@
 //! relaxed current-thread count. It is not a Rust layout claim for
 //! `mi_subproc_t`: `theap_meta` and `theap_meta_lock` are one-way
 //! identity/private-futex capabilities, not C byte-layout or normal C backing
-//! routes. It supplies no subprocess list, heap projection, arena, general
-//! `mi_stats_t` layout, or public subprocess API. It does own the bounded VM
-//! and bitmap statistic fields that its staged source paths actually mutate.
+//! routes. It supplies no subprocess list, heap projection, general
+//! `mi_stats_t` layout, or public subprocess API. It owns one source-shaped
+//! process arena-backing registry, plus the bounded VM and bitmap statistic
+//! fields that its staged source paths actually mutate.
 //! Its main-Heap slot retains only the canonical
 //! static identity publication from `mi_subproc_t::heap_main`; it is never a
 //! Rust heap accessor.
@@ -109,6 +110,10 @@ impl MainStaticTldSlot {
 /// the actual source-shaped `mi_process_tld_main` branch selected only by
 /// sequence zero; it is not a metadata allocation cache or a reusable TLD.
 pub(crate) struct MainSubprocess {
+    /// The one process-owned registry, reserve lock, and permanent exact OS
+    /// backing slots for source normal arenas. This is a Rust ownership group,
+    /// never a complete `mi_subproc_t` layout projection.
+    arena_backing: crate::arena::ProcessArenaBacking,
     /// Source VM events are unconditional at `MI_STAT=0`. This is the exact
     /// OS-path subset, not a public `mi_stats_t` layout or a generic sink.
     vm_statistics: crate::statistics::VmStatistics,
@@ -268,6 +273,7 @@ pub(crate) struct MainHeapPublication<'subprocess> {
 impl MainSubprocess {
     pub(crate) const fn new() -> Self {
         Self {
+            arena_backing: crate::arena::ProcessArenaBacking::new(),
             vm_statistics: crate::statistics::VmStatistics::new(),
             bitmap_statistics: crate::bitmap::BitmapStatistics::new(),
             thread_count: AtomicUsize::new(0),
@@ -296,6 +302,14 @@ impl MainSubprocess {
 
     pub(crate) fn bitmap_statistics(&self) -> &crate::bitmap::BitmapStatistics {
         &self.bitmap_statistics
+    }
+
+    /// Returns this subprocess's only source normal-arena backing owner.
+    /// Arena publication is still gated by its own reserve lock and the
+    /// process-ready VM pair; this accessor grants neither either capability.
+    #[inline]
+    pub(crate) fn arena_backing(&self) -> &crate::arena::ProcessArenaBacking {
+        &self.arena_backing
     }
 
     #[inline]

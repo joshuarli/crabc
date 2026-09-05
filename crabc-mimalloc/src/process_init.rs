@@ -705,6 +705,19 @@ impl ProcessMainReadyLease {
         Ok(VmProcess::new(policy, self.subprocess))
     }
 
+    /// Borrows the source normal-arena backing group of this VM-aware process.
+    ///
+    /// This is intentionally unavailable from legacy explicit-config startup:
+    /// a caller must first prove the matching retained VM policy/process pair,
+    /// so it cannot publish an arena against an invented default policy.
+    #[inline]
+    pub(crate) fn arena_backing(
+        self,
+    ) -> Result<&'static crate::arena::ProcessArenaBacking, ProcessMainInitError> {
+        let _process = self.vm_process()?;
+        Ok(self.subprocess.arena_backing())
+    }
+
     #[inline]
     fn ensure_ready(self) -> Result<(), ProcessMainInitError> {
         if self.storage.state.load(Ordering::Acquire) != READY {
@@ -1029,6 +1042,10 @@ mod tests {
                 ready.vm_process(),
                 Err(ProcessMainInitError::VmPolicyUnavailable)
             ));
+            assert!(matches!(
+                ready.arena_backing(),
+                Err(ProcessMainInitError::VmPolicyUnavailable)
+            ));
 
             assert_eq!(subprocess.total_thread_count(), 1);
             assert_eq!(subprocess.live_thread_count(), 1);
@@ -1085,6 +1102,10 @@ mod tests {
             assert!(!process.is_preloading());
             assert_eq!(process.policy().arena_purge_multiplier(), 4);
             assert_eq!(process.policy().minimal_purge_size(config), config.page_size().bytes());
+            assert!(core::ptr::eq(
+                ready.arena_backing().expect("the VM-ready lease exposes its subprocess arena group"),
+                subprocess.arena_backing(),
+            ));
 
             owner.teardown().expect("the selected ticket-zero owner tears down");
             assert!(matches!(
