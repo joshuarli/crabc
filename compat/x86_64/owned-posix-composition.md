@@ -8,7 +8,18 @@ POSIX family catalog. It does not close the family or its product matrix alone.
 The selected contracts follow pinned musl 1.2.6 revision
 `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under its MIT license:
 `src/process/fork.c` and `posix_spawn.c`, `src/env`, `src/signal`,
-`src/stdio/{flockfile,funlockfile,fileno}.c`, and `src/misc/syslog.c`.
+`src/stdio/{flockfile,funlockfile,fileno}.c`, `src/misc/syslog.c`,
+`src/sched/sched_rr_get_interval.c`, and `src/network/ent.c`.
+
+Before creating process state, the same installed-header object calls
+`sched_rr_get_interval(0, ...)` with a stale errno and validates its canonical
+`timespec` result, then calls `sethostent`/`setnetent` and
+`endhostent`/`endnetent` through their two same-address alias pairs. The
+existing `x86-sched-rr-interval` and `x86-netdb-setent` leaves are selected by
+`x86-owned-static-runtime`, which the dynamic aggregate inherits. The frozen
+default archive still selects neither added feature. This does not select
+scheduler policy mutation, netdb enumeration, resolver state, or a public x86
+support boundary.
 
 The worker finishes its environment reads, installs a distinct signal mask,
 logs a message, locks the stream, and reports readiness through a pipe. The

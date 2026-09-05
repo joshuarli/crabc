@@ -11,8 +11,10 @@
 #define _GNU_SOURCE 1
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <poll.h>
 #include <pthread.h>
+#include <sched.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdio.h>
@@ -22,6 +24,7 @@
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "composition:%s:%d errno=%d\n", __func__, __LINE__, errno); return 1; } } while (0)
@@ -32,6 +35,29 @@ static int cleanup_ran;
 static volatile sig_atomic_t deliveries;
 
 static void handler(int signal_number) { if (signal_number == SIGUSR1) ++deliveries; }
+
+/* This aggregate uses the already-qualified scheduler and netdb leaves
+ * unchanged.  It makes the one installed-header composition object retain all
+ * three otherwise-omitted providers alongside the default terminator pair. */
+static int check_scheduler_netdb_boundary(void)
+{
+    struct timespec interval;
+    void (*set_host)(int) = sethostent;
+    void (*set_net)(int) = setnetent;
+    void (*end_host)(void) = endhostent;
+    void (*end_net)(void) = endnetent;
+
+    errno = EILSEQ;
+    CHECK(sched_rr_get_interval(0, &interval) == 0);
+    CHECK(errno == EILSEQ);
+    CHECK(interval.tv_sec >= 0 && interval.tv_nsec >= 0 && interval.tv_nsec < 1000000000L);
+    CHECK(set_host == set_net && end_host == end_net);
+    set_host(0);
+    set_net(1);
+    end_host();
+    end_net();
+    return 0;
+}
 
 static int log_receiver(void)
 {
@@ -121,6 +147,7 @@ int main(int argc, char **argv)
 {
     if (argc == 4 && !strcmp(argv[1], "--child")) return child_image(argv[2], argv[3]);
     CHECK(argc == 1);
+    CHECK(check_scheduler_netdb_boundary() == 0);
     int receiver = log_receiver();
     CHECK(receiver >= 0);
     CHECK(setenv("CRABC_COMPOSITION", "worker-view", 1) == 0);

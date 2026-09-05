@@ -53,6 +53,8 @@ x86-owned-static-runtime = [
     "x86-resolver-runtime",
     "x86-interval-timers",
     "x86-ualarm",
+    "x86-sched-rr-interval",
+    "x86-netdb-setent",
 ]
 # Share the owned leaf roster; process linkage is selected independently in
 # the target root. This does not select the static startup or TLS owner.
