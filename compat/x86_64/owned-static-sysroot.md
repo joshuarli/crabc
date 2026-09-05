@@ -160,7 +160,14 @@ scansets, widths, suppression, positional arguments, integer and binary32/64/80
 conversion, errno, fenv, and stream lookahead/EOF/error state. Allocation checks
 exercise `%m` growth, cleanup, partial failure, and ENOMEM; each process owns
 its scratch and restores its resource limit. Wide formatting/scanning remains
-explicitly unsupported. The 24 bounded jobs now cover 48 installed binaries.
+explicitly unsupported. The 24 bounded jobs now cover 52 installed binaries.
+
+Each TLS job also runs `owned_pthread_lifecycle_consumer.c` through a separate
+installed link: initialized attributes, private guarded and caller-owned
+stacks, detached-at-create reuse, typed C11 results, deferred cancellation
+cleanup/TSD, and atfork order after worker teardown. This does not qualify
+explicit scheduling, implicit cancellation points, general fork recovery,
+main-thread exit, or dynamic TLS lifetime; those remain lifecycle-owner work.
 
 Each POSIX job includes `owned_temp_objects_probe.c`, separately linked through
 the installed driver. The five `mkstemp`/`mkostemp`/`mkstemps`/`mkostemps`/
