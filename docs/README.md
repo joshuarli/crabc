@@ -23,6 +23,10 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Owned C11 quick-termination evidence](../compat/x86_64/owned-quick-exit.md)
   — fixed-capacity `at_quick_exit`/`quick_exit` behavior across the installed
   native products; neither runtime-family completion nor public support.
+- [Owned legacy time and clock-adjustment evidence](../compat/x86_64/owned-legacy-time.md)
+  — source-mapped `times`, interval-timer, and seccomp-contained
+  clock-adjustment behavior across installed native products; neither
+  runtime-family completion nor public support.
 - [Runtime ownership architecture](design/architecture.md) — layer ownership,
   dependency direction, and the private runtime wire boundary.
 - [Agent/project handoff](../AGENTS.md) — code map, source precedence, and

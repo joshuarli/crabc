@@ -653,6 +653,9 @@ mod clock_settime;
 #[path = "clock_adjtime.rs"]
 mod clock_adjtime;
 #[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_legacy_time.rs"]
+mod owned_legacy_time;
+#[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_posix_timers.rs"]
 mod owned_posix_timers;
 #[cfg(not(feature = "x86-owned-static-runtime"))]

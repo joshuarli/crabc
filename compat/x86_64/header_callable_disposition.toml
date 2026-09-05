@@ -51,7 +51,7 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "planned-provider"
 provider_target = "future selected C ABI providers in libc.text-math-locale-stdio"
 source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["adjtime", "adjtimex", "fnmatch", "getdate", "glob", "globfree", "mbsnrtowcs", "settimeofday", "stime", "strfmon", "strfmon_l", "strptime", "wcsdup", "wcsftime", "wcsftime_l", "wcsnrtombs"]
+members = ["fnmatch", "getdate", "glob", "globfree", "mbsnrtowcs", "strfmon", "strfmon_l", "strptime", "wcsdup", "wcsftime", "wcsftime_l", "wcsnrtombs"]
 
 [[deferred_owner_group]]
 id = "x86-cabi-pthread-tls-completion-v1"
@@ -81,7 +81,7 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "planned-provider"
 provider_target = "future selected C ABI providers in libc.posix-runtime"
 source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["aio_cancel", "aio_fsync", "aio_read", "aio_return", "aio_suspend", "aio_write", "get_current_dir_name", "initstate", "isastream", "lio_listio", "mount", "rand", "random", "setstate", "srand", "srandom", "tcdrain", "times", "umount", "umount2", "vhangup", "vmsplice"]
+members = ["aio_cancel", "aio_fsync", "aio_read", "aio_return", "aio_suspend", "aio_write", "get_current_dir_name", "initstate", "isastream", "lio_listio", "mount", "rand", "random", "setstate", "srand", "srandom", "tcdrain", "umount", "umount2", "vhangup", "vmsplice"]
 
 [[deferred_owner_group]]
 id = "x86-cabi-compat-errors-users-v1"

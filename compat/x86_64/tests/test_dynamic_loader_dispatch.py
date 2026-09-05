@@ -56,6 +56,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("owned-group", False),
                 ("owned-assert", False),
                 ("owned-quick-exit", False),
+                ("owned-legacy-time", False),
                 ("owned-syslog", False),
                 ("owned-pthread-spin", False),
                 ("owned-process-trio", False),
@@ -91,7 +92,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertNotIn("--ipc=host", arguments)
                         self.assertNotIn("--userns=host", arguments)
                         self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", arguments)
-                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-quick-exit", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio", "owned-signal-helpers", "owned-filesystem-mechanisms", "owned-error-reporting", "owned-named-ipc", "owned-vm-mechanisms", "owned-passwd", "owned-group", "owned-message-queues"):
+                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-quick-exit", "owned-legacy-time", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio", "owned-signal-helpers", "owned-filesystem-mechanisms", "owned-error-reporting", "owned-named-ipc", "owned-vm-mechanisms", "owned-passwd", "owned-group", "owned-message-queues"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-2:], [

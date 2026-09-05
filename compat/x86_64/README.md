@@ -235,3 +235,14 @@ owned static/static-PIE, and dynamic PIE/non-PIE kernel and direct-interpreter
 products. The [component contract](owned-group.md) records the local
 `/etc/group` scope, explicit nscd/NSS omission, source storage and cancellation
 boundaries, and disposable credential-transition evidence.
+
+## Owned legacy time and clock adjustment
+
+`./scripts/dev-x86_64.sh owned-legacy-time` compares one installed-header C
+workload with pinned musl and the installed static, static-PIE, dynamic PIE,
+and dynamic non-PIE products, including kernel and direct interpreter entry.
+The [component contract](owned-legacy-time.md) records raw `times` result
+handling, reused interval-timer leaves, source-shaped `settimeofday`/`stime`,
+and seccomp-contained clock-mutation errors. The same runner checks
+static/shared provider binding and is a required dynamic product qualification
+case.

@@ -101,6 +101,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "group",
                 "assert",
                 "quick-exit",
+                "legacy-time",
                 "syslog",
                 "pthread-spin",
                 "process-trio",

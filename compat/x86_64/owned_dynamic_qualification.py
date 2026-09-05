@@ -60,6 +60,7 @@ CASES = {
     "group": ("run_owned_group.sh", None),
     "assert": ("run_owned_assert.sh", None),
     "quick-exit": ("run_owned_quick_exit.sh", None),
+    "legacy-time": ("run_owned_legacy_time.sh", None),
     "syslog": ("run_owned_syslog.sh", None),
     "pthread-spin": ("run_owned_pthread_spin.sh", None),
     "process-trio": ("run_owned_process_trio.sh", None),

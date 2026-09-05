@@ -272,6 +272,8 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "abort",
                 "acos",
                 "acosf",
+                "adjtime",
+                "adjtimex",
                 "asctime",
                 "asctime_r",
                 "asin",
@@ -408,6 +410,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "reboot",
                 "setlogmask",
                 "setns",
+                "settimeofday",
                 "swapoff",
                 "swapon",
                 "syslog",
@@ -429,6 +432,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "ptsname_r",
                 "tcgetsid",
                 "ttyname",
+                "times",
                 "posix_spawn",
                 "posix_spawnp",
                 "prctl",
@@ -461,6 +465,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "setlinebuf",
                 "statx",
                 "strftime",
+                "stime",
                 "strftime_l",
                 "swprintf",
                 "swscanf",
@@ -570,7 +575,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         replacement_rows = tuple(
             replace(
                 row,
-                additive_callables=tuple(sorted((*row.additive_callables, "adjtimex"))),
+                additive_callables=tuple(sorted((*row.additive_callables, "fnmatch"))),
             )
             if row.identifier == "x86-owned-static-runtime"
             else row
@@ -594,7 +599,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             refreshed["callable_provider_partition"]
             ["declared_unverified_feature_archives"][0]["members"],
-            sorted([*source_members, "adjtimex"]),
+            sorted([*source_members, "fnmatch"]),
         )
         source_counts = source["summary"]["callable_provider_counts"]
         self.assertEqual(

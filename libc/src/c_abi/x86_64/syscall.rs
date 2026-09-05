@@ -320,6 +320,7 @@ pub(crate) const SYS_PAUSE: i64 = 34;
 pub(crate) const SYS_NANOSLEEP: i64 = 35;
 pub(crate) const SYS_GETITIMER: i64 = 36;
 pub(crate) const SYS_SETITIMER: i64 = 38;
+pub(crate) const SYS_TIMES: i64 = 100;
 pub(crate) const SYS_SOCKET: i64 = 41;
 pub(crate) const SYS_CONNECT: i64 = 42;
 pub(crate) const SYS_ACCEPT: i64 = 43;
