@@ -1,32 +1,11 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 staged foundation evidence entry point.
-#
-# This is a deliberately closed foundation lane. It proves explicitly named
-# native core, direct-facade, raw-C-syscall, source-only relocation, and a closed
-# set of static C ABI archive boundaries (stat, credentials, bootstrap primitives,
-# simple signal control, bounded process-signal execution, bounded pthread create/exit/join initial TLS, normal private pthread mutexes and their private condition-variable handoff, named termios control, selected process context, child reaping,
-# C11 immediate termination, POSIX _exit forwarding, callback algorithms, direct clock_gettime,
-# system configuration, caller-owned mapping synchronization, per-range memory
-# locking, and anonymous-memory descriptor creation,
-# nanosleep, and clock_nanosleep,
-# selected descriptor entry, selected filesystem access, selected fcntl status control,
-# nonblocking record locks, advisory flock, bounded regular-file sendfile,
-# direct GNU descriptor-to-pipe splice transfer and pipe-buffer tee duplication,
-# mode-zero POSIX range allocation,
-# and descriptor advice,
-# selected descriptor I/O, selected process resources, and selected readiness
-# and signal waits, system observation, UTS identity, base socket transport,
-# padded socket messages/options,
-# SysV semaphore operations and unnamed POSIX semaphore operations,
-# byte strings, startup-published program names and option parsing, random
-# entropy, memory search, C-string copy, fixed-C-locale
-# ctype, named C/POSIX/C.UTF-8 locale/multibyte conversion, integer arithmetic, integer parsing, source-faithful C-locale binary32/binary64/x87 floating parsing, intmax arithmetic, credential
-# observation, find-first-set, the complete private math.complex capability,
-# exact square root and selected fenv-sensitive rounding, a
-# selected binary80 elementary/remainder/conversion block, and the complete
-# private math.special capability);
-# it does not select a general libc, ldso artifact, CRT, sysroot, or allocator
-# build.
+# Native Linux/x86-64 development and evidence dispatcher.
+# Routes focused core/facade/C ABI tests, loader/CRT gates, and installed
+# sysroot consumers through the pinned native container. Mutable host state
+# stays under the checkout's .work boundary; each runner owns its child state.
+# See compat/x86_64/README.md for commands and their evidence contracts.
+# A passing command proves its named boundary, not public-platform promotion.
+# Native mimalloc has its separate contained compat/allocator/run-x86_64.sh.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
