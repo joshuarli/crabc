@@ -26,12 +26,16 @@ run_owned_signal_process.sh [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT
 
 Both paths must be physical product directories under this checkout's `.work`
 tree. The dynamic product is mandatory and supplies the sole compile driver.
-The runner never builds products. `owned_signal_process_evidence.py` records
-the source, object, manifest, installed driver, compiler helper, selected
-compiler, exact driver and dependency commands, and installed header hashes.
-It uses `owned_posix_product_evidence.validate_link` for every static and
-dynamic executable receipt. Its final seal rechecks those identities, the
-copied dynamic execution payload, oracle compiler/archive/object/binary, and
+The runner never builds products. Before the actual installed-driver compile,
+`owned_signal_process_evidence.py` snapshots the source, manifest, driver,
+compiler helper, selected compiler, exact driver and dependency commands,
+clean compiler environment, and installed header/dependency closure. It
+rechecks that snapshot immediately after the one object is created and again at
+final sealing. It uses `owned_posix_product_evidence.validate_link` for every
+static and dynamic executable receipt. After all dynamic product and consumer
+copies complete, before the first dynamic launch, it records their source/copy
+identities. It audits that record before execution, after execution,
+and during the final seal alongside oracle compiler/archive/object/binary and
 all raw `.status`, `.stdout`, and `.stderr` files.
 
 There is no documented source difference in this workload. Every retained

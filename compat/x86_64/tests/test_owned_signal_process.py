@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
+from unittest.mock import patch
 import sys
 import tempfile
 import unittest
@@ -44,7 +46,9 @@ class OwnedSignalProcessTests(unittest.TestCase):
     def test_runner_requires_a_supplied_dynamic_product_and_never_builds_one(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         self.assertIn("usage: %s [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT", source)
-        self.assertIn('"$dynamic_sysroot/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin', source)
+        compile = source.index('"$dynamic_sysroot/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin')
+        snapshot = source.index("snapshot-compile-inputs")
+        self.assertLess(snapshot, compile)
         self.assertNotIn("build_x86_64_owned_dynamic_sysroot.py", source)
         self.assertNotIn("build_x86_64_owned_sysroot.py", source)
         self.assertNotIn("-D", source)
@@ -57,8 +61,14 @@ class OwnedSignalProcessTests(unittest.TestCase):
             "record-compile", "validate-compile", "validate_link", "start_new_session=True",
             "os.killpg", "TIMEOUT", ".stdout", ".stderr", ".status",
             "pie-kernel", "pie-direct", "non-pie-kernel", "non-pie-direct",
+            "record-execution-payload", "execution-pre.json", "execution-post.json",
         ):
             self.assertIn(required, source)
+        copied = source.index('cp -a "$dynamic_sysroot" "$execution_root"')
+        recorded = source.index("record-execution-payload")
+        first_dynamic_launch = source.index('capture_case "$mode-kernel-$subcase"')
+        self.assertLess(copied, recorded)
+        self.assertLess(recorded, first_dynamic_launch)
 
     def test_evidence_contract_binds_the_one_installed_driver_object(self) -> None:
         evidence = load_evidence()
@@ -101,6 +111,104 @@ class OwnedSignalProcessTests(unittest.TestCase):
                 result.stderr,
                 f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT\n",
             )
+
+    def test_matching_nonzero_raw_statuses_are_rejected(self) -> None:
+        evidence = load_evidence()
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            for label in ("oracle", "candidate"):
+                (work / f"{label}.status").write_bytes(b"7\n")
+                (work / f"{label}.stdout").write_bytes(b"same\n")
+                (work / f"{label}.stderr").write_bytes(b"")
+            with self.assertRaisesRegex(evidence.SignalProcessEvidenceError, "must succeed"):
+                evidence.matched_observation(work / "oracle", work / "candidate", work, "matching failure")
+
+    def test_compile_input_snapshot_rejects_source_and_header_tampering_before_object_seal(self) -> None:
+        evidence = load_evidence()
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            product = work / "product"
+            source = work / "signal_process.c"
+            object_path = work / "workload.o"
+            manifest = product / "share/crabc/manifest.json"
+            driver = product / "bin/crabc-cc-dynamic"
+            helper = product / "share/crabc/crabc_cc_static.py"
+            compiler = work / "compiler"
+            header = product / "usr/include/signal.h"
+            for path, contents in (
+                (manifest, b"{}\n"), (driver, b"driver\n"), (helper, b"helper\n"),
+                (compiler, b"compiler\n"), (header, b"header\n"), (source, b"source\n"),
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(contents)
+            dependencies = work / "compile-inputs.dependencies"
+            trace = work / "compile-inputs.headers"
+            status = work / "compile-inputs.header-status"
+            dependencies.write_text(f"out.o: {source} {header}\n", encoding="utf-8")
+            trace.write_bytes(b"")
+            status.write_bytes(b"0\n")
+            environment = {"PATH": "/usr/bin:/bin"}
+            class Policy:
+                @staticmethod
+                def clean_environment():
+                    return environment
+            command = evidence.dependency_command(compiler, product, source)
+            record = {
+                "schema": evidence.COMPILE_INPUT_SCHEMA,
+                "product_manifest": evidence.file_record(manifest),
+                "source": evidence.file_record(source),
+                "planned_object": str(object_path),
+                "driver": evidence.file_record(driver),
+                "compiler_helper": evidence.file_record(helper),
+                "compiler": evidence.file_record(compiler),
+                "driver_compile_command": evidence.driver_compile_command(driver, source, object_path),
+                "dependency_audit_command": command,
+                "clean_environment": environment,
+                "dependency_file": evidence.file_record(dependencies),
+                "header_trace": evidence.file_record(trace),
+                "header_status": evidence.file_record(status),
+                "headers": evidence.dependency_headers(dependencies, product, source),
+            }
+            snapshot = work / "compile-inputs.json"
+            snapshot.write_text(json.dumps(record), encoding="utf-8")
+            with patch.object(evidence, "dynamic_product", return_value=(product, manifest, driver)), \
+                 patch.object(evidence, "installed_policy", return_value=(Policy(), helper, compiler)), \
+                 patch.object(evidence, "SOURCE", source):
+                evidence.validate_compile_inputs(product, source, object_path, snapshot)
+                source.write_bytes(b"tampered source\n")
+                with self.assertRaisesRegex(evidence.SignalProcessEvidenceError, "snapshot source identity drifted"):
+                    evidence.validate_compile_inputs(product, source, object_path, snapshot)
+                source.write_bytes(b"source\n")
+                header.write_bytes(b"tampered header\n")
+                with self.assertRaisesRegex(evidence.SignalProcessEvidenceError, "snapshot header identities drifted"):
+                    evidence.validate_compile_inputs(product, source, object_path, snapshot)
+
+    def test_execution_copy_record_rejects_consumer_tampering(self) -> None:
+        evidence = load_evidence()
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            product = work / "product"
+            manifest = product / "share/crabc/manifest.json"
+            driver = product / "bin/crabc-cc-dynamic"
+            payload = product / "usr/lib/libc.so"
+            execution_root = work / "execution-root"
+            for path, contents in (
+                (manifest, b"{}\n"), (driver, b"driver\n"), (payload, b"payload\n"),
+                (execution_root / "share/crabc/manifest.json", b"{}\n"),
+                (execution_root / "usr/lib/libc.so", b"payload\n"),
+                (work / "dynamic-pie", b"pie\n"), (execution_root / "consumer-pie", b"pie\n"),
+                (work / "dynamic-non-pie", b"nonpie\n"), (execution_root / "consumer-non-pie", b"nonpie\n"),
+            ):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(contents)
+            files = {"usr/lib/libc.so": evidence.sha256(payload)}
+            with patch.object(evidence, "dynamic_product", return_value=(product, manifest, driver)), \
+                 patch.object(evidence, "_validate_dynamic_product", return_value=(manifest, files)):
+                evidence.record_execution_payload(work, product)
+                evidence.audit_execution_payload(work, product)
+                (execution_root / "consumer-pie").write_bytes(b"tampered\n")
+                with self.assertRaisesRegex(evidence.SignalProcessEvidenceError, "execution consumer drifted"):
+                    evidence.audit_execution_payload(work, product)
 
     def test_document_names_the_frozen_source_and_non_promotion_boundary(self) -> None:
         document = DOCUMENT.read_text(encoding="utf-8")

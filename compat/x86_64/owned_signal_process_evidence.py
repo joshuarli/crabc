@@ -50,7 +50,9 @@ SIGNAL_PROCESS_SUBCASES = (
     "atfork",
     "fork-worker-exec",
 )
+COMPILE_INPUT_SCHEMA = "crabc.x86_64-owned-signal-process-compile-inputs/v1"
 COMPILE_SCHEMA = "crabc.x86_64-owned-signal-process-compile/v1"
+EXECUTION_PAYLOAD_SCHEMA = "crabc.x86_64-owned-signal-process-execution-payload/v1"
 ORACLE_SCHEMA = "crabc.x86_64-owned-signal-process-oracle/v1"
 OBSERVATION_SCHEMA = "crabc.x86_64-owned-signal-process-observations/v1"
 MAX_TIMEOUT = 300.0
@@ -237,113 +239,179 @@ def dependency_headers(dependency_file: Path, product: Path, source: Path) -> li
     return [file_record(path) for path in headers]
 
 
-def record_compile(product: Path, source: Path, object_path: Path, audit: Path) -> dict[str, Any]:
-    """Record the immutable one-object installed-driver compile boundary."""
+def planned_object_path(path: Path, description: str) -> Path:
+    """Return a safe intended object path before or after its sole compile."""
+
+    absolute = Path(os.path.abspath(path))
+    physical(absolute.parent, f"{description} parent", directory=True)
+    if absolute.exists() or absolute.is_symlink():
+        return physical(absolute, description)
+    return absolute
+
+
+def snapshot_compile_inputs(product: Path, source: Path, object_path: Path, snapshot: Path) -> dict[str, Any]:
+    """Capture every translation input before the dynamic driver makes an object."""
 
     product, manifest, driver = dynamic_product(product)
     source = physical(source, "signal-process source")
     if source != physical(SOURCE, "frozen signal-process source"):
         fail("signal-process source differs from the frozen workload")
-    object_path = physical(object_path, "signal-process workload object")
-    audit = Path(os.path.abspath(audit))
-    require_within(object_path, audit.parent, "signal-process workload object")
+    object_path = planned_object_path(object_path, "planned signal-process workload object")
+    snapshot = Path(os.path.abspath(snapshot))
+    physical(snapshot.parent, "compile input snapshot parent", directory=True)
+    if snapshot.exists() or snapshot.is_symlink():
+        fail("compile input snapshot already exists or is unsafe")
     policy, helper, compiler = installed_policy(product)
-    source_before, object_before = sha256(source), sha256(object_path)
-    dependencies = audit.with_suffix(".dependencies")
-    header_trace = audit.with_suffix(".headers")
-    status = audit.with_suffix(".header-status")
-    for path in (dependencies, header_trace, status, audit):
-        if path.exists() or path.is_symlink():
-            fail(f"compile evidence path already exists or is unsafe: {path}")
+    environment = policy.clean_environment()
+    if not isinstance(environment, dict) or not all(
+        isinstance(key, str) and isinstance(value, str) for key, value in environment.items()
+    ):
+        fail("installed compiler clean environment is malformed")
+    before = {
+        "product_manifest": file_record(manifest),
+        "source": file_record(source),
+        "driver": file_record(driver),
+        "compiler_helper": file_record(helper),
+        "compiler": file_record(compiler),
+    }
+    dependencies = snapshot.with_suffix(".dependencies")
+    header_trace = snapshot.with_suffix(".headers")
+    status = snapshot.with_suffix(".header-status")
+    for artifact in (dependencies, header_trace, status):
+        if artifact.exists() or artifact.is_symlink():
+            fail(f"compile input snapshot path already exists or is unsafe: {artifact}")
     command = dependency_command(compiler, product, source)
     try:
         with dependencies.open("xb") as stdout, header_trace.open("xb") as stderr:
             result = subprocess.run(
                 command, stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
-                env=policy.clean_environment(), check=False,
+                env=environment, check=False,
             )
         with status.open("x", encoding="ascii", newline="\n") as output:
             output.write(f"{result.returncode}\n")
     except OSError as error:
-        raise SignalProcessEvidenceError("installed-header preprocessing could not run") from error
+        raise SignalProcessEvidenceError("installed-header input snapshot could not run") from error
     if result.returncode != 0:
-        fail("installed-header preprocessing failed")
-    if sha256(source) != source_before or sha256(object_path) != object_before:
-        fail("source or workload object changed during installed-header preprocessing")
-    headers = dependency_headers(dependencies, product, source)
+        fail("installed-header input snapshot failed")
+    for name, identity in before.items():
+        assert_recorded_file(identity, Path(identity["path"]), f"precompile {name}")
     record = {
-        "schema": COMPILE_SCHEMA,
-        "product_manifest": file_record(manifest),
-        "source": file_record(source),
-        "object": file_record(object_path),
-        "driver": file_record(driver),
-        "compiler_helper": file_record(helper),
-        "compiler": file_record(compiler),
+        "schema": COMPILE_INPUT_SCHEMA,
+        **before,
+        "planned_object": str(object_path),
         "driver_compile_command": driver_compile_command(driver, source, object_path),
         "dependency_audit_command": command,
+        "clean_environment": dict(sorted(environment.items())),
         "dependency_file": file_record(dependencies),
         "header_trace": file_record(header_trace),
         "header_status": file_record(status),
-        "headers": headers,
+        "headers": dependency_headers(dependencies, product, source),
+    }
+    write_new_json(snapshot, record)
+    return record
+
+
+def validate_compile_inputs(product: Path, source: Path, object_path: Path, snapshot: Path) -> dict[str, Any]:
+    """Recheck the precompile snapshot without making another workload object."""
+
+    product, manifest, driver = dynamic_product(product)
+    source = physical(source, "signal-process source")
+    if source != physical(SOURCE, "frozen signal-process source"):
+        fail("signal-process source differs from the frozen workload")
+    object_path = planned_object_path(object_path, "planned signal-process workload object")
+    snapshot = physical(snapshot, "signal-process compile input snapshot")
+    record = read_json(snapshot, "signal-process compile input snapshot")
+    expected = {
+        "schema", "product_manifest", "source", "planned_object", "driver", "compiler_helper",
+        "compiler", "driver_compile_command", "dependency_audit_command", "clean_environment",
+        "dependency_file", "header_trace", "header_status", "headers",
+    }
+    if set(record) != expected or record["schema"] != COMPILE_INPUT_SCHEMA:
+        fail("signal-process compile input snapshot schema drifted")
+    for name, current in (
+        ("product_manifest", manifest), ("source", source), ("driver", driver),
+    ):
+        assert_recorded_file(record[name], current, f"snapshot {name}")
+    policy, helper, compiler = installed_policy(product)
+    assert_recorded_file(record["compiler_helper"], helper, "snapshot compiler helper identity")
+    assert_recorded_file(record["compiler"], compiler, "snapshot compiler identity")
+    if record["planned_object"] != str(object_path):
+        fail("snapshot planned object path drifted")
+    if record["driver_compile_command"] != driver_compile_command(driver, source, object_path):
+        fail("snapshot installed driver compile command drifted")
+    command = dependency_command(compiler, product, source)
+    if record["dependency_audit_command"] != command:
+        fail("snapshot installed header audit command drifted")
+    environment = policy.clean_environment()
+    if record["clean_environment"] != dict(sorted(environment.items())):
+        fail("snapshot compiler clean environment drifted")
+    for name, suffix in (
+        ("dependency_file", ".dependencies"),
+        ("header_trace", ".headers"),
+        ("header_status", ".header-status"),
+    ):
+        assert_recorded_file(record[name], snapshot.with_suffix(suffix), f"snapshot {name} identity")
+    if snapshot.with_suffix(".header-status").read_bytes() != b"0\n":
+        fail("snapshot installed header audit status drifted")
+    if not isinstance(record["headers"], list) or not record["headers"]:
+        fail("snapshot headers drifted")
+    if record["headers"] != dependency_headers(snapshot.with_suffix(".dependencies"), product, source):
+        fail("snapshot header identities drifted")
+    return record
+
+
+def record_compile(
+    product: Path, source: Path, object_path: Path, snapshot: Path, audit: Path
+) -> dict[str, Any]:
+    """Bind the postcompile object to the earlier complete input snapshot."""
+
+    inputs = validate_compile_inputs(product, source, object_path, snapshot)
+    object_path = physical(object_path, "signal-process workload object")
+    audit = Path(os.path.abspath(audit))
+    physical(audit.parent, "compile audit parent", directory=True)
+    if audit.exists() or audit.is_symlink():
+        fail("signal-process compile audit already exists or is unsafe")
+    record = {
+        "schema": COMPILE_SCHEMA,
+        "input_snapshot": file_record(snapshot),
+        "object": file_record(object_path),
+        "driver_compile_command": inputs["driver_compile_command"],
     }
     write_new_json(audit, record)
     return record
 
 
 def validate_compile(product: Path, source: Path, object_path: Path, audit: Path) -> dict[str, Any]:
-    """Recheck the compile boundary immediately before sealing observations."""
+    """Recheck precompile inputs and their one resulting object during sealing."""
 
-    product, manifest, driver = dynamic_product(product)
-    source = physical(source, "signal-process source")
-    if source != physical(SOURCE, "frozen signal-process source"):
-        fail("signal-process source differs from the frozen workload")
     object_path = physical(object_path, "signal-process workload object")
     audit = physical(audit, "signal-process compile audit")
     record = read_json(audit, "signal-process compile audit")
-    expected = {
-        "schema", "product_manifest", "source", "object", "driver", "compiler_helper", "compiler",
-        "driver_compile_command", "dependency_audit_command", "dependency_file", "header_trace",
-        "header_status", "headers",
-    }
+    expected = {"schema", "input_snapshot", "object", "driver_compile_command"}
     if set(record) != expected or record["schema"] != COMPILE_SCHEMA:
         fail("signal-process compile audit schema drifted")
-    assert_recorded_file(record["product_manifest"], manifest, "compile manifest")
-    assert_recorded_file(record["source"], source, "compile source")
+    snapshot = Path(exact_record(record["input_snapshot"], {"path", "sha256"}, "compile input snapshot")["path"])
+    inputs = validate_compile_inputs(product, source, object_path, snapshot)
+    assert_recorded_file(record["input_snapshot"], snapshot, "compile input snapshot")
     assert_recorded_file(record["object"], object_path, "compile object")
-    policy, helper, compiler = installed_policy(product)
-    assert_recorded_file(record["driver"], driver, "compile driver")
-    assert_recorded_file(record["compiler_helper"], helper, "compile helper")
-    assert_recorded_file(record["compiler"], compiler, "compile compiler")
-    if record["driver_compile_command"] != driver_compile_command(driver, source, object_path):
-        fail("installed driver compile command drifted")
-    expected_dependency_command = dependency_command(compiler, product, source)
-    if record["dependency_audit_command"] != expected_dependency_command:
-        fail("installed header audit command drifted")
-    for name, suffix in (
-        ("dependency_file", ".dependencies"),
-        ("header_trace", ".headers"),
-        ("header_status", ".header-status"),
-    ):
-        assert_recorded_file(record[name], audit.with_suffix(suffix), f"compile {name}")
-    if audit.with_suffix(".header-status").read_bytes() != b"0\n":
-        fail("installed header audit status drifted")
-    if not isinstance(record["headers"], list) or not record["headers"]:
-        fail("compile headers drifted")
-    observed_headers = dependency_headers(audit.with_suffix(".dependencies"), product, source)
-    if record["headers"] != observed_headers:
-        fail("installed header identities drifted")
+    if record["driver_compile_command"] != inputs["driver_compile_command"]:
+        fail("compile driver command drifted")
+    product_manifest = Path(exact_record(inputs["product_manifest"], {"path", "sha256"}, "snapshot manifest")["path"])
+    driver = Path(exact_record(inputs["driver"], {"path", "sha256"}, "snapshot driver")["path"])
+    helper = Path(exact_record(inputs["compiler_helper"], {"path", "sha256"}, "snapshot helper")["path"])
+    compiler = Path(exact_record(inputs["compiler"], {"path", "sha256"}, "snapshot compiler")["path"])
     return {
         "schema": COMPILE_SCHEMA,
         "compile_audit": file_record(audit),
+        "input_snapshot": file_record(snapshot),
         "source": file_record(source),
         "object": file_record(object_path),
-        "product_manifest": file_record(manifest),
+        "product_manifest": file_record(product_manifest),
         "driver": file_record(driver),
         "compiler_helper": file_record(helper),
         "compiler": file_record(compiler),
-        "headers": observed_headers,
+        "headers": inputs["headers"],
     }
-
 
 def record_oracle(oracle_cc: Path, object_path: Path, binary: Path, record_path: Path) -> dict[str, Any]:
     oracle_cc = physical(oracle_cc, "pinned musl compiler")
@@ -462,32 +530,138 @@ def observation_files(base: Path, work: Path) -> dict[str, dict[str, str]]:
     return result
 
 
-def execution_payload(work: Path, product: Path) -> dict[str, Any]:
-    execution_root = physical(work / "execution-root", "dynamic execution root", directory=True)
-    product, manifest, _driver = dynamic_product(product)
+def matched_observation(
+    reference_base: Path, candidate_base: Path, work: Path, description: str
+) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
+    """Require both processes to succeed before accepting their exact raw match."""
+
+    reference = observation_files(reference_base, work)
+    candidate = observation_files(candidate_base, work)
+    for role, observation in (("oracle", reference), ("candidate", candidate)):
+        status = Path(observation["status"]["path"])
+        if status.read_bytes() != b"0\n":
+            fail(f"raw signal-process {role} status must succeed: {description}")
+    for stream in ("status", "stdout", "stderr"):
+        reference_path = Path(reference[stream]["path"])
+        candidate_path = Path(candidate[stream]["path"])
+        if reference[stream]["sha256"] != candidate[stream]["sha256"] or \
+                reference_path.read_bytes() != candidate_path.read_bytes():
+            fail(f"raw signal-process observation differs: {description} {stream}")
+    return reference, candidate
+
+
+def copied_payload_record(source: Path, execution: Path, description: str) -> dict[str, Any]:
+    source = physical(source, f"{description} source")
+    execution = physical(execution, f"{description} execution copy")
+    source_record, execution_record = file_record(source), file_record(execution)
+    if source_record["sha256"] != execution_record["sha256"]:
+        fail(f"{description} execution copy differs from source")
+    return {"source": source_record, "execution": execution_record}
+
+
+def dynamic_payload_sources(product: Path, manifest: Path) -> dict[str, Path]:
     try:
         _manifest, files = _validate_dynamic_product(product)
     except ProductEvidenceError as error:
         raise SignalProcessEvidenceError(f"dynamic execution product validation failed: {error}") from error
-    payload: list[dict[str, str]] = [
-        {"relative": "share/crabc/manifest.json", "product_sha256": sha256(manifest),
-         "execution_sha256": sha256(execution_root / "share/crabc/manifest.json")}
-    ]
-    for relative, expected_hash in sorted(files.items()):
-        source = product / relative
-        copied = execution_root / relative
-        if sha256(source) != expected_hash or sha256(copied) != expected_hash:
-            fail(f"dynamic execution payload drifted: {relative}")
-        payload.append({"relative": relative, "product_sha256": expected_hash, "execution_sha256": sha256(copied)})
+    return {
+        "share/crabc/manifest.json": manifest,
+        **{relative: product / relative for relative in sorted(files)},
+    }
+
+
+def record_execution_payload(work: Path, product: Path) -> dict[str, Any]:
+    """Seal product and consumer copy identities immediately before dynamic runs."""
+
+    work = physical(work, "signal-process evidence work", directory=True)
+    product, manifest, _driver = dynamic_product(product)
+    execution_root = physical(work / "execution-root", "dynamic execution root", directory=True)
+    product_payload = {
+        relative: copied_payload_record(source, execution_root / relative, f"execution payload {relative}")
+        for relative, source in dynamic_payload_sources(product, manifest).items()
+    }
     consumers = []
     for mode in ("pie", "non-pie"):
-        source = physical(work / f"dynamic-{mode}", f"dynamic {mode} linked consumer")
-        copied = physical(execution_root / f"consumer-{mode}", f"dynamic {mode} execution consumer")
-        if sha256(source) != sha256(copied):
-            fail(f"dynamic {mode} execution consumer drifted")
-        consumers.append({"mode": mode, "linked": file_record(source), "execution": file_record(copied)})
-    return {"root": str(execution_root), "payload": payload, "consumers": consumers}
+        consumers.append({
+            "mode": mode,
+            **copied_payload_record(
+                work / f"dynamic-{mode}", execution_root / f"consumer-{mode}",
+                f"{mode} execution consumer",
+            ),
+        })
+    record = {
+        "schema": EXECUTION_PAYLOAD_SCHEMA,
+        "product_manifest": file_record(manifest),
+        "execution_root": str(execution_root),
+        "product_payload": product_payload,
+        "consumers": consumers,
+    }
+    write_new_json(work / "execution-payload.json", record)
+    return record
 
+
+def audit_copied_payload(value: object, source: Path, execution: Path, description: str) -> dict[str, Any]:
+    record = exact_record(value, {"source", "execution"}, description)
+    source = physical(source, f"{description} source")
+    execution = physical(execution, f"{description} execution copy")
+    assert_recorded_file(record["source"], source, f"{description} source")
+    assert_recorded_file(record["execution"], execution, f"{description} execution")
+    if sha256(source) != sha256(execution):
+        fail(f"{description} execution copy differs from source")
+    return record
+
+
+def audit_execution_payload(work: Path, product: Path) -> dict[str, Any]:
+    """Recheck the copy-time record before, after, and at final sealing."""
+
+    work = physical(work, "signal-process evidence work", directory=True)
+    product, manifest, _driver = dynamic_product(product)
+    execution_root = physical(work / "execution-root", "dynamic execution root", directory=True)
+    record_path = physical(work / "execution-payload.json", "execution payload record")
+    record = read_json(record_path, "execution payload record")
+    expected = {"schema", "product_manifest", "execution_root", "product_payload", "consumers"}
+    if set(record) != expected or record["schema"] != EXECUTION_PAYLOAD_SCHEMA:
+        fail("execution payload record schema drifted")
+    assert_recorded_file(record["product_manifest"], manifest, "execution product manifest")
+    if record["execution_root"] != str(execution_root):
+        fail("execution root path drifted")
+    sources = dynamic_payload_sources(product, manifest)
+    payload = record["product_payload"]
+    if not isinstance(payload, dict) or set(payload) != set(sources):
+        fail("execution payload roster drifted")
+    for relative, source in sources.items():
+        audit_copied_payload(payload[relative], source, execution_root / relative, f"execution payload {relative}")
+    consumers = record["consumers"]
+    if not isinstance(consumers, list) or len(consumers) != 2:
+        fail("execution consumer roster drifted")
+    current_consumers = []
+    for item, mode in zip(consumers, ("pie", "non-pie")):
+        if not isinstance(item, dict) or item.get("mode") != mode:
+            fail("execution consumer mode drifted")
+        try:
+            current = audit_copied_payload(
+                {"source": item["source"], "execution": item["execution"]},
+                work / f"dynamic-{mode}", execution_root / f"consumer-{mode}",
+                f"execution consumer {mode}",
+            )
+        except SignalProcessEvidenceError as error:
+            raise SignalProcessEvidenceError(f"execution consumer drifted: {mode}: {error}") from error
+        current_consumers.append({"mode": mode, **current})
+    return {
+        "schema": EXECUTION_PAYLOAD_SCHEMA,
+        "record": file_record(record_path),
+        "product_manifest": file_record(manifest),
+        "execution_root": str(execution_root),
+        "consumers": current_consumers,
+    }
+
+
+def validated_execution_audit(path: Path, current: dict[str, Any], description: str) -> dict[str, Any]:
+    path = physical(path, description)
+    recorded = read_json(path, description)
+    if recorded != current:
+        fail(f"{description} drifted")
+    return recorded
 
 def record_observations(
     work: Path,
@@ -528,18 +702,25 @@ def record_observations(
         receipt = executable.with_suffix(".crabc-link.json") if linkage in {"pie", "non-pie"} else executable.with_suffix(".receipt.json")
         links.append(load_validated_link(product, object_path, executable, receipt, linkage, link_record))
 
+    # The copied product and consumer identities were recorded before the first
+    # dynamic launch, audited again immediately after the last one, and are
+    # audited one final time here with the rest of the consumed boundary.
+    execution_final = audit_execution_payload(work, dynamic_root)
+    execution_pre = validated_execution_audit(
+        work / "execution-pre.json", execution_final, "pre-execution payload audit"
+    )
+    execution_post = validated_execution_audit(
+        work / "execution-post.json", execution_final, "post-execution payload audit"
+    )
     observations: list[dict[str, Any]] = []
-    execution = execution_payload(work, dynamic_root)
     observation_modes = ["static", "static-pie"] if static_product is not None else []
     observation_modes += ["pie-kernel", "pie-direct", "non-pie-kernel", "non-pie-direct"]
     for mode in observation_modes:
         for subcase in SIGNAL_PROCESS_SUBCASES:
-            reference = observation_files(work / f"oracle-{subcase}", work)
-            candidate = observation_files(work / f"{mode}-{subcase}", work)
-            for stream in ("status", "stdout", "stderr"):
-                if reference[stream]["sha256"] != candidate[stream]["sha256"] or \
-                        Path(reference[stream]["path"]).read_bytes() != Path(candidate[stream]["path"]).read_bytes():
-                    fail(f"raw signal-process observation differs: {mode} {subcase} {stream}")
+            reference, candidate = matched_observation(
+                work / f"oracle-{subcase}", work / f"{mode}-{subcase}", work,
+                f"{mode} {subcase}",
+            )
             observations.append({"mode": mode, "subcase": subcase, "reference": reference, "candidate": candidate})
     record = {
         "schema": OBSERVATION_SCHEMA,
@@ -547,7 +728,13 @@ def record_observations(
         "compile": compile_identity,
         "oracle": oracle_identity,
         "links": links,
-        "execution": execution,
+        "execution": {
+            "pre": file_record(work / "execution-pre.json"),
+            "post": file_record(work / "execution-post.json"),
+            "final": execution_final,
+            "pre_identity": execution_pre,
+            "post_identity": execution_post,
+        },
         "observations": observations,
         "comparison": "exact raw status/stdout/stderr bytes; no documented source difference",
         "process_group_isolation": True,
@@ -559,10 +746,16 @@ def record_observations(
 def main(arguments: Sequence[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
+    input_parser = commands.add_parser("snapshot-compile-inputs")
+    input_parser.add_argument("product", type=Path)
+    input_parser.add_argument("source", type=Path)
+    input_parser.add_argument("object", type=Path)
+    input_parser.add_argument("snapshot", type=Path)
     compile_parser = commands.add_parser("record-compile")
     compile_parser.add_argument("product", type=Path)
     compile_parser.add_argument("source", type=Path)
     compile_parser.add_argument("object", type=Path)
+    compile_parser.add_argument("snapshot", type=Path)
     compile_parser.add_argument("audit", type=Path)
     compile_validate = commands.add_parser("validate-compile")
     compile_validate.add_argument("product", type=Path)
@@ -581,6 +774,12 @@ def main(arguments: Sequence[str]) -> int:
     link_parser.add_argument("receipt", type=Path)
     link_parser.add_argument("linkage", choices=("static", "static-pie", "pie", "non-pie"))
     link_parser.add_argument("record", type=Path)
+    execution_record = commands.add_parser("record-execution-payload")
+    execution_record.add_argument("work", type=Path)
+    execution_record.add_argument("product", type=Path)
+    execution_audit = commands.add_parser("audit-execution-payload")
+    execution_audit.add_argument("work", type=Path)
+    execution_audit.add_argument("product", type=Path)
     capture_parser = commands.add_parser("capture")
     capture_parser.add_argument("--timeout", type=float, required=True)
     capture_parser.add_argument("--cwd", type=Path, required=True)
@@ -598,8 +797,10 @@ def main(arguments: Sequence[str]) -> int:
     seal_parser.add_argument("work", type=Path)
     parsed = parser.parse_args(arguments)
     try:
-        if parsed.action == "record-compile":
-            record_compile(parsed.product, parsed.source, parsed.object, parsed.audit)
+        if parsed.action == "snapshot-compile-inputs":
+            snapshot_compile_inputs(parsed.product, parsed.source, parsed.object, parsed.snapshot)
+        elif parsed.action == "record-compile":
+            record_compile(parsed.product, parsed.source, parsed.object, parsed.snapshot, parsed.audit)
         elif parsed.action == "validate-compile":
             json.dump(validate_compile(parsed.product, parsed.source, parsed.object, parsed.audit), sys.stdout, sort_keys=True, separators=(",", ":"))
             sys.stdout.write("\n")
@@ -607,6 +808,11 @@ def main(arguments: Sequence[str]) -> int:
             record_oracle(parsed.compiler, parsed.object, parsed.binary, parsed.record)
         elif parsed.action == "validate-link":
             validate_link_record(parsed.product, parsed.object, parsed.executable, parsed.receipt, parsed.linkage, parsed.record)
+        elif parsed.action == "record-execution-payload":
+            record_execution_payload(parsed.work, parsed.product)
+        elif parsed.action == "audit-execution-payload":
+            json.dump(audit_execution_payload(parsed.work, parsed.product), sys.stdout, sort_keys=True, separators=(",", ":"))
+            sys.stdout.write("\n")
         elif parsed.action == "capture":
             command = list(parsed.command)
             if command[:1] == ["--"]:

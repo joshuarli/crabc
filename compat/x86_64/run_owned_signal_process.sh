@@ -99,15 +99,24 @@ validate_link() {
         "$executable" "$receipt" "$linkage" "$record"
 }
 
+step=compile-input-snapshot
+# Snapshot every source translation input before the actual driver creates the
+# one object. The helper runs only dependency/header closure discovery and
+# records the selected product manifest, driver, helper, compiler, and clean
+# environment; it never emits an alternate application object.
+python3 -B "$EVIDENCE" snapshot-compile-inputs "$dynamic_sysroot" "$SOURCE" \
+    "$work/workload.o" "$work/compile-inputs.json"
+
 step=compile
 # This is the sole source translation.  No candidate-specific preprocessor
 # spelling crosses into the frozen source; installed headers are selected only
-# by the supplied dynamic product's sealed driver.
+# by the supplied dynamic product's sealed driver. `record-compile` immediately
+# rechecks the earlier input snapshot before sealing the resulting object.
 "$dynamic_sysroot/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$SOURCE" -o "$work/workload.o" \
     >"$work/driver-compile.stdout" 2>"$work/driver-compile.stderr"
 python3 -B "$EVIDENCE" record-compile "$dynamic_sysroot" "$SOURCE" \
-    "$work/workload.o" "$work/compile.json"
+    "$work/workload.o" "$work/compile-inputs.json" "$work/compile.json"
 python3 -B "$EVIDENCE" validate-compile "$dynamic_sysroot" "$SOURCE" \
     "$work/workload.o" "$work/compile.json" >"$work/compile-identity.json"
 
@@ -151,6 +160,17 @@ for mode in pie non-pie; do
     validate_link "$dynamic_sysroot" "$work/dynamic-$mode" \
         "$work/dynamic-$mode.crabc-link.json" "$mode" "$work/dynamic-$mode.link.json"
     cp "$work/dynamic-$mode" "$execution_root/consumer-$mode"
+done
+
+# This immutable receipt is made after every runtime and consumer copy exists,
+# and before any candidate process starts. It binds the source product payload,
+# execution-root payload, linked consumers, and executed consumers together.
+step=execution-pre
+python3 -B "$EVIDENCE" record-execution-payload "$work" "$dynamic_sysroot"
+python3 -B "$EVIDENCE" audit-execution-payload "$work" "$dynamic_sysroot" \
+    >"$work/execution-pre.json"
+
+for mode in pie non-pie; do
     for subcase in "${SUBCASES[@]}"; do
         step="dynamic-$mode-kernel-$subcase"
         capture_case "$mode-kernel-$subcase" /usr/sbin/chroot "$execution_root" \
@@ -162,6 +182,10 @@ for mode in pie non-pie; do
         compare_case "oracle-$subcase" "$mode-direct-$subcase"
     done
 done
+
+step=execution-post
+python3 -B "$EVIDENCE" audit-execution-payload "$work" "$dynamic_sysroot" \
+    >"$work/execution-post.json"
 
 step=seal
 seal=(python3 -B "$EVIDENCE" seal --dynamic-product "$dynamic_sysroot" --source "$SOURCE" \
