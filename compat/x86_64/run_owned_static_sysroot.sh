@@ -805,6 +805,18 @@ run_static_mode() {
             minimum_tls_alignment=1
             candidate_arguments=("$mode_root")
             ;;
+        calendar)
+            probe=owned_calendar_probe.c
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/zone.tzif")
+            probe_defines+=(-DCRABC_OWNED_CALENDAR)
+            [ -f "$printf_matrix_reference" ] || fail "${label} calendar reference is missing"
+            ;;
+        timezone-tzif)
+            probe=owned_timezone_tzif_probe.c
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/zone.tzif" check)
+            ;;
         stdio)
             probe=owned_static_stdio_probe.c
             expected_output=owned-stdio-ok
@@ -899,7 +911,19 @@ run_static_mode() {
     assert_final_static_image "$candidate" "$mode" "$mode_root/file-header" \
         "$mode_root/program-headers" "$mode_root/dynamic" "$mode_root/symbols" \
         "$mode_root/relocations" "$minimum_tls_alignment"
-    if [ "$consumer_kind" = stdio-backends ]; then
+    if [ "$consumer_kind" = calendar ]; then
+        env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/calendar-records" ||
+            fail "${label} calendar candidate failed"
+        cmp "$printf_matrix_reference" "$mode_root/calendar-records" ||
+            fail "${label} calendar records differ from pinned musl"
+        [ ! -e "$mode_root/zone.tzif" ] || fail "${label} retained its timezone scratch"
+    elif [ "$consumer_kind" = timezone-tzif ]; then
+        # These independently specified valid-file cases expose pinned-musl
+        # defects. Keep its diagnostic transcript separate from acceptance.
+        env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/tzif-invariants" ||
+            fail "${label} RFC/POSIX timezone invariant failed"
+        [ ! -e "$mode_root/zone.tzif" ] || fail "${label} retained its timezone scratch"
+    elif [ "$consumer_kind" = stdio-backends ]; then
         env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/backend-records" ||
             fail "${label} FILE backend candidate failed"
         assert_stdio_backend_records "$mode_root/backend-records" "$label"
@@ -972,6 +996,10 @@ run_static_mode() {
     if [ "$consumer_kind" = posix ]; then
         run_static_mode "$installed_root" "$mode" "$mode_root/temp" \
             "$label temporary objects" temp-objects
+        run_static_mode "$installed_root" "$mode" "$mode_root/calendar" \
+            "$label calendar" calendar "$printf_matrix_reference.calendar"
+        run_static_mode "$installed_root" "$mode" "$mode_root/tzif" \
+            "$label timezone specification" timezone-tzif
     fi
     assert_malformed_tls_rejected "$candidate" "$label"
     sha256sum "$candidate" | awk '{ print $1 }' >"$mode_root/candidate.sha256"
@@ -1043,7 +1071,7 @@ for tree_name, installed_root, consumer_root in (
             label if tree_name == "primary" else f"extracted {label}",
             kind,
         ]
-        if kind in ("printf", "stdio"):
+        if kind in ("printf", "stdio", "posix"):
             argv.append(str(printf_matrix_reference))
         jobs.append(
             {
@@ -1094,7 +1122,7 @@ compare_consumer_matrix_runs() {
     # the serial/parallel comparison an additional determinism check rather
     # than just a timing report, while both passes reuse the same cold-built
     # primary and extracted trees.
-    for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread static-et-exec/lifecycle static-pie/lifecycle allocator-et-exec allocator-pie posix-et-exec posix-pie posix-et-exec/temp posix-pie/temp stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
+    for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread static-et-exec/lifecycle static-pie/lifecycle allocator-et-exec allocator-pie posix-et-exec posix-pie posix-et-exec/temp posix-pie/temp posix-et-exec/calendar posix-pie/calendar posix-et-exec/tzif posix-pie/tzif stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
         cmp "$serial_primary/$mode_root/candidate.sha256" \
             "$parallel_primary/$mode_root/candidate.sha256" ||
             fail "${mode_root} primary output differs between serial and parallel consumers"
@@ -1326,6 +1354,20 @@ reference_output="$(env -i "$header_consumer/temp-reference" "$header_consumer")
     fail "pinned-musl temporary-object output drifted: $reference_output"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_calendar_probe.c" \
+    -o "$header_consumer/calendar-reference"
+env -i "$header_consumer/calendar-reference" "$header_consumer/zone.tzif" \
+    >"$printf_matrix_reference.calendar" || fail "pinned-musl calendar reference failed"
+[ "$(wc -c <"$printf_matrix_reference.calendar")" -eq 427712 ] ||
+    fail "pinned-musl calendar reference has incomplete records"
+[ ! -e "$header_consumer/zone.tzif" ] || fail "calendar reference retained its timezone scratch"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_timezone_tzif_probe.c" \
+    -o "$header_consumer/tzif-reference"
+env -i "$header_consumer/tzif-reference" "$header_consumer/zone.tzif" observe \
+    >"$header_consumer/tzif-oracle-bugs" || fail "pinned-musl timezone diagnostic failed"
+
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_static_stdio_probe.c" \
     -o "$header_consumer/stdio-reference"
 reference_output="$(env -i "$header_consumer/stdio-reference" \
@@ -1495,7 +1537,7 @@ if [ "$consumer_benchmark" = 1 ]; then
         "$primary_consumer" "$extracted_consumer" \
         "$work_dir/consumer-matrix-serial-logs" "$work_dir/consumer-matrix-logs"
 fi
-for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread static-et-exec/lifecycle static-pie/lifecycle allocator-et-exec allocator-pie posix-et-exec posix-pie posix-et-exec/temp posix-pie/temp stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
+for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread static-et-exec/lifecycle static-pie/lifecycle allocator-et-exec allocator-pie posix-et-exec posix-pie posix-et-exec/temp posix-pie/temp posix-et-exec/calendar posix-pie/calendar posix-et-exec/tzif posix-pie/tzif stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"
