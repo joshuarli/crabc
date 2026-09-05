@@ -2489,3 +2489,14 @@ boundaries and the degraded-entropy substitution, but no ordinary allocation-
 trace difference. The bounded small-allocation slice has exact logical-trace
 parity; its deliberately absent lifecycle and API regions are incomplete scope
 rather than claimed differences.
+
+### Native huge-registry ownership prerequisite
+
+`./compat/allocator/run-x86_64.sh allocator-huge-registry` compares the pinned
+C multi-arena manage path with the same-process Rust registry and checks
+unpublished rejection and partial-publication ownership. Eight trace values
+and three ownership tests cover a 17-GiB span without imposing a one-arena
+limit. Both fixtures use anonymous memory to simulate successful huge
+primitives. The report `allocator/x86_64/huge-registry.json` records that
+boundary explicitly; it does not qualify kernel huge allocation, startup,
+failed-page cleanup storage, or M2 closure.

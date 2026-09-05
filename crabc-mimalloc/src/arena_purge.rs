@@ -6,7 +6,7 @@
 //! The arena owner retains both the bitmap range and its exact VM pair; it
 //! does not route ordinary OS backing through an external callback policy.
 
-use super::{OwnedArenaMapping, ProcessArenaBacking};
+use super::{OwnedArenaAllocation, ProcessArenaBacking};
 use crate::arena::{ArenaView, arena_slice_range_is_usable};
 use crate::atomic::{AtomicGuardWord, i64_cas_strong_acq_rel, i64_load_relaxed,
     i64_store_release, try_atomic_guard};
@@ -63,12 +63,12 @@ impl ProcessArenaBacking {
         let start = memory.slice_index as usize;
         let count = memory.slice_count as usize;
         if !arena_slice_range_is_usable(arena, start, count) { return false; }
-        let Some(owner) = (unsafe { self.mapping_for_arena(arena) }) else { return false; };
+        let Some(owner) = (unsafe { self.allocation_for_arena(arena) }) else { return false; };
         if !self.schedule_purge(&view, owner, start, count) { return false; }
         unsafe { view.slices_free() }.and_then(|free| free.set_range(start, count)) == Some(true)
     }
 
-    fn schedule_purge(&self, view: &ArenaView<'_>, owner: &OwnedArenaMapping,
+    fn schedule_purge(&self, view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
         start: usize, count: usize) -> bool {
         let policy = owner.process.policy();
         let delay = purge_delay(policy.purge_delay_milliseconds(), policy.arena_purge_multiplier());
@@ -126,7 +126,7 @@ impl ProcessArenaBacking {
             let index = if candidate >= count { candidate - count } else { candidate };
             let Some(arena) = (unsafe { self.registry.arena_at(index) }) else { continue; };
             let Some(view) = (unsafe { ArenaView::from_ptr(core::ptr::from_ref(arena).cast_mut()) }) else { return false; };
-            let Some(owner) = (unsafe { self.mapping_for_arena(arena) }) else { return false; };
+            let Some(owner) = (unsafe { self.allocation_for_arena(arena) }) else { return false; };
             if !core::ptr::eq(owner.process.policy(), process.policy()) || owner.config != config { return false; }
             let Some(purged) = self.try_purge_arena(&view, owner, now, force) else { return false; };
             if purged >= 0 {
@@ -141,7 +141,7 @@ impl ProcessArenaBacking {
         true
     }
 
-    fn try_purge_arena(&self, view: &ArenaView<'_>, owner: &OwnedArenaMapping,
+    fn try_purge_arena(&self, view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
         now: i64, force: bool) -> Option<i8> {
         let arena = view.arena();
         if arena.memid.is_pinned() { return Some(-1); }
@@ -176,7 +176,7 @@ impl ProcessArenaBacking {
 
 /// Purges only after successful free-bitmap exclusion, then restores the
 /// exact source availability range irrespective of advisory VM success.
-fn try_purge_range(view: &ArenaView<'_>, owner: &OwnedArenaMapping,
+fn try_purge_range(view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
     start: usize, count: usize) -> Option<bool> {
     let free = unsafe { view.slices_free() }?;
     if !free.try_clear_within_chunk(start, count)? { return Some(false); }
@@ -189,16 +189,16 @@ fn try_purge_range(view: &ArenaView<'_>, owner: &OwnedArenaMapping,
 /// Source `mi_arena_purge`: count the mixed commitment observation before
 /// calling the exact paired VM policy; preserve Linux's no-recommit outcome
 /// even when MADV_DONTNEED reports an advisory error.
-fn purge_claimed(view: &ArenaView<'_>, owner: &OwnedArenaMapping,
+fn purge_claimed(view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
     start: usize, count: usize) -> Option<bool> {
     let committed = unsafe { view.slices_committed() }?;
     let transition = committed.set_range(start, count)?;
     let all_committed = transition.already_set() == count;
     let address = view.slice_start(start)?;
-    let offset = (address as usize).checked_sub(owner.mapping.base().ok()? as usize)?;
+    let offset = (address as usize).checked_sub(owner.allocation.base().ok()? as usize)?;
     let size = count.checked_mul(ARENA_SLICE_SIZE)?;
     let stat_size = transition.already_set().checked_mul(ARENA_SLICE_SIZE)?;
-    let needs_recommit = owner.mapping.purge_for_process(owner.process, offset, size,
+    let needs_recommit = owner.allocation.regular()?.purge_for_process(owner.process, offset, size,
         all_committed, stat_size).unwrap_or(false);
     if needs_recommit || !all_committed { committed.clear_range(start, count)?; }
     Some(needs_recommit)

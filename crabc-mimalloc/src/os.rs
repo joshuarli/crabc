@@ -2753,6 +2753,23 @@ impl<'a, 'bits> fmt::Debug for HugeOsRawReleaseRetry<'a, 'bits> {
 }
 
 impl<'a> HugeOsAllocation<'a> {
+    pub(crate) const fn process(&self) -> VmProcess<'a> { self.process }
+
+    /// Test storage for registry ownership only; anonymous pages stand in for
+    /// successful huge primitives. This never proves kernel huge-page support.
+    #[cfg(test)]
+    pub(crate) fn test_registry_allocation(process: VmProcess<'a>, config: MemoryConfig,
+        pages: usize) -> Self {
+        let size = pages.checked_mul(HUGE_PAGE_SIZE).unwrap();
+        let mut mapping = Mapping::map_aligned_for_allocator(config, size,
+            HUGE_PAGE_SIZE, MapAccess::Committed).unwrap();
+        let base = NonNull::new(mapping.base().unwrap()).unwrap();
+        mapping.is_mapped = false;
+        Self { process, base, page_count: pages,
+            memory: MemoryId::os_huge(base.as_ptr(), size, true, true),
+            stop: HugeOsAllocationStop::Complete }
+    }
+
     /// Allocates the source `_mi_os_alloc_huge_os_pages` primitive through
     /// one resolved process pair. It never falls back to a regular mapping.
     pub(crate) fn allocate_for_process(

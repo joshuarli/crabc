@@ -2134,7 +2134,7 @@ impl<'arena> ArenaView<'arena> {
         slice_count: usize,
         commit: bool,
         thread_sequence: usize,
-        owner: Option<&owned::OwnedArenaMapping>,
+        owner: Option<&owned::OwnedArenaAllocation>,
     ) -> Option<ArenaSliceClaim<'arena>> {
         let arena = self.arena();
         if slice_count == 0

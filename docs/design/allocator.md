@@ -265,6 +265,27 @@ allocation regression matches the pinned arena probe's block size 64,
 slice-relative offset 64, capacity 512, and 49,152-byte committed/released
 prefix.
 
+`ProcessArenaBacking::install_owned_huge_allocation` is the separate
+`src/arena.c:2167-2191` manage boundary after a huge reservation succeeds.
+Its existing process registry now retains `ArenaOsAllocation::Regular` or
+`ArenaOsAllocation::Huge`; the latter owns the original `HugeOsAllocation`
+and never grants regular commit/decommit/purge access. Pinned slice claims
+and release skip commitment/purge as in source. A span larger than the
+16-GiB arena geometry is split by the existing source manage loop, with one
+huge owner retained for all child arenas. Partial registry publication keeps
+that complete owner, including the unpublished suffix. Rejection before any
+publication returns the exact allocation without a cleanup syscall.
+
+The native `allocator-huge-registry` differential compares eight registry,
+provenance, and pinned-accounting values with fixed C and runs three Rust
+ownership tests. Both fixtures use anonymous memory to simulate already
+successful huge primitives; this is not huge-kernel allocation evidence.
+Reservation/startup invocation remains separate: it needs process-owned
+storage for the unbounded-by-policy failed-page bitset before the source
+free pass can safely retain arbitrary failed primitive pages. This boundary
+neither borrows a temporary tracker into process storage nor replaces huge
+memory with a regular mapping, and does not close M2.
+
 The source's OS-only fallback needs one narrow safety correction. When
 `disallow_arena_alloc=1` combines with `page_commit_on_demand=1`, pinned
 v3.5.0 `src/arena.c:819-855` reserves the OS span with `commit == false`,

@@ -67,6 +67,18 @@ invented third form.
 
 ## Source-to-Rust mapping
 
+The native process huge-registry installation boundary maps pinned
+`src/arena.c:2167-2191` (post-reservation `mi_manage_os_memory_ex2`) and
+`src/arena.c:1794-1869` (multi-arena initialization and partial success) to
+`arena_owned::ProcessArenaBacking::install_owned_huge_allocation` and the
+existing `arena::manage_in_place`. `ArenaOsAllocation::Huge` retains the
+consuming `os::HugeOsAllocation`; the ordinary mapping variant cannot stand
+in for it. This is an installation prerequisite, not the startup/reservation
+caller or huge-page cleanup closure. Native evidence is
+`compat/allocator/x86_64_huge_registry_evidence.py` with explicitly simulated
+successful primitive storage on both C and Rust sides.
+
+
 The dedicated full-regular medium/large/non-direct-small/direct-small post-exit
 row and the full-singleton/homogeneous-full-OS-singleton/full-medium/full-large/mixed-medium-large/full-non-direct-small/full-direct-small aggregate
 rows below are authoritative for those narrow owner-exit routes. The full
