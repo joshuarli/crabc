@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "3acde30c3558ae68a47de4b5eaafe945d3e01ad8cafa7b06eb7152daa3af29b7",
+    "callable_inventory_sha256": "26f279db90fa28331c348ff6823807465a46bd60215fd221c1792933cf3482f8",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "6da053540ffac1c11ae76cba4f7633381729d984c4099c7781769e2aa0222141",
+    "parity_ledger_sha256": "2bf918a7c082d156666357b23d40b0af9cf1acae8bd7457251f700f1569f6435",
     "static_c_abi_exports_sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },
   "missing_reference_declaration_groups": [],
@@ -54,6 +54,8 @@
           "mkstemps",
           "mktime",
           "open_memstream",
+          "pclose",
+          "popen",
           "posix_spawn",
           "posix_spawnp",
           "prctl",
@@ -63,6 +65,7 @@
           "strftime",
           "strftime_l",
           "syscall",
+          "system",
           "tzset",
           "vasprintf",
           "vdprintf"
@@ -1245,8 +1248,6 @@
           "log1pf",
           "mbsnrtowcs",
           "open_wmemstream",
-          "pclose",
-          "popen",
           "putw",
           "putwc",
           "putwc_unlocked",
@@ -1421,7 +1422,6 @@
           "swapon",
           "symlinkat",
           "syslog",
-          "system",
           "tcdrain",
           "tcgetsid",
           "timer_create",
@@ -1794,13 +1794,13 @@
   },
   "summary": {
     "candidate_external_callable_count": 1525,
-    "declared_unverified_feature_callable_count": 52,
+    "declared_unverified_feature_callable_count": 55,
     "default_static_callable_count": 1119,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 7,
-      "planned-provider": 267
+      "planned-provider": 264
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1811,7 +1811,7 @@
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 276,
+    "unprovided_callable_count": 273,
     "verified_feature_callable_count": 78
   },
   "target": "x86_64-unknown-linux-musl",

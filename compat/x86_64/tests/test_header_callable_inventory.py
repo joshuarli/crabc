@@ -302,6 +302,8 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "mkstemps",
                 "mktime",
                 "open_memstream",
+                "pclose",
+                "popen",
                 "posix_spawn",
                 "posix_spawnp",
                 "prctl",
@@ -311,6 +313,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "strftime",
                 "strftime_l",
                 "syscall",
+                "system",
                 "tzset",
                 "vasprintf",
                 "vdprintf",
@@ -425,6 +428,46 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             {key: value for key, value in refreshed["summary"].items() if key != "callable_provider_counts"},
             {key: value for key, value in source["summary"].items() if key != "callable_provider_counts"},
+        )
+
+    def test_owned_spawn_consumes_existing_attribute_and_action_providers(self) -> None:
+        """The aggregate adds spawn execution without reassigning its support ABI."""
+        report = json.loads(CHECKED_INVENTORY.read_text(encoding="utf-8"))
+        partition = report["callable_provider_partition"]
+        default_static = set(partition["default_static"]["members"])
+        verified = {
+            provider["id"]: set(provider["members"])
+            for provider in partition["verified_feature_archives"]
+        }
+
+        spawn_attributes = {
+            "posix_spawnattr_destroy",
+            "posix_spawnattr_getflags",
+            "posix_spawnattr_getpgroup",
+            "posix_spawnattr_getschedparam",
+            "posix_spawnattr_getschedpolicy",
+            "posix_spawnattr_getsigdefault",
+            "posix_spawnattr_getsigmask",
+            "posix_spawnattr_init",
+            "posix_spawnattr_setflags",
+            "posix_spawnattr_setpgroup",
+            "posix_spawnattr_setschedparam",
+            "posix_spawnattr_setschedpolicy",
+            "posix_spawnattr_setsigdefault",
+            "posix_spawnattr_setsigmask",
+            "posix_spawn_file_actions_init",
+        }
+        self.assertTrue(spawn_attributes <= default_static)
+        self.assertEqual(
+            verified["x86-posix-spawn-file-actions"],
+            {
+                "posix_spawn_file_actions_addchdir_np",
+                "posix_spawn_file_actions_addclose",
+                "posix_spawn_file_actions_adddup2",
+                "posix_spawn_file_actions_addfchdir_np",
+                "posix_spawn_file_actions_addopen",
+                "posix_spawn_file_actions_destroy",
+            },
         )
 
     def test_provider_accounting_refresh_rejects_changed_compiler_facts(self) -> None:

@@ -117,6 +117,23 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(stream_backend <= providers["x86-owned-static-runtime"])
         self.assertFalse(stream_backend & deferred)
 
+    def test_owned_process_stream_and_shell_names_are_planned_owned_static_not_deferred(self) -> None:
+        """Keep the selected popen/pclose/system source beneath its aggregate owner."""
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        process_streams = {"pclose", "popen", "system"}
+
+        self.assertTrue(process_streams <= providers["x86-owned-static-runtime"])
+        self.assertFalse(process_streams & deferred)
+
     def test_statx_is_a_planned_provider_after_its_header_declaration_closes(self) -> None:
         contract = DISPOSITION.load_contract()
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
