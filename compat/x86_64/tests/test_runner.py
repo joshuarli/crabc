@@ -2210,7 +2210,7 @@ unsafe fn join_selected_worker_inner(
                 "owned-io-cancellation",
                 "owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation",
                 "owned-dynamic-io-cancellation",
-                "owned-posix-timers|owned-pthread-scheduling|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
+                "owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
                 "owned-pthread-lifecycle",
                 "qualification-manifest",
             )
@@ -9473,10 +9473,10 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("sched-priority-bounds-header-abi", runner)
         self.assertIn("libc-sched-priority-bounds", runner)
 
-    def test_libc_static_c_abi_pthread_cpuclock_artifact_stays_self_only(
+    def test_libc_static_c_abi_pthread_cpuclock_artifact_keeps_main_and_live_worker_scopes(
         self,
     ) -> None:
-        """Keep the selected CPU clock apart from general pthread/clock behavior."""
+        """Keep the selected CPU clock's main/worker boundary explicit."""
 
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -9488,6 +9488,12 @@ unsafe fn join_selected_worker_inner(
         start_path = ROOT / "compat" / "x86_64" / "libc_pthread_cpuclock_start.S"
         artifact_runner_path = (
             ROOT / "compat" / "x86_64" / "run_libc_pthread_cpuclock.sh"
+        )
+        owned_probe_path = (
+            ROOT / "compat" / "x86_64" / "owned_pthread_cpuclock_probe.c"
+        )
+        owned_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_owned_pthread_cpuclock.sh"
         )
         c_header_probe = (
             ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
@@ -9510,11 +9516,19 @@ unsafe fn join_selected_worker_inner(
         )
         runner = RUNNER.read_text(encoding="utf-8")
 
-        for path in (probe_path, start_path, artifact_runner_path):
+        for path in (
+            probe_path,
+            start_path,
+            artifact_runner_path,
+            owned_probe_path,
+            owned_runner_path,
+        ):
             self.assertTrue(path.is_file(), f"missing pthread CPU-clock input: {path}")
         probe = probe_path.read_text(encoding="utf-8")
         start = start_path.read_text(encoding="utf-8")
         artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        owned_probe = owned_probe_path.read_text(encoding="utf-8")
+        owned_runner = owned_runner_path.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "pthread_cpuclock.rs"]', static_root)
         for required in (
@@ -9524,17 +9538,19 @@ unsafe fn join_selected_worker_inner(
             "gettid=186",
             "current_thread_pointer",
             "is_initial_thread_pointer",
+            "pthread_create_join",
+            "selected_worker_linux_thread_id",
+            "CLONE_PARENT_SETTID",
             "thread_cpu_clock_id",
             "does not write C `errno`",
             "clock_getcpuclockid",
-            "worker CPU clocks",
+            "live selected worker",
+            "pthread_join",
             "affinity or scheduling attributes",
             "public x86 support",
         ):
             self.assertIn(required, pthread_cpuclock)
         for forbidden in (
-            "pthread_create_join",
-            "selected_worker_linux_thread_id",
             "set_errno",
             "c_status",
             "crabc_core",
@@ -9569,9 +9585,9 @@ unsafe fn join_selected_worker_inner(
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
             "assert_pthread_cpuclock_path",
-            "gettid syscall 186",
             "must not publish pthread status through errno",
             "src/thread/pthread_getcpuclockid.c",
+            "selected_worker_linux_thread_id",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
@@ -9602,6 +9618,32 @@ unsafe fn join_selected_worker_inner(
             '    libc-pthread-cpuclock)\n        [ "$#" -eq 0 ] || fail "libc-pthread-cpuclock takes no arguments"',
             runner,
         )
+        for required in (
+            "pthread_getcpuclockid",
+            "pthread_create",
+            "pthread_join",
+            "holding_worker",
+            "expected_thread_cpu_clock",
+            "clock_gettime",
+            "E2BIG",
+            "ERANGE",
+        ):
+            self.assertIn(required, owned_probe)
+        for required in (
+            "DYNAMIC_SYSROOT",
+            "build_x86_64_owned_sysroot.py",
+            "build_x86_64_owned_dynamic_sysroot.py",
+            "crabc-cc",
+            "crabc-cc-dynamic",
+            "chroot",
+            "for mode in pie non-pie",
+            "--dynamic-$mode",
+        ):
+            self.assertIn(required, owned_runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_owned_pthread_cpuclock.sh", runner
+        )
+        self.assertIn("    owned-pthread-cpuclock)", runner)
 
     def test_libc_static_c_abi_pthread_name_artifact_stays_self_only(
         self,

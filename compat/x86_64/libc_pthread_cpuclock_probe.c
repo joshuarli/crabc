@@ -5,12 +5,14 @@
  * selected crabc archive. It proves only pthread_getcpuclockid for the
  * bootstrapped calling process-main pthread_self() handle: the returned Linux
  * per-thread CPU clock ID has musl's exact x86 encoding and is accepted by
- * clock_gettime. The candidate-only null-handle check is deliberately outside
- * musl's dereferenceable-TCB contract and must fail closed without modifying
- * either the output slot or errno. This does not select worker or foreign
- * handles, a pthread TCB/thread list, scheduler attributes, C clock APIs,
- * cancellation, synchronization, TSS, CRT, loader, sysroot, general
- * pthread/TLS behavior, or public x86 support.
+ * clock_gettime. The installed sibling witness separately exercises the
+ * admitted live selected-worker registry route. The candidate-only
+ * null-handle check is deliberately outside musl's dereferenceable-TCB
+ * contract and must fail closed without modifying either the output slot or
+ * errno. This fixture does not select foreign or completed handles, a public
+ * pthread TCB/thread list, scheduler attributes, C clock APIs, cancellation,
+ * synchronization, TSS, CRT, loader, sysroot, general pthread/TLS behavior,
+ * or public x86 support.
  */
 
 #ifndef _GNU_SOURCE

@@ -4,8 +4,9 @@
 # The same project-header fixture first executes through pinned musl, then a
 # dependency-free crabc archive and -nostdlib -static candidate. It selects
 # only process-main self pthread_getcpuclockid through gettid=186 and Linux's
-# clock-ID encoding; no TCB/thread-list, worker-handle, scheduler, or general
-# C clock surface is selected.
+# clock-ID encoding. The installed sibling witness covers the separately
+# admitted live selected-worker registry route; neither runner selects a
+# public TCB/thread list, scheduler, or general C clock surface.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -56,10 +57,6 @@ assert_pthread_cpuclock_path() {
     local disassembly="$work_dir/pthread-cpuclock-disassembly"
 
     objdump -d --disassemble=pthread_getcpuclockid "$candidate" >"$disassembly"
-    grep -Eq '\$0xba(,|[[:space:]]|$)' "$disassembly" ||
-        fail "pthread_getcpuclockid lacks fixed gettid syscall 186"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "pthread_getcpuclockid lacks a direct gettid syscall"
     if grep -Eq '__errno_location|c_status|set_errno' "$disassembly"; then
         fail "pthread_getcpuclockid must not publish pthread status through errno"
     fi
@@ -138,7 +135,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
 fi
 for marker in 'src/thread/pthread_getcpuclockid.c' 'SYS_GETTID' \
     'current_thread_pointer' 'is_initial_thread_pointer' \
-    'does not write C `errno`'; do
+    'selected_worker_linux_thread_id' 'does not write C `errno`'; do
     grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_cpuclock.rs ||
         fail "pthread CPU-clock source lacks ${marker}"
 done

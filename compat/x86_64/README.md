@@ -204,6 +204,16 @@ records source mapping, lifecycle ownership, failure reclamation and the GNU/C11
 default rules. This component is registered in the dynamic product matrix; it
 does not itself complete the pthread family or qualify a public platform.
 
+## Installed pthread CPU-clock IDs
+
+`./scripts/dev-x86_64.sh owned-pthread-cpuclock` compares one held-live-worker
+consumer with pinned musl across installed static ET_EXEC/static PIE and
+dynamic PIE/non-PIE kernel/direct-loader entries. The
+[component contract](owned-pthread-cpuclock.md) records the source mapping,
+the registry's copied child-TID boundary, exact Linux CPU-clock encoding, and
+the excluded completion/join/detach/reaping race. It is focused private
+evidence and does not complete the pthread family or qualify a public platform.
+
 ## Installed descriptor control
 
 `./scripts/dev-x86_64.sh owned-message-queues` checks installed POSIX queue

@@ -16735,15 +16735,18 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for phrase in (
             "still-planned `libc.pthread-tls`",
-            "calling bootstrapped process-main task's own `pthread_self()` handle",
+            "bootstrapped process-main task's own `pthread_self()` handle",
+            "live selected-worker handle",
             "full pthread TCB",
             "direct Linux `gettid=186`",
-            "same 32-bit encoding",
-            "separately selected `clock_gettime`",
-            "Null or non-self handles",
+            "CLONE_PARENT_SETTID",
+            "worker-self and parent-to-live-worker",
+            "clock_gettime acceptance",
+            "target completion, `pthread_join`, `pthread_detach`, or selected reaping",
             "candidate-only `ESRCH`",
             "output and errno unchanged",
-            "worker, foreign, completed, or general handles",
+            "foreign/general handles",
+            "completed-target and lifecycle races",
             "separately selected `clock_getcpuclockid` and general C clocks",
             "scheduler or affinity attributes",
             "general pthread/TLS or x86-64 parity",
@@ -16756,11 +16759,31 @@ class X86ParityLedgerTests(unittest.TestCase):
             "exact gettid-derived Linux clock-ID encoding",
             "Candidate-only null-handle ESRCH",
             "output sentinel and errno unchanged",
-            "direct gettid=186",
-            "worker/foreign/completed/general handles",
+            "direct gettid=186 source ownership",
+            "foreign/completed/general handles",
+            "target-completion and concurrent join/detach/reaping races",
             "family completion, promotion, and public x86 support",
         ):
             self.assertIn(phrase, cpuclock_scope)
+        self.assertEqual(
+            cpuclock["native_evidence"][1]["command"],
+            "./scripts/dev-x86_64.sh owned-pthread-cpuclock",
+        )
+        owned_cpuclock_scope = cpuclock["native_evidence"][1]["scope"]
+        for phrase in (
+            "Pinned-musl 1.2.6 project-header consumer",
+            "installed owned static ET_EXEC/static-PIE",
+            "dynamic PIE/non-PIE kernel/direct-loader entries",
+            "held selected worker",
+            "worker-self and parent-to-live-worker",
+            "published child-TID",
+            "clock_gettime acceptance",
+            "worker/parent errno preservation",
+            "completion, join, detach, or reaping",
+            "completed-target and lifecycle races",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, owned_cpuclock_scope)
         self.assertEqual(
             name["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh libc-pthread-name",

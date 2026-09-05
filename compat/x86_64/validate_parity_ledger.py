@@ -74208,7 +74208,7 @@ def require_static_pthread_affinity_artifact(
 def require_static_pthread_cpuclock_artifact(
     family: Mapping[str, Any],
 ) -> None:
-    """Ratchet the caller-self CPU-clock ID leaf without pthread promotion."""
+    """Ratchet the selected main/live-worker CPU-clock leaf without promotion."""
 
     artifacts = require_verified_artifacts(
         family.get("verified_artifact"),
@@ -74235,7 +74235,7 @@ def require_static_pthread_cpuclock_artifact(
     assert isinstance(family_description, str)
     for phrase in (
         "Twenty-five separately verified static artifacts",
-        "caller-self-only pthread CPU-clock-ID route over direct Linux gettid encoding",
+        "pthread CPU-clock-ID route for bootstrapped-main and live selected-worker handles",
         "not pthread/TLS parity",
     ):
         require(
@@ -74248,19 +74248,22 @@ def require_static_pthread_cpuclock_artifact(
     assert isinstance(description, str)
     for phrase in (
         "still-planned `libc.pthread-tls`",
-        "calling bootstrapped process-main task's own `pthread_self()` handle",
+        "bootstrapped process-main task's own `pthread_self()` handle",
+        "live selected-worker handle",
         "full pthread TCB",
         "direct Linux `gettid=186`",
-        "same 32-bit encoding",
-        "separately selected `clock_gettime`",
-        "Null or non-self handles",
+        "CLONE_PARENT_SETTID",
+        "worker-self and parent-to-live-worker",
+        "clock_gettime acceptance",
+        "target completion, `pthread_join`, `pthread_detach`, or selected reaping",
         "candidate-only `ESRCH`",
         "output and errno unchanged",
-        "worker, foreign, completed, or general handles",
+        "foreign/general handles",
+        "completed-target and lifecycle races",
         "separately selected `clock_getcpuclockid` and general C clocks",
         "scheduler or affinity attributes",
-        "lifecycle, cancellation, synchronization, TSS",
-        "a TCB/thread list",
+        "lifecycle ownership, cancellation, synchronization, TSS",
+        "public TCB/thread list",
         "general pthread/TLS or x86-64 parity",
         "promotion",
         "public x86 support",
@@ -74273,8 +74276,11 @@ def require_static_pthread_cpuclock_artifact(
         "libc/src/lib.rs",
         "libc/src/c_abi/x86_64/static_c_abi.rs",
         "libc/src/c_abi/x86_64/pthread_cpuclock.rs",
+        "libc/src/c_abi/x86_64/pthread_create_join.rs",
         "libc/src/c_abi/x86_64/pthread_identity.rs",
         "libc/src/c_abi/x86_64/static_tls.rs",
+        "libc/src/c_abi/x86_64/dynamic_tls.rs",
+        "libc/src/c_abi/x86_64/owned_dynamic_runtime.rs",
         "libc/src/c_abi/x86_64/syscall.rs",
         "libc/src/c_abi/x86_64/clock_gettime.rs",
         "libc/src/c_abi/x86_64/errno.rs",
@@ -74293,12 +74299,17 @@ def require_static_pthread_cpuclock_artifact(
         "compat/x86_64/libc_pthread_cpuclock_probe.c",
         "compat/x86_64/libc_pthread_cpuclock_start.S",
         "compat/x86_64/run_libc_pthread_cpuclock.sh",
+        "compat/x86_64/owned_pthread_cpuclock_probe.c",
+        "compat/x86_64/run_owned_pthread_cpuclock.sh",
+        "compat/x86_64/owned-pthread-cpuclock.md",
         "compat/x86_64/tests/test_runner.py",
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/validate_parity_ledger.py",
         "compat/x86_64/README.md",
         "STATUS.md",
         "x86-64.md",
+        "scripts/build_x86_64_owned_sysroot.py",
+        "scripts/build_x86_64_owned_dynamic_sysroot.py",
         "scripts/dev-x86_64.sh",
     }
     require(
@@ -74313,13 +74324,16 @@ def require_static_pthread_cpuclock_artifact(
         "(-tid-1)*8+6",
         "(~tid << 3) | 6",
         "no-TCB difference",
-        "bootstrapped main caller's opaque self handle",
+        "bootstrapped main caller route",
+        "live selected-worker route",
         "four-byte clockid_t output",
         "Static Initial TLS v1",
         "gettid=186",
+        "CLONE_PARENT_SETTID",
         "positive pthread status",
         "clock_gettime=228",
-        "creates no pthread worker",
+        "completion, join, detach, or later reaping",
+        "installed witness creates one selected worker",
     ):
         require(
             phrase in prerequisite_text,
@@ -74346,12 +74360,16 @@ def require_static_pthread_cpuclock_artifact(
 
     evidence = artifact["native_evidence"]
     assert isinstance(evidence, list)
+    scopes = {entry["command"]: entry["scope"] for entry in evidence}
     require(
-        {entry["command"] for entry in evidence}
-        == {"./scripts/dev-x86_64.sh libc-pthread-cpuclock"},
-        "pthread CPU-clock must use its closed native command",
+        set(scopes)
+        == {
+            "./scripts/dev-x86_64.sh libc-pthread-cpuclock",
+            "./scripts/dev-x86_64.sh owned-pthread-cpuclock",
+        },
+        "pthread CPU-clock must use its closed native commands",
     )
-    scope = evidence[0]["scope"]
+    scope = scopes["./scripts/dev-x86_64.sh libc-pthread-cpuclock"]
     assert isinstance(scope, str)
     for phrase in (
         "Pinned-musl 1.2.6 project-header C reference",
@@ -74361,15 +74379,35 @@ def require_static_pthread_cpuclock_artifact(
         "clock_gettime acceptance",
         "Candidate-only null-handle ESRCH",
         "output sentinel and errno unchanged",
-        "direct gettid=186",
+        "direct gettid=186 source ownership",
         "no pthread errno publication",
         "interpreter/DT_NEEDED/unresolved symbol",
-        "worker/foreign/completed/general handles",
+        "foreign/completed/general handles",
+        "target-completion and concurrent join/detach/reaping races",
         "separately selected clock_getcpuclockid/general C clocks",
         "scheduler and affinity attributes",
         "family completion, promotion, and public x86 support",
     ):
         require(phrase in scope, f"pthread CPU-clock evidence scope omits {phrase}")
+    owned_scope = scopes["./scripts/dev-x86_64.sh owned-pthread-cpuclock"]
+    assert isinstance(owned_scope, str)
+    for phrase in (
+        "Pinned-musl 1.2.6 project-header consumer",
+        "installed owned static ET_EXEC/static-PIE",
+        "dynamic PIE/non-PIE kernel/direct-loader entries",
+        "held selected worker",
+        "worker-self and parent-to-live-worker",
+        "published child-TID",
+        "clock_gettime acceptance",
+        "worker/parent errno preservation",
+        "completion, join, detach, or reaping",
+        "completed-target and lifecycle races",
+        "public x86 support",
+    ):
+        require(
+            phrase in owned_scope,
+            f"installed pthread CPU-clock evidence scope omits {phrase}",
+        )
 
     static_exports = set(
         static_c_abi_export_names(
@@ -74394,6 +74432,8 @@ def require_static_pthread_cpuclock_artifact(
         "run_libc_pthread_cpuclock_probe()",
         "run_libc_pthread_cpuclock.sh",
         "libc-pthread-cpuclock)",
+        "run_owned_pthread_cpuclock.sh",
+        "owned-pthread-cpuclock)",
     ):
         require(snippet in dispatcher, f"pthread CPU-clock dispatcher omits {snippet}")
 

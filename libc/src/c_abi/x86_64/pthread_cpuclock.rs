@@ -7,20 +7,26 @@
 //! per-thread CPU clock as `(~tid << 3) | 6`.
 //!
 //! Static Initial TLS v1 deliberately owns just the x86 Variant-II `%fs:0`
-//! self word, not musl's dereferenceable TCB. This leaf therefore admits only
-//! the bootstrapped process-main task through that task's own
-//! `pthread_self()` handle. It verifies that opaque self identity with the
-//! existing Static Initial TLS v1 task-ID discriminator, reads the calling
-//! task's Linux TID through direct `gettid=186`, and performs musl's exact
-//! 32-bit clock-ID encoding. The difference is intentional and local: no C
-//! handle is dereferenced and no worker, foreign, completed, or general
-//! pthread handle is admitted. A null or non-self handle fails closed with
-//! `ESRCH` before observing the output slot; that diagnostic is candidate-only
-//! because musl's full-TCB implementation requires a valid handle.
+//! self word, not musl's dereferenceable TCB. This leaf therefore admits the
+//! bootstrapped process-main task through that task's own `pthread_self()`
+//! handle and a live handle published by the selected worker registry. Main
+//! identity uses the existing `%fs:0` plus Linux-TID discriminator and reads
+//! direct `gettid=186`. The worker registry instead copies its positive
+//! `CLONE_PARENT_SETTID` child-TID while its private control record is still
+//! linked. Neither route dereferences public `pthread_t`.
 //!
-//! The leaf selects only `pthread_getcpuclockid` for the calling bootstrapped
-//! process-main thread. It does not select `clock_getcpuclockid`, general C
-//! clock APIs, worker CPU clocks, a TCB/thread list, lifecycle ownership,
+//! Registry lookup releases its lock before this leaf returns the encoded
+//! clock ID. A caller querying a worker must therefore keep that selected
+//! target executing and must not race target completion, `pthread_join`,
+//! `pthread_detach`, or a later selected lifecycle/reaping boundary that can
+//! clear its TID, withdraw its mapping, or permit TID reuse. A null, foreign,
+//! finished, or withdrawn handle fails closed with `ESRCH` before observing
+//! the output slot; that diagnostic is candidate-only because musl's full-TCB
+//! implementation requires a valid handle.
+//!
+//! The leaf selects only `pthread_getcpuclockid` for the bootstrapped main
+//! thread and a live selected worker. It does not select `clock_getcpuclockid`,
+//! general C clock APIs, a public TCB/thread list, lifecycle ownership,
 //! affinity or scheduling attributes, cancellation, synchronization, TSS,
 //! dynamic/loader TLS, CRT, sysroot, general pthread/TLS behavior, or public x86 support.
 //! Pthread errors are positive return values: this entry does not write C `errno`.
@@ -30,7 +36,7 @@ compile_error!("the x86 pthread CPU-clock leaf requires little-endian Linux/x86-
 
 use core::ffi::{c_int, c_void};
 
-use super::{pthread_identity, raw_syscall, static_tls};
+use super::{pthread_create_join, pthread_identity, raw_syscall, static_tls};
 
 const ESRCH: c_int = 3;
 const LINUX_ERRNO_MAX: i64 = 4_095;
@@ -60,33 +66,47 @@ fn gettid_status(result: i64) -> Result<c_int, c_int> {
     Err(ESRCH)
 }
 
-/// Return the Linux CPU-clock ID for the calling bootstrapped-main pthread.
+/// Resolve one admitted opaque pthread handle to its currently live Linux TID.
+///
+/// A selected worker lookup never dereferences the caller's opaque value. The
+/// sibling registry validates it while its private control mapping is live and
+/// copies only its parent-written child-TID word. The public operation excludes
+/// the concurrent completion/join/detach/reclamation race documented above.
+#[inline]
+fn selected_thread_id(thread: *mut c_void) -> Result<c_int, c_int> {
+    if thread.is_null() {
+        return Err(ESRCH);
+    }
+
+    let current_thread_pointer = pthread_identity::current_thread_pointer();
+    if thread == current_thread_pointer.cast()
+        && static_tls::is_initial_thread_pointer(current_thread_pointer)
+    {
+        // SAFETY: Linux/x86-64 `gettid=186` takes no arguments. The static-TLS
+        // discriminator proved this is the selected bootstrapped initial task.
+        return gettid_status(unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) });
+    }
+
+    pthread_create_join::selected_worker_linux_thread_id(thread).ok_or(ESRCH)
+}
+
+/// Return the Linux CPU-clock ID for one admitted selected pthread.
 ///
 /// # Safety
 ///
 /// `clock_id` must point to writable x86-64 `clockid_t` (`int`) storage for
-/// the duration of the call. `thread` must be the calling bootstrapped
-/// process-main task's current `pthread_self()` value. Passing any other
-/// handle is outside the selected musl differential; this bounded candidate
-/// returns `ESRCH` without reading the handle or writing `clock_id`.
+/// the duration of the call. `thread` must be the caller's bootstrapped-main
+/// `pthread_self()` value or a currently live selected worker handle. A worker
+/// target must remain executing and must not race selected completion, join,
+/// detach, or reaping ownership. Passing an unadmitted handle is outside the
+/// selected musl differential; this bounded candidate returns `ESRCH` without
+/// reading the handle or writing `clock_id`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_getcpuclockid(
     thread: *mut c_void,
     clock_id: *mut c_int,
 ) -> c_int {
-    let current_thread_pointer = pthread_identity::current_thread_pointer();
-    if thread.is_null()
-        || thread != current_thread_pointer.cast()
-        || !static_tls::is_initial_thread_pointer(current_thread_pointer)
-    {
-        return ESRCH;
-    }
-
-    // SAFETY: Linux/x86-64 `gettid=186` takes no arguments. The preceding
-    // static-TLS discriminator proved this is the selected initial task.
-    let thread_id = match gettid_status(unsafe {
-        raw_syscall::syscall0(raw_syscall::SYS_GETTID)
-    }) {
+    let thread_id = match selected_thread_id(thread) {
         Ok(thread_id) => thread_id,
         Err(status) => return status,
     };

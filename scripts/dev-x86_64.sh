@@ -576,6 +576,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-signal [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test installed pthread signal delivery and task retirement
   owned-posix-timers [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX timer lifecycle and callback TLS reset
   owned-pthread-scheduling test installed pthread scheduling/default attributes
+  owned-pthread-cpuclock [DYNAMIC_SYSROOT]  test installed live pthread CPU-clock IDs
   owned-fcntl  test installed descriptor-control commands and variadic ABI
   owned-named-ipc  test installed named semaphore and shared-memory lifecycles
   owned-message-queues  test installed POSIX queue transfer and notification lifecycles
@@ -1069,14 +1070,20 @@ lifecycle/synchronization/TSS/cancellation, dynamic TLS, CRT, loader, sysroot,
 C11-family completion, or public x86 support.
 `libc-pthread-cpuclock` is a separate static project-header fixture that first
 runs through pinned musl, then links only the selected archive. It selects
-only `pthread_getcpuclockid` for the bootstrapped process-main
-`pthread_self()` handle: direct `gettid=186` is encoded as Linux's thread CPU
-clock without dereferencing a TCB, and the fixture proves its exact result,
-clock_gettime acceptance, and errno preservation. Candidate-only null/non-self
-handles fail closed with `ESRCH` without touching output or errno. It does not
-select worker/foreign handles, `clock_getcpuclockid` or general C clocks,
+`pthread_getcpuclockid` for the bootstrapped process-main `pthread_self()`
+handle: direct `gettid=186` is encoded as Linux's thread CPU clock without
+dereferencing a TCB, and the fixture proves its exact result, clock_gettime
+acceptance, and errno preservation. Candidate-only null handles fail closed
+with `ESRCH` without touching output or errno.
+`owned-pthread-cpuclock` is the installed-product sibling: it holds one
+selected worker live while worker-self and parent-targeted calls copy that
+worker's registry-published child TID, then proves the exact clock encoding,
+clock_gettime acceptance, and errno preservation through static and dynamic
+entries. Neither command selects foreign/completed handles, target completion
+or join/detach/reaping races, `clock_getcpuclockid` or general C clocks,
 scheduler/affinity attributes, lifecycle/cancellation/synchronization/TSS, a
-TCB/thread list, dynamic TLS, CRT, loader, sysroot, or public x86 support.
+public TCB/thread list, dynamic TLS policy, CRT/sysroot completion, or public
+x86 support.
 `libc-pthread-name` is a separate static project-header fixture that first
 runs through pinned musl, then links only the selected archive. It selects
 only GNU `pthread_setname_np`/`pthread_getname_np` for the bootstrapped
@@ -5863,7 +5870,7 @@ case "$command" in
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation) ;;
     owned-dynamic-io-cancellation) ;;
-    owned-posix-timers|owned-pthread-scheduling|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
+    owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
     qualification-manifest) ;;
     owned-static-sysroot|owned-posix-static-products|owned-posix-family) ;;
@@ -8067,6 +8074,9 @@ PY
         ;;
     owned-pthread-scheduling)
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_scheduling.sh "$@"
+        ;;
+    owned-pthread-cpuclock)
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_cpuclock.sh "$@"
         ;;
     owned-message-queues)
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_message_queues.sh "$@"

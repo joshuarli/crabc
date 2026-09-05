@@ -40,6 +40,11 @@ owners:
    the 50-case dynamic catalog. Fresh three-product qualification and the
    complete six-static/twelve-dynamic POSIX family receipt remain required;
    see [`owned-posix-runtime.md`](compat/x86_64/owned-posix-runtime.md).
+   Full native OS-test and libc-test runners now expose the remaining runtime
+   and fixture failures through independently checked source/object/link and
+   execution-root evidence. Their incomplete results do not close the native
+   aggregate; current measurements and the integration sequence are in
+   `plan.md`.
    Do not restart an export-by-export queue.
 2. Allocator: use the contained `compat/allocator/run-x86_64.sh` launcher,
    then complete native x86 M2 qualification. Imported
