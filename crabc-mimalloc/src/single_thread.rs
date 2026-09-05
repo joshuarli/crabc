@@ -2265,9 +2265,11 @@ impl<'route> ThreadExitMappedRegularPagesPostExitRemoteFreeProducerPair<'route> 
 /// rather than reserving VM itself. Dropping it does not
 /// collect, abandon, unregister, or release any page: callers must force a
 /// collection before they dismantle the supplied arena or page map.
-pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession> {
+pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession,
+    Backing: crate::page_backing::PageBacking<'arena> = ArenaView<'arena>> {
     session: Session,
-    arena: ArenaView<'arena>,
+    arena: Backing,
+    arena_lifetime: PhantomData<&'arena ()>,
     requested_arena: ArenaId,
     page_map: &'map PageMap,
     thread_sequence: usize,
@@ -2334,8 +2336,10 @@ pub(crate) struct PageAllocatorEngine<'arena, 'map, Session: TheapPageSession> {
 /// thread-exit transition from manufacturing a second PageMap/arena/OS-owner
 /// capability while it replaces `DynamicTheapPageSession` with its narrower
 /// post-TLS drain session.
-pub(crate) struct PageAllocatorEngineState<'arena, 'map> {
-    arena: ArenaView<'arena>,
+pub(crate) struct PageAllocatorEngineState<'arena, 'map,
+    Backing: crate::page_backing::PageBacking<'arena> = ArenaView<'arena>> {
+    arena: Backing,
+    arena_lifetime: PhantomData<&'arena ()>,
     requested_arena: ArenaId,
     page_map: &'map PageMap,
     thread_sequence: usize,
@@ -2357,6 +2361,55 @@ pub(crate) struct PageAllocatorEngineState<'arena, 'map> {
 /// implementation structure, not a public first-class heap abstraction.
 pub(crate) type SingleThreadAllocator<'bootstrap, 'arena, 'map> =
     PageAllocatorEngine<'arena, 'map, ExclusiveTheapSession<'bootstrap>>;
+
+pub(crate) type ProcessMetadataPageAllocator<'bootstrap, 'map> = PageAllocatorEngine<
+    'static, 'map, ExclusiveTheapSession<'bootstrap>, crate::page_backing::ProcessMetadataPageBacking>;
+
+impl<'bootstrap, 'map> ProcessMetadataPageAllocator<'bootstrap, 'map> {
+    /// Activates the already bound source process-main metadata Theap without
+    /// reserving a private arena or constructing another PageMap.
+    ///
+    /// # Safety
+    ///
+    /// The caller holds this metadata owner's lock and retains its pinned
+    /// bootstrap and exact process pair. `page_map` is that process's shared
+    /// root; this engine owns disjoint ranges, serializes their plain entries,
+    /// and removes every entry/alias before returning its arena/OS backing.
+    /// No overlapping whole-PageMap mutable reference or process teardown may
+    /// coexist with this lifetime.
+    pub(crate) unsafe fn activate_process_metadata(
+        bootstrap: Pin<&'bootstrap mut ExclusiveTheapBootstrap>,
+        process: crate::os::VmProcess<'static>, page_map: &'map PageMap,
+    ) -> Result<Self, BootstrapError> {
+        let session = bootstrap.begin_bound_detached_session(process.subprocess())?;
+        Ok(Self {
+            session,
+            arena: crate::page_backing::ProcessMetadataPageBacking::new(process),
+            arena_lifetime: PhantomData,
+            requested_arena: ArenaId::none(),
+            page_map,
+            thread_sequence: 0,
+            pending_os_release: None,
+            collection_poison: None,
+            page_commit_poison: false,
+            #[cfg(test)]
+            forced_collect_retired_call_count: 0,
+            #[cfg(test)]
+            page_free_collect_failure_once: PageCollectFailureInjection::None,
+            #[cfg(test)]
+            page_release_after_page_map_unregister_failure_once: false,
+            #[cfg(test)]
+            aggregate_abandon_after_queue_detach_failure_once: false,
+            #[cfg(test)]
+            last_page_to_full: None,
+            #[cfg(test)]
+            page_commit_on_demand: false,
+            #[cfg(test)]
+            page_area_commit_lease: None,
+            shutdown_complete: false,
+        })
+    }
+}
 
 /// Private dynamic attachment specialization of the same page engine.
 pub(crate) type DynamicTheapAllocator<'attach, 'heap, 'arena, 'map> =
@@ -7648,6 +7701,7 @@ impl<'bootstrap, 'arena, 'map>
         Ok(Self {
             session,
             arena,
+            arena_lifetime: PhantomData,
             requested_arena,
             page_map,
             thread_sequence,
@@ -7720,12 +7774,13 @@ impl<'bootstrap, 'arena, 'map>
         session: ExclusiveTheapSession<'bootstrap>,
         arena: ArenaView<'arena>,
         requested_arena: ArenaId,
-        page_map: &'map mut PageMap,
+        page_map: &'map PageMap,
         thread_sequence: usize,
     ) -> Self {
         Self {
             session,
             arena,
+            arena_lifetime: PhantomData,
             requested_arena,
             page_map,
             thread_sequence,
@@ -7767,6 +7822,7 @@ impl<'attach, 'heap, 'arena, 'map>
         Self {
             session,
             arena,
+            arena_lifetime: PhantomData,
             requested_arena,
             page_map,
             thread_sequence,
@@ -8121,6 +8177,7 @@ impl<'arena, 'map, Session: MainStaticTheapPageSession>
         Self {
             session,
             arena,
+            arena_lifetime: PhantomData,
             requested_arena,
             page_map,
             // Both marker implementations represent source ticket zero.
@@ -8174,6 +8231,7 @@ impl<'attachment, 'main, 'arena, 'map>
         Self {
             session,
             arena,
+            arena_lifetime: PhantomData,
             requested_arena,
             page_map,
             thread_sequence,
@@ -8367,6 +8425,7 @@ impl<'arena, 'map> PageAllocatorEngine<'arena, 'map, OwnerLocalMainHeapPageSessi
         Self {
             session: OwnerLocalMainHeapPageSession::new(session),
             arena,
+            arena_lifetime: PhantomData,
             requested_arena,
             page_map,
             thread_sequence,
@@ -8626,6 +8685,7 @@ impl<'attachment, 'main, 'arena, 'map>
     ) -> Result<(), MainHeapThreadAttachmentError> {
         let (session, state) = self.into_session_and_state();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -9425,6 +9485,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -9767,6 +9828,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -10109,6 +10171,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -10461,6 +10524,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -10824,6 +10888,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -11186,6 +11251,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -11681,6 +11747,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -12091,6 +12158,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -12454,6 +12522,7 @@ impl<'attachment, 'main, 'arena, 'map>
 
         let (session, state) = self.into_session_and_state();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -12816,6 +12885,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena: _,
             requested_arena: _,
             page_map: _,
@@ -13202,6 +13272,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -13608,6 +13679,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -14045,6 +14117,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -14456,6 +14529,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -15405,6 +15479,7 @@ impl<'attachment, 'main, 'arena, 'map>
         let (session, state) = self.into_session_and_state();
         let main_heap = session.main_heap_lease();
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map: _,
@@ -31786,6 +31861,7 @@ impl<'attach, 'heap, 'arena, 'map>
             }
         };
         let PageAllocatorEngineState {
+            arena_lifetime: _,
             arena,
             requested_arena: _,
             page_map,
@@ -34966,13 +35042,14 @@ impl<'attach, 'heap, 'arena, 'map>
     }
 }
 
-impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, Session> {
+impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::PageBacking<'arena>>
+    PageAllocatorEngine<'arena, 'map, Session, Backing> {
 
     /// Consumes this Drop-bearing engine without running its conservative
     /// unfinished-engine latch, returning its unique typed session separately
     /// from the PageMap/arena state. Callers must immediately reassemble one
     /// engine (possibly with a different session type) or retain both parts.
-    fn into_session_and_state(self) -> (Session, PageAllocatorEngineState<'arena, 'map>) {
+    fn into_session_and_state(self) -> (Session, PageAllocatorEngineState<'arena, 'map, Backing>) {
         let this = ManuallyDrop::new(self);
         let this_ptr = (&this as *const ManuallyDrop<Self>).cast::<Self>();
         // SAFETY: `this` suppresses `Drop`; every field is moved exactly once
@@ -34983,6 +35060,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             (
                 core::ptr::read(core::ptr::addr_of!((*this_ptr).session)),
                 PageAllocatorEngineState {
+                    arena_lifetime: PhantomData,
                     arena: core::ptr::read(core::ptr::addr_of!((*this_ptr).arena)),
                     requested_arena: core::ptr::read(core::ptr::addr_of!((*this_ptr).requested_arena)),
                     page_map: core::ptr::read(core::ptr::addr_of!((*this_ptr).page_map)),
@@ -35009,9 +35087,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
     /// the thread-exit conversion changes a typed session owner.
     fn from_session_and_state<NewSession: TheapPageSession>(
         session: NewSession,
-        state: PageAllocatorEngineState<'arena, 'map>,
-    ) -> PageAllocatorEngine<'arena, 'map, NewSession> {
+        state: PageAllocatorEngineState<'arena, 'map, Backing>,
+    ) -> PageAllocatorEngine<'arena, 'map, NewSession, Backing> {
         PageAllocatorEngine {
+            arena_lifetime: PhantomData,
             session,
             arena: state.arena,
             requested_arena: state.requested_arena,
@@ -35601,7 +35680,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             source.retain_root();
             return Err(GenericPathError::Lifecycle);
         };
-        let arena = NonNull::from(self.arena.arena());
+        let Some(selected) = self.arena.selected_arena() else {
+            return Ok(MappedMediumReclaimBeforeFresh::NoCandidate);
+        };
+        let arena = NonNull::from(selected.arena());
         let mut engine = NonNull::from(&mut *self);
         match source.with_selected_map(arena, target_heap, bin, |source, map| {
             // SAFETY: the source callback remains the sole holder of the
@@ -35635,7 +35717,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         target_thread: LiveThreadId,
         map: &MainArenaMappedAbandonedPage<'_>,
     ) -> Result<MappedMediumReclaimBeforeFresh, GenericPathError> {
-        let arena = &self.arena;
+        let arena = self.arena.selected_arena().ok_or(GenericPathError::Lifecycle)?;
         #[cfg(test)]
         let test_panic_claim_closure = source.take_test_claim_closure_panic();
         #[cfg(test)]
@@ -36000,16 +36082,14 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         let arena_memory = memory
             .arena_memory()
             .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
-        if arena_memory.arena as *const _ != self.arena.arena() as *const _ {
-            return Err(GenericPathError::PageCommit(PageCommitError::InvalidPageArea));
-        }
+        let arena = unsafe { self.arena.arena_for_memory(memory) }
+            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
         let slice_index = arena_memory.slice_index as usize;
         let slice_count = arena_memory.slice_count as usize;
         let page_span_size = slice_count
             .checked_mul(ARENA_SLICE_SIZE)
             .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
-        let slice_start = self
-            .arena
+        let slice_start = arena
             .slice_start(slice_index)
             .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
         let page_start = page
@@ -37053,8 +37133,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         if !self.collect_full_pages_non_abandoning() {
             return false;
         }
-        self.arena
-            .collect_scheduled_purge(self.page_map.memory_config().page_size(), force)
+        self.arena.collect(self.page_map.memory_config(), force, self.thread_sequence)
     }
 
     /// Ports `mi_theap_collect_full_pages` for this explicitly
@@ -37476,6 +37555,12 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         block_size: usize,
         alignment: usize,
     ) -> Option<NonNull<Page>> {
+        self.allocate_fresh_os_page(block_size, alignment, true)
+    }
+
+    fn allocate_fresh_os_page(
+        &mut self, block_size: usize, alignment: usize, enqueue_singleton: bool,
+    ) -> Option<NonNull<Page>> {
         // A failed earlier OS-aligned release owns the sole pending slot. It
         // must be retried before claiming another mapping; ordinary arena
         // pages intentionally do not depend on this token.
@@ -37483,7 +37568,10 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             return None;
         }
         let config = self.page_map.memory_config();
-        let claim = match OsAlignedPageClaim::allocate(config, block_size, alignment) {
+        let allocation = if let Some(process) = self.arena.process() {
+            OsAlignedPageClaim::allocate_for_process(process, config, block_size, alignment, self.requested_arena)
+        } else { OsAlignedPageClaim::allocate(config, block_size, alignment) };
+        let claim = match allocation {
             Ok(claim) => claim,
             Err(failure) => {
                 if let Some(owner) = failure.into_owner() {
@@ -37519,7 +37607,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 metadata,
                 layout.block_size(),
                 layout.page_offset(),
-                1,
+                layout.reserved(),
                 0,
                 memory.initially_zero(),
                 memory,
@@ -37541,7 +37629,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // metadata and describes its committed one-block area. No queue
             // or map observer sees it until this initialization completes.
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }.ok()?;
-            (free_list.extend().ok()? == 1).then_some(())
+            (free_list.extend().ok()? != 0).then_some(())
         })();
         if initialized.is_none() {
             self.rollback_fresh_os_aligned(claim, page, true, false);
@@ -37561,7 +37649,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             return None;
         }
 
-        self.push_regular_page(BIN_HUGE, page);
+        if enqueue_singleton { self.push_regular_page(BIN_HUGE, page); }
         // This is an infallible handoff under `OsAlignedPageClaim`'s private
         // state machine: construction returns only an active `Mapping`; the
         // only method that can close it is the consuming `release`, which has
@@ -37633,6 +37721,19 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
         };
         let allocation_size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
+        if let Some(process) = self.arena.process() {
+            let config = self.page_map.memory_config();
+            let mode = process.policy().page_commit_on_demand();
+            let source_commits_full = matches!(kind, PageKind::Singleton)
+                || crate::config::PAGE_MIN_COMMIT_SIZE.max(config.page_size().bytes()) >= allocation_size
+                || slice_count >= invariants::slice_count_of_size(usize::from(u16::MAX) * config.page_size().bytes())?
+                || mode == 0 || (mode == 2 && config.has_overcommit());
+            // The normal native source profile selects full commitment.
+            // Nondefault incremental commitment still needs its complete
+            // extension/failure/release protocol; never silently reinterpret
+            // that process policy as the fully committed legacy profile.
+            if !source_commits_full { return None; }
+        }
         #[cfg(test)]
         let commit = if self.page_commit_on_demand && !matches!(kind, PageKind::Singleton) {
             self.page_commit_on_demand = false;
@@ -37642,14 +37743,23 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         };
         #[cfg(not(test))]
         let commit = true;
-        let claim = self.arena.try_claim_suitable_slices(
+        let claim = self.arena.claim(
+            self.page_map.memory_config(),
             self.requested_arena,
             slice_count,
             commit,
             self.thread_sequence,
-        )?;
+        );
+        let Some(claim) = claim else {
+            return self.arena.process().and_then(|_| self.allocate_fresh_os_page(block_size, 1, false));
+        };
         let slice_start = claim.start();
         let memory = claim.memory_id();
+        // SAFETY: the fresh linear claim retains this exact live arena.
+        let arena = match unsafe { self.arena.arena_for_memory(memory) } {
+            Some(arena) => arena,
+            None => { let _ = claim.release(); return None; }
+        };
         let metadata = match claim.page_metadata() {
             Some(metadata) => metadata,
             None => {
@@ -37727,7 +37837,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
 
         if !self
             .session
-            .ensure_arena_pages(&self.arena, self.page_map.memory_config())
+            .ensure_arena_pages(&arena, self.page_map.memory_config())
         {
             let _ = claim.release();
             return None;
@@ -37760,12 +37870,12 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 // arena bitmap, PageMap, or queue. Retire it before returning
                 // the exact claim; no wider PageMap fallback is source-valid.
                 let _ = unsafe { self.session.retire_page(&mut *page.as_ptr()) };
-                let _ = unsafe { release_arena_slices(memory) };
+                let _ = unsafe { self.arena.release(memory) };
                 return None;
             }
         };
 
-        let registered_in_arena = self.session.set_arena_page(&self.arena, memory);
+        let registered_in_arena = self.session.set_arena_page(&arena, memory);
         if !registered_in_arena {
             self.rollback_fresh(page, slice_start, page_map_size, memory, false, false);
             return None;
@@ -37821,7 +37931,9 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             if memory.arena_memory().is_some() {
                 // The exact session-selected bitmap bit was set by this
                 // fresh attempt and no page-map reader can observe rollback.
-                let _ = self.session.clear_arena_page(&self.arena, memory);
+                if let Some(arena) = unsafe { self.arena.arena_for_memory(memory) } {
+                    let _ = self.session.clear_arena_page(&arena, memory);
+                }
             }
         }
         // SAFETY: no queue/direct-cache entry names this failed fresh page, so
@@ -37829,7 +37941,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         let _ = unsafe { self.session.retire_page(&mut *page.as_ptr()) };
         // SAFETY: `memory` is the still-outstanding claim consumed by this
         // failed attempt; no successful page exists for its slices.
-        let _ = unsafe { release_arena_slices(memory) };
+        let _ = unsafe { self.arena.release(memory) };
     }
 
     fn push_regular_page(&mut self, bin: usize, page: NonNull<Page>) {
@@ -37984,7 +38096,8 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 if self.consume_page_release_after_page_map_unregister_failure() {
                     return false;
                 }
-                if !self.session.clear_arena_page(&self.arena, memory) {
+                let Some(arena) = (unsafe { self.arena.arena_for_memory(memory) }) else { return false; };
+                if !self.session.clear_arena_page(&arena, memory) {
                     // The map is already clear, so do not release the arena
                     // span on an arena-page registration invariant failure. It
                     // remains a visible diagnostic leak rather than a
@@ -38001,7 +38114,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
                 // SAFETY: source ordering has unregistered the page before
                 // this exact outstanding external-arena claim is returned to
                 // its free bitmap.
-                unsafe { release_arena_slices(memory) }
+                unsafe { self.arena.release(memory) }
             }
             ReleaseSpan::Os(published) => {
                 let layout = published.layout();
@@ -38102,7 +38215,8 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         if unsafe { self.page_map.unregister_range(slice_start, page_map_size) }.is_err() {
             return false;
         }
-        if !self.session.clear_arena_page(&self.arena, memory) {
+        let Some(arena) = (unsafe { self.arena.arena_for_memory(memory) }) else { return false; };
+        if !self.session.clear_arena_page(&arena, memory) {
             // The map is already clear; retain terminal ownership rather than
             // returning slices while the ordinary arena-page image remains
             // visible as allocated.
@@ -38116,7 +38230,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         }
         // SAFETY: map and ordinary page-image removal now precede return of
         // this exact one outstanding external-arena span.
-        unsafe { release_arena_slices(memory) }
+        unsafe { self.arena.release(memory) }
     }
 
     /// Completes the non-arena `_mi_arenas_page_unabandon` then
@@ -38219,7 +38333,9 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             // SAFETY: this preflight holds exclusive live-page ownership and
             // serializes the page-map observations named by the constructor.
             let published = unsafe {
-                PublishedOsAlignedPage::from_page(page_map.memory_config(), page)
+                if let Some(process) = self.arena.process() {
+                    PublishedOsAlignedPage::from_page_for_process(process, page_map.memory_config(), page)
+                } else { PublishedOsAlignedPage::from_page(page_map.memory_config(), page) }
             }?;
             // SAFETY: the returned token carries the exact clipped range and
             // primary address whose entries must still name this page.
@@ -38229,13 +38345,11 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
             return Some(ReleaseSpan::Os(published));
         }
         let arena_memory = memory.arena_memory()?;
-        if arena_memory.arena != core::ptr::from_ref(self.arena.arena()).cast_mut() {
-            return None;
-        }
+        let arena = unsafe { self.arena.arena_for_memory(memory) }?;
         let slice_index = arena_memory.slice_index as usize;
         let slice_count = arena_memory.slice_count as usize;
         let size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
-        let slice_start = self.arena.slice_start(slice_index)?;
+        let slice_start = arena.slice_start(slice_index)?;
         let block_size = page_ref.block_size();
         let kind = size_class::page_kind_for_block_size(block_size)?;
         let expected_slice_count = match kind {
@@ -38452,7 +38566,7 @@ impl<'arena, 'map, Session: TheapPageSession> PageAllocatorEngine<'arena, 'map, 
         bin: usize,
     ) -> Option<MainArenaMappedAbandonedPage<'arena>> {
         let heap = NonNull::new(self.session.theap().heap())?;
-        self.arena.main_heap_abandoned_page(heap, bin)
+        self.arena.selected_arena()?.main_heap_abandoned_page(heap, bin)
     }
 
     fn owns_page(&self, page: &Page) -> bool {
@@ -39076,6 +39190,7 @@ impl PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession> {
         Self {
             session,
             arena,
+            arena_lifetime: PhantomData,
             requested_arena,
             page_map,
             thread_sequence: 0,
@@ -39155,8 +39270,8 @@ impl PageAllocatorEngine<'static, 'static, MainStaticProcessPageSession> {
     }
 }
 
-impl<'arena, 'map, Session: TheapPageSession> Drop
-    for PageAllocatorEngine<'arena, 'map, Session>
+impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::PageBacking<'arena>> Drop
+    for PageAllocatorEngine<'arena, 'map, Session, Backing>
 {
     fn drop(&mut self) {
         if !self.shutdown_complete {

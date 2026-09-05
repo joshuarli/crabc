@@ -53,7 +53,7 @@ use crate::config::{ARENA_ALIGNMENT, ARENA_BIN_COUNT, ARENA_MIN_SIZE, MAX_VABITS
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::{MapAccess, Mapping, MemoryConfig};
 use crate::page_map::{PageMap, PageMapInitializationError};
-use crate::single_thread::{FreeError, SingleThreadAllocator};
+use crate::single_thread::{FreeError, SingleThreadAllocator, ProcessMetadataPageAllocator};
 use crate::size_class;
 use crate::types::{
     ArenaPages, LiveThreadId, MemoryId, MemoryKind, Page, Theap, ThreadLocalData,
@@ -144,6 +144,9 @@ pub(crate) enum MetaError {
     /// published private metadata backing. The detached-Theap identity remains
     /// bound, and a later demand may retry that backing path.
     InitializationFailed,
+    /// Backing has already been selected; a metadata owner cannot swap its
+    /// process policy/PageMap or migrate outstanding legacy private pages.
+    BackingAlreadySelected,
     /// The source allocation route returned null for this request.
     AllocationUnavailable,
     /// The source alignment contract rejected this request before it reached
@@ -922,8 +925,9 @@ impl MetaRelease {
 
 /// One statically bootstrappable, process-lived metadata owner.
 ///
-/// `Self` is `!Unpin`: after initialization, `SingleThreadAllocator` contains
-/// references to the final `PageMap` and `ExclusiveTheapBootstrap` slots. Its
+/// `Self` is `!Unpin`: after initialization, the page engine contains
+/// references to the final bootstrap and either the shared process map or
+/// the historical private PageMap slot. Its
 /// safe operations require `Pin<&'static Self>`. Pin alone only prevents a
 /// move, not a destructor; the `SingleThreadAllocator` holds references to
 /// these final slots and therefore needs a process-lived static address. The
@@ -942,7 +946,8 @@ pub(crate) struct MetaAllocator {
     retained_page_map_initialization_mapping: UnsafeCell<MaybeUninit<Mapping>>,
     has_retained_page_map_initialization_mapping: AtomicBool,
     bootstrap: UnsafeCell<MaybeUninit<ExclusiveTheapBootstrap>>,
-    allocator: UnsafeCell<MaybeUninit<SingleThreadAllocator<'static, 'static, 'static>>>,
+    allocator: UnsafeCell<MaybeUninit<MetadataPageAllocator>>,
+    process_backing: UnsafeCell<Option<MetadataProcessBacking>>,
     subprocess: AtomicPtr<MainSubprocess>,
     /// The exact detached static Theap address successfully published through
     /// `subprocess->theap_meta`. This is identity-only: the allocator never
@@ -969,6 +974,39 @@ pub(crate) struct MetaAllocator {
     #[cfg(any(test, feature = "native-runtime-test-audit"))]
     test_allocation_high_water: AtomicUsize,
     _pin: PhantomPinned,
+}
+
+#[derive(Clone, Copy)]
+struct MetadataProcessBacking {
+    process: crate::os::VmProcess<'static>,
+    page_map: &'static PageMap,
+}
+
+/// Legacy explicit-config callers remain visibly separate until their
+/// process coordinator supplies the real pair/map. The selected production
+/// path never obtains capacity by enlarging that legacy private arena.
+enum MetadataPageAllocator {
+    LegacySelectedArena(SingleThreadAllocator<'static, 'static, 'static>),
+    Process(ProcessMetadataPageAllocator<'static, 'static>),
+}
+
+impl MetadataPageAllocator {
+    fn allocate_zeroed(&mut self, size: usize) -> Option<NonNull<u8>> {
+        match self { Self::LegacySelectedArena(engine) => engine.allocate_zeroed(size),
+            Self::Process(engine) => engine.allocate_zeroed(size) }
+    }
+    fn allocate_aligned_zeroed(&mut self, size: usize, alignment: usize) -> Option<NonNull<u8>> {
+        match self { Self::LegacySelectedArena(engine) => engine.allocate_aligned_zeroed(size, alignment),
+            Self::Process(engine) => engine.allocate_aligned_zeroed(size, alignment) }
+    }
+    unsafe fn usable_size(&self, pointer: NonNull<u8>) -> Option<usize> {
+        match self { Self::LegacySelectedArena(engine) => unsafe { engine.usable_size(pointer) },
+            Self::Process(engine) => unsafe { engine.usable_size(pointer) } }
+    }
+    unsafe fn free(&mut self, pointer: NonNull<u8>) -> Result<(), FreeError> {
+        match self { Self::LegacySelectedArena(engine) => unsafe { engine.free(pointer) },
+            Self::Process(engine) => unsafe { engine.free(pointer) } }
+    }
 }
 
 /// Read-only test audit of caller-visible metadata capabilities.
@@ -1036,6 +1074,7 @@ impl MetaAllocator {
             has_retained_page_map_initialization_mapping: AtomicBool::new(false),
             bootstrap: UnsafeCell::new(MaybeUninit::uninit()),
             allocator: UnsafeCell::new(MaybeUninit::uninit()),
+            process_backing: UnsafeCell::new(None),
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
             detached_metadata_theap: AtomicPtr::new(core::ptr::null_mut()),
             #[cfg(test)]
@@ -1209,8 +1248,10 @@ impl MetaAllocator {
     #[cfg(test)]
     pub(crate) fn test_private_page_map_address(self: Pin<&'static Self>) -> Option<usize> {
         let this = self.get_ref();
-        (this.status.load(Ordering::Acquire) == READY)
-            .then(|| this.page_map.get().addr())
+        if this.status.load(Ordering::Acquire) != READY { return None; }
+        // READY publishes the final backing selection; neither binding nor
+        // engine initialization can mutate it after this acquire observation.
+        unsafe { (*this.process_backing.get()).is_none() }.then(|| this.page_map.get().addr())
     }
 
     /// Returns the capability-level metadata lifetime audit used by bounded
@@ -1255,11 +1296,11 @@ impl MetaAllocator {
 
     /// Binds the detached metadata Theap/image for one selected source main
     /// subprocess without allocating a caller-visible metadata block or its
-    /// private backing. This is the source `mi_process_theap_meta` ordering
-    /// seam used by process initialization: it remains a separate private
-    /// map/arena owner, never publishes through `ProcessPageMapStorage`, and
-    /// takes its first backing only when a metadata caller actually requests
-    /// one.
+    /// backing. This is the source `mi_process_theap_meta` ordering seam used
+    /// by process initialization. The policy-bound path subsequently calls
+    /// `bind_process_backing` with the real shared map; historical explicit-
+    /// config callers retain their separate selected-arena backing. Neither
+    /// path takes its first page before a metadata caller requests one.
     pub(crate) fn prepare_for_main_subprocess(
         self: Pin<&'static Self>,
         config: MemoryConfig,
@@ -1272,6 +1313,37 @@ impl MetaAllocator {
             config,
             subprocess,
         })
+    }
+
+    /// Selects the actual process VM/arena owner and shared PageMap after
+    /// source detached-Theap identity publication but before first metadata
+    /// demand. A later identical binding is idempotent; changing either
+    /// identity or migrating an already active private engine is rejected.
+    /// All resulting engine operations remain under the metadata lock and
+    /// own disjoint PageMap ranges until their aliases/pages are retired.
+    pub(crate) fn bind_process_backing(
+        self: Pin<&'static Self>, process: crate::os::VmProcess<'static>,
+        page_map: crate::process_page_map::ProcessPageMapLease,
+    ) -> Result<(), MetaError> {
+        if !core::ptr::eq(page_map.subprocess().map_err(|_| MetaError::InitializationFailed)?, process.subprocess()) {
+            return Err(MetaError::SubprocessMismatch);
+        }
+        let config = page_map.memory_config().map_err(|_| MetaError::InitializationFailed)?;
+        let mut entry = self.enter()?;
+        entry.ensure_bound(config, process.subprocess())?;
+        // SAFETY: this owner creates only disjoint fresh page ranges and
+        // serializes their map accesses and terminal removals under `entry`.
+        // The retained process lease excludes safe root replacement.
+        let map = unsafe { page_map.page_map_for_owned_ranges() }.map_err(|_| MetaError::InitializationFailed)?;
+        let slot = unsafe { &mut *self.get_ref().process_backing.get() };
+        if let Some(selected) = *slot {
+            return if core::ptr::eq(selected.process.policy(), process.policy())
+                && core::ptr::eq(selected.page_map, map) { Ok(()) }
+                else { Err(MetaError::BackingAlreadySelected) };
+        }
+        if entry.status() != BOUND { return Err(MetaError::BackingAlreadySelected); }
+        *slot = Some(MetadataProcessBacking { process, page_map: map });
+        Ok(())
     }
 
     /// Allocates zeroed metadata through the detached source theap.
@@ -1815,6 +1887,20 @@ impl MetaAllocator {
     ) -> Result<(), MetaError> {
         let this = self.get_ref();
         debug_assert_eq!(this.status.load(Ordering::Acquire), BOUND);
+        // The source process path takes its first page through the ordinary
+        // arena/OS selector, not a private map and a fixed-capacity arena.
+        if let Some(backing) = unsafe { *this.process_backing.get() } {
+            let bootstrap = unsafe { Pin::new_unchecked((&mut *this.bootstrap.get()).assume_init_mut()) };
+            let allocator = unsafe { ProcessMetadataPageAllocator::activate_process_metadata(
+                bootstrap, backing.process, backing.page_map) }
+                .map_err(|_| {
+                    this.status.store(FAILED, Ordering::Release);
+                    MetaError::InitializationRetained
+                })?;
+            unsafe { (*this.allocator.get()).write(MetadataPageAllocator::Process(allocator)) };
+            this.status.store(READY, Ordering::Release);
+            return Ok(());
+        }
         let page_map = match PageMap::initialize(config, MAX_VABITS, false) {
             Ok(page_map) => page_map,
             Err(PageMapInitializationError::Failed { .. }) => {
@@ -1941,7 +2027,7 @@ impl MetaAllocator {
         };
         // SAFETY: every reference captured by `allocator` names one prior
         // final static slot. No operation can observe it before READY.
-        unsafe { (*this.allocator.get()).write(allocator) };
+        unsafe { (*this.allocator.get()).write(MetadataPageAllocator::LegacySelectedArena(allocator)) };
         this.status.store(READY, Ordering::Release);
         let _ = entry;
         Ok(())
@@ -2066,14 +2152,14 @@ impl MetaEntry {
     }
 
     #[inline]
-    fn allocator(&mut self) -> &mut SingleThreadAllocator<'static, 'static, 'static> {
+    fn allocator(&mut self) -> &mut MetadataPageAllocator {
         // SAFETY: READY plus this held private lock gives exclusive mutation
         // of the final static allocator slot.
         unsafe { (&mut *self.owner.get_ref().allocator.get()).assume_init_mut() }
     }
 
     #[inline]
-    fn allocator_ref(&self) -> &SingleThreadAllocator<'static, 'static, 'static> {
+    fn allocator_ref(&self) -> &MetadataPageAllocator {
         // SAFETY: see `allocator`; this shared projection is used only for
         // source pointer identity while the same metadata lock is held.
         unsafe { (&*self.owner.get_ref().allocator.get()).assume_init_ref() }
@@ -2163,6 +2249,110 @@ mod tests {
             );
             thread::yield_now();
         }
+    }
+
+    #[test]
+    fn metadata_singleton_outgrows_the_first_arena_without_a_private_capacity_limit() {
+        let allocator = static_allocator();
+        let (process, _) = bind_process_fixture(allocator, false);
+        let mut first = allocator.zalloc(config(), 64).unwrap();
+        assert_eq!(process.subprocess().arena_backing().registry().count(), 1);
+        // `src/subproc.c:_mi_meta_zalloc` delegates to normal Theap allocation;
+        // `src/arena.c:mi_arenas_page_alloc_fresh` may grow backing or use OS
+        // memory. The first arena's extent is not a metadata allocation cap.
+        let size = 2 * ARENA_MIN_SIZE;
+        let mut allocation = allocator.zalloc(config(), size)
+            .expect("ordinary metadata demand may exceed its first arena");
+        assert_eq!(process.subprocess().arena_backing().registry().count(), 2,
+            "source normal reservation grows beyond the first source-configured arena");
+        assert_eq!(allocation.memory_id().kind(), MemoryKind::Malloc);
+        // SAFETY: the live exclusive capability owns all requested bytes.
+        let bytes = unsafe { core::slice::from_raw_parts(allocation.pointer().as_ptr(), size) };
+        assert!(bytes.iter().all(|byte| *byte == 0));
+        allocator.free(&mut allocation).expect("the exact metadata owner releases its singleton");
+        allocator.free(&mut first).unwrap();
+        std::println!("m2.metadata.capacity.bytes={size}");
+        std::println!("m2.metadata.capacity.zeroed_malloc_released=1");
+    }
+
+    fn bind_process_fixture(allocator: Pin<&'static MetaAllocator>, disallow_arena: bool)
+        -> (crate::os::VmProcess<'static>, crate::process_page_map::ProcessPageMapLease) {
+        use std::boxed::Box;
+        use crate::config::{VmOptions, VmOption, VmOptionEnvironment};
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ArenaReserve, 64 * 1024); // source size option in KiB
+        // These existing fixture observations deliberately report no
+        // overcommit; explicitly select source full-page commitment.
+        options.set(VmOption::PageCommitOnDemand, 0);
+        options.set(VmOption::DisallowArenaAlloc, i64::from(disallow_arena));
+        let policy = Box::leak(Box::new(crate::os::VmPolicy::new(options).unwrap()));
+        policy.finish_preloading();
+        let process = crate::os::VmProcess::new(policy, allocator.test_default_subprocess());
+        let page_map = crate::process_page_map::ProcessPageMapStorage::test_static_owner()
+            .initialize(config(), process.subprocess()).unwrap();
+        allocator.bind_process_backing(process, page_map).unwrap();
+        (process, page_map)
+    }
+
+    #[test]
+    fn process_metadata_uses_os_policy_without_constructing_an_initial_arena() {
+        let allocator = static_allocator();
+        let (process, page_map) = bind_process_fixture(allocator, true);
+        let before = process.subprocess().vm_statistics().snapshot();
+        let mut block = allocator.zalloc(config(), 2 * ARENA_MIN_SIZE).unwrap();
+        assert!(allocator.test_private_page_map_address().is_none());
+        let map = unsafe { page_map.page_map_for_owned_ranges() }.unwrap();
+        let page = unsafe { map.checked_lookup(block.pointer().as_ptr()) };
+        assert!(!page.is_null());
+        assert_eq!(unsafe { (*page).memid().kind() }, MemoryKind::Os);
+        assert_eq!(process.subprocess().arena_backing().registry().count(), 0);
+        allocator.bind_process_backing(process, page_map).unwrap();
+        let pointer = block.pointer();
+        allocator.free(&mut block).unwrap();
+        assert!(unsafe { map.checked_lookup(pointer.as_ptr()) }.is_null());
+        assert_eq!(process.subprocess().vm_statistics().snapshot().reserved_current, before.reserved_current);
+    }
+
+    #[test]
+    fn process_metadata_backing_rejects_foreign_map_or_policy_and_legacy_migration() {
+        use std::boxed::Box;
+        let allocator = static_allocator();
+        let (process, page_map) = bind_process_fixture(allocator, true);
+        let foreign = crate::process_page_map::ProcessPageMapStorage::test_static_owner()
+            .initialize(config(), MainSubprocess::test_static_owner()).unwrap();
+        assert_eq!(allocator.bind_process_backing(process, foreign), Err(MetaError::SubprocessMismatch));
+        let mut options = crate::config::VmOptions::uninitialized();
+        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        let policy = Box::leak(Box::new(crate::os::VmPolicy::new(options).unwrap()));
+        let replacement = crate::os::VmProcess::new(policy, process.subprocess());
+        assert_eq!(allocator.bind_process_backing(replacement, page_map), Err(MetaError::BackingAlreadySelected));
+        let legacy = static_allocator();
+        let mut live = legacy.zalloc(config(), 64).unwrap();
+        let own_map = crate::process_page_map::ProcessPageMapStorage::test_static_owner()
+            .initialize(config(), legacy.test_default_subprocess()).unwrap();
+        assert_eq!(legacy.bind_process_backing(crate::os::VmProcess::new(policy, legacy.test_default_subprocess()), own_map),
+            Err(MetaError::BackingAlreadySelected));
+        legacy.free(&mut live).unwrap();
+    }
+
+    #[test]
+    fn process_metadata_does_not_silently_replace_incremental_commit_policy() {
+        use std::boxed::Box;
+        let allocator = static_allocator();
+        let mut options = crate::config::VmOptions::uninitialized();
+        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        options.set(crate::config::VmOption::PageCommitOnDemand, 1);
+        let policy = Box::leak(Box::new(crate::os::VmPolicy::new(options).unwrap()));
+        policy.finish_preloading();
+        let process = crate::os::VmProcess::new(policy, allocator.test_default_subprocess());
+        let map = crate::process_page_map::ProcessPageMapStorage::test_static_owner()
+            .initialize(config(), process.subprocess()).unwrap();
+        allocator.bind_process_backing(process, map).unwrap();
+        let before = process.subprocess().vm_statistics().snapshot();
+        assert!(matches!(allocator.zalloc(config(), 64), Err(MetaError::AllocationUnavailable)));
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+        assert_eq!(process.subprocess().arena_backing().registry().count(), 0);
     }
 
     #[test]
