@@ -444,6 +444,8 @@ mod pthread_atfork;
 mod pthread_tsd;
 #[path = "pthread_mutex.rs"]
 mod pthread_mutex;
+#[path = "pthread_vmlock.rs"]
+mod pthread_vmlock;
 #[path = "pthread_spin_destroy.rs"]
 mod pthread_spin_destroy;
 // The spin acquisition/release operations compose the existing four-byte

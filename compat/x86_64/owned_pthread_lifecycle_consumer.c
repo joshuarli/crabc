@@ -28,6 +28,7 @@
 #include <sched.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <sys/mman.h>
 #include <sys/wait.h>
 #include <threads.h>
 #include <unistd.h>
@@ -934,6 +935,106 @@ static int run_atfork_after_worker_teardown(void)
     return 0;
 }
 
+/*
+ * Musl carries every owned robust mutex on the task's robust list. A selected
+ * worker that returns while holding a private robust mutex therefore makes
+ * the next owner observe EOWNERDEAD in userspace; after consistent/unlock,
+ * the ordinary lock state is reusable. A process-shared robust mutex takes
+ * the complementary kernel route: the child registers its list with
+ * set_robust_list, and kernel task exit marks the shared mapping owner-dead
+ * for the parent. The two cases keep list unlinking, pending-node handling,
+ * and worker-exit ownership observable without treating a raw robust
+ * attribute bit as sufficient evidence.
+ */
+struct robust_private_round {
+    pthread_mutex_t mutex;
+    volatile int locked;
+    volatile int failure;
+};
+
+struct robust_shared_round {
+    pthread_mutex_t mutex;
+};
+
+static void *robust_private_owner(void *opaque)
+{
+    struct robust_private_round *round = opaque;
+
+    if (pthread_mutex_lock(&round->mutex) != 0)
+        __atomic_store_n(&round->failure, 1, __ATOMIC_RELEASE);
+    else
+        __atomic_store_n(&round->locked, 1, __ATOMIC_RELEASE);
+    /* Deliberately retain the robust mutex through the selected explicit-exit
+     * path, not merely the assembly worker-return tail. */
+    pthread_exit(0);
+}
+
+static int run_robust_mutex_owner_death(void)
+{
+    pthread_mutexattr_t attributes;
+    struct robust_private_round private_round = {
+        .mutex = { 0 },
+        .locked = 0,
+        .failure = 0,
+    };
+    struct robust_shared_round *shared_round;
+    pthread_t worker;
+    pid_t child;
+    int status;
+
+    if (pthread_mutexattr_init(&attributes) != 0 ||
+        pthread_mutexattr_setrobust(&attributes, 2) != EINVAL ||
+        pthread_mutexattr_setrobust(&attributes, PTHREAD_MUTEX_ROBUST) != 0 ||
+        pthread_mutex_init(&private_round.mutex, &attributes) != 0 ||
+        pthread_create(&worker, 0, robust_private_owner, &private_round) != 0 ||
+        pthread_join(worker, 0) != 0 ||
+        __atomic_load_n(&private_round.locked, __ATOMIC_ACQUIRE) != 1 ||
+        __atomic_load_n(&private_round.failure, __ATOMIC_ACQUIRE) != 0 ||
+        pthread_mutex_lock(&private_round.mutex) != EOWNERDEAD ||
+        pthread_mutex_consistent(&private_round.mutex) != 0 ||
+        pthread_mutex_unlock(&private_round.mutex) != 0 ||
+        pthread_mutex_lock(&private_round.mutex) != 0 ||
+        pthread_mutex_unlock(&private_round.mutex) != 0 ||
+        pthread_create(&worker, 0, robust_private_owner, &private_round) != 0 ||
+        pthread_join(worker, 0) != 0 ||
+        pthread_mutex_lock(&private_round.mutex) != EOWNERDEAD ||
+        /* A recovery owner that unlocks without consistent poisons the
+         * mutex, exactly as musl's robust unlock stores 0x7fffffff. */
+        pthread_mutex_unlock(&private_round.mutex) != 0 ||
+        pthread_mutex_lock(&private_round.mutex) != ENOTRECOVERABLE ||
+        pthread_mutex_destroy(&private_round.mutex) != 0)
+        return 1;
+
+    if (pthread_mutexattr_setpshared(&attributes, PTHREAD_PROCESS_SHARED) != 0)
+        return 2;
+    shared_round = mmap(0, sizeof(*shared_round), PROT_READ | PROT_WRITE,
+        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (shared_round == MAP_FAILED)
+        return 3;
+    shared_round->mutex = (pthread_mutex_t)PTHREAD_MUTEX_INITIALIZER;
+    if (pthread_mutex_init(&shared_round->mutex, &attributes) != 0) {
+        (void)munmap(shared_round, sizeof(*shared_round));
+        return 4;
+    }
+    child = fork();
+    if (child == 0) {
+        if (pthread_mutex_lock(&shared_round->mutex) != 0)
+            _Exit(83);
+        _Exit(0);
+    }
+    if (child < 0 || waitpid(child, &status, 0) != child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0 ||
+        pthread_mutex_lock(&shared_round->mutex) != EOWNERDEAD ||
+        pthread_mutex_consistent(&shared_round->mutex) != 0 ||
+        pthread_mutex_unlock(&shared_round->mutex) != 0 ||
+        pthread_mutex_destroy(&shared_round->mutex) != 0 ||
+        munmap(shared_round, sizeof(*shared_round)) != 0) {
+        (void)munmap(shared_round, sizeof(*shared_round));
+        return 5;
+    }
+    return pthread_mutexattr_destroy(&attributes) == 0 ? 0 : 6;
+}
+
 int main(void)
 {
     const int capacity = run_concurrent_lifecycle_capacity();
@@ -945,6 +1046,7 @@ int main(void)
     const int simultaneous_last_exit = run_simultaneous_last_thread_exit();
     const int live_fork = run_fork_with_live_selected_worker();
     const int atfork = run_atfork_after_worker_teardown();
+    const int robust_mutex = run_robust_mutex_owner_death();
 
     if (capacity != 0)
         return 5 + capacity;
@@ -964,5 +1066,7 @@ int main(void)
         return 50 + live_fork;
     if (atfork != 0)
         return 60 + atfork;
+    if (robust_mutex != 0)
+        return 70 + robust_mutex;
     return 0;
 }

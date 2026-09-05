@@ -188,9 +188,12 @@ state; a worker becomes the child's adopted main thread. Logical task exit is
 serialized separately from kernel clear-child-TID: the final live task owns
 ordinary exit, including when the adopted main returns while a child worker
 remains alive. Controls remain owned until creator handoff and kernel
-clear-child-TID both complete. Explicit scheduling, asynchronous and arbitrary
-syscall cancellation, robust mutexes, allocator-wide fork recovery, and dynamic
-TLS lifetime remain open.
+clear-child-TID both complete. The same consumer proves normal robust-mutex
+owner death, `EOWNERDEAD` recovery with `pthread_mutex_consistent`,
+`ENOTRECOVERABLE` after an unrecovered unlock, and process-shared owner death
+across `fork`. Explicit scheduling, asynchronous and arbitrary syscall
+cancellation, recursive/error-checking/PI robust mutexes, allocator-wide fork
+recovery, and dynamic TLS lifetime remain open.
 
 Each POSIX job separately links `owned_spawn_probe.c`: spawn/spawnp file-action
 ordering, working-directory and PATH search, signal/process attributes, worker
