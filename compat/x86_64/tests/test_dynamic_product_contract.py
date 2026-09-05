@@ -104,6 +104,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "filesystem-mechanisms",
                 "error-reporting",
                 "pty",
+                "passwd",
             ],
         )
         self.assertEqual(report["status"], "implemented-unqualified")

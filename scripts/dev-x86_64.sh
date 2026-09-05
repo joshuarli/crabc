@@ -564,6 +564,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-atfork-registry  test installed resource-sized atfork callback ordering
   owned-pty [DYNAMIC_SYSROOT]  test installed PTY naming, lifecycle and session handoff
+  owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
   owned-signal-helpers [DYNAMIC_SYSROOT]  test installed signal aliases, bookkeeping and reporting
   owned-pthread-join-cancel  test installed join cancellation and target reclamation
   owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
@@ -5623,7 +5624,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
-    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers|owned-pty) ;;
+    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers|owned-pty|owned-passwd) ;;
     owned-assert|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -7659,6 +7660,11 @@ case "$command" in
         [ "$#" -le 1 ] || fail "owned-pty takes at most one dynamic sysroot"
         ensure_image
         run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_pty.sh "$@"
+        ;;
+    owned-passwd)
+        [ "$#" -le 1 ] || fail "owned-passwd takes at most one dynamic sysroot"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_passwd.sh "$@"
         ;;
     owned-signal-helpers)
         [ "$#" -le 1 ] || fail "owned-signal-helpers takes at most one dynamic sysroot"

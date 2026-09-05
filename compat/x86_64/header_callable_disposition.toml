@@ -91,7 +91,7 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "planned-provider"
 provider_target = "future selected C ABI providers in libc.c-abi-compat"
 source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["_Fork", "addmntent", "cuserid", "endgrent", "endmntent", "endpwent", "endspent", "endusershell", "endutent", "endutxent", "fgetgrent", "fgetpwent", "fgetspent", "getgrent", "getgrgid", "getgrgid_r", "getgrnam", "getgrnam_r", "getgrouplist", "getmntent", "getmntent_r", "getpwent", "getpwnam", "getpwnam_r", "getpwuid", "getpwuid_r", "getspent", "getspnam", "getspnam_r", "getusershell", "getutent", "getutid", "getutline", "getutxent", "getutxid", "getutxline", "herror", "initgroups", "lckpwdf", "putgrent", "putpwent", "putspent", "pututline", "pututxline", "setgrent", "setmntent", "setpwent", "setspent", "setusershell", "setutent", "setutxent", "ulckpwdf", "updwtmp", "updwtmpx", "utmpname", "utmpxname"]
+members = ["_Fork", "addmntent", "cuserid", "endgrent", "endmntent", "endspent", "endusershell", "endutent", "endutxent", "fgetgrent", "fgetspent", "getgrent", "getgrgid", "getgrgid_r", "getgrnam", "getgrnam_r", "getgrouplist", "getmntent", "getmntent_r", "getspent", "getspnam", "getspnam_r", "getusershell", "getutent", "getutid", "getutline", "getutxent", "getutxid", "getutxline", "herror", "initgroups", "lckpwdf", "putgrent", "putspent", "pututline", "pututxline", "setgrent", "setmntent", "setspent", "setusershell", "setutent", "setutxent", "ulckpwdf", "updwtmp", "updwtmpx", "utmpname", "utmpxname"]
 
 [[deferred_owner_group]]
 id = "x86-header-callable-builtin-v1"

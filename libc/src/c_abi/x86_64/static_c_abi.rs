@@ -384,6 +384,9 @@ mod signal_sysv_helpers;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_signal_helpers.rs"]
 mod owned_signal_helpers;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_passwd.rs"]
+mod owned_passwd;
 #[path = "siginterrupt.rs"]
 mod siginterrupt;
 #[path = "signal_realtime_max.rs"]

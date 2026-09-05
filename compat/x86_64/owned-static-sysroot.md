@@ -541,3 +541,10 @@ is qualified by `owned-pty`, including same-object musl evidence through static
 and dynamic entries. [`owned-pty.md`](owned-pty.md) records source mappings,
 static-name buffer ownership, cancellation/mask and error-pipe order, and the
 fixture's isolated devpts/session boundary.
+
+The installed local passwd C APIs are qualified by `owned-passwd`, including
+reentrant lookups, shared enumeration and FILE records, and literal `putpwent`
+formatting. [`owned-passwd.md`](owned-passwd.md) records the pinned source,
+local-only provider boundary, storage/cancellation contracts, and same-object
+musl/static/dynamic evidence. The Rust facade's snapshot semantics and the
+remaining `users.databases` C roster are separate contracts.
