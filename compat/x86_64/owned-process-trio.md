@@ -56,6 +56,16 @@ provider binding and retains normal driver link receipts. Its private chroots
 contain an actual `/dev/null` device and no foreign runtime. The dynamic
 qualification catalog also runs this leaf on its supplied dynamic product.
 
+The installed-header dependency audit retains `workload.d` and `compile.json`
+beside that object. It imports the selected product's installed
+`crabc_cc_static.py` helper to derive the source translator and clean
+environment, then repeats dependency-only preprocessing with the driver's
+include policy. The only admitted dependencies are
+`owned_process_trio_probe.c` and headers beneath that selected product's
+`usr/include`; the recorded driver, manifest, source, object, command, and
+dependency hashes bind this audit to the object that the runner links. It does
+not substitute a separately compiled object for the installed-driver output.
+
 With no paths, the runner builds both disposable products. A positional
 dynamic product preserves the dynamic-only replay and does not build or run a
 static product. `--static-sysroot` selects a physical checkout `.work` static

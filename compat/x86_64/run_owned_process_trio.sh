@@ -259,6 +259,65 @@ validate_product_payload "$installed" dynamic
 
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$probe" -o "$work/workload.o"
+python3 -B - "$installed" "$work" "$probe" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+product, work, source = map(Path, sys.argv[1:])
+source_path = source.resolve(strict=True)
+workload = work / 'workload.o'
+headers = (product / 'usr/include').resolve(strict=True)
+# Repeat only preprocessing with the installed driver's source translator and
+# sanitized environment. The linked workload remains the object emitted by the
+# installed driver above; this checks its header boundary without replacing it.
+sys.path.insert(0, str(product / 'share/crabc'))
+import crabc_cc_static as compiler_contract
+
+dependency_command = [compiler_contract.compiler(), '-nostdinc', '-isystem', str(headers),
+    '-std=c11', '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', '-fPIE', '-M', str(source_path)]
+dependency_file = work / 'workload.d'
+with dependency_file.open('xb') as output:
+    subprocess.run(
+        dependency_command,
+        check=True,
+        env=compiler_contract.clean_environment(),
+        stdin=subprocess.DEVNULL,
+        stdout=output,
+    )
+try:
+    dependencies = dependency_file.read_text(encoding='utf-8').replace('\\\n', ' ').split(':', 1)[1].split()
+except (IndexError, UnicodeDecodeError) as error:
+    raise SystemExit(f'process-trio installed-driver dependency output is invalid: {error}') from error
+if not dependencies:
+    raise SystemExit('process-trio installed-driver dependency output is empty')
+dependency_paths = []
+for name in dependencies:
+    path = Path(name).resolve(strict=True)
+    if path != source_path and not path.is_relative_to(headers):
+        raise SystemExit(f'process-trio dependency escaped the installed headers: {path}')
+    dependency_paths.append(path)
+if source_path not in dependency_paths:
+    raise SystemExit('process-trio dependency output omits the workload source')
+
+def digest(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+record = {
+    'schema': 'crabc.x86_64-owned-process-trio-compile/v1',
+    'driver_sha256': digest(product / 'bin/crabc-cc-dynamic'),
+    'manifest_sha256': digest(product / 'share/crabc/manifest.json'),
+    'source_sha256': digest(source_path),
+    'object_sha256': digest(workload),
+    'dependency_audit_command': dependency_command,
+    'dependencies': {str(path): digest(path) for path in dependency_paths},
+}
+(work / 'compile.json').write_text(
+    json.dumps(record, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+)
+PY
 "$oracle_cc" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
 prepare_root "$work/oracle-root"
 for scenario in ordinary errors redirect; do

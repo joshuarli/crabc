@@ -149,6 +149,41 @@ class OwnedProcessTrioTests(unittest.TestCase):
         ):
             self.assertIn(comparison, runner)
 
+    def test_installed_driver_compile_provenance_rejects_foreign_headers(self) -> None:
+        document = DOCUMENT.read_text(encoding="utf-8")
+        runner = RUNNER.read_text(encoding="utf-8")
+
+        for required in (
+            "compile.json",
+            "workload.d",
+            "import crabc_cc_static as compiler_contract",
+            "compiler_contract.compiler()",
+            "compiler_contract.clean_environment()",
+            "'-nostdinc'",
+            "'-isystem'",
+            "headers = (product / 'usr/include').resolve(strict=True)",
+            "'-ffreestanding'",
+            "'-fstack-protector-strong'",
+            "'-fPIE'",
+            "dependency_audit_command",
+            "driver_sha256",
+            "manifest_sha256",
+            "source_sha256",
+            "object_sha256",
+            "path != source_path and not path.is_relative_to(headers)",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn("/usr/bin/gcc", runner)
+        self.assertLess(
+            runner.index('"$installed/bin/crabc-cc-dynamic" --dynamic-pie'),
+            runner.index("dependency_command = [compiler_contract.compiler()"),
+        )
+        self.assertLess(
+            runner.index("dependency_command = [compiler_contract.compiler()"),
+            runner.index('"$oracle_cc" -static'),
+        )
+        self.assertIn("installed-header dependency audit", document)
+
     def test_retained_link_identities_match_the_selected_product_matrix(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")
 
