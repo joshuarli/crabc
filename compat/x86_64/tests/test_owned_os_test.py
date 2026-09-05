@@ -118,6 +118,28 @@ class EvidenceContractTests(unittest.TestCase):
             )
             self.assertEqual((root / "dev/ptmx").readlink(), Path("pts/ptmx"))
 
+    def test_basic_requires_private_devpts_and_deterministic_system_file_fixtures(self) -> None:
+        self.assertTrue(RUNNER.suite_needs_private_devpts("basic"))
+        self.assertTrue(RUNNER.suite_needs_private_devpts("pty"))
+        self.assertFalse(RUNNER.suite_needs_private_devpts("process"))
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            record = RUNNER.install_basic_runtime_fixtures(root, "basic")
+            self.assertEqual(record["kind"], "basic-system-files")
+            self.assertEqual((root / "dev/shm").stat().st_mode & 0o7777, 0o1777)
+            self.assertEqual((root / "etc/passwd").read_text(), "root:x:0:0:root:/root:/bin/sh\n")
+            self.assertEqual((root / "etc/group").read_text(), "root:x:0:\n")
+            self.assertEqual((root / "etc/services").read_text(), "http 80/tcp\n")
+
+    def test_candidate_visible_shell_launcher_preserves_shell_arguments_and_control_loader(self) -> None:
+        source = RUNNER.control_shell_launcher_source()
+        self.assertIn('command[0] = "/control/ld-musl-x86_64.so.1";', source)
+        self.assertIn('command[1] = "/control/busybox";', source)
+        self.assertIn('command[2] = "sh";', source)
+        self.assertIn('for (int index = 1; index < argc; index++)', source)
+        self.assertIn('command[argc + 2] = NULL;', source)
+        self.assertIn('execve(command[0], command, environ);', source)
+
     def test_dependency_audit_rejects_host_header(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
             root = Path(temporary)

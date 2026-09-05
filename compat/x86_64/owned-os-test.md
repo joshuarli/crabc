@@ -71,11 +71,17 @@ under `/control` and are invoked explicitly, so they cannot overwrite the
 product's loader aliases or make the candidate's loader and `/usr/lib/libc.so`
 host-control dependencies. The runtime root also retains a minimal deterministic
 `etc/hosts` and `resolv.conf`, target artifacts, and basic device nodes,
-including root-local `/dev/tty`. A missing control-plane facility is recorded
-as an ordinary failing observation; it cannot become a skip or source edit.
+including root-local `/dev/tty`. Basic cases additionally receive only the
+inputs their frozen sources name: a private devpts `/dev/ptmx`, writable
+`/dev/shm`, root uid/gid records in deterministic `passwd` and `group` files,
+and one `http/tcp` service record. Its candidate-visible `/bin/sh` is an
+attested control fixture: a candidate-linked launcher explicitly execs the
+`/control` musl loader and BusyBox while preserving all product loader aliases.
+A missing control-plane facility is recorded as an ordinary failing observation;
+it cannot become a skip or source edit.
 The wrapper preserves os-test’s suite working directory even for nested test
-paths. The PTY suite additionally mounts `devpts` with `newinstance`, links its
-root-local `/dev/ptmx` to that mount, and records both mount and unmount streams
+paths. The basic and PTY suites mount `devpts` with `newinstance`, link their
+root-local `/dev/ptmx` to that mount, and record both mount and unmount streams
 in the evidence. This private fixture prevents host terminal acquisition while
 keeping the full source fixture and product runtime beneath the disposable root.
 

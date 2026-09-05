@@ -40,6 +40,11 @@ SCHEMA = "crabc.x86_64-owned-os-test/v1"
 ADAPTER_SCHEMA = "crabc.x86_64-owned-os-test-adapter/v1"
 PRODUCT_INCLUDE = "usr/include"
 CONTROL_CHARACTER_DEVICES = (("null", 1, 3), ("zero", 1, 5), ("random", 1, 8), ("urandom", 1, 9), ("tty", 5, 0))
+BASIC_SYSTEM_FILES = {
+    "passwd": b"root:x:0:0:root:/root:/bin/sh\n",
+    "group": b"root:x:0:\n",
+    "services": b"http 80/tcp\n",
+}
 
 
 class RunnerError(RuntimeError):
@@ -853,6 +858,107 @@ def mount_private_devpts(destination: Path) -> dict[str, Any]:
     return record
 
 
+def suite_needs_private_devpts(suite: str) -> bool:
+    """Both basic and PTY sources open a fresh pseudo-terminal controller."""
+    return suite in {"basic", "pty"}
+
+
+def install_basic_runtime_fixtures(destination: Path, suite: str) -> dict[str, Any] | None:
+    """Supply only the conventional files that frozen basic cases explicitly read.
+
+    These are test-root inputs, not libc providers: basic's passwd/group cases
+    look up the chroot's uid/gid zero, its netdb cases look up http/tcp, and its
+    POSIX shared-memory/named-semaphore cases require a writable `/dev/shm`.
+    """
+    if suite != "basic":
+        return None
+    shm = destination / "dev/shm"
+    shm.mkdir(parents=True)
+    os.chmod(shm, 0o1777)
+    etc = destination / "etc"
+    etc.mkdir(exist_ok=True)
+    files: dict[str, dict[str, Any]] = {}
+    for name, contents in BASIC_SYSTEM_FILES.items():
+        path = etc / name
+        path.write_bytes(contents)
+        os.chmod(path, 0o644)
+        files[f"/etc/{name}"] = {"sha256": hashlib.sha256(contents).hexdigest(), "byte_length": len(contents)}
+    return {"kind": "basic-system-files", "/dev/shm": {"mode": 0o1777}, "files": files}
+
+
+def control_shell_launcher_source() -> str:
+    """Return the candidate-visible `/bin/sh` control fixture source.
+
+    The fixture begins under the candidate loader, then explicitly execs the
+    separate host-musl loader and BusyBox beneath `/control`. It therefore
+    preserves the selected product's `/lib/ld-musl-x86_64.so.1` alias while
+    allowing libc APIs such as `popen`, `system`, and `wordexp` to execute the
+    conventional shell pathname inside the disposable root.
+    """
+    return """#include <unistd.h>
+
+extern char **environ;
+
+int main(int argc, char **argv)
+{
+    char *command[argc + 3];
+    command[0] = \"/control/ld-musl-x86_64.so.1\";
+    command[1] = \"/control/busybox\";
+    command[2] = \"sh\";
+    for (int index = 1; index < argc; index++)
+        command[index + 2] = argv[index];
+    command[argc + 2] = NULL;
+    execve(command[0], command, environ);
+    return 127;
+}
+"""
+
+
+def install_candidate_shell_launcher(product: Path, destination: Path) -> dict[str, Any]:
+    """Build and attest the explicit candidate-side `/bin/sh` control fixture."""
+    control = destination / "control"
+    source = control / "candidate-shell-launcher.c"
+    object_path = control / "candidate-shell-launcher.o"
+    launcher = control / "candidate-shell-launcher"
+    receipt = Path(str(launcher) + ".crabc-link.json")
+    source_text = control_shell_launcher_source()
+    source.write_text(source_text)
+    os.chmod(source, 0o644)
+    static = load_module("owned_os_test_shell_static", product / "share/crabc/crabc_cc_static.py")
+    environment = static.clean_environment()
+    driver = str(product / "bin/crabc-cc-dynamic")
+    compile_command = [driver, "--dynamic-pie", "-c", str(source), "-o", str(object_path)]
+    compile_status, compile_stdout, compile_stderr = run_capture(compile_command, environment)
+    record: dict[str, Any] = {
+        "kind": "candidate-shell-launcher/v1",
+        "source": {"path": "/control/candidate-shell-launcher.c", "sha256": hashlib.sha256(source_text.encode()).hexdigest()},
+        "compile": {"command": compile_command, "status": compile_status,
+                    "stdout": stream_snapshot(compile_stdout), "stderr": stream_snapshot(compile_stderr)},
+    }
+    if compile_status != 0 or not object_path.is_file():
+        raise FixtureError("candidate-visible shell fixture did not compile", {"shell_launcher": record})
+    record["object"] = {"path": "/control/candidate-shell-launcher.o", "sha256": sha256(object_path)}
+    link_command = [driver, "--dynamic-pie", str(object_path), "-o", str(launcher)]
+    link_status, link_stdout, link_stderr = run_capture(link_command, environment)
+    record["link"] = {"command": link_command, "status": link_status,
+                      "stdout": stream_snapshot(link_stdout), "stderr": stream_snapshot(link_stderr)}
+    if link_status != 0 or not launcher.is_file() or not receipt.is_file():
+        raise FixtureError("candidate-visible shell fixture did not link", {"shell_launcher": record})
+    try:
+        sys.path.insert(0, str(HERE))
+        import owned_posix_product_evidence as evidence
+        record["link_identity"] = evidence.validate_link(product, object_path.absolute(), launcher.absolute(), receipt, "pie")
+    except (OSError, RuntimeError) as error:
+        raise FixtureError(f"candidate-visible shell fixture receipt is invalid: {error}", {"shell_launcher": record}) from error
+    installed = destination / "bin/sh"
+    retain_file(launcher, installed)
+    record["launcher"] = {"path": "/control/candidate-shell-launcher", "sha256": sha256(launcher),
+                          "receipt_sha256": sha256(receipt), "candidate_path": "/bin/sh",
+                          "candidate_sha256": sha256(installed),
+                          "argv": ["/control/ld-musl-x86_64.so.1", "/control/busybox", "sh", "<original argv[1..]>"]}
+    return record
+
+
 def unmount_private_devpts(record: dict[str, Any]) -> dict[str, Any]:
     """Unmount a successful fixture before the evidence leaf is returned."""
     unmount = shutil.which("umount")
@@ -886,7 +992,7 @@ def prepare_compile_product(product: Path, destination: Path, product_roster: li
             "copy_difference": difference}
 
 
-def prepare_execution_root(product: Path, source: Path, destination: Path, private_devpts: bool,
+def prepare_execution_root(product: Path, source: Path, destination: Path, suite: str, private_devpts: bool,
                            product_roster: list[dict[str, Any]]) -> dict[str, Any]:
     """Build the candidate-only root plus an explicitly separate musl shell."""
     copied_tree(product, destination)
@@ -903,17 +1009,21 @@ def prepare_execution_root(product: Path, source: Path, destination: Path, priva
     loader = Path("/lib/ld-musl-x86_64.so.1")
     if not busybox.is_file() or not loader.is_file():
         raise RunnerError("pinned image lacks BusyBox or its musl control loader")
-    for path in (destination / "control",
+    control_paths = [destination / "control",
                  destination / "dev/null", destination / "dev/zero", destination / "dev/random",
                  destination / "dev/urandom", destination / "dev/tty", destination / "etc/hosts",
                  destination / "etc/resolv.conf", destination / "dev/pts", destination / "dev/ptmx",
-                 destination / "tmp", destination / "work"):
+                 destination / "tmp", destination / "work"]
+    if suite == "basic":
+        control_paths.extend(destination / path for path in ("dev/shm", "etc/passwd", "etc/group", "etc/services", "bin/sh"))
+    for path in control_paths:
         if path.exists() or path.is_symlink():
             raise RunnerError(f"control-plane path collides with supplied product: {path}")
     copied_tree(source, destination / "work", discard_git=True)
     (destination / "control").mkdir(exist_ok=True)
     retain_file(busybox, destination / "control/busybox")
     retain_file(loader, destination / "control/ld-musl-x86_64.so.1")
+    shell_launcher = install_candidate_shell_launcher(product, destination) if suite == "basic" else None
     install_control_character_devices(destination)
     (destination / "tmp").mkdir(exist_ok=True)
     os.chmod(destination / "tmp", 0o1777)
@@ -921,6 +1031,7 @@ def prepare_execution_root(product: Path, source: Path, destination: Path, priva
     etc.mkdir(exist_ok=True)
     (etc / "hosts").write_text("127.0.0.1 localhost\n::1 localhost\n")
     (etc / "resolv.conf").write_text("nameserver 127.0.0.1\n")
+    basic_fixtures = install_basic_runtime_fixtures(destination, suite)
     devpts = None
     try:
         devpts = mount_private_devpts(destination) if private_devpts else None
@@ -932,6 +1043,8 @@ def prepare_execution_root(product: Path, source: Path, destination: Path, priva
                 "product_payload_before": product_roster, "execution_root_after_setup": setup_roster,
                 "control_additions": control_delta["unexpected"],
                 "product_manifest_sha256": sha256(destination / "share/crabc/manifest.json"),
+                "basic_runtime_fixtures": basic_fixtures,
+                "shell_launcher": shell_launcher,
                 "busybox": {"path": str(busybox), "sha256": sha256(busybox)},
                 "musl_control_loader": {"path": str(loader), "sha256": sha256(loader)},
                 "candidate_loader_sha256": sha256(destination / "lib/ld-crabc-x86_64.so.1"), "private_devpts": devpts}
@@ -1028,7 +1141,7 @@ def run_profile(values: argparse.Namespace) -> int:
                     "schema": "crabc.x86_64-owned-os-test-product-payload/v1", "phase": "compiler-and-linker",
                     "entries": compile_control["payload"],
                 })
-                control = prepare_execution_root(compile_product, suite_root, runtime, suite == "pty", product_roster)
+                control = prepare_execution_root(compile_product, suite_root, runtime, suite, suite_needs_private_devpts(suite), product_roster)
                 control["compiler_product"] = {"root": compile_control["root"], "identity": compile_control["identity"],
                                                 "copy_difference": compile_control["copy_difference"], "payload": compiler_payload}
                 command = make_command(suite, suite_root, Path(__file__).resolve(), compile_product, evidence, runtime, values.header_jobs)
