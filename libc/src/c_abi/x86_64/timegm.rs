@@ -31,7 +31,7 @@ const DAYS_PER_400Y: i64 = 365 * 400 + 97;
 const DAYS_PER_100Y: i64 = 365 * 100 + 24;
 const DAYS_PER_4Y: i64 = 365 * 4 + 1;
 const SECONDS_PER_DAY: i64 = 86_400;
-const UTC: [u8; 4] = *b"UTC\0";
+pub(super) static UTC: [u8; 4] = *b"UTC\0";
 const SECS_THROUGH_MONTH: [i64; 12] = [
     0,
     31 * SECONDS_PER_DAY,
@@ -52,17 +52,17 @@ const DAYS_IN_MONTH: [c_int; 12] = [31, 30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct Tm {
-    seconds: c_int,
-    minutes: c_int,
-    hours: c_int,
-    month_day: c_int,
-    month: c_int,
-    year: c_int,
-    week_day: c_int,
-    year_day: c_int,
-    daylight_saving: c_int,
-    utc_offset: c_long,
-    utc_name: *const c_char,
+    pub(super) seconds: c_int,
+    pub(super) minutes: c_int,
+    pub(super) hours: c_int,
+    pub(super) month_day: c_int,
+    pub(super) month: c_int,
+    pub(super) year: c_int,
+    pub(super) week_day: c_int,
+    pub(super) year_day: c_int,
+    pub(super) daylight_saving: c_int,
+    pub(super) utc_offset: c_long,
+    pub(super) utc_name: *const c_char,
 }
 
 const _: () = {
@@ -83,7 +83,7 @@ const _: () = {
 
 /// Translate musl's March-based year calculation exactly.
 #[inline]
-fn year_to_secs(year: i64, is_leap: &mut bool) -> i64 {
+pub(super) fn year_to_secs(year: i64, is_leap: &mut bool) -> i64 {
     // musl writes `year-2ULL <= 136`; the unsigned conversion is material for
     // years before 2, so retain it rather than replacing it with a signed test.
     if (year as u64).wrapping_sub(2) <= 136 {
@@ -151,7 +151,7 @@ fn year_to_secs(year: i64, is_leap: &mut bool) -> i64 {
 
 /// Translate musl's normalized January-based month offset.
 #[inline]
-fn month_to_secs(month: c_int, is_leap: bool) -> i64 {
+pub(super) fn month_to_secs(month: c_int, is_leap: bool) -> i64 {
     let mut seconds = SECS_THROUGH_MONTH[month as usize];
     if is_leap && month >= 2 {
         seconds = seconds.wrapping_add(SECONDS_PER_DAY);
@@ -161,7 +161,7 @@ fn month_to_secs(month: c_int, is_leap: bool) -> i64 {
 
 /// Normalize C input fields into musl's signed UTC second count.
 #[inline]
-fn tm_to_secs(value: &Tm) -> i64 {
+pub(super) fn tm_to_secs(value: &Tm) -> i64 {
     let mut year = i64::from(value.year);
     let mut month = value.month;
     if !(0..12).contains(&month) {
@@ -189,7 +189,7 @@ fn tm_to_secs(value: &Tm) -> i64 {
 
 /// Translate musl's signed seconds-to-normalized-fields calculation.
 #[inline]
-fn secs_to_tm(seconds: i64, output: &mut Tm) -> bool {
+pub(super) fn secs_to_tm(seconds: i64, output: &mut Tm) -> bool {
     if seconds < i64::from(c_int::MIN).wrapping_mul(31_622_400)
         || seconds > i64::from(c_int::MAX).wrapping_mul(31_622_400)
     {

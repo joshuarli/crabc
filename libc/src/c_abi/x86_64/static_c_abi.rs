@@ -633,6 +633,15 @@ mod ftime;
 mod gmtime_r;
 #[path = "timegm.rs"]
 mod timegm;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_timezone.rs"]
+mod owned_timezone;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_calendar.rs"]
+mod owned_calendar;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_strftime.rs"]
+mod owned_strftime;
 #[path = "time_observation.rs"]
 mod time_observation;
 #[path = "nanosleep.rs"]
