@@ -43,7 +43,7 @@ use core::ffi::CStr;
 use core::fmt;
 use core::num::NonZeroUsize;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 use crabc_core::{Errno, Result};
 
@@ -111,6 +111,13 @@ static OS_NUMA_NODE_COUNT: AtomicUsize = AtomicUsize::new(0);
 // The frozen normal-release profile has no secure/debug mprotect transition
 // after decommit, so this static is the only raw Unix reset policy retained.
 static RESET_ADVICE: AtomicUsize = AtomicUsize::new(MADV_FREE as usize);
+
+// Pinned `src/stats.c` calibrates this process-wide subtraction once through
+// `_mi_clock_start` and applies it to every `_mi_clock_end`. Huge-page
+// reservation is the first active caller of that source timer in this port;
+// retain the same shared calibration rather than giving each reservation an
+// independently invented timeout clock.
+static SOURCE_CLOCK_DIFF_MILLISECONDS: AtomicI64 = AtomicI64::new(0);
 
 /// Drives one Unix reset advisory sequence without introducing an OS fallback.
 ///
@@ -1426,6 +1433,23 @@ impl Mapping {
         )
     }
 
+    /// Transfers one exact primitive huge-page mapping to the distinct
+    /// [`HugeOsAllocation`] owner.
+    ///
+    /// A one-GiB reservation is assembled from independently mapped ranges.
+    /// It must therefore not retain a `Mapping` and later pass the aggregate
+    /// range to ordinary `munmap` ownership. This consumes only the normal
+    /// mapping capability after its base, length, and huge-page result match
+    /// the pinned `_mi_prim_alloc_huge_os_pages` success branch.
+    fn into_huge_page_at(mut self, expected: *mut u8) -> Result<()> {
+        self.active()?;
+        if self.address != expected || self.length != HUGE_PAGE_SIZE || !self.is_large {
+            return Err(Errno::INVAL);
+        }
+        self.is_mapped = false;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn map_unix_policy(
         policy: &VmPolicy,
@@ -2265,6 +2289,544 @@ impl Mapping {
             length: end - start,
         }))
     }
+}
+
+/// One source `MI_MEM_OS_HUGE` allocation assembled from 1-GiB primitive maps.
+///
+/// Pinned `_mi_os_alloc_huge_os_pages` maps each range independently at a
+/// claimed high-address hint, records one aggregate `MI_MEM_OS_HUGE` memory
+/// ID only for the contiguous successful prefix, and later frees each 1-GiB
+/// primitive map independently. This owner consequently cannot be represented
+/// by a normal [`Mapping`], whose terminal release is one contiguous range.
+/// It retains the exact process pair that selected options and received every
+/// source statistic transition.
+#[must_use = "a huge OS allocation must be installed in a multi-range owner or explicitly released"]
+pub(crate) struct HugeOsAllocation<'a> {
+    process: VmProcess<'a>,
+    base: NonNull<u8>,
+    page_count: usize,
+    memory: MemoryId,
+    stop: HugeOsAllocationStop,
+}
+
+/// Why the pinned huge-page loop returned its contiguous prefix.
+///
+/// This is a typed diagnostic of an already-completed source branch, not a
+/// second allocation policy: `_mi_os_alloc_huge_os_pages` can return a valid
+/// partial prefix after a timeout, primitive error, or rejected noncontiguous
+/// result. Retaining that reason keeps those source warnings observable to
+/// the later process/arena owner without making a partial result disappear.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HugeOsAllocationStop {
+    Complete,
+    NoPagesRequested,
+    ClaimOverflow,
+    PrimitiveMapFailed(Errno),
+    NoncontiguousPrimitive,
+    TimedOut,
+}
+
+/// The source-visible result of one huge-page reservation attempt.
+///
+/// Primitive map failure and zero requested pages both remain source-style
+/// `Unavailable`; no regular mapping is substituted. A noncontiguous
+/// primitive result is rejected after its source adjustment-accounted cleanup.
+/// If that cleanup itself fails, its normal raw mapping is kept in a dedicated
+/// terminal cleanup owner while any already-contiguous huge prefix remains a
+/// valid distinct `MI_MEM_OS_HUGE` result.
+#[must_use = "a retained rejected huge primitive map needs an explicit raw retry or parking owner"]
+pub(crate) enum HugeOsAllocationOutcome<'a> {
+    Unavailable(HugeOsAllocationStop),
+    Allocated(HugeOsAllocation<'a>),
+    AllocatedWithRejectedPrimitive {
+        allocation: HugeOsAllocation<'a>,
+        rejected: HugeOsRejectedPrimitive,
+    },
+    RejectedPrimitive(HugeOsRejectedPrimitive),
+}
+
+/// A noncontiguous huge primitive map whose source adjustment free failed.
+///
+/// This is deliberately not a `HugeOsAllocation` and cannot become a normal
+/// allocation: it has no source `MI_MEM_OS_HUGE` provenance. Its adjustment
+/// statistics already moved at the failed source free edge, so a later retry
+/// is raw-only.
+#[must_use = "a failed rejected-primitive cleanup retains one raw mapping"]
+pub(crate) struct HugeOsRejectedPrimitive {
+    error: Errno,
+    mapping: Mapping,
+}
+
+impl HugeOsRejectedPrimitive {
+    #[inline]
+    pub(crate) const fn error(&self) -> Errno { self.error }
+
+    /// Retries only the raw kernel release after the source adjustment edge
+    /// has already run. It intentionally cannot re-enter normal mapping or
+    /// process-accounting APIs.
+    pub(crate) fn retry_raw_release(mut self) -> core::result::Result<(), Self> {
+        match self.mapping.unmap() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.error = error;
+                Err(self)
+            }
+        }
+    }
+}
+
+impl fmt::Debug for HugeOsRejectedPrimitive {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HugeOsRejectedPrimitive")
+            .field("error", &self.error)
+            .field("retains_mapping", &true)
+            .finish()
+    }
+}
+
+/// A source huge-page release that could not start because the caller did not
+/// provide enough compact failure-state words. No primitive release has run
+/// in this case, so the exact allocation remains available to retry with a
+/// sufficiently sized buffer.
+#[must_use = "a huge allocation remains live when its release tracker is too small"]
+pub(crate) struct HugeOsReleaseTrackingFailure<'a> {
+    allocation: HugeOsAllocation<'a>,
+    required_words: usize,
+}
+
+impl<'a> HugeOsReleaseTrackingFailure<'a> {
+    #[inline]
+    pub(crate) const fn required_words(&self) -> usize { self.required_words }
+
+    #[inline]
+    pub(crate) fn into_allocation(self) -> HugeOsAllocation<'a> { self.allocation }
+}
+
+/// The exact failed primitive-page set after a full source huge-page free
+/// pass. Every page was attempted and received its normal source statistics
+/// transition; only set bits still name live mappings and may be retried.
+#[must_use = "failed huge-page releases retain raw-only retry state"]
+pub(crate) struct HugeOsRawReleaseRetry<'a, 'bits> {
+    process: VmProcess<'a>,
+    base: NonNull<u8>,
+    page_count: usize,
+    memory: MemoryId,
+    source_error: Errno,
+    failed_pages: &'bits mut [usize],
+    failed_words: usize,
+}
+
+/// Error from a raw-only retry of a previously source-accounted huge page.
+#[must_use = "a raw retry failure retains its exact failed-page set"]
+pub(crate) struct HugeOsRawReleaseFailure<'a, 'bits> {
+    error: Errno,
+    retry: HugeOsRawReleaseRetry<'a, 'bits>,
+}
+
+impl<'a, 'bits> HugeOsRawReleaseFailure<'a, 'bits> {
+    #[inline]
+    pub(crate) const fn error(&self) -> Errno { self.error }
+
+    #[inline]
+    pub(crate) fn into_retry(self) -> HugeOsRawReleaseRetry<'a, 'bits> { self.retry }
+}
+
+impl<'a, 'bits> HugeOsRawReleaseRetry<'a, 'bits> {
+    /// Returns the original aggregate huge-memory provenance. Individual
+    /// failed pages remain the only live ranges represented by this retry
+    /// token, but their source owner and original memory kind stay explicit.
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId { self.memory }
+
+    /// Retries all and only the failed primitive unmaps. It keeps walking the
+    /// complete failed set after an error just as the source free loop keeps
+    /// walking later pages. No source statistic is repeated: the original
+    /// process-accounted pass already performed it for every marked bit.
+    pub(crate) fn retry_raw(self) -> core::result::Result<(), HugeOsRawReleaseFailure<'a, 'bits>> {
+        let mut first_error = None;
+        for page in 0..self.page_count {
+            if !huge_release_bit_is_set(self.failed_pages, page) {
+                continue;
+            }
+            let address = match huge_page_address(self.base, page) {
+                Some(address) => address,
+                None => {
+                    first_error.get_or_insert(Errno::INVAL);
+                    continue;
+                }
+            };
+            let result = match fault_before(FaultPoint::Unmap) {
+                Ok(()) => {
+                    // SAFETY: only a set bit can reach this branch; it names
+                    // a still-live exact one-GiB primitive map retained by
+                    // the preceding source-accounted release pass.
+                    unsafe { crabc_core::mm::munmap_raw(address.as_ptr(), HUGE_PAGE_SIZE) }
+                }
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(()) => huge_release_bit_clear(self.failed_pages, page),
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        match first_error {
+            Some(error) => Err(HugeOsRawReleaseFailure { error, retry: self }),
+            None => Ok(()),
+        }
+    }
+
+    #[cfg(test)]
+    fn failed_page(&self, page: usize) -> bool {
+        page < self.page_count && huge_release_bit_is_set(self.failed_pages, page)
+    }
+}
+
+impl<'a, 'bits> fmt::Debug for HugeOsRawReleaseRetry<'a, 'bits> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HugeOsRawReleaseRetry")
+            .field("base", &self.base)
+            .field("page_count", &self.page_count)
+            .field("failed_words", &self.failed_words)
+            .finish()
+    }
+}
+
+impl<'a> HugeOsAllocation<'a> {
+    /// Allocates the source `_mi_os_alloc_huge_os_pages` primitive through
+    /// one resolved process pair. It never falls back to a regular mapping.
+    pub(crate) fn allocate_for_process(
+        process: VmProcess<'a>,
+        config: MemoryConfig,
+        pages: usize,
+        numa_node: i32,
+        max_milliseconds: i64,
+        default_random: Option<&mut TheapRandomImage>,
+    ) -> HugeOsAllocationOutcome<'a> {
+        allocate_huge_pages_with(
+            process,
+            pages,
+            max_milliseconds,
+            default_random,
+            |hint| map_huge_page_for_process(process, config, hint, numa_node),
+            source_clock_start,
+            source_clock_end,
+        )
+    }
+
+    #[inline]
+    pub(crate) const fn page_count(&self) -> usize { self.page_count }
+
+    #[inline]
+    pub(crate) const fn size(&self) -> usize {
+        self.page_count * HUGE_PAGE_SIZE
+    }
+
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId { self.memory }
+
+    /// Returns the source branch that ended the successful contiguous prefix.
+    #[inline]
+    pub(crate) const fn stop(&self) -> HugeOsAllocationStop { self.stop }
+
+    #[inline]
+    pub(crate) const fn base(&self) -> NonNull<u8> { self.base }
+
+    /// Returns the caller storage needed to retain an exact failed-page set
+    /// for one complete source free pass.
+    #[inline]
+    pub(crate) const fn release_tracking_words(&self) -> usize {
+        huge_release_word_count(self.page_count)
+    }
+
+    /// Executes every pinned `mi_os_free_huge_os_pages` primitive free once.
+    ///
+    /// The source ignores individual primitive errors and continues. Rust
+    /// keeps that sequence but records every failed page in the supplied
+    /// compact bitset so later raw retries can neither unmap successful pages
+    /// nor duplicate the source statistics edge. A tracker too small to make
+    /// that guarantee fails before any syscall.
+    pub(crate) fn release_for_process<'bits>(
+        self,
+        failed_pages: &'bits mut [usize],
+    ) -> core::result::Result<(), HugeOsReleaseFailure<'a, 'bits>> {
+        let required_words = self.release_tracking_words();
+        if failed_pages.len() < required_words {
+            return Err(HugeOsReleaseFailure::Tracking(
+                HugeOsReleaseTrackingFailure {
+                    allocation: self,
+                    required_words,
+                },
+            ));
+        }
+        for word in &mut failed_pages[..required_words] {
+            *word = 0;
+        }
+        let first_error = release_huge_pages_with(
+            self.base,
+            self.page_count,
+            failed_pages,
+            |address| free_huge_page_for_process(self.process, address),
+        );
+        match first_error {
+            None => Ok(()),
+            Some(error) => Err(HugeOsReleaseFailure::FailedPages(HugeOsRawReleaseRetry {
+                process: self.process,
+                base: self.base,
+                page_count: self.page_count,
+                memory: self.memory,
+                source_error: error,
+                failed_pages,
+                failed_words: required_words,
+            })),
+        }
+    }
+}
+
+/// A failed source huge-page release either still owns the full allocation
+/// before any syscall (insufficient tracking) or owns precisely the compact
+/// set of source-accounted raw retries.
+#[must_use = "a failed huge release retains an explicit owner"]
+pub(crate) enum HugeOsReleaseFailure<'a, 'bits> {
+    Tracking(HugeOsReleaseTrackingFailure<'a>),
+    FailedPages(HugeOsRawReleaseRetry<'a, 'bits>),
+}
+
+impl<'a, 'bits> HugeOsReleaseFailure<'a, 'bits> {
+    #[inline]
+    pub(crate) fn error(&self) -> Option<Errno> {
+        match self {
+            Self::Tracking(_) => None,
+            Self::FailedPages(retry) => Some(retry.source_error),
+        }
+    }
+}
+
+fn allocate_huge_pages_with<'a>(
+    process: VmProcess<'a>,
+    pages: usize,
+    max_milliseconds: i64,
+    default_random: Option<&mut TheapRandomImage>,
+    mut map_page: impl FnMut(usize) -> Result<Mapping>,
+    mut clock_start: impl FnMut() -> i64,
+    mut clock_end: impl FnMut(i64) -> i64,
+) -> HugeOsAllocationOutcome<'a> {
+    let Some((start, claimed_size)) = process.policy.claim_huge_pages(pages, default_random) else {
+        return HugeOsAllocationOutcome::Unavailable(HugeOsAllocationStop::ClaimOverflow);
+    };
+    let start_time = clock_start();
+    let mut page = 0usize;
+    let mut all_zero = true;
+    let mut rejected = None;
+    let mut stop = if pages == 0 {
+        HugeOsAllocationStop::NoPagesRequested
+    } else {
+        HugeOsAllocationStop::Complete
+    };
+
+    while page < pages {
+        let Some(address) = page
+            .checked_mul(HUGE_PAGE_SIZE)
+            .and_then(|offset| start.checked_add(offset))
+        else {
+            stop = HugeOsAllocationStop::ClaimOverflow;
+            break;
+        };
+        let expected = address as *mut u8;
+        let mut mapping = match map_page(address) {
+            Ok(mapping) => mapping,
+            Err(error) => {
+                stop = HugeOsAllocationStop::PrimitiveMapFailed(error);
+                break;
+            }
+        };
+        all_zero &= mapping.initially_zero();
+        if mapping.base().ok() != Some(expected) {
+            stop = HugeOsAllocationStop::NoncontiguousPrimitive;
+            if let Err(error) = mapping.unmap_for_process(process, HUGE_PAGE_SIZE, true) {
+                rejected = Some(HugeOsRejectedPrimitive { error, mapping });
+            }
+            break;
+        }
+        if mapping.length() != Ok(HUGE_PAGE_SIZE) || !mapping.is_large() {
+            stop = HugeOsAllocationStop::NoncontiguousPrimitive;
+            // The base was exact, so this can only reject a malformed
+            // primitive result. Preserve it as a source-adjusted cleanup
+            // owner rather than treating it as a huge allocation.
+            if let Err(error) = mapping.unmap_for_process(process, HUGE_PAGE_SIZE, true) {
+                rejected = Some(HugeOsRejectedPrimitive { error, mapping });
+            }
+            break;
+        }
+        // The preceding base/length/large checks establish this exact source
+        // primitive result; moving it into the aggregate owner cannot fail.
+        if mapping.into_huge_page_at(expected).is_err() {
+            unreachable!("validated huge primitive mapping transfer must succeed");
+        }
+        page += 1;
+        let statistics = process.subprocess.vm_statistics();
+        statistics.committed_increase(HUGE_PAGE_SIZE);
+        statistics.reserve_increase(HUGE_PAGE_SIZE);
+
+        if max_milliseconds > 0 {
+            let mut elapsed = clock_end(start_time);
+            let estimate = (elapsed / page as i64).saturating_mul(pages as i64);
+            if estimate > max_milliseconds.saturating_mul(2) {
+                elapsed = max_milliseconds.saturating_add(1);
+            }
+            if elapsed > max_milliseconds {
+                stop = HugeOsAllocationStop::TimedOut;
+                break;
+            }
+        }
+    }
+
+    debug_assert!(page.saturating_mul(HUGE_PAGE_SIZE) <= claimed_size);
+    let allocation = NonNull::new(start as *mut u8).and_then(|base| {
+        let size = page.checked_mul(HUGE_PAGE_SIZE)?;
+        (page != 0).then_some(HugeOsAllocation {
+            process,
+            base,
+            page_count: page,
+            memory: MemoryId::os_huge(base.as_ptr(), size, true, all_zero),
+            stop,
+        })
+    });
+    match (allocation, rejected) {
+        (Some(allocation), Some(rejected)) => {
+            HugeOsAllocationOutcome::AllocatedWithRejectedPrimitive { allocation, rejected }
+        }
+        (Some(allocation), None) => HugeOsAllocationOutcome::Allocated(allocation),
+        (None, Some(rejected)) => HugeOsAllocationOutcome::RejectedPrimitive(rejected),
+        (None, None) => HugeOsAllocationOutcome::Unavailable(stop),
+    }
+}
+
+fn map_huge_page_for_process(
+    process: VmProcess<'_>,
+    config: MemoryConfig,
+    hint: usize,
+    numa_node: i32,
+) -> Result<Mapping> {
+    let mapping = Mapping::map_huge_page_at(process.policy, config, hint)?;
+    if numa_node >= 0 && numa_node < usize::BITS as i32 - 1 {
+        let mask = 1usize << numa_node as u32;
+        let address = mapping.base()?;
+        // SAFETY: `mapping` owns this whole live primitive mapping; the
+        // source accepts `mbind` failure as a best-effort NUMA preference and
+        // supplies exactly one native unsigned-long mask word.
+        let _ = unsafe {
+            crabc_core::mm::mbind_raw(
+                address,
+                HUGE_PAGE_SIZE,
+                MPOL_PREFERRED,
+                &mask,
+                usize::BITS as usize,
+                0,
+            )
+        };
+    }
+    Ok(mapping)
+}
+
+fn free_huge_page_for_process(process: VmProcess<'_>, address: NonNull<u8>) -> Result<()> {
+    let result = match fault_before(FaultPoint::Unmap) {
+        Ok(()) => {
+            // SAFETY: the caller supplies one exact still-live primitive huge
+            // mapping. The outer huge owner never reuses an address after a
+            // successful source free and retains failed addresses separately.
+            unsafe { crabc_core::mm::munmap_raw(address.as_ptr(), HUGE_PAGE_SIZE) }
+        }
+        Err(error) => Err(error),
+    };
+    let statistics = process.subprocess.vm_statistics();
+    statistics.committed_decrease(HUGE_PAGE_SIZE);
+    statistics.reserve_decrease(HUGE_PAGE_SIZE);
+    result
+}
+
+/// Walks every primitive page in the source free order while retaining a
+/// compact exact record of only the failed raw ranges. The caller validates
+/// and clears the supplied bitset before entering this helper.
+fn release_huge_pages_with(
+    base: NonNull<u8>,
+    page_count: usize,
+    failed_pages: &mut [usize],
+    mut release: impl FnMut(NonNull<u8>) -> Result<()>,
+) -> Option<Errno> {
+    let mut first_error = None;
+    for page in 0..page_count {
+        let Some(address) = huge_page_address(base, page) else {
+            huge_release_bit_set(failed_pages, page);
+            first_error.get_or_insert(Errno::INVAL);
+            continue;
+        };
+        if let Err(error) = release(address) {
+            huge_release_bit_set(failed_pages, page);
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error
+}
+
+#[inline]
+const fn huge_release_word_count(page_count: usize) -> usize {
+    let bits = usize::BITS as usize;
+    page_count.saturating_add(bits - 1) / bits
+}
+
+#[inline]
+fn huge_release_bit_is_set(bits: &[usize], page: usize) -> bool {
+    let word = page / usize::BITS as usize;
+    let bit = page % usize::BITS as usize;
+    bits.get(word).is_some_and(|value| value & (1usize << bit) != 0)
+}
+
+#[inline]
+fn huge_release_bit_set(bits: &mut [usize], page: usize) {
+    let word = page / usize::BITS as usize;
+    let bit = page % usize::BITS as usize;
+    bits[word] |= 1usize << bit;
+}
+
+#[inline]
+fn huge_release_bit_clear(bits: &mut [usize], page: usize) {
+    let word = page / usize::BITS as usize;
+    let bit = page % usize::BITS as usize;
+    bits[word] &= !(1usize << bit);
+}
+
+#[inline]
+fn huge_page_address(base: NonNull<u8>, page: usize) -> Option<NonNull<u8>> {
+    let offset = page.checked_mul(HUGE_PAGE_SIZE)?;
+    NonNull::new(base.as_ptr().wrapping_add(offset))
+}
+
+#[inline]
+fn source_clock_now() -> i64 {
+    // `_mi_prim_clock_now` falls through to its low-resolution source clock
+    // on a failed `clock_gettime`; this fixed Linux 5.10 port has no libc
+    // fallback, so zero is the source-compatible non-failing observation.
+    monotonic_milliseconds().unwrap_or(0)
+}
+
+fn source_clock_start() -> i64 {
+    if SOURCE_CLOCK_DIFF_MILLISECONDS.load(Ordering::Relaxed) == 0 {
+        let before = source_clock_now();
+        let after = source_clock_now();
+        SOURCE_CLOCK_DIFF_MILLISECONDS.store(after.wrapping_sub(before), Ordering::Relaxed);
+    }
+    source_clock_now()
+}
+
+#[inline]
+fn source_clock_end(start: i64) -> i64 {
+    source_clock_now()
+        .wrapping_sub(start)
+        .wrapping_sub(SOURCE_CLOCK_DIFF_MILLISECONDS.load(Ordering::Relaxed))
 }
 
 /// One regular Linux OS allocation together with its exact release mapping.
@@ -4219,6 +4781,238 @@ mod tests {
         let after_raw_retry = subprocess.vm_statistics().snapshot();
         assert_eq!(after_raw_retry.reserved_current, 0);
         assert_eq!(after_raw_retry.committed_current, 0);
+    }
+
+    fn synthetic_huge_mapping(config: MemoryConfig, address: usize) -> Mapping {
+        Mapping {
+            address: address as *mut u8,
+            length: HUGE_PAGE_SIZE,
+            page_size: config.page_size(),
+            initially_committed: true,
+            initially_zero: true,
+            is_large: true,
+            is_mapped: true,
+        }
+    }
+
+    #[test]
+    fn huge_os_allocation_records_the_contiguous_prefix_and_os_huge_provenance() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapped = 0;
+
+        let allocation = match allocate_huge_pages_with(
+            process,
+            2,
+            0,
+            None,
+            |hint| {
+                mapped += 1;
+                Ok(synthetic_huge_mapping(config, hint))
+            },
+            || 0,
+            |_| 0,
+        ) {
+            HugeOsAllocationOutcome::Allocated(allocation) => allocation,
+            _ => panic!("two exact primitive maps must produce one huge owner"),
+        };
+
+        assert_eq!(mapped, 2);
+        assert_eq!(allocation.page_count(), 2);
+        assert_eq!(allocation.size(), 2 * HUGE_PAGE_SIZE);
+        assert_eq!(allocation.stop(), HugeOsAllocationStop::Complete);
+        let memory = allocation.memory_id();
+        assert_eq!(memory.kind(), MemoryKind::OsHuge);
+        assert_eq!(
+            memory.os_base().map(|address| address.value()),
+            Some(allocation.base().as_ptr().addr()),
+        );
+        assert_eq!(memory.size(), Some(2 * HUGE_PAGE_SIZE));
+        assert!(memory.is_pinned());
+        assert!(memory.initially_committed());
+        assert!(memory.initially_zero());
+        let statistics = subprocess.vm_statistics().snapshot();
+        assert_eq!(statistics.mmap_calls, 0, "the huge primitive does not use mi_os_prim_alloc");
+        assert_eq!(statistics.reserved_current, (2 * HUGE_PAGE_SIZE) as i64);
+        assert_eq!(statistics.committed_current, (2 * HUGE_PAGE_SIZE) as i64);
+    }
+
+    #[test]
+    fn huge_os_allocation_times_out_after_recording_the_completed_prefix() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapped = 0;
+
+        let allocation = match allocate_huge_pages_with(
+            process,
+            3,
+            10,
+            None,
+            |hint| {
+                mapped += 1;
+                Ok(synthetic_huge_mapping(config, hint))
+            },
+            || 0,
+            |_| 11,
+        ) {
+            HugeOsAllocationOutcome::Allocated(allocation) => allocation,
+            _ => panic!("the first source huge primitive completes before timeout evaluation"),
+        };
+
+        assert_eq!(mapped, 1, "the source estimate forces the timeout after one page");
+        assert_eq!(allocation.page_count(), 1);
+        assert_eq!(allocation.stop(), HugeOsAllocationStop::TimedOut);
+        assert_eq!(subprocess.vm_statistics().snapshot().reserved_current, HUGE_PAGE_SIZE as i64);
+    }
+
+    #[test]
+    fn huge_os_allocation_never_substitutes_a_regular_map_after_primitive_failure() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+
+        assert!(matches!(
+            HugeOsAllocation::allocate_for_process(process, config, 1, -1, 0, None),
+            HugeOsAllocationOutcome::Unavailable(HugeOsAllocationStop::PrimitiveMapFailed(
+                Errno::NOMEM
+            ))
+        ));
+        assert_eq!(fault.observed(), 1, "one failed huge primitive ends the source loop");
+        assert_ne!(policy.huge_hint_start.load(Ordering::Acquire), 0);
+        let statistics = subprocess.vm_statistics().snapshot();
+        assert_eq!(statistics.mmap_calls, 0);
+        assert_eq!(statistics.reserved_current, 0);
+        assert_eq!(statistics.committed_current, 0);
+    }
+
+    #[test]
+    fn huge_os_noncontiguous_primitive_retains_only_its_adjusted_cleanup_owner() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+
+        let rejected = match allocate_huge_pages_with(
+            process,
+            1,
+            0,
+            None,
+            |hint| Ok(synthetic_huge_mapping(config, hint + HUGE_PAGE_SIZE)),
+            || 0,
+            |_| 0,
+        ) {
+            HugeOsAllocationOutcome::RejectedPrimitive(rejected) => rejected,
+            _ => panic!("a noncontiguous source primitive cannot become MI_MEM_OS_HUGE"),
+        };
+
+        assert_eq!(rejected.error(), Errno::NOMEM);
+        let statistics = subprocess.vm_statistics().snapshot();
+        assert_eq!(statistics.reserved_current, -(HUGE_PAGE_SIZE as i64));
+        assert_eq!(statistics.committed_current, -(HUGE_PAGE_SIZE as i64));
+        assert_eq!(fault.observed(), 1, "the adjustment cleanup was attempted once");
+    }
+
+    #[test]
+    fn huge_os_release_walks_after_failures_and_records_exact_page_bits() {
+        let base = NonNull::new(HUGE_HINT_BASE as *mut u8).unwrap();
+        let mut failed = [0usize; 1];
+        let mut observed = [usize::MAX; 3];
+        let mut count = 0;
+        let first = release_huge_pages_with(base, 3, &mut failed, |address| {
+            let page = (address.as_ptr().addr() - base.as_ptr().addr()) / HUGE_PAGE_SIZE;
+            observed[count] = page;
+            count += 1;
+            if page == 0 || page == 2 {
+                Err(Errno::NOMEM)
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(first, Some(Errno::NOMEM));
+        assert_eq!(count, 3, "source free continues after the first primitive error");
+        assert_eq!(observed, [0, 1, 2]);
+        assert_eq!(failed[0], 0b101, "only still-live primitive mappings are retained");
+    }
+
+    #[test]
+    fn huge_os_raw_retry_never_repeats_source_statistics() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let base = NonNull::dangling();
+
+        assert_eq!(free_huge_page_for_process(process, base), Err(Errno::NOMEM));
+        let after_source_free = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_source_free.reserved_current, -(HUGE_PAGE_SIZE as i64));
+        assert_eq!(after_source_free.committed_current, -(HUGE_PAGE_SIZE as i64));
+
+        let mut failed = [1usize];
+        let retry = HugeOsRawReleaseRetry {
+            process,
+            base,
+            page_count: 1,
+            memory: MemoryId::os_huge(base.as_ptr(), HUGE_PAGE_SIZE, true, true),
+            source_error: Errno::NOMEM,
+            failed_pages: &mut failed,
+            failed_words: 1,
+        };
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let failure = match retry.retry_raw() {
+            Ok(()) => panic!("the injected raw retry must retain its one failed page"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error(), Errno::NOMEM);
+        let retry = failure.into_retry();
+        assert!(retry.failed_page(0));
+        assert_eq!(
+            subprocess.vm_statistics().snapshot(),
+            after_source_free,
+            "raw retries must not repeat a source-accounted free event",
+        );
+    }
+
+    #[test]
+    fn huge_os_release_requires_complete_failure_tracking_before_any_free() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let allocation = match allocate_huge_pages_with(
+            process,
+            1,
+            0,
+            None,
+            |hint| Ok(synthetic_huge_mapping(config, hint)),
+            || 0,
+            |_| 0,
+        ) {
+            HugeOsAllocationOutcome::Allocated(allocation) => allocation,
+            _ => panic!("the synthetic source primitive produces one huge owner"),
+        };
+
+        let mut no_tracking = [];
+        let failure = match allocation.release_for_process(&mut no_tracking) {
+            Ok(()) => panic!("release must not start without exact failed-page storage"),
+            Err(HugeOsReleaseFailure::Tracking(failure)) => failure,
+            Err(HugeOsReleaseFailure::FailedPages(_)) => {
+                panic!("no primitive free may run before tracker validation")
+            }
+        };
+        assert_eq!(failure.required_words(), 1);
+        let _allocation = failure.into_allocation();
+        assert_eq!(subprocess.vm_statistics().snapshot().reserved_current, HUGE_PAGE_SIZE as i64);
     }
 
     #[test]
