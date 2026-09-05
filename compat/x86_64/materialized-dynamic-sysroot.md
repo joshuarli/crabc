@@ -206,3 +206,8 @@ transactions and existing cancellation/lifecycle consumers; retained log:
 `.work/x86_64/pthread-signals-getattr-search-integrated.log`, product:
 `.work/x86_64/tmp/materialized-dynamic.irVBKA`. This is component evidence,
 not final same-revision platform qualification.
+
+Installed and extracted products also run `run_owned_pthread_join_cancel.sh`:
+pending entry and blocked joins cancel with user cleanup while preserving the
+target for a later join; disabled and masked callers complete their join and
+retain their original cancellation state. The oracle is pinned musl 1.2.6.

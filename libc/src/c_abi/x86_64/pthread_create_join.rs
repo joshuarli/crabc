@@ -23,7 +23,10 @@
 //!   of that source.
 //! - `src/thread/pthread_join.c` supplies the essential wait-before-reclaim
 //!   ordering: a joiner waits for `CLONE_CHILD_CLEARTID` to clear the worker
-//!   TID before it releases worker-owned memory.
+//!   TID before it releases worker-owned memory. Its entry testcancel and
+//!   disabled/masked state handling also govern the owned join path. Because
+//!   this runtime additionally claims the target, it registers explicit
+//!   cancellation cleanup to restore joinability before any user handlers.
 //! - `src/thread/pthread_detach.c` supplies the single successful
 //!   joinable-to-detached ownership transition. This selected artifact keeps
 //!   musl's prompt detach shape but uses its established AArch64-style later
@@ -2277,6 +2280,42 @@ pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
 pub(super) unsafe fn join_selected_worker(
     thread: *mut c_void,
 ) -> Result<SelectedWorkerJoinResult, c_int> {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe {
+        pthread_cancel::pthread_testcancel();
+        let mut original_state = 0;
+        pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, &mut original_state);
+        let mut cleanup = core::mem::MaybeUninit::<pthread_cancel::CleanupNode>::uninit();
+        let mut registered = false;
+        let result = join_selected_worker_inner(thread, cleanup.as_mut_ptr(), &mut registered, original_state);
+        pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut());
+        if registered { pthread_cancel::_pthread_cleanup_pop(cleanup.as_mut_ptr(), 0); }
+        pthread_cancel::pthread_setcancelstate(original_state, core::ptr::null_mut());
+        return result;
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    unsafe { join_selected_worker_inner(thread) }
+}
+
+#[cfg(feature = "x86-owned-static-runtime")]
+const JOIN_CANCEL_ENABLE: c_int = 0;
+#[cfg(feature = "x86-owned-static-runtime")]
+const JOIN_CANCEL_DISABLE: c_int = 1;
+
+/// Cancellation abandons Rust frames; explicitly restore the target before
+/// invoking the joining task's outer user cleanup handlers. The target stays
+/// linked and mapped throughout the cancellable wait.
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe extern "C" fn cancel_selected_worker_join(argument: *mut c_void) {
+    unsafe { release_join_claim(argument.cast::<ThreadControl>()) };
+}
+
+unsafe fn join_selected_worker_inner(
+    thread: *mut c_void,
+    #[cfg(feature = "x86-owned-static-runtime")] cleanup: *mut pthread_cancel::CleanupNode,
+    #[cfg(feature = "x86-owned-static-runtime")] registered: &mut bool,
+    #[cfg(feature = "x86-owned-static-runtime")] original_state: c_int,
+) -> Result<SelectedWorkerJoinResult, c_int> {
     if thread.is_null() {
         return Err(EINVAL);
     }
@@ -2291,6 +2330,15 @@ pub(super) unsafe fn join_selected_worker(
         return Err(EINVAL);
     };
 
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe {
+        pthread_cancel::_pthread_cleanup_push(cleanup, Some(cancel_selected_worker_join), control.cast());
+        *registered = true;
+        // Musl pthread_join keeps DISABLE and MASKED callers disabled while
+        // waiting, and restores their original state on return.
+        if original_state == JOIN_CANCEL_ENABLE { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_ENABLE, core::ptr::null_mut()); }
+    }
+
     // SAFETY: the lifecycle claim keeps this linked control mapped. Do not
     // reclaim a fast child that disclosed pthread_self() to another worker
     // before its creating parent has written the caller-visible handle.
@@ -2304,18 +2352,28 @@ pub(super) unsafe fn join_selected_worker(
             break;
         }
         if child_tid < 0 {
+            #[cfg(feature = "x86-owned-static-runtime")]
+            unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
             unsafe { release_join_claim(control) };
             return Err(EINVAL);
         }
         // CLONE_CHILD_CLEARTID wakes this shared (not FUTEX_PRIVATE) word as
         // the last kernel action on normal child exit. EAGAIN and EINTR only
         // request another load; no C errno translation is selected here.
+        #[cfg(feature = "x86-owned-static-runtime")]
+        let wait_result = unsafe {
+            pthread_cancel::syscall_cp(raw_syscall::SYS_FUTEX,
+                core::ptr::addr_of_mut!((*control).child_tid) as usize as i64,
+                FUTEX_WAIT, i64::from(child_tid), 0, 0, 0)
+        };
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
         let wait_result: i64;
         // SAFETY: the shared child-TID word, expected value, and null timeout
         // satisfy Linux FUTEX_WAIT. Keeping this syscall at the selected join
         // boundary gives the lifecycle's wait-before-reclaim proof a direct
         // machine-code witness rather than depending on generic-wrapper
         // inlining after the worker attribute path grew.
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
         unsafe {
             core::arch::asm!(
                 "syscall",
@@ -2335,10 +2393,17 @@ pub(super) unsafe fn join_selected_worker(
             if error == EAGAIN || error == EINTR {
                 continue;
             }
+            #[cfg(feature = "x86-owned-static-runtime")]
+            unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
             unsafe { release_join_claim(control) };
             return Err(error);
         }
     }
+
+    // From this point the target may be withdrawn and unmapped: cancellation
+    // must not run the claim cleanup against retired storage.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
 
     // A normal returning worker publishes `finished` after its result before
     // its assembly tail invokes exit. The acquire pairs with that release;
@@ -2354,6 +2419,8 @@ pub(super) unsafe fn join_selected_worker(
         // call into the following munmap, and a retry after a failed munmap
         // intentionally leaves the worker withdrawn.
         if !release_selected_worker(control) {
+            #[cfg(feature = "x86-owned-static-runtime")]
+            unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
             unsafe { release_join_claim(control) };
             return Err(EINVAL);
         }

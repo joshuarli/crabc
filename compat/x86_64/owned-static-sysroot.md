@@ -390,3 +390,13 @@ suite, including complete allocator lifecycle, pthread, stdio, filesystem, socke
 resolver obligations. Those remain requirements of the planned families in
 `compat/x86_64/parity.toml`. The artifact does not change x86 promotion or
 public-support state.
+
+The focused `owned-pthread-join-cancel` command qualifies `pthread_join` entry
+and blocked cancellation against pinned musl in both static and both dynamic
+executable modes. `owned_pthread_join_cancel_probe.c` verifies user cleanup,
+continued target joinability after cancellation, joining from user cleanup,
+exact target reclamation,
+and disabled/masked state restoration. The owned join boundary registers an
+explicit private cleanup node before enabling cancellation while waiting;
+Rust destructors cannot restore ownership when cancellation exits the task.
+Retirement and cleanup-node removal run with cancellation disabled.
