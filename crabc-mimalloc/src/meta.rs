@@ -1335,14 +1335,17 @@ impl MetaAllocator {
         // serializes their map accesses and terminal removals under `entry`.
         // The retained process lease excludes safe root replacement.
         let map = unsafe { page_map.page_map_for_owned_ranges() }.map_err(|_| MetaError::InitializationFailed)?;
-        let slot = unsafe { &mut *self.get_ref().process_backing.get() };
-        if let Some(selected) = *slot {
+        let slot = self.get_ref().process_backing.get();
+        // Once READY is published, read-only witnesses may inspect this
+        // immutable selection. Even idempotent rebinding must not create a
+        // whole-slot mutable reference that overlaps those observations.
+        if let Some(selected) = unsafe { *slot } {
             return if core::ptr::eq(selected.process.policy(), process.policy())
                 && core::ptr::eq(selected.page_map, map) { Ok(()) }
                 else { Err(MetaError::BackingAlreadySelected) };
         }
         if entry.status() != BOUND { return Err(MetaError::BackingAlreadySelected); }
-        *slot = Some(MetadataProcessBacking { process, page_map: map });
+        unsafe { *slot = Some(MetadataProcessBacking { process, page_map: map }); }
         Ok(())
     }
 
