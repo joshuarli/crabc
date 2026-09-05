@@ -27,11 +27,12 @@
 //! policy/priority fields. This module owns exactly the eighteen standard
 //! lifecycle and metadata entry points over that record.
 //!
-//! The record is intentionally not a selected worker-creation policy. The
-//! adjacent `pthread_create_join.rs` artifact continues to admit only a null attribute pointer.
-//! In particular, this leaf does not claim detached-at-
-//! create, custom-stack, guard-page, scheduler, GNU default-attribute,
-//! affinity-attribute, live-thread inspection, or general pthread behavior.
+//! `pthread_create_join.rs` decodes this exact record only for its selected
+//! worker policy.  That sibling consumes detached-at-create, a supplied stack
+//! or a private guarded stack, and the requested stack size.  It rejects an
+//! explicit scheduler request with `ENOTSUP`; it does not claim scheduler,
+//! GNU default-attribute, affinity-attribute, live-thread inspection, or
+//! general pthread behavior.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread attribute leaf requires little-endian Linux/x86-64");
@@ -57,6 +58,41 @@ const STACK_TOP_WORD_INDEX: usize = 2;
 const DETACH_INHERIT_WORD_INDEX: usize = 3;
 const POLICY_PRIORITY_WORD_INDEX: usize = 4;
 const LOW_C_INT_MASK: usize = u32::MAX as usize;
+
+/// The creation-relevant portion of one initialized public record.
+///
+/// This is a private, plain-Copy decode boundary shared with the selected
+/// worker seam.  Keeping the source-shaped record layout and the decode next
+/// to its setters/getters prevents the clone owner from guessing public
+/// `pthread_attr_t` offsets.  A scheduler request remains outside that
+/// bounded seam and is represented explicitly rather than silently ignored.
+#[derive(Clone, Copy)]
+pub(super) struct SelectedWorkerAttributes {
+    pub(super) stack_size: usize,
+    pub(super) guard_size: usize,
+    pub(super) caller_stack_top: Option<usize>,
+    pub(super) detached: bool,
+    pub(super) scheduler_requested: bool,
+}
+
+/// The existing selected-worker default when `pthread_create` receives a null
+/// attribute pointer (and when the C11 adapter creates a worker).  This is
+/// intentionally distinct from musl's public initialized-record default:
+/// preserving the established one-megabyte private stack avoids narrowing
+/// prior selected static consumers, while an actual initialized record uses
+/// its source-shaped 128 KiB/8 KiB values below.
+#[inline]
+pub(super) const fn selected_worker_default_attributes(
+    stack_size: usize,
+) -> SelectedWorkerAttributes {
+    SelectedWorkerAttributes {
+        stack_size,
+        guard_size: 0,
+        caller_stack_top: None,
+        detached: false,
+        scheduler_requested: false,
+    }
+}
 
 /// Exact public `pthread_attr_t` storage on Linux/x86-64 LP64.
 #[derive(Clone, Copy)]
@@ -167,6 +203,45 @@ impl PublicPthreadAttr {
     #[inline]
     fn set_sched_priority(&mut self, priority: c_int) {
         Self::replace_high_c_int(&mut self.words[POLICY_PRIORITY_WORD_INDEX], priority);
+    }
+
+    #[inline]
+    const fn selected_worker_attributes(self) -> SelectedWorkerAttributes {
+        SelectedWorkerAttributes {
+            stack_size: self.stack_size(),
+            guard_size: self.guard_size(),
+            caller_stack_top: match self.stack_top() {
+                0 => None,
+                top => Some(top),
+            },
+            detached: self.detach_state() != 0,
+            // Musl enters its scheduler-control handshake only when this
+            // selector asks for explicit scheduling. Policy/priority fields
+            // may be recorded while inheriting and are then source-ignored;
+            // preserve that distinction instead of rejecting inert metadata.
+            // The selected clone seam has no explicit scheduler ownership, so
+            // its caller rejects this one source-visible request.
+            scheduler_requested: self.inherit_sched() != 0,
+        }
+    }
+}
+
+/// Decode one initialized `pthread_attr_t` for the selected worker seam.
+///
+/// # Safety
+///
+/// `attributes` must designate a readable, initialized, properly aligned
+/// public `pthread_attr_t`.  That is the same C API precondition as
+/// `pthread_create`; this private helper does not make a raw or corrupted
+/// record valid.
+#[inline]
+pub(super) unsafe fn selected_worker_attributes(
+    attributes: *const c_void,
+) -> SelectedWorkerAttributes {
+    // SAFETY: the caller retains the public pthread_create precondition
+    // documented above, and `PublicPthreadAttr` has the exact x86 LP64 ABI.
+    unsafe {
+        core::ptr::read(attributes.cast::<PublicPthreadAttr>()).selected_worker_attributes()
     }
 }
 

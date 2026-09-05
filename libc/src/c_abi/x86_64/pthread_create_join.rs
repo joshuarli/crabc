@@ -26,12 +26,16 @@
 //!   musl's prompt detach shape but uses its established AArch64-style later
 //!   external reaper because a worker cannot unmap its own active stack/TLS.
 //!
-//! The admitted contract is exactly one default-attribute worker:
-//! `pthread_create(NULL)`, a normal returning start routine or selected-worker
-//! `pthread_exit`, and one `pthread_join` **or** `pthread_detach`. The private
-//! C11 lifecycle sibling reuses this allocation/clone/join/detach seam through a distinct typed
-//! `int (*)(void *)` start mode; it never reinterprets that callback as the
-//! pointer-returning pthread type. The child gets a distinct copy of the
+//! The admitted contract is one selected worker: `pthread_create(NULL)` or an
+//! initialized attribute record with a private guarded stack or an aligned
+//! caller stack, a normal returning start routine or selected-worker
+//! `pthread_exit`, and one `pthread_join` **or** `pthread_detach`. An
+//! initialized record may request detached-at-create, but scheduler fields
+//! fail closed with `ENOTSUP`; no scheduler transition is silently discarded.
+//! The private C11 lifecycle sibling reuses the default allocation/clone/
+//! join/detach seam through a distinct typed `int (*)(void *)` start mode; it
+//! never reinterprets that callback as the pointer-returning pthread type.
+//! The child gets a distinct copy of the
 //! libc-owned Static Initial TLS v1 final-executable image, including its
 //! initialized prefix, zeroed TBSS tail, high-alignment layout, and `errno`,
 //! and returns its Variant-II thread pointer as the opaque `pthread_t`, exactly
@@ -46,13 +50,12 @@
 //! TLS/control mappings only after `CLONE_CHILD_CLEARTID` has cleared the
 //! child TID. This follows the existing AArch64 runtime's safe external
 //! reaping shape; it is not a claim of general detached-thread reclamation or
-//! full pthread parity. The leaf intentionally does **not** provide attrs,
-//! detached-at-create attributes,
-//! main-thread `pthread_exit` behavior, signal-driven or implicit-point
-//! cancellation, general
+//! full pthread parity. The leaf intentionally does **not** provide main-thread
+//! `pthread_exit` behavior, signal-driven or implicit-point cancellation, general
 //! keys/TSD, synchronization objects, dynamic TLS/DTV, loader TLS, signal-mask
-//! coordination, thread lists, fork/atfork, custom stacks, guards, or general
-//! pthread semantics. It leaves caller `errno` untouched because pthread APIs
+//! coordination, thread lists, fork/atfork, scheduler application, GNU default
+//! attributes, affinity attributes, live-thread inspection, or general pthread
+//! semantics. It leaves caller `errno` untouched because pthread APIs
 //! report errors as positive return values. At most 64 selected workers may be
 //! live concurrently; exhausting this artifact-local admission registry
 //! returns `EAGAIN` rather than constructing broader lifecycle state.
@@ -72,9 +75,11 @@ const EINVAL: c_int = 22;
 const ENOTSUP: c_int = 95;
 const LINUX_ERRNO_MAX: i64 = 4_095;
 
+const PROT_NONE: i64 = 0;
 const PROT_READ_WRITE: i64 = 0x3;
 const MAP_PRIVATE_ANONYMOUS: i64 = 0x22;
 const FUTEX_WAIT: i64 = 0;
+const PAGE_SIZE: usize = 4_096;
 
 const CLONE_VM: i32 = 0x0000_0100;
 const CLONE_FS: i32 = 0x0000_0200;
@@ -115,13 +120,13 @@ const PTHREAD_CLONE_FLAGS: i32 = CLONE_VM
 #[linkage = "weak"]
 pub unsafe extern "C" fn __membarrier_init() {}
 
-// Keep the control record and worker stack in one private page-aligned
-// anonymous mapping. Static Initial TLS v1 owns a separate exact PT_TLS
-// materialization, so this worker mapping never guesses an errno offset or
-// overlays user TLS. The stack grows down from its top.
+// Keep the control record in a private page-aligned anonymous mapping. Static
+// Initial TLS v1 owns a second exact PT_TLS materialization. A private worker
+// stack is a third mapping with an optional inaccessible lower guard; a
+// caller-provided stack remains caller-owned. None of these mappings guesses
+// an errno offset or overlays user TLS.
 const CONTROL_REGION_SIZE: usize = 4_096;
-const WORKER_STACK_SIZE: usize = 1_024 * 1_024;
-const WORKER_MAPPING_SIZE: usize = CONTROL_REGION_SIZE + WORKER_STACK_SIZE;
+const DEFAULT_WORKER_STACK_SIZE: usize = 1_024 * 1_024;
 // This is deliberately a fixed private admission registry, not a general
 // pthread thread list. It validates the one selected explicit-exit route
 // before it dereferences any control record and bounds concurrently live
@@ -349,11 +354,18 @@ struct ThreadControl {
     // still safe to reclaim because pthread_exit can no longer find it.
     registry_retired: AtomicU8,
     // Static Initial TLS v1 maps the complete final-executable image
-    // separately from this control/stack allocation.  A failed control-map
-    // reclamation retry must not unmap the TLS image twice.
+    // separately from this control allocation. A failed later-map reclamation
+    // retry must not unmap the TLS image twice.
     tls_released: AtomicU8,
-    mapping: *mut u8,
-    mapping_size: usize,
+    // A private worker stack has a lower guard and is distinct from the
+    // control mapping so an initialized pthread_attr_t can select an exact
+    // stack size or a caller-owned stack without weakening control lifetime.
+    // A null mapping/zero length means caller-owned and therefore never gets
+    // unmapped by this lifecycle owner.
+    stack_released: AtomicU8,
+    stack_mapping: *mut u8,
+    stack_mapping_size: usize,
+    control_mapping: *mut u8,
     tls_block: static_tls::StaticInitialTlsBlock,
     // The selected TSD leaf owns its values in this private worker mapping,
     // not in the Static Initial TLS v1 `%fs:0` self word. The mapping remains
@@ -400,7 +412,7 @@ const _: () = {
     assert!(align_of::<AtomicI32>() == align_of::<c_int>());
     assert!(size_of::<usize>() >= size_of::<c_int>());
     assert!(size_of::<ThreadControl>() <= CONTROL_REGION_SIZE);
-    assert!(WORKER_MAPPING_SIZE % CONTROL_REGION_SIZE == 0);
+    assert!(CONTROL_REGION_SIZE == PAGE_SIZE);
 };
 
 unsafe extern "C" {
@@ -472,9 +484,21 @@ fn positive_linux_error(result: i64) -> c_int {
 /// a foreign or incomplete worker on pthread_exit's raw exit path.
 #[inline(always)]
 fn current_linux_thread_id() -> Option<c_int> {
-    // SAFETY: SYS_gettid has no arguments and the Linux/x86-64 result is read
-    // only as the bounded private worker identity described above.
-    let result = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
+    let result: i64;
+    // SAFETY: SYS_gettid has no arguments and its Linux/x86-64 result is read
+    // only as the bounded private worker identity described above. Keeping the
+    // instruction adjacent to that identity check avoids relying on a generic
+    // raw-syscall wrapper's cross-item inlining in pthread_exit's audited
+    // foreign-thread rejection path.
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") raw_syscall::SYS_GETTID => result,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
     if is_linux_error(result) || result <= 0 || result > i64::from(c_int::MAX) {
         return None;
     }
@@ -821,6 +845,7 @@ fn claim_finished_detached_selected_worker() -> Option<*mut ThreadControl> {
 /// `control` must remain mapped, be withdrawn from the registry, and have a
 /// zero `child_tid` observed after `CLONE_CHILD_CLEARTID`. The caller must not
 /// access it after this function successfully unmaps its control/stack range.
+#[inline(always)]
 unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Result<(), c_int> {
     // SAFETY: the caller proves the record remains mapped for this first read.
     let tls_block = unsafe { (*control).tls_block };
@@ -834,9 +859,22 @@ unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Resu
         }
         unsafe { (*control).tls_released.store(1, Ordering::Release) };
     }
-    let mapping = unsafe { (*control).mapping };
-    let mapping_size = unsafe { (*control).mapping_size };
-    let unmap_result = unsafe { unmap_worker(mapping, mapping_size) };
+    if unsafe { (*control).stack_released.load(Ordering::Acquire) } == 0 {
+        let stack_mapping = unsafe { (*control).stack_mapping };
+        let stack_mapping_size = unsafe { (*control).stack_mapping_size };
+        // A caller stack remains caller-owned even after the worker has
+        // stopped. Private stacks are unmapped only after the same clear-tid
+        // and registry-withdrawal proof that released the TLS block above.
+        if !stack_mapping.is_null() {
+            let stack_unmap_result = unsafe { unmap_worker(stack_mapping, stack_mapping_size) };
+            if is_linux_error(stack_unmap_result) {
+                return Err(positive_linux_error(stack_unmap_result));
+            }
+        }
+        unsafe { (*control).stack_released.store(1, Ordering::Release) };
+    }
+    let control_mapping = unsafe { (*control).control_mapping };
+    let unmap_result = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
     if is_linux_error(unmap_result) {
         return Err(positive_linux_error(unmap_result));
     }
@@ -867,6 +905,7 @@ fn reap_finished_detached_selected_workers() {
 /// withdrawing the mapping before the task finishes its own callback or exit
 /// path, so the caller may use the returned pointer after the registry lock is
 /// released. It must never be retained past that current-thread operation.
+#[inline(always)]
 fn current_selected_worker_control() -> Option<*mut ThreadControl> {
     let thread_pointer = pthread_identity::current_thread_pointer() as usize;
     let Some(thread_id) = current_linux_thread_id() else {
@@ -973,17 +1012,37 @@ unsafe fn publish_selected_worker_result(
     unsafe { publish_worker_result(control, published) };
 }
 
-/// Map one control/stack backing range without translating `errno`.
-unsafe fn map_worker() -> *mut u8 {
+/// One selected worker's stack handoff and owned-map reclamation record.
+///
+/// The `stack_top` is the only value passed to clone. `mapping`/`mapping_size`
+/// are null/zero for a caller-owned stack and otherwise retain the exact
+/// private guard-plus-stack map that a later join or reaper must release.
+#[derive(Clone, Copy)]
+struct SelectedWorkerStack {
+    stack_top: *mut u8,
+    mapping: *mut u8,
+    mapping_size: usize,
+}
+
+#[inline]
+const fn round_up_to_page(value: usize) -> Option<usize> {
+    match value.checked_add(PAGE_SIZE - 1) {
+        Some(value) => Some(value & !(PAGE_SIZE - 1)),
+        None => None,
+    }
+}
+
+/// Map one private range without translating `errno`.
+unsafe fn map_private_range(length: usize, protection: i64) -> *mut u8 {
     // SAFETY: this fixed anonymous mapping has no caller pointers. The raw
-    // syscall result stays private so pthread_create can return EAGAIN without
-    // mutating the creator's C errno slot.
+    // syscall result stays private so pthread_create can return a positive
+    // error without mutating the creator's C errno slot.
     let result = unsafe {
         raw_syscall::syscall6(
             raw_syscall::SYS_MMAP,
             0,
-            WORKER_MAPPING_SIZE as i64,
-            PROT_READ_WRITE,
+            length as i64,
+            protection,
             MAP_PRIVATE_ANONYMOUS,
             -1,
             0,
@@ -996,17 +1055,83 @@ unsafe fn map_worker() -> *mut u8 {
     }
 }
 
+/// Materialize a selected private guarded stack or admit one caller stack.
+///
+/// This preserves musl's creation choices relevant to an initialized attr
+/// record: a caller stack receives no private guard/map ownership; an owned
+/// stack rounds both its requested stack and its guard to the Linux page
+/// boundary before only the stack portion becomes read/write. The selected
+/// static TLS block remains a separate exact final-image allocation in both
+/// cases.
+unsafe fn allocate_selected_worker_stack(
+    attributes: super::pthread_attr::SelectedWorkerAttributes,
+) -> Option<SelectedWorkerStack> {
+    if let Some(stack_top) = attributes.caller_stack_top {
+        let stack_top = (stack_top & !0xf) as *mut u8;
+        if stack_top.is_null() {
+            return None;
+        }
+        return Some(SelectedWorkerStack {
+            stack_top,
+            mapping: core::ptr::null_mut(),
+            mapping_size: 0,
+        });
+    }
+
+    let guard_size = round_up_to_page(attributes.guard_size)?;
+    let stack_size = round_up_to_page(attributes.stack_size)?;
+    let mapping_size = guard_size.checked_add(stack_size)?;
+    // SAFETY: this lifecycle owns the newly mapped anonymous range until a
+    // failed create or later join/reaper releases it.
+    let mapping = unsafe { map_private_range(mapping_size, PROT_NONE) };
+    if mapping.is_null() {
+        return None;
+    }
+    // SAFETY: the upper portion belongs to the private map just made above;
+    // the lower rounded guard remains PROT_NONE for the worker lifetime.
+    let protection_result = unsafe {
+        raw_syscall::syscall3(
+            raw_syscall::SYS_MPROTECT,
+            mapping.add(guard_size) as usize as i64,
+            stack_size as i64,
+            PROT_READ_WRITE,
+        )
+    };
+    if is_linux_error(protection_result) {
+        let _ = unsafe { unmap_worker(mapping, mapping_size) };
+        return None;
+    }
+    Some(SelectedWorkerStack {
+        // `mapping_size` has already checked the sum, so this points one byte
+        // past the owned writable stack. The clone assembly realigns it before
+        // reserving its one callback argument word.
+        stack_top: unsafe { mapping.add(mapping_size) },
+        mapping,
+        mapping_size,
+    })
+}
+
 /// Release one completed worker mapping without translating `errno`.
+#[inline(always)]
 unsafe fn unmap_worker(mapping: *mut u8, mapping_size: usize) -> i64 {
     // SAFETY: the caller proves that no child can still access this exact
     // range, through a zero child TID after CLONE_CHILD_CLEARTID.
+    let result: i64;
+    // SAFETY: this is the direct Linux x86-64 munmap register contract. Keep
+    // it at the selected lifecycle release boundary so join/reaper auditing
+    // cannot depend on cross-item inlining of the generic syscall wrapper.
     unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_MUNMAP,
-            mapping as usize as i64,
-            mapping_size as i64,
-        )
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") raw_syscall::SYS_MUNMAP => result,
+            in("rdi") mapping as usize as i64,
+            in("rsi") mapping_size as i64,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
     }
+    result
 }
 
 /// Publish one selected worker result before the child exits.
@@ -1023,6 +1148,28 @@ unsafe fn publish_worker_result(control: *mut ThreadControl, result: SelectedWor
             .result_kind
             .store(result.kind().encode(), Ordering::Relaxed);
         (*control).finished.store(1, Ordering::Release);
+    }
+}
+
+/// End precisely the current Linux task after a selected worker publication.
+///
+/// Keep this x86 syscall at the selected lifecycle boundary rather than
+/// depending on cross-item code generation to inline the generic raw-syscall
+/// helper. A worker must leave no reachable continuation after it has exposed
+/// its result and cleanup/TSD teardown, and the direct instruction preserves
+/// that auditable `pthread_exit`/`thrd_exit` boundary in both installed modes.
+#[inline(always)]
+unsafe fn exit_selected_linux_task() -> ! {
+    // SAFETY: SYS_exit terminates exactly the calling Linux task and cannot
+    // return. The selected lifecycle requires this only after the result
+    // publication described by its caller.
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") raw_syscall::SYS_EXIT,
+            in("rdi") 0_i64,
+            options(noreturn, nostack),
+        )
     }
 }
 
@@ -1059,13 +1206,17 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     0
 }
 
-/// Create one default-attribute, joinable x86 pthread worker with Static Initial TLS v1.
+/// Create one selected x86 pthread worker with Static Initial TLS v1.
 ///
 /// `thread` must designate writable `pthread_t` storage; `start` must be a
 /// valid pthread callback and `argument` must remain valid until that function
-/// stops reading it. Only a null `attributes` pointer is admitted. The private
-/// C11 sibling calls [`create_selected_worker`] with its own typed callback
-/// mode instead of reaching this C ABI through an incompatible cast.
+/// stops reading it. A null `attributes` pointer preserves the existing
+/// one-megabyte private stack. An initialized record may select a guarded
+/// private stack, a caller-owned stack, or detached-at-create. Explicit
+/// scheduler fields return `ENOTSUP` because this bounded seam has no
+/// scheduler transition. The private C11 sibling calls
+/// [`create_selected_worker`] with its own typed callback mode instead of
+/// reaching this C ABI through an incompatible cast.
 ///
 /// # Safety
 ///
@@ -1080,13 +1231,22 @@ pub unsafe extern "C" fn pthread_create(
     start: Option<PthreadStartRoutine>,
     argument: *mut c_void,
 ) -> c_int {
-    // Preserve the existing narrow boundary's invalid-input precedence: a
-    // missing output slot or callback is EINVAL even when the caller also
-    // supplies an unsupported attribute object.
+    // Preserve the existing invalid-input precedence: a missing output slot
+    // or callback is EINVAL even when the caller also supplies an invalid or
+    // unsupported attribute record.
     if thread.is_null() || start.is_none() {
         return EINVAL;
     }
-    if !attributes.is_null() {
+    let attributes = if attributes.is_null() {
+        super::pthread_attr::selected_worker_default_attributes(DEFAULT_WORKER_STACK_SIZE)
+    } else {
+        // SAFETY: pthread_create's C boundary requires an initialized,
+        // readable pthread_attr_t whenever the pointer is non-null. The attr
+        // owner keeps its exact public-layout decode separate from this clone
+        // lifecycle owner.
+        unsafe { super::pthread_attr::selected_worker_attributes(attributes) }
+    };
+    if attributes.scheduler_requested {
         return ENOTSUP;
     }
     let start = match start {
@@ -1096,7 +1256,14 @@ pub unsafe extern "C" fn pthread_create(
     // SAFETY: the public C boundary validated only the nullable callback; the
     // common selected-worker seam retains the output-pointer and lifetime
     // obligations documented above.
-    unsafe { create_selected_worker(thread, SelectedWorkerStart::Pthread(start), argument) }
+    unsafe {
+        create_selected_worker_with_attributes(
+            thread,
+            SelectedWorkerStart::Pthread(start),
+            argument,
+            attributes,
+        )
+    }
 }
 
 /// Create one selected default-attribute worker for the pthread or C11 leaf.
@@ -1120,8 +1287,32 @@ pub(super) unsafe fn create_selected_worker(
     start: SelectedWorkerStart,
     argument: *mut c_void,
 ) -> c_int {
+    // C11 has no public pthread_attr_t input. Preserve the existing selected
+    // one-megabyte stack/zero-guard default through the same allocation and
+    // clone machinery used by a null pthread attribute pointer.
+    let attributes =
+        super::pthread_attr::selected_worker_default_attributes(DEFAULT_WORKER_STACK_SIZE);
+    unsafe { create_selected_worker_with_attributes(thread, start, argument, attributes) }
+}
+
+/// Create one selected worker after its public attribute record was decoded.
+///
+/// The caller must retain the ordinary selected-worker output/callback
+/// obligations and pass only a decoded record whose scheduler request has
+/// already been rejected. This private helper keeps stack ownership and
+/// detached-at-create state in the same registry transaction as TLS/control
+/// allocation and clone publication.
+unsafe fn create_selected_worker_with_attributes(
+    thread: *mut *mut c_void,
+    start: SelectedWorkerStart,
+    argument: *mut c_void,
+    attributes: super::pthread_attr::SelectedWorkerAttributes,
+) -> c_int {
     if thread.is_null() {
         return EINVAL;
+    }
+    if attributes.scheduler_requested {
+        return ENOTSUP;
     }
     if !static_tls::is_ready() {
         return ENOTSUP;
@@ -1139,18 +1330,28 @@ pub(super) unsafe fn create_selected_worker(
         // fallback or an attempt to derive an errno-only image.
         None => return EAGAIN,
     };
-    let mapping = unsafe { map_worker() };
-    if mapping.is_null() {
+    let control_mapping = unsafe { map_private_range(CONTROL_REGION_SIZE, PROT_READ_WRITE) };
+    if control_mapping.is_null() {
         let _ = unsafe { static_tls::release_thread(tls_block) };
         return EAGAIN;
     }
+    let worker_stack = match unsafe { allocate_selected_worker_stack(attributes) } {
+        Some(stack) => stack,
+        None => {
+            let _ = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
+            let _ = unsafe { static_tls::release_thread(tls_block) };
+            return EAGAIN;
+        }
+    };
 
-    let control = mapping.cast::<ThreadControl>();
-    let stack_top = unsafe { mapping.add(WORKER_MAPPING_SIZE) };
+    let control = control_mapping.cast::<ThreadControl>();
     let registry_slot = match reserve_selected_worker() {
         Some(registry_slot) => registry_slot,
         None => {
-            let _ = unsafe { unmap_worker(mapping, WORKER_MAPPING_SIZE) };
+            if !worker_stack.mapping.is_null() {
+                let _ = unsafe { unmap_worker(worker_stack.mapping, worker_stack.mapping_size) };
+            }
+            let _ = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
             let _ = unsafe { static_tls::release_thread(tls_block) };
             return EAGAIN;
         }
@@ -1164,25 +1365,36 @@ pub(super) unsafe fn create_selected_worker(
         matches!(start, SelectedWorkerStart::Pthread(_)),
     );
 
-    // SAFETY: mmap returned a private page-aligned zeroed allocation of the
-    // exact fixed control/stack size. Static Initial TLS v1 already copied
-    // the final executable's exact initialized and TBSS TLS image and wrote
-    // its minimal Variant-II self word before this record becomes visible.
+    // SAFETY: mmap returned a private page-aligned zeroed control allocation;
+    // the selected stack is either another private mapping or caller-owned as
+    // documented by pthread_attr_setstack. Static Initial TLS v1 already
+    // copied the final executable's exact initialized and TBSS TLS image and
+    // wrote its minimal Variant-II self word before this record becomes
+    // visible.
     unsafe {
         core::ptr::write(
             control,
             ThreadControl {
                 child_tid: AtomicI32::new(0),
                 start_ready: AtomicU8::new(0),
-                lifecycle: AtomicU8::new(SelectedWorkerLifecycleState::Joinable.encode()),
+                lifecycle: AtomicU8::new(
+                    if attributes.detached {
+                        SelectedWorkerLifecycleState::Detached
+                    } else {
+                        SelectedWorkerLifecycleState::Joinable
+                    }
+                    .encode(),
+                ),
                 result: AtomicUsize::new(0),
                 result_kind: AtomicU8::new(SelectedWorkerResultKind::NONE),
                 finished: AtomicU8::new(0),
                 worker_tid: AtomicI32::new(0),
                 registry_retired: AtomicU8::new(0),
                 tls_released: AtomicU8::new(0),
-                mapping,
-                mapping_size: WORKER_MAPPING_SIZE,
+                stack_released: AtomicU8::new(worker_stack.mapping.is_null() as u8),
+                stack_mapping: worker_stack.mapping,
+                stack_mapping_size: worker_stack.mapping_size,
+                control_mapping,
                 tls_block,
                 tsd: pthread_tsd::SelectedTsdValues::empty(),
                 registry_slot,
@@ -1195,12 +1407,13 @@ pub(super) unsafe fn create_selected_worker(
     publish_selected_worker(registry_slot, control, tls_block.thread_pointer());
     let child_tid = unsafe { core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>() };
     // SAFETY: the private clone seam uses musl's exact x86 argument shuffle.
-    // The worker mapping supplies a writable child stack/live control record,
-    // while the separate v1 block supplies a full fresh final-image TLS copy.
+    // The selected stack is either caller-owned or the writable upper portion
+    // of a private guarded map; the separate control and v1 blocks retain the
+    // live record and full fresh final-image TLS copy.
     let clone_result = unsafe {
         __crabc_x86_pthread_clone(
             worker_entry,
-            stack_top,
+            worker_stack.stack_top,
             PTHREAD_CLONE_FLAGS,
             control.cast(),
             child_tid,
@@ -1218,7 +1431,10 @@ pub(super) unsafe fn create_selected_worker(
             // registry pointer.
             return EAGAIN;
         }
-        let _ = unsafe { unmap_worker(mapping, WORKER_MAPPING_SIZE) };
+        if !worker_stack.mapping.is_null() {
+            let _ = unsafe { unmap_worker(worker_stack.mapping, worker_stack.mapping_size) };
+        }
+        let _ = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
         let _ = unsafe { static_tls::release_thread(tls_block) };
         // Musl intentionally translates every clone failure to EAGAIN.
         return EAGAIN;
@@ -1236,8 +1452,8 @@ pub(super) unsafe fn create_selected_worker(
 /// Exit a selected worker and publish its typed result for its admitted joiner.
 ///
 /// This is valid only when called by a callback created through this leaf's
-/// null-attribute pthread_create path. It invokes the selected cleanup and
-/// worker-TSD destructor phases, but intentionally omits the rest of musl's
+/// selected pthread_create path. It invokes the selected cleanup and worker-
+/// TSD destructor phases, but intentionally omits the rest of musl's
 /// detach/thread-list state machine. Outside that worker contract, it still
 /// performs Linux thread exit but claims no broader pthread behavior.
 ///
@@ -1269,7 +1485,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
     // SAFETY: Linux SYS_exit terminates precisely the calling task and does
     // not return. The CLONE_CHILD_CLEARTID lifecycle attached during clone
     // clears/wakes the joiner's shared child-TID word after this exit.
-    unsafe { raw_syscall::syscall_noreturn1(raw_syscall::SYS_EXIT, 0) }
+    unsafe { exit_selected_linux_task() }
 }
 
 /// End one selected pthread-mode worker with its opaque pointer result.
@@ -1297,8 +1513,8 @@ pub(super) unsafe fn exit_selected_c11_worker(result: c_int) -> ! {
 /// Exit a selected pthread worker and publish its pointer result for its joiner.
 ///
 /// This is valid only when called by a callback created through this leaf's
-/// null-attribute pthread_create path. It invokes the selected cleanup and
-/// worker-TSD destructor phases, but intentionally omits the rest of musl's
+/// selected pthread_create path. It invokes the selected cleanup and worker-
+/// TSD destructor phases, but intentionally omits the rest of musl's
 /// detach/thread-list state machine. Outside that worker contract, it still
 /// performs Linux thread exit but claims no broader pthread behavior.
 ///
@@ -1359,15 +1575,26 @@ pub(super) unsafe fn join_selected_worker(
         // CLONE_CHILD_CLEARTID wakes this shared (not FUTEX_PRIVATE) word as
         // the last kernel action on normal child exit. EAGAIN and EINTR only
         // request another load; no C errno translation is selected here.
-        let wait_result = unsafe {
-            raw_syscall::syscall4(
-                raw_syscall::SYS_FUTEX,
-                core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>() as usize as i64,
-                FUTEX_WAIT,
-                i64::from(child_tid),
-                0,
-            )
-        };
+        let wait_result: i64;
+        // SAFETY: the shared child-TID word, expected value, and null timeout
+        // satisfy Linux FUTEX_WAIT. Keeping this syscall at the selected join
+        // boundary gives the lifecycle's wait-before-reclaim proof a direct
+        // machine-code witness rather than depending on generic-wrapper
+        // inlining after the worker attribute path grew.
+        unsafe {
+            core::arch::asm!(
+                "syscall",
+                inlateout("rax") raw_syscall::SYS_FUTEX => wait_result,
+                in("rdi") core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>()
+                    as usize as i64,
+                in("rsi") FUTEX_WAIT,
+                in("rdx") i64::from(child_tid),
+                in("r10") 0_i64,
+                lateout("rcx") _,
+                lateout("r11") _,
+                options(nostack),
+            );
+        }
         if is_linux_error(wait_result) {
             let error = positive_linux_error(wait_result);
             if error == EAGAIN || error == EINTR {
@@ -1452,9 +1679,10 @@ pub(super) unsafe fn detach_selected_worker(thread: *mut c_void) -> c_int {
 /// Detach one selected static pthread/C11 worker.
 ///
 /// This boundary has the same private selected-worker requirements as
-/// [`pthread_create`] and does not accept detached attributes or arbitrary
-/// system pthread handles. It reports a positive errno and never writes the
-/// calling thread's `errno` slot.
+/// [`pthread_create`]. Detached-at-create records already own the detached
+/// state, so this function admits only a still-joinable selected handle; it
+/// never accepts an arbitrary system pthread handle. It reports a positive
+/// errno and never writes the calling thread's `errno` slot.
 ///
 /// # Safety
 ///

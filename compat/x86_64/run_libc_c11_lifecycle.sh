@@ -85,6 +85,8 @@ errno_disassembly="$work_dir/errno-disassembly"
 clone_disassembly="$work_dir/pthread-clone-disassembly"
 join_disassembly="$work_dir/thrd-join-disassembly"
 exit_disassembly="$work_dir/thrd-exit-disassembly"
+selected_c11_exit_disassembly="$work_dir/selected-c11-exit-disassembly"
+selected_join_disassembly="$work_dir/selected-join-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -214,17 +216,34 @@ grep -Eq '0x8\(%rsp\),%r10' "$clone_disassembly" ||
 grep -Eq '\$0x3c,%al|\$0x000000000000003c,%rax|\$0x3c,%rax' "$clone_disassembly" ||
     fail "pthread clone boundary lacks child exit syscall number 60"
 objdump -d --disassemble=thrd_exit "$candidate" >"$exit_disassembly"
-grep -Eq '\bsyscall\b' "$exit_disassembly" ||
-    fail "thrd_exit lacks an x86 thread-exit syscall instruction"
-grep -Eq '\$0x3c,%eax|\$0x3c,%rax|\$0x000000000000003c,%rax' "$exit_disassembly" ||
-    fail "thrd_exit lacks thread exit syscall number 60"
+# `thrd_exit` preserves the public C11 conversion boundary, then calls the
+# private typed C11 selected-worker publisher. Check that exact call edge and
+# the shared non-returning implementation rather than making the result depend
+# on cross-module inlining of a private Rust helper.
+grep -Eq 'call.*exit_selected_c11_worker' "$exit_disassembly" ||
+    fail "thrd_exit no longer reaches the typed selected C11 exit publisher"
+awk '/<.*pthread_create_join.*exit_selected_c11_worker.*>:/ { found = 1 }
+    found { print }
+    found && /^$/ { exit }' "$candidate_disassembly" >"$selected_c11_exit_disassembly"
+grep -Eq '\bsyscall\b' "$selected_c11_exit_disassembly" ||
+    fail "selected C11 exit publisher lacks an x86 thread-exit syscall instruction"
+grep -Eq '\$0x3c,%eax|\$0x3c,%rax|\$0x000000000000003c,%rax' \
+    "$selected_c11_exit_disassembly" ||
+    fail "selected C11 exit publisher lacks thread exit syscall number 60"
 objdump -d --disassemble=thrd_join "$candidate" >"$join_disassembly"
-grep -Eq '\bsyscall\b' "$join_disassembly" ||
-    fail "thrd_join lacks an x86 futex/munmap syscall instruction"
-grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' "$join_disassembly" ||
-    fail "thrd_join lacks futex syscall number 202"
-grep -Eq '\$0xb,%eax|\$0xb,%rax|\$0x000000000000000b,%rax' "$join_disassembly" ||
-    fail "thrd_join lacks munmap syscall number 11"
+grep -Eq 'call.*join_selected_worker' "$join_disassembly" ||
+    fail "thrd_join no longer reaches the shared selected-worker join seam"
+awk '/<.*pthread_create_join.*join_selected_worker.*>:/ { found = 1 }
+    found { print }
+    found && /^$/ { exit }' "$candidate_disassembly" >"$selected_join_disassembly"
+grep -Eq '\bsyscall\b' "$selected_join_disassembly" ||
+    fail "selected worker join lacks an x86 futex/munmap syscall instruction"
+grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
+    "$selected_join_disassembly" ||
+    fail "selected worker join lacks futex syscall number 202"
+grep -Eq '\$0xb,%eax|\$0xb,%rax|\$0x000000000000000b,%rax' \
+    "$selected_join_disassembly" ||
+    fail "selected worker join lacks munmap syscall number 11"
 
 if "$candidate"; then
     :

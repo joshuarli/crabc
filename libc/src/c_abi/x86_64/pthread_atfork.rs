@@ -39,7 +39,7 @@ compile_error!("x86 pthread-atfork leaf requires little-endian Linux/x86-64");
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use super::{c_status, raw_syscall};
+use super::c_status;
 
 const ATFORK_CAPACITY: usize = 32;
 const ENOMEM: c_int = 12;
@@ -73,6 +73,29 @@ static ATFORK_LOCK: AtomicBool = AtomicBool::new(false);
 static ATFORK_COUNT: AtomicUsize = AtomicUsize::new(0);
 static mut ATFORK_REGISTRATIONS: [AtforkRegistration; ATFORK_CAPACITY] =
     [AtforkRegistration::EMPTY; ATFORK_CAPACITY];
+
+/// Perform only the selected Linux x86-64 `fork=57` transition.
+///
+/// The public `fork` boundary holds the private atfork registry lock across
+/// this exact instruction. Keeping the syscall adjacent to that state change
+/// prevents the process-transition proof from depending on generic raw-
+/// syscall wrapper inlining after lifecycle composition changes elsewhere.
+#[inline(always)]
+unsafe fn raw_selected_fork() -> i64 {
+    let result: i64;
+    // SAFETY: SYS_fork has no argument registers. Linux returns the child's
+    // PID in the parent, zero in the child, or one negative errno value.
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inlateout("rax") LINUX_X86_64_SYS_FORK => result,
+            lateout("rcx") _,
+            lateout("r11") _,
+            options(nostack),
+        );
+    }
+    result
+}
 
 #[inline]
 unsafe fn lock_registry() {
@@ -221,7 +244,7 @@ pub unsafe extern "C" fn fork() -> c_int {
     unsafe { __fork_handler(-1) };
     // SAFETY: this private leaf owns the fixed zero-argument Linux x86-64
     // `fork=57` transition and its no-live-worker admission requirement.
-    let result = unsafe { raw_syscall::syscall0(LINUX_X86_64_SYS_FORK) };
+    let result = unsafe { raw_selected_fork() };
     unsafe { __fork_handler(if result == 0 { 1 } else { 0 }) };
     c_status(result)
 }
