@@ -95,6 +95,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "system-cancellation",
                 "spawn",
                 "linux-control",
+                "vm-mechanisms",
                 "assert",
                 "syslog",
                 "pthread-spin",

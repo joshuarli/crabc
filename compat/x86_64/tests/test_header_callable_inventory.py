@@ -281,6 +281,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "atan2",
                 "atan2f",
                 "atanf",
+                "brk",
                 "chroot",
                 "clearerr_unlocked",
                 "cnd_timedwait",
@@ -347,6 +348,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "mkstemp",
                 "mkstemps",
                 "mktime",
+                "mremap",
                 "mtx_timedlock",
                 "open_memstream",
                 "open_wmemstream",
@@ -386,7 +388,9 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "putwchar_unlocked",
                 "pwritev2",
                 "realpath",
+                "remap_file_pages",
                 "renameat",
+                "sbrk",
                 "sem_timedwait",
                 "setbuf",
                 "setbuffer",
@@ -477,7 +481,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             },
         )
         self.assertEqual(verified["x86-crypt-allocator-composition"], set())
-        self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt", "getitimer", "setitimer", "name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock", "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"} & unprovided)
+        self.assertFalse({"brk", "ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt", "getitimer", "setitimer", "mremap", "name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock", "remap_file_pages", "sbrk", "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"} & unprovided)
         self.assertNotIn(
             "open_wmemstream",
             unprovided,

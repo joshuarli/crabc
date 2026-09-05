@@ -202,3 +202,11 @@ against pinned musl, including duplication, pipe/owner/signal/seal/lease/hint
 controls and POSIX/OFD locking/cancellation. The [component contract](owned-fcntl.md)
 records argument categories, source mapping and the frozen-private distinction.
 The same-object runner is also a required dynamic product qualification case.
+
+## Owned VM mechanisms
+
+`./scripts/dev-x86_64.sh owned-vm-mechanisms` qualifies the installed C
+`mremap`, `brk`, `sbrk`, and `remap_file_pages` boundaries through pinned musl,
+owned static/static-PIE, and dynamic PIE/non-PIE products. The
+[component contract](owned-vm-mechanisms.md) records the exact musl mapping,
+VM-lifetime seam, same-object matrix, and remaining scope.

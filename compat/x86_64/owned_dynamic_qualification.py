@@ -54,6 +54,7 @@ CASES = {
     "system-cancellation": ("run_owned_system_cancellation.sh", None),
     "spawn": ("run_owned_dynamic_spawn.sh", None),
     "linux-control": ("run_owned_linux_control.sh", None),
+    "vm-mechanisms": ("run_owned_vm_mechanisms.sh", None),
     "assert": ("run_owned_assert.sh", None),
     "syslog": ("run_owned_syslog.sh", None),
     "pthread-spin": ("run_owned_pthread_spin.sh", None),

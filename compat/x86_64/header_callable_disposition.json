@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "789261e70b252f91f1706f9758d035dad47a72e0383977ebd423434c293c2315",
+    "callable_inventory_sha256": "81df59e5618d6adeec12d11b4d6f3facc287eabf4babac8e9cbd00d1d9ca5bb9",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "db51cf4d97874f9d75e98e4a959541a47109f5dac83aa230de687dbb7d06c89d",
+    "parity_ledger_sha256": "b9b69694601a5214675d19b079671b0ec7573ac2f555960b091940b32cba581f",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "missing_reference_declaration_groups": [],
@@ -33,6 +33,7 @@
           "atan2",
           "atan2f",
           "atanf",
+          "brk",
           "chroot",
           "clearerr_unlocked",
           "cnd_timedwait",
@@ -101,6 +102,7 @@
           "mkstemp",
           "mkstemps",
           "mktime",
+          "mremap",
           "mtx_timedlock",
           "open_memstream",
           "open_wmemstream",
@@ -131,7 +133,9 @@
           "putwchar_unlocked",
           "pwritev2",
           "realpath",
+          "remap_file_pages",
           "renameat",
+          "sbrk",
           "sem_close",
           "sem_open",
           "sem_timedwait",
@@ -1389,7 +1393,6 @@
           "aio_return",
           "aio_suspend",
           "aio_write",
-          "brk",
           "capget",
           "capset",
           "clone",
@@ -1414,7 +1417,6 @@
           "mq_timedreceive",
           "mq_timedsend",
           "mq_unlink",
-          "mremap",
           "openlog",
           "process_vm_readv",
           "process_vm_writev",
@@ -1423,8 +1425,6 @@
           "rand",
           "random",
           "reboot",
-          "remap_file_pages",
-          "sbrk",
           "setlogmask",
           "setns",
           "setstate",
@@ -1794,13 +1794,13 @@
   },
   "summary": {
     "candidate_external_callable_count": 1525,
-    "declared_unverified_feature_callable_count": 155,
+    "declared_unverified_feature_callable_count": 159,
     "default_static_callable_count": 1122,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 7,
-      "planned-provider": 161
+      "planned-provider": 157
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1811,7 +1811,7 @@
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 170,
+    "unprovided_callable_count": 166,
     "verified_feature_callable_count": 78
   },
   "target": "x86_64-unknown-linux-musl",

@@ -117,6 +117,23 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(scalar_math <= providers["x86-owned-static-runtime"])
         self.assertFalse(scalar_math & deferred)
 
+    def test_owned_vm_mechanisms_are_planned_owned_static_not_deferred(self) -> None:
+        """The installed product owns this four-entry ABI slice together."""
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        owned_vm = {"brk", "mremap", "remap_file_pages", "sbrk"}
+
+        self.assertTrue(owned_vm <= providers["x86-owned-static-runtime"])
+        self.assertFalse(owned_vm & deferred)
+
     def test_memory_stream_and_cookie_names_are_planned_owned_static_not_deferred(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         providers = {

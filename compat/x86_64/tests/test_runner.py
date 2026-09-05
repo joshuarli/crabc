@@ -2101,7 +2101,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "owned-system-cancellation",
                 "owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|"
                 "owned-signal-helpers|owned-pty",
-                "owned-assert|owned-linux-control|owned-filesystem-mechanisms",
+                "owned-assert|owned-linux-control|owned-filesystem-mechanisms|owned-vm-mechanisms",
                 "owned-pthread-spin",
                 "owned-syslog",
                 "owned-error-reporting",
@@ -27124,7 +27124,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "isize::MAX",
             "MAP_FIXED",
             "MAP_ANONYMOUS",
-            "selected_static_vm_wait",
+            "selected_owned_vm_wait",
             "__vm_wait",
             "wrapping_add",
             "POSIX_MADV_DONTNEED",

@@ -999,6 +999,9 @@ mod owned_linux_control;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_filesystem_mechanisms.rs"]
 mod owned_filesystem_mechanisms;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_vm_mechanisms.rs"]
+mod owned_vm_mechanisms;
 // Word expansion is a target-local adapter over the selected environment,
 // owned spawn transaction, allocation-backed streams, and C allocator. Keep
 // it inside the aggregate so the frozen default archive remains export-free.

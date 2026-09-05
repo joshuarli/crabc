@@ -24,9 +24,12 @@
 //! to page boundaries, and makes POSIX `DONTNEED` a no-op that returns zero
 //! without changing `errno`. The selected archive preserves those rules.
 //! Pinned musl calls its private `__vm_wait` before `MAP_FIXED` mappings and
-//! unmaps. This isolated static archive has no loader/allocator VM state to
-//! wait for, so [`selected_static_vm_wait`] is deliberately local and a no-op;
-//! it does not claim the full shared-VM synchronization contract.
+//! unmaps. The frozen selected-static archive retains its established local
+//! no-op because it has no selected shared VM lifetime owner. The owned
+//! product instead waits through the existing source-ported
+//! [`super::pthread_vmlock`] record. That record already guards the selected
+//! process-shared barrier and robust-mutex pending-node transitions, so no new
+//! global VM lock is introduced.
 //!
 //! A separate private direct `msync` artifact now owns only a no-cancellation
 //! Linux request path; musl's cancellation-point semantics remain deferred.
@@ -56,10 +59,25 @@ fn mapping_failed(error: c_int) -> *mut c_void {
     usize::MAX as *mut c_void
 }
 
-/// Keep musl's VM-wait call site explicit without pretending this isolated
-/// archive owns the loader/allocator-wide wait state.
+/// Enter the existing owned runtime's musl-compatible VM lifetime barrier.
+///
+/// The `pthread_vmlock` record is already the sole selected owner of musl's
+/// `src/thread/vmlock.c` protocol. It prevents a fixed replacement or unmap
+/// from racing a selected process-shared barrier/robust-mutex transition that
+/// still holds a caller-owned public-object pointer. The frozen archive keeps
+/// its prior no-op because it does not select that owned product contract.
+#[cfg(feature = "x86-owned-static-runtime")]
 #[inline]
-fn selected_static_vm_wait() {}
+fn selected_owned_vm_wait() {
+    // SAFETY: the existing pthread vmlock owns the selected process-shared
+    // object lifetime interval, and this source-shaped wait acquires no new
+    // global VM ownership or C ABI state.
+    unsafe { super::pthread_vmlock::wait() };
+}
+
+#[cfg(not(feature = "x86-owned-static-runtime"))]
+#[inline]
+fn selected_owned_vm_wait() {}
 
 /// Create one virtual-memory mapping through Linux `mmap(2)`.
 ///
@@ -72,8 +90,9 @@ fn selected_static_vm_wait() {}
 ///
 /// The caller owns every raw mapping contract: pointer/address meaning, range
 /// validity, descriptor lifetime, file-offset semantics, concurrency, and the
-/// later unmap/protection lifecycle. This private static leaf does not provide
-/// musl's process-wide `__vm_wait` synchronization.
+/// later unmap/protection lifecycle. In the owned product, a fixed mapping
+/// first waits for the existing selected pthread VM-lifetime interval; the
+/// frozen archive retains its established no-op boundary.
 #[no_mangle]
 pub unsafe extern "C" fn mmap(
     address: *mut c_void,
@@ -94,7 +113,7 @@ pub unsafe extern "C" fn mmap(
     }
 
     if flags & MAP_FIXED != 0 {
-        selected_static_vm_wait();
+        selected_owned_vm_wait();
     }
 
     // SAFETY: the caller owns the complete Linux mapping request; syscall6
@@ -131,10 +150,12 @@ pub unsafe extern "C" fn mmap(
 /// `address` and `length` must designate a caller-owned mapping range, unless
 /// deliberately exercising Linux's error path. Unmapping can invalidate every
 /// pointer into the range; the caller owns all concurrent access and the
-/// private archive supplies no process-wide VM synchronization.
+/// frozen archive supplies no process-wide VM synchronization. The owned
+/// product waits for its existing selected pthread VM-lifetime interval before
+/// making the kernel request.
 #[no_mangle]
 pub unsafe extern "C" fn munmap(address: *mut c_void, length: usize) -> c_int {
-    selected_static_vm_wait();
+    selected_owned_vm_wait();
     // SAFETY: the caller owns the Linux mapping-range lifetime and aliasing
     // contract.
     let result = unsafe {
