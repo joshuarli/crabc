@@ -2,9 +2,9 @@
 //!
 //! This aggregate-only module retains the frozen configuration block
 //! (`confstr`, `pathconf`, `fpathconf`, `getpagesize`, `getdtablesize`, and
-//! the fixed `sysconf` selectors) while adding the two Linux 5.10
-//! auxv-derived signal-stack selectors required by the installed POSIX
-//! runtime. The frozen `system_configuration.rs` remains selected outside
+//! the fixed `sysconf` selectors) while adding the two musl signal-stack
+//! selectors required by the installed POSIX runtime. The frozen
+//! `system_configuration.rs` remains selected outside
 //! `x86-owned-static-runtime`; this file cannot widen that earlier archive.
 //! It borrows the already-owned immutable auxv observation and initial-TLS C
 //! `errno` publication, but owns neither startup nor signal-stack storage.
@@ -35,9 +35,13 @@
 //!
 //! This remains a selected configuration slice rather than a complete musl
 //! `sysconf` table. Linux/x86-64's base page size is architecturally 4096.
-//! The signal-stack selectors are available only after the installed runtime's
-//! existing startup path publishes the validated initial auxv; Linux 5.10
-//! supplies `AT_MINSIGSTKSZ`, so no pre-baseline fallback is added.
+//! The signal-stack selectors require only the installed runtime's existing
+//! validated initial-auxv publication. Linux 5.10 x86 does not emit
+//! `AT_MINSIGSTKSZ`: upstream kernel commit
+//! `1c33bb0507508af24fd754dd7123bd8e997fab2f` added x86 emission in Linux
+//! 5.14. On the baseline, musl's `__getauxval` source returns zero and sets
+//! `ENOENT`; `sysconf.c` then applies its clamp. That observable absence route
+//! is required source behavior, not a project fallback.
 
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong};
 use core::mem::{align_of, offset_of, size_of};
@@ -107,14 +111,17 @@ const _: () = {
     assert!(offset_of!(Rlimit, maximum) == 8);
 };
 
-/// Return musl's Linux 5.10 minimum alternate-signal-stack size.
+/// Return musl's minimum alternate-signal-stack size.
 ///
 /// `sysconf.c` first takes the kernel-provided signal-frame size from the
 /// validated initial auxv, clamps it to one KiB below the public historical
 /// minimum, and adds one KiB of application working space. The source stores
 /// its result in C `unsigned`; keep that x86 32-bit wrap boundary explicit.
-/// The installed runtime publishes `AT_MINSIGSTKSZ` before application code,
-/// so this is not a pre-5.10 fallback or a second auxv owner.
+/// Linux 5.10 x86 lacks `AT_MINSIGSTKSZ`, so the sibling musl-compatible
+/// [`auxv_observation::__getauxval`] returns zero and publishes `ENOENT`; the
+/// clamp then yields the historical minimum. Linux 5.14 and later x86 kernels
+/// can supply the larger frame value. Deliberately retain the lookup's errno
+/// side effect rather than adding a second auxv owner or a fallback branch.
 pub(super) fn minimum_signal_stack_size() -> usize {
     // SAFETY: the installed static/dynamic startup has already published its
     // validated immutable auxiliary vector before calling public C code.
@@ -126,7 +133,7 @@ pub(super) fn minimum_signal_stack_size() -> usize {
     (signal_frame_size as c_uint).wrapping_add(1_024) as usize
 }
 
-/// Return musl's Linux 5.10 default alternate-signal-stack size.
+/// Return musl's default alternate-signal-stack size.
 pub(super) fn signal_stack_size() -> usize {
     (minimum_signal_stack_size() as c_uint)
         .wrapping_add(SIGSTKSZ - MINSIGSTKSZ) as usize

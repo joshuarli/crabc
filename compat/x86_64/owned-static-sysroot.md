@@ -390,9 +390,10 @@ permanent-format, and resolver dependencies retain their own feature-provider
 rows. The aggregate replaces the default configuration provider for
 `confstr`, `fpathconf`, `getdtablesize`, `getpagesize`, `pathconf`, and
 `sysconf` with `owned_system_configuration.rs`; that source-compatible module
-adds only the Linux 5.10 auxv-derived signal-stack selectors and leaves the
-frozen private `system_configuration.rs` selection unchanged. The installed
-consumer evidence is not a complete callable-provider archive audit, so this
+adds only musl's two signal-stack selectors. Linux 5.10 x86 lacks
+`AT_MINSIGSTKSZ`, so its source-required lookup-`ENOENT` and clamp route
+applies; the frozen private `system_configuration.rs` selection is unchanged.
+The installed consumer evidence is not a complete callable-provider archive audit, so this
 profile remains planned and does not promote a family, the default export
 roster, or public x86 support.
 

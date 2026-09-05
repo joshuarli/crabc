@@ -28,12 +28,14 @@ or a Rust administration facade.
 `owned_system_configuration.rs` is selected only by
 `x86-owned-static-runtime`. It preserves the frozen
 `system_configuration.rs` module outside that aggregate, then adds musl
-`sysconf.c`'s Linux 5.10 `AT_MINSIGSTKSZ` calculation for
-`_SC_MINSIGSTKSZ` and `_SC_SIGSTKSZ`: clamp the kernel frame size to 1024,
-add 1024 bytes of application working space, then add the historical
-`SIGSTKSZ - MINSIGSTKSZ` delta for the default. This uses the existing
-startup-published immutable auxv observation and does not invent a fallback
-for an older kernel.
+`sysconf.c`'s `AT_MINSIGSTKSZ` calculation for `_SC_MINSIGSTKSZ` and
+`_SC_SIGSTKSZ`. Linux 5.10 x86 does not emit that auxv tag; upstream kernel
+commit `1c33bb0507508af24fd754dd7123bd8e997fab2f` added x86 emission in Linux
+5.14. On the baseline, musl's `__getauxval` returns zero and sets `ENOENT`,
+then `sysconf.c` clamps the frame size to 1024, adds 1024 bytes of application
+working space, and adds the historical `SIGSTKSZ - MINSIGSTKSZ` delta for the
+default. The selected observer retains that errno side effect: the clamp is
+musl's required missing-auxv behavior, not an added fallback.
 
 Run `./scripts/dev-x86_64.sh owned-kernel-residual` for the focused evidence.
 Before the owned configuration selection, the same installed-driver C object
@@ -46,7 +48,9 @@ project headers, links it unchanged to pinned musl and owned static
 exit status, stdout, and stderr for each selector. Dynamic applications run
 through both ordinary `PT_INTERP` entry and direct installed-interpreter
 entry; the registered `kernel-residual` dynamic case repeats that matrix for
-the installed, second, and extracted products.
+the installed, second, and extracted products. This is a residual
+18-spelling receipt. It does not combine the four separate workload objects
+into a 42-spelling `system.kernel-admin` family receipt.
 
 The UTS fixture first tries a child private UTS namespace. If the pinned
 container denies namespace creation or mutation, it records the source-matched
