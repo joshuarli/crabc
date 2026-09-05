@@ -275,6 +275,27 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "workload|application"):
             self.validate("pie", receipt)
 
+    def test_boolean_schema_is_not_an_integer_version(self) -> None:
+        for linkage, product in (("static", self.static), ("pie", self.dynamic)):
+            for target in ("manifest", "receipt"):
+                with self.subTest(linkage=linkage, target=target):
+                    manifest = product / "share/crabc/manifest.json"
+                    original = manifest.read_text()
+                    if target == "manifest":
+                        value = json.loads(original)
+                        value["schema"] = True
+                        self.write_json(manifest, value)
+                    receipt = self.static_receipt(linkage) if linkage == "static" else self.dynamic_receipt(linkage)
+                    if target == "receipt":
+                        value = json.loads(receipt.read_text())
+                        value["schema"] = True
+                        self.write_json(receipt, value)
+                    try:
+                        with self.assertRaisesRegex(evidence.ProductEvidenceError, "schema"):
+                            self.validate(linkage, receipt)
+                    finally:
+                        manifest.write_text(original)
+
     def test_dotdot_workload_path_fails_before_normalization(self) -> None:
         receipt = self.dynamic_receipt()
         redirected = self.root / "redirected-work"

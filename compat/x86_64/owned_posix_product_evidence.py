@@ -147,6 +147,10 @@ def _json_object(path: Path, description: str) -> dict[str, Any]:
         raise ProductEvidenceError(f"{description} is not valid JSON: {path}") from error
     if not isinstance(value, dict):
         _fail(f"{description} must be a JSON object")
+    # Python considers True == 1. JSON schema versions admit integers only;
+    # a boolean must not pass the sealed product/receipt identity checks.
+    if type(value.get("schema")) is not int:
+        _fail(f"{description} schema must be an integer version")
     return value
 
 
