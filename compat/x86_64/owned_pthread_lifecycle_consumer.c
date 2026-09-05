@@ -22,6 +22,7 @@
 #endif
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
 #include <sched.h>
@@ -487,11 +488,54 @@ static int run_main_thread_pthread_exit(void)
 
 struct worker_fork_exit_round {
     volatile pid_t child_process;
+    volatile pid_t adopted_main_thread;
     int pipefd;
 };
 
 static int crabc_worker_fork_exit_pipe = -1;
 static volatile int crabc_worker_fork_child_done;
+
+static int adopted_main_task_is_zombie(pid_t task)
+{
+    char path[64] = "/proc/self/task/";
+    char status[128];
+    char digits[sizeof(task) * 3];
+    size_t path_length = sizeof("/proc/self/task/") - 1;
+    size_t digit_count = 0;
+    ssize_t status_length;
+    int descriptor;
+    int index;
+
+    if (task <= 0)
+        return 0;
+    do {
+        digits[digit_count++] = (char)('0' + task % 10);
+        task /= 10;
+    } while (task != 0);
+    while (digit_count != 0)
+        path[path_length++] = digits[--digit_count];
+    path[path_length++] = '/';
+    path[path_length++] = 's';
+    path[path_length++] = 't';
+    path[path_length++] = 'a';
+    path[path_length++] = 't';
+    path[path_length++] = 'u';
+    path[path_length++] = 's';
+    path[path_length] = 0;
+    descriptor = open(path, O_RDONLY);
+    if (descriptor < 0)
+        return 0;
+    status_length = read(descriptor, status, sizeof(status));
+    (void)close(descriptor);
+    for (index = 0; index + 8 <= status_length; ++index) {
+        if (status[index] == 'S' && status[index + 1] == 't' &&
+            status[index + 2] == 'a' && status[index + 3] == 't' &&
+            status[index + 4] == 'e' && status[index + 5] == ':' &&
+            status[index + 6] == '\t' && status[index + 7] == 'Z')
+            return 1;
+    }
+    return 0;
+}
 
 static void worker_fork_child_atexit(void)
 {
@@ -508,9 +552,23 @@ static void *worker_fork_child_worker(void *opaque)
 {
     struct worker_fork_exit_round *round = opaque;
     static const unsigned char marker = 'W';
+    unsigned int spin;
 
-    if (write(round->pipefd, &marker, sizeof(marker)) != sizeof(marker))
+    /* A fork from a selected worker makes that worker the child process's
+     * adopted main task. Correct pthread_exit ends only that task, leaving
+     * this worker to observe the leader's Linux zombie state and become the
+     * final atexit owner. The old direct exit path enters exit_group while the
+     * adopted main task is still live, so it cannot reach this observation. */
+    for (spin = 0; spin != CRABC_WAIT_LIMIT; ++spin) {
+        if (adopted_main_task_is_zombie(__atomic_load_n(
+                &round->adopted_main_thread, __ATOMIC_ACQUIRE)))
+            break;
+        spin_pause();
+    }
+    if (spin == CRABC_WAIT_LIMIT)
         _Exit(88);
+    if (write(round->pipefd, &marker, sizeof(marker)) != sizeof(marker))
+        _Exit(87);
     __atomic_store_n(&crabc_worker_fork_child_done, 1, __ATOMIC_RELEASE);
     return 0;
 }
@@ -532,12 +590,13 @@ static void *worker_that_forks_and_returns(void *opaque)
     crabc_worker_fork_exit_pipe = round->pipefd;
     crabc_worker_fork_child_done = 0;
     if (atexit(worker_fork_child_atexit) != 0)
-        _Exit(87);
+        _Exit(86);
+    __atomic_store_n(&round->adopted_main_thread, getpid(), __ATOMIC_RELEASE);
     {
         pthread_t child_worker;
 
         if (pthread_create(&child_worker, 0, worker_fork_child_worker, round) != 0)
-            _Exit(86);
+            _Exit(84);
     }
     /* Returning through the original selected worker trampoline now means
      * pthread_exit for this fork child's adopted main task. The child worker
@@ -561,14 +620,17 @@ static int read_exact_bytes(int fd, unsigned char *bytes, size_t length)
 
 /*
  * Fork from a selected worker, create a child-local worker, then let the
- * original callback return. The child-visible W/A ordering proves the adopted
- * main path does not call exit_group directly and kill a post-fork worker.
+ * original callback return. W occurs only after the adopted main task becomes
+ * a Linux zombie; the final child worker then supplies atexit A. This
+ * distinguishes pthread_exit's SYS_exit from the former direct exit_group
+ * path without a runtime test hook.
  */
 static int run_fork_from_worker_then_child_worker_exit(void)
 {
     int pipefd[2];
     struct worker_fork_exit_round round = {
         .child_process = 0,
+        .adopted_main_thread = 0,
         .pipefd = -1,
     };
     pthread_t worker;
