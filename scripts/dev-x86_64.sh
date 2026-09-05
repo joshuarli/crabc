@@ -567,6 +567,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-spin  qualify installed private/shared pthread spin locking
   owned-syslog [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify owned C syslog delivery and state against musl
   owned-pattern  qualify owned C fnmatch/glob/globfree behavior against musl
+  owned-wcsftime [DYNAMIC_SYSROOT]  compare installed wide calendar formatting with musl
   owned-process-trio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed clone/vfork/daemon semantics against musl
   owned-process-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed residual POSIX process control
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
@@ -5897,7 +5898,7 @@ case "$command" in
     owned-crypt-runtime) ;;
     owned-system-cancellation) ;;
     owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
-    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
+    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
@@ -6067,7 +6068,7 @@ case "$command" in
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
-    owned-nftw-relative-base)
+    owned-nftw-relative-base|owned-wcsftime)
         prepare_owned_dynamic_product_argument "$command" "$@"
         set -- "${OWNED_DYNAMIC_PRODUCT_ARGUMENTS[@]}"
         ;;
@@ -8074,6 +8075,10 @@ PY
     owned-syslog)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_syslog.sh "$@"
+        ;;
+    owned-wcsftime)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_wcsftime.sh "$@"
         ;;
     owned-pattern)
         [ "$#" -eq 0 ] || fail "owned-pattern takes no arguments"

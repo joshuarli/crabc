@@ -37,7 +37,7 @@ owners:
    priority-protect retains musl's unsupported status. Family closure and
    ordered qualification receipts remain open.
    Residual POSIX workloads and shared-state composition are integrated into
-   the 50-case dynamic catalog. Fresh three-product qualification and the
+   the expanded dynamic catalog. Fresh three-product qualification and the
    complete six-static/twelve-dynamic POSIX family receipt remain required;
    see [`owned-posix-runtime.md`](compat/x86_64/owned-posix-runtime.md).
    Full native OS-test and libc-test runners now expose the remaining runtime

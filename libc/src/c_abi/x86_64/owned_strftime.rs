@@ -3,7 +3,9 @@
 //! ISO-week arithmetic, padding/extended-year rules and partial-buffer failure
 //! semantics retain that source. Existing owned snprintf supplies integer
 //! rendering; the existing C/POSIX/C.UTF-8 LC_TIME table supplies language data.
-//! No locale database, wide formatting, or independent numeric formatter.
+//! `owned_wcsftime` reuses the directive seam below to preserve this exact
+//! byte-formatting implementation before it converts the selected text to wide
+//! characters. No locale database or independent numeric formatter is added.
 
 use core::{ffi::{c_char, c_int, c_void}, ptr};
 use super::{owned_timezone, timegm::{self, Tm}};
@@ -45,7 +47,16 @@ unsafe fn string(pointer: *const c_char) -> (*const u8, usize) {
     }
 }
 
-unsafe fn directive(buffer: *mut u8, conversion: u8, tm: &Tm,
+/// Expand one musl `__strftime_fmt_1` directive into a byte string.
+///
+/// `buffer` names 100 writable bytes. A successful result either borrows that
+/// scratch buffer or immutable locale/timezone data, and is a NUL-terminated
+/// byte string for the reported length. Copy it before reusing `buffer`,
+/// releasing the selected locale, or mutating the borrowed `Tm`/timezone
+/// state. Both byte and wide calendar formatters use this one directive
+/// implementation so their C/POSIX/C.UTF-8 locale data, padding, and calendar
+/// arithmetic stay aligned with musl's `__strftime_fmt_1`.
+pub(super) unsafe fn format_directive(buffer: *mut u8, conversion: u8, tm: &Tm,
     locale: Option<*mut c_void>, pad: u8) -> Option<(*const u8, usize)> {
     unsafe {
         let mut width: i32 = 2;
@@ -78,13 +89,13 @@ unsafe fn directive(buffer: *mut u8, conversion: u8, tm: &Tm,
             b'j' => { value = tm.year_day.wrapping_add(1) as i64; width = 3; }
             b'm' => value = tm.month.wrapping_add(1) as i64,
             b'M' => value = tm.minutes as i64,
-            b'n' => return Some((b"\n".as_ptr(), 1)),
+            b'n' => return Some((c"\n".as_ptr().cast(), 1)),
             b'p' => return Some(string(language(if tm.hours >= 12 { 0x20027 } else { 0x20026 }, locale))),
             b'r' => { recursive = language(0x2002b, locale); value = 0; }
             b'R' => { recursive = c"%H:%M".as_ptr(); value = 0; }
             b's' => { value = timegm::tm_to_secs(tm).wrapping_sub(tm.utc_offset); width = 1; }
             b'S' => value = tm.seconds as i64,
-            b't' => return Some((b"\t".as_ptr(), 1)),
+            b't' => return Some((c"\t".as_ptr().cast(), 1)),
             b'T' => { recursive = c"%H:%M:%S".as_ptr(); value = 0; }
             b'u' => { value = if tm.week_day != 0 { tm.week_day as i64 } else { 7 }; width = 1; }
             b'U' => value = ((tm.year_day as u32).wrapping_add(7).wrapping_sub(tm.week_day as u32)/7) as i64,
@@ -110,7 +121,7 @@ unsafe fn directive(buffer: *mut u8, conversion: u8, tm: &Tm,
             }
             b'Z' => return Some(if tm.daylight_saving < 0 { (c"".as_ptr().cast(), 0) }
                 else { string(owned_timezone::tm_zone_name(tm)) }),
-            b'%' => return Some((b"%".as_ptr(), 1)),
+            b'%' => return Some((c"%".as_ptr().cast(), 1)),
             _ => return None,
         }
         if !recursive.is_null() {
@@ -149,7 +160,7 @@ unsafe fn format(output: *mut u8, capacity: usize, mut input: *const u8,
             } else { width = 0; }
             input = conversion;
             if *input == b'E' || *input == b'O' { input = input.add(1); }
-            let Some((mut text, mut n)) = directive(buffer.as_mut_ptr(), *input, tm, locale, pad) else { break; };
+            let Some((mut text, mut n)) = format_directive(buffer.as_mut_ptr(), *input, tm, locale, pad) else { break; };
             if width != 0 {
                 if *text == b'+' || *text == b'-' { text = text.add(1); n -= 1; }
                 while *text == b'0' && (*text.add(1)).wrapping_sub(b'0') < 10 { text = text.add(1); n -= 1; }

@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "f87cb8d879a02b40e1bba77bdfcfeee2b4e0a4fbe9b62ca81b0a072b094c5d2f",
+    "callable_inventory_sha256": "9032ac804ef05d166152345dfef0f9689bc67b20fd090e9edd67f4089f865371",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "00e9cc0881c0214fd355522d04d19c98fd2cb4195a676243b99cdf3e6cdce6c9",
+    "parity_ledger_sha256": "0fe0ce87e84f0bdd03d14d7482c3b38b38942c5bde51dbbb2c44037a07241cf3",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "missing_reference_declaration_groups": [],
@@ -276,6 +276,8 @@
           "warn",
           "warnx",
           "wcsdup",
+          "wcsftime",
+          "wcsftime_l",
           "wcsnrtombs",
           "wordexp",
           "wordfree",
@@ -1421,9 +1423,7 @@
         "linkage_owner_obligation": "final-callable-provider-archive-closure",
         "members": [
           "strfmon",
-          "strfmon_l",
-          "wcsftime",
-          "wcsftime_l"
+          "strfmon_l"
         ],
         "provider_target": "future selected C ABI providers in libc.text-math-locale-stdio",
         "resolution": "planned-provider",
@@ -1783,13 +1783,13 @@
   },
   "summary": {
     "candidate_external_callable_count": 1525,
-    "declared_unverified_feature_callable_count": 267,
+    "declared_unverified_feature_callable_count": 269,
     "default_static_callable_count": 1122,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 7,
-      "planned-provider": 49
+      "planned-provider": 47
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1800,7 +1800,7 @@
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 58,
+    "unprovided_callable_count": 56,
     "verified_feature_callable_count": 78
   },
   "target": "x86_64-unknown-linux-musl",

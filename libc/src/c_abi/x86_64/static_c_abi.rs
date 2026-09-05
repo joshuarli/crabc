@@ -692,6 +692,9 @@ mod owned_calendar;
 #[path = "owned_strftime.rs"]
 mod owned_strftime;
 #[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_wcsftime.rs"]
+mod owned_wcsftime;
+#[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_strptime.rs"]
 mod owned_strptime;
 #[cfg(feature = "x86-owned-static-runtime")]

@@ -46,6 +46,7 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Owned classic host and service lookup](../compat/x86_64/owned-classic-netdb.md)
   — conventional local files and bounded DNS through owned products, with
   explicit remaining resolver cancellation and parser-order obligations.
+- [Owned wide calendar evidence](evidence/x86-owned-wcsftime.md)
 - [Owned C filename-pattern evidence](../compat/x86_64/owned-pattern.md)
   — source-mapped `fnmatch`/`glob` C ABI slice across owned products; neither
   pattern-family completion nor public support.
