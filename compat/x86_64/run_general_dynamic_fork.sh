@@ -134,8 +134,11 @@ for mode in pie non-pie; do
 done
 
 # The held-finalizer and adopted-main tests need a host parent to synchronize
-# with the private chroot.  Each target still writes the same raw triplet;
-# the helper runs all targets before returning a failure.
+# with the private chroot.  Each target retains stdout/stderr/status before
+# returning a failure.  The adopted-main protocol consumes a live PID line;
+# its complete, product-specific stream is additionally retained as
+# `.raw.stdout`, while `.stdout` stays the fixed semantic tail used by the
+# ordinary musl differential.
 run_interactive() {
     local mode="$1" scenario="$2"
     python3 -B - "$work" "$mode" "$scenario" <<'PY'
@@ -165,8 +168,11 @@ for role, entry, consumer in targets:
     else:
         command = ['chroot', str(work / 'execution-root'), '/lib/ld-crabc-x86_64.so.1', consumer, scenario]
     output, errors, status_path = (work / f'{label}.stdout', work / f'{label}.stderr', work / f'{label}.status')
+    raw_output = work / f'{label}.raw.stdout'
     process = None
     status = 125
+    captured = bytearray()
+    semantic = b''
     try:
         with errors.open('wb') as error_stream:
             process = subprocess.Popen(command, cwd=work / 'oracle', stdin=subprocess.PIPE,
@@ -182,12 +188,15 @@ for role, entry, consumer in targets:
                     if not data:
                         raise RuntimeError(f'premature exit {process.wait()}')
                     prefix += data
+                    captured += data
                 if prefix != b'FB' or selector.select(0.1):
                     raise RuntimeError("fork passed another task's held finalizer")
                 process.stdin.write(b'R')
                 process.stdin.flush()
                 result, _ = process.communicate(timeout=5)
-                output.write_bytes(prefix + result)
+                captured += result
+                semantic = bytes(captured)
+                output.write_bytes(semantic)
                 if result:
                     raise RuntimeError(f'fork escaped finalization: {result!r}')
             else:
@@ -199,7 +208,10 @@ for role, entry, consumer in targets:
                     if not byte or len(line) > 20:
                         raise RuntimeError(f'bad child PID {line!r}')
                     line += byte
+                    captured += byte
                 child = int(line)
+                if child <= 0:
+                    raise RuntimeError(f'bad child PID {line!r}')
                 deadline = time.monotonic() + 5
                 while True:
                     try:
@@ -214,8 +226,10 @@ for role, entry, consumer in targets:
                 process.stdin.write(b'R')
                 process.stdin.flush()
                 result, _ = process.communicate(timeout=5)
-                output.write_bytes(result)
-                if result != b'dynamic fork survives adopted main exit: ok\n':
+                captured += result
+                semantic = result
+                output.write_bytes(semantic)
+                if semantic != b'dynamic fork survives adopted main exit: ok\n':
                     raise RuntimeError(f'bad survivor output: {result!r}')
             status = process.returncode
             if status != 0:
@@ -227,10 +241,19 @@ for role, entry, consumer in targets:
         if process is not None and process.poll() is None:
             os.killpg(process.pid, signal.SIGKILL)
             process.wait()
+        if process is not None and process.stdout is not None:
+            try:
+                captured += process.stdout.read()
+            except (OSError, ValueError):
+                pass
         if process is not None:
             status = process.returncode
-        if not output.exists():
-            output.write_bytes(b'')
+        if scenario == 'worker-survivor':
+            raw_output.write_bytes(captured)
+            if not output.exists():
+                output.write_bytes(semantic)
+        elif not output.exists():
+            output.write_bytes(captured)
         status_path.write_text(f'{status}\n')
 if failed:
     raise SystemExit(1)
@@ -270,5 +293,6 @@ done
 # This final receipt requires every semantic differential and every private
 # layout proof to have retained successful raw results.  It does not compare
 # the private FS layout to musl.
-python3 -B "$ROOT/compat/x86_64/owned_dynamic_fork_evidence.py" seal-observations --work "$work"
+python3 -B "$ROOT/compat/x86_64/owned_dynamic_fork_evidence.py" seal-observations \
+    --product "$installed" --work "$work"
 printf 'general dynamic fork: PASS (same semantic object against pinned musl and all candidate entries; separately sealed crabc-private FS layout witness; tagged DSO receipt/topology); evidence: %s\n' "$work"

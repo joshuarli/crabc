@@ -158,7 +158,16 @@ layout witness is sealed as candidate-only evidence rather than compiled into
 the musl differential. `compile.json` records both consumer roles and the
 three `FORK_LIBRARY_TAG` preprocessing identities; producer receipts and ELF
 checks bind the initial/runtime DSO topology, and `observations.json` requires
-all retained semantic and private-witness results. Its pinned-musl cases cover initial and worker callers with a live sibling,
+all retained semantic and private-witness results. The worker-survivor protocol
+first emits its process-specific positive PID so the host parent can observe
+the adopted initial task's retirement. Each such complete stream is retained
+as `<label>.raw.stdout`; `owned_dynamic_fork_evidence.py` parses and seals the
+PID plus exact fixed body, while `<label>.stdout` retains only that fixed body
+for the ordinary musl comparison. Raw PID streams are therefore evidence of
+the synchronization protocol, never byte-equality inputs across independently
+created processes. The final observation seal revalidates the installed
+product, compile/header closure, link receipts, and ELF topology and binds
+those hashes in its receipt. Its pinned-musl cases cover initial and worker callers with a live sibling,
 reverse-prepare/forward-parent-or-child hooks that call loader APIs, inherited
 TLS/TSD/cleanup, postfork module growth and fresh workers, ordinary and kernel
 robust owner death, raw `EAGAIN` unwind, nested constructor fork, and rejected

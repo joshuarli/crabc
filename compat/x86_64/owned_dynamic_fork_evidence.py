@@ -40,7 +40,11 @@ CONSUMER_ROLES = (
     ("semantic-consumer", "consumer", ()),
     ("owned-layout-consumer", "consumer-owned-layout", ("CRABC_OWNED_WITNESS",)),
 )
-OBSERVATION_SCHEMA = "crabc.dynamic-fork-observations/v1"
+OBSERVATION_SCHEMA = "crabc.dynamic-fork-observations/v2"
+WORKER_SURVIVOR_BODY = b"dynamic fork survives adopted main exit: ok\n"
+WORKER_SURVIVOR_PROTOCOL = re.compile(
+    rb"(?P<pid>[1-9][0-9]*)\n" + re.escape(WORKER_SURVIVOR_BODY)
+)
 
 
 class EvidenceError(RuntimeError):
@@ -177,12 +181,22 @@ def run(command: list[str], *, output: Path, environment: dict[str, str]) -> Non
         )
 
 
-def dependency_names(path: Path, source: Path, headers: Path) -> list[Path]:
+def capture(command: list[str], *, environment: dict[str, str]) -> bytes:
+    completed = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, env=environment, check=False)
+    if completed.returncode:
+        raise EvidenceError(
+            f"compiler audit failed ({completed.returncode}): {completed.stderr.decode(errors='replace')}"
+        )
+    return completed.stdout
+
+
+def dependency_names_text(record: str, source: Path, headers: Path) -> list[Path]:
     try:
-        record = path.read_text(encoding="utf-8").replace("\\\n", " ")
+        record = record.replace("\\\n", " ")
         _, words = record.split(":", 1)
-    except (OSError, UnicodeDecodeError, ValueError) as error:
-        raise EvidenceError(f"dependency record is invalid: {path}") from error
+    except ValueError as error:
+        raise EvidenceError("dependency record is invalid") from error
     result: list[Path] = []
     for word in words.split():
         candidate = physical(Path(word), "dependency input")
@@ -192,6 +206,13 @@ def dependency_names(path: Path, source: Path, headers: Path) -> list[Path]:
     if source not in result:
         fail("dependency roster omits its source")
     return result
+
+
+def dependency_names(path: Path, source: Path, headers: Path) -> list[Path]:
+    try:
+        return dependency_names_text(path.read_text(encoding="utf-8"), source, headers)
+    except (OSError, UnicodeDecodeError) as error:
+        raise EvidenceError(f"dependency record is invalid: {path}") from error
 
 
 def unit_record(
@@ -414,6 +435,10 @@ def audit_compile(product: Path, work: Path, manifest: Path) -> None:
         (role, CONSUMER, work / "objects" / f"{role}.o", "-fPIE", list(defines), None)
         for role, _, defines in CONSUMER_ROLES
     ]
+    headers = physical(product / "usr/include", "installed headers", directory=True)
+    contract = compiler_contract(product)
+    compiler = contract["compiler"]()
+    environment = contract["clean_environment"]()
     units = [*libraries, *consumers]
     preprocessed: set[str] = set()
     for unit, expected in zip(units, expected_units):
@@ -431,35 +456,67 @@ def audit_compile(product: Path, work: Path, manifest: Path) -> None:
             fail("compile unit source tag drifted")
         require_hash(unit["source_sha256"], digest(source), "compile source")
         require_hash(unit["object_sha256"], digest(object_path), "compile object")
-        preprocessed_path = physical(Path(unit["preprocessed"]), "preprocessed source")
+        # The exact installed-driver compiler contract and role flags are
+        # recomputed here, rather than trusting the recorded command fields.
+        expected_base = [compiler, "-nostdinc", "-isystem", str(headers), "-std=c11", "-ffreestanding",
+                         "-fno-builtin", "-fstack-protector-strong", codegen,
+                         *(f"-D{item}" for item in defines)]
+        expected_dependency_command = [*expected_base, "-M", str(source)]
+        expected_preprocessor_command = [*expected_base, "-E", "-P", str(source)]
+        if unit["dependency_audit_command"] != expected_dependency_command:
+            fail("compile dependency audit command drifted")
+        if unit["preprocessor_command"] != expected_preprocessor_command:
+            fail("compile preprocessor command drifted")
+        expected_preprocessed_path = work / "preprocessed" / f"{identifier}.i"
+        if unit["preprocessed"] != str(expected_preprocessed_path):
+            fail("compile preprocessed path drifted")
+        preprocessed_path = physical(expected_preprocessed_path, "preprocessed source")
         require_hash(unit["preprocessed_sha256"], digest(preprocessed_path), "preprocessor identity")
+        current_preprocessed = capture(expected_preprocessor_command, environment=environment)
+        current_preprocessed_sha256 = hashlib.sha256(current_preprocessed).hexdigest()
+        require_hash(unit["preprocessed_sha256"], current_preprocessed_sha256,
+                     "current preprocessor identity")
         preprocessed.add(unit["preprocessed_sha256"])
         dependencies = unit["dependencies"]
-        if not isinstance(dependencies, dict) or str(source) not in dependencies:
+        if not isinstance(dependencies, dict):
             fail("compile dependency roster drifted")
-        for name, expected_hash in dependencies.items():
-            dependency = physical(Path(name), "compile dependency")
-            if dependency != source and not dependency.is_relative_to(product / "usr/include"):
-                fail("compile dependency escapes installed headers")
-            require_hash(expected_hash, digest(dependency), "compile dependency")
+        current_dependencies = dependency_names_text(
+            capture(expected_dependency_command, environment=environment).decode(encoding="utf-8"),
+            source, headers,
+        )
+        if len(current_dependencies) < 2:
+            fail("compile dependency closure omits installed headers")
+        expected_dependencies = {str(path): digest(path) for path in current_dependencies}
+        if dependencies != expected_dependencies:
+            fail("compile dependency roster or installed-header hashes drifted")
     if len(preprocessed) != len(DSO_TOPOLOGY) + len(CONSUMER_ROLES):
         fail("compile preprocessor identities collapsed")
 
-def validate(product: Path, work: Path) -> None:
+def validate(product: Path, work: Path) -> dict[str, Any]:
     product = physical(product, "dynamic product", directory=True)
     work = physical(work, "evidence work directory", directory=True)
     manifest = product_manifest(product)
     audit_compile(product, work, manifest)
+    link_receipts: dict[str, str] = {}
     for name, _, filename, dependencies in DSO_TOPOLOGY:
         dsos = [work / dependency for dependency in dependencies]
         expected_needed = (*dependencies, "libc.so")
         audit_receipt(product, manifest, work / filename, work / "objects" / f"libfork-{name}.o",
                       "shared", dsos, expected_needed)
+        link_receipts[filename] = digest(Path(str(work / filename) + ".crabc-link.json"))
     for role, consumer_name, _ in CONSUMER_ROLES:
         for mode in ("pie", "non-pie"):
             audit_receipt(product, manifest, work / f"{consumer_name}-{mode}",
                           work / "objects" / f"{role}.o", "pie" if mode == "pie" else "exec",
                           [work / "libfork-initial.so"], ("libfork-initial.so", "libc.so"))
+            link_receipts[f"{consumer_name}-{mode}"] = digest(
+                Path(str(work / f"{consumer_name}-{mode}") + ".crabc-link.json")
+            )
+    return {
+        "product_manifest_sha256": digest(manifest),
+        "compile_sha256": digest(work / "compile.json"),
+        "link_receipts": link_receipts,
+    }
 
 
 def observation(path: Path) -> dict[str, Any]:
@@ -473,8 +530,46 @@ def observation(path: Path) -> dict[str, Any]:
             "status_sha256": digest(status_path), "status": 0}
 
 
-def seal_observations(work: Path) -> None:
+def worker_survivor_observation(path: Path) -> dict[str, Any]:
+    """Bind the live-PID protocol to its stable differential projection.
+
+    The parent must see the PID before it can establish that the adopted main
+    thread has become a zombie.  That PID is necessarily distinct across musl
+    and every candidate process, so `.raw.stdout` is parsed and sealed but is
+    deliberately not byte-compared.  `.stdout` is the fixed tail that remains
+    in the semantic musl differential.
+    """
+    stdout = physical(Path(str(path) + ".stdout"), "worker-survivor semantic stdout")
+    raw_stdout = physical(Path(str(path) + ".raw.stdout"), "worker-survivor raw stdout")
+    stderr = physical(Path(str(path) + ".stderr"), "raw observation stderr")
+    status_path = physical(Path(str(path) + ".status"), "raw observation status")
+    status = status_path.read_text(encoding="utf-8")
+    if status != "0\n":
+        fail(f"raw observation failed or timed out: {path.name} ({status.strip()})")
+    semantic = stdout.read_bytes()
+    raw = raw_stdout.read_bytes()
+    match = WORKER_SURVIVOR_PROTOCOL.fullmatch(raw)
+    if match is None:
+        fail(f"worker-survivor raw protocol differs: {path.name}")
+    if semantic != WORKER_SURVIVOR_BODY:
+        fail(f"worker-survivor semantic projection differs: {path.name}")
+    return {
+        "raw_stdout_sha256": digest(raw_stdout),
+        "semantic_stdout_sha256": digest(stdout),
+        "stderr_sha256": digest(stderr),
+        "status_sha256": digest(status_path),
+        "status": 0,
+        "survivor_pid": int(match.group("pid")),
+    }
+
+
+def seal_observations(work: Path, product: Path) -> None:
     work = physical(work, "evidence work directory", directory=True)
+    # This is the final seal after execution, rather than a mere list of raw
+    # files.  Recheck the product, source/header/object identities, link
+    # receipts, and ELF topology so no completed observation can outlive the
+    # product it claims to exercise.
+    validation = validate(product, work)
     scenarios = ("main", "worker", "kernel-main", "kernel-worker", "recursive", "abandoned", "failure", "finalizer-single")
     special = ("finalizer-held", "worker-survivor")
     semantic_oracle: dict[str, dict[str, Any]] = {}
@@ -494,17 +589,19 @@ def seal_observations(work: Path) -> None:
                         fail(f"semantic same-object differential differs: {semantic_label}")
         for scenario in special:
             oracle_label = f"oracle-{mode}-{scenario}"
-            semantic_oracle[oracle_label] = observation(work / oracle_label)
+            observe = worker_survivor_observation if scenario == "worker-survivor" else observation
+            semantic_oracle[oracle_label] = observe(work / oracle_label)
             for entry in ("kernel", "direct"):
                 semantic_label = f"semantic-{mode}-{entry}-{scenario}"
                 layout_label = f"owned-layout-{mode}-{entry}-{scenario}"
-                semantic_candidate[semantic_label] = observation(work / semantic_label)
-                owned_layout[layout_label] = observation(work / layout_label)
+                semantic_candidate[semantic_label] = observe(work / semantic_label)
+                owned_layout[layout_label] = observe(work / layout_label)
                 for suffix in ("stdout", "stderr", "status"):
                     if (work / f"{oracle_label}.{suffix}").read_bytes() != (work / f"{semantic_label}.{suffix}").read_bytes():
                         fail(f"semantic same-object differential differs: {semantic_label}")
     record = {
         "schema": OBSERVATION_SCHEMA,
+        "validation": validation,
         "semantic_consumer": {"role": "semantic-consumer", "oracle": semantic_oracle,
                               "candidate": semantic_candidate},
         "owned_layout_consumer": {"role": "owned-layout-consumer", "candidate": owned_layout},
@@ -523,6 +620,7 @@ def main(argv: list[str] | None = None) -> int:
         subparser.add_argument("--product", type=Path, required=True)
         subparser.add_argument("--work", type=Path, required=True)
     observations = commands.add_parser("seal-observations")
+    observations.add_argument("--product", type=Path, required=True)
     observations.add_argument("--work", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
@@ -531,7 +629,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "validate":
             validate(args.product, args.work)
         else:
-            seal_observations(args.work)
+            seal_observations(args.work, args.product)
     except (EvidenceError, OSError, KeyError, TypeError) as error:
         print(error, file=sys.stderr)
         return 1

@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -69,6 +70,7 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
         self.assertIn('python3 -B "$ROOT/compat/x86_64/owned_dynamic_fork_evidence.py" record-compile', source)
         self.assertIn('python3 -B "$ROOT/compat/x86_64/owned_dynamic_fork_evidence.py" validate', source)
         self.assertIn('seal-observations', source)
+        self.assertIn('--product "$installed" --work "$work"', source)
 
     def test_same_four_objects_feed_musl_dso_links_and_both_consumer_entries(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
@@ -101,6 +103,9 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
         self.assertIn('mode") != "shared"', source)
         self.assertIn('seal_observations', source)
         self.assertIn('owned-layout', source)
+        self.assertIn('current preprocessor identity', source)
+        self.assertIn('compile dependency roster or installed-header hashes drifted', source)
+        self.assertIn('validation', source)
 
     def test_raw_status_stdout_and_stderr_are_retained_for_all_runs(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
@@ -109,6 +114,8 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
         self.assertIn('run_interactive', source)
         self.assertIn('owned-layout', source)
         self.assertIn('for suffix in stdout stderr status; do', source)
+        self.assertIn("raw_output = work / f'{label}.raw.stdout'", source)
+        self.assertIn('raw_output.write_bytes(captured)', source)
 
     def test_observation_receipt_requires_all_semantic_and_private_layout_results(self) -> None:
         evidence = load_evidence()
@@ -123,27 +130,71 @@ class OwnedDynamicForkRunnerTests(unittest.TestCase):
 
             def retain(label: str, payload: bytes) -> None:
                 (work / f"{label}.stdout").write_bytes(payload)
+                if label.endswith("worker-survivor"):
+                    (work / f"{label}.raw.stdout").write_bytes(b"123\n" + payload)
                 (work / f"{label}.stderr").write_bytes(b"")
                 (work / f"{label}.status").write_text("0\n", encoding="utf-8")
 
             for mode in ("pie", "non-pie"):
                 for scenario in scenarios:
-                    payload = f"{mode}:{scenario}\n".encode()
+                    payload = (b"dynamic fork survives adopted main exit: ok\n"
+                               if scenario == "worker-survivor"
+                               else f"{mode}:{scenario}\n".encode())
                     retain(f"oracle-{mode}-{scenario}", payload)
                     for entry in ("kernel", "direct"):
                         retain(f"semantic-{mode}-{entry}-{scenario}", payload)
-                        retain(f"owned-layout-{mode}-{entry}-{scenario}", b"private " + payload)
-            evidence.seal_observations(work)
+                        retain(f"owned-layout-{mode}-{entry}-{scenario}",
+                               payload if scenario == "worker-survivor" else b"private " + payload)
+            validation = {
+                "product_manifest_sha256": "a" * 64,
+                "compile_sha256": "b" * 64,
+                "link_receipts": {"consumer-pie": "c" * 64},
+            }
+            with patch.object(evidence, "validate", return_value=validation) as validate:
+                evidence.seal_observations(work, Path("/validated-product"))
+            validate.assert_called_once_with(Path("/validated-product"), work)
             receipt = json.loads((work / "observations.json").read_text(encoding="utf-8"))
-            self.assertEqual(receipt["schema"], "crabc.dynamic-fork-observations/v1")
+            self.assertEqual(receipt["schema"], "crabc.dynamic-fork-observations/v2")
+            self.assertEqual(receipt["validation"], validation)
             self.assertEqual(len(receipt["semantic_consumer"]["oracle"]), 20)
             self.assertEqual(len(receipt["semantic_consumer"]["candidate"]), 40)
             self.assertEqual(len(receipt["owned_layout_consumer"]["candidate"]), 40)
+            survivor = receipt["semantic_consumer"]["oracle"]["oracle-pie-worker-survivor"]
+            self.assertEqual(survivor["survivor_pid"], 123)
+            self.assertIn("raw_stdout_sha256", survivor)
+            self.assertIn("semantic_stdout_sha256", survivor)
 
             (work / "observations.json").unlink()
             (work / "owned-layout-pie-kernel-main.status").write_text("124\n", encoding="utf-8")
             with self.assertRaisesRegex(evidence.EvidenceError, "failed or timed out"):
-                evidence.seal_observations(work)
+                with patch.object(evidence, "validate", return_value=validation):
+                    evidence.seal_observations(work, Path("/validated-product"))
+
+    def test_worker_survivor_raw_protocol_requires_a_positive_pid_and_exact_projection(self) -> None:
+        evidence = load_evidence()
+        scratch_root = ROOT / ".work/x86_64/owned-dynamic-fork-runner-tests"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            work = Path(temporary)
+            label = work / "semantic-pie-kernel-worker-survivor"
+            body = b"dynamic fork survives adopted main exit: ok\n"
+            Path(str(label) + ".stdout").write_bytes(body)
+            Path(str(label) + ".raw.stdout").write_bytes(b"417\n" + body)
+            Path(str(label) + ".stderr").write_bytes(b"")
+            Path(str(label) + ".status").write_text("0\n", encoding="utf-8")
+            record = evidence.worker_survivor_observation(label)
+            self.assertEqual(record["survivor_pid"], 417)
+            self.assertIn("raw_stdout_sha256", record)
+            self.assertIn("semantic_stdout_sha256", record)
+
+            Path(str(label) + ".raw.stdout").write_bytes(b"0\n" + body)
+            with self.assertRaisesRegex(evidence.EvidenceError, "raw protocol differs"):
+                evidence.worker_survivor_observation(label)
+
+            Path(str(label) + ".raw.stdout").write_bytes(b"417\n" + body)
+            Path(str(label) + ".stdout").write_bytes(b"wrong projection\n")
+            with self.assertRaisesRegex(evidence.EvidenceError, "semantic projection differs"):
+                evidence.worker_survivor_observation(label)
 
     def test_dispatcher_wrapper_still_builds_then_calls_the_qualification_runner(self) -> None:
         source = WRAPPER.read_text(encoding="utf-8")
