@@ -557,6 +557,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-scheduling test installed pthread scheduling/default attributes
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-atfork-registry  test installed resource-sized atfork callback ordering
+  owned-signal-helpers [DYNAMIC_SYSROOT]  test installed signal aliases, bookkeeping and reporting
   owned-pthread-join-cancel  test installed join cancellation and target reclamation
   owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
   owned-pthread-cond-timed  test timed/shared condition transactions and mutex handoffs
@@ -5615,7 +5616,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
-    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio) ;;
+    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers) ;;
     owned-assert|owned-linux-control) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -7645,6 +7646,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-process-trio takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_process_trio.sh
+        ;;
+    owned-signal-helpers)
+        [ "$#" -le 1 ] || fail "owned-signal-helpers takes at most one dynamic sysroot"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_signal_helpers.sh "$@"
         ;;
     owned-dynamic-spawn)
         [ "$#" -eq 0 ] || fail "owned-dynamic-spawn takes no arguments"

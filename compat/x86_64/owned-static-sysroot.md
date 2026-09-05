@@ -515,3 +515,11 @@ The installed process creation trio (`clone`, `vfork`, and `daemon`) has a
 separate source mapping and ordinary application differential gate in
 [`owned-process-trio.md`](owned-process-trio.md). It includes static and
 static-PIE entry, child thread identity/lifecycle, and process-error rollback.
+
+The installed signal aliases, System V helpers, and FILE-owned signal reporting
+are qualified by `owned-signal-helpers`; source mappings, inherited boundaries,
+and the same-object musl differential are recorded in
+[`owned-signal-helpers.md`](owned-signal-helpers.md). The frozen private
+`process.signal` reporting limitations describe its older artifact, while
+the installed reporting pair owns the real stderr lock and restores its
+orientation and encoding state.

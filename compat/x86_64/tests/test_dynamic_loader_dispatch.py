@@ -43,6 +43,8 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("owned-system-cancellation", False),
                 ("owned-dynamic-spawn", False),
                 ("owned-atfork-registry", False),
+                ("owned-signal-helpers", False),
+                ("owned-signal-helpers-product", False),
                 ("owned-linux-control", False),
                 ("owned-assert", False),
                 ("owned-syslog", False),
@@ -58,7 +60,9 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         CRABC_X86_64_WORK_DIR=str(work / "state"),
                     )
                     selected_command = (["qualification-manifest", "--through", "compat.abi-differential"]
-                        if command == "qualification-manifest-prefix" else [command])
+                        if command == "qualification-manifest-prefix" else
+                        ["owned-signal-helpers", "/workspace/.work/x86_64/supplied-product"]
+                        if command == "owned-signal-helpers-product" else [command])
                     result = subprocess.run(
                         ["bash", str(ROOT / "scripts/dev-x86_64.sh"), *selected_command],
                         cwd=ROOT, env=environment, capture_output=True, text=True,
@@ -73,11 +77,18 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertNotIn("--pid=host", arguments)
                         self.assertNotIn("--userns=host", arguments)
                         self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", arguments)
-                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio"):
+                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio", "owned-signal-helpers"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-2:], [
                             "bash", "/workspace/compat/x86_64/run_" + command.replace("-", "_") + ".sh",
+                        ])
+                    if command == "owned-signal-helpers-product":
+                        self.assertEqual(len(invocations), 1)
+                        self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
+                        self.assertEqual(invocations[0][-3:], [
+                            "bash", "/workspace/compat/x86_64/run_owned_signal_helpers.sh",
+                            "/workspace/.work/x86_64/supplied-product",
                         ])
                     if command == "qualification-manifest":
                         self.assertEqual(len(invocations), 1)

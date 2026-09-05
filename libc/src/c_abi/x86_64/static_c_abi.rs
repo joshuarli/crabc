@@ -264,7 +264,7 @@ mod strsignal;
 // psignal/psiginfo compose the selected permanent stderr and errno substrate.
 // Keep this diagnostic pair opt-in so the frozen default archive does not
 // silently acquire reporting symbols or imply a general stdio runtime.
-#[cfg(feature = "x86-signal-reporting")]
+#[cfg(all(feature = "x86-signal-reporting", not(feature = "x86-owned-static-runtime")))]
 #[path = "signal_reporting.rs"]
 mod signal_reporting;
 #[path = "ctype.rs"]
@@ -378,9 +378,12 @@ mod signal_control;
 // Keep the historical System V helper closure opt-in: these four spellings
 // must not silently widen the selected-static signal ABI or imply a general
 // signal runtime.
-#[cfg(feature = "x86-signal-sysv-helpers")]
+#[cfg(all(feature = "x86-signal-sysv-helpers", not(feature = "x86-owned-static-runtime")))]
 #[path = "signal_sysv_helpers.rs"]
 mod signal_sysv_helpers;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_signal_helpers.rs"]
+mod owned_signal_helpers;
 #[path = "siginterrupt.rs"]
 mod siginterrupt;
 #[path = "signal_realtime_max.rs"]

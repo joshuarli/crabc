@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Native Linux/x86-64 SysV signal-helper C/C++ declaration matrix.
 #
-# Pinned musl 1.2.6 is the source and declaration oracle. The project keeps
-# its post-POSIX.1-2024 X/Open contract: the historical declarations are visible
-# in XOPEN=700, GNU, BSD, and default-source profiles, but deliberately hidden
-# in XOPEN=800 even though musl 1.2.6 still exposes them there. This check is
-# header-only and does not select a signal runtime.
+# Pinned musl 1.2.6 is the source and declaration oracle. The native x86
+# header exposes historical declarations in XOPEN=700 and XOPEN=800, GNU,
+# BSD, and default-source profiles, matching that source. The separate legacy
+# architecture header branch does not govern native x86 evidence. This check
+# is header-only and does not select a signal runtime.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -71,33 +71,6 @@ reject_hidden() {
     done
 }
 
-assert_xopen800_header_divergence() {
-    local language
-
-    for language in c cpp; do
-        if [ "$language" = c ]; then
-            "$ORACLE_CC" -std=c11 -U_GNU_SOURCE -D_XOPEN_SOURCE=800 \
-                -DCRABC_EXPECT_SYSV_SIGNAL_HELPERS -fsyntax-only "$C_PROBE" ||
-                fail "oracle C X/Open-800 profile lost musl declarations"
-            if "$ORACLE_CC" -std=c11 -U_GNU_SOURCE -D_XOPEN_SOURCE=800 \
-                -DCRABC_REQUIRE_SYSV_SIGNAL_HELPERS_HIDDEN \
-                -Werror=implicit-function-declaration -I "$ROOT_DIR/include" \
-                -fsyntax-only "$C_PROBE" >"$work_dir/project.xopen800.c.out" 2>&1; then
-                fail "project C X/Open-800 profile lost legacy-XSI hiding"
-            fi
-        else
-            "$ORACLE_CC" -std=c++17 -x c++ -U_GNU_SOURCE -D_XOPEN_SOURCE=800 \
-                -DCRABC_EXPECT_SYSV_SIGNAL_HELPERS -fsyntax-only "$CXX_PROBE" ||
-                fail "oracle C++ X/Open-800 profile lost musl declarations"
-            if "$ORACLE_CC" -std=c++17 -x c++ -U_GNU_SOURCE -D_XOPEN_SOURCE=800 \
-                -DCRABC_REQUIRE_SYSV_SIGNAL_HELPERS_HIDDEN -I "$ROOT_DIR/include" \
-                -fsyntax-only "$CXX_PROBE" >"$work_dir/project.xopen800.cpp.out" 2>&1; then
-                fail "project C++ X/Open-800 profile lost legacy-XSI hiding"
-            fi
-        fi
-    done
-}
-
 assert_unmangled_references() {
     local object="$1" tree="$2"
     local symbol undefined
@@ -129,11 +102,11 @@ for language in c cpp; do
     reject_hidden "$language" strict -D__STRICT_ANSI__
     reject_hidden "$language" posix -D_POSIX_C_SOURCE=200809L
     compile_visible "$language" xopen700 -D_XOPEN_SOURCE=700
+    compile_visible "$language" xopen800 -D_XOPEN_SOURCE=800
     compile_visible "$language" gnu -D_GNU_SOURCE
     compile_visible "$language" bsd -D_BSD_SOURCE
     compile_visible "$language" default-source -D_DEFAULT_SOURCE
 done
-assert_xopen800_header_divergence
 
 "$ORACLE_CC" -std=c11 -U_GNU_SOURCE -D_XOPEN_SOURCE=700 \
     -DCRABC_EXPECT_SYSV_SIGNAL_HELPERS -I "$ROOT_DIR/include" -H \

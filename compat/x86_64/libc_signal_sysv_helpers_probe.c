@@ -21,6 +21,9 @@
 #include <stdint.h>
 #include <sys/syscall.h>
 
+/* XSI exposes the function declaration, not GNU sighandler_t. */
+typedef void (*sysv_signal_handler)(int);
+
 _Static_assert(sizeof(sigset_t) == 128 && _Alignof(sigset_t) == 8,
     "x86 public sigset_t layout");
 _Static_assert(sizeof(struct sigaction) == 152 && _Alignof(struct sigaction) == 8,
@@ -34,7 +37,7 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&sigignore),
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigrelse),
     int (*)(int)), "sigrelse declaration");
 _Static_assert(__builtin_types_compatible_p(__typeof__(&sigset),
-    sighandler_t (*)(int, sighandler_t)), "sigset declaration");
+    sysv_signal_handler (*)(int, sysv_signal_handler)), "sigset declaration");
 
 struct linux_sigaction {
     uintptr_t handler;
@@ -51,7 +54,7 @@ _Static_assert(offsetof(struct linux_sigaction, flags) == 8 &&
     "x86 kernel sigaction offsets");
 
 typedef int (*sysv_signal_unary)(int);
-typedef sighandler_t (*sysv_sigset)(int, sighandler_t);
+typedef sysv_signal_handler (*sysv_sigset)(int, sysv_signal_handler);
 
 /* Volatile function pointers retain the selected C calls, not compiler builtins. */
 static sysv_signal_unary volatile direct_sighold = sighold;

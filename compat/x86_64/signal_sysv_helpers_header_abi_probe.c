@@ -9,8 +9,8 @@
 #include <signal.h>
 
 typedef int (*sysv_signal_unary_signature)(int);
-/* musl spells this function-pointer type inline rather than exposing the
- * project's `sighandler_t` typedef, so keep the oracle-facing probe literal. */
+/* XSI exposes the function declaration without GNU sighandler_t in both
+ * native x86 header trees, so retain the concrete handler signature. */
 typedef void (*sysv_signal_handler_signature)(int);
 typedef sysv_signal_handler_signature (*sysv_sigset_signature)(
     int, sysv_signal_handler_signature);

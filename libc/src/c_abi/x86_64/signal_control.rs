@@ -66,12 +66,20 @@ const RESERVED_SIGNAL_MASK: u64 = (1_u64 << 31) | (1_u64 << 32) | (1_u64 << 33);
 // wrapper would lose musl's weak same-address and override contract. This
 // feature adds no signal behavior; it leaves the default selected-static
 // archive surface unchanged.
-#[cfg(feature = "x86-signal-legacy-aliases")]
+#[cfg(all(feature = "x86-signal-legacy-aliases", not(feature = "x86-owned-static-runtime")))]
 core::arch::global_asm!(
     ".weak bsd_signal",
     ".set bsd_signal, signal",
     ".weak __sysv_signal",
     ".set __sysv_signal, signal",
+);
+
+// Owned products publish strong same-address providers. Both historical names
+// retain musl signal.c's SA_RESTART behavior despite the __sysv_signal name.
+#[cfg(feature = "x86-owned-static-runtime")]
+core::arch::global_asm!(
+    ".global bsd_signal", ".set bsd_signal, signal",
+    ".global __sysv_signal", ".set __sysv_signal, signal",
 );
 
 #[inline]

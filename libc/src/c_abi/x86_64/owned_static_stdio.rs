@@ -49,6 +49,8 @@ mod owned_stdio_backends;
 mod owned_wide_stdio;
 #[path = "owned_stdio_process.rs"]
 mod owned_stdio_process;
+#[path = "owned_signal_reporting.rs"]
+mod owned_signal_reporting;
 #[path = "owned_stdio_extensions.rs"]
 mod owned_stdio_extensions;
 use owned_stdio_backends::Backend;

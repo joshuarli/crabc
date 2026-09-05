@@ -56,18 +56,30 @@ assert_fixture_tls_capacity() {
 assert_named_syscall() {
     local symbol="$1" syscall_word="$2"
     local disassembly="$work_dir/${symbol}-${syscall_word}-disassembly"
+    local trampoline
 
     objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
     if ! grep -Eq '\$0x'"$syscall_word"'(,|[[:space:]]|\$)' "$disassembly"; then
         grep -En 'syscall|0x[de]' "$disassembly" >&2 || true
         fail "$symbol lacks Linux syscall 0x${syscall_word}"
     fi
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "$symbol lacks its Linux syscall instruction"
+    if ! grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly"; then
+        # LLVM may retain the existing private syscall4 leaf instead of
+        # inlining it. Follow only that exact direct target; arbitrary calls
+        # cannot substitute for the named Linux syscall proof.
+        trampoline="$(sed -nE 's/.*call[[:space:]]+[[:xdigit:]]+ <([^>]*11raw_syscall8syscall4[^>]*)>.*/\1/p' "$disassembly" | sort -u)"
+        [ -n "$trampoline" ] && [[ "$trampoline" != *$'\n'* ]] || {
+            cat "$disassembly" >&2
+            fail "$symbol has neither an inline syscall nor one private syscall4 target"
+        }
+        objdump -d --disassemble="$trampoline" "$candidate" >"$disassembly.trampoline"
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly.trampoline" ||
+            fail "$symbol private syscall4 target lacks its Linux syscall instruction"
+    fi
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp comm diff grep mkdir mktemp nm objdump readelf rustup sort uname; do
+for tool in ar awk cargo cmp comm diff grep mkdir mktemp nm objdump readelf rustup sed sort uname; do
     command -v "$tool" >/dev/null 2>&1 || fail "requires $tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
