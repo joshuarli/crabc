@@ -1856,6 +1856,149 @@ mod tests {
         .expect("main-heap later-thread lifecycle completes");
     }
 
+    /// Emits the normalized source-owner transitions for the native C/Rust
+    /// initialization, reentry, teardown, and recovery witness.
+    ///
+    /// Pinned `src/init.c:_mi_thread_init_with_heap` returns the existing
+    /// default Theap when it is already initialized.  This typed Rust layer
+    /// cannot return a second mutable owner for the same TLD/Theap, so a
+    /// direct second constructor instead refuses before any ticket, metadata,
+    /// list, or root mutation.  Both outcomes establish the shared source
+    /// invariant recorded below: reentry creates no second current owner.
+    /// The runtime's `AlreadyAttached` result owns the public worker-wrapper
+    /// form of that distinction; this test stays at the source attachment
+    /// boundary and does not claim its callback or runtime integration.
+    #[test]
+    fn emit_x86_64_init_recursion_teardown_c_rust_trace() {
+        thread::spawn(|| {
+            let (storage, subprocess) = fixture();
+            let metadata = MetaAllocator::test_static_owner();
+            let mut main = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(storage, subprocess)
+            }
+            .expect("the source-main owner remains live while its worker recovers");
+            let main_heap = main
+                .shared_main_heap_lease()
+                .expect("the source-main owner lends one immutable Heap identity");
+
+            thread::scope(|scope| {
+                let worker = scope.spawn(move || {
+                    let mut first = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            memory_config(),
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("the first source worker attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("the first source worker attachment retained: {error:?}")
+                        }
+                    };
+                    let first_theap = first
+                        .theap_pointer()
+                        .expect("the first source worker publishes its default Theap");
+                    let first_default_initialized =
+                        core::ptr::eq(default_theap().as_ptr(), first_theap);
+
+                    let reentrant_constructor_refused = matches!(
+                        unsafe {
+                            MainHeapThreadAttachment::begin_with_test_metadata(
+                                main_heap,
+                                metadata,
+                                memory_config(),
+                            )
+                        },
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(
+                            MainHeapThreadAttachmentError::RootsNotPristine
+                        ))
+                    ) && core::ptr::eq(default_theap().as_ptr(), first_theap)
+                        && fast_slot_peek().map(NonNull::as_ptr)
+                            == Some(first_theap.cast::<()>());
+
+                    first
+                        .finish_after_user_destructors()
+                        .expect("the first source worker clears its roots before TLD release");
+                    let first_teardown_clears_default = roots_are_pristine_for_later_main_attachment();
+                    let repeated_teardown_keeps_default_empty = first
+                        .finish_after_user_destructors()
+                        == Err(MainHeapThreadAttachmentError::TornDown)
+                        && roots_are_pristine_for_later_main_attachment();
+
+                    let mut recovered = match unsafe {
+                        MainHeapThreadAttachment::begin_with_test_metadata(
+                            main_heap,
+                            metadata,
+                            memory_config(),
+                        )
+                    } {
+                        Ok(owner) => owner,
+                        Err(MainHeapThreadAttachmentBeginError::Rejected(error)) => {
+                            panic!("the recovered source worker attachment rejected: {error:?}")
+                        }
+                        Err(MainHeapThreadAttachmentBeginError::Retained { error, .. }) => {
+                            panic!("the recovered source worker attachment retained: {error:?}")
+                        }
+                    };
+                    let recovery_default_initialized = recovered
+                        .theap_pointer()
+                        .map(|theap| core::ptr::eq(default_theap().as_ptr(), theap))
+                        .unwrap_or(false);
+                    recovered
+                        .finish_after_user_destructors()
+                        .expect("the recovered source worker clears its roots before final release");
+                    let final_teardown_clears_default = roots_are_pristine_for_later_main_attachment();
+
+                    assert!(first_default_initialized);
+                    assert!(reentrant_constructor_refused);
+                    assert!(first_teardown_clears_default);
+                    assert!(repeated_teardown_keeps_default_empty);
+                    assert!(recovery_default_initialized);
+                    assert!(final_teardown_clears_default);
+
+                    std::println!("CRABC_MI_INIT_RECURSION_TRACE_BEGIN");
+                    std::println!(
+                        "trace.init_recursion.first_default_initialized={}",
+                        usize::from(first_default_initialized)
+                    );
+                    std::println!(
+                        "trace.init_recursion.reentrant_entry_preserves_one_owner={}",
+                        usize::from(reentrant_constructor_refused)
+                    );
+                    std::println!(
+                        "trace.init_recursion.first_teardown_clears_default={}",
+                        usize::from(first_teardown_clears_default)
+                    );
+                    std::println!(
+                        "trace.init_recursion.repeated_teardown_keeps_default_empty={}",
+                        usize::from(repeated_teardown_keeps_default_empty)
+                    );
+                    std::println!(
+                        "trace.init_recursion.recovery_default_initialized={}",
+                        usize::from(recovery_default_initialized)
+                    );
+                    std::println!(
+                        "trace.init_recursion.final_teardown_clears_default={}",
+                        usize::from(final_teardown_clears_default)
+                    );
+                    std::println!("trace.init_recursion.valid=1");
+                    std::println!("CRABC_MI_INIT_RECURSION_TRACE_END");
+                });
+                worker
+                    .join()
+                    .expect("the selected source worker lifecycle completes");
+            });
+
+            main.teardown()
+                .expect("the source-main owner retires after both worker attachments finish");
+        })
+        .join()
+        .expect("the C/Rust source lifecycle trace completes");
+    }
+
     #[test]
     fn later_thread_rejects_a_foreign_root_before_consuming_a_ticket() {
         thread::spawn(|| {

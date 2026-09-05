@@ -1,0 +1,116 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-init-recursion-evidence",
+  "profile": "linux-x86_64-private-explicit-init-recursion-teardown",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "aarch64_status_reused": false,
+    "automatic_pthread_destructor_claimed": false,
+    "constructor_or_callback_integration_claimed": false,
+    "emulation_accepted": false,
+    "explicit_process_and_worker_thread_route_only": true,
+    "general_allocator_or_api_claimed": false,
+    "general_process_shutdown_claimed": false,
+    "metadata_completion_claimed": false,
+    "native_linux_x86_64_required": true,
+    "one_current_owner_on_recursive_entry": true,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_x86_libc_or_ldso_support": false,
+    "runtime_lifecycle_callback_parity_claimed": false,
+    "rust_direct_second_mutable_owner_refused": true,
+    "thread_recovery_after_explicit_teardown_only": true
+  },
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1",
+    "-DMI_PRIM_HAS_PROCESS_ATTACH=1"
+  ],
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "source_anchors": [
+    {
+      "member": "src/prim/prim.c",
+      "start_line": 29,
+      "end_line": 46,
+      "sha256": "6d2be652e1c17c43fc281807cde2f15d8b9ffee28bd294639d8628eceefe3712"
+    },
+    {
+      "member": "src/init.c",
+      "start_line": 305,
+      "end_line": 360,
+      "sha256": "8b5a6af8d90da7f2cb33cf5c6211c9325234840d57a54c25be891e49e4d354e5"
+    },
+    {
+      "member": "src/init.c",
+      "start_line": 377,
+      "end_line": 422,
+      "sha256": "eaa34dbcd2df052853490df70c9f8ed19b481bb9d1363a0bf61331758f2fb165"
+    },
+    {
+      "member": "src/init.c",
+      "start_line": 448,
+      "end_line": 481,
+      "sha256": "478b40823b940f620731b48121f6da86b4c288c97b9ddddcd03e915e92b11a25"
+    },
+    {
+      "member": "src/init.c",
+      "start_line": 536,
+      "end_line": 592,
+      "sha256": "1f3a0d2b3751b4d3270abe60c46aeef48ef78de91fe1dcfb6d5cc802a5d1480e"
+    }
+  ],
+  "trace": {
+    "begin": "CRABC_MI_INIT_RECURSION_TRACE_BEGIN",
+    "end": "CRABC_MI_INIT_RECURSION_TRACE_END",
+    "expected_values": {
+      "trace.init_recursion.first_default_initialized": 1,
+      "trace.init_recursion.reentrant_entry_preserves_one_owner": 1,
+      "trace.init_recursion.first_teardown_clears_default": 1,
+      "trace.init_recursion.repeated_teardown_keeps_default_empty": 1,
+      "trace.init_recursion.recovery_default_initialized": 1,
+      "trace.init_recursion.final_teardown_clears_default": 1,
+      "trace.init_recursion.valid": 1
+    }
+  },
+  "c_probe_sha256": "86af4227da81190ecb3c9edaf02542b8fb43b73392baf54773517d21f1b3d7de"
+}

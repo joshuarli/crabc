@@ -59,7 +59,7 @@ fi
         )
 
     def test_native_commands_bind_all_mutable_state_to_the_checkout(self):
-        for command in (("allocator", "--quick"), ("allocator-m1",), ("allocator-m2",), ("allocator-unit",),
+        for command in (("allocator", "--quick"), ("allocator-m1",), ("allocator-m2",), ("allocator-init-recursion",), ("allocator-unit",),
                         ("allocator-release-evidence",), ("allocator-perf", "--smoke")):
             with self.subTest(command=command):
                 result = self.launch(*command)
@@ -207,6 +207,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator --quick",
             "allocator-m1",
             "allocator-m2",
+            "allocator-init-recursion",
             "allocator-release-evidence",
             "allocator-cmake-modes",
             "allocator-live-owner-full-medium-remote-release",
@@ -268,6 +269,18 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         result = self.run_launcher("allocator-m2", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-m2 takes no arguments", result.stderr)
+
+    def test_init_recursion_command_is_closed_and_uses_its_private_offline_probe(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-init-recursion)", source)
+        self.assertIn(
+            "run_in_container python3 "
+            "compat/allocator/x86_64_init_recursion_evidence.py --offline",
+            source,
+        )
+        result = self.run_launcher("allocator-init-recursion", "unexpected")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("allocator-init-recursion takes no arguments", result.stderr)
 
     def test_every_native_dispatch_uses_a_fresh_python_bytecode_environment(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")

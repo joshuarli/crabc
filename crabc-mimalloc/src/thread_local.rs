@@ -2311,29 +2311,72 @@ mod tests {
     }
 
     #[test]
-    fn persistent_compiler_tls_owner_refuses_reentry_before_projecting_a_second_borrow() {
-        struct Owner;
+    fn persistent_compiler_tls_owner_rejects_reentry_then_recovers_the_same_owner() {
+        struct Owner {
+            completed_local_operations: usize,
+        }
 
         thread::spawn(|| {
             let cell = core::pin::pin!(PersistentCompilerTlsOwnerCell::new());
             let cell = cell.as_ref();
-            assert!(cell.initialize(Owner, |_| Ok::<(), ()>(())).is_ok());
-            cell.with_owner(|_| {
+            assert!(cell
+                .initialize(
+                    Owner {
+                        completed_local_operations: 0,
+                    },
+                    |_| Ok::<(), ()>(()),
+                )
+                .is_ok());
+            cell.with_owner(|mut owner| {
                 assert_eq!(
                     cell.with_owner(|_| ()),
                     Err(PersistentCompilerTlsOwnerError::Reentrant),
                     "a nested local operation must not form a second mutable owner borrow"
                 );
+                // SAFETY: the outer projection remains the cell's only
+                // mutable borrow, and changing this counter does not move
+                // the pinned source-shaped owner.
+                unsafe { owner.as_mut().get_unchecked_mut() }.completed_local_operations += 1;
             })
             .expect("the original local borrow remains valid after the rejected recursion");
+            cell.with_owner(|mut owner| {
+                assert_eq!(
+                    owner.as_ref().get_ref().completed_local_operations,
+                    1,
+                    "the rejected nested entry leaves the original owner active"
+                );
+                // SAFETY: this later projection begins only after the outer
+                // borrow returned and therefore remains the sole mutable
+                // projection of the pinned owner.
+                unsafe { owner.as_mut().get_unchecked_mut() }.completed_local_operations += 1;
+            })
+            .expect(
+                "a rejected nested entry is a recoverable local-allocation failure, not a terminal owner state",
+            );
             assert!(matches!(
-                cell.initialize(Owner, |_| Ok::<(), ()>(())),
+                cell.initialize(
+                    Owner {
+                        completed_local_operations: 0,
+                    },
+                    |_| Ok::<(), ()>(()),
+                ),
                 Err(PersistentCompilerTlsOwnerInitializeError::State {
                     error: PersistentCompilerTlsOwnerError::AlreadyActive,
-                    owner: Owner,
+                    owner: Owner {
+                        completed_local_operations: 0,
+                    },
                 })
             ));
-            assert!(cell.teardown(|_| Ok::<(), ()>(())).is_ok());
+            assert!(cell
+                .teardown(|owner| {
+                    assert_eq!(
+                        owner.as_ref().get_ref().completed_local_operations,
+                        2,
+                        "the recovered owner reaches source teardown with both completed local operations"
+                    );
+                    Ok::<(), ()>(())
+                })
+                .is_ok());
         })
         .join()
         .expect("the compiler-TLS recursion test completes");

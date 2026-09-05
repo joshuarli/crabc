@@ -1915,6 +1915,31 @@ release. It does not compare a C pthread callback or claim pthread/TLS
 lifecycle parity, general cross-thread routing, public x86 runtime support,
 allocator integration, or AArch64 evidence.
 
+The explicit initialization/recursion recovery witness is a separate native
+x86-64 differential:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-init-recursion
+```
+
+It compiles the pinned release source with its generic process constructor
+suppressed, explicitly calls `mi_process_init`, and gives one worker the fixed
+`mi_thread_init` → repeat-init → `mi_thread_done` → repeat-done → reinit →
+done sequence. The C trace records whether the current default Theap is
+initialized or empty at each boundary. The matching Rust trace uses
+`MainHeapThreadAttachment`: it refuses a direct second mutable owner before
+ticket, metadata, list, or root mutation, then tears down and creates a new
+attachment. The traces normalize C's existing-owner return and Rust's typed
+refusal to the common invariant that recursive entry creates no second current
+owner. The lane also runs the selected allocation-free once recursion,
+process-once reentry/racer, and persistent compiler-TLS recovery tests. Its
+report is `compat/reports/allocator/x86_64/init-recursion.json`.
+
+This does not cover constructor or pthread callback integration, automatic
+pthread teardown, public `mi_*` behavior, runtime `AlreadyAttached` handling,
+complete process shutdown, metadata completion, public x86 runtime support,
+or AArch64 status.
+
 The separate bounded fault-injection judge is also native x86-only:
 
 ```sh
@@ -2222,6 +2247,7 @@ snapshot after review; the normal gate never updates its own baseline.
 | `x86_64_dynamic_os_aligned_singleton_evidence.py` and `x86_64-dynamic-os-aligned-singleton-evidence-v3.5.0.json` | Native x86-64-only private 21-field pinned-C/Rust differential for a 7-byte, 128 KiB-aligned OS singleton: real C `mi_thread_done()` and `pthread_join()` precede the sole consumer free; the selected 4096-byte page is semantically full but is an unflagged `MI_BIN_HUGE` member with an empty `MI_BIN_FULL` queue. It records the bounded OS-list/PageMap/mapping terminal tail while Rust uses only a typed private owner-exit handoff. It is dispatched by `allocator-dynamic-os-aligned-singleton`; it does not claim general lifecycle/routing/concurrency, abandonment/adoption, public API/runtime/backend, public x86 support, or AArch64 evidence. |
 | `x86_64_dynamic_arena_singleton_post_exit_evidence.py` and `x86_64-dynamic-arena-singleton-post-exit-evidence-v3.5.0.json` | Native x86-64-only private 21-value pinned-C/Rust differential for one full arena singleton (request 524289, 589824-byte block size, capacity/reserved 1, nine arena slices): a real C worker runs `mi_thread_done()` and joins before the sole terminal consumer `mi_free`; the trace records teardown/join, unmapped/unowned/detached state, all-nine-slice PageMap/arena-bitmap preconditions, and terminal PageMap/bitmap/slice cleanup. Rust observes a scoped test worker and join while comparing only common typed private owner-exit facts, distinct from its Rust-only route. It is dispatched by `allocator-dynamic-arena-singleton-post-exit`; it does not claim pthread/TLS callback parity, general lifecycle/routing/concurrency, public x86/crabc API/runtime, backend promotion, or AArch64 evidence. |
 | `x86_64_lifecycle_evidence.py` | Native x86-only fixed private lifecycle/concurrency selections. Its nine lanes are deliberately narrower than general allocator lifecycle or stress qualification. |
+| `x86_64_init_recursion_evidence.py` and `x86_64-init-recursion-evidence-v3.5.0.json` | Native x86-64-only private seven-value pinned-C/Rust differential for the explicit process-init, worker init/repeat-init, explicit teardown/repeat-teardown, and recovery-init route. C returns its existing default Theap while Rust refuses a second mutable `MainHeapThreadAttachment`; both traces require one current owner, empty roots after teardown, and successful recovery. It is dispatched by `allocator-init-recursion`, runs selected once/process/TLS recovery checks, and does not claim callback/runtime integration, metadata completion, public API/runtime, public x86 support, or AArch64 evidence. |
 | `x86_64_fault_evidence.py` | Native x86-only fixed crate-private fault-injection state-preservation selections. Its five lanes are deliberately narrower than general fault/misuse, lifecycle, or stress qualification. |
 | `perf_x86_64.py` and `perf-x86_64/` | Native x86-only private-adapter C/Rust timing and post-init live-memory measurement harness. Its reports are not the public-runtime `compat/perf/` matrix. |
 | `known-differences.md` | Sole register for observed, pending, accepted, or rejected Rust/C differences; every entry must identify its architecture profile. |
