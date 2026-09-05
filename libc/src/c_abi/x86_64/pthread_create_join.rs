@@ -694,6 +694,21 @@ unsafe fn release_join_claim(control: *mut ThreadControl) {
     };
 }
 
+/// Wait for the creator to finish publishing the opaque handle.
+///
+/// A child can disclose its own `pthread_self()` before `pthread_create`
+/// returns. Another selected worker may then claim that handle and observe its
+/// clear-child-tid before the creating parent writes its output slot. Keep the
+/// linked control unreclaimable through that complete creator handoff.
+#[inline]
+unsafe fn wait_for_creator_handoff(control: *mut ThreadControl) {
+    // SAFETY: a join claim keeps this control linked/mapped. The creator's
+    // release follows the C output-store that made the public handle usable.
+    while unsafe { (*control).creator_handoff_pending.load(Ordering::Acquire) } != 0 {
+        core::hint::spin_loop();
+    }
+}
+
 /// Claim one exited detached worker while its control mapping remains linked.
 fn claim_finished_detached_selected_worker() -> Option<*mut ThreadControl> {
     lock_selected_worker_registry();
@@ -1434,6 +1449,11 @@ pub(super) unsafe fn join_selected_worker(
     ) else {
         return Err(EINVAL);
     };
+
+    // SAFETY: the lifecycle claim keeps this linked control mapped. Do not
+    // reclaim a fast child that disclosed pthread_self() to another worker
+    // before its creating parent has written the caller-visible handle.
+    unsafe { wait_for_creator_handoff(control) };
 
     loop {
         // SAFETY: the handle remains mapped until this joining caller either

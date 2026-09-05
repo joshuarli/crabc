@@ -209,10 +209,13 @@ static int run_concurrent_lifecycle_capacity(void)
     }
     for (index = 0; index != CRABC_CONCURRENT_WORKERS; ++index) {
         if (wait_for_nonzero(&rounds[index].ready) != 0) {
-            while (index != CRABC_CONCURRENT_WORKERS) {
-                __atomic_store_n(&rounds[index].release, 1, __ATOMIC_RELEASE);
-                ++index;
-            }
+            unsigned int release_index;
+
+            for (release_index = 0;
+                    release_index != CRABC_CONCURRENT_WORKERS;
+                    ++release_index)
+                __atomic_store_n(&rounds[release_index].release, 1,
+                    __ATOMIC_RELEASE);
             for (index = 0; index != CRABC_CONCURRENT_WORKERS; ++index)
                 (void)pthread_join(threads[index], 0);
             (void)pthread_attr_destroy(&attributes);
