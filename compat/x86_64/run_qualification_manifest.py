@@ -138,21 +138,15 @@ class PrivateAdmissionDescendantBoundary:
         except ProcessLookupError:
             pass
 
-    @staticmethod
-    def reap_process(process: int) -> None:
-        try:
-            os.waitpid(process, os.WNOHANG)
-        except ChildProcessError:
-            pass
-
     def terminate_and_reap(self, process: subprocess.Popen[bytes]) -> None:
         """Stop the runner first, then reap its adopted session escapees.
 
-        The runner is stopped before inspecting adopted children.  That closes
-        the Popen-to-active-record launch window: a leaf that has just called
-        ``setsid`` is orphaned to this subreaper and appears in the next pass.
-        A descendant which is itself a subreaper is handled by the following
-        pass after its own death reparents its children here.
+        The runner must be observed dead before inspecting adopted children.
+        That closes the Popen-to-active-record launch window: a leaf that has
+        just called ``setsid`` is orphaned to this subreaper before the first
+        drain observes the exact direct-child state. A descendant which is
+        itself a subreaper is handled by the following pass after its own death
+        reparents its children here.
         """
         if self._private_runner_pid != process.pid:
             raise QualificationRunError("private admission descendant boundary lost its runner")
@@ -161,31 +155,40 @@ class PrivateAdmissionDescendantBoundary:
         except ProcessLookupError:
             pass
         self.kill_process(process.pid)
+        try:
+            # Waiting on a killed child does not read its stdout/stderr pipes.
+            # It establishes its death and all resulting reparenting before we
+            # can treat an empty adopted-child set as containment evidence.
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired as error:
+            raise QualificationRunError(
+                "private admission timeout could not observe its runner exit"
+            ) from error
         self.reap_adopted_descendants()
 
     def reap_adopted_descendants(self) -> None:
-        """Kill and reap every successive generation adopted by this process."""
+        """Kill and reap every successive adopted generation to a fixed point."""
 
         deadline = time.monotonic() + 3.0
-        quiet_passes = 0
         while True:
             adopted = self.adopted_children()
+            if not adopted:
+                return
             for child in adopted:
                 self.kill_process(child)
             for child in adopted:
-                self.reap_process(child)
-            remaining = self.adopted_children()
-            if not remaining:
-                quiet_passes += 1
-                if quiet_passes == 2:
-                    return
-            else:
-                quiet_passes = 0
-            if time.monotonic() >= deadline:
-                raise QualificationRunError(
-                    "private admission timeout left descendant processes outside its supervisor"
-                )
-            time.sleep(0.01)
+                while True:
+                    try:
+                        reaped, _ = os.waitpid(child, os.WNOHANG)
+                    except ChildProcessError:
+                        break
+                    if reaped == child:
+                        break
+                    if time.monotonic() >= deadline:
+                        raise QualificationRunError(
+                            "private admission timeout left descendant processes outside its supervisor"
+                        )
+                    time.sleep(0.01)
 
     def reject_unexpected_descendants(self) -> None:
         """Fail closed if a nominally completed prefix left a daemon behind."""
@@ -1044,11 +1047,17 @@ def run_private_admission(report: Mapping[str, object]) -> Path:
             try:
                 stdout, stderr = process.communicate(timeout=10)
             except subprocess.TimeoutExpired as cleanup:
-                # Descendants are reaped before this communicate call.  Keep a
-                # finite final guard in case an unobservable kernel or pipe
-                # failure still prevents the Popen owner from returning.
+                # Keep the final failure record bounded. The drain below runs
+                # in both paths while this process is still the subreaper.
                 stdout = cleanup.stdout or b""
                 stderr = cleanup.stderr or b""
+            # A first wait can race a runner that finishes dying only after its
+            # bounded wait expires. Recheck the exact adopted-child state after
+            # the final pipe wait, before restoring subreaper ownership.
+            try:
+                descendants.reap_adopted_descendants()
+            except QualificationRunError as drain_error:
+                cleanup_error = drain_error
             error = QualificationRunError("private admission prefix timed out")
             error.__cause__ = cleanup_error or timeout
         if error is None:

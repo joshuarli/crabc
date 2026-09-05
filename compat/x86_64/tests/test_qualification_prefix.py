@@ -169,6 +169,73 @@ class QualificationPrefixTests(unittest.TestCase):
                     self.fail("unreachable")
         self.assertEqual(runner.child_subreaper_enabled(), before)
 
+    def test_timeout_waits_for_runner_death_before_draining_late_child_publication(self):
+        with patch.object(runner, "direct_child_processes", return_value=set()):
+            boundary = runner.PrivateAdmissionDescendantBoundary()
+        process = unittest.mock.Mock(pid=731)
+        boundary.register_private_runner(process)
+        published = []
+
+        def publish_after_runner_death(*, timeout):
+            self.assertEqual(timeout, 3)
+            published.append("late-session-leaf")
+
+        def drain_published_child():
+            self.assertEqual(published, ["late-session-leaf"])
+
+        process.wait.side_effect = publish_after_runner_death
+        with patch.object(runner.os, "killpg"), patch.object(
+            boundary, "kill_process"
+        ), patch.object(
+            boundary, "reap_adopted_descendants", side_effect=drain_published_child
+        ) as drain:
+            boundary.terminate_and_reap(process)
+        process.wait.assert_called_once_with(timeout=3)
+        drain.assert_called_once_with()
+
+    def test_final_pipe_timeout_drains_again_while_the_subreaper_is_scoped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipts = Path(directory) / "qualification-receipts"
+            transaction = receipts / "transaction"
+            transaction.mkdir(parents=True)
+            report = copy.deepcopy(manifest.load_contract())
+
+            class PrivateRunner:
+                @staticmethod
+                def load_contract():
+                    return (SimpleNamespace(timeout_seconds=1),)
+
+                @staticmethod
+                def active_child_record(cases_root):
+                    return cases_root / ".active-child-pgid"
+
+            process = unittest.mock.Mock(pid=732, returncode=-9)
+            process.communicate.side_effect = (
+                subprocess.TimeoutExpired(["fixture"], 1, output=b"first", stderr=b"first"),
+                subprocess.TimeoutExpired(["fixture"], 10, output=b"late", stderr=b"late"),
+            )
+            boundary = unittest.mock.MagicMock()
+            scope = unittest.mock.MagicMock()
+            scope.__enter__.return_value = boundary
+            scope.__exit__.return_value = False
+            inputs = {"fixture": "inputs"}
+            source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+            with patch.object(runner, "verify_private_admission_runner"), patch.object(
+                runner, "require_pinned_native_execution"
+            ), patch.object(runner, "source_identity", return_value=source), patch.object(
+                runner, "execution_inputs", return_value=inputs
+            ), patch.object(runner, "transaction_directory", return_value=transaction), patch.object(
+                runner, "private_admission_runner_module", return_value=PrivateRunner), patch.object(
+                runner, "ensure_physical_receipt_directory", return_value=receipts
+            ), patch.object(runner, "private_admission_subreaper", return_value=scope), patch.object(
+                runner, "terminate_private_admission_process"
+            ), patch.object(runner.subprocess, "Popen", return_value=process):
+                with self.assertRaisesRegex(runner.QualificationRunError, "prefix timed out"):
+                    runner.run_private_admission(report)
+            boundary.reap_adopted_descendants.assert_called_once_with()
+            receipt = json.loads((transaction / "receipt.json").read_text(encoding="utf-8"))
+            self.assertEqual(receipt["outcome"], "failed")
+
     def test_receipt_log_cannot_be_transplanted_from_a_sibling_transaction(self):
         with tempfile.TemporaryDirectory() as directory:
             receipts = Path(directory) / "qualification-receipts"

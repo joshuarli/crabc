@@ -35,8 +35,11 @@ Cargo/Rustc executables and their Rust sysroot, and GCC's builtin include tree
 as well as the pinned musl inputs. A prefix timeout kills the named active leaf
 when it is available, then stops the private runner before the runner can start
 another child. The enclosing receipt process temporarily becomes a Linux child
-subreaper and kills/reaps every orphaned generation, including `setsid` and
-double-fork escapees, before it waits for the runner's log pipes to close.
+subreaper, observes the runner's death and resulting reparenting, then
+kills/reaps every orphaned generation, including `setsid` and double-fork
+escapees, before it waits for the runner's log pipes to close. If that pipe
+wait reaches its finite bound, it drains adopted children again before restoring
+the caller's subreaper state.
 
 This is deliberately a private, non-promoting admission receipt. Its prefix
 record fixes `non_promoting: true`, `promotion_ready: false`, and zero completed
