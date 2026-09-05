@@ -8,8 +8,10 @@
 //!
 //! - `src/thread/pthread_create.c::__pthread_create` supplies the exact
 //!   Linux thread clone flags and the `EAGAIN` translation for allocation or
-//!   clone failure. Owned explicit scheduling ports its `start` 1/2/3
-//!   futex handshake; `start_c11` retains its blocked application mask.
+//!   clone failure. Owned creation blocks application signals before clone,
+//!   publishes worker identity/cancellation state, then restores the inherited
+//!   pthread mask. Explicit scheduling ports its `start` 1/2/3 futex handshake;
+//!   `start_c11` retains its blocked application mask.
 //! - `src/thread/pthread_create.c::__pthread_exit` supplies the selected
 //!   cleanup-before-TSD-destructor-before-result ordering, selected list
 //!   transitions, initial-thread `pthread_exit`, and the last-thread ordinary
@@ -1905,12 +1907,12 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     let startup_mask = unsafe { (*control).startup_signal_mask };
     #[cfg(not(feature = "x86-owned-static-runtime"))]
     let startup_mask: Option<u64> = None;
-    let cancellation_signal = startup_mask.unwrap_or(1_u64 << 32);
+    let startup_mask_word = startup_mask.unwrap_or(1_u64 << 32);
     let _ = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_RT_SIGPROCMASK,
             if startup_mask.is_some() { 2 } else { 1 }, // SETMASK or UNBLOCK
-            core::ptr::addr_of!(cancellation_signal) as usize as i64,
+            core::ptr::addr_of!(startup_mask_word) as usize as i64,
             0,
             8,
         )
@@ -2169,23 +2171,25 @@ unsafe fn create_selected_worker_with_attributes(
             (*control).robust_list
         ));
     }
-    publish_selected_worker(control);
     let child_tid = unsafe { core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>() };
-    // The child must inherit SIGCANCEL blocked: an externally delivered
-    // cancellation signal must not run between clone installing FS and the
-    // trampoline publishing FS+32. Explicit scheduling additionally blocks all
-    // signals until setup/reclamation ends; the child restores the inherited
-    // mask after successful setup and before entering application code.
-    let cancellation_signal = if cfg!(feature = "x86-owned-static-runtime")
-        && (attributes.scheduler_requested || !matches!(start, SelectedWorkerStart::Pthread(_))) {
-        u64::MAX
+    // Musl pthread_create.c blocks application signals before publishing its
+    // thread list and cloning. A queued handler must not run in the new task
+    // until worker_entry has published worker_tid and its FS+32 cancellation
+    // identity: fork and other current-thread operations depend on both.
+    // This runtime also holds SIGCANCEL until that cache is ready. Preserve
+    // the existing all-signal setup interval for explicit scheduling/C11 and
+    // the frozen private leaf's cancellation-only mask.
+    let creation_signal_mask = if cfg!(feature = "x86-owned-static-runtime") {
+        if attributes.scheduler_requested || !matches!(start, SelectedWorkerStart::Pthread(_)) {
+            u64::MAX
+        } else { 0xffff_fffc_7fff_ffff | (1_u64 << 32) }
     } else { 1_u64 << 32 };
     let mut creator_signal_mask = 0_u64;
     let _ = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_RT_SIGPROCMASK,
             0, // SIG_BLOCK
-            core::ptr::addr_of!(cancellation_signal) as usize as i64,
+            core::ptr::addr_of!(creation_signal_mask) as usize as i64,
             core::ptr::addr_of_mut!(creator_signal_mask) as usize as i64,
             8,
         )
@@ -2202,11 +2206,12 @@ unsafe fn create_selected_worker_with_attributes(
         // when invoked by thrd_create (no scheduler selector is synthesized).
         let mask = if !matches!(start, SelectedWorkerStart::Pthread(_)) {
             Some(creator_signal_mask | 0xffff_fffc_7fff_ffff)
-        } else if attributes.scheduler_requested {
+        } else {
             Some(creator_signal_mask & !(1_u64 << 32))
-        } else { None };
+        };
         unsafe { (*control).startup_signal_mask = mask };
     }
+    publish_selected_worker(control);
     // Publish after the final startup-mask write. The child's acquire must
     // cover every non-atomic field, rather than relying on clone as a Rust
     // memory-ordering edge.
