@@ -57,6 +57,7 @@ class NativeM2VmTraceTests(unittest.TestCase):
             ),
             good.replace("m2.vm.normal.good_size=8192", "m2.vm.normal.client_pointer=8192"),
             good.replace("m2.vm.reserved.release_success=1", "m2.vm.reserved.release_success=0"),
+            good.replace("m2.vm.config.has_transparent_huge_pages=0", "m2.vm.config.has_transparent_huge_pages=1"),
         )
         for output in malformed:
             with self.subTest(output=output), self.assertRaises(ValueError):
@@ -100,6 +101,16 @@ class NativeM2VmFragmentTests(unittest.TestCase):
                 if word.lower() not in condition.lower()
             ]
             with self.subTest(word=word), self.assertRaisesRegex(ValueError, "remaining conditions"):
+                load_fragment(self.write_fragment(fragment))
+
+    def test_thp_branch_cannot_drop_its_child_evidence_or_open_frontier(self) -> None:
+        dropped_evidence = copy.deepcopy(self.fragment)
+        dropped_evidence["component"]["branch_matrix"][2]["evidence_check_ids"] = []
+        promoted = copy.deepcopy(self.fragment)
+        promoted["component"]["branch_matrix"][2]["disposition"] = "qualified-fixed-profile"
+        promoted["component"]["branch_matrix"][2]["missing_conditions"] = []
+        for fragment in (dropped_evidence, promoted):
+            with self.subTest(fragment=fragment), self.assertRaisesRegex(ValueError, "THP"):
                 load_fragment(self.write_fragment(fragment))
 
 

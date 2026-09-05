@@ -3449,6 +3449,101 @@ mod tests {
     }
 
     #[test]
+    fn thp_allow_option_preserves_the_detected_memory_configuration() {
+        let mut options = VmOptions::uninitialized();
+        options.set(VmOption::AllowThp, 1);
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        let policy = VmPolicy::new(options).expect("the source option image is resolved");
+        let mut config = MemoryConfig::from_observations(
+            PageSize::new(4 * 1024).expect("four KiB is a selected Linux page size"),
+            0,
+            true,
+            true,
+        );
+
+        assert_eq!(
+            policy.apply_thp_process_policy(&mut config),
+            ThpPolicyOutcome::Allowed,
+            "an enabled source option must not query or change this process's THP policy"
+        );
+        assert!(config.has_transparent_huge_pages());
+    }
+
+    #[cfg(not(miri))]
+    fn disabled_thp_policy_child_observation() -> (bool, bool) {
+        // `PR_SET_THP_DISABLE` is process-local. Run the exact source branch
+        // after a raw fork and send its two address-free observations through
+        // a pre-fork pipe. The child allocates no Rust state after the fork
+        // and exits through the raw Linux boundary.
+        let (reader, writer) = crabc_core::pipe::pipe2(0).expect("create THP policy pipe");
+        let parent_before = unsafe { crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0) };
+        let child = crabc_core::process::fork_raw().expect("fork THP policy child");
+        if child == 0 {
+            let _ = crabc_core::io::close(reader);
+            let mut options = VmOptions::uninitialized();
+            options.initialize_all(|option| {
+                if option == VmOption::AllowThp {
+                    VmOptionEnvironment::Value(b"0")
+                } else {
+                    VmOptionEnvironment::Absent
+                }
+            });
+            let policy = match VmPolicy::new(options) {
+                Ok(policy) => policy,
+                Err(_) => crabc_core::process::exit_immediately(1),
+            };
+            let mut config = MemoryConfig::detect(current_startup());
+            let _outcome = policy.apply_thp_process_policy(&mut config);
+            let observations = [
+                u8::from(!config.has_transparent_huge_pages()),
+                u8::from(matches!(
+                    unsafe { crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0) },
+                    Ok(1)
+                )),
+            ];
+            let wrote = unsafe {
+                crabc_core::io::write_raw(writer, observations.as_ptr(), observations.len())
+            };
+            let _ = crabc_core::io::close(writer);
+            crabc_core::process::exit_immediately(if wrote == Ok(observations.len()) { 0 } else { 1 });
+        }
+
+        crabc_core::io::close(writer).expect("close the parent write end");
+        let mut observations = [0_u8; 2];
+        assert_eq!(
+            unsafe {
+                crabc_core::io::read_raw(reader, observations.as_mut_ptr(), observations.len())
+            },
+            Ok(observations.len()),
+            "the THP policy child must write both source observations"
+        );
+        crabc_core::io::close(reader).expect("close the parent read end");
+        let mut status = 0;
+        assert_eq!(
+            unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) },
+            Ok(child),
+            "the parent must reap the exact THP policy child"
+        );
+        assert_eq!(status, 0, "the THP policy child must complete its raw report");
+        assert_eq!(
+            unsafe { crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0) },
+            parent_before,
+            "the test runner process must retain its original THP setting"
+        );
+        (observations[0] != 0, observations[1] != 0)
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn thp_disable_policy_runs_only_in_an_isolated_child_process() {
+        let (configuration_disabled, _process_disabled) = disabled_thp_policy_child_observation();
+        assert!(
+            configuration_disabled,
+            "the source branch must clear its allocation-policy THP observation even if prctl fails"
+        );
+    }
+
+    #[test]
     fn linux_numa_node_count_scan_preserves_sparse_gap_and_probe_order() {
         assert_eq!(scan_linux_numa_node_count(|_| false), 1);
         assert_eq!(scan_linux_numa_node_count(|node| node <= 3), 4);
@@ -4797,14 +4892,30 @@ mod tests {
     /// ownership and transition facts, never virtual addresses or allocator
     /// statistics.
     ///
-    /// It is not a claim for the source's unowned policy branches.  In
-    /// particular, source options, random aligned hints, THP process policy,
-    /// large/1-GiB huge-page reservation, diagnostics, and arena placement
-    /// require their actual owners before the VM component can close.
+    /// It also compares the selected `allow_thp=0` source configuration and
+    /// process-policy observation. The Rust side executes that `prctl`
+    /// transition only in its child and imports its address-free result, so
+    /// the native test runner never inherits the allocator policy.
+    ///
+    /// It is not a claim for unowned source policy branches. In particular,
+    /// ambient option discovery, random aligned hints, large/1-GiB huge-page
+    /// reservation, diagnostics, and arena placement require their actual
+    /// owners before the VM component can close.
+    #[cfg(not(miri))]
     #[test]
     fn emit_m2_vm_primitives_c_rust_trace() {
         let _fault = fault::install(fault::Plan::disabled());
-        let config = MemoryConfig::detect(current_startup());
+        let mut config = MemoryConfig::detect(current_startup());
+        let (thp_configuration_disabled, thp_process_disabled) =
+            disabled_thp_policy_child_observation();
+        assert!(
+            thp_configuration_disabled,
+            "the isolated source policy must clear the derived configuration"
+        );
+        // The source configuration field is the observable result of the
+        // child-owned transaction. Copy that result into this fixed lifecycle
+        // record without issuing `PR_SET_THP_DISABLE` in the parent.
+        config.disable_transparent_huge_pages();
         let page = config.page_size().bytes();
         let alignment = page
             .checked_mul(16)
@@ -4932,6 +5043,7 @@ mod tests {
             "m2.vm.config.has_transparent_huge_pages",
             u8::from(config.has_transparent_huge_pages())
         );
+        emit!("m2.vm.thp.process_disabled", u8::from(thp_process_disabled));
         emit!("m2.vm.reserved.initially_zero", u8::from(reserved_initially_zero));
         emit!(
             "m2.vm.reserved.initially_committed",

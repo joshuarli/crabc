@@ -12,6 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/prctl.h>
 
 #include <mimalloc.h>
 #include <mimalloc/internal.h>
@@ -29,6 +30,10 @@ int main(void) {
    * statistics even at MI_STAT=0, so it needs the real initialized owner. */
   _mi_detect_cpu_features();
   _mi_options_init();
+  /* Select the source `allow_thp=0` option before the exact `_mi_os_init`
+   * call. This executable is its own native evidence process, so its
+   * process-local `PR_SET_THP_DISABLE` transition cannot alter the runner. */
+  mi_option_set(mi_option_allow_thp, 0);
   _mi_stats_init();
   _mi_os_init();
   mi_subproc_t* const subproc = _mi_subproc_main_init();
@@ -36,6 +41,8 @@ int main(void) {
 
   const size_t page = _mi_os_page_size();
   const size_t alignment = page * 16;
+  const bool thp_process_disabled =
+      (prctl(PR_GET_THP_DISABLE, 0, 0, 0, 0) == 1);
   if (page == 0 || alignment / 16 != page) return 11;
 
   mi_memid_t reserved_id = _mi_memid_none();
@@ -95,6 +102,7 @@ int main(void) {
   U("m2.vm.config.has_partial_free", mi_os_mem_config.has_partial_free);
   U("m2.vm.config.has_virtual_reserve", mi_os_mem_config.has_virtual_reserve);
   U("m2.vm.config.has_transparent_huge_pages", mi_os_mem_config.has_transparent_huge_pages);
+  U("m2.vm.thp.process_disabled", thp_process_disabled);
   U("m2.vm.reserved.initially_zero", reserved_id.initially_zero);
   U("m2.vm.reserved.initially_committed", reserved_id.initially_committed);
   U("m2.vm.reserved.commit_not_known_zero", !commit_is_zero);

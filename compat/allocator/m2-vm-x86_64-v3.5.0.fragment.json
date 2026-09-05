@@ -214,7 +214,7 @@
       },
       {
         "id": "unix-configuration-and-thp-process-policy",
-        "disposition": "unqualified",
+        "disposition": "partial-fixed-profile",
         "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch.",
         "source_anchors": [
           {
@@ -224,9 +224,11 @@
             "sha256": "955c45eab6dcb9a5fa09decdc76350b69962f806d7d571ac9f39b6e4f08675e0"
           }
         ],
-        "evidence_check_ids": [],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential"
+        ],
         "missing_conditions": [
-          "A typed allocator-option owner and an explicit Linux THP process-policy transaction, including failed prctl diagnostics and its process-lifetime ownership."
+          "Ambient source-option discovery, failed-prctl diagnostic evidence, and the production caller that supplies one resolved option image remain unqualified; the selected allow_thp=0 process transaction is only child-isolated evidence."
         ]
       },
       {
@@ -441,10 +443,10 @@
     "unqualified_failure_matrix": [
       {
         "id": "vm-option-hint-large-and-thp-policy",
-        "source_scope": "src/os.c:110-158,303-430,438-527,534-712 and src/prim/unix/prim.c:250-277,308-497 option routing, random hints, large/THP attempts, purge policy, and diagnostics.",
+        "source_scope": "src/os.c:110-158,303-430,438-527,534-712 and src/prim/unix/prim.c:250-277,308-497 ambient option routing, random hints, large/THP attempts, purge policy, and diagnostics beyond the selected child-isolated allow_thp=0 transaction.",
         "required_evidence": [
           "typed allocator-option and default-Theap random-state owners",
-          "native C/Rust option, hint, THP, large-page retry, and diagnostic failure differential"
+          "native C/Rust ambient-option, hint, large-page retry, and diagnostic failure differential"
         ]
       },
       {
@@ -569,9 +571,9 @@
       }
     ],
     "remaining_conditions": [
-      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed no-option regular mapping lifecycle, including pinned-C failure ownership and retry evidence for every source branch.",
+      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle and child-isolated THP-disable transaction, including pinned-C failure ownership and retry evidence for every source branch.",
       "Complete the aligned-overmap substrate beyond the selected direct/prefix/suffix retained-map owners: source large-page arguments, every receiving allocator caller, callback/counter/error paths, and native cleanup failure/retry differentials remain required.",
-      "Complete random aligned-hint policy, virtual-address eligibility, default-Theap random state, source options and diagnostics, Linux THP process policy, MAP_HUGETLB/MADV_HUGEPAGE retry behavior, and their native differential evidence.",
+      "Complete random aligned-hint policy, virtual-address eligibility, default-Theap random state, ambient source options and diagnostics, Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE retry behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
       "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes; the selected fixed normal/offset MemoryId owner, contained Linux reuse no-op, reset-advice snapshot, and one-page protection retry do not establish those broader source contracts."
     ]

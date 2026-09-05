@@ -67,6 +67,21 @@ const INITIALIZING: u8 = 1;
 const READY: u8 = 2;
 const RETAINED: u8 = 3;
 
+/// How this source-startup call owns an optional resolved VM policy.
+///
+/// The production path must execute the pinned Unix process-memory policy
+/// before it publishes any heap, metadata, or PageMap state. Ordinary
+/// in-process Rust fixtures retain the same policy image but deliberately do
+/// not alter the test runner's THP setting; the one native fixture that
+/// exercises this transition runs its `ApplyProcessMemoryPolicy` branch only
+/// in a dedicated child process. Keeping the cases typed here prevents a test
+/// helper from silently claiming it performed a process-wide policy change.
+enum VmPolicyStartup {
+    None,
+    RetainOnly(VmPolicy),
+    ApplyProcessMemoryPolicy(VmPolicy),
+}
+
 /// Final process-lifetime state for the bounded source main-process startup.
 ///
 /// `READY` is published only after every predecessor in the source order has
@@ -147,7 +162,7 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                None,
+                VmPolicyStartup::None,
                 MainStaticAttachmentStorage::global(),
                 MainSubprocess::global(),
                 MetaAllocator::global(),
@@ -182,7 +197,7 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                Some(policy),
+                VmPolicyStartup::ApplyProcessMemoryPolicy(policy),
                 MainStaticAttachmentStorage::global(),
                 MainSubprocess::global(),
                 MetaAllocator::global(),
@@ -213,7 +228,7 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                None,
+                VmPolicyStartup::None,
                 main_static,
                 subprocess,
                 metadata,
@@ -245,7 +260,46 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                Some(policy),
+                VmPolicyStartup::RetainOnly(policy),
+                main_static,
+                subprocess,
+                metadata,
+                page_map_storage,
+                || {},
+                || {},
+            )
+        }
+    }
+
+    /// Runs the VM-aware transition in a process that the caller has already
+    /// isolated with `fork`.
+    ///
+    /// This is deliberately narrower than the ordinary VM fixture above:
+    /// source `_mi_os_init` can invoke `PR_SET_THP_DISABLE`, which must never
+    /// affect an in-process Rust test runner.
+    ///
+    /// # Safety
+    ///
+    /// The caller must meet the ordinary isolated-component requirements and
+    /// additionally run in a disposable process with no post-fork Rust
+    /// allocation or synchronization dependency after this transition.
+    #[cfg(all(test, not(miri)))]
+    unsafe fn initialize_with_test_components_and_process_memory_policy(
+        &'static self,
+        config: MemoryConfig,
+        options: VmOptions,
+        main_static: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        page_map_storage: &'static ProcessPageMapStorage,
+    ) -> Result<ProcessMainThread, ProcessMainInitError> {
+        let policy = VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?;
+        // SAFETY: the caller has isolated the process-local kernel transition
+        // and retains every supplied final source owner.
+        unsafe {
+            self.initialize_with_components_after_claim(
+                config,
+                VmPolicyStartup::ApplyProcessMemoryPolicy(policy),
                 main_static,
                 subprocess,
                 metadata,
@@ -276,7 +330,7 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                None,
+                VmPolicyStartup::None,
                 main_static,
                 subprocess,
                 metadata,
@@ -305,7 +359,7 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
-                None,
+                VmPolicyStartup::None,
                 main_static,
                 subprocess,
                 metadata,
@@ -318,8 +372,8 @@ impl ProcessMainInitializationStorage {
 
     unsafe fn initialize_with_components_after_claim<F, G>(
         &'static self,
-        config: MemoryConfig,
-        vm_policy: Option<VmPolicy>,
+        mut config: MemoryConfig,
+        vm_policy: VmPolicyStartup,
         main_static: &'static MainStaticAttachmentStorage,
         subprocess: &'static MainSubprocess,
         metadata: core::pin::Pin<&'static MetaAllocator>,
@@ -387,7 +441,12 @@ impl ProcessMainInitializationStorage {
         self.state.store(INITIALIZING, Ordering::Release);
         after_claim();
 
-        if let Some(policy) = vm_policy {
+        let (policy, apply_process_memory_policy) = match vm_policy {
+            VmPolicyStartup::None => (None, false),
+            VmPolicyStartup::RetainOnly(policy) => (Some(policy), false),
+            VmPolicyStartup::ApplyProcessMemoryPolicy(policy) => (Some(policy), true),
+        };
+        if let Some(policy) = policy {
             // The source process-load edge clears `os_preloading` before its
             // option/OS/main-heap work. Retain this policy first, then expose
             // only its post-preloading read state to every later source
@@ -401,6 +460,17 @@ impl ProcessMainInitializationStorage {
                 }
             };
             policy.finish_preloading();
+            if apply_process_memory_policy {
+                // Pinned `mi_process_init_once` invokes `_mi_os_init` after
+                // options/statistics initialization and before heap/PageMap
+                // initialization.  The Linux primitive may change only this
+                // process's THP state; its result is intentionally
+                // best-effort, just as the source ignores `prctl` failures.
+                #[cfg(not(miri))]
+                let _outcome = policy.apply_thp_process_policy(&mut config);
+                #[cfg(miri)]
+                let _ = (&policy, &mut config);
+            }
         }
 
         let mut selection = match subprocess.reserve_static_bootstrap() {
@@ -979,6 +1049,9 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
+    // Linux's process-local THP query used by the child-only startup test.
+    const PR_GET_THP_DISABLE: i32 = 42;
+
     fn memory_config() -> MemoryConfig {
         MemoryConfig::from_observations(
             PageSize::new(4096).expect("the native page size is valid"),
@@ -1115,6 +1188,64 @@ mod tests {
         })
         .join()
         .expect("VM-aware process-main test thread completes");
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn process_main_vm_policy_disables_thp_only_in_its_isolated_child() {
+        // Build every static owner before `fork`; the child only performs the
+        // source startup transition then crosses the raw exit boundary.
+        let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+        let mut options = VmOptions::uninitialized();
+        options.set(crate::config::VmOption::AllowThp, 0);
+        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4096).expect("the selected native page size is valid"),
+            1024 * 1024,
+            false,
+            true,
+        );
+        let parent_before = unsafe {
+            crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0)
+        };
+
+        let child = crabc_core::process::fork_raw().expect("fork isolated process startup");
+        if child == 0 {
+            let result = unsafe {
+                storage.initialize_with_test_components_and_process_memory_policy(
+                    config,
+                    options,
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            };
+            let status = match result {
+                Ok(owner) => match owner.ready().and_then(ProcessMainReadyLease::memory_config) {
+                    Ok(ready_config) if !ready_config.has_transparent_huge_pages() => 0,
+                    _ => 1,
+                },
+                Err(_) => 1,
+            };
+            crabc_core::process::exit_immediately(status);
+        }
+
+        let mut status = 0;
+        assert_eq!(
+            unsafe { crabc_core::process::wait4_raw(child, &mut status, 0) },
+            Ok(child),
+            "the parent must reap its process-policy child"
+        );
+        assert_eq!(
+            status, 0,
+            "source process initialization must retain a THP-disabled memory configuration"
+        );
+        assert_eq!(
+            unsafe { crabc_core::process::prctl_raw(PR_GET_THP_DISABLE, 0, 0, 0, 0) },
+            parent_before,
+            "the process-policy fixture must not alter the test runner"
+        );
     }
 
     #[test]

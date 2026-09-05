@@ -4,10 +4,11 @@
 This module owns neither milestone aggregation nor source-map promotion.  It
 checks the target-local fragment's complete source-policy matrix, compiles a
 fresh direct-include C oracle from the pinned archive, and compares its fixed
-regular-VM lifecycle record with one already-built Rust exact test.  The
-fragment deliberately remains partial: passing this producer is evidence for
-the fixed no-option owner slice, not a claim for huge pages, hints, THP policy,
-or allocator lifecycle integration.
+regular-VM lifecycle record with one already-built Rust exact test. The
+selected `allow_thp=0` source transaction runs only in child evidence
+processes. The fragment deliberately remains partial: passing this producer is
+not a claim for huge pages, hints, ambient option discovery, diagnostics, or
+allocator lifecycle integration.
 """
 
 from __future__ import annotations
@@ -124,6 +125,7 @@ TRACE_KEYS = (
     "m2.vm.config.has_partial_free",
     "m2.vm.config.has_virtual_reserve",
     "m2.vm.config.has_transparent_huge_pages",
+    "m2.vm.thp.process_disabled",
     "m2.vm.reserved.initially_zero",
     "m2.vm.reserved.initially_committed",
     "m2.vm.reserved.commit_not_known_zero",
@@ -161,6 +163,7 @@ TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
         "m2.vm.config.has_partial_free",
         "m2.vm.config.has_virtual_reserve",
         "m2.vm.config.has_transparent_huge_pages",
+        "m2.vm.thp.process_disabled",
         "m2.vm.reserved.initially_committed",
         "m2.vm.normal.good_size",
         "m2.vm.aligned.alignment",
@@ -168,7 +171,12 @@ TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
         "m2.vm.offset.good_size",
     }
 )
-TRACE_FALSE_KEYS = frozenset({"m2.vm.reserved.initially_committed"})
+TRACE_FALSE_KEYS = frozenset(
+    {
+        "m2.vm.config.has_transparent_huge_pages",
+        "m2.vm.reserved.initially_committed",
+    }
+)
 
 BRANCH_IDS = (
     "unix-platform-primitive-dispatch",
@@ -355,6 +363,15 @@ def load_fragment(path: Path) -> dict[str, Any]:
                 raise _error(f"branch {branch['id']} repeats a source anchor")
             branch_anchor_keys.add(key)
 
+    thp_branch = branches[2]
+    if (
+        thp_branch["disposition"] != "partial-fixed-profile"
+        or thp_branch["evidence_check_ids"] != [TRACE_CHECK_ID]
+        or not any("ambient" in condition.lower() for condition in thp_branch["missing_conditions"])
+        or not any("child-isolated" in condition.lower() for condition in thp_branch["missing_conditions"])
+    ):
+        raise _error("THP process-policy branch lost its bounded native evidence or open frontier")
+
     unqualified = component.get("unqualified_failure_matrix")
     if not isinstance(unqualified, list) or not unqualified:
         raise _error("unqualified failure matrix is absent")
@@ -471,6 +488,7 @@ def _validate_trace_values(trace: Mapping[str, int], *, source: str) -> None:
         "m2.vm.config.has_partial_free",
         "m2.vm.config.has_virtual_reserve",
         "m2.vm.config.has_transparent_huge_pages",
+        "m2.vm.thp.process_disabled",
     ):
         if trace[key] not in {0, 1}:
             raise ValueError(f"{source} M2 VM trace has a nonboolean configuration field: {key}")
@@ -590,7 +608,7 @@ def run_evidence(
         "comparison": comparison,
         "fixture": harness.artifact_record(FIXTURE),
         "format": 1,
-        "profile": "release-no-default-features-fixed-regular-vm",
+        "profile": "release-no-default-features-fixed-regular-vm-thp-disabled",
         "rust_build_command": list(test_program.get("build_command", [])),
         "rust_command": rust_command,
         "rust_passed_test_count": rust_count,
