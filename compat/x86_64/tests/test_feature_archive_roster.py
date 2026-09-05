@@ -73,9 +73,11 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "x86-allocator-runtime",
                 "x86-allocator-string-duplication",
                 "x86-environment-runtime",
+                "x86-filesystem-traversal",
                 "x86-h-errno",
                 "x86-process-exec",
                 "x86-resolver-runtime",
+                "x86-scandir",
                 "x86-stdio-permanent-format-scan",
             ),
         )

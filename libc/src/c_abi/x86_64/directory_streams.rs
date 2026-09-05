@@ -31,10 +31,14 @@
 //! private anonymous 4 KiB mapping and `closedir` releases that exact mapping;
 //! it is a bounded implementation detail, not a reusable allocator. The
 //! selected direct syscall paths omit musl cancellation-point machinery. The
-//! project supports only `C`, `POSIX`, and `C.UTF-8` locale profiles, whose
-//! selected `alphasort` behavior is byte collation; broad locale collation is
-//! intentionally absent. The default archive excludes `scandir`; the opt-in
-//! `x86-scandir` client reaches the separately audited C
+//! standalone `x86-scandir` feature preserves that boundary, and the owned
+//! static aggregate deliberately does not add an entry checkpoint: pinned musl
+//! 1.2.6 `src/dirent/scandir.c` has no cancellation-state wrapper around its
+//! stream, allocation, selector, or comparator work. The project supports
+//! only `C`, `POSIX`, and `C.UTF-8` locale profiles, whose selected `alphasort`
+//! behavior is byte collation; broad locale collation is intentionally absent.
+//! The default archive excludes `scandir`; the opt-in `x86-scandir` client
+//! reaches the separately audited C
 //! `malloc`/`realloc`/`free` ABI and remains a mixed-runtime artifact rather
 //! than making the private DIR mapping reusable allocation. `versionsort` is a
 //! pure GNU comparison callback using the selected stateless `strverscmp`
