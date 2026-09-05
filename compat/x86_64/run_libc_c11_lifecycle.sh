@@ -9,6 +9,7 @@
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly EXECUTION_TIMEOUT=20s
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 
@@ -98,7 +99,7 @@ done
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_c11_lifecycle_probe.c -o "$reference"
-"$reference"
+timeout "$EXECUTION_TIMEOUT" "$reference"
 
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
@@ -158,7 +159,7 @@ if grep -Eq 'C11StartRoutine.*as.*(PthreadStartRoutine|StartRoutine)' \
 fi
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_C11_LIFECYCLE_FREESTANDING \
-    -DCRABC_C11_LIFECYCLE_SELECTED_WORKER_LIMIT=64 -I"$ROOT_DIR/include" \
+    -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_c11_lifecycle_probe.c \
@@ -244,7 +245,7 @@ grep -Eq '\$0xb,%eax|\$0xb,%rax|\$0x000000000000000b,%rax' \
     "$selected_join_disassembly" ||
     fail "selected worker join lacks munmap syscall number 11"
 
-if "$candidate"; then
+if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
     :
 else
     candidate_status=$?

@@ -365,12 +365,14 @@ static int run_cross_mode_thrd_exit_rejection_round(void)
 }
 #endif
 
-#if defined(CRABC_C11_LIFECYCLE_SELECTED_WORKER_LIMIT)
-static int run_registry_capacity_round(void)
+/* Hold 64 live C11 workers while a 65th runs: the owned registry grows.
+ * Run this same observable growth and reclamation contract against musl. */
+enum { held_worker_count = 64 };
+static int run_registry_growth_round(void)
 {
-	struct held_worker_observation workers[CRABC_C11_LIFECYCLE_SELECTED_WORKER_LIMIT] = {{0}};
-	thrd_t handles[CRABC_C11_LIFECYCLE_SELECTED_WORKER_LIMIT] = {0};
-	struct worker_observation overflow_observation = {
+	struct held_worker_observation workers[held_worker_count] = {{0}};
+	thrd_t handles[held_worker_count] = {0};
+	struct worker_observation additional_observation = {
 		.observed = 0,
 		.result = 7,
 		.initial_errno = -1,
@@ -384,12 +386,13 @@ static int run_registry_capacity_round(void)
 		.identity = 0,
 		.thread_pointer = 0,
 	};
-	thrd_t overflow_handle = 0;
+	thrd_t additional_handle = 0;
 	thrd_t reuse_handle = 0;
 	int reuse_result = 0;
+	int additional_result = 0;
 	unsigned int index;
 
-	for (index = 0; index != CRABC_C11_LIFECYCLE_SELECTED_WORKER_LIMIT; ++index) {
+	for (index = 0; index != held_worker_count; ++index) {
 		workers[index].result = (int)index - 31;
 		workers[index].initial_errno = -1;
 		errno = E2BIG;
@@ -399,13 +402,14 @@ static int run_registry_capacity_round(void)
 			return 81;
 	}
 	errno = E2BIG;
-	if (thrd_create(&overflow_handle, normal_worker, &overflow_observation) != thrd_nomem)
+	if (thrd_create(&additional_handle, normal_worker, &additional_observation) != thrd_success)
 		return 82;
-	if (errno != E2BIG)
+	if (thrd_join(additional_handle, &additional_result) != thrd_success ||
+		additional_result != 7 || additional_observation.initial_errno != 0 || errno != E2BIG)
 		return 83;
-	for (index = 0; index != CRABC_C11_LIFECYCLE_SELECTED_WORKER_LIMIT; ++index)
+	for (index = 0; index != held_worker_count; ++index)
 		__atomic_store_n(&workers[index].release, 1, __ATOMIC_RELEASE);
-	for (index = 0; index != CRABC_C11_LIFECYCLE_SELECTED_WORKER_LIMIT; ++index) {
+	for (index = 0; index != held_worker_count; ++index) {
 		int joined_result = 0;
 
 		if (thrd_join(handles[index], &joined_result) != thrd_success ||
@@ -420,7 +424,6 @@ static int run_registry_capacity_round(void)
 		return 86;
 	return 0;
 }
-#endif
 
 static int run_c11_lifecycle(void)
 {
@@ -448,10 +451,8 @@ static int run_c11_lifecycle(void)
 	if ((result = run_cross_mode_thrd_exit_rejection_round()) != 0)
 		return result;
 #endif
-#if defined(CRABC_C11_LIFECYCLE_SELECTED_WORKER_LIMIT)
-	if ((result = run_registry_capacity_round()) != 0)
+	if ((result = run_registry_growth_round()) != 0)
 		return result;
-#endif
 	return 0;
 }
 
