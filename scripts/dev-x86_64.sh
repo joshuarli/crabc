@@ -775,6 +775,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-elementary-sqrt-fenv  run the static x86 sqrt/sqrtf/sqrtl fenv-sensitive slice
   libc-fenv-rounding  run the static x86 rint/nearbyint fenv-sensitive slice
   libc-owned-scalar-math  run installed x86 fma/fmaf, hypot/hypotf, and log1p/log1pf scalar completion
+  libc-owned-binary80-math  run installed x86 fmal, hypotl, and log1pl binary80 completion
   libc-math-long-double-completion  run the private x86 binary80 fdiml/exp10l/pow10l closure
   libc-math-elementary-fenv-sensitive  run the complete private x86 math.elementary-fenv-sensitive aggregate
   libc-math-minmax  run the static x86 fmax/fmin minmax slice
@@ -5504,6 +5505,7 @@ case "$command" in
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
     libc-owned-scalar-math) ;;
+    libc-owned-binary80-math) ;;
     libc-math-minmax) ;;
     libc-math-bit-sign) ;;
     libc-math-trunc) ;;
@@ -8871,6 +8873,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-owned-scalar-math takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_owned_static_math_scalar_consumer.sh
+        ;;
+    libc-owned-binary80-math)
+        [ "$#" -eq 0 ] || fail "libc-owned-binary80-math takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_owned_static_math_binary80_consumer.sh
         ;;
     libc-math-complex)
         [ "$#" -eq 0 ] || fail "libc-math-complex takes no arguments"
