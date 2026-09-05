@@ -812,6 +812,12 @@ run_static_mode() {
             candidate_arguments=("$mode_root/backend-exit")
             [ -f "$printf_matrix_reference" ] || fail "${label} backend reference is missing"
             ;;
+        stdio-process)
+            probe=owned_stdio_process_probe.c
+            expected_output=owned-process-ok
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/process-stream")
+            ;;
         resolver)
             probe=libc_resolver_runtime_probe.c
             expected_output=''
@@ -928,6 +934,8 @@ run_static_mode() {
             fail "${label} did not flush its dynamic stream at ordinary exit"
         run_static_mode "$installed_root" "$mode" "$mode_root/backends" \
             "$label FILE backends" stdio-backends "$printf_matrix_reference.backends"
+        run_static_mode "$installed_root" "$mode" "$mode_root/process" \
+            "$label process streams" stdio-process
     fi
     if [ "$consumer_kind" = resolver ]; then
         assert_resolver_fixture_result "$resolver_fixture" "$label"
@@ -1079,7 +1087,7 @@ compare_consumer_matrix_runs() {
     # the serial/parallel comparison an additional determinism check rather
     # than just a timing report, while both passes reuse the same cold-built
     # primary and extracted trees.
-    for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread allocator-et-exec allocator-pie posix-et-exec posix-pie posix-et-exec/temp posix-pie/temp stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
+    for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread allocator-et-exec allocator-pie posix-et-exec posix-pie posix-et-exec/temp posix-pie/temp stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
         cmp "$serial_primary/$mode_root/candidate.sha256" \
             "$parallel_primary/$mode_root/candidate.sha256" ||
             fail "${mode_root} primary output differs between serial and parallel consumers"
@@ -1325,6 +1333,14 @@ printf 'backend-exit\n' >"$header_consumer/expected-backend-exit"
 cmp "$header_consumer/expected-backend-exit" "$header_consumer/backend-exit" ||
     fail "pinned-musl reference did not flush its cookie stream at ordinary exit"
 
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_stdio_process_probe.c" \
+    -o "$header_consumer/process-reference"
+reference_output="$(env -i "$header_consumer/process-reference" "$header_consumer/process-stream")" ||
+    fail "pinned-musl process-stream reference failed"
+[ "$reference_output" = owned-process-ok ] ||
+    fail "pinned-musl process-stream output drifted: $reference_output"
+
 seed_resolver_fixture "$resolver_reference_fixture"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/libc_resolver_runtime_probe.c" \
@@ -1465,7 +1481,7 @@ if [ "$consumer_benchmark" = 1 ]; then
         "$primary_consumer" "$extracted_consumer" \
         "$work_dir/consumer-matrix-serial-logs" "$work_dir/consumer-matrix-logs"
 fi
-for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread allocator-et-exec allocator-pie posix-et-exec posix-pie posix-et-exec/temp posix-pie/temp stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
+for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread allocator-et-exec allocator-pie posix-et-exec posix-pie posix-et-exec/temp posix-pie/temp stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"

@@ -138,8 +138,12 @@ and errors. Each stdio job also links `owned_stdio_backends_probe.c`: 29 binary
 records compare fixed/growing memory streams, cookie callbacks, short/error
 writes, descriptor buffering, and formatter error state with pinned musl.
 The separately receipted binary must flush its unclosed cookie stream at
-ordinary exit. Wide streams, `popen`, cancellation, and fork-lock recovery
-remain unqualified.
+ordinary exit. `owned_stdio_process_probe.c` separately exercises `popen`,
+`pclose`, and `system`: read/write streams, prior-process descriptor closure,
+CLOEXEC and same-descriptor dup2, worker-thread spawn, signal status/restoration,
+interrupted wait, and exec/pipe failure cleanup without leaked descriptors or
+zombies. Its child shell and scratch are private to each run. Public spawn,
+wide streams, syscall cancellation, and fork-lock recovery remain unqualified.
 
 `owned_static_printf_probe.c` additionally covers positional integer/string/
 count/pointer/errno/hex-float formatting and FILE, descriptor, allocated, and
@@ -156,7 +160,7 @@ scansets, widths, suppression, positional arguments, integer and binary32/64/80
 conversion, errno, fenv, and stream lookahead/EOF/error state. Allocation checks
 exercise `%m` growth, cleanup, partial failure, and ENOMEM; each process owns
 its scratch and restores its resource limit. Wide formatting/scanning remains
-explicitly unsupported. The 24 bounded jobs now cover 44 installed binaries.
+explicitly unsupported. The 24 bounded jobs now cover 48 installed binaries.
 
 Each POSIX job includes `owned_temp_objects_probe.c`, separately linked through
 the installed driver. The five `mkstemp`/`mkostemp`/`mkstemps`/`mkostemps`/
