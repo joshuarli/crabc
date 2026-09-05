@@ -587,6 +587,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
   owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  execute the prepared static and dynamic POSIX family matrix
   owned-posix-filesystem [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX filesystem provider composition
+  owned-nftw-relative-base [DYNAMIC_SYSROOT]  regress installed nftw relative FTW.base callback metadata
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
   owned-posix-signals [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test residual installed signal state and boundaries
   owned-signal-helpers [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed signal aliases, bookkeeping and reporting
@@ -2774,6 +2775,23 @@ prepare_owned_posix_replay_arguments() {
     if [ -n "$dynamic_product" ]; then
         dynamic_product="$(translate_owned_posix_product "$dynamic_product")" || exit 2
         POSIX_REPLAY_ARGUMENTS+=("$dynamic_product")
+    fi
+}
+
+prepare_owned_dynamic_product_argument() {
+    local selected_command="$1"
+    shift
+    local dynamic_product=''
+    local expected="usage: ./scripts/dev-x86_64.sh $selected_command [DYNAMIC_SYSROOT]"
+
+    [ "$#" -le 1 ] || fail "$expected"
+    if [ "$#" -eq 1 ]; then
+        [ -n "$1" ] && [[ "$1" != -* ]] || fail "$expected"
+        dynamic_product="$(translate_owned_posix_product "$1")" || exit 2
+    fi
+    OWNED_DYNAMIC_PRODUCT_ARGUMENTS=()
+    if [ -n "$dynamic_product" ]; then
+        OWNED_DYNAMIC_PRODUCT_ARGUMENTS+=("$dynamic_product")
     fi
 }
 
@@ -5837,7 +5855,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-crypt-runtime) ;;
     owned-system-cancellation) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -6003,6 +6021,10 @@ case "$command" in
     owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-process-trio|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation)
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
+        ;;
+    owned-nftw-relative-base)
+        prepare_owned_dynamic_product_argument "$command" "$@"
+        set -- "${OWNED_DYNAMIC_PRODUCT_ARGUMENTS[@]}"
         ;;
 esac
 
@@ -7936,6 +7958,11 @@ PY
     owned-posix-filesystem)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_posix_filesystem.sh "$@"
+        ;;
+    owned-nftw-relative-base)
+        [ "$#" -le 1 ] || fail "owned-nftw-relative-base takes at most one dynamic sysroot"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_nftw_relative_base.sh "$@"
         ;;
     owned-pthread-signal)
         ensure_image

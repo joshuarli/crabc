@@ -104,7 +104,7 @@ struct History {
     device: u64,
     inode: u64,
     level: c_int,
-    base: c_int,
+    child_base: c_int,
 }
 
 #[inline]
@@ -406,11 +406,18 @@ unsafe fn walk(
         return 0;
     }
 
-    let base = if history.is_null() {
+    // Pinned musl gives the root callback its own basename position, then
+    // carries `new.base = j + 1` into the next recursion frame. The two
+    // values differ for a relative root: nftw(".") reports root base zero,
+    // while its direct child "./name" starts at offset two. Keeping the
+    // next-child position in history prevents descendants from inheriting the
+    // root callback's base.
+    let callback_base = if history.is_null() {
         unsafe { root_base(path, last) }
     } else {
-        unsafe { (*history).base }
+        unsafe { (*history).child_base }
     };
+    let child_base = (last + 1) as c_int;
     let level = if history.is_null() {
         0
     } else {
@@ -421,7 +428,7 @@ unsafe fn walk(
         device: metadata.device(),
         inode: metadata.inode(),
         level,
-        base,
+        child_base,
     };
 
     let directory_kind = is_directory_kind(kind);
@@ -462,7 +469,7 @@ unsafe fn walk(
 
     if flags & FTW_DEPTH == 0 {
         let callback_result = unsafe {
-            callback(callbacks, path.cast(), &metadata, kind, base, level)
+            callback(callbacks, path.cast(), &metadata, kind, callback_base, level)
         };
         if callback_result != 0 {
             return unsafe { finish(stream, saved_descriptor, callback_result) };
@@ -561,7 +568,7 @@ unsafe fn walk(
             return unsafe { finish(stream, saved_descriptor, -1) };
         }
         let callback_result = unsafe {
-            callback(callbacks, path.cast(), &metadata, kind, base, level)
+            callback(callbacks, path.cast(), &metadata, kind, callback_base, level)
         };
         if callback_result != 0 {
             return unsafe { finish(stream, saved_descriptor, callback_result) };

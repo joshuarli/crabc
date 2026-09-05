@@ -243,6 +243,13 @@ temporary-name contracts, exact raw file-handle outcomes, and inherited
 the full manifest/payload and one-object receipt/link-trace audit alongside the
 source map, strong-provider audit, and required dynamic qualification case.
 
+`./scripts/dev-x86_64.sh owned-nftw-relative-base [DYNAMIC_SYSROOT]` is the
+focused installed-product regression for the retained os-test `nftw(".")`
+fixture: it differentially checks each relative callback path's `FTW.base` and
+level through musl and owned dynamic kernel/direct entries. Its
+[contract](owned-nftw-relative-base.md) records the source-history distinction
+that makes a child callback's basename position differ from the root's.
+
 ## Owned Linux/filesystem/terminal mechanisms
 
 `./scripts/dev-x86_64.sh owned-unix-mechanisms` compares installed C
