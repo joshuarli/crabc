@@ -234,8 +234,20 @@ blocked in `poll`, `ppoll`, `select`, `pselect`, `pause`, `sigsuspend`,
 cancellation cleanup and restoration of the temporary signal mask. `fclose`
 remains non-canceling even with a pending request. The focused command is
 `./scripts/dev-x86_64.sh owned-io-cancellation`; the aggregate remains the
-installed/extracted product judge. Other syscall cancellation points and dynamic
-initial-task/fork cancellation are still separate work.
+installed/extracted product judge.
+
+The same jobs include `owned_socket_cancellation_probe.c` and
+`owned_sleep_wait_cancellation_probe.c`. The socket fixture covers pending,
+disabled, masked, and observed blocked calls for `connect`, `accept`/`accept4`,
+all send/receive forms, and musl's LP64 `sendmmsg` loop. It checks socket-timeout
+cancellation and ordinary `SA_RESTART`/`EINTR` behavior. The sleep/wait fixture
+covers `nanosleep`, relative and absolute `clock_nanosleep`, `sleep`, `usleep`,
+and `thrd_sleep` called by a pthread, plus `wait`, `waitpid`, and `waitid`.
+It preserves positive-error/no-errno clock sleep results and proves that the
+source-defined `wait3`/`wait4`, CPU-clock rejection, and empty `sendmmsg` paths
+do not check cancellation. Each controlled child is released and reaped even
+after the waiting worker is canceled. Other syscall cancellation points and
+dynamic initial-task/fork cancellation are separate work.
 
 Each POSIX job separately links `owned_spawn_probe.c`: spawn/spawnp file-action
 ordering, working-directory and PATH search, signal/process attributes, worker

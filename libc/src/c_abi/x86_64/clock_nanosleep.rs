@@ -1,31 +1,23 @@
 //! Selected static Linux/x86-64 C `clock_nanosleep` boundary.
 //!
-//! This leaf owns the selected non-cancellation normal-call, result, and
+//! This leaf owns the selected normal-call, result, and
 //! pointer boundary of POSIX `clock_nanosleep`. Unlike ordinary C syscall
 //! wrappers, its public contract returns zero on success or a *positive errno*
 //! value on failure; it must not publish failures through `errno`. The
 //! implementation therefore deliberately bypasses the static archive's
 //! `c_status` translator and negates only Linux's raw negative errno result.
-//! It is a direct, non-pthread leaf: musl 1.2.6 routes this operation through
-//! `__syscall_cp` as a cancellation point, but cancellation and cleanup are
-//! deferred until the x86 pthread/TLS runtime exists.
+//! The owned runtime supplies musl's pthread cancellation point.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
 //! `src/time/clock_nanosleep.c` maps to [`clock_nanosleep`] below.  Musl
 //! special-cases a relative realtime request through `nanosleep` and rejects
 //! `CLOCK_THREAD_CPUTIME_ID` with `EINVAL` before the syscall. This bounded
-//! Linux-5.10 leaf retains the latter musl-visible error rule, but intentionally
-//! uses `clock_nanosleep=230` rather than musl's realtime `nanosleep` route for
-//! every remaining clock request while keeping this leaf independent of the
-//! separately selected `nanosleep` boundary. The
-//! x86-64 raw ABI places clock ID, flags,
-//! request, and remaining-timespec pointers in `rdi`, `rsi`, `rdx`, and `r10`.
-//!
-//! This leaf does not call or depend on the separately selected `nanosleep`
-//! boundary, and it does not select `sleep`, `clock_gettime`, C timer state,
-//! time-zone/calendar services, timer delivery policy, pthread cancellation,
-//! libc.so, CRT, dynamic TLS, loader, sysroot, or public x86 support.
+//! Linux-5.10 leaf retains the latter validation before cancellation. The owned
+//! runtime also preserves the relative realtime `nanosleep` route; standalone
+//! archive selections retain their previously qualified `clock_nanosleep=230`
+//! syscall for every accepted clock request. Both forms return positive errors
+//! without changing errno and do not establish public x86 support.
 
 use core::ffi::{c_int, c_void};
 
@@ -75,6 +67,29 @@ pub unsafe extern "C" fn clock_nanosleep(
 
     // SAFETY: the caller owns the complete raw Linux record-pointer contract;
     // x86 syscall argument four is explicitly placed in r10 by this helper.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        // Musl uses nanosleep for relative realtime requests; preserve that
+        // syscall boundary as well as its cancellation/error behavior.
+        if clock_id == CLOCK_REALTIME && flags == 0 {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_NANOSLEEP,
+                request as usize as i64,
+                remaining as usize as i64,
+                0, 0, 0, 0,
+            )
+        } else {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_CLOCK_NANOSLEEP,
+                i64::from(clock_id),
+                i64::from(flags),
+                request as usize as i64,
+                remaining as usize as i64,
+                0, 0,
+            )
+        }
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_CLOCK_NANOSLEEP,

@@ -800,6 +800,16 @@ run_static_mode() {
             expected_output=''
             minimum_tls_alignment=1
             ;;
+        socket-cancellation)
+            probe=owned_socket_cancellation_probe.c
+            expected_output="$(cat "$printf_matrix_reference")"
+            minimum_tls_alignment=1
+            ;;
+        sleep-wait-cancellation)
+            probe=owned_sleep_wait_cancellation_probe.c
+            expected_output="$(cat "$printf_matrix_reference")"
+            minimum_tls_alignment=1
+            ;;
         descriptor-cancellation)
             probe=owned_descriptor_cancellation_probe.c
             expected_output="$(cat "$printf_matrix_reference")"
@@ -1076,6 +1086,10 @@ run_static_mode() {
             "$label I/O cancellation" io-cancellation "$printf_matrix_reference.cancellation"
         run_static_mode "$installed_root" "$mode" "$mode_root/descriptor-cancellation" \
             "$label descriptor cancellation" descriptor-cancellation "$printf_matrix_reference.descriptor-cancellation"
+        run_static_mode "$installed_root" "$mode" "$mode_root/socket-cancellation" \
+            "$label socket cancellation" socket-cancellation "$printf_matrix_reference.socket-cancellation"
+        run_static_mode "$installed_root" "$mode" "$mode_root/sleep-wait-cancellation" \
+            "$label sleep-wait cancellation" sleep-wait-cancellation "$printf_matrix_reference.sleep-wait-cancellation"
     fi
     if [ "$consumer_kind" = posix ]; then
         run_static_mode "$installed_root" "$mode" "$mode_root/temp" \
@@ -1433,6 +1447,22 @@ env -i "$header_consumer/descriptor-cancellation-reference" >"$printf_matrix_ref
     fail "pinned-musl descriptor cancellation reference failed"
 grep -qx owned-descriptor-cancellation-ok "$printf_matrix_reference.descriptor-cancellation" ||
     fail "pinned-musl descriptor cancellation completion missing"
+
+"$ORACLE_CC" -std=c11 -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_socket_cancellation_probe.c" \
+    -o "$header_consumer/socket-cancellation-reference"
+env -i "$header_consumer/socket-cancellation-reference" >"$printf_matrix_reference.socket-cancellation" ||
+    fail "pinned-musl socket cancellation reference failed"
+grep -qx owned-socket-cancellation-ok "$printf_matrix_reference.socket-cancellation" ||
+    fail "pinned-musl socket cancellation completion missing"
+
+"$ORACLE_CC" -std=c11 -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_sleep_wait_cancellation_probe.c" \
+    -o "$header_consumer/sleep-wait-cancellation-reference"
+env -i "$header_consumer/sleep-wait-cancellation-reference" >"$printf_matrix_reference.sleep-wait-cancellation" ||
+    fail "pinned-musl sleep-wait cancellation reference failed"
+grep -qx owned-sleep-wait-cancellation-ok "$printf_matrix_reference.sleep-wait-cancellation" ||
+    fail "pinned-musl sleep-wait cancellation completion missing"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -I"$ROOT_DIR/include" \

@@ -7,9 +7,9 @@
 //! whole-second portion of that same remaining record after interruption.
 //!
 //! The selected x86 `nanosleep` dependency is the existing direct Linux
-//! `nanosleep=35` non-cancellation boundary. It preserves musl's ordinary
+//! `nanosleep=35` boundary, canceling in the owned runtime. It preserves musl's ordinary
 //! single-call result and initial-TLS `errno` publication on EINTR, but does
-//! not select pthread cancellation, `usleep`, clocks or timer control, signal
+//! not independently select `usleep`, clocks or timer control, signal
 //! policy, libc.so, CRT, loader, sysroot, family completion, promotion, or
 //! public x86 support.
 

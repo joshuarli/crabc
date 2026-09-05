@@ -12,7 +12,7 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
-readonly PROBE_NAMES=(owned_io_cancellation owned_descriptor_cancellation)
+readonly PROBE_NAMES=(owned_io_cancellation owned_descriptor_cancellation owned_socket_cancellation owned_sleep_wait_cancellation)
 
 fail() {
     printf 'ERROR: x86 owned I/O cancellation: %s\n' "$*" >&2
@@ -69,10 +69,12 @@ for probe_name in "${PROBE_NAMES[@]}"; do
     header_trace="$work_dir/$probe_name-header-trace"
     "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H "$PROBE" \
         >/dev/null 2>"$header_trace"
-    headers=(errno.h pthread.h stdio.h sys/uio.h unistd.h bits/alltypes.h)
+    headers=(errno.h pthread.h stdio.h unistd.h bits/alltypes.h)
     case "$probe_name" in
-        owned_io_cancellation) headers+=(ucontext.h sys/wait.h) ;;
-        owned_descriptor_cancellation) headers+=(poll.h signal.h sys/select.h sys/epoll.h sys/eventfd.h sys/mman.h) ;;
+        owned_io_cancellation) headers+=(ucontext.h sys/wait.h sys/uio.h) ;;
+        owned_socket_cancellation) headers+=(sys/socket.h sys/un.h sys/uio.h) ;;
+        owned_sleep_wait_cancellation) headers+=(time.h threads.h sys/wait.h sys/resource.h) ;;
+        owned_descriptor_cancellation) headers+=(sys/uio.h poll.h signal.h sys/select.h sys/epoll.h sys/eventfd.h sys/mman.h) ;;
     esac
     for header in "${headers[@]}"; do
         grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
@@ -233,4 +235,4 @@ for probe_name in "${PROBE_NAMES[@]}"; do
 done
 
 printf '%s\n' \
-    'x86 owned I/O cancellation: PASS (pinned musl + installed ET_EXEC/static-PIE scalar/positioned/vector I/O, close/sync, readiness/signal/event waits, cancellation states, FILE locks, fork inheritance)'
+    'x86 owned I/O cancellation: PASS (pinned musl + installed ET_EXEC/static-PIE scalar/positioned/vector I/O, close/sync, readiness/signal/event waits, sockets, sleep/child waits, cancellation states, FILE locks, fork inheritance)'

@@ -1,6 +1,6 @@
 //! Selected static Linux/x86-64 C `nanosleep` boundary.
 //!
-//! This leaf owns the selected non-cancellation normal-call, errno, and
+//! This leaf owns the selected normal-call, errno, and
 //! remaining-timespec boundary of POSIX `nanosleep`. Its C contract is the
 //! ordinary syscall-wrapper convention: return zero on completion, or return
 //! `-1` after publishing the raw Linux errno in the calling initial-TLS errno
@@ -13,13 +13,9 @@
 //! `src/time/nanosleep.c` maps to [`nanosleep`] below. Musl delegates the
 //! realtime relative operation to `src/time/clock_nanosleep.c`, which reaches
 //! `__syscall_cp` as a pthread cancellation point. The selected direct leaf
-//! instead enters Linux `nanosleep=35` through the two-register x86 syscall
-//! ABI and intentionally omits cancellation until the x86 pthread/TLS runtime
-//! owns that lifecycle.
-//!
-//! This does not select `sleep`, `usleep`, C clock or timer state, signal
-//! policy, pthread cancellation, libc.so, CRT, dynamic TLS, loader, sysroot,
-//! or public x86 support.
+//! enters Linux `nanosleep=35`. The owned runtime supplies that cancellation
+//! point; standalone archive selections retain the two-register raw syscall.
+//! This does not establish public x86 support.
 
 use core::ffi::{c_int, c_void};
 
@@ -31,8 +27,8 @@ use super::{c_status, raw_syscall};
 /// errors become `-1` and are stored in the calling initial-TLS errno slot.
 /// A signal interruption returns `-1`/`EINTR`; when `remaining` is non-null,
 /// Linux initializes it with a valid positive remaining interval. This direct
-/// leaf does not retry interrupted sleeps and is not a pthread cancellation
-/// point yet.
+/// leaf does not retry interrupted sleeps. It is a pthread cancellation
+/// point in the owned runtime.
 ///
 /// # Safety
 ///
@@ -50,11 +46,26 @@ pub unsafe extern "C" fn nanosleep(request: *const c_void, remaining: *mut c_voi
     // SAFETY: the caller owns the complete raw Linux pointer contract. Linux
     // x86-64 receives the request and remaining pointers in rdi/rsi.
     let result = unsafe {
-        raw_syscall::syscall2(
-            raw_syscall::SYS_NANOSLEEP,
-            request as usize as i64,
-            remaining as usize as i64,
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_NANOSLEEP,
+                request as usize as i64,
+                remaining as usize as i64,
+                0,
+                0,
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_NANOSLEEP,
+                request as usize as i64,
+                remaining as usize as i64,
+            )
+        }
     };
 
     // Preserve normal C `0`/`-1 + errno` behavior; unlike clock_nanosleep,

@@ -111,9 +111,11 @@ else
     fail "pinned-musl socket-message fixture exited ${status}"
 fi
 
+# The instruction judge below requires inlining the raw syscall adapter into
+# each selected wrapper. One codegen unit makes that boundary deterministic.
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+    -C relocation-model=static -C code-model=small -C panic=abort -C codegen-units=1
 [ -f "$archive" ] || fail "cargo did not emit libc.a"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"

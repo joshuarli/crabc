@@ -66,8 +66,10 @@ done
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" compat/x86_64/libc_child_reaping_probe.c -o "$reference"
 "$reference" || fail "pinned-musl child-reaping fixture failed"
+# The instruction judge below requires inlining the raw syscall adapter into
+# each selected wrapper. One codegen unit makes that boundary deterministic.
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort
+    --target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort -C codegen-units=1
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
@@ -82,7 +84,7 @@ for unselected in _Fork vfork clone execve syscall posix_spawn malloc free \
     fi
 done
 "$ORACLE_CC" -std=c11 -D_POSIX_C_SOURCE=200809L \
-    -DCRABC_CHILD_REAPING_FREESTANDING -I"$ROOT_DIR/include" -nostdlib -static \
+    -DCRABC_CHILD_REAPING_FREESTANDING -I"$ROOT_DIR/include" -nostdlib -static -Wl,--gc-sections \
     -fno-pie -no-pie -ffreestanding -fno-builtin -fno-stack-protector \
     -Wl,-e,_start -Wl,--no-undefined compat/x86_64/libc_child_reaping_probe.c \
     compat/x86_64/libc_child_reaping_start.S "$archive" -o "$candidate"

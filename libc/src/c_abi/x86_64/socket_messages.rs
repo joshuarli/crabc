@@ -29,11 +29,10 @@
 //! - `src/network/sockatmark.c` maps to [`sockatmark`]'s `SIOCATMARK` ioctl
 //!   request.
 //!
-//! The full musl forms that can block are pthread cancellation points. The
-//! selected static archive has no general cancellation owner, so this leaf
-//! deliberately issues the otherwise matching Linux calls directly. It is not
-//! a general socket ABI, a C runtime, libc.so, CRT, loader, sysroot, or public
-//! x86 support.
+//! The owned runtime preserves the source-defined message cancellation points
+//! after record preparation, including each iteration of LP64 `sendmmsg`.
+//! An empty `sendmmsg` batch performs no cancellation check. Standalone archive
+//! selections retain their direct syscalls; option calls remain non-canceling.
 
 use core::ffi::{c_int, c_uint, c_void};
 
@@ -135,17 +134,32 @@ unsafe fn zero_cmsg_padding(control: *mut u8, length: usize) {
 /// The raw result deliberately remains in Linux's negative-errno form so
 /// both `sendmsg` and musl-shaped `sendmmsg` can publish its C errno behavior.
 #[inline(always)]
-unsafe fn sendmsg_raw(file_descriptor: c_int, message: *const MsgHdr, flags: c_int) -> i64 {
+unsafe fn sendmsg_result(file_descriptor: c_int, message: *const MsgHdr, flags: c_int) -> i64 {
     if message.is_null() {
         // SAFETY: Linux owns null message-pointer validation for this direct
         // raw form.
         return unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_SENDMSG,
-                i64::from(file_descriptor),
-                0,
-                i64::from(flags),
-            )
+            #[cfg(feature = "x86-owned-static-runtime")]
+            {
+                super::pthread_cancel::syscall_cp(
+                    raw_syscall::SYS_SENDMSG,
+                    i64::from(file_descriptor),
+                    0,
+                    i64::from(flags),
+                    0,
+                    0,
+                    0,
+                )
+            }
+            #[cfg(not(feature = "x86-owned-static-runtime"))]
+            {
+                raw_syscall::syscall3(
+                    raw_syscall::SYS_SENDMSG,
+                    i64::from(file_descriptor),
+                    0,
+                    i64::from(flags),
+                )
+            }
         };
     }
 
@@ -177,28 +191,58 @@ unsafe fn sendmsg_raw(file_descriptor: c_int, message: *const MsgHdr, flags: c_i
     // Linux returns. The caller owns iovec/name pointer validity and every
     // message-specific descriptor/policy contract.
     unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_SENDMSG,
-            i64::from(file_descriptor),
-            core::ptr::addr_of!(header) as usize as i64,
-            i64::from(flags),
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_SENDMSG,
+                i64::from(file_descriptor),
+                core::ptr::addr_of!(header) as usize as i64,
+                i64::from(flags),
+                0,
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_SENDMSG,
+                i64::from(file_descriptor),
+                core::ptr::addr_of!(header) as usize as i64,
+                i64::from(flags),
+            )
+        }
     }
 }
 
 /// Invoke Linux `recvmsg` with a copied, kernel-safe public header.
 #[inline(always)]
-unsafe fn recvmsg_raw(file_descriptor: c_int, message: *mut MsgHdr, flags: c_int) -> i64 {
+unsafe fn recvmsg_result(file_descriptor: c_int, message: *mut MsgHdr, flags: c_int) -> i64 {
     if message.is_null() {
         // Keep the raw invalid-pointer result defined at this Rust boundary;
         // valid public calls always take the copy-and-sanitise path below.
         return unsafe {
-            raw_syscall::syscall3(
-                raw_syscall::SYS_RECVMSG,
-                i64::from(file_descriptor),
-                0,
-                i64::from(flags),
-            )
+            #[cfg(feature = "x86-owned-static-runtime")]
+            {
+                super::pthread_cancel::syscall_cp(
+                    raw_syscall::SYS_RECVMSG,
+                    i64::from(file_descriptor),
+                    0,
+                    i64::from(flags),
+                    0,
+                    0,
+                    0,
+                )
+            }
+            #[cfg(not(feature = "x86-owned-static-runtime"))]
+            {
+                raw_syscall::syscall3(
+                    raw_syscall::SYS_RECVMSG,
+                    i64::from(file_descriptor),
+                    0,
+                    i64::from(flags),
+                )
+            }
         };
     }
 
@@ -209,12 +253,27 @@ unsafe fn recvmsg_raw(file_descriptor: c_int, message: *mut MsgHdr, flags: c_int
     header.iov_padding = 0;
     header.control_padding = 0;
     let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_RECVMSG,
-            i64::from(file_descriptor),
-            core::ptr::addr_of_mut!(header) as usize as i64,
-            i64::from(flags),
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_RECVMSG,
+                i64::from(file_descriptor),
+                core::ptr::addr_of_mut!(header) as usize as i64,
+                i64::from(flags),
+                0,
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_RECVMSG,
+                i64::from(file_descriptor),
+                core::ptr::addr_of_mut!(header) as usize as i64,
+                i64::from(flags),
+            )
+        }
     };
     // Musl copies its temporary public-shaped record back after the syscall,
     // including on the error path where Linux may already have updated output
@@ -286,14 +345,14 @@ pub unsafe extern "C" fn getsockopt(
 /// `message` must designate a readable x86 public `msghdr`; every nested
 /// pointer and optional outbound control buffer must remain readable for the
 /// call. The caller owns descriptor lifetime, blocking, SIGPIPE, and message
-/// policy. This selected static leaf deliberately omits pthread cancellation.
+/// policy. The owned runtime supplies pthread cancellation.
 #[no_mangle]
 pub unsafe extern "C" fn sendmsg(
     file_descriptor: c_int,
     message: *const MsgHdr,
     flags: c_int,
 ) -> isize {
-    c_ssize_status(unsafe { sendmsg_raw(file_descriptor, message, flags) })
+    c_ssize_status(unsafe { sendmsg_result(file_descriptor, message, flags) })
 }
 
 /// Receive one padded public message through Linux `recvmsg(2)`.
@@ -302,15 +361,15 @@ pub unsafe extern "C" fn sendmsg(
 ///
 /// `message` must designate a readable/writable x86 public `msghdr`; every
 /// nested output pointer must remain valid for the syscall. The caller owns
-/// descriptor lifetime, blocking, and message/ancillary policy. This selected
-/// static leaf deliberately omits pthread cancellation.
+/// descriptor lifetime, blocking, and message/ancillary policy. The owned runtime
+/// supplies pthread cancellation.
 #[no_mangle]
 pub unsafe extern "C" fn recvmsg(
     file_descriptor: c_int,
     message: *mut MsgHdr,
     flags: c_int,
 ) -> isize {
-    c_ssize_status(unsafe { recvmsg_raw(file_descriptor, message, flags) })
+    c_ssize_status(unsafe { recvmsg_result(file_descriptor, message, flags) })
 }
 
 /// Send a bounded batch through musl's padded `sendmsg` loop.
@@ -320,7 +379,7 @@ pub unsafe extern "C" fn recvmsg(
 /// If `count` is nonzero, `messages` must designate at least the first
 /// `min(count, IOV_MAX)` writable public `mmsghdr` records and their complete
 /// nested message inputs. The caller owns all descriptor, blocking, and
-/// SIGPIPE policy. This selected static leaf deliberately omits cancellation.
+/// SIGPIPE policy. The owned runtime supplies cancellation for each message.
 #[no_mangle]
 pub unsafe extern "C" fn sendmmsg(
     file_descriptor: c_int,
@@ -332,10 +391,11 @@ pub unsafe extern "C" fn sendmmsg(
     let mut index = 0u32;
     while index < bounded_count {
         // SAFETY: the caller's count/record-lifetime contract covers this
-        // selected record; `sendmsg_raw` owns only ABI adaptation.
+        // selected record; `sendmsg_result` prepares the ABI record before its
+        // source-defined cancellation point.
         let message = unsafe { messages.add(index as usize) };
         let result = unsafe {
-            sendmsg_raw(
+            sendmsg_result(
                 file_descriptor,
                 core::ptr::addr_of!((*message).header),
                 flags as c_int,
@@ -361,7 +421,7 @@ pub unsafe extern "C" fn sendmmsg(
 /// If `count` is nonzero, `messages` must designate that many readable and
 /// writable public `mmsghdr` records plus all nested output storage. `timeout`
 /// is either null or writable x86 `timespec` storage. The caller owns socket,
-/// blocking, timeout, and message policy. This leaf deliberately omits
+/// blocking, timeout, and message policy. The owned runtime supplies
 /// pthread cancellation.
 #[no_mangle]
 pub unsafe extern "C" fn recvmmsg(
@@ -382,14 +442,29 @@ pub unsafe extern "C" fn recvmmsg(
         index += 1;
     }
     let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_RECVMMSG,
-            i64::from(file_descriptor),
-            messages as usize as i64,
-            i64::from(count),
-            i64::from(flags),
-            timeout as usize as i64,
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_RECVMMSG,
+                i64::from(file_descriptor),
+                messages as usize as i64,
+                i64::from(count),
+                i64::from(flags),
+                timeout as usize as i64,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_RECVMMSG,
+                i64::from(file_descriptor),
+                messages as usize as i64,
+                i64::from(count),
+                i64::from(flags),
+                timeout as usize as i64,
+            )
+        }
     };
     c_status(result)
 }

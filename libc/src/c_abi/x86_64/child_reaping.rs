@@ -5,7 +5,7 @@
 //! [`waitid`]. It adapts only Linux's `wait4`/`waitid` syscall ABI to C's
 //! initial-TLS `errno` convention. It does not select `fork`, `vfork`,
 //! `execve`, process supervision, signal delivery, pthread-atfork hooks,
-//! cancellation machinery, a dynamic libc, CRT, loader, sysroot, allocator,
+//! a dynamic libc, CRT, loader, sysroot, allocator,
 //! or public x86 support.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
@@ -18,10 +18,10 @@
 //!   `waitid(idtype, id, info, options, NULL)`.
 //!
 //! Musl routes the latter two paths through `syscall_cp`, making them pthread
-//! cancellation points. The selected static archive deliberately has no
-//! pthread cancellation state, so these direct wrappers retain the same
-//! kernel arguments and errno result mapping but not musl's cancellation
-//! behavior. `WNOWAIT` and `WNOHANG` remain kernel-owned observation flags:
+//! cancellation points. The owned runtime preserves those boundaries;
+//! standalone archive selections retain raw syscalls. The separate Linux
+//! `wait3`/`wait4` extensions are non-canceling in musl and remain so here.
+//! `WNOWAIT` and `WNOHANG` remain kernel-owned observation flags:
 //! in particular, Linux reports a no-event `waitid(..., WNOHANG)` outcome
 //! through a zeroed `siginfo_t` record only when the caller pre-zeroes it.
 
@@ -46,13 +46,28 @@ unsafe fn wait4_result(pid: c_int, status: *mut c_int, options: c_int) -> i64 {
     // contract. Linux/x86-64 receives its fourth null `rusage` argument in
     // `r10` through the raw syscall adapter.
     unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_WAIT4,
-            i64::from(pid),
-            status as usize as i64,
-            i64::from(options),
-            0,
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_WAIT4,
+                i64::from(pid),
+                status as usize as i64,
+                i64::from(options),
+                0,
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_WAIT4,
+                i64::from(pid),
+                status as usize as i64,
+                i64::from(options),
+                0,
+            )
+        }
     }
 }
 
@@ -62,7 +77,7 @@ unsafe fn wait4_result(pid: c_int, status: *mut c_int, options: c_int) -> i64 {
 /// `int` for Linux to fill if this call reports a child. A `WNOHANG` no-event
 /// result is zero and leaves that status word under Linux's normal wait4
 /// contract. This function does not establish child creation, ownership,
-/// cancellation, or pthread-atfork coordination.
+/// or pthread-atfork coordination.
 #[no_mangle]
 pub unsafe extern "C" fn wait(status: *mut c_int) -> c_int {
     // SAFETY: `wait` is the fixed `wait4(-1, status, 0, NULL)` spelling; the
@@ -76,8 +91,8 @@ pub unsafe extern "C" fn wait(status: *mut c_int) -> c_int {
 /// `status` may be null; when non-null it must designate one writable x86
 /// `int` for Linux's wait-status output. `options` is passed unchanged to
 /// Linux, including `WNOHANG`; unsupported bits report the kernel's `EINVAL`
-/// through the selected initial-TLS `errno` slot. This direct leaf omits the
-/// musl pthread-cancellation point machinery.
+/// through the selected initial-TLS `errno` slot. The owned runtime supplies
+/// the musl pthread cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn waitpid(
     pid: c_int,
@@ -100,7 +115,7 @@ pub unsafe extern "C" fn waitpid(
 /// convention must pre-zero the record themselves. `WNOWAIT` observation does
 /// not reap the child; a later eligible wait remains required.
 ///
-/// This is a direct non-cancellation wrapper. It does not select `wait4`,
+/// The owned runtime supplies cancellation. This does not select `wait4`,
 /// process creation, generic signal waits, or pthread lifecycle state.
 #[no_mangle]
 pub unsafe extern "C" fn waitid(
@@ -113,14 +128,29 @@ pub unsafe extern "C" fn waitid(
     // output-record contract. The raw adapter places `options`/NULL rusage in
     // Linux/x86-64's r10/r8 argument registers, respectively.
     let result = unsafe {
-        raw_syscall::syscall5(
-            raw_syscall::SYS_WAITID,
-            i64::from(id_type),
-            i64::from(id),
-            info as usize as i64,
-            i64::from(options),
-            0,
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_WAITID,
+                i64::from(id_type),
+                i64::from(id),
+                info as usize as i64,
+                i64::from(options),
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall5(
+                raw_syscall::SYS_WAITID,
+                i64::from(id_type),
+                i64::from(id),
+                info as usize as i64,
+                i64::from(options),
+                0,
+            )
+        }
     };
     c_status(result)
 }

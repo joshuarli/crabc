@@ -3,11 +3,11 @@
 //! This leaf owns one closed, basic C socket lifecycle and byte-transport
 //! block: `socket`, `socketpair`, `bind`, `listen`, `accept`, `accept4`,
 //! `connect`, `send`, `recv`, `sendto`, `recvfrom`, `shutdown`,
-//! `getsockname`, and `getpeername`. It composes only the raw Linux syscall
-//! register boundary and the selected initial-TLS C `errno` slot. It is not
+//! `getsockname`, and `getpeername`. It composes the Linux syscall register
+//! boundary, C `errno`, and the owned runtime's cancellation window. It is not
 //! socket-option or interface-ioctl support; vector, batched, or ancillary
 //! message I/O; resolver or netdb state; C path/open/fcntl APIs; a pthread
-//! cancellation boundary; a general C/POSIX runtime; libc.so; CRT; dynamic
+//! lifecycle owner; a general C/POSIX runtime; libc.so; CRT; dynamic
 //! TLS; loader; sysroot; allocator; or public x86 support.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
@@ -29,10 +29,9 @@
 //! `SOCK_CLOEXEC`, `SOCK_NONBLOCK`, and `accept4`, so this target-specific
 //! leaf calls their direct syscalls and deliberately carries no pre-baseline
 //! fcntl fallback. Musl also routes accept, connect, sendto, and recvfrom
-//! through pthread cancellation-point machinery. The selected static archive
-//! has no pthread/TLS lifecycle owner, so these direct calls intentionally
-//! omit cancellation integration. Those are the only intentional
-//! source-level differences; neither is an ambient fallback.
+//! through pthread cancellation-point machinery. The owned runtime preserves
+//! those cancellation points; standalone archive selections retain direct
+//! syscalls. Linux 5.10 makes the source's older-kernel fallbacks unnecessary.
 
 use core::ffi::{c_int, c_uint, c_void};
 
@@ -134,8 +133,7 @@ pub extern "C" fn listen(file_descriptor: c_int, backlog: c_int) -> c_int {
 /// writable sockaddr output region and writable x86 `socklen_t` word whose
 /// capacity is described by that word. Passing both null follows Linux's
 /// address-omission form. The caller owns descriptor lifetime and blocking
-/// policy; this direct leaf does not provide musl's pthread cancellation
-/// point.
+/// policy. The owned runtime supplies musl's pthread cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn accept(
     file_descriptor: c_int,
@@ -145,12 +143,27 @@ pub unsafe extern "C" fn accept(
     // SAFETY: the caller supplies Linux's optional paired sockaddr output
     // contract. The kernel validates the descriptor and copies output.
     let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_ACCEPT,
-            i64::from(file_descriptor),
-            address as usize as i64,
-            address_length as usize as i64,
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_ACCEPT,
+                i64::from(file_descriptor),
+                address as usize as i64,
+                address_length as usize as i64,
+                0,
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_ACCEPT,
+                i64::from(file_descriptor),
+                address as usize as i64,
+                address_length as usize as i64,
+            )
+        }
     };
     c_status(result)
 }
@@ -173,13 +186,28 @@ pub unsafe extern "C" fn accept4(
     // SAFETY: the caller supplies Linux's optional paired sockaddr output
     // contract; x86's fourth syscall argument is r10.
     let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_ACCEPT4,
-            i64::from(file_descriptor),
-            address as usize as i64,
-            address_length as usize as i64,
-            i64::from(flags),
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_ACCEPT4,
+                i64::from(file_descriptor),
+                address as usize as i64,
+                address_length as usize as i64,
+                i64::from(flags),
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_ACCEPT4,
+                i64::from(file_descriptor),
+                address as usize as i64,
+                address_length as usize as i64,
+                i64::from(flags),
+            )
+        }
     };
     c_status(result)
 }
@@ -191,7 +219,7 @@ pub unsafe extern "C" fn accept4(
 /// `address` must designate at least `address_length` readable bytes in one
 /// kernel-recognized sockaddr form for the syscall's duration. The caller
 /// owns descriptor lifetime, nonblocking state, and signal/cancellation
-/// policy; this direct leaf intentionally has no pthread cancellation point.
+/// policy. This is a cancellation point in the owned runtime.
 #[no_mangle]
 pub unsafe extern "C" fn connect(
     file_descriptor: c_int,
@@ -200,12 +228,27 @@ pub unsafe extern "C" fn connect(
 ) -> c_int {
     // SAFETY: the caller supplies the complete raw sockaddr input contract.
     let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_CONNECT,
-            i64::from(file_descriptor),
-            address as usize as i64,
-            i64::from(address_length),
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_CONNECT,
+                i64::from(file_descriptor),
+                address as usize as i64,
+                i64::from(address_length),
+                0,
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_CONNECT,
+                i64::from(file_descriptor),
+                address as usize as i64,
+                i64::from(address_length),
+            )
+        }
     };
     c_status(result)
 }
@@ -218,7 +261,7 @@ pub unsafe extern "C" fn connect(
 ///
 /// `buffer` must designate `count` readable bytes when Linux examines it.
 /// The caller owns descriptor lifetime, blocking state, and SIGPIPE policy.
-/// This direct leaf deliberately has no pthread cancellation point.
+/// This is a cancellation point in the owned runtime.
 #[no_mangle]
 pub unsafe extern "C" fn send(
     file_descriptor: c_int,
@@ -229,15 +272,30 @@ pub unsafe extern "C" fn send(
     // SAFETY: the caller supplies the complete raw send buffer contract;
     // Linux x86 receives its final peer-address words in r8/r9.
     let result = unsafe {
-        raw_syscall::syscall6(
-            raw_syscall::SYS_SENDTO,
-            i64::from(file_descriptor),
-            buffer as usize as i64,
-            count as i64,
-            i64::from(flags),
-            0,
-            0,
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_SENDTO,
+                i64::from(file_descriptor),
+                buffer as usize as i64,
+                count as i64,
+                i64::from(flags),
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall6(
+                raw_syscall::SYS_SENDTO,
+                i64::from(file_descriptor),
+                buffer as usize as i64,
+                count as i64,
+                i64::from(flags),
+                0,
+                0,
+            )
+        }
     };
     c_ssize_status(result)
 }
@@ -250,7 +308,7 @@ pub unsafe extern "C" fn send(
 ///
 /// `buffer` must designate `count` writable bytes when Linux examines it.
 /// The caller owns descriptor lifetime, blocking state, and signal/cancellation
-/// policy; this direct leaf deliberately has no pthread cancellation point.
+/// policy. This is a cancellation point in the owned runtime.
 #[no_mangle]
 pub unsafe extern "C" fn recv(
     file_descriptor: c_int,
@@ -261,15 +319,30 @@ pub unsafe extern "C" fn recv(
     // SAFETY: the caller supplies the complete raw receive buffer contract;
     // Linux x86 receives its final source-address words in r8/r9.
     let result = unsafe {
-        raw_syscall::syscall6(
-            raw_syscall::SYS_RECVFROM,
-            i64::from(file_descriptor),
-            buffer as usize as i64,
-            count as i64,
-            i64::from(flags),
-            0,
-            0,
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_RECVFROM,
+                i64::from(file_descriptor),
+                buffer as usize as i64,
+                count as i64,
+                i64::from(flags),
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall6(
+                raw_syscall::SYS_RECVFROM,
+                i64::from(file_descriptor),
+                buffer as usize as i64,
+                count as i64,
+                i64::from(flags),
+                0,
+                0,
+            )
+        }
     };
     c_ssize_status(result)
 }
@@ -281,8 +354,7 @@ pub unsafe extern "C" fn recv(
 /// `buffer` must designate `count` readable bytes and `address` must
 /// designate `address_length` readable sockaddr bytes when Linux examines
 /// them. The caller owns descriptor lifetime, blocking state, and SIGPIPE or
-/// cancellation policy; this direct leaf supplies no pthread cancellation
-/// point.
+/// cancellation policy. The owned runtime supplies the cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn sendto(
     file_descriptor: c_int,
@@ -295,15 +367,30 @@ pub unsafe extern "C" fn sendto(
     // SAFETY: the caller supplies both raw buffer and sockaddr input
     // contracts; Linux x86 passes arguments four through six in r10/r8/r9.
     let result = unsafe {
-        raw_syscall::syscall6(
-            raw_syscall::SYS_SENDTO,
-            i64::from(file_descriptor),
-            buffer as usize as i64,
-            count as i64,
-            i64::from(flags),
-            address as usize as i64,
-            i64::from(address_length),
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_SENDTO,
+                i64::from(file_descriptor),
+                buffer as usize as i64,
+                count as i64,
+                i64::from(flags),
+                address as usize as i64,
+                i64::from(address_length),
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall6(
+                raw_syscall::SYS_SENDTO,
+                i64::from(file_descriptor),
+                buffer as usize as i64,
+                count as i64,
+                i64::from(flags),
+                address as usize as i64,
+                i64::from(address_length),
+            )
+        }
     };
     c_ssize_status(result)
 }
@@ -330,15 +417,30 @@ pub unsafe extern "C" fn recvfrom(
     // SAFETY: the caller supplies raw receive buffer and optional paired
     // sockaddr output contracts; Linux x86 uses r10/r8/r9 for their tail.
     let result = unsafe {
-        raw_syscall::syscall6(
-            raw_syscall::SYS_RECVFROM,
-            i64::from(file_descriptor),
-            buffer as usize as i64,
-            count as i64,
-            i64::from(flags),
-            address as usize as i64,
-            address_length as usize as i64,
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_RECVFROM,
+                i64::from(file_descriptor),
+                buffer as usize as i64,
+                count as i64,
+                i64::from(flags),
+                address as usize as i64,
+                address_length as usize as i64,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall6(
+                raw_syscall::SYS_RECVFROM,
+                i64::from(file_descriptor),
+                buffer as usize as i64,
+                count as i64,
+                i64::from(flags),
+                address as usize as i64,
+                address_length as usize as i64,
+            )
+        }
     };
     c_ssize_status(result)
 }

@@ -10,8 +10,8 @@
 //!
 //! The exact source closure intentionally reaches the separately selected
 //! static [`super::nanosleep`] boundary. That sibling publishes ordinary
-//! `-1`/errno failures through initial TLS and deliberately omits musl's
-//! pthread cancellation-point machinery; this adapter adds no cancellation,
+//! `-1`/errno failures through initial TLS and supplies musl's cancellation
+//! point in the owned runtime; this adapter adds no independent cancellation,
 //! timer, signal, or errno path of its own.
 //!
 //! This does not select `sleep`, `alarm`, `ualarm`, interval or POSIX timers,
