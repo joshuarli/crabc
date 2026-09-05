@@ -55,6 +55,7 @@ x86-owned-static-runtime = [
     "x86-ualarm",
     "x86-sched-rr-interval",
     "x86-netdb-setent",
+    "x86-legacy-des-compat",
 ]
 # Share the owned leaf roster; process linkage is selected independently in
 # the target root. This does not select the static startup or TLS owner.
@@ -124,12 +125,11 @@ x86-crypt = ["dep:base64ct", "dep:sha-crypt"]
 # the allocation-provider contract and keeps a manual pair selection rejected.
 x86-crypt-allocator-composition = ["x86-crypt", "x86-allocator-runtime"]
 # The frozen legacy.misc aggregate has five separately evidenced default-root
-# prerequisites.  Keep its remaining fmtmsg/setkey/encrypt C ABI owner opt-in
-# until this private aggregate has its own closed x86 evidence; otherwise the
-# selected-static export contract would silently widen.  `encrypt`/`setkey`
-# deliberately retain the established inert-DES compatibility result rather
-# than selecting or implementing a cryptographic subsystem.
-x86-legacy-misc = []
+# prerequisites. The independently evidenced inert-DES spelling pair is a
+# narrow prerequisite so owned products can select it without `fmtmsg`; the
+# aggregate retains only its bounded formatting addition.
+x86-legacy-des-compat = []
+x86-legacy-misc = ["x86-legacy-des-compat"]
 # Private x86 binary80 evidence for the exact musl `fdiml` and GNU
 # `exp10l`/weak-`pow10l` closure.  It intentionally has no default-root or
 # dependency effect: the focused runner is the only current consumer.

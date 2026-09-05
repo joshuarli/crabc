@@ -2009,6 +2009,7 @@ LEGACY_MISC_SYMBOLS = (
     "issetugid",
     "setkey",
 )
+LEGACY_DES_COMPAT_SYMBOLS = ("encrypt", "setkey")
 LEGACY_MISC_OPT_IN_SYMBOLS = ("encrypt", "fmtmsg", "setkey")
 GETTID_SYMBOLS = ("gettid",)
 GETLOADAVG_SYMBOLS = ("getloadavg",)
@@ -47821,8 +47822,10 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         "Private native x86 selected-private frozen `legacy.misc` capability",
         "still-planned `libc.c-abi-compat`",
         "`encrypt`, `fmtmsg`, `get_avphys_pages`, `get_nprocs`, `get_nprocs_conf`, `get_phys_pages`, `issetugid`, and `setkey`",
+        "`x86-legacy-des-compat` feature",
         "`x86-legacy-misc` feature",
-        "`fmtmsg`, `setkey`, and `encrypt`",
+        "`setkey`/`encrypt`",
+        "only `fmtmsg`",
         "`static_c_abi_exports.txt`",
         "`MSGVERB`",
         "`MM_PRINT`",
@@ -47851,6 +47854,7 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         "libc/src/lib.rs",
         "libc/src/legacy_des_exports.rs",
         "libc/src/c_abi/x86_64/static_c_abi.rs",
+        "libc/src/c_abi/x86_64/legacy_des_compat.rs",
         "libc/src/c_abi/x86_64/legacy_misc.rs",
         "libc/src/c_abi/x86_64/byte_strings.rs",
         "libc/src/c_abi/x86_64/descriptor_entry.rs",
@@ -47879,10 +47883,14 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         "compat/x86_64/libc_legacy_misc_probe.c",
         "compat/x86_64/libc_legacy_misc_start.S",
         "compat/x86_64/run_libc_legacy_misc.sh",
+        "compat/x86_64/libc_legacy_des_compat_probe.c",
+        "compat/x86_64/libc_legacy_des_compat_start.S",
+        "compat/x86_64/run_libc_legacy_des_compat.sh",
         "compat/x86_64/aarch64_parity_inventory.py",
         "compat/x86_64/aarch64_parity_inventory.json",
         "compat/x86_64/tests/test_aarch64_parity_inventory.py",
         "compat/x86_64/tests/test_legacy_misc.py",
+        "compat/x86_64/tests/test_legacy_des_compat.py",
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/tests/test_runner.py",
         "compat/x86_64/validate_parity_ledger.py",
@@ -47921,15 +47929,16 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
     )
     require(
         any(
-            "x86-legacy-misc" in item
-            and "exactly one target-local archive member" in item
-            and "only `fmtmsg`, `setkey`, and `encrypt`" in item
+            "x86-legacy-des-compat" in item
+            and "only `setkey` and `encrypt`" in item
+            and "x86-legacy-misc" in item
+            and "only `fmtmsg`" in item
             and "static_c_abi_exports.txt" in item
             and "static-c-system-information" in item
             and "static-c-issetugid" in item
             for item in prerequisites
         ),
-        "legacy.misc must retain its exact opt-in owner and prerequisite split",
+        "legacy.misc must retain its split inert-DES/fmtmsg owner and prerequisite contract",
     )
     require(
         any(
@@ -47969,11 +47978,12 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
     }
     expected_commands = {
         "./scripts/dev-x86_64.sh legacy-misc-header-abi",
+        "./scripts/dev-x86_64.sh libc-legacy-des-compat",
         "./scripts/dev-x86_64.sh libc-legacy-misc",
     }
     require(
         set(evidence_by_command) == expected_commands and len(evidence) == len(expected_commands),
-        "legacy.misc must use its two closed commands",
+        "legacy.misc must use its three closed commands",
     )
     header_scope = evidence_by_command["./scripts/dev-x86_64.sh legacy-misc-header-abi"].get(
         "scope"
@@ -48020,6 +48030,24 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         ),
         "legacy.misc runtime evidence must retain the inert DES and static closure boundary",
     )
+    des_scope = evidence_by_command["./scripts/dev-x86_64.sh libc-legacy-des-compat"].get(
+        "scope"
+    )
+    require(
+        isinstance(des_scope, str)
+        and all(
+            phrase in des_scope
+            for phrase in (
+                "exact two-symbol feature delta",
+                "null and unreadable pointers",
+                "initial-TLS",
+                "no DES semantic differential",
+                "full legacy runtime",
+                "public x86 support",
+            )
+        ),
+        "legacy.misc narrow inert-DES evidence must retain its direct boundary",
+    )
 
     exports = set(
         static_c_abi_export_names(
@@ -48037,8 +48065,12 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
 
     manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
     require(
-        "x86-legacy-misc = []" in manifest,
-        "legacy.misc feature must remain dependency-free",
+        "x86-legacy-des-compat = []" in manifest,
+        "legacy.misc narrow inert-DES feature must remain dependency-free",
+    )
+    require(
+        'x86-legacy-misc = ["x86-legacy-des-compat"]' in manifest,
+        "legacy.misc must explicitly depend on its narrow inert-DES feature",
     )
     static_root = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -48053,16 +48085,11 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
     )
     for snippet in (
         "src/legacy/fmtmsg.c::fmtmsg",
-        "src/legacy/encrypt.c::setkey",
-        "src/legacy/encrypt.c::encrypt",
         "MSGVERB",
         "MM_NOMSG",
         "MM_NOCON",
         "MM_NOTOK",
         "retry-on-short-write",
-        "inert-DES",
-        "intentional divergence",
-        "no-hand-rolled-cryptography",
         "byte_strings",
         "descriptor_entry",
         "descriptor_io",
@@ -48075,13 +48102,41 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         )
     )
     require(
-        source_exports == set(LEGACY_MISC_OPT_IN_SYMBOLS),
-        "legacy.misc owner must export exactly fmtmsg, setkey, and encrypt",
+        source_exports == {"fmtmsg"},
+        "legacy.misc owner must export exactly fmtmsg",
     )
     for forbidden in ("sha_crypt", "crabc_core", "crabc_mimalloc", "mimalloc"):
         require(
             forbidden not in source,
             f"legacy.misc owner must not select {forbidden}",
+        )
+
+    des_source = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_des_compat.rs"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "src/legacy/encrypt.c::setkey",
+        "src/legacy/encrypt.c::encrypt",
+        "x86-legacy-des-compat",
+        "inert-DES",
+        "intentional divergence",
+        "no-hand-rolled-cryptography",
+        "does not alter errno",
+    ):
+        require(snippet in des_source, f"legacy.misc inert-DES owner omits {snippet}")
+    des_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(', des_source
+        )
+    )
+    require(
+        des_exports == set(LEGACY_DES_COMPAT_SYMBOLS),
+        "legacy.misc inert-DES owner must export exactly setkey and encrypt",
+    )
+    for forbidden in ("sha_crypt", "crabc_core", "crabc_mimalloc", "mimalloc"):
+        require(
+            forbidden not in des_source,
+            f"legacy.misc inert-DES owner must not select {forbidden}",
         )
 
     header_runner = (
@@ -48112,7 +48167,7 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         "run_libc_issetugid.sh",
         "unfeatured selected-static C ABI export surface drifted",
         "opt-in legacy.misc changed more than its exact public closure",
-        "legacy.misc owner export surface drifted",
+        "legacy.misc fmtmsg owner export surface drifted",
         "inert DES compatibility functions select a local cipher",
         "candidate retains an unresolved symbol",
         "candidate selects a dynamic runtime",
@@ -48121,10 +48176,25 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         "public support claim",
     ):
         require(snippet in runner, f"legacy.misc runner omits {snippet}")
+    des_runner = (
+        ROOT / "compat" / "x86_64" / "run_libc_legacy_des_compat.sh"
+    ).read_text(encoding="utf-8")
+    for snippet in (
+        "FEATURE=x86-legacy-des-compat",
+        "FEATURE_EXPORTS=(encrypt setkey)",
+        "default archive unexpectedly exposes opt-in",
+        "narrow feature widened the archive",
+        "both-feature closure",
+        "candidate errno does not use direct initial TLS",
+        "inert DES compatibility functions select a local cipher",
+    ):
+        require(snippet in des_runner, f"legacy.misc narrow inert-DES runner omits {snippet}")
     dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
     for snippet in (
         "legacy-misc-header-abi)",
         "run_legacy_misc_header_abi()",
+        "libc-legacy-des-compat)",
+        "run_libc_legacy_des_compat_probe()",
         "libc-legacy-misc)",
         "run_libc_legacy_misc_probe()",
     ):

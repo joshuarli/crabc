@@ -5,7 +5,8 @@
  * adds only fmtmsg/setkey/encrypt.  Pinned musl 1.2.6 remains the fmtmsg and
  * declaration oracle.  DES is the explicit exception: the candidate adopts
  * the established project inert-DES compatibility contract, so no local
- * cipher is implemented and candidate buffers remain byte-for-byte unchanged.
+ * cipher is implemented, candidate buffers remain byte-for-byte unchanged,
+ * and candidate-only invalid pointers preserve errno without a memory access.
  *
  * The fixture redirects fd 2 to private pipes instead of relying on host
  * stderr.  It verifies MSGVERB selection, exact normal output, a closed-fd
@@ -298,6 +299,24 @@ static int check_des_boundary(void)
 #endif
 }
 
+/* The source contract is intentionally stronger than link compatibility: the
+ * x86 owner must not observe either caller pointer or change errno. Do not
+ * exercise this vector against musl; its real historical DES implementation
+ * understandably requires valid 64-byte bit arrays. */
+static int check_des_inert_arguments(void)
+{
+#if defined(CRABC_LEGACY_MISC_CANDIDATE)
+    errno = ERANGE;
+    setkey(NULL);
+    if (errno != ERANGE)
+        return 1;
+    encrypt(NULL, -1);
+    return errno == ERANGE ? 0 : 2;
+#else
+    return 0;
+#endif
+}
+
 static int check_retained_observations(void)
 {
     const get_nprocs_signature configured = get_nprocs_conf;
@@ -343,7 +362,10 @@ int crabc_x86_64_legacy_misc_probe(void)
     if (result != 0)
         return 170 + result;
     result = check_des_boundary();
-    return result == 0 ? 0 : 190 + result;
+    if (result != 0)
+        return 190 + result;
+    result = check_des_inert_arguments();
+    return result == 0 ? 0 : 210 + result;
 }
 
 #ifndef CRABC_LEGACY_MISC_FREESTANDING

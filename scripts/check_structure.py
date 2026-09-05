@@ -231,6 +231,9 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     # independently evidenced.  This exact admission is not a default-root
     # or directory-wide legacy-runtime exception.
     Path("libc/src/c_abi/x86_64/legacy_misc.rs"),
+    # The inert historical DES ABI names are shared by the legacy.misc feature
+    # and the owned-static product without admitting fmtmsg or a cipher.
+    Path("libc/src/c_abi/x86_64/legacy_des_compat.rs"),
     Path("libc/src/c_abi/x86_64/math_complex.rs"),
     Path("libc/src/c_abi/x86_64/complex_projection.rs"),
     Path("libc/src/c_abi/x86_64/math_complex_complete.rs"),
@@ -4048,9 +4051,13 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/static_c_abi.rs: tmpnam/tempnam must "
             "remain behind their dedicated opt-in feature gate"
         )
-    if 'x86-legacy-misc = []' not in libc_manifest_text:
+    if 'x86-legacy-des-compat = []' not in libc_manifest_text:
         errors.append(
-            "libc/Cargo.toml: opt-in legacy.misc feature must remain dependency-free"
+            "libc/Cargo.toml: narrow inert-DES compatibility feature must remain dependency-free"
+        )
+    if 'x86-legacy-misc = ["x86-legacy-des-compat"]' not in libc_manifest_text:
+        errors.append(
+            "libc/Cargo.toml: legacy.misc must explicitly depend on the narrow inert-DES feature"
         )
     legacy_misc_wiring = (
         '#[cfg(feature = "x86-legacy-misc")]\n'
@@ -4062,23 +4069,30 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             "libc/src/c_abi/x86_64/static_c_abi.rs: frozen legacy.misc additions "
             "must stay behind their dedicated opt-in feature gate"
         )
+    legacy_des_wiring = (
+        '#[cfg(feature = "x86-legacy-des-compat")]\n'
+        '#[path = "legacy_des_compat.rs"]\n'
+        "mod legacy_des_compat;"
+    )
+    if legacy_des_wiring not in static_root_text:
+        errors.append(
+            "libc/src/c_abi/x86_64/static_c_abi.rs: inert historical DES names "
+            "must stay behind the narrow inert-DES feature gate"
+        )
     legacy_misc_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_misc.rs"
     legacy_misc_text = legacy_misc_source.read_text(errors="replace")
+    legacy_des_source = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_des_compat.rs"
+    legacy_des_text = legacy_des_source.read_text(errors="replace")
     for required in (
         "src/legacy/fmtmsg.c::fmtmsg",
-        "src/legacy/encrypt.c::setkey",
-        "src/legacy/encrypt.c::encrypt",
         "MSGVERB",
         "MM_PRINT",
         "MM_CONSOLE",
         "retry-on-short-write",
-        "inert-DES",
-        "intentional divergence",
-        "no-hand-rolled-cryptography",
     ):
         if required not in legacy_misc_text:
             errors.append(
-                "libc/src/c_abi/x86_64/legacy_misc.rs: frozen legacy.misc "
+                "libc/src/c_abi/x86_64/legacy_misc.rs: frozen legacy fmtmsg "
                 f"boundary is missing {required!r}"
             )
     legacy_misc_exports = set(
@@ -4087,15 +4101,47 @@ def check_x86_libc_static_c_abi_boundary(errors: list[str]) -> None:
             legacy_misc_text,
         )
     )
-    if legacy_misc_exports != {"fmtmsg", "setkey", "encrypt"}:
+    if legacy_misc_exports != {"fmtmsg"}:
         errors.append(
-            "libc/src/c_abi/x86_64/legacy_misc.rs: opt-in frozen legacy.misc "
-            "owner must export only fmtmsg, setkey, and encrypt"
+            "libc/src/c_abi/x86_64/legacy_misc.rs: opt-in frozen legacy fmtmsg "
+            "owner must export only fmtmsg"
         )
     for forbidden in ("strfmon", "sha_crypt", "crabc_core", "crabc_mimalloc"):
         if forbidden in legacy_misc_text:
             errors.append(
-                "libc/src/c_abi/x86_64/legacy_misc.rs: frozen legacy.misc "
+                "libc/src/c_abi/x86_64/legacy_misc.rs: frozen legacy fmtmsg "
+                f"owner must not select {forbidden!r}"
+            )
+    for required in (
+        "src/legacy/encrypt.c::setkey",
+        "src/legacy/encrypt.c::encrypt",
+        "x86-owned-static-runtime",
+        "x86-legacy-misc",
+        "inert-DES",
+        "intentional divergence",
+        "no-hand-rolled-cryptography",
+        "does not alter errno",
+    ):
+        if required not in legacy_des_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/legacy_des_compat.rs: shared inert DES "
+                f"boundary is missing {required!r}"
+            )
+    legacy_des_exports = set(
+        re.findall(
+            r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
+            legacy_des_text,
+        )
+    )
+    if legacy_des_exports != {"setkey", "encrypt"}:
+        errors.append(
+            "libc/src/c_abi/x86_64/legacy_des_compat.rs: shared inert DES "
+            "owner must export only setkey and encrypt"
+        )
+    for forbidden in ("strfmon", "sha_crypt", "crabc_core", "crabc_mimalloc"):
+        if forbidden in legacy_des_text:
+            errors.append(
+                "libc/src/c_abi/x86_64/legacy_des_compat.rs: shared inert DES "
                 f"owner must not select {forbidden!r}"
             )
     if 'x86-signal-reporting = []' not in libc_manifest_text:

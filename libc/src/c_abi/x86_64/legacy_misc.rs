@@ -1,13 +1,16 @@
 //! Opt-in static Linux/x86-64 frozen `legacy.misc` C ABI additions.
 //!
-//! This target-local owner supplies exactly three spellings:
-//! [`fmtmsg`], [`setkey`], and [`encrypt`].  The frozen aggregate's other
-//! five names—`get_avphys_pages`, `get_nprocs`, `get_nprocs_conf`,
-//! `get_phys_pages`, and `issetugid`—remain independently evidenced default
-//! selected-static prerequisites in [`super::system_information`] and
-//! [`super::issetugid`].  Keeping this module behind `x86-legacy-misc` makes
-//! that boundary explicit: the default x86 `libc.a` export contract does not
-//! silently widen into a legacy runtime.
+//! This target-local owner supplies [`fmtmsg`] for the separately selected
+//! `x86-legacy-misc` aggregate. That aggregate's `setkey` and `encrypt`
+//! spellings come from the shared `legacy_des_compat.rs` owner, which also
+//! serves the owned-static runtime without selecting this module's bounded
+//! formatting path. The frozen aggregate's other five names—
+//! `get_avphys_pages`, `get_nprocs`, `get_nprocs_conf`, `get_phys_pages`, and
+//! `issetugid`—remain independently evidenced default selected-static
+//! prerequisites in [`super::system_information`] and [`super::issetugid`].
+//! Keeping this module behind `x86-legacy-misc` makes that boundary explicit:
+//! the default x86 `libc.a` export contract does not silently widen into a
+//! legacy runtime.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -17,8 +20,9 @@
 //!   contract is `MSGVERB` component selection, fd-2 `MM_PRINT`,
 //!   `/dev/console` `MM_CONSOLE`, and `MM_NOMSG`/`MM_NOCON`/`MM_NOTOK` result
 //!   composition.
-//! - `src/legacy/encrypt.c::setkey` maps to [`setkey`] and
-//!   `src/legacy/encrypt.c::encrypt` maps to [`encrypt`].
+//! - `src/legacy/encrypt.c::{setkey,encrypt}` maps to the shared
+//!   `legacy_des_compat.rs` owner. Its documented inert-DES divergence is
+//!   intentionally separate from this `fmtmsg` implementation.
 //!
 //! `fmtmsg` composes only the existing selected static environment lookup,
 //! C-string scan, descriptor entry, descriptor I/O, and initial-TLS errno
@@ -28,10 +32,10 @@
 //! observable output and retry-on-short-write behavior without selecting those
 //! wider subsystems.
 //!
-//! The DES functions intentionally diverge from musl.  They retain the
+//! The shared DES names intentionally diverge from musl. They retain the
 //! frozen project inert-DES observable contract also owned by
 //! `libc/src/legacy_des_exports.rs`: neither function reads, stores, mutates,
-//! encrypts, decrypts, nor otherwise interprets its caller buffer.  This
+//! encrypts, decrypts, nor otherwise interprets its caller buffer. This
 //! intentional divergence preserves link compatibility while complying with
 //! the no-hand-rolled-cryptography boundary; it is not a cipher, PRNG,
 //! allocator, dynamic libc, CRT, sysroot, loader, public-support, capability,
@@ -278,22 +282,3 @@ pub unsafe extern "C" fn fmtmsg(
         result
     }
 }
-
-/// Retain the historical `setkey` link spelling as a deliberately inert ABI
-/// compatibility function.
-///
-/// The caller buffer is intentionally neither dereferenced nor retained, so
-/// there is no Rust pointer-validity obligation. This no-op is the documented
-/// intentional divergence from musl's DES key-schedule state; it must not be
-/// replaced with a local cipher implementation.
-#[no_mangle]
-pub extern "C" fn setkey(_key: *const c_char) {}
-
-/// Retain the historical `encrypt` link spelling as a deliberately inert ABI
-/// compatibility function.
-///
-/// The caller block is intentionally neither read nor modified for either
-/// `edflag` direction. There is therefore no Rust pointer-validity obligation:
-/// this function has no DES algorithm, state, allocation, or crypto behavior.
-#[no_mangle]
-pub extern "C" fn encrypt(_block: *mut c_char, _edflag: c_int) {}

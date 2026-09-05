@@ -24,12 +24,14 @@ adaptation, which is prohibited by the project's no-hand-rolled-cryptography
 rule.
 
 DES crypt, BSDI extended DES, MD5-crypt (`$1$`), and bcrypt
-(`$2a$`/`$2y$`) remain intentionally unsupported crypt semantics. The
-separate selected-private x86 `legacy.misc` evidence slice may provide
-opt-in, inert link-compatible `encrypt`/`setkey` names, but they neither
-implement nor imply DES, a cipher, PRNG, or any cryptographic service. The
-private `__crypt_*` symbols remain exported where the existing ABI inventory
-requires them, but unsupported formats return the conventional `*` marker.
+(`$2a$`/`$2y$`) remain intentionally unsupported crypt semantics. The shared
+x86 `legacy_des_compat.rs` owner supplies inert link-compatible
+`encrypt`/`setkey` names through the narrow `x86-legacy-des-compat` feature.
+The owned-static runtime selects that feature directly, while selected-private
+`legacy.misc` depends on it and contributes its separate `fmtmsg` owner. They
+neither implement nor imply DES, a cipher, PRNG, or any cryptographic service. The private
+`__crypt_*` symbols remain exported where the existing ABI inventory requires
+them, but unsupported formats return the conventional `*` marker.
 Null output pointers and a null `crypt_r` storage pointer are rejected without
 writing, returning null. A null key selects the empty key. A null setting is
 an unsupported `*` marker through `crypt`/`crypt_r`/`__crypt_r`, while a direct

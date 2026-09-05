@@ -574,9 +574,12 @@ mod startup_security;
 #[path = "issetugid.rs"]
 mod issetugid;
 // The frozen legacy.misc aggregate keeps its five observation prerequisites
-// in the selected default archive.  Its historical formatting/inert-DES
-// additions are a separately evidenced opt-in owner so the default export
-// surface cannot silently grow into a legacy runtime or crypto subsystem.
+// in the selected default archive. Its historical formatting addition is a
+// separately evidenced opt-in owner so the default export surface cannot
+// silently grow into a legacy runtime.
+#[cfg(feature = "x86-legacy-des-compat")]
+#[path = "legacy_des_compat.rs"]
+mod legacy_des_compat;
 #[cfg(feature = "x86-legacy-misc")]
 #[path = "legacy_misc.rs"]
 mod legacy_misc;

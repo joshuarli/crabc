@@ -1914,11 +1914,20 @@
       {
         "aliases": [],
         "evidence_record": "legacy.misc",
-        "id": "x86-legacy-misc",
+        "id": "x86-legacy-des-compat",
         "members": [
           "encrypt",
-          "fmtmsg",
           "setkey"
+        ],
+        "runner": "compat/x86_64/run_libc_legacy_des_compat.sh",
+        "state": "verified"
+      },
+      {
+        "aliases": [],
+        "evidence_record": "legacy.misc",
+        "id": "x86-legacy-misc",
+        "members": [
+          "fmtmsg"
         ],
         "runner": "compat/x86_64/run_libc_legacy_misc.sh",
         "state": "verified"
@@ -417442,7 +417451,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "56f8b05620b802f072d32f66219216c35b1bd8dd8de4b367340ffc27c01bc853",
+    "parity_ledger_sha256": "14e24e9d678f6b818872a707b34015c2339e5134f7dd237b744414e491b70d4f",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "oracle": "Pinned musl 1.2.6",

@@ -21,6 +21,7 @@ readonly FEATURE=x86-legacy-misc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
 readonly STATIC_C_ABI_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/static_c_abi.rs"
 readonly LEGACY_MISC_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/legacy_misc.rs"
+readonly LEGACY_DES_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/legacy_des_compat.rs"
 readonly AARCH64_STATIC_ABI="$ROOT_DIR/compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
 readonly -a FEATURE_EXPORTS=(encrypt fmtmsg setkey)
 readonly -a ALL_SYMBOLS=(
@@ -104,20 +105,33 @@ bash "$ROOT_DIR/compat/x86_64/run_legacy_misc_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_libc_system_information.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_libc_issetugid.sh" >/dev/null
 
-[ -f "$LEGACY_MISC_ROOT" ] || fail "missing target-local legacy.misc owner"
+[ -f "$LEGACY_MISC_ROOT" ] || fail "missing target-local legacy.misc fmtmsg owner"
+[ -f "$LEGACY_DES_ROOT" ] || fail "missing shared target-local inert DES owner"
 grep -Fq '#[cfg(feature = "x86-legacy-misc")]' "$STATIC_C_ABI_ROOT" ||
     fail "legacy.misc is not opt-in at the selected-static root"
 grep -Fq 'mod legacy_misc;' "$STATIC_C_ABI_ROOT" ||
     fail "selected-static root does not compose the opt-in legacy.misc owner"
+grep -Fq '#[cfg(feature = "x86-legacy-des-compat")]' \
+    "$STATIC_C_ABI_ROOT" || fail "inert DES owner is not selected by its narrow feature"
+grep -Fq 'mod legacy_des_compat;' "$STATIC_C_ABI_ROOT" ||
+    fail "selected-static root does not compose the shared inert DES owner"
 for phrase in \
     'src/legacy/fmtmsg.c::fmtmsg' \
+    'MSGVERB' \
+    'retry-on-short-write'; do
+    grep -Fq "$phrase" "$LEGACY_MISC_ROOT" ||
+        fail "target-local legacy.misc fmtmsg provenance/contract omits $phrase"
+done
+for phrase in \
     'src/legacy/encrypt.c::setkey' \
     'src/legacy/encrypt.c::encrypt' \
-    'inert' \
-    'DES' \
-    'intentional divergence'; do
-    grep -Fq "$phrase" "$LEGACY_MISC_ROOT" ||
-        fail "target-local legacy.misc provenance/contract omits $phrase"
+    'x86-owned-static-runtime' \
+    'x86-legacy-misc' \
+    'inert-DES' \
+    'does not alter errno' \
+    'no-hand-rolled-cryptography'; do
+    grep -Fq "$phrase" "$LEGACY_DES_ROOT" ||
+        fail "shared inert DES provenance/contract omits $phrase"
 done
 
 work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-legacy-misc.XXXXXX)"
@@ -142,11 +156,12 @@ base_bindings="$work_dir/base-bindings"
 feature_bindings="$work_dir/feature-bindings"
 feature_baseline_bindings="$work_dir/feature-baseline-bindings"
 archive_symbols="$work_dir/archive-symbols"
-owner_member_names="$work_dir/owner-member-names"
-owner_dir="$work_dir/owner"
-owner_symbols="$work_dir/owner-symbols"
-owner_setkey_disassembly="$work_dir/owner-setkey-disassembly"
-owner_encrypt_disassembly="$work_dir/owner-encrypt-disassembly"
+fmtmsg_owner_dir="$work_dir/fmtmsg-owner"
+des_owner_dir="$work_dir/des-owner"
+fmtmsg_owner_symbols="$work_dir/fmtmsg-owner-symbols"
+des_owner_symbols="$work_dir/des-owner-symbols"
+des_owner_setkey_disassembly="$work_dir/des-owner-setkey-disassembly"
+des_owner_encrypt_disassembly="$work_dir/des-owner-encrypt-disassembly"
 archive_relocations="$work_dir/archive-relocations"
 link_map="$work_dir/candidate.map"
 candidate_symbols="$work_dir/candidate-symbols"
@@ -250,29 +265,45 @@ mapfile -t setkey_members < <(archive_member_for_symbol "$archive" setkey)
 [ "${#fmtmsg_members[@]}" -eq 1 ] || fail "fmtmsg must have one target-local archive owner"
 [ "${#encrypt_members[@]}" -eq 1 ] || fail "encrypt must have one target-local archive owner"
 [ "${#setkey_members[@]}" -eq 1 ] || fail "setkey must have one target-local archive owner"
-[ "${fmtmsg_members[0]}" = "${encrypt_members[0]}" ] &&
-    [ "${fmtmsg_members[0]}" = "${setkey_members[0]}" ] ||
-    fail "legacy.misc additions must share their one target-local archive owner"
-printf '%s\n' "${fmtmsg_members[0]}" >"$owner_member_names"
-mkdir "$owner_dir"
+if [ "${encrypt_members[0]}" != "${setkey_members[0]}" ]; then
+    fail "shared inert DES names must have one target-local archive owner"
+fi
+if [ "${fmtmsg_members[0]}" = "${encrypt_members[0]}" ]; then
+    fail "legacy fmtmsg must not become an owned-static DES dependency"
+fi
+mkdir "$fmtmsg_owner_dir" "$des_owner_dir"
 (
-    cd "$owner_dir"
+    cd "$fmtmsg_owner_dir"
     ar x "$archive" "${fmtmsg_members[0]}"
 )
-owner_member="$owner_dir/${fmtmsg_members[0]}"
-nm -g --defined-only --format=posix "$owner_member" >"$owner_symbols"
-mapfile -t owner_exports < <(
-    awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' "$owner_symbols" | LC_ALL=C sort -u
+(
+    cd "$des_owner_dir"
+    ar x "$archive" "${encrypt_members[0]}"
 )
-if [ "${owner_exports[*]}" != "encrypt fmtmsg setkey" ]; then
-    printf 'expected: %s\nactual:   %s\n' 'encrypt fmtmsg setkey' \
-        "${owner_exports[*]}" >&2
-    fail "legacy.misc owner export surface drifted"
+fmtmsg_owner="$fmtmsg_owner_dir/${fmtmsg_members[0]}"
+des_owner="$des_owner_dir/${encrypt_members[0]}"
+nm -g --defined-only --format=posix "$fmtmsg_owner" >"$fmtmsg_owner_symbols"
+nm -g --defined-only --format=posix "$des_owner" >"$des_owner_symbols"
+mapfile -t fmtmsg_owner_exports < <(
+    awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' "$fmtmsg_owner_symbols" | LC_ALL=C sort -u
+)
+mapfile -t des_owner_exports < <(
+    awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' "$des_owner_symbols" | LC_ALL=C sort -u
+)
+if [ "${fmtmsg_owner_exports[*]}" != "fmtmsg" ]; then
+    printf 'expected: %s\nactual:   %s\n' 'fmtmsg' \
+        "${fmtmsg_owner_exports[*]}" >&2
+    fail "legacy.misc fmtmsg owner export surface drifted"
 fi
-objdump -d --disassemble=setkey "$owner_member" >"$owner_setkey_disassembly"
-objdump -d --disassemble=encrypt "$owner_member" >"$owner_encrypt_disassembly"
+if [ "${des_owner_exports[*]}" != "encrypt setkey" ]; then
+    printf 'expected: %s\nactual:   %s\n' 'encrypt setkey' \
+        "${des_owner_exports[*]}" >&2
+    fail "shared inert DES owner export surface drifted"
+fi
+objdump -d --disassemble=setkey "$des_owner" >"$des_owner_setkey_disassembly"
+objdump -d --disassemble=encrypt "$des_owner" >"$des_owner_encrypt_disassembly"
 if grep -Eq '[[:space:]](call|syscall)([[:space:]]|$)' \
-    "$owner_setkey_disassembly" "$owner_encrypt_disassembly"; then
+    "$des_owner_setkey_disassembly" "$des_owner_encrypt_disassembly"; then
     fail "inert DES compatibility functions select a local cipher or runtime edge"
 fi
 readelf --relocs --wide "$archive" >"$archive_relocations"
@@ -296,7 +327,9 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 grep -Fq "${fmtmsg_members[0]}" "$link_map" ||
-    fail "candidate link map did not take the target-local legacy.misc owner"
+    fail "candidate link map did not take the target-local legacy.misc fmtmsg owner"
+grep -Fq "${encrypt_members[0]}" "$link_map" ||
+    fail "candidate link map did not take the shared inert DES owner"
 if grep -Eq 'libc\.a\((fmtmsg|encrypt)\.lo\)' "$link_map"; then
     fail "candidate selected a pinned-musl fmtmsg or DES implementation"
 fi

@@ -30207,7 +30207,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(f"`{symbol}`", selected["description"])
         for phrase in (
             "`x86-legacy-misc` feature",
-            "`fmtmsg`, `setkey`, and `encrypt`",
+            "`x86-legacy-des-compat` feature",
+            "`fmtmsg`",
+            "`setkey` and `encrypt`",
             "`static_c_abi_exports.txt`",
             "`MSGVERB`",
             "`MM_PRINT`",
@@ -30225,6 +30227,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         assert isinstance(owners, list)
         for owner in (
             "libc/src/c_abi/x86_64/legacy_misc.rs",
+            "libc/src/c_abi/x86_64/legacy_des_compat.rs",
             "libc/src/legacy_des_exports.rs",
             "libc/src/c_abi/x86_64/system_information.rs",
             "libc/src/c_abi/x86_64/issetugid.rs",
@@ -30238,6 +30241,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/libc_legacy_misc_probe.c",
             "compat/x86_64/libc_legacy_misc_start.S",
             "compat/x86_64/run_libc_legacy_misc.sh",
+            "compat/x86_64/libc_legacy_des_compat_probe.c",
+            "compat/x86_64/libc_legacy_des_compat_start.S",
+            "compat/x86_64/run_libc_legacy_des_compat.sh",
+            "compat/x86_64/tests/test_legacy_des_compat.py",
             "compat/x86_64/tests/test_legacy_misc.py",
             "compat/x86_64/aarch64_parity_inventory.json",
         ):
@@ -30249,6 +30256,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             {entry["command"] for entry in evidence},
             {
                 "./scripts/dev-x86_64.sh legacy-misc-header-abi",
+                "./scripts/dev-x86_64.sh libc-legacy-des-compat",
                 "./scripts/dev-x86_64.sh libc-legacy-misc",
             },
         )
@@ -30268,6 +30276,20 @@ class X86ParityLedgerTests(unittest.TestCase):
             "public x86 support",
         ):
             self.assertIn(phrase, runtime["scope"])
+
+        des_runtime = next(
+            entry
+            for entry in evidence
+            if entry["command"] == "./scripts/dev-x86_64.sh libc-legacy-des-compat"
+        )
+        for phrase in (
+            "exact two-symbol feature delta",
+            "null and unreadable pointers",
+            "initial-TLS",
+            "no DES semantic differential",
+            "public x86 support",
+        ):
+            self.assertIn(phrase, des_runtime["scope"])
 
         changed_capability = self.data()
         changed_slice = next(
@@ -30315,7 +30337,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "./scripts/dev-x86_64.sh legacy-misc-broad"
         )
         with self.assertRaisesRegex(
-            ledger.LedgerError, "legacy.misc must use its two closed commands"
+                ledger.LedgerError, "legacy.misc must use its three closed commands"
         ):
             ledger.require_legacy_misc_slice(
                 self.family(changed_command, "libc.c-abi-compat")

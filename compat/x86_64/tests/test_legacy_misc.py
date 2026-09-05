@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[3]
 LIBC_MANIFEST = ROOT / "libc" / "Cargo.toml"
 STATIC_ROOT = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
 OWNER = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_misc.rs"
+DES_OWNER = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_des_compat.rs"
 HEADER_C = ROOT / "compat" / "x86_64" / "legacy_misc_header_abi_probe.c"
 HEADER_CXX = ROOT / "compat" / "x86_64" / "legacy_misc_header_abi_probe.cpp"
 HEADER_RUNNER = ROOT / "compat" / "x86_64" / "run_legacy_misc_header_abi.sh"
@@ -24,37 +25,60 @@ class X86LegacyMiscTests(unittest.TestCase):
         manifest = LIBC_MANIFEST.read_text(encoding="utf-8")
         root = STATIC_ROOT.read_text(encoding="utf-8")
 
-        self.assertIn("x86-legacy-misc = []", manifest)
+        self.assertIn(
+            'x86-legacy-misc = ["x86-legacy-des-compat"]', manifest
+        )
         self.assertIn('#[cfg(feature = "x86-legacy-misc")]', root)
         self.assertIn('#[path = "legacy_misc.rs"]\nmod legacy_misc;', root)
+        self.assertIn(
+            '#[cfg(feature = "x86-legacy-des-compat")]\n'
+            '#[path = "legacy_des_compat.rs"]\n'
+            'mod legacy_des_compat;',
+            root,
+        )
         self.assertIn("default export", root)
 
-    def test_owner_keeps_the_exact_inert_three_symbol_boundary(self) -> None:
+    def test_fmtmsg_and_inert_des_keep_distinct_owners(self) -> None:
         source = OWNER.read_text(encoding="utf-8")
+        des_source = DES_OWNER.read_text(encoding="utf-8")
 
         for required in (
             "src/legacy/fmtmsg.c::fmtmsg",
-            "src/legacy/encrypt.c::setkey",
-            "src/legacy/encrypt.c::encrypt",
             'pub unsafe extern "C" fn fmtmsg',
-            'pub extern "C" fn setkey',
-            'pub extern "C" fn encrypt',
             "MSGVERB",
             "MM_NOMSG",
             "MM_NOCON",
             "MM_NOTOK",
             "retry-on-short-write",
+        ):
+            self.assertIn(required, source)
+
+        self.assertNotIn('pub extern "C" fn setkey', source)
+        self.assertNotIn('pub extern "C" fn encrypt', source)
+
+        for required in (
+            "src/legacy/encrypt.c::setkey",
+            "src/legacy/encrypt.c::encrypt",
+            "x86-owned-static-runtime",
+            "x86-legacy-misc",
             "inert-DES",
             "intentional divergence",
             "no-hand-rolled-cryptography",
+            "use core::ffi::{c_char, c_int};",
+            'pub extern "C" fn setkey',
+            'pub extern "C" fn encrypt',
+            "neither read nor write",
+            "does not alter errno",
         ):
-            self.assertIn(required, source)
+            self.assertIn(required, des_source)
 
         # `legacy_formatting_exports.rs` also owns strfmon; the x86 aggregate
         # must not pull that locale/formatter surface in merely to gain fmtmsg.
         self.assertNotIn("strfmon", source)
         self.assertNotIn("sha_crypt", source)
         self.assertNotIn("mimalloc", source)
+        self.assertNotIn("sha_crypt", des_source)
+        self.assertNotIn("mimalloc", des_source)
 
     def test_header_matrix_preserves_the_three_profile_partitions(self) -> None:
         runner = HEADER_RUNNER.read_text(encoding="utf-8")
@@ -113,6 +137,10 @@ class X86LegacyMiscTests(unittest.TestCase):
             "EAGAIN",
             "check_console_path",
             "check_des_boundary",
+            "check_des_inert_arguments",
+            "ERANGE",
+            "setkey(NULL)",
+            "encrypt(NULL, -1)",
             "CRABC_LEGACY_MISC_CANDIDATE",
             "check_retained_observations",
             "get_nprocs_conf",
@@ -130,9 +158,12 @@ class X86LegacyMiscTests(unittest.TestCase):
             "run_libc_issetugid.sh",
             "unfeatured selected-static C ABI export surface drifted",
             "opt-in legacy.misc changed more than its exact public closure",
-            "legacy.misc owner export surface drifted",
+            "legacy.misc fmtmsg owner export surface drifted",
+            "shared inert DES owner export surface drifted",
+            "shared inert DES names must have one target-local archive owner",
             "inert DES compatibility functions select a local cipher",
-            "candidate link map did not take the target-local legacy.misc owner",
+            "candidate link map did not take the target-local legacy.misc fmtmsg owner",
+            "candidate link map did not take the shared inert DES owner",
             "candidate selected a pinned-musl fmtmsg or DES implementation",
             "candidate retains an unresolved symbol",
             "candidate selects a dynamic runtime",

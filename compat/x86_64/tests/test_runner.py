@@ -32879,6 +32879,9 @@ unsafe fn join_selected_worker_inner(
         implementation = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_misc.rs"
         ).read_text(encoding="utf-8")
+        des_implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "legacy_des_compat.rs"
+        ).read_text(encoding="utf-8")
         header_runner = (
             ROOT / "compat" / "x86_64" / "run_legacy_misc_header_abi.sh"
         ).read_text(encoding="utf-8")
@@ -32894,29 +32897,46 @@ unsafe fn join_selected_worker_inner(
         }
         runner = RUNNER.read_text(encoding="utf-8")
 
-        self.assertIn("x86-legacy-misc = []", manifest)
+        self.assertIn("x86-legacy-des-compat = []", manifest)
+        self.assertIn(
+            'x86-legacy-misc = ["x86-legacy-des-compat"]', manifest
+        )
         self.assertIn(
             '#[cfg(feature = "x86-legacy-misc")]\n#[path = "legacy_misc.rs"]\nmod legacy_misc;',
             static_root,
         )
+        self.assertIn(
+            '#[cfg(feature = "x86-legacy-des-compat")]\n'
+            '#[path = "legacy_des_compat.rs"]\nmod legacy_des_compat;',
+            static_root,
+        )
         for required in (
             "src/legacy/fmtmsg.c::fmtmsg",
-            "src/legacy/encrypt.c::setkey",
-            "src/legacy/encrypt.c::encrypt",
             "MSGVERB",
             "MM_PRINT",
             "MM_CONSOLE",
             "retry-on-short-write",
+            'pub unsafe extern "C" fn fmtmsg',
+        ):
+            self.assertIn(required, implementation)
+        self.assertNotIn('pub extern "C" fn setkey', implementation)
+        self.assertNotIn('pub extern "C" fn encrypt', implementation)
+        for required in (
+            "src/legacy/encrypt.c::setkey",
+            "src/legacy/encrypt.c::encrypt",
+            "x86-owned-static-runtime",
+            "x86-legacy-misc",
             "inert-DES",
             "intentional divergence",
             "no-hand-rolled-cryptography",
-            'pub unsafe extern "C" fn fmtmsg',
+            "does not alter errno",
             'pub extern "C" fn setkey',
             'pub extern "C" fn encrypt',
         ):
-            self.assertIn(required, implementation)
+            self.assertIn(required, des_implementation)
         for forbidden in ("sha_crypt", "crabc_core", "crabc_mimalloc", "mimalloc"):
             self.assertNotIn(forbidden, implementation)
+            self.assertNotIn(forbidden, des_implementation)
         self.assertTrue({"get_avphys_pages", "get_nprocs", "get_nprocs_conf", "get_phys_pages", "issetugid"} <= static_exports)
         self.assertFalse({"encrypt", "fmtmsg", "setkey"} & static_exports)
         for required in (
@@ -32948,9 +32968,14 @@ unsafe fn join_selected_worker_inner(
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
         self.assertIn("run_legacy_misc_header_abi()", runner)
+        self.assertIn("run_libc_legacy_des_compat_probe()", runner)
         self.assertIn("run_libc_legacy_misc_probe()", runner)
         self.assertIn(
             '    legacy-misc-header-abi)\n        [ "$#" -eq 0 ] || fail "legacy-misc-header-abi takes no arguments"',
+            runner,
+        )
+        self.assertIn(
+            '    libc-legacy-des-compat)\n        [ "$#" -eq 0 ] || fail "libc-legacy-des-compat takes no arguments"',
             runner,
         )
         self.assertIn(

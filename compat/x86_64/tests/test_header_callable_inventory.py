@@ -518,6 +518,8 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "warn",
                 "warnx",
                 "wcsdup",
+                "wcsftime",
+                "wcsftime_l",
                 "wcsnrtombs",
                 "wprintf",
                 "wscanf",
@@ -543,8 +545,12 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         )
         self.assertEqual(verified["x86-scandir"], {"scandir"})
         self.assertEqual(
+            verified["x86-legacy-des-compat"],
+            {"encrypt", "setkey"},
+        )
+        self.assertEqual(
             verified["x86-legacy-misc"],
-            {"encrypt", "fmtmsg", "setkey"},
+            {"fmtmsg"},
         )
         self.assertEqual(
             verified["x86-h-errno"],

@@ -648,6 +648,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-unlockpt  run the static x86 crabc-libc PTY lock-release slice
   libc-gethostid  run the static x86 crabc-libc gethostid compatibility slice
   libc-issetugid  run the static x86 crabc-libc issetugid compatibility slice
+  libc-legacy-des-compat  run the static x86 crabc-libc inert-DES compatibility leaf
   libc-legacy-misc  run the static x86 crabc-libc frozen legacy.misc aggregate
   libc-endhostent  run the static x86 crabc-libc legacy netdb terminator slice
   libc-sethostent  run the opt-in static x86 crabc-libc legacy netdb setter slice
@@ -5322,6 +5323,10 @@ run_libc_issetugid_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_issetugid.sh
 }
 
+run_libc_legacy_des_compat_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_legacy_des_compat.sh
+}
+
 run_libc_legacy_misc_probe() {
     run_in_container bash /workspace/compat/x86_64/run_libc_legacy_misc.sh
 }
@@ -5823,7 +5828,7 @@ case "$command" in
     signal-legacy-aliases-header-abi|libc-signal-legacy-aliases|signal-sysv-helpers-header-abi|libc-signal-sysv-helpers) ;;
     psignal-header-abi|libc-psignal|libc-process-signal) ;;
     h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime) ;;
-    legacy-misc-header-abi|libc-legacy-misc) ;;
+    legacy-misc-header-abi|libc-legacy-des-compat|libc-legacy-misc) ;;
     ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-interval-timers|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions) ;;
     libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min) ;;
     sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi) ;;
@@ -8282,6 +8287,11 @@ PY
         [ "$#" -eq 0 ] || fail "libc-issetugid takes no arguments"
         ensure_image
         run_libc_issetugid_probe
+        ;;
+    libc-legacy-des-compat)
+        [ "$#" -eq 0 ] || fail "libc-legacy-des-compat takes no arguments"
+        ensure_image
+        run_libc_legacy_des_compat_probe
         ;;
     libc-legacy-misc)
         [ "$#" -eq 0 ] || fail "libc-legacy-misc takes no arguments"

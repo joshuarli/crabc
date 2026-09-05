@@ -17916,7 +17916,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_slice]]
 id = "legacy.misc"
-description = "Private native x86 selected-private frozen `legacy.misc` capability inside still-planned `libc.c-abi-compat`. Its exact eight-spelling C roster is `encrypt`, `fmtmsg`, `get_avphys_pages`, `get_nprocs`, `get_nprocs_conf`, `get_phys_pages`, `issetugid`, and `setkey`. The five system-observation/secure-startup spellings remain their independently evidenced default selected-static prerequisites; the opt-in dependency-free `x86-legacy-misc` feature contributes only one target-local owner with `fmtmsg`, `setkey`, and `encrypt`, while `static_c_abi_exports.txt` and the unfeatured archive remain frozen. `fmtmsg` retains the bounded pinned-musl `MSGVERB`, fd-2 `MM_PRINT`, `/dev/console` `MM_CONSOLE`, output-error, and retry-on-short-write seam. `setkey` and `encrypt` deliberately remain inert link-compatible no-ops: they neither dereference nor mutate caller storage and select no DES, cipher, PRNG, crypto service, or hand-rolled cryptography. This is not a full legacy runtime, a system-information or secure-execution promotion, `crypto.crypt` or `crypto.crypt-helpers`, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support."
+description = "Private native x86 selected-private frozen `legacy.misc` capability inside still-planned `libc.c-abi-compat`. Its exact eight-spelling C roster is `encrypt`, `fmtmsg`, `get_avphys_pages`, `get_nprocs`, `get_nprocs_conf`, `get_phys_pages`, `issetugid`, and `setkey`. The five system-observation/secure-startup spellings remain their independently evidenced default selected-static prerequisites. The narrow dependency-free `x86-legacy-des-compat` feature contributes one target-local `setkey`/`encrypt` owner; the `x86-legacy-misc` feature depends on it and contributes only `fmtmsg`, while `static_c_abi_exports.txt` and the unfeatured archive remain frozen. `fmtmsg` retains the bounded pinned-musl `MSGVERB`, fd-2 `MM_PRINT`, `/dev/console` `MM_CONSOLE`, output-error, and retry-on-short-write seam. `setkey` and `encrypt` deliberately remain inert link-compatible no-ops: they neither dereference nor mutate caller storage and select no DES, cipher, PRNG, crypto service, or hand-rolled cryptography. This is not a full legacy runtime, a system-information or secure-execution promotion, `crypto.crypt` or `crypto.crypt-helpers`, libc.so, CRT, dynamic TLS, loader, sysroot, family completion, promotion, or public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "compat/crabc-rs/coverage.toml",
@@ -17926,6 +17926,7 @@ source_owners = [
   "libc/src/lib.rs",
   "libc/src/legacy_des_exports.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
+  "libc/src/c_abi/x86_64/legacy_des_compat.rs",
   "libc/src/c_abi/x86_64/legacy_misc.rs",
   "libc/src/c_abi/x86_64/byte_strings.rs",
   "libc/src/c_abi/x86_64/descriptor_entry.rs",
@@ -17954,10 +17955,14 @@ source_owners = [
   "compat/x86_64/libc_legacy_misc_probe.c",
   "compat/x86_64/libc_legacy_misc_start.S",
   "compat/x86_64/run_libc_legacy_misc.sh",
+  "compat/x86_64/libc_legacy_des_compat_probe.c",
+  "compat/x86_64/libc_legacy_des_compat_start.S",
+  "compat/x86_64/run_libc_legacy_des_compat.sh",
   "compat/x86_64/aarch64_parity_inventory.py",
   "compat/x86_64/aarch64_parity_inventory.json",
   "compat/x86_64/tests/test_aarch64_parity_inventory.py",
   "compat/x86_64/tests/test_legacy_misc.py",
+  "compat/x86_64/tests/test_legacy_des_compat.py",
   "compat/x86_64/tests/test_parity_ledger.py",
   "compat/x86_64/tests/test_runner.py",
   "compat/x86_64/validate_parity_ledger.py",
@@ -17969,14 +17974,15 @@ source_owners = [
 x86_abi_prerequisites = [
   "The SysV AMD64 LP64 C ABI passes `fmtmsg(long, const char *, int, const char *, const char *, const char *)` in rdi/rsi/edx/rcx/r8/r9 and returns its signed int route result in eax. `setkey(const char *)` takes its pointer in rdi and returns void; `encrypt(char *, int)` takes rdi/esi and returns void. The retained page/processor observations and `issetugid` preserve their separately evidenced no-argument C ABI owners rather than acquiring a new aggregate runtime.",
   "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417 maps `src/legacy/fmtmsg.c::fmtmsg` and `src/legacy/encrypt.c::{setkey,encrypt}` to the opt-in owner; pinned `fmtmsg.lo` and `encrypt.lo` plus the AArch64 static ABI manifest prove source/member ownership. Musl is the fmtmsg behavior and declaration oracle, while its DES algorithm is provenance only because `libc/src/legacy_des_exports.rs` records the project-wide intentional inert-DES divergence.",
-  "The `x86-legacy-misc` feature adds exactly one target-local archive member exporting only `fmtmsg`, `setkey`, and `encrypt`; it preserves every unfeatured selected-static binding and adds none of those names to `static_c_abi_exports.txt`. The existing `static-c-system-information` and `static-c-issetugid` evidence remains the owner of the other five frozen capability spellings.",
-  "The feature candidate is a true `-nostdlib -static` ET_EXEC with its existing initial-TLS bootstrap and static startup. It rejects an interpreter, DT_NEEDED, unresolved symbols, PLT, dynamic TLS model, allocator/backend, ambient runtime, pinned-musl object extraction, and crypto dependency; `setkey` and `encrypt` contain no call or syscall and neither dereference nor mutate caller storage.",
+  "The `x86-legacy-des-compat` feature adds exactly one target-local archive member exporting only `setkey` and `encrypt`; `x86-legacy-misc` depends on it and adds exactly one distinct owner exporting only `fmtmsg`. Both profiles preserve every unfeatured selected-static binding and add none of those names to `static_c_abi_exports.txt`. The existing `static-c-system-information` and `static-c-issetugid` evidence remains the owner of the other five frozen capability spellings.",
+  "The direct narrow-feature candidate is a true `-nostdlib -static` ET_EXEC with its existing initial-TLS bootstrap. It rejects an interpreter, DT_NEEDED, unresolved symbols, PLT, dynamic TLS model, allocator/backend, ambient runtime, pinned-musl object extraction, and crypto dependency; `setkey` and `encrypt` contain no call or syscall and neither dereference nor mutate caller storage.",
 ]
 x86_header_prerequisites = [
   "The raw project-first `-nostdinc`/`-nostdinc++` C11/C++17 matrix compares pinned musl and project `<fmtmsg.h>`, `<stdlib.h>`, `<unistd.h>`, and `<sys/sysinfo.h>` declarations. `fmtmsg` and the four page/processor observations remain visible in strict/POSIX profiles; `setkey`/`encrypt` require X/Open, GNU, or BSD selection; `issetugid` is GNU/BSD-only and remains hidden under X/Open; every selected C++ reference retains unmangled C linkage. This is an exact declaration matrix, not installed-header or legacy-runtime completion.",
 ]
 native_evidence = [
   { state = "verified", command = "./scripts/dev-x86_64.sh legacy-misc-header-abi", scope = "Pinned-musl/project raw `-nostdinc`/`-nostdinc++` C11/C++17 declaration proof for the exact frozen legacy.misc profile partition: strict/POSIX base visibility, X/Open encrypt/setkey visibility, GNU/BSD issetugid visibility, X/Open issetugid hiding, project-header provenance, and unmangled C++ linkage. It does not select a legacy runtime, crypto behavior, family completion, promotion, or public x86 support." },
+  { state = "verified", command = "./scripts/dev-x86_64.sh libc-legacy-des-compat", scope = "One narrow feature-gated x86 crabc-libc `-nostdlib -static` candidate proves the exact two-symbol feature delta and distinct fmtmsg closure, one target-local owner, null and unreadable pointers, live-storage non-mutation, and errno preservation. It requires initial-TLS direct errno, then rejects an interpreter, DT_NEEDED, unresolved symbols, PLT, dynamic TLS, ambient runtime, allocation, and cipher dependencies. This is inert ABI evidence, no DES semantic differential or cryptographic support, and does not select a full legacy runtime, family completion, promotion, or public x86 support." },
   { state = "verified", command = "./scripts/dev-x86_64.sh libc-legacy-misc", scope = "Pinned-musl fmtmsg behavior plus one feature-gated x86 crabc-libc `-nostdlib -static` aggregate. The runner invokes retained system-information and issetugid prerequisite gates, proves the exact three-symbol feature delta and one target-local owner, MSGVERB/stderr/console/error/short-write fmtmsg behavior, initial-TLS static closure, and no interpreter/DT_NEEDED/unresolved symbol/PLT/dynamic-TLS/ambient runtime. Its DES checks prove only inert no-dereference/no-mutation/no-call/no-syscall ABI behavior, not a musl DES semantic differential or cryptographic support. It does not select crypto.crypt, crypto.crypt-helpers, a full legacy runtime, family completion, promotion, or public x86 support." },
 ]
 oracle = [
@@ -20286,7 +20292,7 @@ id = "x86-owned-static-runtime"
 state = "planned"
 runner = "compat/x86_64/run_owned_static_sysroot.sh"
 feature_selection_source = "scripts/build_x86_64_owned_sysroot.py"
-baseline_features = ["x86-allocator-observability", "x86-allocator-runtime", "x86-allocator-string-duplication", "x86-crypt", "x86-crypt-allocator-composition", "x86-environment-runtime", "x86-file-handles", "x86-filesystem-traversal", "x86-h-errno", "x86-interval-timers", "x86-math-long-double-completion", "x86-netdb-setent", "x86-process-exec", "x86-resolver-runtime", "x86-scandir", "x86-sched-rr-interval", "x86-stdio-permanent-format-scan", "x86-temporary-names", "x86-ualarm"]
+baseline_features = ["x86-allocator-observability", "x86-allocator-runtime", "x86-allocator-string-duplication", "x86-crypt", "x86-crypt-allocator-composition", "x86-environment-runtime", "x86-file-handles", "x86-filesystem-traversal", "x86-h-errno", "x86-interval-timers", "x86-legacy-des-compat", "x86-math-long-double-completion", "x86-netdb-setent", "x86-process-exec", "x86-resolver-runtime", "x86-scandir", "x86-sched-rr-interval", "x86-stdio-permanent-format-scan", "x86-temporary-names", "x86-ualarm"]
 enabled_features = ["x86-owned-static-runtime"]
 additive_callables = ["__assert_fail", "__fpending", "__fpurge", "__freadahead", "__freadptr", "__freadptrinc", "__fwriting", "_flushlbf", "abort", "acct", "acos", "acosf", "addmntent", "adjtime", "adjtimex", "asctime", "asctime_r", "asin", "asinf", "asprintf", "at_quick_exit", "atan", "atan2", "atan2f", "atanf", "brk", "capget", "capset", "chroot", "clearerr_unlocked", "clone", "closelog", "cnd_timedwait", "ctime", "ctime_r", "daemon", "delete_module", "dprintf", "endgrent", "endmntent", "endpwent", "err", "errx", "fallocate", "fanotify_init", "fanotify_mark", "fchmodat", "fchown", "fchownat", "fdopen", "fflush_unlocked", "fgetc_unlocked", "fgetgrent", "fgetln", "fgetpwent", "fgets_unlocked", "fgetwc", "fgetwc_unlocked", "fgetws", "fgetws_unlocked", "flockfile", "fma", "fmaf", "fmemopen", "fnmatch", "fopencookie", "forkpty", "fputc_unlocked", "fputs_unlocked", "fputwc", "fputwc_unlocked", "fputws", "fputws_unlocked", "fread_unlocked", "freopen", "ftrylockfile", "funlockfile", "fwide", "fwprintf", "fwrite_unlocked", "fwscanf", "get_current_dir_name", "getc_unlocked", "getchar_unlocked", "getdate", "getdelim", "getgrent", "getgrgid", "getgrgid_r", "getgrnam", "getgrnam_r", "getgrouplist", "gethostbyaddr", "gethostbyaddr_r", "gethostbyname", "gethostbyname2", "gethostbyname2_r", "gethostbyname_r", "gethostent", "getline", "getmntent", "getmntent_r", "getnetbyaddr", "getnetbyname", "getnetent", "getpwent", "getpwnam", "getpwnam_r", "getpwuid", "getpwuid_r", "gets", "getservbyname", "getservbyname_r", "getservbyport", "getservbyport_r", "getw", "getwc", "getwc_unlocked", "getwchar", "getwchar_unlocked", "glob", "globfree", "gmtime", "herror", "hypot", "hypotf", "init_module", "initgroups", "isastream", "klogctl", "localtime", "localtime_r", "lockf", "log1p", "log1pf", "login_tty", "mbsnrtowcs", "mkdtemp", "mknod", "mknodat", "mkostemp", "mkostemps", "mkstemp", "mkstemps", "mktime", "mount", "mq_close", "mq_getattr", "mq_notify", "mq_open", "mq_receive", "mq_send", "mq_timedreceive", "mq_timedsend", "mq_unlink", "mremap", "mtx_timedlock", "open_memstream", "open_wmemstream", "openlog", "openpty", "pclose", "perror", "popen", "posix_openpt", "posix_spawn", "posix_spawnp", "prctl", "preadv2", "process_vm_readv", "process_vm_writev", "pthread_cond_timedwait", "pthread_getattr_default_np", "pthread_getattr_np", "pthread_getschedparam", "pthread_kill", "pthread_mutex_setprioceiling", "pthread_mutex_timedlock", "pthread_mutexattr_setprotocol", "pthread_setattr_default_np", "pthread_setschedparam", "pthread_setschedprio", "pthread_sigmask", "pthread_timedjoin_np", "pthread_tryjoin_np", "ptrace", "ptsname", "ptsname_r", "putc_unlocked", "putchar_unlocked", "putgrent", "putpwent", "putw", "putwc", "putwc_unlocked", "putwchar", "putwchar_unlocked", "pwritev2", "quick_exit", "quotactl", "realpath", "reboot", "remap_file_pages", "renameat", "sbrk", "sem_close", "sem_open", "sem_timedwait", "sem_unlink", "setbuf", "setbuffer", "setgrent", "setlinebuf", "setlogmask", "setmntent", "setns", "setpwent", "settimeofday", "shm_open", "shm_unlink", "statx", "stime", "strftime", "strftime_l", "strptime", "swapoff", "swapon", "swprintf", "swscanf", "symlinkat", "syscall", "syslog", "system", "tcdrain", "tcgetsid", "timer_create", "times", "ttyname", "tzset", "umount", "umount2", "ungetwc", "unshare", "vasprintf", "vdprintf", "verr", "verrx", "vfork", "vfwprintf", "vfwscanf", "vhangup", "vmsplice", "vswprintf", "vswscanf", "vsyslog", "vwarn", "vwarnx", "vwprintf", "vwscanf", "warn", "warnx", "wcsdup", "wcsftime", "wcsftime_l", "wcsnrtombs", "wordexp", "wordfree", "wprintf", "wscanf"]
 replacement_callables = ["__fbufsize", "__flbf", "__freadable", "__freading", "__fseterr", "__fsetlocking", "__fwritable", "clearerr", "confstr", "fclose", "feof", "feof_unlocked", "ferror", "ferror_unlocked", "fflush", "fgetc", "fgetpos", "fgets", "fileno", "fileno_unlocked", "fopen", "fpathconf", "fputc", "fputs", "fread", "fseek", "fseeko", "fsetpos", "ftell", "ftello", "fwrite", "getaddrinfo", "getc", "getchar", "getdtablesize", "getnameinfo", "getpagesize", "lchmod", "pathconf", "putc", "putchar", "puts", "rewind", "setvbuf", "sigaltstack", "siginterrupt", "sigpause", "snprintf", "sprintf", "sscanf", "sysconf", "timer_delete", "timer_getoverrun", "timer_gettime", "timer_settime", "tmpfile", "ungetc", "vsnprintf", "vsprintf", "vsscanf"]
@@ -20511,14 +20517,26 @@ replacement_callables = []
 aliases = []
 
 [[feature_archive]]
+id = "x86-legacy-des-compat"
+state = "verified"
+evidence_record = "legacy.misc"
+runner = "compat/x86_64/run_libc_legacy_des_compat.sh"
+dispatch_command = "libc-legacy-des-compat"
+baseline_features = []
+enabled_features = ["x86-legacy-des-compat"]
+additive_callables = ["encrypt", "setkey"]
+replacement_callables = []
+aliases = []
+
+[[feature_archive]]
 id = "x86-legacy-misc"
 state = "verified"
 evidence_record = "legacy.misc"
 runner = "compat/x86_64/run_libc_legacy_misc.sh"
 dispatch_command = "libc-legacy-misc"
-baseline_features = []
+baseline_features = ["x86-legacy-des-compat"]
 enabled_features = ["x86-legacy-misc"]
-additive_callables = ["encrypt", "fmtmsg", "setkey"]
+additive_callables = ["fmtmsg"]
 replacement_callables = []
 aliases = []
 
