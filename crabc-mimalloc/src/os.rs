@@ -74,6 +74,9 @@ const PR_SET_THP_DISABLE: i32 = 41;
 const PR_GET_THP_DISABLE: i32 = 42;
 const MPOL_PREFERRED: i32 = 1;
 const CLOCK_MONOTONIC: i32 = 1;
+const CLOCK_PROCESS_CPUTIME_ID: i32 = 2;
+// The pinned native musl oracle's `clock()` reports microsecond ticks.
+const SOURCE_CLOCKS_PER_SECOND: i64 = 1_000_000;
 const GRND_NONBLOCK: u32 = 0x1;
 const RUSAGE_SELF: i32 = 0;
 const R_OK: u32 = 4;
@@ -118,6 +121,14 @@ static RESET_ADVICE: AtomicUsize = AtomicUsize::new(MADV_FREE as usize);
 // retain the same shared calibration rather than giving each reservation an
 // independently invented timeout clock.
 static SOURCE_CLOCK_DIFF_MILLISECONDS: AtomicI64 = AtomicI64::new(0);
+
+// Linux's fixed two-signed-word 64-bit timespec ABI.  Both source clock
+// paths use this exact raw record and never require a libc clock wrapper.
+#[repr(C)]
+struct KernelTimespec {
+    seconds: i64,
+    nanoseconds: i64,
+}
 
 /// Drives one Unix reset advisory sequence without introducing an OS fallback.
 ///
@@ -2807,10 +2818,65 @@ fn huge_page_address(base: NonNull<u8>, page: usize) -> Option<NonNull<u8>> {
 
 #[inline]
 fn source_clock_now() -> i64 {
-    // `_mi_prim_clock_now` falls through to its low-resolution source clock
-    // on a failed `clock_gettime`; this fixed Linux 5.10 port has no libc
-    // fallback, so zero is the source-compatible non-failing observation.
-    monotonic_milliseconds().unwrap_or(0)
+    source_clock_now_with(monotonic_milliseconds, source_clock_now_lowres)
+}
+
+/// Preserves `_mi_prim_clock_now`'s preferred-clock/fallback transition.
+///
+/// Pinned `src/prim/unix/prim.c:742-775` falls through to `clock()` after a
+/// failed `clock_gettime(CLOCK_MONOTONIC)`.  This selector remains explicit
+/// so a faulted preferred query cannot turn a bounded huge-page reservation
+/// into a zero-time, potentially unbounded loop.
+#[inline]
+fn source_clock_now_with(
+    preferred: impl FnOnce() -> Result<i64>,
+    low_resolution: impl FnOnce() -> i64,
+) -> i64 {
+    preferred().unwrap_or_else(|_| low_resolution())
+}
+
+/// Reads the pinned `clock()` fallback without a libc dependency.
+///
+/// Native musl defines `CLOCKS_PER_SEC` as one million and implements
+/// `clock()` from `CLOCK_PROCESS_CPUTIME_ID`; the source fallback then
+/// converts those ticks to milliseconds. A raw CPU-clock error produces the
+/// source `clock()` failure value of `-1`, whose C signed integer division by
+/// 1000 truncates to zero.
+#[inline]
+fn source_clock_now_lowres() -> i64 {
+    let mut time = core::mem::MaybeUninit::<KernelTimespec>::uninit();
+    // Do not consult `fault_before(FaultPoint::Clock)` here: this is the
+    // source fallback reached precisely after that preferred observation was
+    // rejected, and it must still issue its own primitive query.
+    let result = unsafe {
+        crabc_core::time::clock_gettime_raw(
+            CLOCK_PROCESS_CPUTIME_ID,
+            time.as_mut_ptr().cast(),
+        )
+    };
+    if result.is_err() {
+        return source_clock_lowres_milliseconds_from_ticks(-1);
+    }
+    // SAFETY: a successful kernel/vDSO query initialized the fixed record.
+    let time = unsafe { time.assume_init() };
+    if time.seconds < 0 || !(0..1_000_000_000).contains(&time.nanoseconds) {
+        return source_clock_lowres_milliseconds_from_ticks(-1);
+    }
+    let Some(ticks) = time
+        .seconds
+        .checked_mul(SOURCE_CLOCKS_PER_SECOND)
+        .and_then(|seconds| seconds.checked_add(time.nanoseconds / 1_000))
+    else {
+        return source_clock_lowres_milliseconds_from_ticks(-1);
+    };
+    source_clock_lowres_milliseconds_from_ticks(ticks)
+}
+
+/// Applies the selected musl `clock()` tick-to-millisecond conversion.
+#[inline]
+fn source_clock_lowres_milliseconds_from_ticks(ticks: i64) -> i64 {
+    // `SOURCE_CLOCKS_PER_SECOND > 1000` selects the final source branch.
+    ticks / (SOURCE_CLOCKS_PER_SECOND / 1_000)
 }
 
 fn source_clock_start() -> i64 {
@@ -3553,17 +3619,11 @@ fn validate_mapping_length(page_size: PageSize, length: usize) -> Result<()> {
 
 /// Reads monotonic time with the Unix primitive's millisecond truncation.
 ///
-/// Linux 5.10 supplies `CLOCK_MONOTONIC`, so this keeps the upstream preferred
-/// clock and intentionally omits the `clock()` low-resolution fallback. The
-/// `i64` output is the pinned `mi_msecs_t` representation.
+/// This is only `_mi_prim_clock_now`'s preferred raw observation. Its caller
+/// owns the source `clock()` low-resolution fallback. The `i64` output is the
+/// pinned `mi_msecs_t` representation.
 #[inline]
 pub(crate) fn monotonic_milliseconds() -> Result<i64> {
-    #[repr(C)]
-    struct KernelTimespec {
-        seconds: i64,
-        nanoseconds: i64,
-    }
-
     let mut time = core::mem::MaybeUninit::<KernelTimespec>::uninit();
     fault_before(FaultPoint::Clock)?;
     // SAFETY: `KernelTimespec` is the two-signed-word Linux 64-bit timespec
@@ -4793,6 +4853,30 @@ mod tests {
             is_large: true,
             is_mapped: true,
         }
+    }
+
+    #[test]
+    fn source_huge_clock_uses_the_low_resolution_clock_after_monotonic_failure() {
+        // `src/prim/unix/prim.c:_mi_prim_clock_now` does not substitute zero
+        // when its preferred CLOCK_MONOTONIC query fails: it calls `clock()`.
+        // Keep this selector independent from host timing and fault-plan
+        // serialization so a timed huge reservation cannot silently fail open.
+        assert_eq!(source_clock_lowres_milliseconds_from_ticks(1_234_567), 1_234);
+        assert_eq!(source_clock_lowres_milliseconds_from_ticks(-1), 0);
+
+        // This is the production fault edge: fault the real preferred raw
+        // query, then require its transition to a nonzero fallback value.
+        // This avoids coupling the regression to how much CPU time an
+        // unusually fast test process happened to consume.
+        let fault = fault::install(fault::Plan::at(fault::Point::Clock, 1, Errno::NOMEM));
+        let after_forced_monotonic_failure = source_clock_now_with(
+            monotonic_milliseconds,
+            || 47,
+        );
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(after_forced_monotonic_failure, 47);
+        drop(fault);
+        assert!(source_clock_now_lowres() >= 0);
     }
 
     #[test]
