@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Native Linux/x86-64 executor check for the private musl TRE source port.
+# Native Linux/x86-64 allocator-failure check for the owned musl TRE port.
 #
-# This copies the checkout below `.work/x86_64`, changes only that copy's
-# private module routing, and compares the semantic fixture with pinned musl.
-# It does not alter the selected bounded regex leaf or claim public routing.
+# The selected `x86-owned-static-runtime` route owns TRE semantics.  This
+# checkpoint keeps a copied-route build only to retain the frozen, recording
+# allocator witness for compiler and executor failure cleanup.  The installed
+# header/product proof is `run_owned_regex.sh`; neither runner claims aggregate
+# runtime closure.
 set -euo pipefail
 export LC_ALL=C
 
