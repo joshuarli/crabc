@@ -61,7 +61,7 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "planned-provider"
 provider_target = "future selected C ABI providers in libc.pthread-tls"
 source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["cnd_timedwait", "mtx_timedlock", "pthread_cond_timedwait", "pthread_getattr_default_np", "pthread_getschedparam", "pthread_mutex_setprioceiling", "pthread_mutex_timedlock", "pthread_mutexattr_getprioceiling", "pthread_mutexattr_setprioceiling", "pthread_mutexattr_setprotocol", "pthread_setattr_default_np", "pthread_setschedparam", "pthread_setschedprio", "pthread_timedjoin_np", "pthread_tryjoin_np"]
+members = ["mtx_timedlock", "pthread_getattr_default_np", "pthread_getschedparam", "pthread_mutex_setprioceiling", "pthread_mutex_timedlock", "pthread_mutexattr_getprioceiling", "pthread_mutexattr_setprioceiling", "pthread_mutexattr_setprotocol", "pthread_setattr_default_np", "pthread_setschedparam", "pthread_setschedprio", "pthread_timedjoin_np", "pthread_tryjoin_np"]
 
 [[deferred_owner_group]]
 id = "x86-cabi-resolver-netdb-classic-v1"

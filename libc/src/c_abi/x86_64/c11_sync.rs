@@ -11,9 +11,9 @@
 //!   normal-mutex fast path.
 //! - `src/thread/cnd_init.c`, `cnd_destroy.c`, `cnd_wait.c`, `cnd_signal.c`,
 //!   and `cnd_broadcast.c` supply the C11 condition-object/result boundary.
-//! - `src/thread/mtx_timedlock.c` and `cnd_timedwait.c` explain musl's shared
-//!   error translations, while their timed operation itself remains outside
-//!   this selected x86 artifact.
+//! - `src/thread/cnd_timedwait.c` supplies the owned timed condition adapter:
+//!   success, timeout, and other errors map to distinct C11 statuses.
+//!   `src/thread/mtx_timedlock.c` remains an unimplemented mutex obligation.
 //!
 //! The installed C header deliberately gives `mtx_t` and `cnd_t` their own C
 //! record types even though their x86 LP64 storage is layout-compatible with
@@ -34,7 +34,8 @@
 //! would select unimplemented mutex type state machines. This artifact admits
 //! only `mtx_plain` and fails every other kind closed with `thrd_error` before
 //! it interprets or initializes the record; that candidate-only policy is not
-//! a musl-differential claim. Timed mutex/condition calls, static C11 object
+//! a musl-differential claim. Owned products additionally admit `cnd_timedwait`
+//! through the same condition transaction. Timed mutex calls, static C11 object
 //! initialization, recursive mutexes, cancellation, TSS, once, process-shared
 //! synchronization, dynamic/loader TLS, CRT/sysroot integration, general C11
 //! or pthread parity, promotion, and public x86 support remain excluded.
@@ -52,6 +53,10 @@ const MTX_PLAIN: c_int = 0;
 const THRD_SUCCESS: c_int = 0;
 const THRD_BUSY: c_int = 1;
 const THRD_ERROR: c_int = 2;
+#[cfg(feature = "x86-owned-static-runtime")]
+const THRD_TIMEDOUT: c_int = 4;
+#[cfg(feature = "x86-owned-static-runtime")]
+const ETIMEDOUT: c_int = 110;
 
 /// Exact public x86 C11 `mtx_t` storage.
 ///
@@ -250,4 +255,24 @@ pub unsafe extern "C" fn cnd_broadcast(condition: *mut c_void) -> c_int {
     // SAFETY: the C ABI obligations above establish the selected private
     // condition record for its broadcast/list/barrier protocol.
     c11_status(unsafe { pthread_cond::broadcast_selected_private_cond(condition) })
+}
+
+/// Wait on an owned C11 condition until its realtime deadline expires.
+///
+/// Musl `src/thread/cnd_timedwait.c` maps timeout to `thrd_timedout`, success
+/// to `thrd_success`, and all other pthread results to `thrd_error`.
+/// # Safety
+/// The caller holds a live initialized C11 mutex and retains both aligned
+/// object lifetimes and predicate discipline. `deadline` names a readable
+/// aligned native timespec for the duration of the operation.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn cnd_timedwait(
+    condition: *mut c_void, mutex: *mut c_void, deadline: *const c_void,
+) -> c_int {
+    match unsafe { pthread_cond::timed_wait_selected_cond(condition, mutex, deadline) } {
+        0 => THRD_SUCCESS,
+        ETIMEDOUT => THRD_TIMEDOUT,
+        _ => THRD_ERROR,
+    }
 }

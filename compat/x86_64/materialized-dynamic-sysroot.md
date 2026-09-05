@@ -274,3 +274,12 @@ libc dependency checks. The pinned-musl reference uses static copies of those
 same fixture sources in its own root. Normal cancellation tests and injected
 tester failure/timeout verify source wait semantics and supervisor child
 ownership. This is process/wait evidence, not a shell implementation claim.
+
+`run_owned_pthread_cond_timed.sh SYSROOT` qualifies supplied installed/extracted
+products for:
+clocked expiration and validation, C11 timed status, robust mutex relock error
+precedence, main/worker timed/shared cancellation, private-barrier handoff onto
+a shared mutex, and shared conditions across distinct child mapping addresses.
+The condition and mutex algorithms are local owned-runtime code, and both PIE
+and non-PIE consumers use the same pinned-musl fixtures. This adds component
+coverage while the pthread-family and final platform gates remain open.

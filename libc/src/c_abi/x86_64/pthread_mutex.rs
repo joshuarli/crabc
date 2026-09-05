@@ -386,7 +386,10 @@ fn is_linux_error(result: i64) -> bool {
     result < 0 && result >= -LINUX_ERRNO_MAX
 }
 
-/// Whether the C object has the one selected all-zero normal/private type.
+/// Whether the C object has an admitted normal mutex type.
+///
+/// The frozen archive admits the all-zero private type. Owned products also
+/// admit normal/shared bit 128 and use its shared kernel futex key.
 ///
 /// The type word is initialized before publication and is immutable during a
 /// valid mutex lifetime. It is therefore deliberately not an atomic state
@@ -395,7 +398,11 @@ fn is_linux_error(result: i64) -> bool {
 unsafe fn is_selected_normal_mutex(mutex: *mut PublicPthreadMutex) -> bool {
     // SAFETY: the caller supplies a complete mutex whose immutable type word
     // is initialized before the mutex becomes concurrently reachable.
-    unsafe { core::ptr::read(mutex_word(mutex, MUTEX_TYPE_WORD)) == 0 }
+    let mutex_type = unsafe { core::ptr::read(mutex_word(mutex, MUTEX_TYPE_WORD)) };
+    #[cfg(feature = "x86-owned-static-runtime")]
+    return mutex_type & !MUTEX_PROCESS_SHARED_BIT == 0;
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    return mutex_type == 0;
 }
 
 /// Initialize one selected all-zero normal/private mutex without crossing a
@@ -554,7 +561,7 @@ pub(super) unsafe fn try_lock_selected_normal_mutex(mutex: *mut c_void) -> c_int
     unsafe { try_lock_selected_normal_mutex_record(mutex_record) }
 }
 
-/// Acquire an already-admitted selected normal/private mutex.
+/// Acquire an already-admitted normal mutex using its sharing attribute.
 ///
 /// This is the shared private state-machine body used by the direct C entry
 /// and the condition-variable leaf after it has atomically enrolled a waiter.
@@ -619,7 +626,9 @@ unsafe fn lock_selected_normal_mutex_record(mutex: *mut PublicPthreadMutex) -> c
 
         // SAFETY: the marked value was atomically published above on this
         // live private lock word.
-        let result = unsafe { futex_wait(lock, marked, true) };
+        let result = unsafe {
+            futex_wait(lock, marked, mutex_is_private(selected_mutex_type(mutex)))
+        };
         // SAFETY: balances this loop iteration's advisory waiter count after
         // the futex call has stopped observing the word.
         unsafe { atomic::x86_64_fetch_sub_acqrel_i32(waiters, 1) };
@@ -650,7 +659,7 @@ pub(super) unsafe fn lock_selected_normal_mutex(mutex: *mut c_void) -> c_int {
     unsafe { lock_selected_normal_mutex_record(mutex_record) }
 }
 
-/// Release an already-admitted selected normal/private mutex.
+/// Release an already-admitted normal mutex using its sharing attribute.
 unsafe fn unlock_selected_normal_mutex_record(mutex: *mut PublicPthreadMutex) -> c_int {
     let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
     let waiters = unsafe { mutex_word(mutex, MUTEX_WAITERS_WORD) };
@@ -665,7 +674,7 @@ unsafe fn unlock_selected_normal_mutex_record(mutex: *mut PublicPthreadMutex) ->
     if previous < 0 || waiter_hint > 0 {
         // SAFETY: the public lock word remains live for the C caller's mutex
         // lifetime; this wake has no C errno result.
-        unsafe { futex_wake(lock, true) };
+        unsafe { futex_wake(lock, mutex_is_private(selected_mutex_type(mutex))) };
     }
     0
 }
@@ -1106,7 +1115,8 @@ pub unsafe extern "C" fn pthread_mutex_consistent(mutex: *mut c_void) -> c_int {
 /// `mutex` must point to writable, aligned storage for one x86
 /// `pthread_mutex_t` that is not concurrently accessed. A non-null `attr`
 /// must designate an initialized public x86 attribute record whose type is
-/// either normal or the selected robust/private-or-shared combination.
+/// either normal or the selected robust/private-or-shared combination. Owned
+/// products also admit normal/shared initialization.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_init(
     mutex: *mut c_void,
@@ -1120,7 +1130,11 @@ pub unsafe extern "C" fn pthread_mutex_init(
         // musl public attribute word.
         unsafe { core::ptr::read(attr.cast::<PublicPthreadMutexAttr>()) }.attr as c_int
     };
-    if mutex_type != 0
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let normal = mutex_type & !MUTEX_PROCESS_SHARED_BIT == 0;
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    let normal = mutex_type == 0;
+    if !normal
         && (mutex_type & MUTEX_ROBUST_BIT == 0
             || mutex_type & !MUTEX_SELECTED_ROBUST_BITS != 0)
     {
@@ -1225,4 +1239,81 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut c_void) -> c_int {
         return unsafe { unlock_selected_robust_mutex_record(mutex) };
     }
     ENOTSUP
+}
+
+/// One admitted owned mutex throughout a condition wait transaction.
+///
+/// This boundary retains the mutex owner's type validation, lock/unlock
+/// algorithms, and futex words. The condition owner may release and relock it
+/// and coordinate detached waiters, but does not reproduce mutex acquisition.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[derive(Clone, Copy)]
+pub(super) struct ConditionMutex {
+    record: *mut PublicPthreadMutex,
+    robust: bool,
+    shared: bool,
+    lock_address: *mut c_int,
+    waiters_address: *mut c_int,
+}
+
+#[cfg(feature = "x86-owned-static-runtime")]
+impl ConditionMutex {
+    pub(super) fn lock_word(self) -> *mut c_int { self.lock_address }
+    pub(super) fn waiters_word(self) -> *mut c_int { self.waiters_address }
+    pub(super) fn shared(self) -> bool { self.shared }
+
+    /// Release the caller-held mutex after condition enrollment.
+    /// # Safety
+    /// This admitted mutex is still live and owned by the current task.
+    pub(super) unsafe fn unlock(self) -> c_int {
+        if self.robust {
+            unsafe { unlock_selected_robust_mutex_record(self.record) }
+        } else {
+            unsafe { unlock_selected_normal_mutex_record(self.record) }
+        }
+    }
+
+    /// Reacquire the same live mutex after condition withdrawal.
+    /// # Safety
+    /// The caller retains its lifetime and type until this operation returns.
+    pub(super) unsafe fn lock(self) -> c_int {
+        if self.robust {
+            unsafe { lock_selected_robust_mutex_record(self.record) }
+        } else {
+            unsafe { lock_selected_normal_mutex_record(self.record) }
+        }
+    }
+}
+
+/// Admit the mutex before a condition wait validates its deadline or cancels.
+///
+/// Musl checks ownership first when `_m_type & 15` is nonzero. Normal mutex
+/// ownership remains the caller's POSIX obligation; supported robust types
+/// must contain this task's TID without an unresolved owner-death marker.
+/// Recursive, error-checking and PI mutex implementations remain family work;
+/// this seam follows the existing public mutex admission for those types.
+/// # Safety
+/// `mutex` is a live aligned public mutex, with an immutable initialized type.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn condition_mutex(mutex: *mut c_void) -> Result<ConditionMutex, c_int> {
+    let record = mutex.cast::<PublicPthreadMutex>();
+    let mutex_type = unsafe { selected_mutex_type(record) };
+    let robust = unsafe { is_selected_robust_mutex(record) };
+    if !robust && !unsafe { is_selected_normal_mutex(record) } {
+        return Err(ENOTSUP);
+    }
+    let lock = unsafe { mutex_word(record, MUTEX_LOCK_WORD) };
+    if robust {
+        let Some(tid) = pthread_create_join::current_selected_runtime_thread_id() else {
+            return Err(ENOTSUP);
+        };
+        if unsafe { atomic::x86_64_load_acquire_i32(lock) } & c_int::MAX != tid {
+            return Err(EPERM);
+        }
+    }
+    Ok(ConditionMutex {
+        record, robust, shared: !mutex_is_private(mutex_type),
+        lock_address: lock,
+        waiters_address: unsafe { mutex_word(record, MUTEX_WAITERS_WORD) },
+    })
 }

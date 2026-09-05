@@ -4,13 +4,14 @@
  * can release the fixture's futex while the observer checks it. */
 #include <fcntl.h>
 #include <sys/syscall.h>
-static void witness_pthread_futex_wait_at(int tid, unsigned long operation, unsigned long expected_address)
+static void witness_process_futex_wait_at(int pid, int tid, unsigned long operation, unsigned long expected_address)
 {
     const char *value = getenv("CRABC_TEST_PROC_FD");
     if (!value) _Exit(70);
     int proc_fd = atoi(value);
     char path[80], record[256];
-    snprintf(path, sizeof path, "self/task/%d/syscall", tid);
+    if (pid) snprintf(path, sizeof path, "%d/task/%d/syscall", pid, tid);
+    else snprintf(path, sizeof path, "self/task/%d/syscall", tid);
     for (;;) {
         int fd = (int)syscall(SYS_openat, proc_fd, path, O_RDONLY | O_CLOEXEC, 0);
         if (fd < 0) _Exit(71);
@@ -26,6 +27,11 @@ static void witness_pthread_futex_wait_at(int tid, unsigned long operation, unsi
         }
         sched_yield();
     }
+}
+
+static void witness_pthread_futex_wait_at(int tid, unsigned long operation, unsigned long expected_address)
+{
+    witness_process_futex_wait_at(0, tid, operation, expected_address);
 }
 
 static void witness_pthread_futex_wait(int tid, unsigned long operation)

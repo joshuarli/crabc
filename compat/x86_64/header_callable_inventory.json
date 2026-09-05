@@ -128,6 +128,7 @@
           "atanf",
           "chroot",
           "clearerr_unlocked",
+          "cnd_timedwait",
           "ctime",
           "ctime_r",
           "dprintf",
@@ -189,6 +190,7 @@
           "posix_spawn",
           "posix_spawnp",
           "prctl",
+          "pthread_cond_timedwait",
           "pthread_getattr_np",
           "pthread_kill",
           "pthread_sigmask",
@@ -1457,7 +1459,6 @@
         "capset",
         "clone",
         "closelog",
-        "cnd_timedwait",
         "cuserid",
         "daemon",
         "delete_module",
@@ -1556,7 +1557,6 @@
         "preadv2",
         "process_vm_readv",
         "process_vm_writev",
-        "pthread_cond_timedwait",
         "pthread_getattr_default_np",
         "pthread_getschedparam",
         "pthread_mutex_setprioceiling",
@@ -417406,7 +417406,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "cdb07ecd093ccd67f4471dfbf892a454322a0e2a38ad8b19151d0d3255923e87",
+    "parity_ledger_sha256": "f4c51e57c68159a5532c45fd6f8500d0d2f740ea2fdce985eb40aec01b195ada",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -436216,9 +436216,9 @@
       "macro": 5202
     },
     "callable_provider_counts": {
-      "declared_unverified_feature_archives": 115,
+      "declared_unverified_feature_archives": 117,
       "default_static": 1122,
-      "unprovided": 210,
+      "unprovided": 208,
       "verified_feature_archives": 78
     },
     "candidate_external_callable_count": 1525,

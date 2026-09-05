@@ -438,8 +438,36 @@ An unsignaled MASKED caller instead observes `ECANCELED` with cancellation
 disabled, as at musl's `__pthread_cond_timedwait` done label. The owned syscall
 boundary replaces the old worker-only signal-free route, so the original main
 task participates in the same list repair and mutex reacquisition contract.
-Timed waits, shared conditions, and non-normal mutexes remain outside this
-component's admitted boundary.
+The later timed/shared component extends these owned transactions and their
+mutex admission as described below; the frozen archive keeps its prior boundary.
+
+`owned-pthread-cond-timed` qualifies the owned timed/private/shared condition
+transaction against pinned musl in all four executable modes. Initialization
+consumes the existing condition attribute word, including its clock and sharing
+fields. `owned_pthread_cond.rs` maps musl's private linked waiters, shared
+sequence/count accounting, relative deadline conversion, cancellation repair,
+relock precedence, and signal/broadcast/destruction transitions. Its typed
+`pthread_mutex::ConditionMutex` seam admits the existing normal and robust
+normal mutex kinds, with private/shared normal futex selection added for
+cross-process condition use. Recursive, error-checking, and PI mutex engines
+remain implementation gaps in the pthread family, not profile exclusions.
+
+`owned_pthread_cond_timed_probe.c` checks realtime/monotonic expiration, invalid
+nanoseconds, invalid-clock errno, validation before cancellation, C11
+`thrd_timedout`/`thrd_error`, and robust relock owner death overriding timeout or
+cancellation, plus unrecoverable mutex state overriding a pending request. A private-condition broadcast onto a shared mutex proves that
+successors are woken on their private barriers instead of incorrectly requeued
+to a shared futex key. The cancellation fixture also runs timed-private,
+ordinary-shared, and timed-shared variants with exact kernel wait observation.
+`owned_pthread_cond_shared_probe.c` moves inherited shared storage to different
+virtual addresses in each child, then proves signal, broadcast, and ordinary
+or timed wait without process-local waiter pointers. The same fixture is used
+for pinned musl and installed static/dynamic products.
+
+The pinned Rust nightly's `std/src/sys/sync/condvar/mod.rs` selects futexes for
+Linux. Its Unix pthread fallback uses monotonic condition attributes and timed
+waiting, but is not the selected Linux `std::Condvar` path; this component's
+evidence is direct POSIX/C11 coverage, not Rust-std qualification.
 
 `./scripts/dev-x86_64.sh owned-system-cancellation` qualifies the distinct
 source waits in `owned_stdio_process.rs`: `system` calls public `waitpid` and

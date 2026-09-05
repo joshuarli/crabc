@@ -22,27 +22,17 @@
 //!   `src/thread/pthread_cond_timedwait.c::{lock,unlock,unlock_requeue}`
 //!   supply the private `0/1/2` futex lock and requeue mechanics.
 //!
-//! The admitted contract is intentionally narrow: a zero-initialized or
-//! `pthread_cond_init(..., NULL)` process-private object may wait, signal,
-//! broadcast, and be destroyed after every waiter has returned. Every wait
-//! uses a zero-initialized or `pthread_mutex_init(..., NULL)` sibling
-//! `PTHREAD_MUTEX_NORMAL` object. The exact musl private path keeps a
-//! stack-local linked waiter list; it does not reuse the public `_c_seq` or
-//! `_c_waiters` words, which are process-shared overlays. It excludes
-//! condition attributes; process-shared state; timed waits; non-normal,
-//! robust, PI, or shared mutexes; and destruction while waiters exist.
-//! Owned static/dynamic main tasks and pthread workers admit deferred
-//! cancellation at `pthread_cond_wait`: musl's MASKED syscall boundary returns
-//! ECANCELED while this transaction removes its automatic waiter and relocks
-//! the mutex before cleanup. Consuming a signal suppresses cancellation for
-//! that handoff. The frozen archive retains its mapped worker waiter and
-//! signal-free cancellation wake protocol. This leaf does not install the
-//! SIGCANCEL handler or make other waits/syscalls cancellation points. The
-//! separate C11 plain-synchronization sibling maps distinct `cnd_t` storage through this
-//! exact private path without acquiring pthread cancellation behavior. A
-//! non-null initialization attribute or a non-private marker fails closed with
-//! `ENOTSUP`; this is a selected-artifact boundary, not a musl-differential
-//! claim.
+//! The frozen archive admits NULL-attribute process-private conditions and
+//! normal/private mutexes, using its mapped worker cancellation barrier. Its
+//! historical boundary and machine-code evidence remain separate from the
+//! owned product. Owned static/dynamic operations delegate to
+//! `owned_pthread_cond.rs`: initialized clock/sharing attributes, ordinary and
+//! timed waits, automatic private waiters or shared sequence/count storage,
+//! MASKED cancellation, and mutex-owner validation/relock error precedence.
+//! The C11 adapter shares these private Rust seams without interposable calls.
+//! Recursive/error-checking/PI mutex implementations remain pthread-family
+//! work in the mutex owner; this component does not change the public profile
+//! or claim complete pthread parity or public x86 support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 private pthread-condition leaf requires little-endian Linux/x86-64");
@@ -53,6 +43,10 @@ use core::mem::{align_of, offset_of, size_of};
 use core::ptr::null_mut;
 
 use super::{atomic, pthread_cancel, pthread_create_join, pthread_mutex, raw_syscall};
+
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_pthread_cond.rs"]
+mod owned;
 
 const ENOTSUP: c_int = 95;
 #[cfg(feature = "x86-owned-static-runtime")]
@@ -623,35 +617,40 @@ pub(super) unsafe fn destroy_selected_private_cond(condition: *mut c_void) -> c_
 /// # Safety
 ///
 /// `condition` must point to writable, aligned storage for one x86
-/// `pthread_cond_t` that is not concurrently accessed. Only a null `attr` is
-/// admitted by this bounded artifact; no attribute object is read.
+/// `pthread_cond_t` that is not concurrently accessed. For owned products, a
+/// non-null `attr` designates an initialized readable condition attribute.
+/// The frozen archive admits only a null attribute.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_init(
     condition: *mut c_void,
     attr: *const c_void,
 ) -> c_int {
-    if !attr.is_null() {
-        return ENOTSUP;
+    #[cfg(feature = "x86-owned-static-runtime")]
+    return unsafe { owned::init(condition, attr) };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    {
+        if !attr.is_null() { return ENOTSUP; }
+        unsafe { init_selected_private_cond(condition) }
     }
-    // SAFETY: the C ABI obligations above exactly match the private selected
-    // initialization seam.
-    unsafe { init_selected_private_cond(condition) }
 }
 
 /// Destroy one selected private condition object after quiescence.
 ///
-/// The selected private representation owns neither an allocation nor a
-/// kernel resource. Calling this while a waiter is still enrolled is outside
-/// the caller obligations and remains deliberately unsupported.
+/// Private conditions own no allocation or kernel resource. The owned shared
+/// representation retains musl's waiter-drain transition before storage reuse;
+/// the caller still owns the POSIX destruction/no-new-waiter discipline.
 ///
 /// # Safety
 ///
-/// `condition` must designate a complete aligned selected private condition
-/// object that is no longer used by any thread and has no remaining waiter.
+/// `condition` must designate a complete aligned initialized condition whose
+/// lifetime and quiescence satisfy POSIX destruction requirements.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_destroy(condition: *mut c_void) -> c_int {
     // SAFETY: the C ABI obligations above exactly match the private selected
     // destruction seam.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    return unsafe { owned::destroy(condition) };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     unsafe { destroy_selected_private_cond(condition) }
 }
 
@@ -671,6 +670,7 @@ pub unsafe extern "C" fn pthread_cond_destroy(condition: *mut c_void) -> c_int {
 /// pthread wrapper selects cancellation for owned main/worker pthread tasks
 /// and the frozen archive's validated selected pthread worker. It does not
 /// accept non-normal mutex state.
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[inline(always)]
 pub(super) unsafe fn wait_selected_private_cond(
     condition: *mut c_void,
@@ -693,13 +693,10 @@ pub(super) unsafe fn wait_selected_private_cond(
         return ENOTSUP;
     };
 
-    // The frozen archive's signal-free wake path needs a durable mapped
-    // waiter. Owned tasks use the syscall cancellation boundary and musl's
-    // automatic storage for main tasks, workers, and non-canceling C11 waits.
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    // Only pointer-returning selected pthread workers obtain the durable
+    // control-mapped waiter needed by the signal-free cancellation wake path.
+    // C11 and foreign callers retain musl's automatic-storage waiter.
     let selected_waiter = pthread_create_join::current_selected_pthread_condition_waiter();
-    #[cfg(feature = "x86-owned-static-runtime")]
-    let selected_waiter: Option<*const SelectedPthreadConditionWaiter> = None;
     let mut stack_waiter = Waiter::empty();
     let node = match selected_waiter {
         Some(waiter) => unsafe { (*waiter).as_mut_ptr() },
@@ -747,51 +744,26 @@ pub(super) unsafe fn wait_selected_private_cond(
         return unlock_result;
     }
 
-    // Owned tasks use musl's cancellation syscall while MASKED: cancellation
-    // returns ECANCELED so this frame can withdraw its stack waiter and relock
-    // the mutex before user cleanup. This includes the original main task.
-    #[cfg(feature = "x86-owned-static-runtime")]
-    let saved_cancellation =
-        pthread_cancel::begin_current_selected_pthread_condition_cancellation();
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    // Mask an enabled selected pthread while its waiter/list state is exposed;
+    // a disabled worker stays disabled. The published mapped barrier makes a
+    // concurrent request either change this value or be observed by the
+    // activation recheck, so a request cannot be lost between enrollment and
+    // the futex wait below.
     let saved_cancellation = selected_waiter.and_then(|_| {
         pthread_cancel::begin_current_selected_pthread_condition_cancellation()
     });
-    #[cfg(feature = "x86-owned-static-runtime")]
-    let wait_error = loop {
-        // SAFETY: the automatic waiter remains linked and live until the
-        // withdrawal below. MASKED cancellation cannot run deferred cleanup.
-        let result = unsafe {
-            pthread_cancel::syscall_cp(raw_syscall::SYS_FUTEX,
-                waiter_barrier_word(node) as usize as i64,
-                FUTEX_WAIT_PRIVATE, PRIVATE_CONTENDED as i64, 0, 0, 0)
-        };
-        if result == -(ECANCELED as i64) {
-            break ECANCELED;
-        }
-        // Musl's untimed wait normalizes other syscall errors and retries
-        // EINTR while the barrier remains closed. Linux 5.10 provides futex.
-        if unsafe { atomic::x86_64_load_acquire_i32(waiter_barrier_word(node)) }
-            != PRIVATE_CONTENDED
-        {
-            break 0;
-        }
-    };
-    #[cfg(not(feature = "x86-owned-static-runtime"))]
-    {
-        // The frozen archive has no signal cancellation boundary; its mapped
-        // barrier and wake leases retain the original signal-free protocol.
-        if saved_cancellation.is_some() {
-            pthread_cancel::activate_current_selected_pthread_condition_waiter(
-                unsafe { waiter_barrier_word(node) },
-            );
-        }
-        unsafe { wait_private_while(waiter_barrier_word(node), PRIVATE_CONTENDED) };
-        if saved_cancellation.is_some() {
-            pthread_create_join::withdraw_current_selected_pthread_condition_waiter(
-                unsafe { waiter_barrier_word(node) },
-            );
-        }
+    if saved_cancellation.is_some() {
+        pthread_cancel::activate_current_selected_pthread_condition_waiter(
+            unsafe { waiter_barrier_word(node) },
+        );
+    }
+
+    // SAFETY: the stack waiter and its barrier remain live through this loop.
+    unsafe { wait_private_while(waiter_barrier_word(node), PRIVATE_CONTENDED) };
+    if saved_cancellation.is_some() {
+        pthread_create_join::withdraw_current_selected_pthread_condition_waiter(
+            unsafe { waiter_barrier_word(node) },
+        );
     }
     // SAFETY: the CAS arbitrates a concurrent signaler against a locally
     // leaving waiter exactly as musl's private cancellation/timeout path does.
@@ -853,21 +825,8 @@ pub(super) unsafe fn wait_selected_private_cond(
             // A request that won the unsignaled waiter race is delivered only
             // after this relock. Active cleanup therefore observes the mutex
             // held, exactly as musl's condition cancellation path requires.
-            #[cfg(feature = "x86-owned-static-runtime")]
-            if wait_error == ECANCELED {
-                pthread_cancel::test_current_selected_pthread_cancellation();
-                // An originally MASKED caller observes ECANCELED with
-                // cancellation disabled, matching musl's done label.
-                pthread_cancel::restore_current_selected_pthread_condition_cancellation(
-                    PTHREAD_CANCEL_DISABLE,
-                );
-            }
-            #[cfg(not(feature = "x86-owned-static-runtime"))]
             pthread_cancel::test_current_selected_pthread_cancellation();
         }
-        #[cfg(feature = "x86-owned-static-runtime")]
-        return wait_error;
-        #[cfg(not(feature = "x86-owned-static-runtime"))]
         return 0;
     }
 
@@ -914,17 +873,37 @@ pub(super) unsafe fn wait_selected_private_cond(
     0
 }
 
+/// Wait on an owned condition using its initialized clock/sharing fields.
+/// # Safety
+/// The caller holds a supported live mutex, protects its predicate with it,
+/// and retains both objects through wait, relock, and cancellation cleanup.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[inline(always)]
+pub(super) unsafe fn wait_selected_private_cond(condition: *mut c_void, mutex: *mut c_void) -> c_int {
+    unsafe { owned::wait(condition, mutex, core::ptr::null()) }
+}
+
+/// The C11 timed adapter shares the owned condition transaction directly.
+/// # Safety
+/// In addition to ordinary wait obligations, `deadline` is a readable aligned
+/// x86 timespec that remains immutable during the call.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn timed_wait_selected_cond(
+    condition: *mut c_void, mutex: *mut c_void, deadline: *const c_void,
+) -> c_int {
+    unsafe { owned::wait(condition, mutex, deadline) }
+}
+
 /// Atomically enroll and wait through the selected private condition path.
 ///
 /// # Safety
 ///
 /// `condition` and `mutex` must designate live aligned selected public x86
 /// objects. The caller owns their lifetimes, predicate discipline, signal and
-/// cancellation policy, and quiescent destruction. For an owned main/worker
-/// pthread task or a validated frozen-archive worker, this cancellation point
-/// removes or consumes the waiter, relocks the normal mutex, then transfers
-/// to the selected cleanup/TSD exit path. C11 and foreign callers retain the
-/// non-cancellation private route. It does not accept non-normal mutex state.
+/// cancellation policy, and quiescent destruction. Owned main/worker pthread
+/// tasks use the initialized private/shared condition and an admitted mutex;
+/// cancellation repairs enrollment and reacquires that mutex before cleanup.
+/// The frozen archive retains its normal/private worker-only route.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_wait(
     condition: *mut c_void,
@@ -960,14 +939,17 @@ pub(super) unsafe fn signal_selected_private_cond(condition: *mut c_void) -> c_i
 ///
 /// # Safety
 ///
-/// `condition` must designate a live aligned selected private x86
-/// `pthread_cond_t`. The caller owns the predicate/mutex discipline, object
-/// lifetime, and quiescent destruction; this direct static leaf does not
-/// implement process-shared or cancellation behavior.
+/// `condition` must designate a live aligned initialized x86
+/// `pthread_cond_t`. The caller owns predicate/mutex discipline and object
+/// lifetime. Owned products honor its sharing field; the frozen archive
+/// retains its private-only admission.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_signal(condition: *mut c_void) -> c_int {
     // SAFETY: the C ABI obligations above exactly match the private selected
     // signal seam.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    return unsafe { owned::signal(condition, 1) };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     unsafe { signal_selected_private_cond(condition) }
 }
 
@@ -995,13 +977,16 @@ pub(super) unsafe fn broadcast_selected_private_cond(condition: *mut c_void) -> 
 ///
 /// # Safety
 ///
-/// `condition` must designate a live aligned selected private x86
-/// `pthread_cond_t`. The caller owns the predicate/mutex discipline, object
-/// lifetime, and quiescent destruction; this direct static leaf does not
-/// implement process-shared or cancellation behavior.
+/// `condition` must designate a live aligned initialized x86
+/// `pthread_cond_t`. The caller owns predicate/mutex discipline and object
+/// lifetime. Owned products honor its sharing field; the frozen archive
+/// retains its private-only admission.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_broadcast(condition: *mut c_void) -> c_int {
     // SAFETY: the C ABI obligations above exactly match the private selected
     // broadcast seam.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    return unsafe { owned::signal(condition, -1) };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     unsafe { broadcast_selected_private_cond(condition) }
 }

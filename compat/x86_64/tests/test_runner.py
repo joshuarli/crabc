@@ -2102,7 +2102,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "owned-io-cancellation",
                 "owned-resolver-network",
                 "owned-dynamic-io-cancellation",
-                "owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel",
+                "owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed",
                 "owned-pthread-lifecycle",
                 "qualification-manifest",
             )
@@ -10145,8 +10145,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "size_of::<PublicPthreadMutex>() == 40",
             "align_of::<PublicPthreadMutex>() == 8",
             "FUTEX_PRIVATE_FLAG",
-            "futex_wait(lock, marked, true)",
-            "futex_wake(lock, true)",
+            "futex_wait(lock, marked, mutex_is_private(selected_mutex_type(mutex)))",
+            "futex_wake(lock, mutex_is_private(selected_mutex_type(mutex)))",
             "raw_syscall::SYS_FUTEX",
             "raw_syscall::syscall4(",
             "x86_64_compare_exchange_acqrel_i32",
@@ -10625,7 +10625,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_mutex::unlock_selected_normal_mutex",
             "pthread_mutex::lock_selected_normal_mutex",
             "never writes C errno",
-            "Owned static/dynamic main tasks and pthread workers admit deferred",
+            "The frozen archive admits NULL-attribute process-private conditions",
         ):
             self.assertIn(required, pthread_cond)
         condition_exports = set(
@@ -10888,13 +10888,19 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "cnd_init",
                 "cnd_destroy",
                 "cnd_wait",
+                "cnd_timedwait",
                 "cnd_signal",
                 "cnd_broadcast",
             },
         )
+        # Timed conditions are additive only in the owned product. The frozen
+        # archive's installed-symbol rejection remains in its runtime runner.
+        self.assertIn(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\npub unsafe extern "C" fn cnd_timedwait',
+            c11_sync,
+        )
         for forbidden in (
             'pub unsafe extern "C" fn mtx_timedlock',
-            'pub unsafe extern "C" fn cnd_timedwait',
             'pub unsafe extern "C" fn call_once',
             'pub unsafe extern "C" fn tss_',
             "__tls_get_addr",
