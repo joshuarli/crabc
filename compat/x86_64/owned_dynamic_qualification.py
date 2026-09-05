@@ -71,6 +71,7 @@ CASES = {
     "passwd": ("run_owned_passwd.sh", None),
     "pattern": ("run_owned_pattern.sh", None),
     "classic-netdb": ("run_owned_classic_netdb.sh", None),
+    "posix-filesystem": ("run_owned_posix_filesystem.sh", None),
     "unix-mechanisms": ("run_owned_unix_mechanisms.sh", None),
     "posix-composition": ("run_owned_posix_composition.sh", None),
     "resolver-cancellation": ("run_owned_resolver_cancellation.sh", None),

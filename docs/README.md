@@ -20,6 +20,10 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Owned filesystem mechanism evidence](../compat/x86_64/owned-filesystem-mechanisms.md)
   — source-mapped installed filesystem C ABI slice across owned products;
   neither POSIX-family completion nor public support.
+- [Owned POSIX filesystem composition](../compat/x86_64/owned-posix-filesystem.md)
+  — source-mapped stat, directory, traversal, temporary-name, and file-handle
+  providers across owned products; neither POSIX-family completion nor public
+  support.
 - [Owned Linux/filesystem/terminal mechanism evidence](../compat/x86_64/owned-unix-mechanisms.md)
   — source-mapped installed Unix C ABI slice across owned products;
   neither POSIX-family completion nor public support.

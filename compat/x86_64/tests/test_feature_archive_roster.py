@@ -73,6 +73,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "x86-allocator-runtime",
                 "x86-allocator-string-duplication",
                 "x86-environment-runtime",
+                "x86-file-handles",
                 "x86-filesystem-traversal",
                 "x86-h-errno",
                 "x86-interval-timers",
@@ -80,6 +81,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "x86-resolver-runtime",
                 "x86-scandir",
                 "x86-stdio-permanent-format-scan",
+                "x86-temporary-names",
                 "x86-ualarm",
             ),
         )

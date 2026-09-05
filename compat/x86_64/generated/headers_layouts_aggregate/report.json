@@ -618,7 +618,7 @@
       "id": "callable-visibility",
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1",
-      "sha256": "2b5f19e5cc81eb1c4c721a3aebb02c085f107544f9f5d377c4d1bef566267d74",
+      "sha256": "5fdd7de3a06e55e72a47dae86eb121d1d65b8c32c43210b22483c85801b93750",
       "summary": {
         "candidate_only_callable_count": 0,
         "candidate_public_header_count": 191,
@@ -725,7 +725,7 @@
       "id": "callable-disposition",
       "path": "compat/x86_64/header_callable_disposition.json",
       "schema": "crabc.x86_64-header-callable-disposition-report/v1",
-      "sha256": "d98ae7db35a97d8beb06107bcf812982f434356252ea6b86fc935fa2493972a7",
+      "sha256": "b49e46e25bcd22b7e1002db5cc775a078077b7b16a8431f16b1000c7f109ea54",
       "summary": {
         "candidate_external_callable_count": 1525,
         "declared_unverified_feature_callable_count": 257,
@@ -811,7 +811,7 @@
     },
     {
       "path": "compat/x86_64/parity.toml",
-      "sha256": "c14fa0a5ec13f87f419c2b85c4bf0bea34761cd93f72f3f3893cf42b417ce043"
+      "sha256": "447e59a68c7ddd501e049880451ea552370daa26c562e6f8e21e8a8c5f302386"
     },
     {
       "path": "compat/x86_64/public_headers.txt",
@@ -823,7 +823,7 @@
     },
     {
       "path": "compat/x86_64/header_callable_inventory.json",
-      "sha256": "f6a801813bf1357fdba9b708398df1bc5daa073920ab04d2acdd1da72f48d612"
+      "sha256": "517666d8f5b4b90fee5ee6c939214ee2d2aea7b97848392c7d551421f4d7d153"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.toml",
@@ -863,7 +863,7 @@
     },
     {
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
-      "sha256": "2b5f19e5cc81eb1c4c721a3aebb02c085f107544f9f5d377c4d1bef566267d74"
+      "sha256": "5fdd7de3a06e55e72a47dae86eb121d1d65b8c32c43210b22483c85801b93750"
     },
     {
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
@@ -875,7 +875,7 @@
     },
     {
       "path": "compat/x86_64/header_callable_disposition.json",
-      "sha256": "d98ae7db35a97d8beb06107bcf812982f434356252ea6b86fc935fa2493972a7"
+      "sha256": "b49e46e25bcd22b7e1002db5cc775a078077b7b16a8431f16b1000c7f109ea54"
     },
     {
       "path": "compat/x86_64/headers_layouts_aggregate.py",

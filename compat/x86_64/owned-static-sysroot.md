@@ -586,6 +586,16 @@ and dropped-privilege error boundaries, along with the same-object
 musl/static/dynamic product evidence. They do not complete the broader C
 pattern, locale, filesystem, or account contracts.
 
+The installed POSIX filesystem composition is qualified by
+`owned-posix-filesystem`: historical stat aliases, directory cursor/comparator
+and `scandir` ownership, `ftw`/`nftw` callbacks and deferred cancellation,
+legacy temporary names, caller-owned Linux file handles, and the selected
+`lchmod` source path share one pinned-musl/static/dynamic object matrix.
+[`owned-posix-filesystem.md`](owned-posix-filesystem.md) records its source
+mapping, contained filesystem outcomes, provider audit, and required dynamic
+qualification case. It retains the separate feature leaves' ownership and does
+not establish a general filesystem or temporary-file policy.
+
 The installed Linux/filesystem/terminal C mechanism block is qualified by
 `owned-unix-mechanisms`: `get_current_dir_name`, mount lifecycle spellings,
 `tcdrain`, `vhangup`, `vmsplice`, and Linux's `isastream` behavior share

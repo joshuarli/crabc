@@ -32,16 +32,19 @@ x86-allocator-string-duplication = ["x86-allocator-runtime"]
 # The owned-static runtime composition is intentionally a new aggregate, not
 # a widening of either existing allocator evidence feature.  It combines the
 # accepted C backend and its independently audited observation/string clients
-# with the environment-mutation/direct-exec composition, the selected directory
-# clients, and support owners needed by one foreign-free static final link. The
-# support modules themselves remain gated here so default and older private
-# fixture archives keep their exact contracts.
+# with the environment-mutation/direct-exec composition, selected directory
+# clients, caller-owned Linux file handles, and legacy temporary-name clients
+# needed by one foreign-free static final link. The support modules themselves
+# remain gated here so default and older private fixture archives keep their
+# exact contracts.
 x86-owned-static-runtime = [
     "x86-allocator-runtime",
     "x86-allocator-observability",
     "x86-allocator-string-duplication",
     "x86-environment-runtime",
+    "x86-file-handles",
     "x86-filesystem-traversal",
+    "x86-temporary-names",
     "x86-process-exec",
     "x86-stdio-permanent-format-scan",
     "x86-scandir",

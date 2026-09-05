@@ -64,6 +64,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("owned-filesystem-mechanisms", True),
                 ("owned-error-reporting", False),
                 ("owned-passwd", False),
+                ("owned-posix-filesystem", False),
                 ("owned-unix-mechanisms", False),
                 ("owned-passwd-product", False),
                 ("owned-pattern", False),
@@ -95,7 +96,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertNotIn("--ipc=host", arguments)
                         self.assertNotIn("--userns=host", arguments)
                         self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", arguments)
-                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-quick-exit", "owned-legacy-time", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio", "owned-process-control", "owned-signal-helpers", "owned-filesystem-mechanisms", "owned-error-reporting", "owned-named-ipc", "owned-vm-mechanisms", "owned-passwd", "owned-group", "owned-message-queues", "owned-pattern", "owned-unix-mechanisms"):
+                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-quick-exit", "owned-legacy-time", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio", "owned-process-control", "owned-signal-helpers", "owned-filesystem-mechanisms", "owned-error-reporting", "owned-named-ipc", "owned-vm-mechanisms", "owned-passwd", "owned-group", "owned-message-queues", "owned-pattern", "owned-posix-filesystem", "owned-unix-mechanisms"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-2:], [

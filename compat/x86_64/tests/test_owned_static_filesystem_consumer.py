@@ -11,16 +11,18 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class OwnedStaticFilesystemConsumerTests(unittest.TestCase):
-    def test_owned_aggregate_inherits_only_the_ready_directory_features(self) -> None:
+    def test_owned_aggregate_inherits_ready_directory_and_filesystem_extension_features(self) -> None:
         manifest = (ROOT / "libc" / "Cargo.toml").read_text(encoding="utf-8")
 
         aggregate = manifest.split("x86-owned-static-runtime = [", 1)[1].split("]", 1)[0]
         self.assertIn('"x86-scandir",', aggregate)
         self.assertIn('"x86-filesystem-traversal",', aggregate)
-        self.assertNotIn("x86-temporary-names", aggregate)
-        self.assertNotIn("x86-file-handles", aggregate)
+        self.assertIn('"x86-file-handles",', aggregate)
+        self.assertIn('"x86-temporary-names",', aggregate)
         self.assertIn('x86-scandir = ["x86-allocator-runtime"]', manifest)
         self.assertIn("x86-filesystem-traversal = []", manifest)
+        self.assertIn("x86-file-handles = []", manifest)
+        self.assertIn('x86-temporary-names = ["x86-allocator-string-duplication"]', manifest)
 
     def test_owned_runtime_preserves_scandir_and_nftw_cancellation_source_forms(self) -> None:
         directory = (

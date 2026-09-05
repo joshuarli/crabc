@@ -189,7 +189,11 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                 record["artifacts"] = qualification.artifact_snapshot(log, str(self.root))
                 with self.assertRaisesRegex(qualification.QualificationError, "isolated live loopback"):
                     qualification.validate_case(record, "installed", "classic-netdb", self.source, self.manifest)
-    def test_unix_mechanisms_case_stays_bound_to_its_same_object_runner(self):
+    def test_posix_filesystem_and_unix_mechanism_cases_stay_bound_to_same_object_runners(self):
+        self.assertEqual(
+            qualification.CASES["posix-filesystem"],
+            ("run_owned_posix_filesystem.sh", None),
+        )
         self.assertEqual(
             qualification.CASES["unix-mechanisms"],
             ("run_owned_unix_mechanisms.sh", None),

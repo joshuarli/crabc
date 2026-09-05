@@ -112,6 +112,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "passwd",
                 "pattern",
                 "classic-netdb",
+                "posix-filesystem",
                 "unix-mechanisms",
                 "posix-composition",
                 "resolver-cancellation",
