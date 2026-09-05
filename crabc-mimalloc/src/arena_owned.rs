@@ -24,6 +24,9 @@ use crate::lock::PrivateLock;
 use crate::os::{MapAccess, Mapping, MemoryConfig, NormalOsAllocation, VmProcess};
 use crate::types::{Arena, MemoryId, MemoryKind};
 
+#[path = "arena_purge.rs"]
+mod purge;
+
 const EMPTY: u8 = 0;
 const INITIALIZING: u8 = 1;
 const PUBLISHED: u8 = 2;
@@ -86,6 +89,8 @@ pub(crate) struct ProcessArenaBacking {
     reserve_lock: PrivateLock,
     registry: ArenaRegistry,
     slots: [ArenaMappingSlot; MAX_ARENAS],
+    purge_expire: crate::atomic::AtomicI64Value,
+    arena_purges: crate::statistics::StatCounter,
 }
 
 // SAFETY: the lock exclusively owns all unpublished slot transitions. Once
@@ -99,6 +104,8 @@ impl ProcessArenaBacking {
             reserve_lock: PrivateLock::new(),
             registry: ArenaRegistry::new(core::ptr::null_mut()),
             slots: [const { ArenaMappingSlot::new() }; MAX_ARENAS],
+            purge_expire: crate::atomic::AtomicI64Value::new(0),
+            arena_purges: crate::statistics::StatCounter::new(),
         }
     }
 
@@ -120,8 +127,10 @@ impl ProcessArenaBacking {
         unsafe {
             self.registry.try_find_free_with(search, slice_count, alignment, |view| {
                 let owner = self.mapping_for_arena(view.arena())?;
-                view.try_claim_slices_with_owner(search.requested, slice_count, commit,
-                    search.thread_sequence, Some(owner))
+                let mut claim = view.try_claim_slices_with_owner(search.requested, slice_count, commit,
+                    search.thread_sequence, Some(owner))?;
+                claim.backing = Some(self);
+                Some(claim)
             })
         }
     }
@@ -211,6 +220,9 @@ impl ProcessArenaBacking {
         // The internal hook carries Rust ownership, not an externally supplied
         // source callback. Its zero-already-committed path is exactly the OS
         // commit used by source arena initialization and page metadata.
+        let numa_node = if numa_node < 0 && process.policy().arena_is_numa_local() {
+            process.current_numa_node() as i32
+        } else { numa_node };
         let result = unsafe {
             super::manage_in_place(&self.registry, start, managed_size, config.page_size(),
                 memory.initially_committed(), numa_node, exclusive, Some(hook), memory)
@@ -429,6 +441,9 @@ mod tests {
 
     fn process_with_options(options: VmOptions) -> VmProcess<'static> {
         let policy = Box::leak(Box::new(VmPolicy::new(options).unwrap()));
+        // This direct fixture explicitly represents a process after its
+        // preload interval; production transition belongs to process_init.
+        policy.finish_preloading();
         VmProcess::new(policy, MainSubprocess::test_static_owner())
     }
 
@@ -632,6 +647,180 @@ mod tests {
         guard.unlock().unwrap();
         assert_eq!(reader.join().unwrap(), Some(expected_base));
         assert_eq!(slot.initializing_reads.load(Ordering::Relaxed), before);
+    }
+
+    fn purge_process(delay: i64, decommit: bool) -> VmProcess<'static> {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::PurgeDelay, delay);
+        options.set(VmOption::PurgeDecommits, i64::from(decommit));
+        process_with_options(options)
+    }
+
+    #[test]
+    fn source_purge_guard_excludes_collection_without_losing_scheduled_work() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let backing = backing();
+        let process = process();
+        let id = install(backing, process, MapAccess::Reserved);
+        let claim = unsafe { backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }.unwrap();
+        assert!(claim.release());
+        let before = process.subprocess().vm_statistics().snapshot();
+        let guard = crate::atomic::try_atomic_guard(&purge::PURGE_GUARD).unwrap();
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+        assert_eq!(crate::atomic::i64_load_relaxed(&backing.arena_purges.total), 0);
+        drop(guard);
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+        assert_eq!(process.subprocess().vm_statistics().snapshot().purge_calls, before.purge_calls + 1);
+        assert_eq!(crate::atomic::i64_load_relaxed(&backing.arena_purges.total), 1);
+    }
+
+    #[test]
+    fn source_purge_rotation_budget_and_expiration_follow_the_registry_snapshot() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let backing = backing();
+        let process = purge_process(100_000, true);
+        let mut arenas = std::vec::Vec::new();
+        for _ in 0..3 {
+            let id = install(backing, process, MapAccess::Reserved);
+            arenas.push(id);
+            let claim = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }.unwrap();
+            assert!(claim.release());
+        }
+        let expiry = |id: ArenaId| crate::atomic::i64_load_relaxed(unsafe { &(*id.as_ptr()).purge_expire });
+        let before = process.subprocess().vm_statistics().snapshot();
+        assert!(unsafe { backing.collect_purge(process, config(), false, false, 1) });
+        assert!(unsafe { backing.collect_purge(process, config(), false, true, 1) });
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+        assert!(unsafe { backing.collect_purge(process, config(), true, false, 1) });
+        assert_eq!(expiry(arenas[1]), 0);
+        assert!(expiry(arenas[0]) > 0 && expiry(arenas[2]) > 0);
+        assert_eq!(crate::atomic::i64_load_relaxed(&backing.arena_purges.total), 1);
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 2) });
+        assert!(arenas.iter().all(|id| expiry(*id) == 0));
+        assert_eq!(crate::atomic::i64_load_relaxed(&backing.arena_purges.total), 3);
+        assert!(crate::atomic::i64_load_relaxed(&backing.purge_expire) > 0);
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+        assert_eq!(crate::atomic::i64_load_relaxed(&backing.purge_expire), 0);
+    }
+
+    #[test]
+    fn source_minimal_purge_windows_preserve_partial_bits_until_a_later_release() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::MinimalPurgeSize, (2 * ARENA_SLICE_SIZE / KIB) as i64);
+        let process = process_with_options(options);
+        let backing = backing();
+        let id = install(backing, process, MapAccess::Reserved);
+        let mut claims = std::vec::Vec::new();
+        for _ in 0..3 {
+            claims.push(unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }.unwrap());
+        }
+        claims.sort_by_key(|claim| claim.slice_index());
+        let selected = if claims[0].slice_index() % 2 == 0 { 0 } else { 1 };
+        let first = claims.remove(selected);
+        let second = claims.remove(selected);
+        let start = first.slice_index();
+        assert_eq!(second.slice_index(), start + 1);
+        assert_eq!(start % 2, 0);
+        let before = process.subprocess().vm_statistics().snapshot();
+        assert!(first.release());
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+        assert_eq!(process.subprocess().vm_statistics().snapshot().purge_calls, before.purge_calls);
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+        assert_eq!(unsafe { view.slices_purge() }.unwrap().is_set_range(start, 1), Some(true));
+        assert_eq!(crate::atomic::i64_load_relaxed(&view.arena().purge_expire), 0);
+        assert!(second.release());
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+        let after = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after.purge_calls - before.purge_calls, 1);
+        assert_eq!(after.purged - before.purged, (2 * ARENA_SLICE_SIZE) as i64);
+        assert_eq!(unsafe { view.slices_purge() }.unwrap().is_clear_range(start, 2), Some(true));
+        for claim in claims { assert!(claim.release()); }
+    }
+
+    #[test]
+    fn source_purge_consumes_advisory_failure_and_never_discards_reallocated_slices() {
+        let fault = fault::install(fault::Plan::disabled());
+        let backing = backing();
+        let process = process();
+        let id = install(backing, process, MapAccess::Reserved);
+        let claim = unsafe { backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }.unwrap();
+        let start = claim.slice_index();
+        assert!(claim.release());
+        let live = unsafe { backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, true) }.unwrap();
+        assert_eq!(live.slice_index(), start);
+        unsafe { live.start().write(0x7b); }
+        let before = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+        let after = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after.purge_calls - before.purge_calls, 1);
+        assert_eq!(after.purged - before.purged, ARENA_SLICE_SIZE as i64);
+        assert_eq!(unsafe { live.start().read() }, 0x7b);
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+        assert_eq!(unsafe { view.slices_purge() }.unwrap().is_clear_range(start, 2), Some(true));
+        assert_eq!(crate::atomic::i64_load_relaxed(&view.arena().purge_expire), 0);
+        fault.set(fault::Plan::disabled());
+        assert!(live.release());
+    }
+
+    #[test]
+    fn source_disabled_and_preloading_purge_leave_no_scheduled_bits() {
+        let _fault = fault::install(fault::Plan::disabled());
+        for preloading in [false, true] {
+            let process = if preloading {
+                let mut options = VmOptions::uninitialized();
+                options.initialize_all(|_| VmOptionEnvironment::Absent);
+                let policy = Box::leak(Box::new(VmPolicy::new(options).unwrap()));
+                VmProcess::new(policy, MainSubprocess::test_static_owner())
+            } else { purge_process(-1, true) };
+            let backing = backing();
+            let id = install(backing, process, MapAccess::Reserved);
+            let claim = unsafe { backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true) }.unwrap();
+            let start = claim.slice_index();
+            let before = process.subprocess().vm_statistics().snapshot();
+            assert!(claim.release());
+            assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+            assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            assert_eq!(unsafe { view.slices_purge() }.unwrap().is_clear_range(start, 2), Some(true));
+            assert_eq!(crate::atomic::i64_load_relaxed(&backing.purge_expire), 0);
+        }
+    }
+
+    #[test]
+    fn emit_native_owned_arena_purge_trace() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let mut field = 0;
+        for (delay, decommit, mixed) in [(0, true, false), (0, false, false),
+            (0, false, true), (1000, true, false)] {
+            let process = purge_process(delay, decommit);
+            let backing = backing();
+            let id = install(backing, process, MapAccess::Reserved);
+            let claim = unsafe { backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, !mixed) }.unwrap();
+            let start = claim.slice_index();
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            if mixed {
+                let owner = unsafe { backing.mapping_for_arena(view.arena()) }.unwrap();
+                assert!(owner.commit(claim.start(), ARENA_SLICE_SIZE, 0));
+                unsafe { view.slices_committed() }.unwrap().set_range(start, 1).unwrap();
+            }
+            let before = process.subprocess().vm_statistics().snapshot();
+            assert!(claim.release());
+            assert!(unsafe { backing.collect_purge(process, config(), true, true, 0) });
+            let after = process.subprocess().vm_statistics().snapshot();
+            for value in [after.purge_calls - before.purge_calls, after.purged - before.purged,
+                after.reset_calls - before.reset_calls, after.reset - before.reset,
+                after.committed_current - before.committed_current,
+                unsafe { view.slices_committed() }.unwrap().popcount_range(start, 2).unwrap() as i64,
+                crate::atomic::i64_load_relaxed(&backing.arena_purges.total)] {
+                std::println!("m2.arena.purge.{field}={value}"); field += 1;
+            }
+        }
+        assert_eq!(field, 28);
     }
 
     #[test]

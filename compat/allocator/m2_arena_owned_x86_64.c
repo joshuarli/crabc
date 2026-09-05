@@ -37,6 +37,40 @@ static void trace_claim(mi_arena_t* owner, bool commit) {
   _mi_arenas_free(subprocess, p, 2 * MI_ARENA_SLICE_SIZE, memory);
 }
 
+static size_t purge_field;
+static void emit_purge(int64_t value) {
+  printf("m2.arena.purge.%zu=%lld\n", purge_field++, (long long)value);
+}
+
+static void trace_purge(long delay, bool decommit, bool mixed) {
+  mi_option_set(mi_option_purge_delay, delay);
+  mi_option_set(mi_option_purge_decommits, decommit);
+  mi_arena_t* owner = arena(false);
+  mi_memid_t memory;
+  void* p = mi_arena_try_alloc_at(owner, 2, !mixed, 0, &memory);
+  require(p != NULL);
+  const size_t start = memory.mem.arena.slice_index;
+  if (mixed) {
+    require(_mi_os_commit(subprocess, p, MI_ARENA_SLICE_SIZE, NULL));
+    mi_bitmap_setN(owner->slices_committed, start, 1, NULL);
+  }
+  const int64_t calls = subprocess->stats.purge_calls.total;
+  const int64_t purged = subprocess->stats.purged.total;
+  const int64_t reset_calls = subprocess->stats.reset_calls.total;
+  const int64_t reset = subprocess->stats.reset.total;
+  const int64_t committed = subprocess->stats.committed.current;
+  const int64_t arena_purges = subprocess->stats.arena_purges.total;
+  _mi_arenas_free(subprocess, p, 2 * MI_ARENA_SLICE_SIZE, memory);
+  if (delay > 0) mi_arena_try_purge(owner, _mi_clock_now(), true);
+  emit_purge(subprocess->stats.purge_calls.total - calls);
+  emit_purge(subprocess->stats.purged.total - purged);
+  emit_purge(subprocess->stats.reset_calls.total - reset_calls);
+  emit_purge(subprocess->stats.reset.total - reset);
+  emit_purge(subprocess->stats.committed.current - committed);
+  emit_purge(mi_bitmap_popcountN(owner->slices_committed, start, 2));
+  emit_purge(subprocess->stats.arena_purges.total - arena_purges);
+}
+
 int main(void) {
   mi_process_init();
   subprocess = _mi_subproc_main();
@@ -55,5 +89,10 @@ int main(void) {
   _mi_arenas_free(subprocess, p, 2 * MI_ARENA_SLICE_SIZE, memory);
   trace_claim(mixed, false);
   require(field == 20);
+  trace_purge(0, true, false);
+  trace_purge(0, false, false);
+  trace_purge(0, false, true);
+  trace_purge(1000, true, false);
+  require(purge_field == 28);
   return 0;
 }

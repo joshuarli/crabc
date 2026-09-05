@@ -1254,6 +1254,7 @@ pub(crate) struct ArenaSliceClaim<'arena> {
     arena: NonNull<Arena>,
     start: NonNull<u8>,
     memory: MemoryId,
+    backing: Option<&'arena ProcessArenaBacking>,
     _arena: PhantomData<&'arena Arena>,
 }
 
@@ -1377,6 +1378,9 @@ impl ArenaSliceClaim<'_> {
     /// free span introduced through an unsafe external release.
     #[inline]
     pub(crate) fn release(self) -> bool {
+        if let Some(backing) = self.backing {
+            return unsafe { backing.release_slices(self.memory) };
+        }
         unsafe { release_arena_slices(self.memory) }
     }
 
@@ -1407,7 +1411,7 @@ impl ArenaSliceClaim<'_> {
         if !core::ptr::eq(arena.subprocess, subprocess.as_ptr()) {
             return Err(self);
         }
-        Ok(unsafe { release_arena_slices(self.memory) })
+        Ok(self.release())
     }
 }
 
@@ -2254,6 +2258,7 @@ impl<'arena> ArenaView<'arena> {
             arena: self.arena,
             start,
             memory,
+            backing: None,
             _arena: PhantomData,
         })
     }
