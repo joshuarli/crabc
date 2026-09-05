@@ -44,6 +44,19 @@ and that pinned backend's own sources. Owned `syscall`, `prctl`, `realpath`,
 and `abort` providers remove the earlier musl support-object tail. This is
 an accepted C dependency, not full target-runtime Rust purity.
 
+Both owned-sysroot builders define `MI_PRIM_HAS_PROCESS_ATTACH=1` for that
+backend and pass the paired `crabc_owned_mimalloc_lifecycle` Rust cfg. The
+define suppresses mimalloc's private C implicit attach/detach entries; the cfg
+installs exactly one private same-image `.init_array` entry and one
+`.fini_array` entry that invoke the matching upstream automatic process
+operation while preserving the application's incoming `errno`. The builder
+rejects either half of the pair, a duplicate Rust entry, or a backend object
+that still carries a C lifecycle hook, then records the profile in allocator
+provenance. `compat/x86_64/run_owned_mimalloc_startup_errno.sh` compares musl
+and proves preinit, application-constructor, and main allocations preserve an
+errno sentinel in static `ET_EXEC` and static-PIE, as well as the dynamic
+product's PIE and non-PIE modes.
+
 `bin/crabc-cc` is an installed, sealed static-driver seed. Its deterministic
 `--print-link-plan -static` contract selects `crt1.o` and `ET_EXEC`; its
 `--print-link-plan -static-pie` contract selects `rcrt1.o` and `ET_DYN`. Both

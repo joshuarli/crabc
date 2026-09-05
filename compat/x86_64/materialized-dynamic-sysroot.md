@@ -132,11 +132,21 @@ The native gate checks the installed and extracted real PIE plus GD-TLS DSO:
 allocation/reallocation, ordinary environment COPY interposition, independent
 main/worker errno, 24 create/join/release cycles, over-aligned TLS and TBSS,
 buffered file I/O and ordinary-exit flushing. Its stdout equals pinned musl
-1.2.6. The main errno sentinel is installed after constructors: the accepted C
-allocator probes `/proc/sys/vm/overcommit_memory` and sysfs during initialization
-(`libmimalloc-sys` 0.1.49, `mimalloc/v2/src/prim/unix/prim.c`), which can leave
-ENOENT inside the intentionally empty chroot. Each worker's initial errno is
-still required to be zero, independent of the main's live errno.
+1.2.6. The paired static and dynamic builders compile the accepted
+`libmimalloc-sys` 0.1.49 mimalloc v3.3.2 backend with
+`MI_PRIM_HAS_PROCESS_ATTACH=1`. That suppresses its C-owned implicit
+attach/detach entries only because the same Cargo build selects exactly one
+private Rust `.init_array` and `.fini_array` entry in the libc image. Each
+entry calls the matching upstream automatic process operation and restores the
+incoming application `errno`: allocator probes of
+`/proc/sys/vm/overcommit_memory` or sysfs can otherwise leave `ENOENT` in an
+intentionally empty chroot. The builder rejects a missing or duplicate C/Rust
+profile or lifecycle entry and attests the resulting profile in libc
+provenance. `compat/x86_64/run_owned_mimalloc_startup_errno.sh` runs the musl
+reference and proves a preinit allocation, a user-constructor allocation, and
+main retain the sentinel through the owned dynamic PIE/non-PIE image. Each
+worker's initial errno is still required to be zero, independent of the
+main's live errno.
 
 The first actual libc exposed 648 RELA entries, exceeding the legacy 512-write
 scratch buffer. General relocation preflight now owns checked ELF-sized raw

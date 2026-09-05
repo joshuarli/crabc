@@ -305,6 +305,78 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
                 with self.assertRaisesRegex(builder.BuildError, "lacks its source"):
                     builder.allocator_header_provenance(dependencies, cargo)
 
+    def test_owned_mimalloc_lifecycle_profile_rejects_unpaired_or_duplicate_entries(self) -> None:
+        """The producer may suppress C hooks only with one Rust replacement pair."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "libmimalloc.a"
+            raw_libc = root / "libc.a"
+            archive.write_bytes(b"archive")
+            raw_libc.write_bytes(b"raw libc")
+            command = ("cargo", "rustc", "--cfg", builder.MIMALLOC_LIFECYCLE_RUST_CFG)
+            c_flags = (builder.MIMALLOC_LIFECYCLE_C_FLAG,)
+
+            with self.assertRaisesRegex(builder.BuildError, "C profile"):
+                builder.owned_mimalloc_lifecycle_profile(
+                    (), command, archive, raw_libc, llvm_ar="ar", llvm_nm="nm",
+                    llvm_objdump="objdump", stage=root / "missing-c",
+                )
+            with self.assertRaisesRegex(builder.BuildError, "C profile"):
+                builder.owned_mimalloc_lifecycle_profile(
+                    c_flags * 2, command, archive, raw_libc, llvm_ar="ar", llvm_nm="nm",
+                    llvm_objdump="objdump", stage=root / "duplicate-c",
+                )
+            with self.assertRaisesRegex(builder.BuildError, "Rust cfg"):
+                builder.owned_mimalloc_lifecycle_profile(
+                    c_flags, ("cargo", "rustc"), archive, raw_libc, llvm_ar="ar", llvm_nm="nm",
+                    llvm_objdump="objdump", stage=root / "missing-rust",
+                )
+            with self.assertRaisesRegex(builder.BuildError, "Rust cfg"):
+                builder.owned_mimalloc_lifecycle_profile(
+                    c_flags, (*command, "--cfg", builder.MIMALLOC_LIFECYCLE_RUST_CFG), archive, raw_libc,
+                    llvm_ar="ar", llvm_nm="nm", llvm_objdump="objdump", stage=root / "duplicate-rust",
+                )
+
+            profile_index = 0
+
+            def run_with(symbols: bytes, shim_symbols: bytes, sections: bytes = b"Sections:\n") -> object:
+                nonlocal profile_index
+                stage = root / f"profile-{profile_index}"
+                profile_index += 1
+
+                def fake_run(command: list[str], **kwargs: object) -> bytes:
+                    if command[:2] == ["ar", "t"]:
+                        return b"1234-static.o\n"
+                    if command[:2] == ["ar", "p"]:
+                        return b"object"
+                    if command[:2] == ["objdump", "--section-headers"]:
+                        return sections
+                    if command == ["nm", str(stage / "1234-static.o")]:
+                        return symbols
+                    if command == ["nm", "--defined-only", str(raw_libc)]:
+                        return shim_symbols
+                    raise AssertionError(command)
+
+                with mock.patch.object(builder, "run", side_effect=fake_run):
+                    return builder.owned_mimalloc_lifecycle_profile(
+                        c_flags, command, archive, raw_libc, llvm_ar="ar", llvm_nm="nm",
+                        llvm_objdump="objdump", stage=stage,
+                    )
+
+            entries = (
+                f"0000 d {builder.MIMALLOC_LIFECYCLE_INIT_SYMBOL}\n"
+                f"0008 d {builder.MIMALLOC_LIFECYCLE_FINI_SYMBOL}\n"
+            ).encode()
+            self.assertEqual(run_with(b"", entries)["backend_implicit_attach_detach"], "absent")
+            with self.assertRaisesRegex(builder.BuildError, "implicit process attach"):
+                run_with(b"0000 t mi_process_attach\n", entries)
+            with self.assertRaisesRegex(builder.BuildError, "implicit process attach"):
+                run_with(b"", entries, b"  8 .init_array\n")
+            for symbol in (builder.MIMALLOC_LIFECYCLE_INIT_SYMBOL, builder.MIMALLOC_LIFECYCLE_FINI_SYMBOL):
+                with self.subTest(duplicate=symbol), self.assertRaisesRegex(builder.BuildError, "exactly one"):
+                    run_with(b"", entries + f"0010 d {symbol}\n".encode())
+
     def test_accepted_allocator_pin_rejects_changed_or_duplicate_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             checkout = Path(temporary)

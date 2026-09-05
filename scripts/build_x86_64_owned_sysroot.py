@@ -51,6 +51,14 @@ C_ALLOCATOR_PIN = {
     "version": "0.1.49",
     "checksum": "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9",
 }
+# The C backend's compiler constructor is disabled only when this matching
+# Rust cfg selects the private same-image replacement entries.  Keeping the
+# two spellings here makes the product builder, rather than an ambient Cargo
+# invocation, the authority for this coupled lifecycle profile.
+MIMALLOC_LIFECYCLE_C_FLAG = "-DMI_PRIM_HAS_PROCESS_ATTACH=1"
+MIMALLOC_LIFECYCLE_RUST_CFG = "crabc_owned_mimalloc_lifecycle"
+MIMALLOC_LIFECYCLE_INIT_SYMBOL = "__crabc_x86_owned_mimalloc_process_initializer"
+MIMALLOC_LIFECYCLE_FINI_SYMBOL = "__crabc_x86_owned_mimalloc_process_finalizer"
 STOCK_COMPILER_BUILTINS_MEMBER = re.compile(r"^compiler_builtins-.+\.rcgu\.o$")
 STOCK_RUST_CORE_MEMBER = re.compile(
     r"^core-[0-9a-f]+\.core\.[0-9a-f]+-cgu\.[0-9]+\.rcgu\.o$"
@@ -340,6 +348,57 @@ def run(
             f"stderr:\n{completed.stderr.decode(errors='replace')}"
         )
     return completed.stdout
+
+
+def owned_mimalloc_lifecycle_profile(
+    c_flags: Sequence[str], cargo_command: Sequence[str], allocator_archive: Path,
+    raw_libc: Path, *, llvm_ar: str, llvm_nm: str, llvm_objdump: str, stage: Path,
+) -> dict[str, object]:
+    """Reject a one-sided C/Rust automatic-mimalloc lifecycle selection.
+
+    The locked C source owns the normal compiler constructor. These native
+    products suppress it only because the same Cargo invocation selects the
+    private Rust entries below. Inspect the produced C object and raw Rust
+    archive as well as the commands, so changing just a flag or just a cfg
+    cannot silently create a missing or duplicate process callback.
+    """
+
+    if c_flags.count(MIMALLOC_LIFECYCLE_C_FLAG) != 1 or any(
+        flag.startswith("-DMI_PRIM_HAS_PROCESS_ATTACH") and flag != MIMALLOC_LIFECYCLE_C_FLAG
+        for flag in c_flags
+    ):
+        raise BuildError("owned mimalloc lifecycle C profile is missing or ambiguous")
+    if sum(
+        (cargo_command[index], cargo_command[index + 1]) == ("--cfg", MIMALLOC_LIFECYCLE_RUST_CFG)
+        for index in range(len(cargo_command) - 1)
+    ) != 1:
+        raise BuildError("owned mimalloc lifecycle Rust cfg is missing or ambiguous")
+
+    members = run([llvm_ar, "t", str(allocator_archive)]).decode("utf-8", errors="replace").splitlines()
+    if len(members) != 1 or ALLOCATOR_MEMBER.fullmatch(members[0]) is None:
+        raise BuildError("owned mimalloc lifecycle requires one accepted allocator object")
+    if stage.exists() or stage.is_symlink():
+        raise BuildError("owned mimalloc lifecycle inspection path is already occupied")
+    stage.mkdir(mode=0o700)
+    backend = stage / members[0]
+    backend.write_bytes(run([llvm_ar, "p", str(allocator_archive), members[0]]))
+    sections = run([llvm_objdump, "--section-headers", str(backend)]).decode("utf-8", errors="replace")
+    symbols = run([llvm_nm, str(backend)]).decode("utf-8", errors="replace")
+    if re.search(r"\.(?:init|fini)_array\b", sections) or re.search(
+        r"(?m)^.*\bmi_process_(?:attach|detach)$", symbols
+    ):
+        raise BuildError("accepted allocator retains its implicit process attach/detach hooks")
+
+    rust_symbols = run([llvm_nm, "--defined-only", str(raw_libc)]).decode("utf-8", errors="replace")
+    for symbol in (MIMALLOC_LIFECYCLE_INIT_SYMBOL, MIMALLOC_LIFECYCLE_FINI_SYMBOL):
+        if len(re.findall(rf"(?m)^.*\b{re.escape(symbol)}$", rust_symbols)) != 1:
+            raise BuildError(f"raw libc lacks exactly one owned mimalloc lifecycle entry: {symbol}")
+    return {
+        "c_define": MIMALLOC_LIFECYCLE_C_FLAG,
+        "rust_cfg": MIMALLOC_LIFECYCLE_RUST_CFG,
+        "backend_implicit_attach_detach": "absent",
+        "same_image_entries": [MIMALLOC_LIFECYCLE_INIT_SYMBOL, MIMALLOC_LIFECYCLE_FINI_SYMBOL],
+    }
 
 
 def assert_native_target() -> None:
@@ -706,6 +765,9 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
     c_flags = [
         "-nostdinc", "-isystem", str(ROOT / "include"),
         "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong",
+        # The Rust libc owns the matching init/fini entries.  Do not let the
+        # fixed C backend install a second hidden constructor.
+        MIMALLOC_LIFECYCLE_C_FLAG,
         f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file),
     ]
     environment = deterministic_environment()
@@ -734,6 +796,8 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         "--",
         "--cfg",
         "crabc_owned_static_sysroot",
+        "--cfg",
+        MIMALLOC_LIFECYCLE_RUST_CFG,
         "-C",
         "relocation-model=pic",
         "-C",
@@ -752,6 +816,11 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
     if len(allocator_archives) != 1:
         raise BuildError("Cargo did not produce one unambiguous accepted allocator archive")
     allocator_headers = allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"]))
+    allocator_lifecycle = owned_mimalloc_lifecycle_profile(
+        c_flags, cargo_command, allocator_archives[0], raw_libc,
+        llvm_ar=llvm_ar, llvm_nm=llvm_nm, llvm_objdump=llvm_objdump,
+        stage=stage / "allocator-lifecycle-profile",
+    )
 
     crt_root = stage / "crt"
     run(
@@ -792,6 +861,7 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
         "compiler": c_compiler,
         "target_flags": [flag.replace(str(stage), "$CRABC_X86_BUILD").replace(str(ROOT), "$CRABC_SOURCE") for flag in c_flags],
         "source_and_header_sha256": allocator_headers,
+        "lifecycle_profile": allocator_lifecycle,
     })
     return {
         "cargo_command": [
@@ -814,6 +884,8 @@ def build_runtime_inputs(stage: Path) -> dict[str, object]:
             "--",
             "--cfg",
             "crabc_owned_static_sysroot",
+            "--cfg",
+            MIMALLOC_LIFECYCLE_RUST_CFG,
             "-C",
             "relocation-model=pic",
             "-C",

@@ -82,6 +82,9 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     dependency_file = stage / "allocator.d"
     c_flags = ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC",
                "-ftls-model=initial-exec", "-fstack-protector-strong",
+               # The Rust libc owns the matching init/fini entries.  Do not
+               # let the fixed C backend install a second hidden constructor.
+               common.MIMALLOC_LIFECYCLE_C_FLAG,
                f"-ffile-prefix-map={ROOT}=/crabc", "-MD", "-MF", str(dependency_file)]
     environment.update({"CC_x86_64_unknown_linux_musl": "/usr/bin/gcc",
                         "CFLAGS_x86_64_unknown_linux_musl": shlex.join(c_flags),
@@ -90,6 +93,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     libc_command = [*cargo, "rustc", "--locked", "-p", "crabc-libc", "--lib", "--release",
          "--features", "x86-owned-dynamic-runtime", "--target", common.TARGET,
          "--target-dir", str(stage / "cargo"), "--", "--cfg", "crabc_owned_static_sysroot",
+         "--cfg", common.MIMALLOC_LIFECYCLE_RUST_CFG,
          "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec",
          "--remap-path-prefix", f"{ROOT}=/crabc"]
     # The linkage feature selects the general dlfcn bridge. The historical
@@ -99,6 +103,11 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     backends = list((stage / "cargo" / common.TARGET / "release/build").glob("libmimalloc-sys-*/out/libmimalloc.a"))
     if len(backends) != 1:
         raise common.BuildError("expected one accepted C allocator archive")
+    allocator_lifecycle = common.owned_mimalloc_lifecycle_profile(
+        c_flags, libc_command, backends[0], raw,
+        llvm_ar=ar, llvm_nm=nm, llvm_objdump=objdump,
+        stage=stage / "allocator-lifecycle-profile",
+    )
     backend_members = run([ar, "t", str(backends[0])]).decode().splitlines()
     if len(backend_members) != 1:
         raise common.BuildError("accepted allocator archive must have one object")
@@ -173,6 +182,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
                   "allocator_headers": common.allocator_header_provenance(dependency_file, Path(environment["CARGO_HOME"])),
                   "allocator_compiler": common.executable_identity(Path("/usr/bin/gcc"), "pinned allocator C compiler"),
                   "allocator_flags": [flag.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for flag in c_flags],
+                  "allocator_lifecycle_profile": allocator_lifecycle,
                   "libc_command": [arg.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for arg in libc_command],
                   "loader_imports": sorted(allowed)}
     common.write_json(metadata / "libc-shared.provenance.json", provenance)
