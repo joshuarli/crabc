@@ -211,6 +211,9 @@ def require_live_oracle(work: Path, oracle: dict) -> None:
 def prepare(work: Path) -> None:
     """Run the pinned oracle and nearest source/driver judges with kept logs."""
     work = evidence_path(work)
+    # This is the evidence parent, not a runtime fixture root. Make even a
+    # failed preparation log reachable from the host without recursive changes.
+    os.chmod(work, stat.S_IMODE(work.stat().st_mode) | 0o555, follow_symlinks=False)
     source = source_digest()
     oracle = capture_oracle(work)
     require_live_oracle(work, oracle)
@@ -227,6 +230,7 @@ def prepare(work: Path) -> None:
     ]
     log = work / "qualification-prepare.log"
     with log.open("xb") as output:
+        os.fchmod(output.fileno(), stat.S_IMODE(os.fstat(output.fileno()).st_mode) | 0o444)
         for command in commands:
             completed = subprocess.run(command, cwd=ROOT, stdout=output, stderr=subprocess.STDOUT)
             require(completed.returncode == 0, f"qualification preparation failed: {command[0]}; {log}")
@@ -254,8 +258,8 @@ def preparation_evidence(work: Path, source: str) -> dict[str, str]:
     return {relative(path): digest(path), relative(log): digest(log), **oracle_files}
 
 
-def artifact_snapshot(log: Path, source_mount: str) -> dict:
-    """Seal the actual leaf evidence, including derived ELF and link receipts.
+def leaf_evidence_directories(log: Path, source_mount: str) -> set[Path]:
+    """Find only the exact retained roots declared by a completed leaf.
 
     Paths in logs use the producer's container mount; record them relative to
     the checkout so host-side validation does not depend on /workspace.
@@ -269,6 +273,34 @@ def artifact_snapshot(log: Path, source_mount: str) -> dict:
         path = evidence_path(ROOT / name[len(prefix):])
         require(path.is_dir() and not path.is_symlink(), "leaf evidence directory missing")
         directories.add(path)
+    return directories
+
+
+def make_retained_evidence_readable(root: Path) -> None:
+    """After execution, add directory read/traverse and regular-file read bits.
+
+    This mutates only the exact admitted evidence tree. Symlinks are described
+    but never followed and special nodes stay unchanged. Regular-file execute
+    and write bits and directory write bits stay intact. Runtime permissions have already
+    been tested before this retention policy runs.
+    """
+    root = evidence_path(root)
+    require(root.is_dir() and not root.is_symlink(), "retained evidence root must be a physical directory")
+    pending = [root]
+    while pending:
+        path = pending.pop()
+        require(path.is_relative_to(root), "retained evidence escapes its exact root")
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            os.chmod(path, stat.S_IMODE(mode) | 0o555, follow_symlinks=False)
+            pending.extend(path.iterdir())
+        elif stat.S_ISREG(mode):
+            os.chmod(path, stat.S_IMODE(mode) | 0o444, follow_symlinks=False)
+
+
+def artifact_snapshot(log: Path, source_mount: str) -> dict:
+    """Seal post-execution evidence, including derived ELF and link receipts."""
+    directories = leaf_evidence_directories(log, source_mount)
     require(directories, "leaf did not identify retained artifact evidence")
     result = {}
     for directory in sorted(directories):
@@ -304,6 +336,8 @@ def run_case(work: Path, product: str, case: str) -> None:
     with log.open("xb") as output:
         completed = subprocess.run(command, cwd=ROOT, env=environment, stdout=output, stderr=subprocess.STDOUT)
     print(log.read_text(errors="replace"), end="", flush=True)
+    for directory in leaf_evidence_directories(log, str(ROOT)):
+        make_retained_evidence_readable(directory)
     require(completed.returncode == 0, f"coverage case failed: {product}/{case}; {log}")
     require_live_oracle(work, oracle)
     require(source_digest() == source and product_identity(work / product) == manifest,
@@ -488,6 +522,7 @@ def main() -> int:
             run_case(args.work, args.product, args.case)
         elif args.operation == "finish":
             require(args.work is not None, "finish requires --work")
+            make_retained_evidence_readable(args.work)
             write_new(args.work / "qualification.json", collect(args.work))
             print(f"dynamic product qualification ready for review: {args.work / 'qualification.json'}")
         else:

@@ -78,3 +78,16 @@ its pointer remains available for inspection and cannot block fresh
 qualification. Explicit receipt validation still reports the precise stale
 or missing evidence. A fresh reviewed receipt can replace the old pointer. All generated receipts and referenced evidence
 must remain available under the checkout's ignored `.work` tree.
+
+Retained evidence is readable from the host without a Docker status wrapper.
+`prepare` adds read/traverse permission only to the fresh top-level evidence
+work directory and makes its log readable, including on preparation failure.
+Runtime fixture roots keep their original permissions while their leaf runs.
+After each leaf exits, the producer adds directory read/traverse and regular-file
+read permissions only within the exact `.work` evidence roots named by that
+leaf, before sealing artifact snapshots. Symlinks are never followed, special
+nodes stay unchanged, regular-file executable/write bits stay intact, and no
+whole `.work` permission rewrite occurs. `finish` applies the same retention
+policy to its exact completed work tree before validation. Snapshot modes thus
+describe retained evidence; runtime permission semantics come from the executed
+fixture assertions and musl observations, before normalization.

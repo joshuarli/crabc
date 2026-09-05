@@ -223,6 +223,74 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         with mock.patch.object(qualification, "require_clean_source", side_effect=qualification.QualificationError("dirty source")):
             self.assertIsNone(qualification.load_publication())
 
+    def test_leaf_permissions_change_only_after_execution_and_symlink_targets_stay_private(self):
+        leaf = self.work / "private-leaf"
+        leaf.mkdir(mode=0o700)
+        leaf.chmod(0o700)
+        nested = leaf / "nested"
+        nested.mkdir(mode=0o700)
+        nested.chmod(0o700)
+        retained = nested / "observation"
+        retained.write_bytes(b"retained observation")
+        retained.chmod(0o600)
+        executable = leaf / "consumer"
+        executable.write_bytes(b"owned executable")
+        executable.chmod(0o711)
+        outside = self.root / "unrelated-private"
+        outside.mkdir(mode=0o700)
+        outside.chmod(0o700)
+        outside_file = outside / "secret"
+        outside_file.write_bytes(b"unrelated")
+        outside_file.chmod(0o600)
+        (leaf / "outside-file").symlink_to(outside_file)
+        (leaf / "outside-directory").symlink_to(outside, target_is_directory=True)
+        for suffix in (".log", ".json"):
+            (self.work / "qualification-cases/installed/cycle").with_suffix(suffix).unlink()
+
+        def execute(command, **arguments):
+            self.assertEqual(stat.S_IMODE(leaf.stat().st_mode), 0o700)
+            self.assertEqual(stat.S_IMODE(retained.stat().st_mode), 0o600)
+            arguments["stdout"].write(f"leaf passed; evidence: {leaf}\n".encode())
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.object(qualification.subprocess, "run", side_effect=execute), \
+             mock.patch.object(qualification, "require_live_oracle"):
+            qualification.run_case(self.work, "installed", "cycle")
+        self.assertEqual(stat.S_IMODE(leaf.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(nested.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(retained.stat().st_mode), 0o644)
+        self.assertEqual(stat.S_IMODE(executable.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o700)
+        self.assertEqual(stat.S_IMODE(outside_file.stat().st_mode), 0o600)
+        record = qualification.read(self.work / "qualification-cases/installed/cycle.json")
+        qualification.validate_case(record, "installed", "cycle", self.source, self.manifest)
+        self.assertNotIn("outside-directory/secret", record["artifacts"][qualification.relative(leaf)])
+
+    def test_retention_policy_refuses_a_discovered_root_outside_checkout_work(self):
+        outside = self.root / "unrelated"
+        outside.mkdir()
+        outside.chmod(0o700)
+        log = self.put("outside-evidence.log", f"evidence: {outside}\n".encode())
+        with self.assertRaisesRegex(qualification.QualificationError, "physical checkout .work"):
+            for directory in qualification.leaf_evidence_directories(log, str(self.root)):
+                qualification.make_retained_evidence_readable(directory)
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o700)
+
+    def test_prepare_makes_only_the_work_directory_traversable_before_running_judges(self):
+        self.work.chmod(0o700)
+        untouched = self.work / "runtime-private"
+        untouched.mkdir(mode=0o700)
+        untouched.chmod(0o700)
+        oracle = qualification.read(self.work / "qualification-prepare.json")["oracle"]
+        for name in ("qualification-prepare.json", "qualification-prepare.log"):
+            (self.work / name).unlink()
+        with mock.patch.object(qualification, "capture_oracle", return_value=oracle), \
+             mock.patch.object(qualification, "require_live_oracle"), \
+             mock.patch.object(qualification.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+            qualification.prepare(self.work)
+        self.assertEqual(stat.S_IMODE(self.work.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(untouched.stat().st_mode), 0o700)
+
     def test_missing_second_product_cancellation_cannot_be_inferred_from_other_products(self):
         (self.work / "qualification-cases/second/io-cancellation.json").unlink()
         with self.assertRaisesRegex(qualification.QualificationError, "coverage cases"):
