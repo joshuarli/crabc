@@ -528,6 +528,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
   owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
   lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
+  libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
   owned-dynamic-sysroot  inspect the legacy plan-only dynamic-product gate
   materialized-dynamic-sysroot  build and test the installed initial-graph shared runtime
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
@@ -4853,6 +4854,10 @@ run_lua_static_source_build_probe() {
         --timeout "${CRABC_X86_64_LUA_TIMEOUT:-120}"
 }
 
+run_libc_owned_wordexp_probe() {
+    run_in_container bash /workspace/compat/x86_64/run_libc_owned_wordexp.sh
+}
+
 run_owned_dynamic_sysroot_probe() {
     run_in_container bash /workspace/compat/x86_64/run_owned_dynamic_sysroot.sh
 }
@@ -5483,6 +5488,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-static-sysroot) ;;
     lua-static-source-build) ;;
+    libc-owned-wordexp) ;;
     owned-dynamic-sysroot) ;;
     materialized-dynamic-sysroot) ;;
     crt-object-bundle) ;;
@@ -7482,6 +7488,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "lua-static-source-build takes no arguments"
         ensure_image
         run_lua_static_source_build_probe
+        ;;
+    libc-owned-wordexp)
+        [ "$#" -eq 0 ] || fail "libc-owned-wordexp takes no arguments"
+        ensure_image
+        run_libc_owned_wordexp_probe
         ;;
     owned-dynamic-sysroot)
         [ "$#" -eq 0 ] || fail "owned-dynamic-sysroot takes no arguments"

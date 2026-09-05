@@ -939,6 +939,12 @@ mod owned_process_lock;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_spawn.rs"]
 mod owned_spawn;
+// Word expansion is a target-local adapter over the selected environment,
+// owned spawn transaction, allocation-backed streams, and C allocator. Keep
+// it inside the aggregate so the frozen default archive remains export-free.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_wordexp.rs"]
+mod owned_wordexp;
 // The installed owned-static composition additionally needs Lua's complete
 // binary32/binary64 inverse-trigonometry set. Keep it at this aggregate
 // boundary: the frozen default archive must not acquire any of these entries.
