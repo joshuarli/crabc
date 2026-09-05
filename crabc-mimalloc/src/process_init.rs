@@ -728,6 +728,54 @@ pub(crate) enum ProcessMainInitError {
     InitialThread(MainStaticTheapError),
 }
 
+/// Coordinator-issued proof for one canonical VM-backed process root.
+///
+/// This is deliberately not reconstructible from a [`VmProcess`] and a
+/// [`ProcessPageMapLease`].  Independent test or future process coordinators
+/// can legitimately form matching-looking pairs for the same subprocess;
+/// only this source-order coordinator proves that the retained policy and
+/// PageMap root were selected together before its sole `READY` publication.
+/// Metadata and arena backing consumers use this capability instead of
+/// accepting an arbitrary pair of copyable witnesses.
+#[derive(Clone, Copy)]
+pub(crate) struct ProcessMainBackingBinding {
+    storage: &'static ProcessMainInitializationStorage,
+    process: VmProcess<'static>,
+    page_map: ProcessPageMapLease,
+}
+
+impl ProcessMainBackingBinding {
+    #[inline]
+    fn new(
+        storage: &'static ProcessMainInitializationStorage,
+        process: VmProcess<'static>,
+        page_map: ProcessPageMapLease,
+    ) -> Self {
+        Self {
+            storage,
+            process,
+            page_map,
+        }
+    }
+
+    /// Returns the policy/subprocess pair that the process coordinator
+    /// retained before forming its canonical PageMap root.
+    #[inline]
+    pub(crate) const fn process(self) -> VmProcess<'static> { self.process }
+
+    /// Returns the canonical PageMap witness selected with [`Self::process`].
+    #[inline]
+    pub(crate) const fn page_map(self) -> ProcessPageMapLease { self.page_map }
+
+    /// Confirms that this capability still names the coordinator's one
+    /// terminal ready image. Consumers call this before an idempotent rebind;
+    /// it is intentionally not a constructor for raw pair/map inputs.
+    #[inline]
+    pub(crate) fn is_ready(self) -> bool {
+        self.storage.state.load(Ordering::Acquire) == READY
+    }
+}
+
 /// A copyable immutable witness that the bounded source process startup
 /// reached `READY` for one frozen main-subprocess/configuration/PageMap tuple.
 ///
@@ -789,6 +837,19 @@ impl ProcessMainReadyLease {
         // destroys this slot.
         let policy = unsafe { policy.as_ref() };
         Ok(VmProcess::new(policy, self.subprocess))
+    }
+
+    /// Returns the exact coordinator-issued policy/PageMap binding for a
+    /// process backing consumer. This proves that both copyable witnesses
+    /// originate from the same source main-process transition.
+    #[inline]
+    pub(crate) fn process_backing(self) -> Result<ProcessMainBackingBinding, ProcessMainInitError> {
+        self.ensure_ready()?;
+        Ok(ProcessMainBackingBinding::new(
+            self.storage,
+            self.vm_process()?,
+            self.page_map,
+        ))
     }
 
     /// Borrows the source normal-arena backing group of this VM-aware process.
