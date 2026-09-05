@@ -96,8 +96,6 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertEqual(
                             "--security-opt=seccomp=unconfined" in arguments,
                             command in (
-                                "materialized-dynamic-sysroot",
-                                "owned-dynamic-sysroot",
                                 "owned-credentials-profile",
                                 "owned-credentials-profile-product",
                             ),

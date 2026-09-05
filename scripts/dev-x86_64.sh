@@ -2832,36 +2832,6 @@ run_in_dynamic_loader_mount_container() {
         "$IMAGE" "$@"
 }
 
-# The full dynamic-product receipt includes the credentials-profile leaf, which
-# enters a mapped user namespace before its disposable chroot. Docker's default
-# seccomp policy blocks that unshare transition. Keep this relaxation on the
-# two dynamic-product dispatcher routes; the ordinary mount/PTY gates retain
-# their default seccomp filter.
-run_in_dynamic_loader_user_namespace_container() {
-    prepare_work_dir
-    docker run --rm --init \
-        "${GIT_METADATA_MOUNT[@]}" \
-        --platform "$PLATFORM" \
-        --cap-add=SYS_CHROOT \
-        --cap-add=SYS_ADMIN \
-        --security-opt=apparmor=unconfined \
-        --security-opt=seccomp=unconfined \
-        --workdir /workspace \
-        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
-        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
-        --env TMPDIR=/workspace/.work/x86_64/tmp \
-        --env PYTHONDONTWRITEBYTECODE=1 \
-        --env GIT_OPTIONAL_LOCKS=0 \
-        --env GIT_CONFIG_COUNT=1 \
-        --env GIT_CONFIG_KEY_0=safe.directory \
-        --env GIT_CONFIG_VALUE_0=/workspace \
-        --volume "$ROOT_DIR:/workspace" \
-        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
-        --volume "$TARGET_VOLUME:/workspace/target" \
-        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
-        "$IMAGE" "$@"
-}
-
 # Only the UTS-identity artifact needs SYS_ADMIN, solely to create a fresh UTS
 # namespace before its fixture changes hostname/domain-name state. Keeping this
 # grant off the shared runner and all other artifact commands does not select a
@@ -5090,7 +5060,7 @@ run_libc_owned_wordexp_probe() {
 }
 
 run_owned_dynamic_sysroot_probe() {
-    run_in_dynamic_loader_user_namespace_container bash /workspace/compat/x86_64/run_owned_dynamic_sysroot.sh
+    run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_dynamic_sysroot.sh
 }
 
 run_crt_object_bundle_probe() {
@@ -7956,7 +7926,7 @@ case "$command" in
     materialized-dynamic-sysroot)
         [ "$#" -eq 0 ] || fail "materialized-dynamic-sysroot takes no arguments"
         ensure_image
-        run_in_dynamic_loader_user_namespace_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh
         ;;
     crt-object-bundle)
         [ "$#" -eq 0 ] || fail "crt-object-bundle takes no arguments"
