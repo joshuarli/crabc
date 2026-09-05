@@ -37,7 +37,7 @@
 compile_error!("the x86 pthread cancellation leaf requires little-endian Linux/x86-64");
 
 use core::ffi::{c_int, c_void};
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
 use super::pthread_create_join;
 
@@ -79,9 +79,13 @@ pub(super) struct CleanupNode {
 /// mutator while its positive child-TID keeps its mapping live.
 pub(super) struct SelectedWorkerCancellation {
     kind: AtomicU8,
-    pending: AtomicU8,
+    // The cancellation-point assembly reads one aligned source-shaped int.
+    pending: AtomicI32,
     state: AtomicU8,
+    asynchronous: AtomicU8,
     cleanup_head: AtomicUsize,
+    // Explicit flockfile ownership, not internal FILE operation guards.
+    stdio_locks: AtomicUsize,
     // A selected pthread condition wait uses a waiter in the private control
     // mapping, rather than automatic storage, only while it is an implicit
     // cancellation point. Its barrier stays mapped through join/detach
@@ -96,12 +100,26 @@ impl SelectedWorkerCancellation {
     pub(super) const fn new(is_pthread: bool) -> Self {
         Self {
             kind: AtomicU8::new(if is_pthread { SLOT_PTHREAD } else { SLOT_C11 }),
-            pending: AtomicU8::new(0),
+            pending: AtomicI32::new(0),
             state: AtomicU8::new(PTHREAD_CANCEL_ENABLE),
+            asynchronous: AtomicU8::new(0),
             cleanup_head: AtomicUsize::new(0),
+            stdio_locks: AtomicUsize::new(0),
             active_condition_barrier: AtomicUsize::new(0),
         }
     }
+}
+
+// The initial owned thread has cancellation/cleanup state without a worker
+// control mapping or allocation. The lifecycle owner publishes this address
+// into reserved FS+32 only after owned TLS is established; signal handlers
+// must never discover it through a registry scan or a TLS-GD resolver.
+#[cfg(feature = "x86-owned-static-runtime")]
+static MAIN_CANCELLATION: SelectedWorkerCancellation = SelectedWorkerCancellation::new(true);
+
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) fn main_cancellation_state() -> *const SelectedWorkerCancellation {
+    core::ptr::addr_of!(MAIN_CANCELLATION)
 }
 
 /// Mark one lock-validated selected pthread worker pending and return its
