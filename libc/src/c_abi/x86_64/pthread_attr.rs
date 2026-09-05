@@ -75,19 +75,18 @@ pub(super) struct SelectedWorkerAttributes {
     pub(super) scheduler_requested: bool,
 }
 
-/// The existing selected-worker default when `pthread_create` receives a null
-/// attribute pointer (and when the C11 adapter creates a worker).  This is
-/// intentionally distinct from musl's public initialized-record default:
-/// preserving the established one-megabyte private stack avoids narrowing
-/// prior selected static consumers, while an actual initialized record uses
-/// its source-shaped 128 KiB/8 KiB values below.
+/// Owned-runtime default when `pthread_create` receives a null attribute
+/// pointer and when the C11 adapter creates a worker.
+///
+/// This is the same 128 KiB stack and 8 KiB guard selected by musl's default
+/// attribute record. The old one-megabyte/zero-guard private-fixture policy
+/// was neither a public POSIX default nor an owned-runtime guarantee, so it
+/// must not leak into ordinary installed consumers.
 #[inline]
-pub(super) const fn selected_worker_default_attributes(
-    stack_size: usize,
-) -> SelectedWorkerAttributes {
+pub(super) const fn selected_worker_default_attributes() -> SelectedWorkerAttributes {
     SelectedWorkerAttributes {
-        stack_size,
-        guard_size: 0,
+        stack_size: DEFAULT_STACK_SIZE,
+        guard_size: DEFAULT_GUARD_SIZE,
         caller_stack_top: None,
         detached: false,
         scheduler_requested: false,

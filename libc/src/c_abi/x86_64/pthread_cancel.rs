@@ -48,9 +48,6 @@ const PTHREAD_CANCEL_DEFERRED: c_int = 0;
 const PTHREAD_CANCEL_ASYNCHRONOUS: c_int = 1;
 const PTHREAD_CANCELED: *mut c_void = usize::MAX as *mut c_void;
 
-const SELECTED_WORKER_REGISTRY_SIZE: usize = 64;
-
-const SLOT_FREE: u8 = 0;
 const SLOT_PTHREAD: u8 = 1;
 const SLOT_C11: u8 = 2;
 
@@ -66,24 +63,24 @@ pub(super) struct CleanupNode {
     next: *mut CleanupNode,
 }
 
-/// One fixed selected-worker cancellation record.
+/// Cancellation state embedded in one selected worker's control mapping.
 ///
-/// It is parallel to—not embedded in—the private control/stack mapping so the
-/// established x86 Static Initial TLS v1/opaque-TP contract remains unchanged.
-/// The create/join registry lock serializes initialization, cancellation
-/// request, and release, preventing a stale handle from marking a recycled
-/// registry index pending.
-struct SelectedCancellationSlot {
+/// Keeping this with the control record makes the cancellation lifetime match
+/// the opaque handle and removes the artifact-only fixed worker table. The
+/// create/join list lock still serializes a handle lookup, pending request,
+/// withdrawal, and eventual unmap; a current worker is the sole cleanup-chain
+/// mutator while its positive child-TID keeps its mapping live.
+pub(super) struct SelectedWorkerCancellation {
     kind: AtomicU8,
     pending: AtomicU8,
     state: AtomicU8,
     cleanup_head: AtomicUsize,
 }
 
-impl SelectedCancellationSlot {
-    const fn empty() -> Self {
+impl SelectedWorkerCancellation {
+    pub(super) const fn new(is_pthread: bool) -> Self {
         Self {
-            kind: AtomicU8::new(SLOT_FREE),
+            kind: AtomicU8::new(if is_pthread { SLOT_PTHREAD } else { SLOT_C11 }),
             pending: AtomicU8::new(0),
             state: AtomicU8::new(PTHREAD_CANCEL_ENABLE),
             cleanup_head: AtomicUsize::new(0),
@@ -91,65 +88,26 @@ impl SelectedCancellationSlot {
     }
 }
 
-static SELECTED_CANCELLATION_SLOTS: [SelectedCancellationSlot; SELECTED_WORKER_REGISTRY_SIZE] =
-    [const { SelectedCancellationSlot::empty() }; SELECTED_WORKER_REGISTRY_SIZE];
-
-#[inline]
-fn selected_slot(index: usize) -> Option<&'static SelectedCancellationSlot> {
-    SELECTED_CANCELLATION_SLOTS.get(index)
-}
-
-/// Initialize the cancellation record for one registry reservation.
-///
-/// The sibling invokes this only after it has reserved an otherwise invisible
-/// registry index and before it publishes the control record or clones a
-/// child. The C11 tag has no cancellation behavior; it prevents accidental
-/// cross-family use of the same private table slot.
-pub(super) fn initialize_selected_worker_slot(index: usize, is_pthread: bool) {
-    let Some(slot) = selected_slot(index) else {
-        return;
-    };
-    slot.pending.store(0, Ordering::Relaxed);
-    slot.state.store(PTHREAD_CANCEL_ENABLE, Ordering::Relaxed);
-    slot.cleanup_head.store(0, Ordering::Relaxed);
-    slot.kind.store(
-        if is_pthread { SLOT_PTHREAD } else { SLOT_C11 },
-        Ordering::Release,
-    );
-}
-
-/// Clear a withdrawn registry reservation while its sibling still holds the
-/// registry lock.
-pub(super) fn release_selected_worker_slot(index: usize) {
-    let Some(slot) = selected_slot(index) else {
-        return;
-    };
-    slot.kind.store(SLOT_FREE, Ordering::Release);
-    slot.pending.store(0, Ordering::Relaxed);
-    slot.state.store(PTHREAD_CANCEL_ENABLE, Ordering::Relaxed);
-    slot.cleanup_head.store(0, Ordering::Relaxed);
-}
-
-/// Mark one lock-validated selected pthread slot pending.
+/// Mark one lock-validated selected pthread worker pending.
 ///
 /// The caller holds the create/join registry lock for the complete target
 /// lookup and this store. It must not call user code or release a mapping.
-pub(super) fn mark_selected_worker_pending(index: usize) -> bool {
-    let Some(slot) = selected_slot(index) else {
-        return false;
-    };
-    if slot.kind.load(Ordering::Acquire) != SLOT_PTHREAD {
+pub(super) fn mark_selected_worker_pending(state: &SelectedWorkerCancellation) -> bool {
+    if state.kind.load(Ordering::Acquire) != SLOT_PTHREAD {
         return false;
     }
-    slot.pending.store(1, Ordering::Release);
+    state.pending.store(1, Ordering::Release);
     true
 }
 
 #[inline]
-fn current_pthread_slot() -> Option<&'static SelectedCancellationSlot> {
-    let index = pthread_create_join::current_selected_pthread_worker_slot()?;
-    let slot = selected_slot(index)?;
-    (slot.kind.load(Ordering::Acquire) == SLOT_PTHREAD).then_some(slot)
+fn current_pthread_slot() -> Option<&'static SelectedWorkerCancellation> {
+    let state = pthread_create_join::current_selected_pthread_worker_cancellation()?;
+    // SAFETY: current-worker resolution proves its control mapping remains
+    // live until this task exits. This private reference is used only for the
+    // immediate C ABI operation; no caller can retain it across that exit.
+    let state = unsafe { &*state };
+    (state.kind.load(Ordering::Acquire) == SLOT_PTHREAD).then_some(state)
 }
 
 /// Execute all active cleanup handlers for the current selected pthread worker.

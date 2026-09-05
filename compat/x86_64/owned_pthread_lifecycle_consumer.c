@@ -35,6 +35,7 @@ enum {
     CRABC_WAIT_LIMIT = 100000000u,
     CRABC_PRIVATE_STACK_SIZE = 64 * 1024,
     CRABC_DETACHED_ROUNDS = 65,
+    CRABC_CONCURRENT_WORKERS = 96,
     CRABC_CANCELED_SENTINEL = 0x56a71c2d,
 };
 
@@ -151,6 +152,70 @@ static void *detached_worker(void *opaque)
 
     __atomic_store_n(&round->done, 1, __ATOMIC_RELEASE);
     return 0;
+}
+
+struct concurrent_round {
+    volatile int ready;
+    volatile int release;
+};
+
+static void *concurrent_worker(void *opaque)
+{
+    struct concurrent_round *round = opaque;
+
+    __atomic_store_n(&round->ready, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&round->release, __ATOMIC_ACQUIRE) == 0)
+        spin_pause();
+    return opaque;
+}
+
+static int run_concurrent_lifecycle_capacity(void)
+{
+    pthread_attr_t attributes;
+    pthread_t threads[CRABC_CONCURRENT_WORKERS];
+    struct concurrent_round rounds[CRABC_CONCURRENT_WORKERS];
+    unsigned int index;
+
+    if (pthread_attr_init(&attributes) != 0 ||
+        pthread_attr_setstacksize(&attributes, 8 * PTHREAD_STACK_MIN) != 0)
+        return 1;
+    for (index = 0; index != CRABC_CONCURRENT_WORKERS; ++index) {
+        rounds[index].ready = 0;
+        rounds[index].release = 0;
+        if (pthread_create(&threads[index], &attributes, concurrent_worker,
+                &rounds[index]) != 0) {
+            while (index != 0) {
+                --index;
+                __atomic_store_n(&rounds[index].release, 1, __ATOMIC_RELEASE);
+                (void)pthread_join(threads[index], 0);
+            }
+            (void)pthread_attr_destroy(&attributes);
+            return 2;
+        }
+    }
+    for (index = 0; index != CRABC_CONCURRENT_WORKERS; ++index) {
+        if (wait_for_nonzero(&rounds[index].ready) != 0) {
+            while (index != CRABC_CONCURRENT_WORKERS) {
+                __atomic_store_n(&rounds[index].release, 1, __ATOMIC_RELEASE);
+                ++index;
+            }
+            for (index = 0; index != CRABC_CONCURRENT_WORKERS; ++index)
+                (void)pthread_join(threads[index], 0);
+            (void)pthread_attr_destroy(&attributes);
+            return 3;
+        }
+    }
+    for (index = 0; index != CRABC_CONCURRENT_WORKERS; ++index)
+        __atomic_store_n(&rounds[index].release, 1, __ATOMIC_RELEASE);
+    for (index = 0; index != CRABC_CONCURRENT_WORKERS; ++index) {
+        void *result = 0;
+
+        if (pthread_join(threads[index], &result) != 0 || result != &rounds[index]) {
+            (void)pthread_attr_destroy(&attributes);
+            return 4;
+        }
+    }
+    return pthread_attr_destroy(&attributes) == 0 ? 0 : 5;
 }
 
 static int c11_worker(void *opaque)
@@ -275,10 +340,13 @@ static int run_atfork_after_worker_teardown(void)
 
 int main(void)
 {
+    const int capacity = run_concurrent_lifecycle_capacity();
     const int attrs = run_attr_and_cancellation();
     const int detached = run_detached_attr_and_c11_reaper();
     const int atfork = run_atfork_after_worker_teardown();
 
+    if (capacity != 0)
+        return 5 + capacity;
     if (attrs != 0)
         return 10 + attrs;
     if (detached != 0)

@@ -126,13 +126,6 @@ pub unsafe extern "C" fn __membarrier_init() {}
 // caller-provided stack remains caller-owned. None of these mappings guesses
 // an errno offset or overlays user TLS.
 const CONTROL_REGION_SIZE: usize = 4_096;
-const DEFAULT_WORKER_STACK_SIZE: usize = 1_024 * 1_024;
-// This is deliberately a fixed private admission registry, not a general
-// pthread thread list. It validates the one selected explicit-exit route
-// before it dereferences any control record and bounds concurrently live
-// workers in this artifact to a small, auditable number.
-const SELECTED_WORKER_REGISTRY_SIZE: usize = 64;
-const SELECTED_WORKER_REGISTRY_RESERVING: usize = usize::MAX;
 
 /// The selected pthread callback ABI.
 ///
@@ -371,33 +364,19 @@ struct ThreadControl {
     // not in the Static Initial TLS v1 `%fs:0` self word. The mapping remains
     // live through the destructor phase and clear-child-tid handoff.
     tsd: pthread_tsd::SelectedTsdValues,
-    registry_slot: usize,
+    // Each control allocation contributes its own intrusive list node. The
+    // registry lock owns every link update, so this removes the former
+    // artifact-only fixed worker ceiling without an allocator or side table.
+    registry_previous: *mut ThreadControl,
+    registry_next: *mut ThreadControl,
+    cancellation: pthread_cancel::SelectedWorkerCancellation,
     start: SelectedWorkerStart,
     argument: *mut c_void,
 }
 
-struct SelectedWorkerRegistrySlot {
-    // Zero means free; the transient all-ones state is owned by pthread_create
-    // while it initializes the control record before making it visible to a
-    // possible child. A nonzero ordinary pointer identifies one live mapping.
-    control: AtomicUsize,
-    // This is the child Variant-II thread pointer, not a general thread ID.
-    // pthread_exit pairs it with worker_tid and the live child-TID word before
-    // using the paired control pointer.
-    thread_pointer: AtomicUsize,
-}
-
-impl SelectedWorkerRegistrySlot {
-    const fn empty() -> Self {
-        Self {
-            control: AtomicUsize::new(0),
-            thread_pointer: AtomicUsize::new(0),
-        }
-    }
-}
-
-static SELECTED_WORKER_REGISTRY: [SelectedWorkerRegistrySlot; SELECTED_WORKER_REGISTRY_SIZE] =
-    [const { SelectedWorkerRegistrySlot::empty() }; SELECTED_WORKER_REGISTRY_SIZE];
+// The head changes only while the registry lock is held. It is atomic solely
+// to avoid `static mut`; it does not make lock-free traversal permissible.
+static SELECTED_WORKER_REGISTRY_HEAD: AtomicUsize = AtomicUsize::new(0);
 
 // The lock covers every registry mutation and the complete scan-to-publish
 // interval. It is deliberately held only for bounded local atomics: never
@@ -522,186 +501,146 @@ fn unlock_selected_worker_registry() {
     SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
 }
 
-/// Whether any selected worker reservation or live mapping exists.
+/// Whether any selected worker control remains linked.
 ///
-/// The single-threaded atfork leaf uses this as a fail-closed admission check
-/// before it copies process state. A reservation is conservatively live too:
-/// a concurrent creator has not yet established a child mapping, but fork
-/// cannot safely race the registry publication transition. This is not a
-/// general all-thread-list query and says nothing about foreign threads.
+/// The current atfork boundary consumes this as a conservative admission
+/// predicate. A creator links its fully initialized control before clone, so
+/// every possible child-visible worker has a list node; before that point no
+/// child exists and a concurrent parent-side fork needs no stale reservation.
 pub(super) fn has_live_selected_workers() -> bool {
     lock_selected_worker_registry();
-    let live = SELECTED_WORKER_REGISTRY.iter().any(|slot| {
-        slot.control.load(Ordering::Acquire) != 0
-    });
+    let live = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) != 0;
     unlock_selected_worker_registry();
     live
 }
 
-/// Reserve one private selected-worker registry slot before cloning.
-fn reserve_selected_worker() -> Option<usize> {
+/// Link a fully initialized selected control before the child can run.
+///
+/// The control's release flag follows every non-atomic initialization write.
+/// The intrusive node stays linked until join or detached reaping has observed
+/// the kernel clear-child-tid handoff and is ready to release its mappings.
+fn publish_selected_worker(control: *mut ThreadControl) {
     lock_selected_worker_registry();
-    let mut reservation = None;
-    for (index, slot) in SELECTED_WORKER_REGISTRY.iter().enumerate() {
-        if slot.control.load(Ordering::Acquire) == 0 {
-            slot.thread_pointer.store(0, Ordering::Relaxed);
-            slot.control
-                .store(SELECTED_WORKER_REGISTRY_RESERVING, Ordering::Release);
-            reservation = Some(index);
-            break;
+    let previous_head = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Relaxed) as *mut ThreadControl;
+    // SAFETY: `control` is a fresh private mapping and every linked mapping
+    // remains live while it is reachable from this lock-protected list.
+    unsafe {
+        (*control).registry_previous = core::ptr::null_mut();
+        (*control).registry_next = previous_head;
+        if !previous_head.is_null() {
+            (*previous_head).registry_previous = control;
         }
     }
-    unlock_selected_worker_registry();
-    reservation
-}
-
-/// Publish a fully initialized selected worker before the child can start.
-///
-/// The `control` release follows every ThreadControl initialization write; an
-/// explicit-exit child acquires it before it uses the record.
-fn publish_selected_worker(
-    registry_slot: usize,
-    control: *mut ThreadControl,
-    thread_pointer: *mut u8,
-) {
-    lock_selected_worker_registry();
-    if let Some(slot) = SELECTED_WORKER_REGISTRY.get(registry_slot) {
-        slot.thread_pointer
-            .store(thread_pointer as usize, Ordering::Relaxed);
-        slot.control.store(control as usize, Ordering::Release);
-    }
+    SELECTED_WORKER_REGISTRY_HEAD.store(control as usize, Ordering::Release);
     unlock_selected_worker_registry();
 }
 
-/// Withdraw a selected-worker registry entry while its registry lock is held.
+/// Remove a known linked selected control while the registry lock is held.
 ///
-/// A failed compare-and-exchange deliberately retains the entry rather than
-/// risking a corruption-driven release of some other worker's identity. A
-/// successful return guarantees that no pthread_exit scanner can retain this
-/// mapping beyond the lock, so its caller may subsequently unmap it.
-fn release_selected_worker_locked(registry_slot: usize, control: *mut ThreadControl) -> bool {
-    if let Some(slot) = SELECTED_WORKER_REGISTRY.get(registry_slot) {
-        if slot
-            .control
-            .compare_exchange(
-                control as usize,
-                SELECTED_WORKER_REGISTRY_RESERVING,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_ok()
-        {
-            // This slot is no longer reachable through the selected worker
-            // registry. Clear the parallel deferred-cancellation record while
-            // the same lock still prevents an ABA reuse of `registry_slot`.
-            pthread_cancel::release_selected_worker_slot(registry_slot);
-            slot.thread_pointer.store(0, Ordering::Relaxed);
-            slot.control.store(0, Ordering::Release);
-            true
-        } else {
-            false
+/// A successful removal proves no registry scanner can retain this mapping
+/// beyond the lock. The caller may then reclaim it after its separate kernel
+/// child-TID lifetime proof. A missing node is retained fail-closed.
+fn release_selected_worker_locked(control: *mut ThreadControl) -> bool {
+    let mut cursor = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) as *mut ThreadControl;
+    while !cursor.is_null() {
+        if cursor == control {
+            // SAFETY: the lock keeps every traversed control mapped. The
+            // predecessor/successor fields are changed only in this function
+            // or `publish_selected_worker`, under the same lock.
+            unsafe {
+                let previous = (*control).registry_previous;
+                let next = (*control).registry_next;
+                if previous.is_null() {
+                    SELECTED_WORKER_REGISTRY_HEAD.store(next as usize, Ordering::Release);
+                } else {
+                    (*previous).registry_next = next;
+                }
+                if !next.is_null() {
+                    (*next).registry_previous = previous;
+                }
+                (*control).registry_previous = core::ptr::null_mut();
+                (*control).registry_next = core::ptr::null_mut();
+            }
+            return true;
         }
-    } else {
-        false
+        // SAFETY: cursor is a still-linked mapping for the lock duration.
+        cursor = unsafe { (*cursor).registry_next };
     }
+    false
+}
+
+/// Find a selected worker by its opaque x86 Variant-II thread pointer.
+///
+/// The caller holds the registry lock and must not retain the result after it
+/// releases that lock unless it has independently claimed the lifecycle or is
+/// the currently running worker with a positive child-TID.
+fn selected_worker_by_thread_pointer_locked(thread_pointer: usize) -> Option<*mut ThreadControl> {
+    let mut control = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) as *mut ThreadControl;
+    while !control.is_null() {
+        // SAFETY: list membership under the lock proves the control mapping is
+        // live; the TLS block's opaque token exposes only its thread pointer.
+        if unsafe { (*control).tls_block.thread_pointer() as usize } == thread_pointer {
+            return Some(control);
+        }
+        control = unsafe { (*control).registry_next };
+    }
+    None
 }
 
 /// Mark one live selected pthread worker for deferred cancellation.
 ///
-/// The registry lock covers handle validation and the pending-bit update, so
-/// join withdrawal cannot recycle this private slot between those two steps.
-/// There is intentionally no signal delivery: this static artifact observes a
-/// request only through the target's explicit `pthread_testcancel` call.
+/// The registry lock covers handle validation and the pending-bit update. No
+/// signal is sent: this artifact observes a request only through the target's
+/// explicit `pthread_testcancel` call.
 pub(super) fn request_selected_pthread_cancellation(thread: *mut c_void) -> bool {
     if thread.is_null() {
         return false;
     }
-
-    let thread_pointer = thread as usize;
     lock_selected_worker_registry();
-    let mut requested = false;
-    for slot in &SELECTED_WORKER_REGISTRY {
-        if slot.thread_pointer.load(Ordering::Acquire) != thread_pointer {
-            continue;
-        }
-        let control = slot.control.load(Ordering::Acquire);
-        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
-            break;
-        }
-        let control = control as *mut ThreadControl;
-        // SAFETY: the registry lock keeps this private control mapping live.
-        // Only pointer-returning pthread workers are in this cancellation
-        // slice; the typed C11 sibling is deliberately not reinterpreted as a
-        // pthread cancellation target.
-        if matches!(unsafe { (*control).start }, SelectedWorkerStart::Pthread(_)) {
-            requested = pthread_cancel::mark_selected_worker_pending(
-                unsafe { (*control).registry_slot },
-            );
-        }
-        break;
-    }
+    let requested = selected_worker_by_thread_pointer_locked(thread as usize)
+        .filter(|control| unsafe { matches!((**control).start, SelectedWorkerStart::Pthread(_)) })
+        .map(|control| {
+            // SAFETY: list membership holds this control mapping live for the
+            // pending store, and only a pthread-mode record is selected.
+            unsafe { pthread_cancel::mark_selected_worker_pending(&(*control).cancellation) }
+        })
+        .unwrap_or(false);
     unlock_selected_worker_registry();
     requested
 }
 
 /// Resolve one live selected-worker handle to Linux's parent-written TID.
 ///
-/// This is deliberately a scalar handoff for the pthread-affinity sibling,
-/// not a public TCB accessor or a general thread-list query. The registry lock
-/// proves that the opaque TP maps to a live private control record while this
-/// helper copies `child_tid`; it never dereferences the caller's handle. A
-/// caller must use the returned ID immediately, keep the target executing,
-/// and must not race its completion, join, detach, or later reaping boundary,
-/// which can clear this word, withdraw the mapping, and permit Linux TID reuse
-/// after the lock is released.
+/// This is a scalar handoff for the pthread-affinity sibling, not a general
+/// thread-list query. The list lock proves the matched mapping is live only
+/// while its child-TID word is copied.
 pub(super) fn selected_worker_linux_thread_id(thread: *mut c_void) -> Option<c_int> {
     if thread.is_null() {
         return None;
     }
-
-    let thread_pointer = thread as usize;
     lock_selected_worker_registry();
-    let mut thread_id = None;
-    for slot in &SELECTED_WORKER_REGISTRY {
-        if slot.thread_pointer.load(Ordering::Acquire) != thread_pointer {
-            continue;
-        }
-        let control = slot.control.load(Ordering::Acquire);
-        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
-            break;
-        }
-        let control = control as *mut ThreadControl;
-        // SAFETY: the registry lock prevents withdrawal and reclamation of
-        // this matched private control record while its child-TID word is
-        // copied. CLONE_PARENT_SETTID has written a positive TID before a
-        // successful create returns; CLONE_CHILD_CLEARTID later clears it.
+    let thread_id = selected_worker_by_thread_pointer_locked(thread as usize).and_then(|control| {
+        // SAFETY: lock-protected membership keeps the mapped control live.
         let child_tid = unsafe { (*control).child_tid.load(Ordering::Acquire) };
-        if child_tid > 0 {
-            thread_id = Some(child_tid);
-        }
-        break;
-    }
+        (child_tid > 0).then_some(child_tid)
+    });
     unlock_selected_worker_registry();
     thread_id
 }
 
-/// Withdraw a selected-worker registry entry without touching its mapping.
-fn release_selected_worker(registry_slot: usize, control: *mut ThreadControl) -> bool {
+/// Withdraw a selected-worker list node without touching its mapping.
+fn release_selected_worker(control: *mut ThreadControl) -> bool {
     lock_selected_worker_registry();
-    let released = release_selected_worker_locked(registry_slot, control);
+    let released = release_selected_worker_locked(control);
     unlock_selected_worker_registry();
     released
 }
 
 /// Claim the one selected worker named by its public x86 `pthread_t` value.
 ///
-/// The selected static identity leaf exposes the child Variant-II TP as the
-/// opaque handle, matching musl x86's `__pthread_self()` value and C's raw
-/// `pthread_equal` macro. This lookup remains under the same registry lock
-/// that withdraws entries before `munmap`, so the returned control pointer
-/// cannot name a reclaimed mapping. Claiming a non-joinable lifecycle state
-/// while still locked gives that caller exclusive ownership until it either
-/// releases a join claim on an error or completes reclamation.
+/// A lifecycle claim under the list lock gives the caller sole ownership until
+/// it either releases that claim or completes reclamation, so a withdrawn
+/// mapping can never be returned by a stale handle lookup.
 fn claim_selected_worker_by_thread_pointer(
     thread: *mut c_void,
     claimed_state: SelectedWorkerLifecycleState,
@@ -713,22 +652,11 @@ fn claim_selected_worker_by_thread_pointer(
         claimed_state,
         SelectedWorkerLifecycleState::JoinClaimed | SelectedWorkerLifecycleState::Detached
     ));
-
-    let thread_pointer = thread as usize;
     lock_selected_worker_registry();
-    let mut claimed = None;
-    for slot in &SELECTED_WORKER_REGISTRY {
-        if slot.thread_pointer.load(Ordering::Acquire) != thread_pointer {
-            continue;
-        }
-        let control = slot.control.load(Ordering::Acquire);
-        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
-            continue;
-        }
-        let control = control as *mut ThreadControl;
-        // SAFETY: registry withdrawal uses this lock before it may unmap the
-        // control record. The record is therefore live for the atomic claim.
-        if unsafe {
+    let claimed = selected_worker_by_thread_pointer_locked(thread as usize).and_then(|control| {
+        // SAFETY: the list lock prevents withdrawal/reclamation through this
+        // state transition.
+        unsafe {
             (*control)
                 .lifecycle
                 .compare_exchange(
@@ -737,24 +665,18 @@ fn claim_selected_worker_by_thread_pointer(
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 )
+                .is_ok()
+                .then_some(control)
         }
-        .is_ok()
-        {
-            claimed = Some(control);
-        }
-        break;
-    }
+    });
     unlock_selected_worker_registry();
     claimed
 }
 
-/// Release a join claim before the worker has been withdrawn from the registry.
-///
-/// A detachment never uses this transition: once detached, only the external
-/// clear-child-tid reaper may own its mappings.
+/// Release a join claim before the worker has been withdrawn from the list.
 unsafe fn release_join_claim(control: *mut ThreadControl) {
-    // SAFETY: the joining caller still owns a registry-published control
-    // record on each error path that reaches this helper.
+    // SAFETY: the joining caller still owns a linked control on every error
+    // path reaching this helper.
     let _ = unsafe {
         (*control).lifecycle.compare_exchange(
             SelectedWorkerLifecycleState::JoinClaimed.encode(),
@@ -765,74 +687,49 @@ unsafe fn release_join_claim(control: *mut ThreadControl) {
     };
 }
 
-/// Claim one exited detached worker while its registry mapping is still live.
-///
-/// The lock covers the lookup, `Detached -> DetachedReclaiming` transition,
-/// second clear-child-tid observation, and registry withdrawal. This prevents
-/// an explicit-exit publisher from retaining a raw control pointer while the
-/// external reaper begins releasing its TLS/control mappings.
+/// Claim one exited detached worker while its control mapping remains linked.
 fn claim_finished_detached_selected_worker() -> Option<*mut ThreadControl> {
     lock_selected_worker_registry();
+    let mut control = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) as *mut ThreadControl;
     let mut claimed = None;
-    for (registry_slot, slot) in SELECTED_WORKER_REGISTRY.iter().enumerate() {
-        let control = slot.control.load(Ordering::Acquire);
-        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
-            continue;
-        }
-        let control = control as *mut ThreadControl;
-        // SAFETY: this registry entry remains published while the lock is
-        // held, so every control-field access through it is valid.
+    while !control.is_null() {
+        // SAFETY: list membership keeps this mapping live for the complete
+        // state/clear-child-tid/withdraw transaction below.
         let detached = unsafe {
             (*control).lifecycle.load(Ordering::Acquire)
                 == SelectedWorkerLifecycleState::Detached.encode()
         };
-        if !detached {
-            continue;
-        }
-        if unsafe { (*control).child_tid.load(Ordering::Acquire) } != 0 {
-            continue;
-        }
-        let claimed_reclamation = unsafe {
-            (*control).lifecycle.compare_exchange(
-                SelectedWorkerLifecycleState::Detached.encode(),
-                SelectedWorkerLifecycleState::DetachedReclaiming.encode(),
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-        };
-        if claimed_reclamation.is_err() {
-            continue;
-        }
-        // `CLONE_CHILD_CLEARTID` cannot restore a nonzero TID, but keep this
-        // defensive second observation next to the ownership transition so a
-        // future clone-path change cannot free a still-running child's stack.
-        if unsafe { (*control).child_tid.load(Ordering::Acquire) } != 0 {
-            let _ = unsafe {
+        if detached && unsafe { (*control).child_tid.load(Ordering::Acquire) } == 0 {
+            let claimed_reclamation = unsafe {
                 (*control).lifecycle.compare_exchange(
-                    SelectedWorkerLifecycleState::DetachedReclaiming.encode(),
                     SelectedWorkerLifecycleState::Detached.encode(),
-                    Ordering::Release,
-                    Ordering::Relaxed,
+                    SelectedWorkerLifecycleState::DetachedReclaiming.encode(),
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
                 )
             };
-            continue;
+            if claimed_reclamation.is_ok() {
+                // `CLONE_CHILD_CLEARTID` cannot restore a nonzero TID. Keep a
+                // second observation adjacent to withdrawal so a future clone
+                // change cannot free a stack still used by its child.
+                if unsafe { (*control).child_tid.load(Ordering::Acquire) } == 0
+                    && release_selected_worker_locked(control)
+                {
+                    unsafe { (*control).registry_retired.store(1, Ordering::Release) };
+                    claimed = Some(control);
+                    break;
+                }
+                let _ = unsafe {
+                    (*control).lifecycle.compare_exchange(
+                        SelectedWorkerLifecycleState::DetachedReclaiming.encode(),
+                        SelectedWorkerLifecycleState::Detached.encode(),
+                        Ordering::Release,
+                        Ordering::Relaxed,
+                    )
+                };
+            }
         }
-        if release_selected_worker_locked(registry_slot, control) {
-            // The selected worker can no longer reach this record through its
-            // explicit-exit identity scan, and child_tid==0 proves it is no
-            // longer executing on either worker-owned mapping.
-            unsafe { (*control).registry_retired.store(1, Ordering::Release) };
-            claimed = Some(control);
-            break;
-        }
-        let _ = unsafe {
-            (*control).lifecycle.compare_exchange(
-                SelectedWorkerLifecycleState::DetachedReclaiming.encode(),
-                SelectedWorkerLifecycleState::Detached.encode(),
-                Ordering::Release,
-                Ordering::Relaxed,
-            )
-        };
+        control = unsafe { (*control).registry_next };
     }
     unlock_selected_worker_registry();
     claimed
@@ -899,61 +796,38 @@ fn reap_finished_detached_selected_workers() {
 
 /// Resolve the current admitted selected worker's private control record.
 ///
-/// The exact `%fs:0`, Linux-TID, and live-child-TID match prevents a foreign
-/// thread from turning a copied TLS base into a control record. Once this
-/// current task has matched, its positive child-TID keeps join/reaping from
-/// withdrawing the mapping before the task finishes its own callback or exit
-/// path, so the caller may use the returned pointer after the registry lock is
-/// released. It must never be retained past that current-thread operation.
+/// The exact `%fs:0`, Linux-TID, and live-child-TID match rejects a foreign
+/// task that copied an owned TLS base. A positive child-TID then prevents join
+/// or detached reaping from withdrawing this current mapping before it exits.
 #[inline(always)]
 fn current_selected_worker_control() -> Option<*mut ThreadControl> {
     let thread_pointer = pthread_identity::current_thread_pointer() as usize;
-    let Some(thread_id) = current_linux_thread_id() else {
-        return None;
-    };
+    let thread_id = current_linux_thread_id()?;
     if thread_pointer == 0 {
         return None;
     }
-
     lock_selected_worker_registry();
-    let mut current = None;
-    for slot in &SELECTED_WORKER_REGISTRY {
-        let control = slot.control.load(Ordering::Acquire);
-        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
-            continue;
+    let current = selected_worker_by_thread_pointer_locked(thread_pointer).filter(|control| {
+        // SAFETY: lock-protected membership makes this identity observation
+        // valid; the positive child-TID retains the current mapping after the
+        // lock is released.
+        unsafe {
+            (**control).worker_tid.load(Ordering::Acquire) == thread_id
+                && (**control).child_tid.load(Ordering::Acquire) == thread_id
         }
-        if slot.thread_pointer.load(Ordering::Acquire) == thread_pointer {
-            let control = control as *mut ThreadControl;
-            // SAFETY: the matched live registry entry keeps the mapping valid
-            // until this function releases the lock; join withdrawal takes
-            // the same lock before it may reclaim that mapping.
-            if unsafe { (*control).worker_tid.load(Ordering::Acquire) } == thread_id
-                && unsafe { (*control).child_tid.load(Ordering::Acquire) } == thread_id
-            {
-                current = Some(control);
-                break;
-            }
-        }
-    }
+    });
     unlock_selected_worker_registry();
     current
 }
 
-/// Return the current selected pthread worker's private registry slot.
-///
-/// This deliberately excludes the typed C11 sibling even though its opaque
-/// handle shares the x86 Variant-II TP representation. The returned slot is
-/// stable until this current worker exits because its positive child-TID keeps
-/// join or detached reaping from withdrawing the control mapping.
-pub(super) fn current_selected_pthread_worker_slot() -> Option<usize> {
+/// Return the current selected pthread worker's embedded cancellation state.
+pub(super) fn current_selected_pthread_worker_cancellation(
+) -> Option<*const pthread_cancel::SelectedWorkerCancellation> {
     let control = current_selected_worker_control()?;
-    // SAFETY: current-worker resolution above keeps the mapping live for this
-    // current task. The start mode is immutable after clone publication.
-    if matches!(unsafe { (*control).start }, SelectedWorkerStart::Pthread(_)) {
-        Some(unsafe { (*control).registry_slot })
-    } else {
-        None
-    }
+    // SAFETY: current-worker resolution keeps the control mapping live until
+    // this task exits; C11 controls are intentionally not cancellation-aware.
+    matches!(unsafe { (*control).start }, SelectedWorkerStart::Pthread(_))
+        .then(|| unsafe { core::ptr::addr_of!((*control).cancellation) })
 }
 
 /// Return the current selected worker's bounded TSD table.
@@ -977,16 +851,12 @@ pub(super) fn current_selected_worker_tsd_values(
 /// control pointer beyond the scan.
 pub(super) fn clear_selected_worker_tsd_key(key: usize) {
     lock_selected_worker_registry();
-    for slot in &SELECTED_WORKER_REGISTRY {
-        let control = slot.control.load(Ordering::Acquire);
-        if control == 0 || control == SELECTED_WORKER_REGISTRY_RESERVING {
-            continue;
-        }
-        let control = control as *mut ThreadControl;
-        // SAFETY: this published registry entry remains mapped while its lock
-        // is held. The TSD leaf's own metadata lock excludes a concurrent
-        // selected set/get for this key.
+    let mut control = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) as *mut ThreadControl;
+    while !control.is_null() {
+        // SAFETY: a linked control stays mapped under this lock. The TSD
+        // metadata lock excludes a concurrent selected set/get for this key.
         unsafe { (*control).tsd.clear_key(key) };
+        control = unsafe { (*control).registry_next };
     }
     unlock_selected_worker_registry();
 }
@@ -1210,8 +1080,8 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
 ///
 /// `thread` must designate writable `pthread_t` storage; `start` must be a
 /// valid pthread callback and `argument` must remain valid until that function
-/// stops reading it. A null `attributes` pointer preserves the existing
-/// one-megabyte private stack. An initialized record may select a guarded
+/// stops reading it. A null `attributes` pointer selects the musl-shaped 128
+/// KiB private stack with its 8 KiB guard. An initialized record may select a guarded
 /// private stack, a caller-owned stack, or detached-at-create. Explicit
 /// scheduler fields return `ENOTSUP` because this bounded seam has no
 /// scheduler transition. The private C11 sibling calls
@@ -1238,7 +1108,7 @@ pub unsafe extern "C" fn pthread_create(
         return EINVAL;
     }
     let attributes = if attributes.is_null() {
-        super::pthread_attr::selected_worker_default_attributes(DEFAULT_WORKER_STACK_SIZE)
+        super::pthread_attr::selected_worker_default_attributes()
     } else {
         // SAFETY: pthread_create's C boundary requires an initialized,
         // readable pthread_attr_t whenever the pointer is non-null. The attr
@@ -1280,18 +1150,17 @@ pub unsafe extern "C" fn pthread_create(
 /// `thread` must designate writable opaque-handle storage. The typed callback
 /// and its argument must remain valid until the callback stops using them. The
 /// caller must execute after the private Static Initial TLS v1 bootstrap has
-/// retained the final executable template. At most 64 selected workers may be
-/// live at once. This is not a general pthread or C11 creation primitive.
+/// retained the final executable template. Each live worker owns one mapped
+/// control-list node; no artifact-only numeric worker ceiling remains. This
+/// is not a general pthread or C11 creation primitive.
 pub(super) unsafe fn create_selected_worker(
     thread: *mut *mut c_void,
     start: SelectedWorkerStart,
     argument: *mut c_void,
 ) -> c_int {
-    // C11 has no public pthread_attr_t input. Preserve the existing selected
-    // one-megabyte stack/zero-guard default through the same allocation and
-    // clone machinery used by a null pthread attribute pointer.
-    let attributes =
-        super::pthread_attr::selected_worker_default_attributes(DEFAULT_WORKER_STACK_SIZE);
+    // C11 has no public pthread_attr_t input. Use the same musl-shaped owned
+    // default stack/guard policy as a null pthread attribute pointer.
+    let attributes = super::pthread_attr::selected_worker_default_attributes();
     unsafe { create_selected_worker_with_attributes(thread, start, argument, attributes) }
 }
 
@@ -1320,8 +1189,7 @@ unsafe fn create_selected_worker_with_attributes(
     // A detached child cannot release its active stack/TLS mappings itself.
     // Reap only here at a later lifecycle boundary, after the kernel's
     // clear-child-tid write proves any selected detached child has stopped
-    // using them. Creation remains bounded by the 64-slot registry even when
-    // a caller never joins detached workers.
+    // using them. Each remaining live control carries its own list node.
     reap_finished_detached_selected_workers();
     let tls_block = match unsafe { static_tls::allocate_thread() } {
         Some(block) => block,
@@ -1345,25 +1213,6 @@ unsafe fn create_selected_worker_with_attributes(
     };
 
     let control = control_mapping.cast::<ThreadControl>();
-    let registry_slot = match reserve_selected_worker() {
-        Some(registry_slot) => registry_slot,
-        None => {
-            if !worker_stack.mapping.is_null() {
-                let _ = unsafe { unmap_worker(worker_stack.mapping, worker_stack.mapping_size) };
-            }
-            let _ = unsafe { unmap_worker(control_mapping, CONTROL_REGION_SIZE) };
-            let _ = unsafe { static_tls::release_thread(tls_block) };
-            return EAGAIN;
-        }
-    };
-
-    // The cancellation leaf is a parallel fixed table keyed by this already
-    // reserved registry index. It remains private state rather than a TCB or
-    // thread-list extension, and it is initialized before the child can run.
-    pthread_cancel::initialize_selected_worker_slot(
-        registry_slot,
-        matches!(start, SelectedWorkerStart::Pthread(_)),
-    );
 
     // SAFETY: mmap returned a private page-aligned zeroed control allocation;
     // the selected stack is either another private mapping or caller-owned as
@@ -1397,14 +1246,19 @@ unsafe fn create_selected_worker_with_attributes(
                 control_mapping,
                 tls_block,
                 tsd: pthread_tsd::SelectedTsdValues::empty(),
-                registry_slot,
+                registry_previous: core::ptr::null_mut(),
+                registry_next: core::ptr::null_mut(),
+                cancellation: pthread_cancel::SelectedWorkerCancellation::new(matches!(
+                    start,
+                    SelectedWorkerStart::Pthread(_)
+                )),
                 start,
                 argument,
             },
         );
         (*control).start_ready.store(1, Ordering::Release);
     }
-    publish_selected_worker(registry_slot, control, tls_block.thread_pointer());
+    publish_selected_worker(control);
     let child_tid = unsafe { core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>() };
     // SAFETY: the private clone seam uses musl's exact x86 argument shuffle.
     // The selected stack is either caller-owned or the writable upper portion
@@ -1422,13 +1276,13 @@ unsafe fn create_selected_worker_with_attributes(
         )
     };
     if is_linux_error(clone_result) {
-        if !release_selected_worker(registry_slot, control) {
-            // The private registry can still expose `control` to the selected
+        if !release_selected_worker(control) {
+            // The private list can still expose `control` to the selected
             // pthread_exit scanner.  Fail closed by retaining both mappings
             // rather than unmapping a pointer that a failed withdrawal left
             // published. This impossible-under-contract corruption path leaks
-            // one bounded admission slot but cannot manufacture a dangling
-            // registry pointer.
+            // one private control allocation but cannot manufacture a
+            // dangling list pointer.
             return EAGAIN;
         }
         if !worker_stack.mapping.is_null() {
@@ -1612,14 +1466,13 @@ pub(super) unsafe fn join_selected_worker(
     while unsafe { (*control).finished.load(Ordering::Acquire) } == 0 {
         core::hint::spin_loop();
     }
-    let registry_slot = unsafe { (*control).registry_slot };
     let registry_retired = unsafe { (*control).registry_retired.load(Ordering::Acquire) };
     if registry_retired == 0 {
         // Withdraw under the same lock used by pthread_exit's complete
         // scan-to-publish interval. No raw registry pointer can survive this
         // call into the following munmap, and a retry after a failed munmap
         // intentionally leaves the worker withdrawn.
-        if !release_selected_worker(registry_slot, control) {
+        if !release_selected_worker(control) {
             unsafe { release_join_claim(control) };
             return Err(EINVAL);
         }
