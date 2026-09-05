@@ -33,6 +33,48 @@ CONFIGURATION_REPLACEMENTS = {
 
 
 class OwnedKernelResidualTests(unittest.TestCase):
+    def assert_replay_parser_usage(self, *arguments: str) -> None:
+        scratch = ROOT / ".work" / "x86_64" / "tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="owned-kernel-residual-parser.", dir=scratch
+        ) as temporary:
+            tools = Path(temporary) / "tools"
+            tools.mkdir()
+            python = tools / "python3"
+            python.write_text("#!/bin/sh\nexit 79\n", encoding="utf-8")
+            python.chmod(0o755)
+            result = subprocess.run(
+                ["bash", str(RUNNER), *arguments],
+                cwd=ROOT,
+                env={**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}"},
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(
+            result.stderr,
+            f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n",
+        )
+
+    def test_supplied_static_replay_parser_rejects_ambiguous_paths(self) -> None:
+        for label, arguments in (
+            ("missing static", ("--static-sysroot",)),
+            ("empty static", ("--static-sysroot", "")),
+            ("empty dynamic", ("",)),
+            ("option static", ("--static-sysroot", "--not-a-sysroot")),
+            ("short option static", ("--static-sysroot", "-e")),
+            ("option dynamic", ("--not-a-sysroot",)),
+            ("short option dynamic", ("-e",)),
+            ("duplicate static", ("--static-sysroot", "/one", "--static-sysroot", "/two")),
+            ("duplicate dynamic", ("/one", "/two")),
+        ):
+            with self.subTest(label=label):
+                self.assert_replay_parser_usage(*arguments)
+
     def test_exact_residual_roster_and_source_bindings_are_recorded(self) -> None:
         document = tomllib.loads(CATALOG.read_text(encoding="utf-8"))
         row = next(item for item in document["capability"] if item["id"] == "system.kernel-admin")
@@ -99,9 +141,11 @@ class OwnedKernelResidualTests(unittest.TestCase):
         for required in (
             '"$installed/bin/crabc-cc-dynamic" --dynamic-pie',
             '"$ORACLE_CC" -static', "run_static_mode", "run_dynamic_mode",
-            "compare_case_output", "run_in_root", "run_static_mode \"$work/static-product\" static",
-            "run_static_mode \"$work/static-product\" static-pie", "kernel/direct",
+            "compare_case_output", "run_in_root", "run_static_mode \"$static_product\" static",
+            "run_static_mode \"$static_product\" static-pie", "kernel/direct",
             "provided_dynamic", "provided dynamic PIE/non-PIE kernel/direct",
+            "provided_static", "static_was_supplied=0", "dynamic_was_supplied=0",
+            "--static-sysroot", "static_product=\"$provided_static\"",
             "assert_static_symbols", "assert_dynamic_symbols",
             "--link-receipt", "audit_owned_link", "validate_link",
             "bind_dynamic_inputs", "dynamic-input-binding.json", "source_sha256_before_compile",
@@ -140,19 +184,22 @@ class OwnedKernelResidualTests(unittest.TestCase):
     def test_supplied_product_escape_is_rejected_before_building(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
-            result = subprocess.run(
-                ["bash", str(RUNNER), str(ROOT)],
-                env={**os.environ, "TMPDIR": temporary},
-                text=True,
-                capture_output=True,
-            )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(
-            "owned kernel residual product must be a checkout .work directory",
-            result.stderr,
-        )
-        self.assertNotIn("evidence:", result.stdout)
+        for label, arguments, expected in (
+            ("static", ("--static-sysroot", str(ROOT)),
+             "owned kernel residual static product must be a checkout .work directory"),
+            ("dynamic", (str(ROOT),),
+             "owned kernel residual product must be a checkout .work directory"),
+        ):
+            with self.subTest(label=label), tempfile.TemporaryDirectory(dir=scratch) as temporary:
+                result = subprocess.run(
+                    ["bash", str(RUNNER), *arguments],
+                    env={**os.environ, "TMPDIR": temporary},
+                    text=True,
+                    capture_output=True,
+                )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(expected, result.stderr)
+            self.assertNotIn("evidence:", result.stdout)
 
 
 if __name__ == "__main__":

@@ -62,6 +62,19 @@ that binding. The shared audit verifies the complete installed product and each
 dynamic receipt's resolved inputs, command, trace, output, interpreter, and
 `libc.so` dependency.
 
+The runner accepts `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`.
+With no arguments it preserves the disposable static and dynamic product builds.
+A positional dynamic product preserves the existing dynamic-only replay and
+does not build or run the static/static-PIE pair. `--static-sysroot` selects a
+physical checkout `.work` static product for that pair; when it is the only
+argument, the runner still builds its disposable dynamic product so its
+installed driver compiles the one shared workload object and runs the dynamic
+matrix. Supplying both products reuses both sealed trees and invokes neither
+producer. Paths must be nonempty, neither path can be parsed as an option, and
+both paths are canonicalized to physical checkout `.work` targets
+before validation. This is a replay seam for the existing receipt, not a new
+family claim.
+
 The UTS fixture first tries a child private UTS namespace. If the pinned
 container denies namespace creation or mutation, it emits an explicit raw
 negative syscall and public-wrapper errno transcript instead of claiming a
