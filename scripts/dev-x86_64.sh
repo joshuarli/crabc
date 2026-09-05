@@ -583,6 +583,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
   owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
+  owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  execute the prepared static and dynamic POSIX family matrix
   owned-posix-filesystem [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX filesystem provider composition
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
   owned-posix-signals [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test residual installed signal state and boundaries
@@ -2651,16 +2652,18 @@ fail() {
     exit 2
 }
 
-# Supplied POSIX products remain physical checkout inputs. Translate against
+# Supplied POSIX products and family receipts remain physical checkout inputs. Translate against
 # the actual bind mounts so a WORK_DIR override cannot select a hidden sibling.
 translate_owned_posix_product() {
-    python3 -B - "$ROOT_DIR" "$WORK_DIR" "$CARGO_VOLUME" "$1" <<'PY_PRODUCT'
+    python3 -B - "$ROOT_DIR" "$WORK_DIR" "$CARGO_VOLUME" "$1" "${2:-directory}" \
+        "$TARGET_VOLUME" "$TMP_DIR" "$REPORT_DIR" <<'PY_PRODUCT'
 from pathlib import Path
 import os
 import sys
 
 root, work, cargo = map(Path, sys.argv[1:4])
 argument = sys.argv[4]
+kind = sys.argv[5]
 container_root = Path('/workspace')
 container_work = container_root / '.work/x86_64'
 container_cargo = container_work / 'cargo'
@@ -2682,8 +2685,19 @@ try:
         path = host_path(raw)
     else:
         path = Path(os.path.abspath(raw))
-    if path.resolve(strict=True) != path or not path.is_dir() or not path.is_relative_to(root / '.work'):
-        raise ValueError('product must be a physical checkout .work directory')
+    if not path.is_relative_to(root / '.work') or (kind != 'directory' and path == root / '.work'):
+        raise ValueError('path must be below the physical checkout .work directory')
+    if kind == 'fresh-output':
+        if path.exists() or path.is_symlink() or path.parent.resolve(strict=True) != path.parent or not path.parent.is_dir():
+            raise ValueError('output must be fresh below an existing physical .work directory')
+        if any(directory.is_relative_to(path) for directory in (work, cargo, *map(Path, sys.argv[6:]))):
+            raise ValueError('output is reserved for container setup')
+    elif kind in ('directory', 'receipt-file'):
+        if path.resolve(strict=True) != path or not (path.is_dir() if kind == 'directory' else path.is_file()):
+            raise ValueError('product must be a physical checkout .work directory' if kind == 'directory'
+                             else 'receipt must be a physical checkout .work regular file')
+    else:
+        raise ValueError('unknown POSIX path kind')
     if path.is_relative_to(cargo):
         container = container_cargo / path.relative_to(cargo)
     elif path.is_relative_to(work):
@@ -2696,6 +2710,35 @@ try:
 except (OSError, RuntimeError, ValueError) as error:
     raise SystemExit(f'ERROR: supplied POSIX product: {error}')
 PY_PRODUCT
+}
+
+prepare_owned_posix_family_arguments() {
+    local static_receipt='' dynamic_receipt='' output=''
+    local expected='usage: ./scripts/dev-x86_64.sh owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR'
+    while [ "$#" -gt 0 ]; do
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$expected"
+        case "$1" in
+            --static-preparation)
+                [ -z "$static_receipt" ] || fail "$expected"
+                static_receipt="$2"
+                ;;
+            --dynamic-qualification)
+                [ -z "$dynamic_receipt" ] || fail "$expected"
+                dynamic_receipt="$2"
+                ;;
+            --output)
+                [ -z "$output" ] || fail "$expected"
+                output="$2"
+                ;;
+            *) fail "$expected" ;;
+        esac
+        shift 2
+    done
+    [ -n "$static_receipt" ] && [ -n "$dynamic_receipt" ] && [ -n "$output" ] || fail "$expected"
+    static_receipt="$(translate_owned_posix_product "$static_receipt" receipt-file)" || exit 2
+    dynamic_receipt="$(translate_owned_posix_product "$dynamic_receipt" receipt-file)" || exit 2
+    output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
+    POSIX_FAMILY_ARGUMENTS=(--static-preparation "$static_receipt" --dynamic-qualification "$dynamic_receipt" --output "$output")
 }
 
 prepare_owned_posix_replay_arguments() {
@@ -2898,6 +2941,12 @@ run_in_resolver_network_container() {
 # roots with trap-owned unmount cleanup. Their mount authority and disabled
 # AppArmor profile remain confined to the Docker mount/PID namespaces.
 run_in_dynamic_loader_mount_container() {
+    # The family includes credentials-profile's disposable user namespace.
+    # Preserve every other mount caller's existing seccomp policy.
+    local -a family_namespace_authority=()
+    if [ "$command" = owned-posix-family ]; then
+        family_namespace_authority+=(--security-opt=seccomp=unconfined)
+    fi
     prepare_work_dir
     docker run --rm --init \
         "${GIT_METADATA_MOUNT[@]}" \
@@ -2905,6 +2954,7 @@ run_in_dynamic_loader_mount_container() {
         --cap-add=SYS_CHROOT \
         --cap-add=SYS_ADMIN \
         --security-opt=apparmor=unconfined \
+        "${family_namespace_authority[@]}" \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
@@ -5790,7 +5840,7 @@ case "$command" in
     owned-posix-timers|owned-pthread-scheduling|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
     qualification-manifest) ;;
-    owned-static-sysroot|owned-posix-static-products) ;;
+    owned-static-sysroot|owned-posix-static-products|owned-posix-family) ;;
     lua-static-source-build) ;;
     lua-dynamic-source-build) ;;
     libc-owned-wordexp) ;;
@@ -5938,6 +5988,10 @@ esac
 require_native_linux_x86_64_host
 
 case "$command" in
+    owned-posix-family)
+        prepare_owned_posix_family_arguments "$@"
+        set -- "${POSIX_FAMILY_ARGUMENTS[@]}"
+        ;;
     owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-process-trio|owned-syslog|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation)
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
@@ -7857,6 +7911,10 @@ PY
         )"
         ensure_image
         run_in_container python3 -B /workspace/compat/x86_64/owned_posix_static_products.py prepare "$container_work"
+        ;;
+    owned-posix-family)
+        ensure_image
+        run_in_dynamic_loader_mount_container python3 -B /workspace/compat/x86_64/owned_posix_family_execution.py run "$@"
         ;;
     owned-unix-mechanisms)
         [ "$#" -le 1 ] || fail "owned-unix-mechanisms takes at most one dynamic sysroot"

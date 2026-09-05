@@ -20,6 +20,8 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             work = Path(temporary)
             (work / "state/supplied-product").mkdir(parents=True)
+            (work / "state/static-preparation.json").write_text("{}\n")
+            (work / "state/dynamic-qualification.json").write_text("{}\n")
             docker = work / "docker"
             docker.write_text(
                 f"#!{sys.executable}\n"
@@ -36,6 +38,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
             for command, needs_mount in (
                 ("materialized-dynamic-sysroot", True),
                 ("owned-dynamic-sysroot", True),
+                ("owned-posix-family", True),
                 ("owned-pty", True),
                 ("owned-pty-product", True),
                 ("libc-owned-wordexp", False),
@@ -82,7 +85,11 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         DISPATCH_CAPTURE=str(capture),
                         CRABC_X86_64_WORK_DIR=str(work / "state"),
                     )
-                    selected_command = (["qualification-manifest", "--through", "compat.abi-differential"]
+                    selected_command = ([command, "--static-preparation", "/workspace/.work/x86_64/static-preparation.json",
+                        "--dynamic-qualification", "/workspace/.work/x86_64/dynamic-qualification.json",
+                        "--output", "/workspace/.work/x86_64/family-output"]
+                        if command == "owned-posix-family" else
+                        ["qualification-manifest", "--through", "compat.abi-differential"]
                         if command == "qualification-manifest-prefix" else
                         [command.removesuffix("-product"), "/workspace/.work/x86_64/supplied-product"]
                         if command in ("owned-signal-helpers-product", "owned-pty-product", "owned-named-ipc-product", "owned-passwd-product", "owned-message-queues-product", "owned-credentials-profile-product") else [command])
@@ -101,6 +108,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                             command in (
                                 "owned-credentials-profile",
                                 "owned-credentials-profile-product",
+                                "owned-posix-family",
                             ),
                         )
                         self.assertNotIn("--privileged", arguments)
@@ -153,7 +161,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertEqual(invocations[0][-2:], [
                             "bash", "/workspace/compat/x86_64/run_owned_pty.sh",
                         ])
-                    if needs_mount and command not in ("owned-pty", "owned-pty-product"):
+                    if needs_mount and command not in ("owned-pty", "owned-pty-product", "owned-posix-family"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         expected_runner = {

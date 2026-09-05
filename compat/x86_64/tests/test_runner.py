@@ -2200,7 +2200,7 @@ unsafe fn join_selected_worker_inner(
             expected_groups[:static_sysroot_index]
             + (
                 "owned-system-cancellation",
-                "owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|"
+                "owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|"
                 "owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition",
                 "owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern",
                 "owned-pthread-spin",
@@ -2226,6 +2226,11 @@ unsafe fn join_selected_worker_inner(
             expected_groups[:dynamic_sysroot_index]
             + ("owned-dynamic-pthread-exit", "owned-dynamic-fork", "materialized-dynamic-sysroot")
             + expected_groups[dynamic_sysroot_index:]
+        )
+        expected_groups = tuple(
+            "owned-static-sysroot|owned-posix-static-products|owned-posix-family"
+            if group == "owned-static-sysroot" else group
+            for group in expected_groups
         )
         self.assertEqual(actual_groups, expected_groups)
 
