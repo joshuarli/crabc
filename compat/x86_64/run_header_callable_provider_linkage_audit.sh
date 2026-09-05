@@ -67,6 +67,65 @@ build_archive() {
     [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive for ${feature_request:-the default profile}"
 }
 
+verified_feature_profile_rows() {
+    PYTHONPATH="$ROOT_DIR/compat/x86_64" python3 - <<'PY'
+from feature_archive_roster import load_feature_archive_roster
+
+for row in load_feature_archive_roster():
+    if row.state == "verified":
+        print(f"{row.identifier}\t{','.join(row.baseline_features)}")
+PY
+}
+
+run_topology_only_profile_evidence() {
+    bash "$ROOT_DIR/compat/x86_64/run_libc_crypt_allocator_composition.sh" >/dev/null
+}
+
+# Reuse only exact canonical roster baseline feature sets during this one audit
+# invocation. Every profile still receives an explicit baseline argument, every
+# enabled profile is built in its own target directory, and the fresh work tree
+# prevents an inter-run archive cache or a changed final-product build.
+build_profile_archives() {
+    local work_dir="$1"
+    local default_target="$work_dir/default"
+    local identifier baseline_features
+    local enabled_target enabled_archive
+    local baseline_target baseline_archive
+    declare -A baseline_archives=()
+
+    default_archive="$default_target/$TARGET/debug/libc.a"
+    build_archive "$default_target" ""
+    baseline_args=()
+    enabled_args=()
+
+    while IFS=$'\t' read -r identifier baseline_features; do
+        [ -n "$identifier" ] || fail "feature archive roster emitted an empty identifier"
+        enabled_target="$work_dir/$identifier-enabled"
+        enabled_archive="$enabled_target/$TARGET/debug/libc.a"
+        build_archive "$enabled_target" "$identifier"
+        enabled_args+=(--profile-enabled "$identifier=$enabled_archive")
+
+        if [ "$identifier" = "$TOPOLOGY_ONLY_PROFILE" ]; then
+            [ "$baseline_features" = "x86-allocator-runtime,x86-crypt" ] ||
+                fail "topology-only composition baseline drifted"
+            run_topology_only_profile_evidence
+            continue
+        fi
+
+        if [ -z "$baseline_features" ]; then
+            baseline_archive="$default_archive"
+        elif [[ -v "baseline_archives[$baseline_features]" ]]; then
+            baseline_archive="${baseline_archives[$baseline_features]}"
+        else
+            baseline_target="$work_dir/$identifier-baseline"
+            baseline_archive="$baseline_target/$TARGET/debug/libc.a"
+            build_archive "$baseline_target" "$baseline_features"
+            baseline_archives["$baseline_features"]="$baseline_archive"
+        fi
+        baseline_args+=(--profile-baseline "$identifier=$baseline_archive")
+    done < <(verified_feature_profile_rows)
+}
+
 [ "$#" -eq 0 ] || fail "usage: $0"
 require_native_linux_x86_64
 for tool in cargo clang ld nm python3 readelf rustup stat; do
@@ -91,42 +150,10 @@ python3 "$INVENTORY_GENERATOR" \
 
 work_dir="$(mktemp -d /tmp/crabc-x86-header-callable-provider-linkage.XXXXXX)"
 report_tmp="$work_dir/report.json"
-default_target="$work_dir/default"
-default_archive="$default_target/$TARGET/debug/libc.a"
 trap 'rm -rf -- "$work_dir"' EXIT
 
 cd "$ROOT_DIR"
-build_archive "$default_target" ""
-
-declare -a baseline_args=()
-declare -a enabled_args=()
-while IFS=$'\t' read -r identifier baseline_features; do
-    [ -n "$identifier" ] || fail "feature archive roster emitted an empty identifier"
-    enabled_target="$work_dir/$identifier-enabled"
-    enabled_archive="$enabled_target/$TARGET/debug/libc.a"
-    build_archive "$enabled_target" "$identifier"
-    enabled_args+=(--profile-enabled "$identifier=$enabled_archive")
-
-    if [ "$identifier" = "$TOPOLOGY_ONLY_PROFILE" ]; then
-        [ "$baseline_features" = "x86-allocator-runtime,x86-crypt" ] ||
-            fail "topology-only composition baseline drifted"
-        bash "$ROOT_DIR/compat/x86_64/run_libc_crypt_allocator_composition.sh" >/dev/null
-        continue
-    fi
-
-    baseline_target="$work_dir/$identifier-baseline"
-    baseline_archive="$baseline_target/$TARGET/debug/libc.a"
-    build_archive "$baseline_target" "$baseline_features"
-    baseline_args+=(--profile-baseline "$identifier=$baseline_archive")
-done < <(
-    PYTHONPATH="$ROOT_DIR/compat/x86_64" python3 - <<'PY'
-from feature_archive_roster import load_feature_archive_roster
-
-for row in load_feature_archive_roster():
-    if row.state == "verified":
-        print(f"{row.identifier}\t{','.join(row.baseline_features)}")
-PY
-)
+build_profile_archives "$work_dir"
 
 python3 "$AUDIT" \
     --inventory "$INVENTORY" \

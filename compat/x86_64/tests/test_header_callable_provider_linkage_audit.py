@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
 import stat
 import subprocess
@@ -308,6 +309,147 @@ class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
         self.assertEqual(
             set(replacement_rows), {planned.identifier, verified.identifier}
         )
+
+    def test_runner_reuses_one_invocation_baseline_archives_by_feature_set(self) -> None:
+        """Equal baseline feature sets must not cause duplicate archive builds."""
+
+        work_root = ROOT / ".work" / "x86_64" / "provider-linkage-audit-tests"
+        work_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="baseline-reuse-",
+            dir=work_root,
+        ) as temporary:
+            root = Path(temporary)
+
+            def execute_orchestration(label: str, runner: str) -> list[str]:
+                prelude, marker, entry = runner.partition('[ "$#" -eq 0 ] || fail "usage: $0"')
+                self.assertTrue(marker, f"{label} runner has no executable entry boundary")
+                _, change_directory, after_directory = entry.partition('cd "$ROOT_DIR"\n')
+                self.assertTrue(change_directory, f"{label} runner has no orchestration directory boundary")
+                body, audit, _ = after_directory.partition('python3 "$AUDIT" \\')
+                self.assertTrue(audit, f"{label} runner has no audit boundary")
+                mock_bin = root / f"{label}-bin"
+                mock_bin.mkdir()
+                capture = root / f"{label}-trace.txt"
+                mock_python = mock_bin / "python3"
+                mock_python.write_text(
+                    "#!/bin/bash\n"
+                    "printf 'roster\\n' >>\"$CAPTURE\"\n"
+                    "cat >/dev/null\n"
+                    "printf '%s\\t%s\\n' x86-alpha ''\n"
+                    "printf '%s\\t%s\\n' x86-beta ''\n"
+                    "printf '%s\\t%s\\n' x86-gamma x86-shared\n"
+                    "printf '%s\\t%s\\n' x86-delta x86-shared\n"
+                    "printf '%s\\t%s\\n' x86-epsilon x86-distinct\n"
+                    "printf '%s\\t%s\\n' x86-crypt-allocator-composition x86-allocator-runtime,x86-crypt\n",
+                    encoding="utf-8",
+                )
+                mock_bash = mock_bin / "bash"
+                mock_bash.write_text(
+                    "#!/bin/bash\n"
+                    "printf 'topology\\n' >>\"$CAPTURE\"\n",
+                    encoding="utf-8",
+                )
+                mock_python.chmod(0o755)
+                mock_bash.chmod(0o755)
+                harness = root / f"{label}.sh"
+                harness.write_text(
+                    prelude
+                    + r"""
+
+work_dir="$1"
+capture="$2"
+default_target="$work_dir/default"
+default_archive="$default_target/$TARGET/debug/libc.a"
+
+build_archive() {
+    local target_dir="$1"
+    local feature_request="$2"
+    mkdir -p "$target_dir/$TARGET/debug"
+    : >"$target_dir/$TARGET/debug/libc.a"
+    printf 'build\t%s\t%s\n' "$(basename "$target_dir")" "$feature_request" >>"$capture"
+}
+
+"""
+                    + body
+                    + r"""
+printf 'baseline-args\t%s\n' "${baseline_args[*]}" >>"$capture"
+printf 'enabled-args\t%s\n' "${enabled_args[*]}" >>"$capture"
+""",
+                    encoding="utf-8",
+                )
+                environment = dict(
+                    os.environ,
+                    CAPTURE=str(capture),
+                    PATH=f"{mock_bin}{os.pathsep}{os.environ['PATH']}",
+                )
+                completed = subprocess.run(
+                    ["/bin/bash", str(harness), str(root / f"{label}-work"), str(capture)],
+                    cwd=ROOT,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                return capture.read_text(encoding="utf-8").splitlines()
+
+            current_records = execute_orchestration("current", RUNNER.read_text(encoding="utf-8"))
+
+        current_builds = [record for record in current_records if record.startswith("build\t")]
+        self.assertEqual(
+            current_builds,
+            [
+                "build\tdefault\t",
+                "build\tx86-alpha-enabled\tx86-alpha",
+                "build\tx86-beta-enabled\tx86-beta",
+                "build\tx86-gamma-enabled\tx86-gamma",
+                "build\tx86-gamma-baseline\tx86-shared",
+                "build\tx86-delta-enabled\tx86-delta",
+                "build\tx86-epsilon-enabled\tx86-epsilon",
+                "build\tx86-epsilon-baseline\tx86-distinct",
+                "build\tx86-crypt-allocator-composition-enabled\tx86-crypt-allocator-composition",
+            ],
+        )
+        self.assertEqual(len(current_builds), 9)
+        self.assertEqual(sum(record.endswith("\t") for record in current_builds), 1)
+        self.assertEqual(current_records.count("roster"), 1)
+        self.assertEqual(current_records.count("topology"), 1)
+
+        def archive(directory: str) -> str:
+            return str(
+                root
+                / "current-work"
+                / directory
+                / "x86_64-unknown-linux-musl"
+                / "debug"
+                / "libc.a"
+            )
+
+        expected_baseline_args = "baseline-args\t" + " ".join(
+            (
+                f"--profile-baseline x86-alpha={archive('default')}",
+                f"--profile-baseline x86-beta={archive('default')}",
+                f"--profile-baseline x86-gamma={archive('x86-gamma-baseline')}",
+                f"--profile-baseline x86-delta={archive('x86-gamma-baseline')}",
+                f"--profile-baseline x86-epsilon={archive('x86-epsilon-baseline')}",
+            )
+        )
+        expected_enabled_args = "enabled-args\t" + " ".join(
+            f"--profile-enabled {identifier}={archive(directory)}"
+            for identifier, directory in (
+                ("x86-alpha", "x86-alpha-enabled"),
+                ("x86-beta", "x86-beta-enabled"),
+                ("x86-gamma", "x86-gamma-enabled"),
+                ("x86-delta", "x86-delta-enabled"),
+                ("x86-epsilon", "x86-epsilon-enabled"),
+                (
+                    "x86-crypt-allocator-composition",
+                    "x86-crypt-allocator-composition-enabled",
+                ),
+            )
+        )
+        self.assertEqual(current_records[-2:], [expected_baseline_args, expected_enabled_args])
 
     def test_runner_and_dispatcher_keep_the_provider_audit_non_promoting(self) -> None:
         result = subprocess.run(
