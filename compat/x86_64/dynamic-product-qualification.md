@@ -19,7 +19,12 @@ excluded, so there is no checked-in self-hash or commit cycle.
 
 - `prepare --work PATH` runs the installed-driver tests, owned CRT tests,
   owned loader source tests, and pinned musl oracle check. It retains their
-  log and the actual oracle runtime/compiler identities and source pin hash.
+  log and copies of the observed oracle runtime, tracked compiler wrapper,
+  specs and verification manifests. Hashes are checked against those retained
+  bytes; the wrapper must match tracked source, and the source/specs manifests
+  must match the upstream pins and copied specs. The live files must still
+  match before and after every case. The runtime hash identifies observed
+  executable bytes; it is not a claimed reproducible upstream binary pin.
 - `run --work PATH --product LABEL --case CASE` executes one exact registered
   leaf with its selected mode. It removes inherited loader and leaf-selection
   environment overrides, retains the subprocess log, and records success only
@@ -34,14 +39,17 @@ excluded, so there is no checked-in self-hash or commit cycle.
 - `validate --receipt PATH` revalidates that receipt against live source,
   contracts and all retained evidence. Missing evidence or changed bytes fail.
 - `publish --receipt PATH` is an explicit operation after review. It requires
-  a clean source revision and creates the ignored publication pointer under
-  `.work/x86_64/`. No schema check or build invokes publication implicitly.
+  a clean source revision and atomically replaces the ignored publication pointer under
+  `.work/x86_64/`, after rechecking source and receipt identity immediately
+  before replacement. Immutable receipts and prior case evidence are never
+  rewritten. No schema check or build invokes publication implicitly.
 
 The finite `CASES` roster maps the contract to CLI, dependency cycles, ELF
 weak/protected/hidden scope and interpreter aliases, PIE/non-PIE runtime
 loading and deferred binding, constructor exit, pthread signals and exit,
 fork repair, stack attributes, join cancellation, condition-wait cancellation,
-and the shared full I/O cancellation roster. The runtime-loading leaf also
+the shared full I/O cancellation roster, and the separate `system()`
+cancellation protocol. The runtime-loading leaf also
 runs search policy, all-thread GD TLS growth, initial IE, new-runtime-IE
 rejection, retained scope/lifecycle and rollback differentials. Both clean
 builds and the extracted package must run the complete same roster; neither
@@ -65,6 +73,8 @@ Only a valid reviewed publication makes the product report `materialized`
 and the RuntimeV1 report `verified`/published. `campaign_report.py` still
 requires every declared prerequisite family and the independent full-26,
 capability and platform qualification gates. Product publication does not
-change the ledger, those family states, or public support. A stale publication
-is rejected rather than reused. All generated receipts and referenced evidence
+change the ledger, those family states, or public support. A stale or dirty-source publication is unqualified rather than reused;
+its pointer remains available for inspection and cannot block fresh
+qualification. Explicit receipt validation still reports the precise stale
+or missing evidence. A fresh reviewed receipt can replace the old pointer. All generated receipts and referenced evidence
 must remain available under the checkout's ignored `.work` tree.

@@ -33,6 +33,16 @@ require_tool() {
     command -v "$1" >/dev/null 2>&1 || fail "requires $1"
 }
 
+# Oracle probes inherit the same checkout-owned scratch boundary as candidates.
+readonly temporary_root="${TMPDIR:-}"
+case "$temporary_root" in
+    "$ROOT_DIR"/.work/*) ;;
+    *) fail "oracle TMPDIR must be a physical checkout .work directory" ;;
+esac
+[ -d "$temporary_root" ] && [ "$(realpath "$temporary_root")" = "$temporary_root" ] || {
+    fail "oracle TMPDIR must be a physical checkout .work directory"
+}
+
 require_native_linux_x86_64
 require_tool readelf
 require_tool sha256sum
@@ -70,7 +80,7 @@ case "$compiler_target" in
     *) fail "oracle compiler is not an x86_64 musl GCC: ${compiler_target}" ;;
 esac
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-musl-oracle.XXXXXX)"
+work_dir="$(mktemp -d "$temporary_root/crabc-x86-64-musl-oracle.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 probe="${work_dir}/probe"
 canonical_libc="$(realpath "$MUSL_LIBC")"

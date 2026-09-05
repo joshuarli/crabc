@@ -19,6 +19,8 @@ import stat
 import subprocess
 import sys
 import tarfile
+import tempfile
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "crabc.x86_64-owned-dynamic-qualification/v1"
@@ -42,10 +44,19 @@ CASES = {
     "pthread-join-cancel": ("run_owned_pthread_join_cancel.sh", None),
     "pthread-cond-cancel": ("run_owned_pthread_cond_cancel.sh", None),
     "io-cancellation": ("run_owned_dynamic_io_cancellation.sh", None),
+    "system-cancellation": ("run_owned_system_cancellation.sh", None),
 }
 MATERIALIZATION_PROFILE = "retained dlclose mappings; default NOW with declared lazy imports; runtime GD growth; new runtime IE rejected"
 MATERIALIZATION_QUALIFICATION = "separate live three-product receipt and review required"
 CONTRACTS = ("compat/x86_64/dynamic-product.toml", "compat/x86_64/loader-libc-tls-runtime-v1.toml")
+
+ORACLE_FILES = {
+    "runtime": Path("/opt/musl-1.2.6/lib/libc.so"),
+    "compiler_wrapper": Path("/usr/local/bin/crabc-x86_64-musl-gcc"),
+    "specs": Path("/opt/musl-1.2.6/lib/musl-gcc.specs"),
+    "source_manifest": Path("/opt/musl-1.2.6/.crabc-oracle"),
+    "specs_manifest": Path("/opt/musl-1.2.6/.crabc-musl-gcc-specs.sha256"),
+}
 
 
 class QualificationError(RuntimeError):
@@ -90,6 +101,13 @@ def require_clean_source() -> str:
 
 
 def contract_digests() -> dict[str, str]:
+    # A matching byte hash cannot substitute for valid semantic contracts.
+    import dynamic_product_contract as product_contract
+    import validate_loader_libc_tls_runtime_v1 as tls_contract
+    product_contract.validate_contract_and_state(
+        product_contract.load_toml(product_contract.CONTRACT_PATH),
+        json.loads(product_contract.STATE_PATH.read_text()))
+    tls_contract.validate_contract(tls_contract.load_toml(tls_contract.CONTRACT_PATH))
     return {name: digest(ROOT / name) for name in CONTRACTS}
 
 
@@ -120,7 +138,10 @@ def read(path: Path) -> dict:
 
 def product_identity(product: Path) -> str:
     import crabc_cc_owned_dynamic as driver
-    manifest = driver.validate(product)
+    try:
+        manifest = driver.validate(product)
+    except driver.shared.DriverError as error:
+        raise QualificationError(f"installed product invalid: {error}") from error
     state = read(product / "share/crabc/dynamic-product-state.json")
     require(set(state) == {"schema", "status", "source_sha256", "contracts", "payload_files",
             "runtime_v1_published", "campaign_complete", "public_support", "modes", "runtime_profile", "qualification"},
@@ -140,10 +161,58 @@ def product_identity(product: Path) -> str:
     return digest(product / "share/crabc/manifest.json")
 
 
+def capture_oracle(work: Path) -> dict:
+    destination = work / "qualification-oracle"
+    destination.mkdir()
+    for name, path in ORACLE_FILES.items():
+        digest(path)
+        with (destination / name).open("xb") as output:
+            output.write(path.read_bytes())
+    files = {name: digest(destination / name) for name in ORACLE_FILES}
+    return {"version": "musl-1.2.6", "runtime_sha256": files["runtime"],
+            "compiler_wrapper_sha256": files["compiler_wrapper"],
+            "pins_sha256": digest(ROOT / "compat/upstreams.toml"), "files": files}
+
+
+def validate_oracle(work: Path, oracle: dict) -> dict[str, str]:
+    """Validate retained observed binaries and pinned source/specs provenance.
+
+    The runtime hash identifies observed executable bytes, not a claimed
+    reproducible-build hash of upstream musl. Source provenance is supplied by
+    the pinned image build and the executed source/specs/version/mapping probe.
+    """
+    require(set(oracle) == {"version", "runtime_sha256", "compiler_wrapper_sha256", "pins_sha256", "files"}, "oracle identity missing")
+    require(oracle["version"] == "musl-1.2.6" and oracle["pins_sha256"] == digest(ROOT / "compat/upstreams.toml"), "oracle pin identity drifted")
+    files = oracle["files"]
+    require(isinstance(files, dict) and set(files) == set(ORACLE_FILES), "oracle observed file roster drifted")
+    directory = work / "qualification-oracle"
+    require({path.name for path in directory.iterdir()} == set(files), "oracle retained file roster drifted")
+    for name, expected in files.items():
+        require(digest(directory / name) == expected, "oracle retained file identity differs")
+    require(oracle["runtime_sha256"] == files["runtime"]
+            and oracle["compiler_wrapper_sha256"] == files["compiler_wrapper"], "oracle identity differs from retained bytes")
+    require(files["compiler_wrapper"] == digest(ROOT / "docker/x86_64-musl-oracle-gcc"), "oracle compiler wrapper differs from pinned source")
+    pins = tomllib.loads((ROOT / "compat/upstreams.toml").read_text())["musl"]
+    expected_manifest = ("format=crabc-pinned-musl-oracle-v1\n"
+                         f"version={pins['version']}\nsource_sha256={pins['sha256']}\n"
+                         f"fallback_revision={pins['fallback_revision']}\narchitecture=x86_64\n")
+    require((directory / "source_manifest").read_text() == expected_manifest, "oracle source verification manifest drifted")
+    require((directory / "specs_manifest").read_text() == f"{files['specs']}  /opt/musl-1.2.6/lib/musl-gcc.specs\n", "oracle specs verification manifest drifted")
+    return {relative(directory / name): value for name, value in files.items()}
+
+
+def require_live_oracle(work: Path, oracle: dict) -> None:
+    validate_oracle(work, oracle)
+    require({name: digest(path) for name, path in ORACLE_FILES.items()} == oracle["files"],
+            "live oracle files differ from the validated preparation")
+
+
 def prepare(work: Path) -> None:
     """Run the pinned oracle and nearest source/driver judges with kept logs."""
     work = evidence_path(work)
     source = source_digest()
+    oracle = capture_oracle(work)
+    require_live_oracle(work, oracle)
     commands = [
         ["python3", "-B", "-m", "unittest", "discover", "-s", str(ROOT / "compat/x86_64"), "-p", "test_owned_dynamic_driver.py"],
         ["python3", "-B", "-m", "unittest", "discover", "-s", str(ROOT / "crt/tests"), "-p", "test_x86_64_dynamic_modes.py"],
@@ -162,11 +231,10 @@ def prepare(work: Path) -> None:
             require(completed.returncode == 0, f"qualification preparation failed: {command[0]}; {log}")
     print(log.read_text(errors="replace"), end="", flush=True)
     require(source == source_digest(), "source changed during qualification preparation")
+    require_live_oracle(work, oracle)
     write_new(work / "qualification-prepare.json", {
         "schema": SCHEMA, "source_sha256": source, "log": relative(log), "log_sha256": digest(log),
-        "oracle": {"version": "musl-1.2.6", "runtime_sha256": digest(Path("/opt/musl-1.2.6/lib/libc.so")),
-                   "compiler_wrapper_sha256": digest(Path("/usr/local/bin/crabc-x86_64-musl-gcc")),
-                   "pins_sha256": digest(ROOT / "compat/upstreams.toml")},
+        "oracle": oracle,
         "checks": ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"],
         "exit_status": 0,
     })
@@ -179,14 +247,10 @@ def preparation_evidence(work: Path, source: str) -> dict[str, str]:
     require(record["schema"] == SCHEMA and record["source_sha256"] == source and record["exit_status"] == 0,
             "missing or stale preparation evidence")
     require(record["checks"] == ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"], "preparation checks incomplete")
-    oracle = record["oracle"]
-    require(set(oracle) == {"version", "runtime_sha256", "compiler_wrapper_sha256", "pins_sha256"}, "oracle identity missing")
-    require(oracle["version"] == "musl-1.2.6" and oracle["pins_sha256"] == digest(ROOT / "compat/upstreams.toml"), "oracle pin identity drifted")
-    for field in ("runtime_sha256", "compiler_wrapper_sha256"):
-        require(isinstance(oracle[field], str) and len(oracle[field]) == 64 and all(c in "0123456789abcdef" for c in oracle[field]), "oracle tool identity invalid")
+    oracle_files = validate_oracle(work, record["oracle"])
     log = evidence_path(ROOT / record["log"])
     require(log == work / "qualification-prepare.log" and digest(log) == record["log_sha256"], "preparation log is stale")
-    return {relative(path): digest(path), relative(log): digest(log)}
+    return {relative(path): digest(path), relative(log): digest(log), **oracle_files}
 
 
 def artifact_snapshot(log: Path, source_mount: str) -> dict:
@@ -224,6 +288,8 @@ def run_case(work: Path, product: str, case: str) -> None:
     require(product in PRODUCTS and case in CASES, "unknown product or coverage case")
     work = evidence_path(work)
     source = source_digest()
+    oracle = read(work / "qualification-prepare.json")["oracle"]
+    require_live_oracle(work, oracle)
     manifest = product_identity(work / product)
     script, mode = CASES[case]
     environment = {key: value for key, value in os.environ.items()
@@ -238,6 +304,7 @@ def run_case(work: Path, product: str, case: str) -> None:
         completed = subprocess.run(command, cwd=ROOT, env=environment, stdout=output, stderr=subprocess.STDOUT)
     print(log.read_text(errors="replace"), end="", flush=True)
     require(completed.returncode == 0, f"coverage case failed: {product}/{case}; {log}")
+    require_live_oracle(work, oracle)
     require(source_digest() == source and product_identity(work / product) == manifest,
             "source or installed product changed during coverage case")
     write_new(destination / (case + ".json"), {
@@ -342,16 +409,65 @@ def validate_receipt(path: Path) -> dict:
     return receipt
 
 
+def publish_receipt(path: Path) -> None:
+    """Atomically replace the reviewed pointer; never rewrite any receipt.
+
+    Requalification after a source change creates a fresh receipt and may
+    replace this mutable selection. Validate both before staging and just
+    before replacement, so a concurrent source edit cannot publish stale proof.
+    """
+    revision = require_clean_source()
+    receipt = validate_receipt(path)
+    receipt_hash = digest(path)
+    destination = evidence_path(PUBLICATION)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    pointer = {"schema": SCHEMA, "receipt": relative(path),
+               "receipt_sha256": receipt_hash, "source_revision": revision}
+    staged = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix=".publication-", suffix=".json",
+                                         dir=destination.parent, delete=False) as output:
+            staged = Path(output.name)
+            # Reports produced in the native container remain host-readable.
+            os.fchmod(output.fileno(), 0o644)
+            json.dump(pointer, output, indent=2, sort_keys=True)
+            output.write("\n")
+            output.flush()
+            os.fsync(output.fileno())
+        require(require_clean_source() == revision and source_digest() == receipt["source_sha256"]
+                and digest(path) == receipt_hash, "source or receipt changed during publication")
+        os.replace(staged, destination)
+        directory = os.open(destination.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if staged is not None:
+            staged.unlink(missing_ok=True)
+
+
 def load_publication() -> dict | None:
+    """Return current proof only; a stale selection is recoverably unqualified.
+
+    The pointer and old immutable evidence stay available for inspection. An
+    explicit validate operation still diagnoses stale/missing receipt inputs;
+    neither status reporting nor fresh qualification consumes them as proof.
+    Malformed pointer schemas remain errors rather than silently accepted state.
+    """
     if not PUBLICATION.exists():
         return None
     published = read(PUBLICATION)
     require(set(published) == {"schema", "receipt", "receipt_sha256", "source_revision"}, "publication fields drifted")
     require(published["schema"] == SCHEMA, "publication schema drifted")
-    require(published["source_revision"] == require_clean_source(), "published source revision is stale")
-    receipt = evidence_path(ROOT / published["receipt"])
-    require(digest(receipt) == published["receipt_sha256"], "published receipt hash mismatch")
-    return validate_receipt(receipt)
+    try:
+        if published["source_revision"] != require_clean_source():
+            return None
+        receipt = evidence_path(ROOT / published["receipt"])
+        require(digest(receipt) == published["receipt_sha256"], "published receipt hash mismatch")
+        return validate_receipt(receipt)
+    except (QualificationError, OSError, ValueError, tarfile.TarError):
+        return None
 
 
 def main() -> int:
@@ -375,11 +491,10 @@ def main() -> int:
             print(f"dynamic product qualification ready for review: {args.work / 'qualification.json'}")
         else:
             require(args.receipt is not None, "operation requires --receipt")
-            validate_receipt(args.receipt)
             if args.operation == "publish":
-                revision = require_clean_source()
-                write_new(PUBLICATION, {"schema": SCHEMA, "receipt": relative(args.receipt),
-                                       "receipt_sha256": digest(args.receipt), "source_revision": revision})
+                publish_receipt(args.receipt)
+            else:
+                validate_receipt(args.receipt)
             print("dynamic product receipt validated; family and platform gates remain independent")
     except (QualificationError, OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"dynamic qualification: {error}", file=sys.stderr)

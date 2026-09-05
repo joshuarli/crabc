@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import importlib.util
 import io
 import json
+import os
+import shutil
+import stat
 from pathlib import Path
 import sys
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -32,7 +37,11 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         self.work.mkdir(parents=True)
         pins = self.root / "compat/upstreams.toml"
         pins.parent.mkdir(parents=True)
-        pins.write_text("pinned musl fixture\n")
+        pins.write_text('[musl]\nversion = "1.2.6"\nsha256 = "' + "d" * 64
+                        + '"\nfallback_revision = "' + "e" * 40 + '"\n')
+        wrapper = self.root / "docker/x86_64-musl-oracle-gcc"
+        wrapper.parent.mkdir()
+        wrapper.write_bytes(b"tracked oracle wrapper\n")
         self.source = "a" * 64
         self.manifest = "b" * 64
         for patch in (
@@ -77,12 +86,26 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                     "log": qualification.relative(log), "log_sha256": qualification.digest(log), "exit_status": 0,
                     "source_mount": str(self.root), "artifacts": qualification.artifact_snapshot(log, str(self.root)),
                 })
+        oracle_payloads = {
+            "runtime": b"observed oracle runtime", "compiler_wrapper": wrapper.read_bytes(),
+            "specs": b"pinned specs", "source_manifest":
+                ("format=crabc-pinned-musl-oracle-v1\nversion=1.2.6\nsource_sha256=" + "d" * 64
+                 + "\nfallback_revision=" + "e" * 40 + "\narchitecture=x86_64\n").encode(),
+        }
+        for name, payload in oracle_payloads.items():
+            self.put("qualification-oracle/" + name, payload)
+        self.put("qualification-oracle/specs_manifest",
+                 (qualification.digest(self.work / "qualification-oracle/specs")
+                  + "  /opt/musl-1.2.6/lib/musl-gcc.specs\n").encode())
+        oracle_files = {name: qualification.digest(self.work / "qualification-oracle" / name)
+                        for name in qualification.ORACLE_FILES}
         prepare_log = self.put("qualification-prepare.log", b"source judges and musl pin validated\n")
         self.put("qualification-prepare.json", {
             "schema": qualification.SCHEMA, "source_sha256": self.source,
             "log": qualification.relative(prepare_log), "log_sha256": qualification.digest(prepare_log),
-            "oracle": {"version": "musl-1.2.6", "runtime_sha256": "d" * 64,
-                       "compiler_wrapper_sha256": "e" * 64, "pins_sha256": qualification.digest(pins)},
+            "oracle": {"version": "musl-1.2.6", "runtime_sha256": oracle_files["runtime"],
+                       "compiler_wrapper_sha256": oracle_files["compiler_wrapper"],
+                       "pins_sha256": qualification.digest(pins), "files": oracle_files},
             "checks": ["installed-driver", "owned-crt", "owned-loader-source", "pinned-musl-oracle"], "exit_status": 0,
         })
         for name in ("runtime.tar", "second-runtime.tar"):
@@ -139,8 +162,66 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         })
         self.assertEqual(qualification.load_publication(), receipt)
         with mock.patch.object(qualification, "require_clean_source", return_value="later-revision"):
-            with self.assertRaisesRegex(qualification.QualificationError, "source revision is stale"):
-                qualification.load_publication()
+            self.assertIsNone(qualification.load_publication())
+
+    def publish(self, path):
+        with mock.patch.object(sys, "argv", ["owned_dynamic_qualification.py", "publish", "--receipt", str(path)]), \
+             contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            return qualification.main()
+
+    def test_reviewed_pointer_republishes_atomically_after_source_changes(self):
+        first = self.put("qualification.json", qualification.collect(self.work))
+        self.assertEqual(self.publish(first), 0)
+        old_receipt_bytes = first.read_bytes()
+        old_case = self.work / "qualification-cases/installed/cycle.json"
+        old_case_bytes = old_case.read_bytes()
+        second_work = self.root / ".work/fresh-product"
+        shutil.copytree(self.work, second_work)
+        (second_work / "qualification.json").unlink()
+        new_source = "f" * 64
+        for path in second_work.rglob("*.log"):
+            path.write_text(path.read_text().replace(str(self.work), str(second_work)))
+        for path in second_work.glob("qualification-cases/*/*.json"):
+            record = json.loads(path.read_text().replace(str(self.work.relative_to(self.root)), str(second_work.relative_to(self.root))))
+            record["source_sha256"] = new_source
+            log = self.root / record["log"]
+            record["log_sha256"] = qualification.digest(log)
+            record["artifacts"] = qualification.artifact_snapshot(log, str(self.root))
+            path.write_text(json.dumps(record))
+        prepare = second_work / "qualification-prepare.json"
+        record = qualification.read(prepare)
+        record["source_sha256"] = new_source
+        record["log"] = qualification.relative(second_work / "qualification-prepare.log")
+        prepare.write_text(json.dumps(record))
+        for path in second_work.glob("*.crabc-link.json"):
+            path.write_text(path.read_text().replace(str(self.work), str(second_work)))
+        with mock.patch.object(qualification, "source_digest", return_value=new_source), \
+             mock.patch.object(qualification, "require_clean_source", return_value="next-clean-revision"):
+            second = second_work / "qualification.json"
+            qualification.write_new(second, qualification.collect(second_work))
+            self.assertEqual(self.publish(second), 0)
+            self.assertEqual(qualification.load_publication()["work"], qualification.relative(second_work))
+            self.assertEqual(stat.S_IMODE(qualification.PUBLICATION.stat().st_mode), 0o644)
+        self.assertEqual(first.read_bytes(), old_receipt_bytes)
+        self.assertEqual(old_case.read_bytes(), old_case_bytes)
+        self.assertFalse(list(qualification.PUBLICATION.parent.glob(".publication-*.json")))
+
+    def test_source_change_during_republication_preserves_old_pointer_and_receipts(self):
+        path = self.put("qualification.json", qualification.collect(self.work))
+        self.assertEqual(self.publish(path), 0)
+        pointer_bytes = qualification.PUBLICATION.read_bytes()
+        receipt_bytes = path.read_bytes()
+        with mock.patch.object(qualification, "require_clean_source", side_effect=["clean-revision", "later-revision"]):
+            self.assertEqual(self.publish(path), 1)
+        self.assertEqual(qualification.PUBLICATION.read_bytes(), pointer_bytes)
+        self.assertEqual(path.read_bytes(), receipt_bytes)
+        self.assertFalse(list(qualification.PUBLICATION.parent.glob(".publication-*.json")))
+
+    def test_dirty_source_makes_existing_publication_unqualified(self):
+        path = self.put("qualification.json", qualification.collect(self.work))
+        self.assertEqual(self.publish(path), 0)
+        with mock.patch.object(qualification, "require_clean_source", side_effect=qualification.QualificationError("dirty source")):
+            self.assertIsNone(qualification.load_publication())
 
     def test_missing_second_product_cancellation_cannot_be_inferred_from_other_products(self):
         (self.work / "qualification-cases/second/io-cancellation.json").unlink()
@@ -193,6 +274,34 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             path.write_text(json.dumps(changed))
             with self.assertRaises(qualification.QualificationError):
                 qualification.collect(self.work)
+
+    def test_oracle_identity_cannot_be_an_arbitrary_well_formed_digest(self):
+        path = self.work / "qualification-prepare.json"
+        record = qualification.read(path)
+        record["oracle"]["runtime_sha256"] = "0" * 64
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(qualification.QualificationError, "oracle"):
+            qualification.collect(self.work)
+
+    def test_live_oracle_change_and_wrapper_source_mismatch_are_rejected(self):
+        oracle = qualification.read(self.work / "qualification-prepare.json")["oracle"]
+        live = self.root / ".work/live-oracle"
+        shutil.copytree(self.work / "qualification-oracle", live)
+        with mock.patch.object(qualification, "ORACLE_FILES", {name: live / name for name in oracle["files"]}):
+            qualification.require_live_oracle(self.work, oracle)
+            (live / "runtime").write_bytes(b"different live runtime")
+            with self.assertRaisesRegex(qualification.QualificationError, "live oracle files differ"):
+                qualification.require_live_oracle(self.work, oracle)
+        (self.root / "docker/x86_64-musl-oracle-gcc").write_bytes(b"changed tracked wrapper")
+        with self.assertRaisesRegex(qualification.QualificationError, "wrapper differs from pinned source"):
+            qualification.validate_oracle(self.work, oracle)
+
+    def test_oracle_runner_rejects_scratch_outside_checkout_before_tool_execution(self):
+        environment = dict(os.environ, TMPDIR="/tmp")
+        completed = subprocess.run(["bash", str(ROOT / "compat/x86_64/run_musl_oracle.sh")],
+                                   env=environment, capture_output=True, text=True)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("oracle TMPDIR must be a physical checkout .work directory", completed.stderr)
 
     def test_equal_archives_from_another_product_are_rejected(self):
         for name in ("runtime.tar", "second-runtime.tar"):
