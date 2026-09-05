@@ -2310,6 +2310,7 @@ unsafe extern "C" fn cancel_selected_worker_join(argument: *mut c_void) {
     unsafe { release_join_claim(argument.cast::<ThreadControl>()) };
 }
 
+#[inline(always)]
 unsafe fn join_selected_worker_inner(
     thread: *mut c_void,
     #[cfg(feature = "x86-owned-static-runtime")] cleanup: *mut pthread_cancel::CleanupNode,

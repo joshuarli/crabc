@@ -312,23 +312,17 @@ static int run_concurrent_explicit_exit_round(int *main_errno_location)
     return 0;
 }
 
-#if defined(CRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT)
-/* This is candidate-only evidence for the deliberate artifact-local limit.
- * Pinned musl is the behavioral oracle for the shared routes above, but does
- * not impose this private 64-slot admission registry. */
-enum {
-    selected_worker_limit = CRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT,
-};
+/* Keep 64 workers alive while admitting another. The linked registry has no
+ * fixed slot limit; both musl and the candidate must preserve independent TLS
+ * and permit subsequent reuse after all workers have been joined. */
+enum { held_worker_count = 64 };
 
-_Static_assert(selected_worker_limit == 64,
-    "the selected crabc worker registry has exactly 64 slots");
-
-static int run_registry_capacity_round(int *main_errno_location)
+static int run_registry_growth_round(int *main_errno_location)
 {
-    pthread_t threads[selected_worker_limit];
-    struct held_worker_observation observations[selected_worker_limit];
-    pthread_t overflow_thread;
-    struct worker_observation overflow = {
+    pthread_t threads[held_worker_count];
+    struct held_worker_observation observations[held_worker_count];
+    pthread_t additional_thread;
+    struct worker_observation additional = {
         .errno_location = 0,
         .initial_errno = -1,
         .final_errno = -1,
@@ -339,7 +333,7 @@ static int run_registry_capacity_round(int *main_errno_location)
     unsigned int created = 0;
     unsigned int index;
 
-    for (index = 0; index < selected_worker_limit; ++index) {
+    for (index = 0; index < held_worker_count; ++index) {
         observations[index].errno_location = 0;
         observations[index].initial_errno = -1;
         observations[index].final_errno = -1;
@@ -355,34 +349,35 @@ static int run_registry_capacity_round(int *main_errno_location)
         }
         ++created;
     }
-    while (__atomic_load_n(&entered, __ATOMIC_ACQUIRE) != selected_worker_limit)
+    while (__atomic_load_n(&entered, __ATOMIC_ACQUIRE) != held_worker_count)
         ;
     if (errno != EACCES || __errno_location() != main_errno_location) {
         __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
-        for (index = 0; index < selected_worker_limit; ++index)
+        for (index = 0; index < held_worker_count; ++index)
             (void)pthread_join(threads[index], 0);
         return 2;
     }
 
-    int overflow_status = pthread_create(&overflow_thread, 0, observe_worker,
-        &overflow);
-    if (overflow_status != EAGAIN) {
-        if (overflow_status == 0)
-            (void)pthread_join(overflow_thread, 0);
+    int additional_status = pthread_create(&additional_thread, 0, observe_worker,
+        &additional);
+    if (additional_status != 0) {
         __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
-        for (index = 0; index < selected_worker_limit; ++index)
+        for (index = 0; index < held_worker_count; ++index)
             (void)pthread_join(threads[index], 0);
         return 3;
     }
+    void *additional_result = 0;
+    if (pthread_join(additional_thread, &additional_result) != 0 ||
+        additional_result != (void *)additional.marker) return 10;
     if (errno != EACCES || __errno_location() != main_errno_location) {
         __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
-        for (index = 0; index < selected_worker_limit; ++index)
+        for (index = 0; index < held_worker_count; ++index)
             (void)pthread_join(threads[index], 0);
         return 4;
     }
 
     __atomic_store_n(&release, 1, __ATOMIC_RELEASE);
-    for (index = 0; index < selected_worker_limit; ++index) {
+    for (index = 0; index < held_worker_count; ++index) {
         void *thread_result = 0;
         unsigned int earlier;
 
@@ -404,12 +399,11 @@ static int run_registry_capacity_round(int *main_errno_location)
     if (errno != EACCES || __errno_location() != main_errno_location)
         return 9;
 
-    /* Every joined worker withdrew its entry; a fresh explicit-exit worker
-     * must therefore reuse one of the 64 slots successfully. */
+    /* Every joined worker withdrew its entry; fresh allocation must work. */
     return run_explicit_exit_round((uintptr_t)0x5656565656565656ULL,
         main_errno_location);
 }
-#endif
+
 
 int crabc_x86_64_pthread_create_join_tls_probe(void)
 {
@@ -452,11 +446,9 @@ int crabc_x86_64_pthread_create_join_tls_probe(void)
     if (concurrent_explicit_exit != 0)
         return 140 + concurrent_explicit_exit;
 
-#if defined(CRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT)
-    int registry_capacity = run_registry_capacity_round(main_errno_location);
-    if (registry_capacity != 0)
-        return 160 + registry_capacity;
-#endif
+    int registry_growth = run_registry_growth_round(main_errno_location);
+    if (registry_growth != 0)
+        return 160 + registry_growth;
 
 #ifdef CRABC_PTHREAD_MEMBARRIER_INIT_OVERRIDE
     int membarrier_override = check_membarrier_init_override();
