@@ -18,12 +18,37 @@ readonly PROBE="$ROOT/compat/x86_64/owned_process_control_probe.c"
 readonly CHROOT="$(command -v chroot)"
 readonly RESIDUAL_SYMBOLS='execl execle execlp execv execve execvp execvpe fexecve nice setpgid setpgrp setsid wait wait3 wait4 waitid waitpid posix_spawnattr_destroy posix_spawnattr_getflags posix_spawnattr_getpgroup posix_spawnattr_getschedparam posix_spawnattr_getschedpolicy posix_spawnattr_getsigdefault posix_spawnattr_getsigmask posix_spawnattr_init posix_spawnattr_setflags posix_spawnattr_setpgroup posix_spawnattr_setschedparam posix_spawnattr_setschedpolicy posix_spawnattr_setsigdefault posix_spawnattr_setsigmask'
 
-[ "$#" -le 1 ] || {
-    printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
+usage() {
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
 
-provided_dynamic="${1:-}"
+provided_static=''
+provided_dynamic=''
+dynamic_was_supplied=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-sysroot)
+            [ "$#" -ge 2 ] || usage
+            [ -z "$provided_static" ] || usage
+            [ -n "$2" ] && [[ "$2" != -* ]] || usage
+            provided_static="$2"
+            shift 2
+            ;;
+        -*)
+            usage
+            ;;
+        *)
+            [ "$dynamic_was_supplied" -eq 0 ] && [ -n "$1" ] || usage
+            provided_dynamic="$1"
+            dynamic_was_supplied=1
+            shift
+            ;;
+    esac
+done
+if [ -n "$provided_static" ]; then
+    provided_static="$(realpath "$provided_static")"
+fi
 if [ -n "$provided_dynamic" ]; then
     provided_dynamic="$(realpath "$provided_dynamic")"
 fi
@@ -31,7 +56,7 @@ fi
 # Reject an ambient or incomplete supplied product before this runner creates
 # mutable evidence.  The link receipts below bind each consumer to this exact
 # manifest again, including an extracted product in qualification.
-python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
+python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" "$provided_static" <<'PY'
 from hashlib import sha256
 import json
 from pathlib import Path
@@ -57,6 +82,13 @@ if sys.argv[3]:
     for relative in ("bin/crabc-cc-dynamic", "usr/lib/libc.so", "lib/ld-crabc-x86_64.so.1"):
         if not (product / relative).is_file():
             raise SystemExit(f"process-control product lacks {relative}")
+if sys.argv[4]:
+    product = Path(sys.argv[4]).resolve(strict=True)
+    if not product.is_dir() or not product.is_relative_to(root / ".work"):
+        raise SystemExit("process-control static product must be a checkout .work directory")
+    sys.path.insert(0, str(root / "compat/x86_64"))
+    from owned_static_sysroot_package import source_entries, validate_installed_tree
+    validate_installed_tree(product, source_entries(product))
 PY
 
 readonly work="$(mktemp -d "$TMPDIR/owned-process-control.XXXXXX")"
@@ -441,24 +473,30 @@ run_in_root "$work/oracle-root" "$work/oracle.stdout" /consumer
 grep -qx 'owned-process-control-ok fexecve-seccomp=9' "$work/oracle.stdout"
 printf '%s\n' 'owned-process-control-ok fexecve-seccomp=38' >"$work/crabc.expected"
 
-if [ -z "${1:-}" ]; then
+static_product=''
+if [ -n "$provided_static" ]; then
+    static_product="$provided_static"
+elif [ "$dynamic_was_supplied" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
         --output "$work/static-sysroot" >"$work/static-build.json"
-    assert_static_symbols "$work/static-sysroot/usr/lib/libc.a"
+    static_product="$work/static-sysroot"
+fi
+if [ -n "$static_product" ]; then
+    assert_static_symbols "$static_product/usr/lib/libc.a"
     for mode in static static-pie; do
         consumer="$work/consumer-$mode"
         receipt="$work/consumer-$mode.receipt.json"
         (
             cd "$work"
-            "$work/static-sysroot/bin/crabc-cc" "-$mode" \
+            "$static_product/bin/crabc-cc" "-$mode" \
                 --link-receipt "$(basename "$receipt")" "$work/workload.o" -o "$consumer"
         )
-        assert_static_receipt_and_elf "$work/static-sysroot" "$consumer" "$mode" \
+        assert_static_receipt_and_elf "$static_product" "$consumer" "$mode" \
             "$work/workload.o" "$receipt"
-        assert_static_receipt_tampering_rejected "$work/static-sysroot" "$consumer" "$mode" \
+        assert_static_receipt_tampering_rejected "$static_product" "$consumer" "$mode" \
             "$work/workload.o" "$receipt"
         if [ "$mode" = static ]; then
-            assert_static_manifest_tampering_rejected "$work/static-sysroot" "$consumer" "$mode" \
+            assert_static_manifest_tampering_rejected "$static_product" "$consumer" "$mode" \
                 "$work/workload.o" "$receipt"
         fi
         mkdir "$work/$mode-root"

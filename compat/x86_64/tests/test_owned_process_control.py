@@ -225,6 +225,65 @@ class OwnedProcessControlTests(unittest.TestCase):
         )
         self.assertNotIn("evidence:", result.stdout)
 
+    def test_static_replay_parser_rejects_invalid_arguments_before_output(self) -> None:
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        cases = (
+            ["--static-sysroot"],
+            ["--static-sysroot", ""],
+            [""],
+            ["--static-sysroot", "--unknown"],
+            ["--static-sysroot", "-x"],
+            ["--unknown"],
+            ["-x"],
+            ["--static-sysroot", str(ROOT), "--static-sysroot", str(ROOT)],
+            [str(ROOT), str(ROOT)],
+            [str(ROOT), ""],
+            ["--static-sysroot", str(ROOT), ""],
+        )
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            for arguments in cases:
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(
+                        ["bash", str(RUNNER), *arguments], cwd=ROOT,
+                        env={**os.environ, "TMPDIR": temporary},
+                        capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(result.stderr,
+                        f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n")
+                    self.assertEqual(list(Path(temporary).iterdir()), [])
+
+    def test_static_replay_rejects_ambient_or_incomplete_products_before_building(self) -> None:
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            incomplete = Path(temporary) / "incomplete"
+            incomplete.mkdir()
+            for product in (ROOT, incomplete):
+                with self.subTest(product=product):
+                    result = subprocess.run(
+                        ["bash", str(RUNNER), "--static-sysroot", str(product)], cwd=ROOT,
+                        env={**os.environ, "TMPDIR": temporary}, capture_output=True, text=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(list(Path(temporary).iterdir()), [incomplete])
+
+    def test_supplied_static_selection_preserves_existing_dynamic_only_route(self) -> None:
+        runner = RUNNER.read_text(encoding="utf-8")
+        for required in (
+            "dynamic_was_supplied=0",
+            'elif [ "$dynamic_was_supplied" -eq 0 ]; then',
+            'static_product="$provided_static"',
+            '"$static_product/bin/crabc-cc" "-$mode"',
+            'assert_static_receipt_and_elf "$static_product"',
+            'assert_static_receipt_tampering_rejected "$static_product"',
+            'assert_static_manifest_tampering_rejected "$static_product"',
+        ):
+            self.assertIn(required, runner)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -36,6 +36,21 @@ builtins hashes, manifest-recognized static payload, link trace/map, and final
 consumer. Dynamic consumer receipts bind the object, manifest, owned runtime
 inputs, interpreter, and `libc.so` dependency to the supplied product.
 
+For family replay inside the pinned native environment, the leaf also accepts
+`bash compat/x86_64/run_owned_process_control.sh [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`.
+The dispatcher retains its existing zero-argument or dynamic-only interface.
+With no arguments the leaf builds both products and runs the full matrix.
+A lone dynamic product preserves the dynamic-only replay. A supplied static
+product runs both static modes; when no dynamic product is supplied, the leaf
+builds a default dynamic product for the installed-driver compilation and
+dynamic runs. Supplying both products reuses both without invoking a producer.
+Supplied static products undergo the existing package owner's complete
+installed-tree validation before evidence creation, and every static link
+retains the same receipt/ELF and deliberate tampering checks described above.
+Empty, option-valued, or duplicate product arguments fail with usage status 2
+before output directories or builds are created. All supplied products must
+remain under the checkout's `.work` tree.
+
 The workload performs each image replacement in a raw fixture child. It checks
 PATH and explicit-environment forwarding, variadic argv construction, and a
 successful descriptor execution. Its `nice` and group/session transitions also
