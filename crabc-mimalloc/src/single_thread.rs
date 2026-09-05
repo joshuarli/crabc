@@ -167,7 +167,10 @@ use crate::config::{
 };
 use crate::free_list::{FreeListError, LocalFreeList};
 use crate::invariants;
-use crate::os_page::{OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedPage};
+use crate::os_page::{
+    OsAlignedPageClaim, OsAlignedPageOwner, PublishedOsAlignedPage,
+    published_on_demand_os_page_area_for_process,
+};
 use crate::page;
 use crate::page_map::PageMap;
 use crate::process_page_map::{
@@ -318,6 +321,7 @@ enum PageCommitError {
     InvalidPageArea,
     InvalidPlan,
     Mapping(ProcessPageArenaLeaseError),
+    ProcessMapping(crabc_core::Errno),
     PrefixState,
     Extension(FreeListError),
     ExtensionDidNotExtend,
@@ -35304,6 +35308,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             let direct = self.session.direct_page(direct_index)?;
             if direct == EMPTY_PAGE.as_ptr() {
                 let block_size = size_class::bin_size(bin)?;
+                if self.arena.process().is_some() {
+                    // Source `mi_page_malloc_zero` misses the empty direct
+                    // page through ordinary generic selection, including its
+                    // unforced fresh retry before the later OOM collection.
+                    return self.allocate_generic_with_retry(bin, block_size, PageKind::Small, zero);
+                }
                 let page = self.allocate_fresh_page(block_size, PageKind::Small)?;
                 self.push_regular_page(bin, page);
                 continue;
@@ -35560,11 +35570,13 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
 
         if let Some(candidate) = NonNull::new(candidate) {
-            match self.page_make_immediate(candidate) {
-                Ok(true) => {}
+            let immediate = match self.page_make_immediate(candidate) {
+                Ok(true) => true,
+                Err(GenericPathError::PageCommit(PageCommitError::ProcessMapping(_))) => false,
                 Ok(false) => return Err(GenericPathError::Lifecycle),
                 Err(error) => return Err(error),
-            }
+            };
+            if immediate {
             let queue = self
                 .session
                 .queue_mut(bin)
@@ -35577,6 +35589,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             // post-search owner-only retirement reset without borrowing Page.
             unsafe { Page::set_retire_expire_at(candidate, 0) };
             return Ok(Some(candidate));
+            }
         }
 
         if !self.collect_retired(false) {
@@ -35603,6 +35616,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
 
         let Some(fresh) = self.allocate_fresh_page(block_size, kind) else {
+            if first_try && self.arena.process().is_some() {
+                return self.find_generic_queue_page_with_first_try(bin, block_size, kind, false);
+            }
             return Ok(None);
         };
         self.push_regular_page(bin, fresh);
@@ -35874,9 +35890,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     fn selected_mapped_medium_reabandonable_mapping_failure(error: GenericPathError) -> bool {
         matches!(
             error,
-            GenericPathError::PageCommit(PageCommitError::Mapping(
-                ProcessPageArenaLeaseError::Arena(ProcessSharedArenaError::Mapping(_))
-            ))
+            GenericPathError::PageCommit(PageCommitError::ProcessMapping(_))
+                | GenericPathError::PageCommit(PageCommitError::Mapping(
+                    ProcessPageArenaLeaseError::Arena(ProcessSharedArenaError::Mapping(_))
+                ))
         )
     }
 
@@ -36015,9 +36032,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
     /// Performs the selected page's source extension before its free-list
     /// links become visible. Fully committed pages retain the existing scalar
-    /// operation. The only nonzero `slice_pcommitted` path is test-only and
-    /// commits its planned direct page area before publishing page metadata
-    /// and free-list capacity.
+    /// operation. An on-demand page commits its direct page area before
+    /// publishing page metadata and free-list capacity.
     fn extend_page_before_allocation(
         &mut self,
         page: NonNull<Page>,
@@ -36036,25 +36052,16 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             };
         }
 
-        #[cfg(test)]
-        {
-            return self.extend_on_demand_page_before_allocation(page);
-        }
-        #[cfg(not(test))]
-        {
-            let _ = page;
-            Err(GenericPathError::PageCommit(PageCommitError::MissingTestLease))
-        }
+        self.extend_on_demand_page_before_allocation(page)
     }
 
-    /// Ports the successful `mi_page_extend_free` direct-commit order for one
-    /// selected test-only reserved page: mapping commit, committed-prefix
-    /// publication, then free-list links and capacity. A failed mapping leaves
-    /// all page fields untouched so this bounded seam can prove explicit
-    /// same-page retry; it deliberately does not port C's separate
-    /// retire/fresh-selection failure route. A later publication failure
-    /// poisons this private engine instead of allocating a different page.
-    #[cfg(test)]
+    /// Ports `mi_page_extend_free`'s direct-commit order: mapping commit,
+    /// committed-prefix publication, then free-list links and capacity. A
+    /// process-owned arena retains its `Mapping`; an OS-only on-demand page
+    /// has already published that mapping and instead uses its validated raw
+    /// prefix capability. The cfg(test) lease remains a deliberately narrower
+    /// same-page seam. A later publication failure poisons this private engine
+    /// instead of allocating over an unrecorded commitment.
     fn extend_on_demand_page_before_allocation(
         &mut self,
         page: NonNull<Page>,
@@ -36076,36 +36083,49 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         if slice_pcommitted == 0 || !free.is_null() {
             return Err(GenericPathError::PageCommit(PageCommitError::InvalidPageArea));
         }
-        let pair = self
-            .page_area_commit_lease
-            .ok_or(GenericPathError::PageCommit(PageCommitError::MissingTestLease))?;
-        let arena_memory = memory
-            .arena_memory()
-            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
-        let arena = unsafe { self.arena.arena_for_memory(memory) }
-            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
-        let slice_index = arena_memory.slice_index as usize;
-        let slice_count = arena_memory.slice_count as usize;
-        let page_span_size = slice_count
-            .checked_mul(ARENA_SLICE_SIZE)
-            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
-        let slice_start = arena
-            .slice_start(slice_index)
-            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
         let page_start = page
             .as_ptr()
             .addr()
             .checked_add(page_offset)
             .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
-        let page_slice_offset = page_start
-            .checked_sub(slice_start.addr())
-            .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+        let config = self.page_map.memory_config();
+        let (page_slice_offset, page_span_size, published_os) =
+            if let Some(arena_memory) = memory.arena_memory() {
+                let arena = unsafe { self.arena.arena_for_memory(memory) }
+                    .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+                let slice_index = arena_memory.slice_index as usize;
+                let slice_count = arena_memory.slice_count as usize;
+                let page_span_size = slice_count
+                    .checked_mul(ARENA_SLICE_SIZE)
+                    .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+                let slice_start = arena
+                    .slice_start(slice_index)
+                    .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+                let page_slice_offset = page_start
+                    .checked_sub(slice_start.addr())
+                    .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+                (page_slice_offset, page_span_size, None)
+            } else if let Some(process) = self.arena.process() {
+                // SAFETY: this engine owns the live page and its exclusive
+                // next-prefix transition; the helper validates the copied OS
+                // mapping geometry without recreating its release capability.
+                let area = unsafe {
+                    published_on_demand_os_page_area_for_process(config, page)
+                }
+                .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+                let page_slice_offset = page_start
+                    .checked_sub(area.slice_start().as_ptr().addr())
+                    .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?;
+                (page_slice_offset, area.size(), Some((process, area.slice_start())))
+            } else {
+                return Err(GenericPathError::PageCommit(PageCommitError::InvalidPageArea));
+            };
         let plan = page::page_area_commit_plan(
             capacity,
             reserved,
             block_size,
             slice_pcommitted,
-            self.page_map.memory_config().page_size().bytes(),
+            config.page_size().bytes(),
             page_slice_offset,
             page_span_size,
         )
@@ -36118,8 +36138,49 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
 
         let committed = plan.commit_size != 0;
         if committed {
-            pair.commit_page_area(memory, plan.commit_offset, plan.commit_size)
-                .map_err(|error| GenericPathError::PageCommit(PageCommitError::Mapping(error)))?;
+            if let Some((process, slice_start)) = published_os {
+                let address = slice_start
+                    .as_ptr()
+                    .addr()
+                    .checked_add(plan.commit_offset)
+                    .ok_or(GenericPathError::PageCommit(PageCommitError::InvalidPageArea))?
+                    as *mut u8;
+                // SAFETY: the validated published OS page owns this exact
+                // old..new area, the plan keeps it inside that mapping, and
+                // this engine exclusively owns the transition until prefix
+                // state and free-list capacity publish below.
+                let outcome = unsafe {
+                    crate::os::Mapping::commit_published_for_process(
+                        process,
+                        config,
+                        address,
+                        plan.commit_size,
+                    )
+                }
+                .map_err(|error| GenericPathError::PageCommit(PageCommitError::ProcessMapping(error)))?;
+                if outcome.is_none() {
+                    return Err(GenericPathError::PageCommit(PageCommitError::InvalidPageArea));
+                }
+            } else if let Some(process) = self.arena.process() {
+                // SAFETY: this engine retains the live page's exact arena
+                // provenance and owns the disjoint old..new prefix.
+                unsafe { process.subprocess().arena_backing().commit_page_area(
+                    memory, plan.commit_offset, plan.commit_size,
+                ) }.map_err(|error| GenericPathError::PageCommit(match error {
+                    crate::arena::ArenaPageCommitError::InvalidPageArea => PageCommitError::InvalidPageArea,
+                    crate::arena::ArenaPageCommitError::Mapping(error) => PageCommitError::ProcessMapping(error),
+                }))?;
+            } else {
+                #[cfg(test)]
+                {
+                    let pair = self.page_area_commit_lease
+                        .ok_or(GenericPathError::PageCommit(PageCommitError::MissingTestLease))?;
+                    pair.commit_page_area(memory, plan.commit_offset, plan.commit_size)
+                        .map_err(|error| GenericPathError::PageCommit(PageCommitError::Mapping(error)))?;
+                }
+                #[cfg(not(test))]
+                return Err(GenericPathError::PageCommit(PageCommitError::MissingTestLease));
+            }
             // SAFETY: the exact old..new prefix mapping commit succeeded;
             // this engine still exclusively owns the selected live page.
             if !unsafe {
@@ -37555,11 +37616,15 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         block_size: usize,
         alignment: usize,
     ) -> Option<NonNull<Page>> {
-        self.allocate_fresh_os_page(block_size, alignment, true)
+        self.allocate_fresh_os_page(block_size, alignment, true, true)
     }
 
     fn allocate_fresh_os_page(
-        &mut self, block_size: usize, alignment: usize, enqueue_singleton: bool,
+        &mut self,
+        block_size: usize,
+        alignment: usize,
+        enqueue_singleton: bool,
+        commit: bool,
     ) -> Option<NonNull<Page>> {
         // A failed earlier OS-aligned release owns the sole pending slot. It
         // must be retried before claiming another mapping; ordinary arena
@@ -37569,9 +37634,25 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         let config = self.page_map.memory_config();
         let allocation = if let Some(process) = self.arena.process() {
-            OsAlignedPageClaim::allocate_for_process(process, config, block_size, alignment, self.requested_arena)
+            if commit {
+                OsAlignedPageClaim::allocate_for_process(
+                    process,
+                    config,
+                    block_size,
+                    alignment,
+                    self.requested_arena,
+                )
+            } else {
+                OsAlignedPageClaim::allocate_on_demand_for_process(
+                    process,
+                    config,
+                    block_size,
+                    alignment,
+                    self.requested_arena,
+                )
+            }
         } else { OsAlignedPageClaim::allocate(config, block_size, alignment) };
-        let claim = match allocation {
+        let mut claim = match allocation {
             Ok(claim) => claim,
             Err(failure) => {
                 if let Some(owner) = failure.into_owner() {
@@ -37602,13 +37683,42 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 return None;
             }
         };
+        let slice_pcommitted = if !memory.initially_committed() {
+            let page_size = config.page_size().bytes();
+            let prefix_pages = match page::initial_page_slice_pcommitted(
+                layout.block_start_offset(),
+                layout.block_size(),
+                layout.allocation_size(),
+                page_size,
+            ) {
+                Some(prefix_pages) => prefix_pages,
+                None => {
+                    self.release_unpublished_claim_or_park(claim);
+                    return None;
+                }
+            };
+            let prefix_size = match usize::from(prefix_pages).checked_mul(page_size) {
+                Some(prefix_size) => prefix_size,
+                None => {
+                    self.release_unpublished_claim_or_park(claim);
+                    return None;
+                }
+            };
+            if claim.commit_initial_page_prefix(prefix_size).is_err() {
+                self.release_unpublished_claim_or_park(claim);
+                return None;
+            }
+            prefix_pages
+        } else {
+            0
+        };
         let page = match unsafe {
             self.session.publish_fresh_page(
                 metadata,
                 layout.block_size(),
                 layout.page_offset(),
                 layout.reserved(),
-                0,
+                slice_pcommitted,
                 memory.initially_zero(),
                 memory,
             )
@@ -37625,11 +37735,26 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
 
         let initialized = (|| {
-            // SAFETY: `page` was initialized from the live OS claim's primary
-            // metadata and describes its committed one-block area. No queue
-            // or map observer sees it until this initialization completes.
+            // SAFETY: an on-demand claim committed its first page area above;
+            // a full claim committed the entire area. No queue or map observer
+            // sees the free-list links until this closure completes.
             let mut free_list = unsafe { LocalFreeList::from_page_at(page) }.ok()?;
-            (free_list.extend().ok()? != 0).then_some(())
+            if slice_pcommitted == 0 {
+                return (free_list.extend().ok()? != 0).then_some(());
+            }
+            let plan = page::page_area_commit_plan(
+                0,
+                layout.reserved(),
+                layout.block_size(),
+                slice_pcommitted,
+                config.page_size().bytes(),
+                layout.block_start_offset(),
+                layout.allocation_size(),
+            )?;
+            if plan.commit_size != 0 {
+                return None;
+            }
+            (free_list.extend_count(plan.extend).ok()? == plan.extend).then_some(())
         })();
         if initialized.is_none() {
             self.rollback_fresh_os_aligned(claim, page, true, false);
@@ -37721,19 +37846,14 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             PageKind::Singleton => page::singleton_page_slice_count(block_size)?,
         };
         let allocation_size = slice_count.checked_mul(ARENA_SLICE_SIZE)?;
-        if let Some(process) = self.arena.process() {
+        let process_commit = self.arena.process().map(|process| {
             let config = self.page_map.memory_config();
             let mode = process.policy().page_commit_on_demand();
-            let source_commits_full = matches!(kind, PageKind::Singleton)
+            matches!(kind, PageKind::Singleton)
                 || crate::config::PAGE_MIN_COMMIT_SIZE.max(config.page_size().bytes()) >= allocation_size
-                || slice_count >= invariants::slice_count_of_size(usize::from(u16::MAX) * config.page_size().bytes())?
-                || mode == 0 || (mode == 2 && config.has_overcommit());
-            // The normal native source profile selects full commitment.
-            // Nondefault incremental commitment still needs its complete
-            // extension/failure/release protocol; never silently reinterpret
-            // that process policy as the fully committed legacy profile.
-            if !source_commits_full { return None; }
-        }
+                || slice_count >= (usize::from(u16::MAX) * config.page_size().bytes()).div_ceil(ARENA_SLICE_SIZE)
+                || mode == 0 || (mode == 2 && config.has_overcommit())
+        });
         #[cfg(test)]
         let commit = if self.page_commit_on_demand && !matches!(kind, PageKind::Singleton) {
             self.page_commit_on_demand = false;
@@ -37743,6 +37863,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         #[cfg(not(test))]
         let commit = true;
+        let commit = process_commit.unwrap_or(commit);
         let claim = self.arena.claim(
             self.page_map.memory_config(),
             self.requested_arena,
@@ -37751,7 +37872,9 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             self.thread_sequence,
         );
         let Some(claim) = claim else {
-            return self.arena.process().and_then(|_| self.allocate_fresh_os_page(block_size, 1, false));
+            return self.arena.process().and_then(|_| {
+                self.allocate_fresh_os_page(block_size, 1, false, commit)
+            });
         };
         let slice_start = claim.start();
         let memory = claim.memory_id();
@@ -37760,6 +37883,12 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             Some(arena) => arena,
             None => { let _ = claim.release(); return None; }
         };
+        // Source ensures the heap's arena-page image before committing this
+        // page's partial prefix, so failure cannot orphan prefix accounting.
+        if !self.session.ensure_arena_pages(&arena, self.page_map.memory_config()) {
+            let _ = claim.release();
+            return None;
+        }
         let metadata = match claim.page_metadata() {
             Some(metadata) => metadata,
             None => {
@@ -37802,9 +37931,10 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         };
         // `mi_arenas_page_alloc_fresh` commits only the prefix through
         // `mi_arena_commit` when its fresh arena claim was deliberately
-        // uncommitted. The normal profile above always takes `commit == true`;
-        // the test-only source-shaped seam below is the only caller that can
-        // leave this nonzero page-local count.
+        // uncommitted. The normal profile and test seam select their own
+        // `commit` value, while a bound process may select the same source
+        // branch through `page_commit_on_demand`; every such caller records a
+        // nonzero page-local count only after the prefix commit succeeds.
         let slice_pcommitted = if !memory.initially_committed() {
             let page_size = self.page_map.memory_config().page_size().bytes();
             let prefix_pages = match page::initial_page_slice_pcommitted(
@@ -37835,14 +37965,6 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             0
         };
 
-        if !self
-            .session
-            .ensure_arena_pages(&arena, self.page_map.memory_config())
-        {
-            let _ = claim.release();
-            return None;
-        }
-
         // SAFETY: `claim` owns the exact unregistered slice and selected
         // metadata record exclusively. The caller-pinned session owns the
         // only mutable theap/heap image. Publication writes a fresh Page value
@@ -37859,6 +37981,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             )
         };
         let Some(page) = page else {
+            let _ = unsafe { self.arena.account_page_commit_before_release(memory,
+                usize::from(slice_pcommitted) * self.page_map.memory_config().page_size().bytes()) };
             let _ = claim.release();
             return None;
         };
@@ -37869,6 +37993,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // The fresh metadata is initialized but has not entered an
                 // arena bitmap, PageMap, or queue. Retire it before returning
                 // the exact claim; no wider PageMap fallback is source-valid.
+                let _ = self.account_page_commit_before_release(page, memory);
                 let _ = unsafe { self.session.retire_page(&mut *page.as_ptr()) };
                 let _ = unsafe { self.arena.release(memory) };
                 return None;
@@ -37893,21 +38018,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
             return None;
         }
 
-        let initialized = (|| {
-            // SAFETY: source fresh-page publication has installed all geometry
-            // and exclusive ownership fields; no queue or map operation below
-            // mutates the page while this local-list borrow is live.
-            let mut free_list = unsafe { LocalFreeList::from_page_at(page) }.ok()?;
-            if free_list.extend().ok()? == 0 {
-                return None;
-            }
-            Some(())
-        })();
-        if initialized.is_none() {
+        if self.extend_page_before_allocation(page).is_err() {
             self.rollback_fresh(page, slice_start, page_map_size, memory, true, true);
             return None;
         }
         Some(page)
+    }
+
+    fn account_page_commit_before_release(&self, page: NonNull<Page>, memory: MemoryId) -> bool {
+        // SAFETY: callers retain the detached page until its prefix has been
+        // reconciled, before any whole-page metadata retirement.
+        let committed = usize::from(unsafe { page.as_ref().slice_pcommitted() })
+            * self.page_map.memory_config().page_size().bytes();
+        unsafe { self.arena.account_page_commit_before_release(memory, committed) }
     }
 
     fn rollback_fresh(
@@ -37938,6 +38061,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         }
         // SAFETY: no queue/direct-cache entry names this failed fresh page, so
         // the pinned session owns its terminal metadata transition.
+        if !self.account_page_commit_before_release(page, memory) { return; }
         let _ = unsafe { self.session.retire_page(&mut *page.as_ptr()) };
         // SAFETY: `memory` is the still-outstanding claim consumed by this
         // failed attempt; no successful page exists for its slices.
@@ -38107,6 +38231,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // SAFETY: queue/direct/map membership is gone and local free
                 // state is fully free, so the session may reset metadata
                 // before slice release.
+                if !self.account_page_commit_before_release(page_pointer, memory) { return false; }
                 let retired = unsafe { self.session.retire_page(&mut *page) };
                 if retired.is_none() {
                     return false;
@@ -38225,6 +38350,7 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         // SAFETY: the source all-free result proved there is no remote list;
         // this method just proved queue detachment and removed every map and
         // arena-page publication predecessor before resetting metadata.
+        if !self.account_page_commit_before_release(page, memory) { return false; }
         if unsafe { self.session.retire_page(&mut *page.as_ptr()) }.is_none() {
             return false;
         }

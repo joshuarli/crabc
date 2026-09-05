@@ -2309,6 +2309,23 @@ mod tests {
         unsafe { storage.test_prepare_vm_process_backing_binding(config(), options, subprocess, map) }.unwrap()
     }
 
+    /// The pinned v3.5.0 regular-page policy used by the incremental metadata
+    /// probes. `disallow_arena` selects the source OS fallback after the
+    /// process policy has already selected on-demand commitment.
+    fn incremental_process_options(disallow_arena: bool) -> crate::config::VmOptions {
+        let mut options = crate::config::VmOptions::uninitialized();
+        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        options.set(crate::config::VmOption::PageCommitOnDemand, 1);
+        options.set(crate::config::VmOption::ArenaEagerCommit, 0);
+        options.set(crate::config::VmOption::ArenaReserve, 64 * 1024);
+        options.set(crate::config::VmOption::PurgeDelay, -1);
+        options.set(
+            crate::config::VmOption::DisallowArenaAlloc,
+            i64::from(disallow_arena),
+        );
+        options
+    }
+
     #[test]
     fn process_metadata_uses_os_policy_without_constructing_an_initial_arena() {
         let allocator = static_allocator();
@@ -2350,18 +2367,242 @@ mod tests {
     }
 
     #[test]
-    fn process_metadata_does_not_silently_replace_incremental_commit_policy() {
+    fn process_metadata_incrementally_commits_and_releases_its_arena_page_prefix() {
         let allocator = static_allocator();
-        let mut options = crate::config::VmOptions::uninitialized();
-        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
-        options.set(crate::config::VmOption::PageCommitOnDemand, 1);
-        let binding = process_binding_fixture(allocator.test_default_subprocess(), options);
+        let binding = process_binding_fixture(
+            allocator.test_default_subprocess(),
+            incremental_process_options(false),
+        );
         let process = binding.process();
         allocator.bind_process_backing(binding).unwrap();
-        let before = process.subprocess().vm_statistics().snapshot();
-        assert!(matches!(allocator.zalloc(config(), 64), Err(MetaError::AllocationUnavailable)));
-        assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+        let mut allocations = std::vec::Vec::new();
+        for _ in 0..400 {
+            allocations.push(allocator.zalloc(config(), 64)
+                .expect("source incremental policy must allocate without committing the whole page"));
+        }
+        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+        let pointer = allocations[0].pointer();
+        let page = unsafe { map.checked_lookup(pointer.as_ptr()) };
+        assert!(!page.is_null());
+        let committed = unsafe { (*page).slice_pcommitted() } as usize * 4096;
+        assert_eq!(unsafe { (*page).block_size() }, 64);
+        assert_eq!(unsafe { (*page).capacity() }, 512);
+        assert_eq!(
+            unsafe { (*page).start() }.addr() % crate::config::ARENA_SLICE_SIZE,
+            64,
+            "the C oracle's offset is relative to the aligned page slice, not Page metadata"
+        );
+        assert_eq!(committed, 48 * 1024);
+        assert_eq!(process.subprocess().arena_backing().registry().count(), 1);
+        let before_release = process.subprocess().vm_statistics().snapshot();
+        for allocation in &mut allocations {
+            let bytes = unsafe { core::slice::from_raw_parts(allocation.pointer().as_ptr(), 64) };
+            assert!(bytes.iter().all(|byte| *byte == 0));
+            allocator.free(allocation).unwrap();
+        }
+        let mut entry = allocator.enter().unwrap();
+        let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process engine"); };
+        assert!(engine.collect_retired(true));
+        assert!(unsafe { map.checked_lookup(pointer.as_ptr()) }.is_null());
+        let after_release = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(before_release.committed_current - after_release.committed_current, committed as i64);
+    }
+
+    #[test]
+    fn process_metadata_os_only_on_demand_commits_before_publishing_capacity() {
+        let allocator = static_allocator();
+        let binding = process_binding_fixture(
+            allocator.test_default_subprocess(),
+            incremental_process_options(true),
+        );
+        let process = binding.process();
+        allocator.bind_process_backing(binding).unwrap();
+        let mut allocations = std::vec::Vec::new();
+        for _ in 0..400 {
+            allocations.push(allocator.zalloc(config(), 64).expect(
+                "the OS-only source fallback commits its first prefix before writing free-list links",
+            ));
+        }
+        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+        let pointer = allocations[0].pointer();
+        let page = unsafe { map.checked_lookup(pointer.as_ptr()) };
+        assert!(!page.is_null());
+        for allocation in &allocations {
+            assert_eq!(unsafe { map.checked_lookup(allocation.pointer().as_ptr()) }, page);
+        }
+        assert_eq!(unsafe { (*page).memid().kind() }, MemoryKind::Os);
+        assert!(
+            !unsafe { (*page).memid().initially_committed() },
+            "the reserved OS area must not claim full commitment before its prefix is committed"
+        );
+        let committed = unsafe { (*page).slice_pcommitted() } as usize * 4096;
+        assert_eq!(unsafe { (*page).block_size() }, 64);
+        assert_eq!(unsafe { (*page).capacity() }, 512);
+        assert_eq!(
+            unsafe { (*page).start() }.addr() % crate::config::ARENA_SLICE_SIZE,
+            64,
+            "the C oracle's offset is relative to the aligned page slice, not Page metadata"
+        );
+        assert_eq!(committed, 48 * 1024);
         assert_eq!(process.subprocess().arena_backing().registry().count(), 0);
+        let before_release = process.subprocess().vm_statistics().snapshot();
+        for allocation in &mut allocations {
+            let bytes = unsafe { core::slice::from_raw_parts(allocation.pointer().as_ptr(), 64) };
+            assert!(bytes.iter().all(|byte| *byte == 0));
+            allocator.free(allocation).unwrap();
+        }
+        let mut entry = allocator.enter().unwrap();
+        let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process engine"); };
+        assert!(engine.collect_retired(true));
+        assert!(unsafe { map.checked_lookup(pointer.as_ptr()) }.is_null());
+        let after_release = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(before_release.committed_current - after_release.committed_current, committed as i64);
+    }
+
+    #[test]
+    fn process_metadata_failed_extension_keeps_the_old_page_and_selects_fresh() {
+        let fault = fault::install(fault::Plan::disabled());
+        let allocator = static_allocator();
+        let binding = process_binding_fixture(
+            allocator.test_default_subprocess(),
+            incremental_process_options(false),
+        );
+        allocator.bind_process_backing(binding).unwrap();
+        let mut allocations = std::vec::Vec::new();
+        for _ in 0..384 { allocations.push(allocator.zalloc(config(), 64).unwrap()); }
+        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+        let old_page = unsafe { map.checked_lookup(allocations[0].pointer().as_ptr()) };
+        assert_eq!(unsafe { (*old_page).capacity() }, 384);
+        assert_eq!(unsafe { (*old_page).slice_pcommitted() }, 8);
+        let before = binding.process().subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, crabc_core::Errno::NOMEM));
+        let mut next = allocator.zalloc(config(), 64)
+            .expect("source candidate extension failure selects a fresh page without poisoning the engine");
+        assert_ne!(unsafe { map.checked_lookup(next.pointer().as_ptr()) }, old_page);
+        assert_eq!(unsafe { (*old_page).capacity() }, 384);
+        assert_eq!(unsafe { (*old_page).slice_pcommitted() }, 8);
+        let after = binding.process().subprocess().vm_statistics().snapshot();
+        assert_eq!(after.committed_current - before.committed_current, 16 * 1024);
+        assert_eq!(after.commit_calls - before.commit_calls, 2);
+        for allocation in &mut allocations { allocator.free(allocation).unwrap(); }
+        allocator.free(&mut next).unwrap();
+        let mut entry = allocator.enter().unwrap();
+        let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process engine"); };
+        assert_eq!(engine.test_forced_collect_retired_call_count(), 0);
+        assert!(engine.collect_retired(true));
+    }
+
+    #[test]
+    fn process_metadata_os_only_failed_extension_selects_fresh_without_forging_commitment() {
+        let fault = fault::install(fault::Plan::disabled());
+        let allocator = static_allocator();
+        let binding = process_binding_fixture(
+            allocator.test_default_subprocess(),
+            incremental_process_options(true),
+        );
+        allocator.bind_process_backing(binding).unwrap();
+        let mut allocations = std::vec::Vec::new();
+        for _ in 0..384 { allocations.push(allocator.zalloc(config(), 64).unwrap()); }
+        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+        let old_page = unsafe { map.checked_lookup(allocations[0].pointer().as_ptr()) };
+        assert_eq!(unsafe { (*old_page).memid().kind() }, MemoryKind::Os);
+        assert!(!unsafe { (*old_page).memid().initially_committed() });
+        assert_eq!(unsafe { (*old_page).capacity() }, 384);
+        assert_eq!(unsafe { (*old_page).slice_pcommitted() }, 8);
+        let before = binding.process().subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, crabc_core::Errno::NOMEM));
+        let mut next = allocator.zalloc(config(), 64).expect(
+            "a failed published OS-page extension retries through source fresh selection",
+        );
+        let fresh_page = unsafe { map.checked_lookup(next.pointer().as_ptr()) };
+        assert_ne!(fresh_page, old_page);
+        assert_eq!(unsafe { (*old_page).capacity() }, 384);
+        assert_eq!(unsafe { (*old_page).slice_pcommitted() }, 8);
+        assert!(!unsafe { (*fresh_page).memid().initially_committed() });
+        let after = binding.process().subprocess().vm_statistics().snapshot();
+        assert_eq!(after.committed_current - before.committed_current, 16 * 1024);
+        assert_eq!(after.commit_calls - before.commit_calls, 3,
+            "failed published extension, then fresh metadata and prefix commitments");
+        for allocation in &mut allocations { allocator.free(allocation).unwrap(); }
+        allocator.free(&mut next).unwrap();
+        let mut entry = allocator.enter().unwrap();
+        let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process engine"); };
+        assert_eq!(engine.test_forced_collect_retired_call_count(), 0);
+        assert!(engine.collect_retired(true));
+    }
+
+    #[test]
+    fn process_metadata_os_only_failed_initial_prefix_rolls_back_before_source_retry() {
+        let fault = fault::install(fault::Plan::disabled());
+        let allocator = static_allocator();
+        let binding = process_binding_fixture(
+            allocator.test_default_subprocess(),
+            incremental_process_options(true),
+        );
+        allocator.bind_process_backing(binding).unwrap();
+        // Warm the process PageMap and a distinct small bin so the selected
+        // failure is the private OS claim's first page-area prefix, after its
+        // metadata commitment but before Page/free-list publication.
+        let mut warm = allocator.zalloc(config(), 128).unwrap();
+        let before = binding.process().subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Commit, 2, crabc_core::Errno::NOMEM));
+        let mut next = allocator.zalloc(config(), 64).expect(
+            "the failed private OS prefix rolls back and source fresh retry commits a new prefix",
+        );
+        let map = unsafe { binding.page_map().page_map_for_owned_ranges() }.unwrap();
+        let page = unsafe { map.checked_lookup(next.pointer().as_ptr()) };
+        let pointer = next.pointer();
+        assert_eq!(unsafe { (*page).memid().kind() }, MemoryKind::Os);
+        assert!(!unsafe { (*page).memid().initially_committed() });
+        assert_eq!(unsafe { (*page).capacity() }, 128);
+        assert_eq!(unsafe { (*page).slice_pcommitted() }, 4);
+        let after = binding.process().subprocess().vm_statistics().snapshot();
+        assert_eq!(after.committed_current - before.committed_current, 16 * 1024);
+        assert_eq!(after.commit_calls - before.commit_calls, 4,
+            "metadata, failed prefix, then metadata and prefix for the source retry");
+        allocator.free(&mut next).unwrap();
+        {
+            let mut entry = allocator.enter().unwrap();
+            let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process engine"); };
+            assert!(engine.collect_retired(true));
+        }
+        assert!(unsafe { map.checked_lookup(pointer.as_ptr()) }.is_null());
+        let after_release = binding.process().subprocess().vm_statistics().snapshot();
+        assert_eq!(after_release.reserved_current, before.reserved_current,
+            "the failed unpublished claim retains no reservation");
+        assert_eq!(after_release.committed_current, before.committed_current,
+            "the failed unpublished claim retains no prefix accounting");
+        allocator.free(&mut warm).unwrap();
+        let mut entry = allocator.enter().unwrap();
+        let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process engine"); };
+        assert!(engine.collect_retired(true));
+    }
+
+    #[test]
+    fn process_metadata_failed_initial_prefix_takes_source_retry_before_forced_collection() {
+        let fault = fault::install(fault::Plan::disabled());
+        let allocator = static_allocator();
+        let binding = process_binding_fixture(
+            allocator.test_default_subprocess(),
+            incremental_process_options(false),
+        );
+        allocator.bind_process_backing(binding).unwrap();
+        // A different bin warms the arena, aligned page metadata, and shared
+        // PageMap so only the requested page's prefix calls are faulted.
+        let mut warm = allocator.zalloc(config(), 128).unwrap();
+        let before = binding.process().subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, crabc_core::Errno::NOMEM));
+        let mut next = allocator.zalloc(config(), 64).unwrap();
+        let after = binding.process().subprocess().vm_statistics().snapshot();
+        assert_eq!(after.committed_current - before.committed_current, 16 * 1024);
+        assert_eq!(after.commit_calls - before.commit_calls, 2);
+        allocator.free(&mut next).unwrap();
+        allocator.free(&mut warm).unwrap();
+        let mut entry = allocator.enter().unwrap();
+        let MetadataPageAllocator::Process(engine) = entry.allocator() else { panic!("process engine"); };
+        assert_eq!(engine.test_forced_collect_retired_call_count(), 0,
+            "mi_page_queue_find_free_ex retries before the separate forced collection fallback");
+        assert!(engine.collect_retired(true));
     }
 
     #[test]

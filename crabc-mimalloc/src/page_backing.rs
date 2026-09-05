@@ -1,6 +1,6 @@
 // Copyright (c) 2018-2026, Microsoft Research, Daan Leijen
 // SPDX-License-Identifier: MIT
-// Source map: mimalloc v3.5.0 src/arena.c:98-129,781-870 and
+// Source map: mimalloc v3.5.0 src/arena.c:98-129,781-870,1216-1283 and
 // src/init.c:184-205. See UPSTREAM.md for the fixed revision and license.
 
 //! Backing capabilities of the existing page engine. The historical
@@ -34,6 +34,10 @@ pub(crate) trait PageBacking<'arena>: sealed::Sealed {
     /// page-map entries and metadata aliases must be removed, no client or
     /// lookup may remain, and this caller owns the unique slice release right.
     unsafe fn release(&self, memory: MemoryId) -> bool;
+    /// # Safety
+    /// The caller uniquely owns the page release after removing its PageMap
+    /// and arena-page publication. Account its prefix once before retirement.
+    unsafe fn account_page_commit_before_release(&self, _: MemoryId, _: usize) -> bool { true }
     fn collect(&self, config: MemoryConfig, force: bool, thread_sequence: usize) -> bool;
 }
 
@@ -107,6 +111,10 @@ impl PageBacking<'static> for ProcessMetadataPageBacking {
     unsafe fn release(&self, memory: MemoryId) -> bool {
         unsafe { self.arena_for_memory(memory) }.is_some()
             && unsafe { self.backing().release_slices(memory) }
+    }
+    unsafe fn account_page_commit_before_release(&self, memory: MemoryId, committed: usize) -> bool {
+        unsafe { self.arena_for_memory(memory) }.is_some()
+            && unsafe { self.backing().account_page_commit_before_release(memory, committed) }
     }
     fn collect(&self, config: MemoryConfig, force: bool, thread_sequence: usize) -> bool {
         unsafe { self.backing().collect_purge(self.process, config, force, false, thread_sequence) }

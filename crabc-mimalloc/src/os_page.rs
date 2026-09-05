@@ -34,9 +34,12 @@
 //!
 //! The paired ordinary path takes an explicit process VM owner; copied page
 //! provenance alone cannot recreate that policy/statistics lifetime. Normal
-//! release excludes the metadata prefix from committed-byte accounting, while
-//! pre-publication commit-failure cleanup follows the source full-map free.
-//! Failed syscall ownership survives without repeating its accounting event.
+//! release excludes the metadata prefix from committed-byte accounting. The
+//! on-demand OS fallback keeps its page-area prefix separate from that
+//! metadata commitment: it cannot publish a capacity or free-list link until
+//! the initial prefix is actually writable, and terminal release accounts the
+//! exact prefix rather than the reserved mapping suffix. Failed syscall
+//! ownership survives without repeating its accounting event.
 //! This is M2 backing ownership; normal M3 queue/free-list callers still own
 //! page publication, retirement, and the choice of source commitment branch.
 
@@ -346,6 +349,11 @@ pub(crate) struct OsAlignedPageClaim {
     mapping: Mapping,
     layout: OsAlignedPageLayout,
     process: Option<VmProcess<'static>>,
+    initially_committed: bool,
+    /// The exact source page-area commitment to remove if this private claim
+    /// rolls back. Metadata commitment is deliberately excluded because its
+    /// source call passes it as `stat_already_committed`.
+    release_commit_size: usize,
     release_state: OsPageReleaseState,
     ready: bool,
 }
@@ -374,7 +382,29 @@ pub(crate) struct PublishedOsAlignedPage {
     slice_start: NonNull<u8>,
     primary: NonNull<Page>,
     process: Option<VmProcess<'static>>,
+    release_commit_size: usize,
     release_accounted: bool,
+}
+
+/// Non-owning geometry for one live process-owned on-demand OS page.
+///
+/// This validates the copied `MemoryId` and aligned page metadata without
+/// reconstructing its terminal mapping-release capability. The page engine
+/// uses it only while it exclusively owns a live page's next prefix
+/// transition, then passes the derived subrange to
+/// `Mapping::commit_published_for_process`.
+#[derive(Clone, Copy)]
+pub(crate) struct PublishedOnDemandOsPageArea {
+    slice_start: NonNull<u8>,
+    size: usize,
+}
+
+impl PublishedOnDemandOsPageArea {
+    #[inline]
+    pub(crate) const fn slice_start(self) -> NonNull<u8> { self.slice_start }
+
+    #[inline]
+    pub(crate) const fn size(self) -> usize { self.size }
 }
 
 /// The single, allocation-free owner of an OS-aligned singleton mapping after
@@ -444,7 +474,15 @@ impl OsAlignedPageAllocationFailure {
 
 impl OsAlignedPageClaim {
     fn legacy(mapping: Mapping, layout: OsAlignedPageLayout, ready: bool) -> Self {
-        Self { mapping, layout, process: None, release_state: OsPageReleaseState::Unaccounted, ready }
+        Self {
+            mapping,
+            layout,
+            process: None,
+            initially_committed: true,
+            release_commit_size: 0,
+            release_state: OsPageReleaseState::Unaccounted,
+            ready,
+        }
     }
 
     /// Allocates the fully committed source ordinary/aligned OS-page area using one process
@@ -475,13 +513,29 @@ impl OsAlignedPageClaim {
                     None => Err(failed(error)),
                     Some(mapping) => Err(OsAlignedPageAllocationFailure::with_claim(
                         OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error),
-                        Self { mapping, layout, process: Some(process), ready: false,
-                            release_state: OsPageReleaseState::RetainedAlignmentFailure(error) })),
+                        Self {
+                            mapping,
+                            layout,
+                            process: Some(process),
+                            initially_committed: false,
+                            release_commit_size: 0,
+                            ready: false,
+                            release_state: OsPageReleaseState::RetainedAlignmentFailure(error),
+                        })),
                 };
             }
         };
-        let mut claim = Self { mapping, layout, process: Some(process), ready: false,
-            release_state: OsPageReleaseState::Unaccounted };
+        let mut claim = Self {
+            mapping,
+            layout,
+            process: Some(process),
+            initially_committed: true,
+            // Preserve the existing source full-commit release accounting:
+            // the mapping suffix from `slice_start` is its source extent.
+            release_commit_size: layout.mapping_length(),
+            release_state: OsPageReleaseState::Unaccounted,
+            ready: false,
+        };
         let metadata_size = layout.metadata_commit_size();
         let result = claim.mapping.commit_for_process(process, 0, metadata_size, metadata_size)
             .map_err(|error| (OsAlignedPageFailureStage::MetadataCommit, error))
@@ -503,6 +557,94 @@ impl OsAlignedPageClaim {
         if !claim.mapping.initially_zero() {
             // SAFETY: the successful metadata commit makes this complete
             // still-private prefix writable before any Page is published.
+            unsafe { core::ptr::write_bytes(claim.mapping.base().unwrap(), 0, metadata_size); }
+        }
+        claim.ready = true;
+        Ok(claim)
+    }
+
+    /// Reserves the source OS fallback for a regular on-demand page.
+    ///
+    /// Pinned `arena.c` commits only its aligned metadata prefix here, then
+    /// mistakenly records `memid.initially_committed = true` even though the
+    /// block span is still `PROT_NONE`. That causes `mi_page_extend_free` to
+    /// write its first free-list links before the backing is accessible. The
+    /// native correction retains the same reservation and metadata commit,
+    /// but keeps the commitment state false until
+    /// [`Self::commit_initial_page_prefix`] succeeds. It does not change the
+    /// source option policy or make an eager full-commit substitution.
+    pub(crate) fn allocate_on_demand_for_process(
+        process: VmProcess<'static>, config: MemoryConfig, block_size: usize,
+        alignment: usize, requested: crate::arena::ArenaId,
+    ) -> Result<Self, OsAlignedPageAllocationFailure> {
+        let failed = |error| OsAlignedPageAllocationFailure::released(
+            OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error));
+        if process.policy().disallow_os_alloc() || !requested.as_ptr().is_null() {
+            return Err(failed(Errno::NOMEM));
+        }
+        let layout = OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)
+            .ok_or_else(|| failed(Errno::INVAL))?;
+        let allocation = NormalOsAllocation::allocate_aligned_base_for_process(process, config,
+            layout.mapping_length(), PAGE_META_ALIGNMENT, MapAccess::Reserved, false, None);
+        let mapping = match allocation {
+            Ok(allocation) => allocation.into_mapping_and_memory().0,
+            Err(failure) => {
+                let error = failure.error();
+                return match failure.into_mapping() {
+                    None => Err(failed(error)),
+                    Some(mapping) => Err(OsAlignedPageAllocationFailure::with_claim(
+                        OsAlignedPageError::new(OsAlignedPageFailureStage::Map, error),
+                        Self {
+                            mapping,
+                            layout,
+                            process: Some(process),
+                            initially_committed: false,
+                            release_commit_size: 0,
+                            ready: false,
+                            release_state: OsPageReleaseState::RetainedAlignmentFailure(error),
+                        })),
+                };
+            }
+        };
+        let mut claim = Self {
+            mapping,
+            layout,
+            process: Some(process),
+            initially_committed: false,
+            release_commit_size: 0,
+            release_state: OsPageReleaseState::Unaccounted,
+            ready: false,
+        };
+        let metadata_size = layout.metadata_commit_size();
+        if let Err(error) = claim.mapping.commit_for_process(
+            process,
+            0,
+            metadata_size,
+            metadata_size,
+        ) {
+            return match claim.release() {
+                Ok(()) => Err(OsAlignedPageAllocationFailure::released(
+                    OsAlignedPageError::new(OsAlignedPageFailureStage::MetadataCommit, error),
+                )),
+                Err(failure) => {
+                    let cleanup = failure.error().operation();
+                    let OsAlignedPageOwner::Claim(claim) = failure.into_owner() else {
+                        unreachable!("unpublished claim cleanup retains that exact claim");
+                    };
+                    Err(OsAlignedPageAllocationFailure::with_claim(
+                        OsAlignedPageError::with_cleanup(
+                            OsAlignedPageFailureStage::MetadataCommit,
+                            error,
+                            Some(cleanup),
+                        ),
+                        claim,
+                    ))
+                }
+            };
+        }
+        if !claim.mapping.initially_zero() {
+            // SAFETY: only the metadata prefix is accessible at this point;
+            // no page or free-list metadata is published yet.
             unsafe { core::ptr::write_bytes(claim.mapping.base().unwrap(), 0, metadata_size); }
         }
         claim.ready = true;
@@ -581,6 +723,35 @@ impl OsAlignedPageClaim {
     #[inline]
     pub(crate) const fn layout(&self) -> OsAlignedPageLayout {
         self.layout
+    }
+
+    /// Commits the first regular-page prefix while this claim still retains
+    /// its `Mapping` capability.
+    ///
+    /// This precedes page metadata capacity/free-list publication. A failure
+    /// leaves both `initially_committed` and `release_commit_size` unchanged,
+    /// so private rollback releases only the reservation and cannot publish a
+    /// fictitious accessible page span.
+    pub(crate) fn commit_initial_page_prefix(
+        &mut self,
+        size: usize,
+    ) -> Result<(), OsAlignedPageError> {
+        let Some(process) = self.process else {
+            return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
+        };
+        if !self.ready
+            || self.initially_committed
+            || self.release_commit_size != 0
+            || size == 0
+            || size > self.layout.allocation_size()
+        {
+            return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
+        }
+        self.mapping
+            .commit_for_process(process, self.layout.alignment(), size, 0)
+            .map_err(|error| OsAlignedPageError::new(OsAlignedPageFailureStage::BlockCommit, error))?;
+        self.release_commit_size = size;
+        Ok(())
     }
 
     #[inline]
@@ -667,8 +838,9 @@ impl OsAlignedPageClaim {
 
     /// Describes the mapping while this claim still owns it.
     ///
-    /// The source sets `initially_committed` after its two successful commit
-    /// transitions so fresh-page initialization never commits the span again.
+    /// A full source OS page records `initially_committed` after both commit
+    /// transitions. The on-demand correction instead retains false here and
+    /// records its successful prefix in `Page::slice_pcommitted`.
     pub(crate) fn memory_id(&self) -> Result<MemoryId, OsAlignedPageError> {
         if !self.ready {
             return Err(OsAlignedPageError::new(OsAlignedPageFailureStage::Publish, Errno::INVAL));
@@ -676,7 +848,7 @@ impl OsAlignedPageClaim {
         Ok(MemoryId::os(
             self.base()?,
             self.layout.mapping_length(),
-            true,
+            self.initially_committed,
             self.mapping.initially_zero(),
             false,
         ))
@@ -701,11 +873,8 @@ impl OsAlignedPageClaim {
         let result = match (self.process, self.release_state) {
             (_, OsPageReleaseState::RetainedAlignmentFailure(error)) => Err(error),
             (Some(process), OsPageReleaseState::Unaccounted) => {
-                let length = self.mapping.length().expect("a page claim retains an active mapping");
                 self.release_state = OsPageReleaseState::Accounted;
-                // `_mi_os_free` accounts the full OS extent even when a
-                // failed fresh-page commit never made all of it accessible.
-                self.mapping.unmap_for_process(process, length, false)
+                self.mapping.unmap_for_process(process, self.release_commit_size, false)
             }
             _ => self.mapping.unmap(),
         };
@@ -717,6 +886,106 @@ impl OsAlignedPageClaim {
             }),
         }
     }
+}
+
+struct PublishedOsPageGeometry {
+    memory: MemoryId,
+    layout: OsAlignedPageLayout,
+    base: NonNull<u8>,
+    slice_start: NonNull<u8>,
+}
+
+/// Reconstructs only the immutable geometry of a live published normal OS
+/// page. This deliberately carries no terminal release capability: extension
+/// callers need a bounded raw commit span, whereas `PublishedOsAlignedPage`
+/// is constructed only at an actual release boundary.
+///
+/// # Safety
+///
+/// `primary` must remain live and exclusively stable while its copied memory
+/// identity and aligned metadata fields are read. `process_backed` selects the
+/// ordinary process OS-page layout, whose regular-page alignment is valid only
+/// for the paired process allocation route.
+unsafe fn published_os_page_geometry(
+    config: MemoryConfig,
+    primary: NonNull<Page>,
+    process_backed: bool,
+) -> Option<PublishedOsPageGeometry> {
+    // SAFETY: forwarded from this helper's stable-page contract.
+    let page = unsafe { primary.as_ref() };
+    if page.aligned_alias_owner() != primary.as_ptr()
+        || (!process_backed && page.reserved() != 1)
+    {
+        return None;
+    }
+    let memory = page.memid();
+    if memory.kind() != MemoryKind::Os {
+        return None;
+    }
+    let os = memory.os_memory()?;
+    let base = NonNull::new(os.base)?;
+    let block_size = page.block_size();
+    let block_start_offset = page::page_usable_start_offset(block_size)?;
+    let page_start_address = primary
+        .as_ptr()
+        .addr()
+        .checked_add(page.page_offset())?;
+    let slice_start_address = page_start_address.checked_sub(block_start_offset)?;
+    let alignment = slice_start_address.checked_sub(base.as_ptr().addr())?;
+    let layout = if process_backed {
+        OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)?
+    } else {
+        OsAlignedPageLayout::new(config, block_size, alignment)?
+    };
+    if layout.mapping_length() != os.size
+        || layout.reserved() != page.reserved()
+        || layout.page_offset() != page.page_offset()
+        || base.as_ptr().addr().checked_add(layout.metadata_offset())?
+            != primary.as_ptr().addr()
+    {
+        return None;
+    }
+    let slice_start = NonNull::new(base.as_ptr().wrapping_add(layout.alignment()))?;
+    if slice_start.as_ptr().addr() != slice_start_address {
+        return None;
+    }
+    Some(PublishedOsPageGeometry {
+        memory,
+        layout,
+        base,
+        slice_start,
+    })
+}
+
+/// Returns the one source page area that a process-owned on-demand OS page
+/// may commit after its `Mapping` has been published.
+///
+/// # Safety
+///
+/// `primary` must be a live, exclusively owned page whose original process
+/// mapping was transferred by `OsAlignedPageClaim::into_published`. The caller
+/// must retain the matching `VmProcess` and prove that its next prefix does
+/// not race page release or another commitment transition.
+pub(crate) unsafe fn published_on_demand_os_page_area_for_process(
+    config: MemoryConfig,
+    primary: NonNull<Page>,
+) -> Option<PublishedOnDemandOsPageArea> {
+    // SAFETY: forwarded from this helper's live-page contract.
+    let page = unsafe { primary.as_ref() };
+    if page.memid().initially_committed() || page.slice_pcommitted() == 0 {
+        return None;
+    }
+    // SAFETY: this helper's caller retains the same stable primary.
+    let geometry = unsafe { published_os_page_geometry(config, primary, true) }?;
+    let committed = usize::from(page.slice_pcommitted())
+        .checked_mul(config.page_size().bytes())?;
+    if committed > geometry.layout.allocation_size() {
+        return None;
+    }
+    Some(PublishedOnDemandOsPageArea {
+        slice_start: geometry.slice_start,
+        size: geometry.layout.allocation_size(),
+    })
 }
 
 impl PublishedOsAlignedPage {
@@ -754,55 +1023,37 @@ impl PublishedOsAlignedPage {
     ) -> Option<Self> {
         // SAFETY: the caller proves `primary` is live and exclusively owned.
         let page = unsafe { primary.as_ref() };
-        if page.aligned_alias_owner() != primary.as_ptr()
-            || (process.is_none() && page.reserved() != 1)
-            || page.slice_pcommitted() != 0
-        {
-            return None;
-        }
-        let memory = page.memid();
-        // The bounded W03 terminal tail owns normal `MI_MEM_OS` mappings
-        // created by `OsAlignedPageClaim`. Pinned `MI_MEM_OS_HUGE` has its
-        // own `mi_os_free_huge_os_pages` source release. `MI_MEM_OS_REMAP`
-        // falls through the generic upstream release, but this bounded
-        // adapter has no corresponding remap claim/provenance owner, so both
-        // stay fail-closed here rather than treating this clipped `munmap`
-        // capability as theirs.
-        if memory.kind() != MemoryKind::Os {
-            return None;
-        }
-        let os = memory.os_memory()?;
-        let base = NonNull::new(os.base)?;
-        let block_size = page.block_size();
-        let block_start_offset = page::page_usable_start_offset(block_size)?;
-        let page_start_address = primary
-            .as_ptr()
-            .addr()
-            .checked_add(page.page_offset())?;
-        let slice_start_address = page_start_address.checked_sub(block_start_offset)?;
-        let alignment = slice_start_address.checked_sub(base.as_ptr().addr())?;
-        let layout = if process.is_some() {
-            OsAlignedPageLayout::for_fresh_page(config, block_size, alignment)?
-        } else { OsAlignedPageLayout::new(config, block_size, alignment)? };
-        if layout.mapping_length() != os.size
-            || layout.reserved() != page.reserved()
-            || layout.page_offset() != page.page_offset()
-            || base.as_ptr().addr().checked_add(layout.metadata_offset())?
-                != primary.as_ptr().addr()
-        {
-            return None;
-        }
-        let slice_start = NonNull::new(base.as_ptr().wrapping_add(layout.alignment()))?;
-        if slice_start.as_ptr().addr() != slice_start_address {
-            return None;
-        }
+        // SAFETY: this release constructor retains the live primary while it
+        // validates its immutable source geometry.
+        let geometry = unsafe { published_os_page_geometry(config, primary, process.is_some()) }?;
+        let release_commit_size = if process.is_some() {
+            if geometry.memory.initially_committed() {
+                if page.slice_pcommitted() != 0 {
+                    return None;
+                }
+                geometry.layout.mapping_length().checked_sub(geometry.layout.alignment())?
+            } else {
+                let committed = usize::from(page.slice_pcommitted())
+                    .checked_mul(config.page_size().bytes())?;
+                if committed == 0 || committed > geometry.layout.allocation_size() {
+                    return None;
+                }
+                committed
+            }
+        } else {
+            if page.slice_pcommitted() != 0 {
+                return None;
+            }
+            0
+        };
         Some(Self {
-            memory,
-            layout,
-            base,
-            slice_start,
+            memory: geometry.memory,
+            layout: geometry.layout,
+            base: geometry.base,
+            slice_start: geometry.slice_start,
             primary,
             process,
+            release_commit_size,
             release_accounted: false,
         })
     }
@@ -882,11 +1133,12 @@ impl PublishedOsAlignedPage {
         // exact rounded length, and unique terminal ownership.
         let result = if let Some(process) = self.process.filter(|_| !self.release_accounted) {
             self.release_accounted = true;
-            // `_mi_arenas_page_free_prim` frees from slice_start, not the
-            // metadata base. `_mi_os_free_ex` removes that prefix from the
-            // committed extent while still releasing the complete mapping.
+            // Full OS pages preserve the existing source suffix accounting.
+            // The native on-demand correction instead subtracts only the
+            // prefix that reached a successful page-area commit; metadata
+            // commitment was never included in the source statistic.
             unsafe { Mapping::reclaim_published_for_process(process, self.base.as_ptr(),
-                self.layout.mapping_length(), self.layout.mapping_length() - self.layout.alignment(), false) }
+                self.layout.mapping_length(), self.release_commit_size, false) }
         } else {
             unsafe { Mapping::reclaim_published(self.base.as_ptr(), self.layout.mapping_length()) }
         };

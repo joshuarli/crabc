@@ -1,6 +1,7 @@
 // Copyright (c) 2018-2026 Microsoft Research, Daan Leijen
 // SPDX-License-Identifier: MIT
-// Source: pinned mimalloc v3.5.0 src/arena.c:1573-1611,1676-1912.
+// Source: pinned mimalloc v3.5.0 src/arena.c:1216-1283,1573-1611,1676-1912
+// and src/page.c:630-705 (page-area commitment before capacity publication).
 
 //! Process-owned backing for the source arena registry.
 //!
@@ -31,6 +32,12 @@ const EMPTY: u8 = 0;
 const INITIALIZING: u8 = 1;
 const PUBLISHED: u8 = 2;
 const RETAINED: u8 = 3;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ArenaPageCommitError {
+    InvalidPageArea,
+    Mapping(Errno),
+}
 
 struct ArenaMappingSlot {
     state: AtomicU8,
@@ -111,6 +118,57 @@ impl ProcessArenaBacking {
 
     #[inline]
     pub(crate) fn registry(&self) -> &ArenaRegistry { &self.registry }
+
+    /// Direct `_mi_os_commit` used by `mi_page_extend_free`, deliberately
+    /// distinct from the arena callback used for a fresh page's first prefix.
+    ///
+    /// # Safety
+    /// `memory` is an outstanding page span of this registry. The caller
+    /// exclusively owns its commitment prefix and all newly accessible bytes;
+    /// no release or overlapping page transition may run concurrently.
+    pub(crate) unsafe fn commit_page_area(
+        &self, memory: MemoryId, offset: usize, size: usize,
+    ) -> Result<(), ArenaPageCommitError> {
+        let invalid = ArenaPageCommitError::InvalidPageArea;
+        let arena_memory = memory.arena_memory().ok_or(invalid)?;
+        let view = unsafe { super::ArenaView::from_ptr(arena_memory.arena) }.ok_or(invalid)?;
+        let owner = unsafe { self.mapping_for_arena(view.arena()) }.ok_or(invalid)?;
+        let span = (arena_memory.slice_count as usize).checked_mul(super::ARENA_SLICE_SIZE)
+            .ok_or(invalid)?;
+        if size == 0 || offset.checked_add(size).is_none_or(|end| end > span) { return Err(invalid); }
+        let start = view.slice_start(arena_memory.slice_index as usize).ok_or(invalid)?;
+        let mapping_offset = (start as usize).checked_sub(owner.mapping.base().map_err(|_| invalid)? as usize)
+            .and_then(|base| base.checked_add(offset)).ok_or(invalid)?;
+        owner.mapping.commit_for_process(owner.process, mapping_offset, size, 0)
+            .map_err(ArenaPageCommitError::Mapping)?;
+        Ok(())
+    }
+
+    /// Reconciles `mi_arenas_page_free_prim`'s on-demand prefix before the
+    /// page metadata is retired and its complete slices become available.
+    /// Complete slices enter the conservative commit bitmap; a partial tail
+    /// is accounted as already decommitted, without an extra OS operation.
+    ///
+    /// # Safety
+    /// The caller owns this live page's unique release right, has removed its
+    /// PageMap and ordinary arena-page bit, and calls this exactly once with
+    /// the page's actual committed prefix before returning its slices.
+    pub(crate) unsafe fn account_page_commit_before_release(
+        &self, memory: MemoryId, committed: usize,
+    ) -> bool {
+        if committed == 0 { return true; }
+        let Some(arena_memory) = memory.arena_memory() else { return false; };
+        let Some(view) = (unsafe { super::ArenaView::from_ptr(arena_memory.arena) }) else { return false; };
+        let Some(owner) = (unsafe { self.mapping_for_arena(view.arena()) }) else { return false; };
+        let Some(span) = (arena_memory.slice_count as usize).checked_mul(super::ARENA_SLICE_SIZE) else { return false; };
+        if committed > span || committed % owner.config.page_size().bytes() != 0 { return false; }
+        let Some(bitmap) = (unsafe { view.slices_committed() }) else { return false; };
+        let whole = committed / super::ARENA_SLICE_SIZE;
+        if whole != 0 && bitmap.set_range(arena_memory.slice_index as usize, whole).is_none() { return false; }
+        let extra = committed % super::ARENA_SLICE_SIZE;
+        if extra != 0 { owner.process.subprocess().vm_statistics().committed_decrease(extra); }
+        true
+    }
 
     /// Validates a new coordinator consumer against every arena mapping
     /// already retained by this process owner. This is a one-time binding

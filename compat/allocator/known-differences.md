@@ -1754,8 +1754,9 @@ transfer capability.
   `single_thread::PageAllocatorEngine::extend_on_demand_page_before_allocation`
   and
   `main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse`.
-- **Category:** private native x86-64 test seam only. It has no C ABI surface,
-  public Rust API, or production page-on-demand option/policy claim.
+- **Category:** private native x86-64 test seam only. It has no C ABI surface
+  or public Rust API, and does not describe the separately bounded
+  process-metadata policy path below.
 - **Difference:** after a failed direct extension, pinned C may retire the
   selected page and fall through to a fresh allocation path. The Rust test seam
   instead returns `None` without changing the selected page's committed prefix,
@@ -1776,8 +1777,68 @@ transfer capability.
 - **Decision/removal:** accepted solely for the private test fixture until a
   separately reviewed source-shaped failed-extension lane proves the C retire
   and any fresh-selection behavior, or the fixture is removed. It does not
-  authorize production option processing, a public allocator control, a
-  general retry rule, or backend promotion.
+  authorize a public allocator control, a general lifecycle policy, or backend
+  promotion.
+
+### `CRABC-MI-OS-ON-DEMAND-ARENA-REFUSAL` — accepted pinned-upstream safety correction
+
+- **Upstream/Rust:** pinned mimalloc v3.5.0
+  `src/arena.c:819-855` takes the ordinary OS fallback when
+  `mi_option_disallow_arena_alloc=1` and
+  `mi_option_page_commit_on_demand=1`. It reserves the block span as
+  uncommitted, commits only the aligned metadata prefix, then unconditionally
+  assigns `memid.initially_committed = true` at line 855.
+  `os_page::OsAlignedPageClaim::allocate_on_demand_for_process`,
+  `OsAlignedPageClaim::commit_initial_page_prefix`,
+  `single_thread::PageAllocatorEngine::allocate_fresh_os_page`, and
+  `extend_on_demand_page_before_allocation` preserve the reservation and
+  source prefix algorithm while correcting that false publication.
+- **Category:** native x86-64, process-bound metadata safety correction to a
+  pinned upstream defect. It has no public C/Rust API, allocator-policy
+  expansion, backend-promotion, or AArch64 claim.
+- **Difference:** pinned C treats the uncommitted OS block span as fully
+  committed and `_mi_page_init` writes its first free-list link into
+  `PROT_NONE`, faulting before the allocation returns. Rust leaves
+  `MemoryId::initially_committed` false, commits the initial regular-page
+  prefix while the private `Mapping` is still retained, and only then publishes
+  `Page::slice_pcommitted`, free-list links, and capacity. After `PageMap`
+  publication, a later extension uses only
+  `Mapping::commit_published_for_process` for its exclusive old-to-new prefix;
+  terminal OS release removes exactly `slice_pcommitted * page_size` from
+  committed accounting. A failed initial or later commit publishes no new
+  capacity/prefix and follows the ordinary source fresh retry rather than
+  treating inaccessible backing as live.
+- **Evidence:**
+  `.work/allocator-x86_64/tmp/incremental-arena-oracle.c` and
+  `.work/allocator-x86_64/incremental-arena-oracle.log` record the matching
+  pinned-C arena trace: 400 live 64-byte metadata allocations yield block 64,
+  capacity 512, offset 64, prefix 49,152, one arena, and release 49,152.
+  `.work/allocator-x86_64/tmp/incremental-os-oracle.c` with the paired
+  setter and pre-constructor environment invocations records the pinned-C
+  faults (exit 139) in
+  `.work/allocator-x86_64/incremental-os-oracle.log` and
+  `.work/allocator-x86_64/incremental-os-environment-oracle.log`.
+  `meta::tests::process_metadata_incrementally_commits_and_releases_its_arena_page_prefix`
+  asserts the C arena geometry/accounting;
+  `meta::tests::process_metadata_os_only_on_demand_commits_before_publishing_capacity`
+  proves the OS-only first prefix, 400-allocation extension, and exact
+  49,152-byte release; and
+  `meta::tests::process_metadata_failed_extension_keeps_the_old_page_and_selects_fresh`,
+  `process_metadata_failed_initial_prefix_takes_source_retry_before_forced_collection`,
+  `process_metadata_os_only_failed_initial_prefix_rolls_back_before_source_retry`,
+  and
+  `process_metadata_os_only_failed_extension_selects_fresh_without_forging_commitment`
+  cover arena and published-OS commit failure/retry boundaries. The pinned
+  `allocator-unit` lane passes 932 tests. The private native smoke command
+  `./compat/allocator/run-x86_64.sh allocator-perf --smoke --label m2-incremental-on-demand`
+  completed successfully and emitted
+  `.work/allocator-x86_64/reports/allocator/x86_64/perf/m2-incremental-on-demand.json`;
+  it is a bounded performance record, not a promotion threshold.
+- **Decision/removal:** retain this correction while v3.5.0 remains pinned.
+  Revisit it only with an upstream fix and a fresh setter/environment
+  differential. Do not generalize it into a different allocation policy or
+  infer runtime, lifecycle, backend, or AArch64 support from this metadata
+  slice.
 
 ### `CRABC-MI-SHARED-MAIN-NO-PAGE-LIFECYCLE` — accepted incomplete lifecycle boundary
 

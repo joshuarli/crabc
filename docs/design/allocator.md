@@ -238,20 +238,51 @@ reabandonment remain separate page-lifecycle transitions.
 The native x86-64 evidence fixture binds that paired lease only under
 `cfg(test)` through `PageAllocatorEngine::test_bind_page_area_commit_lease`.
 `test_enable_page_commit_on_demand` then selects one source `commit == false`
-fresh-page branch; neither capability exists in a production engine nor maps a
-Rust option parser, API, or policy. For one ordinary selected reserved medium
-page, `PageAllocatorEngine::page_make_immediate` performs the direct mapping
-before `Page::set_slice_pcommitted_after_commit` and
+fresh-page branch; that fixture remains separate from process option handling.
+For one ordinary selected reserved medium page,
+`PageAllocatorEngine::page_make_immediate` performs the direct mapping before
+`Page::set_slice_pcommitted_after_commit` and
 `LocalFreeList::extend_count`, so the second allocation reuses the same page
 only after its prefix grows. A mapping failure returns no allocation with the
 selected page unchanged, and the test explicitly retries that same page.
 Pinned C may instead retire and fall through to fresh allocation at
-`src/page.c:845-863`; that intentional test-only divergence is recorded in
+`src/page.c:845-863`; that intentional fixture-only divergence is recorded in
 [`known-differences.md`](../../compat/allocator/known-differences.md), not
 claimed as C fault-injection parity. The C oracle sets
 `mi_option_page_commit_on_demand` only for its own successful branch. Its
-23-field native trace establishes neither a production option nor fresh
-fallback behavior.
+23-field native trace establishes neither a public allocator control nor a
+general lifecycle/fresh-fallback claim.
+
+The separately bounded native x86-64 `ProcessMetadataPageBacking` route now
+uses the resolved process `page_commit_on_demand` policy for regular metadata
+pages. With `page_commit_on_demand=1`, it preserves pinned
+`src/arena.c:951-1120` and `src/page.c:630-729` ordering: an arena claim
+commits its initial prefix through its retained owner before page capacity or
+free-list links publish; a later arena extension uses that same retained
+mapping; and a failed candidate extension takes C's false collection/fresh
+retry before the outer forced-collection policy. Its 400 live 64-byte
+allocation regression matches the pinned arena probe's block size 64,
+slice-relative offset 64, capacity 512, and 49,152-byte committed/released
+prefix.
+
+The source's OS-only fallback needs one narrow safety correction. When
+`disallow_arena_alloc=1` combines with `page_commit_on_demand=1`, pinned
+v3.5.0 `src/arena.c:819-855` reserves the OS span with `commit == false`,
+commits only aligned metadata, then unconditionally sets
+`memid.initially_committed` at line 855. `_mi_page_init` consequently writes
+the first free-list links into a still-`PROT_NONE` block area. The native
+`OsAlignedPageClaim::allocate_on_demand_for_process` keeps that reservation
+and metadata commit, but
+`OsAlignedPageClaim::commit_initial_page_prefix` must succeed before the Page
+is published with a nonzero `slice_pcommitted` or has any capacity/free-list
+state. After publication, only the validated exclusive new prefix uses
+`Mapping::commit_published_for_process`; terminal
+`PublishedOsAlignedPage` release subtracts exactly the recorded prefix, never
+the uncommitted mapping suffix. This does not change option policy or replace
+on-demand allocation with eager commitment. It is native x86-64 metadata work
+only: not a public allocator API, backend promotion, general lifecycle claim,
+or AArch64 evidence. The source fault and the correction are recorded in
+[`known-differences.md`](../../compat/allocator/known-differences.md).
 
 The bounded metadata prerequisite from `src/subproc.c:19-88` is now also
 present. `MetaAllocator` is one process-static, `!Unpin` owner. Its preparation
@@ -1474,7 +1505,8 @@ while still extending the source free list. If a direct commit fails,
 detach, direct-cache/page-count repair, and mapped identity/bit/count/unown
 publication. The resulting consuming owner can retry only the same candidate
 through its long lifecycle; it cannot reopen short map access, scan, or take a
-fresh fallback. This proves no production page-on-demand option. A bitmap miss,
+fresh fallback. This proves no production main-thread/lifecycle
+page-on-demand option. A bitmap miss,
 malformed state, scalar extension error, or any other post-transfer failure
 likewise retains the target owner.
 
