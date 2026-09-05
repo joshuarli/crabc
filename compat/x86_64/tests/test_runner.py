@@ -2098,6 +2098,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         expected_groups = (
             expected_groups[:static_sysroot_index]
             + (
+                "owned-system-cancellation",
                 "owned-io-cancellation",
                 "owned-resolver-network",
                 "owned-dynamic-io-cancellation",
