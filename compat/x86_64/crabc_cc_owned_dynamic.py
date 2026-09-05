@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextlib import contextmanager, nullcontext
 
 # Installed tools are immutable payload, including when callers do not set a
 # Python environment policy. Importing the shared checks must not create a
@@ -28,6 +29,41 @@ INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 ALIASES = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
 REQUIRED = {"usr/lib/libc.so", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
             "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1"}
+
+
+@contextmanager
+def reserve_receipt(path: Path):
+    """Claim a new sidecar before tools; never replace an existing inode.
+
+    The held descriptor is the write authority. A failed invocation removes
+    only its own still-empty reservation, not a pathname replaced by another
+    publisher. Existing files, symlinks and hardlinks fail with EEXIST.
+    """
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+    except OSError as error:
+        raise shared.DriverError(f"cannot reserve dynamic link receipt: {path}: {error}") from error
+    identity = os.fstat(descriptor)
+    complete = False
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        def publish(payload: str):
+            nonlocal complete
+            current = path.lstat()
+            if (current.st_dev, current.st_ino, current.st_nlink) != (identity.st_dev, identity.st_ino, 1):
+                raise shared.DriverError("dynamic receipt reservation identity changed")
+            stream.write(payload)
+            stream.flush()
+            complete = True
+        try:
+            yield publish
+        finally:
+            if not complete:
+                try:
+                    current = path.lstat()
+                    if (current.st_dev, current.st_ino, current.st_nlink) == (identity.st_dev, identity.st_ino, 1):
+                        path.unlink()
+                except FileNotFoundError:
+                    pass
 
 
 def validate(root: Path) -> dict:
@@ -156,7 +192,7 @@ def execute(root: Path, arguments: list[str]) -> None:
     shared.validate_application_output(root, receipt)
     shared.validate_application_output_disjoint(receipt, invocation.sources + invocation.objects + tuple(dsos) + (output,))
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="crabc-dynamic-link.", dir=output.parent) as temporary_name:
+    with (nullcontext(None) if invocation.compile_only else reserve_receipt(receipt)) as receipt_stream, tempfile.TemporaryDirectory(prefix="crabc-dynamic-link.", dir=output.parent) as temporary_name:
         temporary = Path(temporary_name)
         objects = [shared.require_x86_64_relocatable_object(root, path) for path in invocation.objects]
         for index, source in enumerate(invocation.sources):
@@ -215,7 +251,7 @@ def execute(root: Path, arguments: list[str]) -> None:
                   "input_receipts": [{"path": str(path), "sha256": shared.sha256_file(path)} for path in [*direct, archive]],
                   "resolved_linker": {"path": link[0], "sha256": shared.sha256_file(Path(link[0]))},
                   "link_command": link, "link_trace": trace, "campaign_complete": False}
-        receipt.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+        receipt_stream(json.dumps(record, indent=2, sort_keys=True) + "\n")
 
 
 def main() -> int:

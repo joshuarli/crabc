@@ -15,10 +15,14 @@ import shlex
 import sys
 import re
 
+sys.dont_write_bytecode = True
 import build_x86_64_owned_sysroot as common
 
 ROOT = common.ROOT
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+import crabc_cc_owned_dynamic as installed_driver
+import owned_static_sysroot_package as shared_package
 
 
 def audit_shared_elf(path: Path) -> dict[str, str]:
@@ -38,12 +42,30 @@ def audit_shared_elf(path: Path) -> dict[str, str]:
 def build(output: Path) -> None:
     common.assert_native_target()
     output = common.validate_output_path(output)
-    if output.exists():
+    if not output.is_relative_to(ROOT / ".work"):
+        raise common.BuildError("dynamic output must remain below checkout .work")
+    if output.exists() or output.is_symlink():
         raise common.BuildError("dynamic output already exists; choose a fresh owned output")
     stage = output.parent / (output.name + ".build")
-    if stage.exists():
+    if stage.exists() or stage.is_symlink():
         raise common.BuildError("dynamic build state already exists; choose a fresh owned output")
-    stage.mkdir(parents=True)
+    stage.mkdir(parents=True, mode=0o700)
+    staged_output = stage / "installed"
+    build_staged_payload(staged_output, stage)
+    try:
+        installed_driver.validate(staged_output)
+        shared_package.publish_noreplace(staged_output, output, "dynamic sysroot output")
+    except (installed_driver.shared.DriverError, shared_package.PackageError) as error:
+        raise common.BuildError(str(error)) from error
+
+
+def build_staged_payload(output: Path, stage: Path) -> None:
+    """Build the complete candidate privately; only build() may publish it.
+
+    Failure retains diagnostic/build state under the dedicated .build owner,
+    never a partially populated public output. The final manifest must pass
+    the installed driver's exact validation before atomic no-replace rename.
+    """
     environment = common.deterministic_environment()
     tools = common.resolve_pinned_producer_tools()
     rustup = tools["rustup"]["path"]

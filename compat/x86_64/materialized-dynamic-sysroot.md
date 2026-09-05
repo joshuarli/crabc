@@ -51,6 +51,13 @@ absolute 32-bit dynamic relocations, and must have RELRO and an NX stack.
 Every application link records hashed inputs, exact command and checked LLD
 input trace; undeclared target inputs fail. The driver disables Python bytecode
 publication itself, so importing its shared checks cannot dirty the install.
+An output-derived receipt is exclusively reserved before compilation or
+linkage. Existing sidecars, symlinks and hardlinks are never overwritten;
+failed tools release only their own reservation, and receipt publication checks
+the still-owned inode. Producer payloads remain private under the dedicated
+`.build/installed` directory until the complete manifest passes validation and
+Linux no-replacement atomic rename publishes the requested install. A failing
+build or a competing publisher cannot expose or replace a partial install.
 
 The manifest covers the exact regular-file roster and the one permitted
 relative alias. `owned_dynamic_package.py` creates deterministic archives and
@@ -78,7 +85,7 @@ cover 1025 RELA writes, 600 RELR entries, size overflow and a late overlapping
 destination rejected before any graph write. Legacy private roots retain their
 bounded admission. Allocation failure aborts the uncommitted initial graph.
 
-The initial-component gate also runs 33 loader tests and eight driver/package
+The initial-component gate also runs 33 loader tests and 15 driver/package
 boundary tests. Two cold producer manifests and deterministic package bytes
 must match; the extracted driver must compile and execute the same consumer.
 These checks do not promote public support or the frozen AArch64 baseline.

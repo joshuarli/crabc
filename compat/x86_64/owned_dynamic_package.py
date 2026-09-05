@@ -73,8 +73,11 @@ def extract(package_path: Path, output: Path) -> None:
                 raise driver.shared.DriverError("unapproved package symlink")
         manifest_member = archive.getmember("share/crabc/manifest.json")
         if not manifest_member.isfile(): raise driver.shared.DriverError("manifest is not a regular file")
-        manifest = json.loads(archive.extractfile(manifest_member).read())
-        if manifest.get("format") != driver.FORMAT or manifest.get("symlinks") != driver.ALIASES:
+        try:
+            manifest = json.loads(archive.extractfile(manifest_member).read())
+        except (ValueError, UnicodeDecodeError) as error:
+            raise driver.shared.DriverError("invalid package manifest JSON") from error
+        if not isinstance(manifest, dict) or manifest.get("format") != driver.FORMAT or manifest.get("symlinks") != driver.ALIASES:
             raise driver.shared.DriverError("wrong package contract")
         files = manifest.get("files", {})
         if manifest.get("target") != driver.shared.TARGET or not isinstance(files, dict) or not driver.REQUIRED <= files.keys():

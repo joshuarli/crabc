@@ -14,6 +14,9 @@ import owned_dynamic_package as package
 import io
 import tarfile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import build_x86_64_owned_dynamic_sysroot as producer
+
 
 class InstalledDynamicDriverTests(unittest.TestCase):
     def setUp(self):
@@ -97,6 +100,64 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                 driver.execute(self.root, ["--dynamic-pie", str(source), "-o", str(source)])
             run.assert_not_called()
 
+    def test_existing_receipt_regular_symlink_and_hardlink_reject_before_tools_and_preserve_bytes(self):
+        source = Path(self.temporary.name) / "source.c"
+        source.write_text("int main(void) { return 0; }\n")
+        for kind in ("regular", "symlink", "hardlink"):
+            output = Path(self.temporary.name) / kind
+            receipt = Path(str(output) + ".crabc-link.json")
+            original = Path(self.temporary.name) / (kind + ".original")
+            original.write_bytes(b"old receipt bytes")
+            if kind == "regular": receipt.write_bytes(b"old receipt bytes")
+            elif kind == "symlink": receipt.symlink_to(original)
+            else: os.link(original, receipt)
+            with self.subTest(kind=kind), patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch.object(driver.shared, "compiler", return_value="/owned/gcc"), patch.object(driver, "run", side_effect=driver.shared.DriverError("tool was called")) as run:
+                with self.assertRaises(driver.shared.DriverError):
+                    driver.execute(self.root, ["--dynamic-pie", str(source), "-o", str(output)])
+                run.assert_not_called()
+                self.assertEqual(receipt.read_bytes(), b"old receipt bytes")
+                self.assertEqual(original.read_bytes(), b"old receipt bytes")
+                self.assertFalse(output.exists())
+
+    def test_failed_translation_releases_only_its_new_receipt_reservation(self):
+        source = Path(self.temporary.name) / "source.c"
+        source.write_text("invalid")
+        output = Path(self.temporary.name) / "consumer"
+        receipt = Path(str(output) + ".crabc-link.json")
+        def fail(command, temporary):
+            self.assertTrue(receipt.is_file(), "receipt must be reserved before compiler execution")
+            self.assertEqual(receipt.read_bytes(), b"")
+            raise driver.shared.DriverError("isolated translation failure")
+        with patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch.object(driver.shared, "compiler", return_value="/owned/gcc"), patch.object(driver, "run", side_effect=fail):
+            with self.assertRaisesRegex(driver.shared.DriverError, "isolated translation failure"):
+                driver.execute(self.root, ["--dynamic-pie", str(source), "-o", str(output)])
+        self.assertFalse(receipt.exists())
+
+    def test_failed_link_does_not_remove_a_competing_receipt_inode(self):
+        source = Path(self.temporary.name) / "source.c"
+        source.write_text("int main(void) { return 0; }\n")
+        output = Path(self.temporary.name) / "consumer"
+        receipt = Path(str(output) + ".crabc-link.json")
+        def fail_link(command, temporary):
+            self.assertEqual(receipt.read_bytes(), b"")
+            if command[0] == "/owned/gcc": return ""
+            receipt.unlink()
+            receipt.write_bytes(b"competing receipt")
+            raise driver.shared.DriverError("isolated link failure")
+        with patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch.object(driver.shared, "compiler", return_value="/owned/gcc"), patch.object(driver, "dynamic_symbols", return_value=(set(), set())), patch.object(driver, "run", side_effect=fail_link):
+            with self.assertRaisesRegex(driver.shared.DriverError, "isolated link failure"):
+                driver.execute(self.root, ["--dynamic-pie", str(source), "-o", str(output)])
+        self.assertEqual(receipt.read_bytes(), b"competing receipt")
+
+    def test_receipt_replacement_is_rejected_before_publication(self):
+        path = Path(self.temporary.name) / "receipt"
+        with self.assertRaisesRegex(driver.shared.DriverError, "identity changed"):
+            with driver.reserve_receipt(path) as publish:
+                path.unlink()
+                path.write_bytes(b"other publisher")
+                publish("new receipt")
+        self.assertEqual(path.read_bytes(), b"other publisher")
+
     def test_package_is_deterministic_and_extracted_payload_is_identical(self):
         one = Path(self.temporary.name) / "one.tar"
         two = Path(self.temporary.name) / "two.tar"
@@ -120,6 +181,53 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                 with self.assertRaises(driver.shared.DriverError):
                     package.extract(archive_path, output)
                 self.assertFalse(output.exists())
+
+    def test_package_nonobject_manifest_is_clean_error_before_output_creation(self):
+        for value in ([], None, "manifest", 7, True):
+            with self.subTest(value=value):
+                archive_path = Path(self.temporary.name) / "bad-manifest.tar"
+                payload = json.dumps(value).encode()
+                with tarfile.open(archive_path, "w") as archive:
+                    entry = tarfile.TarInfo("share/crabc/manifest.json")
+                    entry.size = len(payload)
+                    archive.addfile(entry, io.BytesIO(payload))
+                output = Path(self.temporary.name) / "rejected"
+                with self.assertRaises(driver.shared.DriverError):
+                    package.extract(archive_path, output)
+                self.assertFalse(output.exists())
+
+    def test_producer_failure_keeps_partial_payload_private(self):
+        output = Path(self.temporary.name) / "produced"
+        def fail(staged, build):
+            staged.mkdir()
+            (staged / "partial-libc.so").write_bytes(b"partial")
+            self.assertFalse(output.exists())
+            raise producer.common.BuildError("isolated loader build failure")
+        with patch.object(producer, "build_staged_payload", side_effect=fail, create=True), patch.object(producer.common, "resolve_pinned_producer_tools", side_effect=AssertionError("private staged payload owner required")):
+            with self.assertRaisesRegex(producer.common.BuildError, "isolated loader build failure"):
+                producer.build(output)
+        self.assertFalse(output.exists())
+        self.assertEqual((output.parent / (output.name + ".build") / "installed/partial-libc.so").read_bytes(), b"partial")
+
+    def test_producer_final_validation_failure_and_competing_publication_preserve_destination(self):
+        for failure in ("invalid-payload", "competing-publication"):
+            with self.subTest(failure=failure):
+                output = Path(self.temporary.name) / failure
+                def finish(staged, build):
+                    staged.mkdir()
+                    (staged / "payload").write_bytes(b"private candidate")
+                    if failure == "competing-publication":
+                        output.mkdir()
+                        (output / "competitor").write_bytes(b"other publisher")
+                validator = (None if failure == "competing-publication" else driver.shared.DriverError("invalid payload"))
+                with patch.object(producer, "build_staged_payload", side_effect=finish, create=True), patch.object(driver, "validate", side_effect=validator), patch.object(producer.common, "resolve_pinned_producer_tools", side_effect=AssertionError("private staged payload owner required")):
+                    with self.assertRaises(producer.common.BuildError):
+                        producer.build(output)
+                if failure == "competing-publication":
+                    self.assertEqual((output / "competitor").read_bytes(), b"other publisher")
+                    self.assertEqual(list(output.iterdir()), [output / "competitor"])
+                else:
+                    self.assertFalse(output.exists())
 
 
 if __name__ == "__main__":
