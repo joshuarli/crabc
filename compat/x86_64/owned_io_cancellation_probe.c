@@ -165,10 +165,69 @@ static int exercise_initial(void) {
     puts("initial-thread blocked read canceled cleanup=1");
     return 0;
 }
+/* Fork retains the calling task's pending bit, state, type, and cleanup
+ * chain, including a worker adopted as the child's initial task. */
+static void inherited_cleanup(void *unused) { (void)unused; _exit(42); }
+static void *fork_cancel_state(void *unused) {
+    (void)unused;
+    if (pthread_setcancelstate(PTHREAD_CANCEL_DISABLE,NULL) ||
+        pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS,NULL)) _exit(101);
+    pthread_cleanup_push(inherited_cleanup,NULL);
+    if (pthread_cancel(pthread_self())) _exit(102);
+    pid_t child=fork(); if (child<0) _exit(103);
+    if (!child) {
+        int previous=-1;
+        if (pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED,&previous) ||
+            previous!=PTHREAD_CANCEL_ASYNCHRONOUS) _exit(104);
+        if (pthread_setcancelstate(PTHREAD_CANCEL_ENABLE,&previous) ||
+            previous!=PTHREAD_CANCEL_DISABLE) _exit(105);
+        pthread_testcancel();
+        _exit(106);
+    }
+    int status;
+    if (waitpid(child,&status,0)!=child || !WIFEXITED(status) || WEXITSTATUS(status)!=42) _exit(107);
+    pthread_cleanup_pop(0);
+    return NULL;
+}
+static int exercise_fork_state(void) {
+    pid_t child=fork(); CHECK(child>=0);
+    if (!child) { fork_cancel_state(NULL); _exit(0); }
+    int status; CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0);
+    pthread_t worker; void *result=(void *)1;
+    CHECK(!pthread_create(&worker,NULL,fork_cancel_state,NULL));
+    CHECK(!pthread_join(worker,&result) && !result);
+    puts("fork retains initial/worker pending state type cleanup");
+    return 0;
+}
+
+/* Abandoned explicit locks remain unavailable after task retirement, just
+ * like musl's orphan sentinel. Each negative case exits its own process via
+ * _exit because ordinary exit must not flush a deliberately locked FILE. */
+static void *orphan_file_lock(void *opaque) {
+    FILE *file=opaque;
+    flockfile(file); flockfile(file);
+    return NULL;
+}
+static int exercise_orphan_lock(void) {
+    pid_t child=fork(); CHECK(child>=0);
+    if (!child) {
+        int descriptors[2]; if (pipe(descriptors)) _exit(111);
+        FILE *file=fdopen(descriptors[0],"r"); if (!file) _exit(112);
+        pthread_t worker;
+        if (pthread_create(&worker,NULL,orphan_file_lock,file) || pthread_join(worker,NULL)) _exit(113);
+        if (!ftrylockfile(file)) _exit(114);
+        _exit(0);
+    }
+    int status; CHECK(waitpid(child,&status,0)==child && WIFEXITED(status) && WEXITSTATUS(status)==0);
+    puts("retired task explicit FILE lock remains orphaned");
+    return 0;
+}
 int main(void) {
     alarm(20);
     for (int operation=READ_BYTE;operation<=ASYNC_LOOP;operation++) CHECK(!exercise(operation));
     CHECK(!exercise_initial());
+    CHECK(!exercise_fork_state());
+    CHECK(!exercise_orphan_lock());
     puts("owned-io-cancellation-ok");
     return 0;
 }
