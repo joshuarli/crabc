@@ -14,8 +14,9 @@
 //!   transitions, initial-thread `pthread_exit`, and the last-thread ordinary
 //!   exit decision. The separate deferred cancellation leaf owns active
 //!   selected-worker cleanup records, explicit `pthread_testcancel`, and one
-//!   paired private `pthread_cond_wait` cancellation point; signal-driven
-//!   cancellation and robust lists remain unselected.
+//!   paired private `pthread_cond_wait` cancellation point. The owned product
+//!   additionally uses SIGCANCEL and its syscall PC window; normal robust
+//!   mutex owner death composes through the selected robust-list owner.
 //! - `src/thread/x86_64/clone.s::__clone` supplies the seven-argument SysV
 //!   entry layout, `clone=56` register shuffle, aligned child-stack callback,
 //!   and `exit=60` tail. The assembly below is a lexical private-symbol rename
@@ -54,8 +55,7 @@
 //! reaping shape; it is not a claim of general detached-thread reclamation or
 //! full pthread parity. It provides the selected static initial-thread
 //! `pthread_exit` and static fork child-list/TLS/TSD reset paths, but not
-//! signal-driven cancellation, robust lists, dynamic
-//! main-thread exit/fork, scheduler application, GNU default attributes,
+//! dynamic main-thread exit/fork, scheduler application, GNU default attributes,
 //! affinity attributes, live-thread inspection, or general pthread semantics.
 //! Dynamic workers retain the loader's opaque allocation/release token through
 //! the same create/join seam, while the static-only initial/last-task and fork
@@ -96,9 +96,9 @@ const PAGE_SIZE: usize = 4_096;
 /// The static startup and materialized dynamic startup composition boundaries
 /// call this before any constructor or application callback can execute. The
 /// backing state is process-lifetime storage, so unlike a worker record it
-/// has no registry membership or mapped-control retirement edge. Signal
-/// delivery remains unselected until the cancellation owner installs its
-/// source-shaped handler and target transaction.
+/// has no registry membership or mapped-control retirement edge. The first
+/// cancellation request installs the source handler before delivering through
+/// the lifecycle-owned target transaction.
 #[cfg(feature = "x86-owned-static-runtime")]
 pub(super) unsafe fn publish_initial_selected_pthread_cancellation_state() {
     // SAFETY: each selected process startup calls this only after its static
@@ -1719,8 +1719,10 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     }
     unsafe { retire_selected_worker_signal_target(control) };
     // SAFETY: a non-final worker has completed its selected state users and
-    // returns only to the private clone tail that ends this Linux task. A
-    // future orphaned-FILE repair runs immediately before this clear.
+    // returns only to the private clone tail that ends this Linux task.
+    // Mark explicit FILE locks before retiring their FS+32 list owner.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe { pthread_cancel::orphan_current_stdio_locks() };
     unsafe { pthread_identity::clear_current_selected_cancellation_state() };
     0
 }
@@ -2038,7 +2040,9 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         unsafe { retire_initial_signal_target() };
         // SAFETY: only a non-final initial task reaches this point. Its
         // cancellation state is disabled and no ordinary-exit callback will
-        // run; clear the signal-safe pointer before Linux task retirement.
+        // run; orphan explicit FILE locks before retiring their FS+32 owner.
+        #[cfg(feature = "x86-owned-static-runtime")]
+        unsafe { pthread_cancel::orphan_current_stdio_locks() };
         unsafe { pthread_identity::clear_current_selected_cancellation_state() };
         // SAFETY: another selected worker remains. End only this initial task;
         // the final worker takes the ordinary process-exit path above.
@@ -2081,8 +2085,10 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
     }
     // SAFETY: a selected non-final worker reaches only the immediate Linux
     // task exit below after cancellation is disabled for pthread-mode exits
-    // and all current selected state users have completed. Do not move this
-    // above the future orphaned-FILE repair hook.
+    // and cleanup/TSD users have completed. FILE retirement still needs the
+    // current FS+32 list even though its signal target is already retired.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe { pthread_cancel::orphan_current_stdio_locks() };
     unsafe { pthread_identity::clear_current_selected_cancellation_state() };
     // SAFETY: Linux SYS_exit terminates precisely the calling task and does
     // not return. The CLONE_CHILD_CLEARTID lifecycle attached during clone

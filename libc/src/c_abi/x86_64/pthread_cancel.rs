@@ -1,4 +1,4 @@
-//! Deferred Linux/x86-64 static pthread-cancellation boundary.
+//! Linux/x86-64 pthread cancellation state and cleanup ownership.
 //!
 //! This is a deliberately bounded translation of the ownership portions of
 //! pinned musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`,
@@ -15,10 +15,14 @@
 //!   __do_cleanup_pop}` supplies LIFO cleanup ownership and the cleanup-before-
 //!   TSD-destructor exit ordering.
 //!
-//! The x86 static worker seam intentionally has neither musl's full TCB nor
-//! its cancellation signal/syscall-cancellation assembly. Accordingly this
-//! artifact admits selected pointer-returning `pthread_create` workers. A
-//! request is delivered at the explicit `pthread_testcancel` point and at the
+//! The legacy private fixture admits selected pointer-returning workers,
+//! explicit deferred checkpoints, and no asynchronous delivery. The owned
+//! product additionally composes `owned_syscall_cancel.rs`: source SIGCANCEL,
+//! the x86 syscall PC window, main/worker FS+32 state, and target-lifetime
+//! exclusion. Public read/readv/write/writev are cancellation points; ordinary
+//! FILE descriptor I/O deliberately remains non-canceling, as in musl.
+//! Explicit FILE locks are source-tracked for non-final task retirement.
+//! Both paths retain the explicit `pthread_testcancel` point and the
 //! paired selected private `pthread_cond_wait` point. The latter uses the
 //! worker control mapping's durable waiter barrier: a request changes that
 //! barrier before waking it, so no wake can be lost between publication and
@@ -26,12 +30,10 @@
 //! lookup-and-lease handoff and drains every older wake before that mapping is
 //! reset for another wait. The condition leaf repairs its waiter list, relocks
 //! the mutex, and only then asks this leaf to deliver cancellation and drain
-//! the user cleanup chain. It installs no cancellation signal handler and does
-//! not interrupt arbitrary blocking syscalls. A request for asynchronous
-//! cancellation fails with `ENOTSUP` without changing state. C11 workers,
-//! foreign threads, stale handles, and unsupported state records fail closed.
-//! This is not general pthread cancellation, C11 cancellation, signal
-//! coordination, or a public x86 pthread-runtime claim.
+//! the user cleanup chain. This private condition point still excludes main
+//! and C11 tasks; other syscall cancellation points remain separate routing
+//! obligations. C11 cancellation, foreign tasks and stale handles are not
+//! admitted by this state contract. No full pthread-family claim follows.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread cancellation leaf requires little-endian Linux/x86-64");
@@ -41,15 +43,28 @@ use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
 use super::pthread_create_join;
 
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_syscall_cancel.rs"]
+mod owned_syscall_cancel;
+
+/// Source cancellation-point syscall used only by owned public descriptor APIs.
+/// # Safety
+/// The syscall pointer, lifetime and argument requirements hold. A caller must
+/// not own a non-cancel-safe runtime resource without a cleanup/disable scope.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[inline(always)]
+pub(super) unsafe fn syscall_cp(number: i64, a: i64, b: i64, c: i64, d: i64, e: i64, f: i64) -> i64 {
+    unsafe { owned_syscall_cancel::syscall_cp(number,a,b,c,d,e,f) }
+}
+
 const EINVAL: c_int = 22;
 const ENOTSUP: c_int = 95;
 
 const PTHREAD_CANCEL_ENABLE: u8 = 0;
 const PTHREAD_CANCEL_DISABLE: u8 = 1;
 // Musl accepts the public MASKED value as a third non-delivering state.  The
-// selected x86 seam has no cancellation-aware syscalls, so its exact retained
-// effect is the one `pthread_testcancel` needs: a pending request stays
-// pending and is not delivered until the worker later selects ENABLE.
+// legacy fixture only retains a request; owned syscall cancellation returns
+// ECANCELED and changes MASKED to DISABLE, exactly as musl __cancel does.
 const PTHREAD_CANCEL_MASKED: u8 = 2;
 const PTHREAD_CANCEL_DEFERRED: c_int = 0;
 const PTHREAD_CANCEL_ASYNCHRONOUS: c_int = 1;
@@ -122,6 +137,24 @@ pub(super) fn main_cancellation_state() -> *const SelectedWorkerCancellation {
     core::ptr::addr_of!(MAIN_CANCELLATION)
 }
 
+// The current task alone mutates this intrusive explicit-FILE-lock list.
+// It includes C11 tasks too: FILE retirement is not a cancellation policy.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) fn current_stdio_lock_head() -> Option<&'static AtomicUsize> {
+    let state = super::pthread_identity::current_selected_cancellation_state();
+    if state.is_null() { None } else { Some(unsafe { &(*state).stdio_locks }) }
+}
+
+/// Mark explicit FILE locks orphaned after committed non-final task exit.
+/// # Safety
+/// Cleanup/TSD callbacks have finished, cancellation is disabled, and this
+/// task is retiring without ordinary process-exit callbacks. Its FS+32 state
+/// and all still-listed FILE objects remain live through this call.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn orphan_current_stdio_locks() {
+    unsafe { super::stdio_standard::orphan_current_stdio_locks(); }
+}
+
 /// Mark one lock-validated selected pthread worker pending and return its
 /// currently published condition barrier, when it may be interrupted.
 ///
@@ -148,6 +181,13 @@ pub(super) fn mark_selected_worker_pending(
 
 #[inline]
 fn current_pthread_slot() -> Option<&'static SelectedWorkerCancellation> {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let state = {
+        let pointer = super::pthread_identity::current_selected_cancellation_state();
+        if pointer.is_null() { return None; }
+        pointer
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let state = pthread_create_join::current_selected_pthread_worker_cancellation()?;
     // SAFETY: current-worker resolution proves its control mapping remains
     // live until this task exits. This private reference is used only for the
@@ -276,15 +316,20 @@ pub(super) fn run_current_selected_pthread_cleanup_handlers() {
 pub(super) fn disable_current_selected_pthread_cancellation_for_exit() {
     if let Some(slot) = current_pthread_slot() {
         slot.state.store(PTHREAD_CANCEL_DISABLE, Ordering::Release);
+        slot.asynchronous.store(0, Ordering::Release);
     }
 }
 
-/// Record a deferred cancellation request for one selected pthread handle.
-///
-/// No signal is sent. A successful request becomes observable only if its
-/// target later calls `pthread_testcancel` while cancellation is enabled.
+/// Request cancellation using the selected runtime's delivery protocol.
+/// # Safety
+/// `thread` is a live pthread handle from this runtime, not a stale/reaped
+/// handle or a C11/foreign task. Cancellation cleanup obligations belong to
+/// the target application; asynchronous targets must obey POSIX async safety.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cancel(thread: *mut c_void) -> c_int {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    { return unsafe { owned_syscall_cancel::request(thread) }; }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     if pthread_create_join::request_selected_pthread_cancellation(thread) {
         0
     } else {
@@ -292,8 +337,9 @@ pub unsafe extern "C" fn pthread_cancel(thread: *mut c_void) -> c_int {
     }
 }
 
-/// Change deferred-cancellation enablement for the current selected pthread
-/// worker. `old_state`, when non-null, must designate writable C `int` storage.
+/// Change cancellation enablement for the current selected pthread task.
+/// # Safety
+/// `old_state`, when non-null, designates aligned writable C `int` storage.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, old_state: *mut c_int) -> c_int {
     let state = match state {
@@ -305,22 +351,34 @@ pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, old_state: *mut c_
     let Some(slot) = current_pthread_slot() else {
         return ENOTSUP;
     };
-    let previous = slot.state.swap(state, Ordering::AcqRel);
+    let previous = slot.state.load(Ordering::Acquire);
     if !old_state.is_null() {
         // SAFETY: the C ABI requires writable aligned `int` storage when the
         // optional old-state pointer is non-null.
         unsafe { core::ptr::write(old_state, c_int::from(previous)) };
     }
+    slot.state.store(state, Ordering::Release);
     0
 }
 
-/// Select the only admitted cancellation type, deferred.
-///
-/// Asynchronous cancellation would require a signal-frame/syscall-cancellation
-/// contract that this static worker seam deliberately does not own, so it is
-/// rejected without writing `old_type` or changing any state.
+/// Select deferred/asynchronous owned delivery; legacy fixtures admit only
+/// deferred delivery and reject asynchronous requests without state changes.
+/// # Safety
+/// Non-null `old_type` designates aligned writable C `int` storage. A caller
+/// enabling asynchronous cancellation must obey POSIX async-cancel safety.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_setcanceltype(type_: c_int, old_type: *mut c_int) -> c_int {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        if type_ != PTHREAD_CANCEL_DEFERRED && type_ != PTHREAD_CANCEL_ASYNCHRONOUS { return EINVAL; }
+        let Some(slot) = current_pthread_slot() else { return ENOTSUP; };
+        let previous = slot.asynchronous.load(Ordering::Acquire);
+        if !old_type.is_null() { unsafe { *old_type = previous as c_int; } }
+        slot.asynchronous.store(type_ as u8, Ordering::Release);
+        if type_ != 0 { test_current_selected_pthread_cancellation(); }
+        return 0;
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     match type_ {
         PTHREAD_CANCEL_DEFERRED => {
             if current_pthread_slot().is_none() {
@@ -340,6 +398,9 @@ pub unsafe extern "C" fn pthread_setcanceltype(type_: c_int, old_type: *mut c_in
 
 /// Deliver a pending request at the explicit selected deferred cancellation
 /// point. This does not return when it observes an enabled pending request.
+/// # Safety
+/// Any owned resource requiring cancellation cleanup has a registered cleanup
+/// handler or is otherwise safe to abandon at this cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_testcancel() {
     test_current_selected_pthread_cancellation();

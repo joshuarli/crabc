@@ -33,8 +33,12 @@
 //! the shared spawn owner, also used by system. `owned_wide_format` consumes
 //! the held wide and stack-string adapters. `owned_stdio_extensions` maps
 //! ext.c/ext2.c and fgetln.c to the same active buffering and FILE-owned line
-//! lifetime. Cancellation integration remains separate; fork preparation
-//! consumes the narrow registry triplet. This is not stdio-family completion.
+//! lifetime. Ordinary FILE backend I/O remains non-canceling, as in musl.
+//! ftrylockfile.c::{__register_locked_file,__unlist_locked_file,
+//! __do_orphaned_stdio_locks} maps to the explicit-lock list and non-final
+//! pthread retirement hook below; internal guards never enter that list.
+//! Fork preparation consumes the narrow registry triplet and preserves the
+//! surviving task's lock list. This is not stdio-family completion.
 
 use core::{ffi::{c_char, c_int, c_void}, ptr, sync::atomic::{AtomicI32, Ordering}};
 use super::{c_off_status, c_ssize_status, c_status, errno, raw_syscall};
@@ -103,6 +107,10 @@ pub struct StandardStream {
     write_position: *mut u8,
     owner: AtomicI32,
     lock_count: usize,
+    // musl ftrylockfile.c: only explicit caller locks enter the current
+    // task's intrusive list; internal operation guards never enter it.
+    next_locked: *mut StandardStream,
+    previous_locked: *mut StandardStream,
     next: *mut StandardStream,
     previous: *mut StandardStream,
     line_buffered: bool,
@@ -119,6 +127,7 @@ impl StandardStream {
             read_position: ptr::null_mut(), read_end: ptr::null_mut(),
             write_position: ptr::null_mut(), owner: AtomicI32::new(0),
             lock_count: 0, next: ptr::null_mut(), previous: ptr::null_mut(),
+            next_locked: ptr::null_mut(), previous_locked: ptr::null_mut(),
             line_buffered: flags & F_STDOUT_WRITE != 0, backend: Backend::Descriptor, write_failed: false,
             storage: [0; BUFSIZ + UNGET] }
     }
@@ -218,16 +227,79 @@ pub(super) unsafe fn pthread_fork_child() {
     LIST_LOCK.store(0, Ordering::Relaxed);
 }
 
-pub(crate) struct StreamGuard(*mut StandardStream);
+pub(crate) struct StreamGuard(*mut StandardStream, bool);
 impl StreamGuard {
     /// Caller supplies a live FILE; the guard serializes all state access.
     pub(crate) unsafe fn acquire(stream: *mut StandardStream) -> Self {
-        unsafe { flockfile(stream); }
-        Self(stream)
+        let acquired = unsafe { lock_internal(stream) };
+        Self(stream, acquired)
     }
 }
 impl Drop for StreamGuard {
-    fn drop(&mut self) { unsafe { funlockfile(self.0); } }
+    fn drop(&mut self) { if self.1 { unsafe { unlock_internal(self.0); } } }
+}
+
+unsafe fn lock_internal(stream: *mut StandardStream) -> bool {
+    unsafe {
+        let tid = raw_syscall::syscall0(186) as i32;
+        if (*stream).owner.load(Ordering::Relaxed) == tid { return false; }
+        loop {
+            if (*stream).owner.compare_exchange(0, tid, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+                initialize_buffer(stream);
+                return true;
+            }
+            let owner = (*stream).owner.load(Ordering::Relaxed);
+            if owner != 0 { futex_wait(&(*stream).owner, owner); }
+        }
+    }
+}
+
+unsafe fn unlock_internal(stream: *mut StandardStream) {
+    unsafe {
+        (*stream).owner.store(0, Ordering::Release);
+        futex_wake(&(*stream).owner);
+    }
+}
+
+unsafe fn register_locked_file(stream: *mut StandardStream) {
+    unsafe {
+        (*stream).lock_count = 1;
+        (*stream).previous_locked = ptr::null_mut();
+        if let Some(head) = super::pthread_cancel::current_stdio_lock_head() {
+            (*stream).next_locked = head.load(Ordering::Relaxed) as *mut StandardStream;
+            if !(*stream).next_locked.is_null() { (*(*stream).next_locked).previous_locked = stream; }
+            head.store(stream as usize, Ordering::Relaxed);
+        }
+    }
+}
+
+unsafe fn unlist_locked_file(stream: *mut StandardStream) {
+    unsafe {
+        if (*stream).lock_count == 0 { return; }
+        if !(*stream).next_locked.is_null() {
+            (*(*stream).next_locked).previous_locked = (*stream).previous_locked;
+        }
+        if !(*stream).previous_locked.is_null() {
+            (*(*stream).previous_locked).next_locked = (*stream).next_locked;
+        } else if let Some(head) = super::pthread_cancel::current_stdio_lock_head() {
+            head.store((*stream).next_locked as usize, Ordering::Relaxed);
+        }
+    }
+}
+
+// musl __do_orphaned_stdio_locks deliberately does not unlock or wake: another
+// task cannot acquire a departed owner's explicit FILE lock. Retaining this
+// sentinel also prevents recycled Linux TIDs from appearing to own the lock.
+pub(super) unsafe fn orphan_current_stdio_locks() {
+    unsafe {
+        if let Some(head) = super::pthread_cancel::current_stdio_lock_head() {
+            let mut stream = head.load(Ordering::Relaxed) as *mut StandardStream;
+            while !stream.is_null() {
+                (*stream).owner.store(0x4000_0000, Ordering::Release);
+                stream = (*stream).next_locked;
+            }
+        }
+    }
 }
 
 /// # Safety
@@ -237,13 +309,14 @@ pub unsafe extern "C" fn ftrylockfile(stream: *mut StandardStream) -> c_int {
     unsafe {
         let tid = raw_syscall::syscall0(186) as i32;
         if (*stream).owner.load(Ordering::Relaxed) == tid {
+            if (*stream).lock_count == isize::MAX as usize { return -1; }
             (*stream).lock_count += 1;
             return 0;
         }
         if (*stream).owner.compare_exchange(0, tid, Ordering::Acquire, Ordering::Relaxed).is_err() {
-            return 1;
+            return -1;
         }
-        (*stream).lock_count = 1;
+        register_locked_file(stream);
         initialize_buffer(stream);
         0
     }
@@ -254,10 +327,9 @@ pub unsafe extern "C" fn ftrylockfile(stream: *mut StandardStream) -> c_int {
 #[no_mangle]
 pub unsafe extern "C" fn flockfile(stream: *mut StandardStream) {
     unsafe {
-        while ftrylockfile(stream) != 0 {
-            let owner = (*stream).owner.load(Ordering::Relaxed);
-            if owner != 0 { futex_wait(&(*stream).owner, owner); }
-        }
+        if ftrylockfile(stream) == 0 { return; }
+        lock_internal(stream);
+        register_locked_file(stream);
     }
 }
 
@@ -266,11 +338,11 @@ pub unsafe extern "C" fn flockfile(stream: *mut StandardStream) {
 #[no_mangle]
 pub unsafe extern "C" fn funlockfile(stream: *mut StandardStream) {
     unsafe {
-        (*stream).lock_count -= 1;
-        if (*stream).lock_count == 0 {
-            (*stream).owner.store(0, Ordering::Release);
-            futex_wake(&(*stream).owner);
-        }
+        if (*stream).lock_count == 1 {
+            unlist_locked_file(stream);
+            (*stream).lock_count = 0;
+            unlock_internal(stream);
+        } else { (*stream).lock_count -= 1; }
     }
 }
 
@@ -648,7 +720,10 @@ pub unsafe extern "C" fn fclose(stream: *mut StandardStream) -> c_int {
             result = fflush(stream) | owned_stdio_backends::close(stream);
             (*stream).file_descriptor = -1;
         }
-        if !permanent { free((*stream).getln_buffer.cast()); free(stream.cast()); }
+        if !permanent {
+            unlist_locked_file(stream);
+            free((*stream).getln_buffer.cast()); free(stream.cast());
+        }
         result
     }
 }
