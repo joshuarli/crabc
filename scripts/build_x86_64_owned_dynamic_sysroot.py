@@ -88,8 +88,8 @@ def build_staged_payload(output: Path, stage: Path) -> None:
          "--target-dir", str(stage / "cargo"), "--", "--cfg", "crabc_owned_static_sysroot",
          "-C", "relocation-model=pic", "-C", "panic=abort", "-Ztls-model=initial-exec",
          "--remap-path-prefix", f"{ROOT}=/crabc"]
-    # The historical cfg selects only the unavailable dlfcn trampoline. This
-    # installed initial-graph component must not import a fixed-fixture record.
+    # The linkage feature selects the general dlfcn bridge. The historical
+    # static cfg remains for other shared source-owner visibility choices.
     run(libc_command, environment=environment)
     raw = stage / "cargo" / common.TARGET / "release/libc.a"
     backends = list((stage / "cargo" / common.TARGET / "release/build").glob("libmimalloc-sys-*/out/libmimalloc.a"))
@@ -118,7 +118,10 @@ def build_staged_payload(output: Path, stage: Path) -> None:
          *(str(objects / item) for item in selected), str(builtins), "-o", str(library / "libc.so")])
     undefined = run([nm, "--undefined-only", str(library / "libc.so")]).decode().splitlines()
     allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
-               "__crabc_x86_64_resolve_initial_tls"}
+               "__crabc_x86_64_resolve_initial_tls",
+               "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
+               "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address",
+               "__crabc_x86_64_runtime_information", "__crabc_x86_64_runtime_iterate"}
     unexpected = [line for line in undefined if line.split()[-1] not in allowed]
     if unexpected:
         raise common.BuildError(f"shared libc has unexpected unresolved symbols: {unexpected}")
@@ -170,11 +173,12 @@ def build_staged_payload(output: Path, stage: Path) -> None:
                   "loader_imports": sorted(allowed)}
     common.write_json(metadata / "libc-shared.provenance.json", provenance)
     common.write_json(metadata / "dynamic-product-state.json", {
-        "schema": 1, "status": "materialized-initial-graph-component",
+        "schema": 1, "status": "materialized-runtime-loader-component",
         "campaign_complete": False, "public_support": False,
         "modes": ["dynamic-pie", "dynamic-shared-object"],
-        "dlfcn": "unavailable legacy bridge; no runtime module admission",
-        "remaining": ["dynamic-non-pie", "runtime-load-close-reopen", "worker-dtv-growth", "dynamic-fork-repair", "complete-dynamic-campaign"]})
+        "dlfcn": "general retained runtime graphs, eager relocation, all-thread DTV growth",
+        "remaining": ["dynamic-non-pie", "deferred-lazy-relocation", "complete-runtime-search-policy",
+                      "dynamic-fork-repair", "dynamic-main-last-pthread-exit", "complete-dynamic-campaign"]})
     files = {path.relative_to(output).as_posix(): common.sha256_file(path)
              for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}
     common.write_json(metadata / "manifest.json", {"schema": 1, "format": FORMAT,

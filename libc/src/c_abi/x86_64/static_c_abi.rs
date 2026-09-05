@@ -860,7 +860,8 @@ mod sysv_semaphore;
 mod posix_semaphore;
 #[path = "sysv_message_shared_memory.rs"]
 mod sysv_message_shared_memory;
-#[path = "fixed_graph_dlfcn.rs"]
+#[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "general_dlfcn.rs")]
+#[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), path = "fixed_graph_dlfcn.rs")]
 mod fixed_graph_dlfcn;
 
 // The allocator is opt-in until the complete x86 runtime can own its bundled

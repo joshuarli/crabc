@@ -1,10 +1,11 @@
-# Materialized initial-graph dynamic sysroot
+# Materialized dynamic sysroot component
 
 `scripts/build_x86_64_owned_dynamic_sysroot.py` produces a real native x86-64
 shared runtime. `run_materialized_dynamic_sysroot.sh` builds and executes
 ordinary C consumers through the installed `bin/crabc-cc-dynamic`, repeats
 through an extracted package, and compares two fresh builds byte for byte.
-This is an initial-graph component, not completion of `dynamic-product.toml`.
+It also executes retained runtime graphs and all-thread DTV growth. This is
+component evidence, not completion of `dynamic-product.toml`.
 Run it from the host with `./scripts/dev-x86_64.sh materialized-dynamic-sysroot`.
 
 ## One owner per runtime state
@@ -30,7 +31,8 @@ Initial TLS is copied from relocated templates for every worker, including
 over-aligned modules, TBSS, errno and the accepted allocator's IE TLS. Live
 main-thread mutations are never the worker template. CLONE_SETTLS installs a
 worker's TP; release requires clear-child-TID and reader withdrawal. Runtime
-module admission and DTV generation replacement remain separate work.
+module admission and coherent DTV generations use the same loader allocation
+registry, as described in [runtime-dynamic-loader.md](runtime-dynamic-loader.md).
 
 ## Installed artifacts and purity
 
@@ -93,17 +95,17 @@ executable. No application memory callback may run in the shared-address-space
 child or during lock-held spawn stack setup; neither child nor parent uses an
 ambient target executable.
 
-The initial-component gate also runs 38 loader tests and 15 driver/package
+The component gate also runs 42 loader tests and 15 driver/package
 boundary tests. Two cold producer manifests and deterministic package bytes
 must match; the extracted driver must compile and execute the same consumer.
 These checks do not promote public support or the frozen AArch64 baseline.
 
-`run_general_dynamic_dlopen.sh INSTALLED_SYSROOT` is the next independent
+`run_general_dynamic_dlopen.sh INSTALLED_SYSROOT` is the independent
 ordinary regression, reusing the portable nested plugin fixtures without an
-initial dependency. It currently fails with application status 10: runtime
-module admission is absent, and that failure is not counted as a passing gate.
-Remaining product work includes dynamic non-PIE startup, general dlopen/dlsym,
-retained close/reopen semantics and process-exit destruction, worker DTV growth,
-loader concurrency/reentrancy, dynamic fork repair and main-thread pthread_exit
+initial dependency. Its nested plugin, 41-module worker TLS/lifecycle, scope
+and rollback consumers now run through installed and extracted products with
+pinned musl differentials. Remaining product work includes dynamic non-PIE
+startup, deferred lazy relocation, complete runtime search policy and broader
+introspection/order qualification, dynamic fork repair and main-thread pthread_exit
 composition, followed by the complete installed dynamic campaign. Musl's
 retained dlclose mappings, not physical unloading, are the parity target.

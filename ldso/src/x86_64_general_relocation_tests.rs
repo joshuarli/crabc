@@ -144,6 +144,12 @@ fn installed_runtime_function_imports_validate_shape_before_any_graph_write() {
         b"\0__crabc_x86_64_initial_tls_allocate\0".as_slice(),
         b"\0__crabc_x86_64_initial_tls_release\0".as_slice(),
         b"\0__crabc_x86_64_resolve_initial_tls\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_open\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_symbol\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_close\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_address\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_information\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_iterate\0".as_slice(),
     ] {
         for (relocation, kind, binding, visibility, section, addend, admitted) in [
             (R_X86_64_GLOB_DAT, 2, 1, 0, 0, 0, true),

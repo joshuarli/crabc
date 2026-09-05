@@ -1,6 +1,6 @@
-//! Ownership of worker allocations for the immutable initial module graph.
+//! Ownership of worker allocations and registered runtime TLS views.
 //!
-//! Materialization uses the startup allocator and retained relocated templates,
+//! Initial materialization uses the startup allocator and retained relocated templates,
 //! without installing FS or calling libc. A generation-tagged token identifies
 //! exactly one live mapping. Unmapping and successful registry withdrawal are
 //! serialized; failure retains the node. Wrong, stale and duplicate tokens
@@ -9,8 +9,9 @@
 
 use super::*;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use super::x86_64_general_initial_loader_state::GeneralInitialLoaderState;
+use super::x86_64_runtime_lock::RuntimeGuard as Guard;
 
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,29 +29,34 @@ const _: () = assert!(core::mem::size_of::<WorkerTlsAllocation>() == 32);
 #[repr(C)]
 struct AllocationNode { token: WorkerTlsAllocation, next: *mut AllocationNode }
 struct AllocationRegistry(UnsafeCell<*mut AllocationNode>);
-// Access is serialized by LOCK; no pointer/reference escapes the lock.
+// Access is serialized by RuntimeGuard; no pointer/reference escapes the lock.
 unsafe impl Sync for AllocationRegistry {}
 static REGISTRY: AllocationRegistry = AllocationRegistry(UnsafeCell::new(core::ptr::null_mut()));
-static LOCK: AtomicBool = AtomicBool::new(false);
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 
-struct Guard;
-impl Guard {
-    fn acquire() -> Self {
-        while LOCK.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
-            core::hint::spin_loop();
-        }
-        Self
+/// # Safety
+/// The shared mutation guard excludes allocation/release and runtime growth.
+/// Each TP is borrowed only for this call; callbacks must not reenter loader
+/// mutation or retain an unprotected allocation-registry pointer.
+pub(super) unsafe fn visit_registered_threads(
+    _guard: &Guard, mut visit: impl FnMut(*mut u8) -> Option<()>,
+) -> Option<()> {
+    let main = x86_64_general_initial_tls_state::retained_initial_thread_pointer()?;
+    visit(main)?;
+    let mut node = unsafe { *REGISTRY.0.get() };
+    while !node.is_null() {
+        visit(unsafe { (*node).token.thread_pointer })?;
+        node = unsafe { (*node).next };
     }
+    Some(())
 }
-impl Drop for Guard { fn drop(&mut self) { LOCK.store(false, Ordering::Release); } }
 
 pub(super) fn runtime_function(name: &[u8]) -> Option<u64> {
     match name {
         b"__crabc_x86_64_initial_tls_allocate" => Some(allocate as *const () as usize as u64),
         b"__crabc_x86_64_initial_tls_release" => Some(release as *const () as usize as u64),
         b"__crabc_x86_64_resolve_initial_tls" => Some(__tls_get_addr as *const () as usize as u64),
-        _ => None,
+        _ => x86_64_runtime_registry::runtime_function(name),
     }
 }
 
@@ -64,6 +70,10 @@ unsafe extern "C" fn allocate(output: *mut WorkerTlsAllocation) -> i32 {
     let _guard = Guard::acquire();
     let Ok(id) = NEXT_ID.try_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1)) else { return -1; };
     let Some(block) = (unsafe { materialize_initial_tls(objects, core::mem::size_of::<AllocationNode>()) }) else { return -1; };
+    if unsafe { x86_64_runtime_registry::attach_worker_tls(&_guard, block.thread_pointer) }.is_none() {
+        unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64); }
+        return -1;
+    }
     // GCC's guard is process entropy, not a per-thread generator. Copy only
     // this reserved TCB field; initialized TLS always comes from ELF templates.
     let guard: usize;
@@ -79,7 +89,7 @@ unsafe extern "C" fn allocate(output: *mut WorkerTlsAllocation) -> i32 {
     0
 }
 
-/// LOCK is held; `node` is writable mapping-prefix storage, disjoint from
+/// RuntimeGuard is held; `node` is writable mapping-prefix storage, disjoint from
 /// every live registered node and the TLS/TCB/DTV ranges.
 unsafe fn register_allocation(node: *mut AllocationNode, token: WorkerTlsAllocation) {
     unsafe {

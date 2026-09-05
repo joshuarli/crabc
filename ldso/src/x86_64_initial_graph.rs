@@ -78,6 +78,15 @@ mod x86_64_initial_worker_tls;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_runtime_tls_view.rs"]
 mod x86_64_runtime_tls_view;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_runtime_memory.rs"]
+mod x86_64_runtime_memory;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_runtime_lock.rs"]
+mod x86_64_runtime_lock;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_runtime_registry.rs"]
+mod x86_64_runtime_registry;
 #[cfg(crabc_general_initial_graph)]
 use x86_64_initial_graph_state::ObjectIdentity;
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
@@ -781,7 +790,7 @@ struct Object {
     base: u64,
     phdr: *const u8,
     phnum: usize,
-    #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+    #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
     dynamic: *const u8,
     strtab: *const u8,
     strsz: usize,
@@ -826,6 +835,8 @@ struct Object {
     tls_align: usize,
     tls_offset_below_tp: usize,
     tls_module_id: usize,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    bind_now: bool,
     #[cfg(crabc_initial_exec_tls_graph)]
     static_tls: bool,
 }
@@ -834,7 +845,7 @@ const EMPTY_OBJECT: Object = Object {
     base: 0,
     phdr: core::ptr::null(),
     phnum: 0,
-    #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+    #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
     dynamic: core::ptr::null(),
     strtab: core::ptr::null(),
     strsz: 0,
@@ -874,6 +885,8 @@ const EMPTY_OBJECT: Object = Object {
     tls_align: 1,
     tls_offset_below_tp: 0,
     tls_module_id: 0,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    bind_now: false,
     #[cfg(crabc_initial_exec_tls_graph)]
     static_tls: false,
 };
@@ -1328,7 +1341,7 @@ unsafe fn parse_mapped(
         base,
         phdr,
         phnum,
-        #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+        #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
         dynamic,
         mapped,
         relro_virtual_address,
@@ -1516,6 +1529,8 @@ unsafe fn parse_mapped(
             // General initial TLS assigns all modules retained placements;
             // the older fixed IE sibling keeps its one-leaf restriction.
             DT_FLAGS => {
+                #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+                { object.bind_now |= value & DF_BIND_NOW != 0; }
                 #[cfg(not(any(crabc_initial_exec_tls_graph, crabc_general_initial_tls_materialization_v1)))]
                 if value & DF_STATIC_TLS != 0 {
                     return None;
@@ -1529,6 +1544,10 @@ unsafe fn parse_mapped(
                 }
             }
             DT_FLAGS_1 if value & !(DF_1_NOW | DF_1_PIE) != 0 => return None,
+            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+            DT_FLAGS_1 => { object.bind_now |= value & DF_1_NOW != 0; }
+            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+            24 => { object.bind_now = true; } // DT_BIND_NOW has no value.
             // These imply relocation, finalization, hash, or initialization
             // semantics outside the closed fixture ABI.  Reject before any
             // corresponding pointer can be used.

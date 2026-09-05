@@ -14,6 +14,8 @@
 
 use super::*;
 use core::sync::atomic::{AtomicPtr, Ordering};
+use super::x86_64_runtime_lock::RuntimeGuard;
+use super::x86_64_runtime_memory::LoaderBuffer;
 
 pub(super) const CURRENT_VIEW_TCB_OFFSET: usize = 24;
 
@@ -29,6 +31,52 @@ pub(super) struct RuntimeTlsView {
 /// An unpublished generation owns only its own mapping. Dropping preparation
 /// never follows `previous`, which still belongs to the live thread.
 pub(super) struct PreparedTlsView { view: *mut RuntimeTlsView }
+
+#[derive(Clone, Copy)]
+struct ThreadView { tp: *mut u8, view: *mut RuntimeTlsView }
+
+/// All-thread preparation retains the mutation guard's borrow until publish
+/// or rollback. No new thread can register and no token can be released while
+/// these unpublished descriptors refer to its TP.
+pub(super) struct PreparedAllThreads<'a> {
+    _guard: &'a RuntimeGuard,
+    threads: LoaderBuffer<ThreadView>,
+}
+impl<'a> PreparedAllThreads<'a> {
+    pub(super) unsafe fn prepare(guard: &'a RuntimeGuard, modules: &[Object]) -> Option<Self> {
+        let mut count = 0usize;
+        unsafe { x86_64_initial_worker_tls::visit_registered_threads(guard, |_| { count = count.checked_add(1)?; Some(()) }) }?;
+        let mut prepared = Self { _guard: guard, threads: LoaderBuffer::new(count,
+            ThreadView { tp: core::ptr::null_mut(), view: core::ptr::null_mut() })? };
+        let mut index = 0;
+        unsafe { x86_64_initial_worker_tls::visit_registered_threads(guard, |tp| {
+            let view = PreparedTlsView::prepare(tp, modules)?;
+            *prepared.threads.as_mut_slice().get_mut(index)? = ThreadView { tp, view: view.view };
+            core::mem::forget(view);
+            index += 1;
+            Some(())
+        }) }?;
+        (index == count).then_some(prepared)
+    }
+
+    /// # Safety
+    /// Every graph/relocation/protection/callback check has completed. New
+    /// object scope must be published non-fallibly immediately afterward under
+    /// this same mutation guard. All individual publications are infallible.
+    pub(super) unsafe fn publish(mut self) {
+        for thread in self.threads.as_mut_slice() {
+            unsafe { PreparedTlsView { view: thread.view }.publish(thread.tp); }
+            thread.view = core::ptr::null_mut();
+        }
+    }
+}
+impl Drop for PreparedAllThreads<'_> {
+    fn drop(&mut self) {
+        for thread in self.threads.as_slice() {
+            if !thread.view.is_null() { drop(PreparedTlsView { view: thread.view }); }
+        }
+    }
+}
 
 impl PreparedTlsView {
     /// # Safety
@@ -151,6 +199,37 @@ pub(super) unsafe fn release(tp: *mut u8) -> i64 {
 mod tests {
     use super::*;
     extern crate std;
+
+    #[test]
+    fn abandoning_partial_all_thread_preparation_preserves_every_live_view() {
+        let image = [31u8];
+        let mut initial = [EMPTY_OBJECT; MAX_OBJECTS];
+        initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
+            tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
+        let first = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
+        let second = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
+        let modules = [initial[0], Object { tls_image: image.as_ptr(), tls_filesz: 1,
+            tls_memsz: 33, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT }];
+        let guard = RuntimeGuard::acquire();
+        let view = unsafe { PreparedTlsView::prepare(first.thread_pointer, &modules) }.unwrap();
+        let address = view.view;
+        let mut prepared = PreparedAllThreads { _guard: &guard, threads: LoaderBuffer::new(2,
+            ThreadView { tp: core::ptr::null_mut(), view: core::ptr::null_mut() }).unwrap() };
+        prepared.threads.as_mut_slice()[0] = ThreadView { tp: first.thread_pointer, view: view.view };
+        core::mem::forget(view);
+        // The second registered thread rejects a truncated population. Drop
+        // must reclaim the first prepared view without publishing either TP.
+        assert!(unsafe { PreparedTlsView::prepare(second.thread_pointer, &[]) }.is_none());
+        drop(prepared);
+        let mut residency = 0u8;
+        assert_eq!(unsafe { syscall3(27, address as i64, 1, core::ptr::addr_of_mut!(residency) as i64) }, -12);
+        for block in [first, second] {
+            assert!(unsafe { current(block.thread_pointer) }.is_null());
+            assert_eq!(unsafe { *block.dtv }, 1);
+            assert_eq!(unsafe { *(*block.dtv.add(1) as *const u8) }, 31);
+            assert_eq!(unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) }, 0);
+        }
+    }
 
     #[test]
     fn acquire_readers_keep_valid_old_generations_during_repeated_publication() {
