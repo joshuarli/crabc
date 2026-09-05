@@ -46,6 +46,9 @@ for mode in pie non-pie; do
     for scenario in ordinary filtered; do
         timeout 20 chroot "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
+        timeout 20 chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \
+            "/consumer-$mode" "$scenario" >"$work/direct-$mode-$scenario.stdout"
+        cmp "$work/oracle-$scenario.stdout" "$work/direct-$mode-$scenario.stdout"
     done
 done
 printf 'owned pthread_getattr_np: PASS (musl + requested installed entries, live/caller/guard/detach metadata, main probe errno and filtered errors); evidence: %s\n' "$work"

@@ -22,7 +22,9 @@ Continue from the integrated runtime and allocator components below.
   roster's three missing, already implemented robust-mutex exports.
 - `1ee958ae`, `31438d28`, and `6ea4b2ee`: syscall-PC-window cancellation
   across descriptor, socket, sleep, child-wait, open, blocking record-lock and
-  memory-sync operations. Ordinary FILE backends, `wait3/wait4`, empty
+  memory-sync operations. `afb545e6` adds source-compatible unnamed
+  semaphore wait/timed-wait cancellation and cleanup/token conservation.
+  Ordinary FILE backends, `wait3/wait4`, empty
   `sendmmsg`, and nonblocking fcntl commands retain their source non-CP
   behavior. SIGCANCEL is **33**, timer signal is 32. Clone blocks SIG33 until
   FS+32 publication; requester signal transactions release leases/locks before
@@ -30,8 +32,9 @@ Continue from the integrated runtime and allocator components below.
 - `6b5af4ec`, `4cb7f815`, and `ebf8b30f`: canonical-path-bound application
   receipts, shared initial/runtime musl search, system path caching, preloads,
   ORIGIN/real setuid AT_SECURE, and pure-TBSS templates whose zero fill extends
-  beyond file mappings. Executable role and mapping ownership must stay
-  separate in the pending direct-interpreter implementation.
+  beyond file mappings. `6cd722ff` adds direct-interpreter PIE/non-PIE entry,
+  CLI options and argv/auxv handoff, keeping executable role separate from
+  mapping ownership.
 - `f57b0aae` and `781dbd67`: scalar `fma/fmaf`, `hypot/hypotf`, `log1p/log1pf`
   and existing binary80 `fmal/hypotl/log1pl` installed differential evidence.
 - `5a48b06f`: typed process-registry huge backing, durable failed-page cleanup,
@@ -50,13 +53,14 @@ Continue from the integrated runtime and allocator components below.
   signal, descriptor/socket/open/lock/wait cancellation consumers and two-build
   reproducibility. Latest log: `.work/x86_64/open-sequence-static-integrated.log`
   at `5a48b06f`. Successful static scratch products are cleaned by the runner.
-- The integrated dynamic gate passes 48 loader tests, 21 driver tests, two CRT
-  tests, 37 search decisions per installed/extracted PIE/non-PIE arm, 41-module
-  worker TLS, pure TBSS, live attributes, signal transactions, scope/rollback,
-  finalization and reproducibility. Log:
-  `.work/x86_64/pthread-signals-getattr-search-integrated.log`; retained product:
-  `.work/x86_64/tmp/materialized-dynamic.irVBKA`. This predates the latest
-  open/lock/msync batch; requalify the combined product after integration.
+- The integrated dynamic gate passes 50 loader tests, 21 driver tests, two CRT
+  tests, 37 search decisions and 40 CLI cases per oracle/candidate arm,
+  41-module worker TLS, pure TBSS, live attributes through both kernel and
+  direct-interpreter entry, signal transactions, semaphore cancellation,
+  scope/rollback, finalization and reproducibility. Log:
+  `.work/x86_64/cli-semaphore-getattr-integrated.log`; retained product:
+  `.work/x86_64/tmp/materialized-dynamic.T4IHj9`. This includes `6cd722ff` and
+  the direct-interpreter attribute regression committed with this record.
 - `allocator-huge-reservation` passes 69 C differential values and ten focused
   tests at clean root `5a48b06f`; log:
   `.work/x86_64/allocator-huge-reservation-integrated.log`. The worker also
@@ -73,11 +77,9 @@ state before integration. No uncommitted checkpoint is a completed feature.
 
 | Worktree | Current task |
 | --- | --- |
-| `owned_dynamic_sysroot` | Direct interpreter CLI, safe AT_BASE=0 entry, explicit executable role versus mapping provenance, admitted-main mapping and argv/auxv handoff. Ordinary PT_INTERP behavior must remain qualified. |
 | `owned_pthread_lifecycle` | Dynamic fork transaction across loader graph and callback ownership, surviving-thread TLS adoption, libc/TSD/robust repair, recursive constructor fork and vanished-constructor rejection. |
-| `owned_stdio_engine` | Unnamed POSIX semaphore source wait/timed-wait cancellation, exact cleanup/token conservation, private/shared behavior and sticky signal-interruption policy. |
 | `header_declaration_parity` | Generic matrices are green; finish the complete native aggregate and promote the header family only when its executable predicates pass. Public support remains separate. |
-| `rust_std_unwinder` | Approved pinned pure-Rust unwind provider, bounded metadata behavior, and ordinary stock-std/build-std/LTO integration under the owned product contract. |
+| `rust_std_unwinder` | Automatic tool review paused this task. Initial provider commit `d3ca0e79` and unfinished producer/driver/metadata changes remain isolated and unqualified; resolve the restriction before resuming. |
 | `native_source_build` | Pinned Lua source build through owned installed inputs, ordinary workload, purity and extracted/reproducibility evidence. |
 | `allocator_m2_metadata` | Quiescent arena-destruction ownership design is paused by automatic tool review. Partial uncommitted snapshot/destruction files are unqualified; preserve them and resolve that tool restriction before resuming the subtask. |
 
