@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Materialized initial-graph product evidence. Full dynamic campaign stays open.
+# Installed initial/runtime graph evidence. Full dynamic campaign stays open.
 set -euo pipefail
+ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [ "$(uname -sm)" = 'Linux x86_64' ]
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
@@ -84,4 +85,6 @@ python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/second"
 cmp "$work/runtime.tar" "$work/second-runtime.tar"
 bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/installed"
 bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/extracted"
+bash "$ROOT/compat/x86_64/run_general_dynamic_constructor_exit.sh" "$work/installed"
+bash "$ROOT/compat/x86_64/run_general_dynamic_constructor_exit.sh" "$work/extracted"
 printf 'materialized dynamic sysroot: PASS (initial and retained runtime graphs); evidence: %s\n' "$work"

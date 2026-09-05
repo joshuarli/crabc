@@ -95,7 +95,7 @@ executable. No application memory callback may run in the shared-address-space
 child or during lock-held spawn stack setup; neither child nor parent uses an
 ambient target executable.
 
-The component gate also runs 42 loader tests and 15 driver/package
+The component gate also runs 43 loader tests and 15 driver/package
 boundary tests. Two cold producer manifests and deterministic package bytes
 must match; the extracted driver must compile and execute the same consumer.
 These checks do not promote public support or the frozen AArch64 baseline.
@@ -104,7 +104,10 @@ These checks do not promote public support or the frozen AArch64 baseline.
 ordinary regression, reusing the portable nested plugin fixtures without an
 initial dependency. Its nested plugin, 41-module worker TLS/lifecycle, scope
 and rollback consumers now run through installed and extracted products with
-pinned musl differentials. Remaining product work includes dynamic non-PIE
+pinned musl differentials. Initial/runtime-loaded constructors that call exit
+must skip their own incomplete destructor, while completed objects finalize;
+`run_general_dynamic_constructor_exit.sh` checks both installed product arms.
+Remaining product work includes dynamic non-PIE
 startup, deferred lazy relocation, complete runtime search policy and broader
 introspection/order qualification, dynamic fork repair and main-thread pthread_exit
 composition, followed by the complete installed dynamic campaign. Musl's
