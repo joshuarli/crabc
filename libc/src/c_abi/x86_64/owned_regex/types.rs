@@ -68,12 +68,14 @@ pub(crate) const ASSERT_BACKREF: c_int = 256;
 pub(crate) const ASSERT_LAST: c_int = ASSERT_BACKREF;
 
 /// `tre_tag_direction_t` in `tre.h`.
-#[repr(i32)]
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) enum TreTagDirection {
-    Minimize = 0,
-    Maximize = 1,
-}
+///
+/// The source initializes the allocated direction array bytewise to `-1`
+/// before assigning its `TRE_TAG_MINIMIZE`/`TRE_TAG_MAXIMIZE` members.  Keep
+/// the C integer representation rather than a Rust enum so that temporary
+/// source state never becomes an invalid Rust discriminant.
+pub(crate) type TreTagDirection = c_int;
+pub(crate) const TRE_TAG_MINIMIZE: TreTagDirection = 0;
+pub(crate) const TRE_TAG_MAXIMIZE: TreTagDirection = 1;
 
 /// `struct tre_submatch_data` in `tre.h`.
 #[repr(C)]

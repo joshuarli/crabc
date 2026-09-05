@@ -10,16 +10,8 @@ use core::ffi::{c_int, c_void};
 use core::mem::{align_of, size_of};
 use core::ptr;
 
+use super::{cabi_calloc, cabi_free, cabi_malloc};
 use super::types::{TreList, TreMem, TRE_MEM_BLOCK_SIZE};
-
-unsafe extern "C" {
-    #[link_name = "calloc"]
-    fn cabi_calloc(count: usize, size: usize) -> *mut c_void;
-    #[link_name = "free"]
-    fn cabi_free(pointer: *mut c_void);
-    #[link_name = "malloc"]
-    fn cabi_malloc(size: usize) -> *mut c_void;
-}
 
 #[cfg(test)]
 mod allocation_test_hook {
