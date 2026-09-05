@@ -27,13 +27,16 @@ artifact directory. Its builder and comparator use the physical checkout
 reference, freestanding candidate, and the ELF/stream inspection outputs, then
 the case receipt seals every retained entry without following symlinks.
 The mutable Cargo home must contain no `config` or `config.toml`, so ignored
-wrapper, linker, or rustflags injection cannot alter the recorded build. Input
-identity covers every resolved directory on the scrubbed `PATH`, the actual
-rustup-selected Cargo/Rustc executables and their Rust sysroot, and GCC's
-builtin include tree as well as the pinned musl inputs. A prefix timeout first
-reaps the active leaf's separately created process group, then its Python
-supervisor; that nested cleanup prevents an inherited log pipe from keeping a
-failed transaction alive.
+wrapper, linker, or rustflags injection cannot alter the recorded build. That
+prohibition is checked before every selected leaf and in each input snapshot,
+including the one immediately before receipt sealing. Input identity covers
+every resolved directory on the scrubbed `PATH`, the actual rustup-selected
+Cargo/Rustc executables and their Rust sysroot, and GCC's builtin include tree
+as well as the pinned musl inputs. A prefix timeout kills the named active leaf
+when it is available, then stops the private runner before the runner can start
+another child. The enclosing receipt process temporarily becomes a Linux child
+subreaper and kills/reaps every orphaned generation, including `setsid` and
+double-fork escapees, before it waits for the runner's log pipes to close.
 
 This is deliberately a private, non-promoting admission receipt. Its prefix
 record fixes `non_promoting: true`, `promotion_ready: false`, and zero completed

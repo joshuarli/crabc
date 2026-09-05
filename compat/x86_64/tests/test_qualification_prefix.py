@@ -6,11 +6,14 @@ import copy
 import hashlib
 import importlib.util
 import json
+import os
 import sys
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -148,6 +151,24 @@ class QualificationPrefixTests(unittest.TestCase):
                     leaf.kill()
                     leaf.wait()
 
+    def test_private_subreaper_scope_restores_the_callers_prior_state(self):
+        before = runner.child_subreaper_enabled()
+        with runner.private_admission_subreaper():
+            self.assertTrue(runner.child_subreaper_enabled())
+        self.assertEqual(runner.child_subreaper_enabled(), before)
+
+    def test_private_subreaper_scope_restores_state_when_child_accounting_fails(self):
+        before = runner.child_subreaper_enabled()
+        with patch.object(
+            runner,
+            "direct_child_processes",
+            side_effect=runner.QualificationRunError("synthetic /proc failure"),
+        ):
+            with self.assertRaisesRegex(runner.QualificationRunError, "synthetic /proc failure"):
+                with runner.private_admission_subreaper():
+                    self.fail("unreachable")
+        self.assertEqual(runner.child_subreaper_enabled(), before)
+
     def test_receipt_log_cannot_be_transplanted_from_a_sibling_transaction(self):
         with tempfile.TemporaryDirectory() as directory:
             receipts = Path(directory) / "qualification-receipts"
@@ -180,6 +201,110 @@ class QualificationPrefixTests(unittest.TestCase):
             (cargo_home / "config.toml").write_text("[build]\nrustflags = ['--cfg=poison']\n")
             with self.assertRaisesRegex(runner.QualificationRunError, "mutable Cargo home"):
                 runner.require_unconfigured_cargo_home(cargo_home)
+
+    def test_execution_input_snapshot_rechecks_cargo_configuration(self):
+        with patch.object(runner, "require_unconfigured_cargo_home") as cargo_home, patch.object(
+            runner, "tool_identity", return_value={"tool": "identity"}
+        ), patch.object(runner, "trusted_tool_directories", return_value=[]), patch.object(
+            runner, "pinned_rust_toolchain_identity", return_value={}
+        ), patch.object(runner, "gcc_builtin_include_identity", return_value={}), patch.object(
+            runner, "physical_file_identity", return_value={"file": "identity"}
+        ), patch.object(runner, "physical_directory_identity", return_value={"directory": "identity"}):
+            runner.execution_inputs()
+        cargo_home.assert_called_once_with(Path(manifest.EXECUTION_CONTRACT["cargo_home"]))
+
+    def test_prefix_timeout_reaps_unrecorded_session_escaping_descendants_and_seals_failure(self):
+        scratch = ROOT / ".work/x86_64/tmp/qualification-timeout-descendant-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            receipts = root / "qualification-receipts"
+            transaction = receipts / "transaction"
+            transaction.mkdir(parents=True)
+            fixture = root / "launch_escaping_descendants.py"
+            fixture.write_text(
+                """import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+cases = Path(os.environ[\"CRABC_QUALIFICATION_RECEIPT_ROOT\"])
+leaf_pid = cases / \"unrecorded-leaf.pid\"
+grandchild_pid = cases / \"escaping-grandchild.pid\"
+grandchild = subprocess.Popen(
+    [sys.executable, \"-c\", \"import time; time.sleep(60)\"],
+    start_new_session=True,
+)
+grandchild_pid.write_text(f\"{grandchild.pid}\\n\", encoding=\"ascii\")
+time.sleep(60)
+""",
+                encoding="utf-8",
+            )
+            supervisor = root / "launch_unrecorded_leaf.py"
+            supervisor.write_text(
+                """import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+cases = Path(os.environ[\"CRABC_QUALIFICATION_RECEIPT_ROOT\"])
+fixture = Path(os.environ[\"QUALIFICATION_TIMEOUT_FIXTURE\"])
+leaf = subprocess.Popen([sys.executable, str(fixture)], start_new_session=True)
+(cases / \"unrecorded-leaf.pid\").write_text(f\"{leaf.pid}\\n\", encoding=\"ascii\")
+while not (cases / \"escaping-grandchild.pid\").is_file():
+    time.sleep(0.01)
+time.sleep(60)
+""",
+                encoding="utf-8",
+            )
+            report = copy.deepcopy(manifest.load_contract())
+            admission = report["private_admission"][0]
+            admission["command"] = [sys.executable, str(supervisor)]
+            admission["runner_sha256"] = "test-fixture"
+
+            class PrivateRunner:
+                @staticmethod
+                def load_contract():
+                    return (SimpleNamespace(timeout_seconds=1),)
+
+                @staticmethod
+                def active_child_record(cases_root):
+                    return cases_root / ".active-child-pgid"
+
+            inputs = {"fixture": "inputs"}
+            source = {"revision": "a" * 40, "content_sha256": "b" * 64}
+            environment = {"CRABC_QUALIFICATION_RECEIPT_ROOT": "ignored"}
+            environment["QUALIFICATION_TIMEOUT_FIXTURE"] = str(fixture)
+            started = time.monotonic()
+            with patch.object(runner, "verify_private_admission_runner"), patch.object(
+                runner, "require_pinned_native_execution"
+            ), patch.object(runner, "source_identity", return_value=source), patch.object(
+                runner, "execution_inputs", return_value=inputs
+            ), patch.object(runner, "transaction_directory", return_value=transaction), patch.object(
+                runner, "private_admission_runner_module", return_value=PrivateRunner), patch.object(
+                runner, "ensure_physical_receipt_directory", return_value=receipts
+            ), patch.object(runner, "controlled_environment", return_value=environment):
+                with self.assertRaisesRegex(runner.QualificationRunError, "prefix timed out"):
+                    runner.run_private_admission(report)
+            self.assertLess(time.monotonic() - started, 5)
+
+            for name in ("unrecorded-leaf.pid", "escaping-grandchild.pid"):
+                process_id = int((transaction / "cases" / name).read_text(encoding="ascii"))
+                deadline = time.monotonic() + 2
+                while True:
+                    try:
+                        os.kill(process_id, 0)
+                    except ProcessLookupError:
+                        break
+                    if time.monotonic() >= deadline:
+                        self.fail(f"timeout left {name} running")
+                    time.sleep(0.01)
+
+            receipt = json.loads((transaction / "receipt.json").read_text(encoding="utf-8"))
+            self.assertEqual(receipt["outcome"], "failed")
+            self.assertIn("prefix timed out", receipt["error"])
 
     def test_builtin_header_tree_identity_changes_with_header_bytes(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -261,6 +261,17 @@ def controlled_environment() -> dict[str, str]:
     }
 
 
+def require_unconfigured_cargo_home() -> None:
+    """Reject mutable Cargo configuration before every selected leaf starts."""
+    cargo_home = Path(CARGO_HOME)
+    for name in ("config", "config.toml"):
+        path = cargo_home / name
+        if path.exists() or path.is_symlink():
+            raise EvidenceError(
+                f"qualification mutable Cargo home must not contain {name}"
+            )
+
+
 def receipt_root_from_environment() -> Path | None:
     value = os.environ.get(RECEIPT_ROOT_ENVIRONMENT)
     if value is None:
@@ -445,6 +456,7 @@ def run_case(case: Case, receipt_root: Path | None = None, order: int | None = N
             environment[ARTIFACT_DIRECTORY_ENVIRONMENT] = str(artifact_directory)
     # Capture the runner bytes at the direct execution boundary. The source
     # snapshots around it make a post-run rehash an independent check.
+    require_unconfigured_cargo_home()
     runner_sha256 = digest(case.runner)
     started_at_unix_ns = time.time_ns()
     outcome = "passed"

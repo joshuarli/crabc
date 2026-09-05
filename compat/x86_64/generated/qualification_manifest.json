@@ -1,6 +1,6 @@
 {
   "completed_gate_count": 0,
-  "contract_sha256": "08c5dacae436f74e5dd1096643b9930dfc2a73fdd38994f52995e904849e315d",
+  "contract_sha256": "994ee4c67f59fca6e4e46d05ebfbc45ad49ff8986f3be15b4a2994606b976ca9",
   "execution": {
     "cargo_home": "/workspace/.work/x86_64/cargo",
     "dispatcher_command": [
@@ -39,7 +39,7 @@
       ],
       "id": "posix-abi-admission",
       "non_promoting": true,
-      "runner_sha256": "f82cd1e18e70c7666767f07599f2193d5422f5233e32aceec9c2b67a3572ede3"
+      "runner_sha256": "579c5deaf872835d100408aac2b7b6970ea54a5b20f827573c782c2d02b4f9aa"
     }
   ],
   "promotion_chain": [

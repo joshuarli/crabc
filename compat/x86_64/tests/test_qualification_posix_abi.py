@@ -164,6 +164,33 @@ class QualificationPosixAbiTests(unittest.TestCase):
             self.assertEqual((root / record["stdout"]["path"]).read_bytes(), b"partial stdout\n")
             self.assertEqual((root / record["stderr"]["path"]).read_bytes(), b"partial stderr\n")
 
+    def test_later_case_rejects_cargo_configuration_created_by_an_earlier_case(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp/qualification-cargo-configuration-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            cargo_home = root / "cargo"
+            cargo_home.mkdir()
+            first, second = qualification.load_contract()[1:3]
+            identity = {"revision": "a" * 40, "content_sha256": "b" * 64}
+
+            def complete_first_case(*unused, **unused_keywords):
+                (cargo_home / "config.toml").write_text(
+                    "[build]\nrustflags = ['--cfg=poison']\n", encoding="utf-8"
+                )
+                return first.expected_stdout_line + b"\n", b""
+
+            process = unittest.mock.Mock(returncode=0)
+            process.communicate.side_effect = complete_first_case
+            with patch.object(qualification, "CARGO_HOME", str(cargo_home)), patch.object(
+                qualification, "source_identity", return_value=identity
+            ), patch.object(qualification.subprocess, "Popen", return_value=process) as popen:
+                qualification.run_case(first, root, 2)
+                with self.assertRaisesRegex(qualification.EvidenceError, "mutable Cargo home"):
+                    qualification.run_case(second, root, 3)
+            self.assertEqual(popen.call_count, 1)
+            self.assertTrue((root / "002-static-process-context" / "receipt.json").is_file())
+
     def test_receipted_case_seals_its_command_logs_timing_and_source_identity(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp/qualification-receipt-case-tests"
         scratch.mkdir(parents=True, exist_ok=True)

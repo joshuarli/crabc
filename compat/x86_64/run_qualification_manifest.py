@@ -10,6 +10,7 @@ qualification receipt, so the default full-qualification entry stays closed.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import importlib.util
 import json
@@ -23,8 +24,9 @@ import sys
 import tempfile
 import time
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import generate_qualification_manifest as manifest
 
@@ -58,6 +60,151 @@ TOOL_COMMANDS = (
 
 class QualificationRunError(RuntimeError):
     """A native qualification transaction did not meet its pinned contract."""
+
+
+PR_SET_CHILD_SUBREAPER = 36
+PR_GET_CHILD_SUBREAPER = 37
+
+
+def child_subreaper_enabled() -> bool:
+    """Return Linux's inherited-child routing state for this prefix process."""
+    enabled = ctypes.c_int()
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_GET_CHILD_SUBREAPER, ctypes.byref(enabled), 0, 0, 0) != 0:
+        error = ctypes.get_errno()
+        raise QualificationRunError(
+            f"qualification cannot query Linux child subreaper state: {os.strerror(error)}"
+        )
+    return bool(enabled.value)
+
+
+def set_child_subreaper(enabled: bool) -> None:
+    """Route orphaned private-prefix descendants to this supervisor on Linux."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_SET_CHILD_SUBREAPER, int(enabled), 0, 0, 0) != 0:
+        error = ctypes.get_errno()
+        raise QualificationRunError(
+            f"qualification cannot set Linux child subreaper state: {os.strerror(error)}"
+        )
+
+
+def direct_child_processes() -> set[int]:
+    """Read the current process's direct children without accepting an ambient tree."""
+    path = Path(f"/proc/{os.getpid()}/task/{os.getpid()}/children")
+    try:
+        values = path.read_text(encoding="ascii").split()
+    except OSError as error:
+        raise QualificationRunError(
+            "qualification requires Linux /proc child accounting for private receipt cleanup"
+        ) from error
+    try:
+        children = {int(value, 10) for value in values}
+    except ValueError as error:
+        raise QualificationRunError("qualification Linux /proc child accounting is invalid") from error
+    if any(process <= 0 for process in children):
+        raise QualificationRunError("qualification Linux /proc child accounting is invalid")
+    return children
+
+
+class PrivateAdmissionDescendantBoundary:
+    """Own descendants adopted after a private runner's session is terminated.
+
+    A selected shell leaf is allowed to create its own session.  Killing only
+    the private Python runner's process group would then leave that leaf (or a
+    double-forked descendant retaining its pipes) outside the timeout boundary.
+    Linux's child-subreaper contract makes every orphan from this runner become
+    our direct child, so the fixed point below can kill and reap each generation.
+    """
+
+    def __init__(self) -> None:
+        self._baseline = direct_child_processes()
+        self._private_runner_pid: int | None = None
+
+    def register_private_runner(self, process: subprocess.Popen[bytes]) -> None:
+        if process.pid <= 0:
+            raise QualificationRunError("private admission runner has an invalid process identifier")
+        self._private_runner_pid = process.pid
+
+    def adopted_children(self) -> set[int]:
+        children = direct_child_processes()
+        if self._private_runner_pid is not None:
+            children.discard(self._private_runner_pid)
+        return children - self._baseline
+
+    @staticmethod
+    def kill_process(process: int) -> None:
+        try:
+            os.kill(process, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    @staticmethod
+    def reap_process(process: int) -> None:
+        try:
+            os.waitpid(process, os.WNOHANG)
+        except ChildProcessError:
+            pass
+
+    def terminate_and_reap(self, process: subprocess.Popen[bytes]) -> None:
+        """Stop the runner first, then reap its adopted session escapees.
+
+        The runner is stopped before inspecting adopted children.  That closes
+        the Popen-to-active-record launch window: a leaf that has just called
+        ``setsid`` is orphaned to this subreaper and appears in the next pass.
+        A descendant which is itself a subreaper is handled by the following
+        pass after its own death reparents its children here.
+        """
+        if self._private_runner_pid != process.pid:
+            raise QualificationRunError("private admission descendant boundary lost its runner")
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        self.kill_process(process.pid)
+        self.reap_adopted_descendants()
+
+    def reap_adopted_descendants(self) -> None:
+        """Kill and reap every successive generation adopted by this process."""
+
+        deadline = time.monotonic() + 3.0
+        quiet_passes = 0
+        while True:
+            adopted = self.adopted_children()
+            for child in adopted:
+                self.kill_process(child)
+            for child in adopted:
+                self.reap_process(child)
+            remaining = self.adopted_children()
+            if not remaining:
+                quiet_passes += 1
+                if quiet_passes == 2:
+                    return
+            else:
+                quiet_passes = 0
+            if time.monotonic() >= deadline:
+                raise QualificationRunError(
+                    "private admission timeout left descendant processes outside its supervisor"
+                )
+            time.sleep(0.01)
+
+    def reject_unexpected_descendants(self) -> None:
+        """Fail closed if a nominally completed prefix left a daemon behind."""
+        if not self.adopted_children():
+            return
+        self.reap_adopted_descendants()
+        raise QualificationRunError("private admission left descendant processes after completion")
+
+
+@contextmanager
+def private_admission_subreaper() -> Iterator[PrivateAdmissionDescendantBoundary]:
+    """Temporarily make the receipt supervisor own orphaned prefix children."""
+    previous = child_subreaper_enabled()
+    set_child_subreaper(True)
+    try:
+        boundary = PrivateAdmissionDescendantBoundary()
+        yield boundary
+    finally:
+        set_child_subreaper(previous)
 
 
 def controlled_environment() -> dict[str, str]:
@@ -420,6 +567,12 @@ def gcc_builtin_include_identity() -> dict[str, str]:
 
 def execution_inputs() -> dict[str, object]:
     """Capture the complete selected tool, compiler, and runtime closure."""
+    # ``CARGO_HOME`` is a physical checkout-local cache, so its normal cache
+    # entries are intentionally outside this identity. Its configuration is
+    # executable build input, however. Recheck it at every before/after
+    # snapshot; the private runner separately performs the same check before
+    # each selected leaf can start.
+    require_unconfigured_cargo_home(Path(manifest.EXECUTION_CONTRACT["cargo_home"]))
     runtime: dict[str, dict[str, str]] = {}
     for name, path in MUSL_RUNTIME_PATHS.items():
         runtime[name] = (
@@ -587,6 +740,8 @@ def terminate_active_private_case(private_runner: Any, cases_root: Path) -> None
         mode = record.lstat().st_mode
     except FileNotFoundError:
         return
+    except OSError as error:
+        raise QualificationRunError("private admission active-child record is unreadable") from error
     if not stat.S_ISREG(mode) or record.is_symlink():
         raise QualificationRunError("private admission active-child record is unsafe")
     try:
@@ -603,14 +758,22 @@ def terminate_active_private_case(private_runner: Any, cases_root: Path) -> None
 
 
 def terminate_private_admission_process(
-    process: subprocess.Popen[bytes], private_runner: Any, cases_root: Path
+    process: subprocess.Popen[bytes],
+    private_runner: Any,
+    cases_root: Path,
+    descendants: PrivateAdmissionDescendantBoundary,
 ) -> None:
-    """Reap the nested leaf group before its owner can leave its pipes open."""
-    terminate_active_private_case(private_runner, cases_root)
+    """Kill the named leaf when available, then close every descendant race."""
+    record_error: QualificationRunError | None = None
     try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+        terminate_active_private_case(private_runner, cases_root)
+    except QualificationRunError as error:
+        # An unsafe transient record is evidence failure, but never a reason
+        # to skip killing the parent and every child it can orphan to us.
+        record_error = error
+    descendants.terminate_and_reap(process)
+    if record_error is not None:
+        raise record_error
 
 
 def private_case_receipts(transaction: Path) -> list[dict[str, object]]:
@@ -856,30 +1019,43 @@ def run_private_admission(report: Mapping[str, object]) -> Path:
     environment["CRABC_QUALIFICATION_RECEIPT_ROOT"] = str(cases_root)
     started_at_unix_ns = time.time_ns()
     error: QualificationRunError | None = None
-    process = subprocess.Popen(
-        command,
-        cwd=ROOT,
-        env=environment,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True,
-    )
-    try:
-        stdout, stderr = process.communicate(
-            timeout=sum(case.timeout_seconds for case in private_runner.load_contract())
+    with private_admission_subreaper() as descendants:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired as timeout:
-        terminate_private_admission_process(process, private_runner, cases_root)
+        descendants.register_private_runner(process)
         try:
-            stdout, stderr = process.communicate(timeout=10)
-        except subprocess.TimeoutExpired as cleanup:
-            # The supervisor and its published leaf group were killed above.
-            # Do not let a misbehaving descendant retaining a pipe turn a
-            # bounded failed admission into an unbounded parent wait.
-            stdout = cleanup.stdout or b""
-            stderr = cleanup.stderr or b""
-        error = QualificationRunError("private admission prefix timed out")
-        error.__cause__ = timeout
+            stdout, stderr = process.communicate(
+                timeout=sum(case.timeout_seconds for case in private_runner.load_contract())
+            )
+        except subprocess.TimeoutExpired as timeout:
+            cleanup_error: QualificationRunError | None = None
+            try:
+                terminate_private_admission_process(
+                    process, private_runner, cases_root, descendants
+                )
+            except QualificationRunError as cleanup:
+                cleanup_error = cleanup
+            try:
+                stdout, stderr = process.communicate(timeout=10)
+            except subprocess.TimeoutExpired as cleanup:
+                # Descendants are reaped before this communicate call.  Keep a
+                # finite final guard in case an unobservable kernel or pipe
+                # failure still prevents the Popen owner from returning.
+                stdout = cleanup.stdout or b""
+                stderr = cleanup.stderr or b""
+            error = QualificationRunError("private admission prefix timed out")
+            error.__cause__ = cleanup_error or timeout
+        if error is None:
+            try:
+                descendants.reject_unexpected_descendants()
+            except QualificationRunError as failure:
+                error = failure
     finished_at_unix_ns = time.time_ns()
     if error is None and process.returncode != 0:
         error = QualificationRunError(f"private admission prefix exited {process.returncode}")
