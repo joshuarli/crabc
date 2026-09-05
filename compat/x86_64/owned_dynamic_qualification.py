@@ -271,6 +271,14 @@ def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:
             require(output.read_bytes() == observation, f"base observation differs: {name}")
             receipt_path = work / (name + ".crabc-link.json")
             receipt = read(receipt_path)
+            source_mount = read(work / "qualification-cases" / product / "cycle.json")["source_mount"]
+            expected_path = source_mount.rstrip("/") + "/" + binary.relative_to(ROOT).as_posix()
+            runtime = sorted("usr/lib/" + entry for entry in
+                             (("crt1.o" if name.startswith("non-pie-") else "Scrt1.o"),
+                              "crabc-dynamic-attach.o", "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o"))
+            require(receipt.get("schema") == 1 and receipt.get("format") == "crabc-x86-64-owned-dynamic-sysroot-v1"
+                    and receipt.get("runtime_imports") == [] and receipt.get("output_path") == expected_path
+                    and receipt.get("owned_runtime_inputs") == runtime, "base driver path or purity contract drifted")
             require(receipt.get("output_sha256") == digest(binary), "base executable receipt hash mismatch")
             require(receipt.get("manifest_sha256") == manifests[product], "base receipt uses another installed product")
             require(receipt.get("mode") == ("exec" if name.startswith("non-pie-") else "pie"), "base executable mode mismatch")

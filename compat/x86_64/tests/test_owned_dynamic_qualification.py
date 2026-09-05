@@ -57,11 +57,16 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                 self.put(name, b"owned ELF fixture")
                 self.put(name + ".stdout", output)
                 self.put(name + ".crabc-link.json", {
+                    "schema": 1, "format": driver.FORMAT, "runtime_imports": [],
+                    "output_path": str(self.work / name),
                     "output_sha256": qualification.digest(self.work / name),
                     "manifest_sha256": self.manifest,
                     "mode": "exec" if name.startswith("non-pie-") else "pie",
                     "campaign_complete": False, "binding": "now",
-                    "link_trace": ["declared input"], "owned_runtime_inputs": ["usr/lib/libc.so"],
+                    "link_trace": ["declared input"],
+                    "owned_runtime_inputs": sorted("usr/lib/" + entry for entry in
+                        (("crt1.o" if name.startswith("non-pie-") else "Scrt1.o"),
+                         "crabc-dynamic-attach.o", "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o")),
                 })
             for case, (script, mode) in qualification.CASES.items():
                 artifact = self.put(f"leaf-artifacts/{product}-{case}/consumer", b"actual leaf artifact")
@@ -168,6 +173,16 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         (self.work / "leaf-artifacts/extracted-elf-scope-alias/consumer").write_bytes(b"replacement fixture")
         with self.assertRaisesRegex(qualification.QualificationError, "leaf artifact evidence changed"):
             qualification.collect(self.work)
+
+    def test_base_receipt_cannot_claim_another_output_or_an_ambient_runtime_roster(self):
+        path = self.work / "installed-consumer.crabc-link.json"
+        original = qualification.read(path)
+        for key, value in (("output_path", str(self.work / "other-consumer")),
+                           ("owned_runtime_inputs", ["/ambient/libc.so"]),
+                           ("runtime_imports", ["undeclared_import"])):
+            path.write_text(json.dumps({**original, key: value}))
+            with self.assertRaisesRegex(qualification.QualificationError, "base driver"):
+                qualification.collect(self.work)
 
     def test_missing_oracle_identity_and_stale_pins_are_rejected(self):
         path = self.work / "qualification-prepare.json"
