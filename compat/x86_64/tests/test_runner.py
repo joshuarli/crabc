@@ -2099,6 +2099,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             expected_groups[:static_sysroot_index]
             + (
                 "owned-io-cancellation",
+                "owned-resolver-network",
                 "owned-dynamic-io-cancellation",
                 "owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel",
                 "owned-pthread-lifecycle",

@@ -527,6 +527,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-static-tls-v1  run the static x86 crabc-libc initial TLS template slice
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
+  owned-resolver-network  compare owned products with musl in isolated loopback DNS fixtures
   owned-dynamic-io-cancellation  qualify shared-runtime cancellation through kernel and direct entry
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-getattr  test installed live pthread stack and guard metadata
@@ -2680,6 +2681,29 @@ run_in_chroot_cap_container() {
     docker run --rm --init \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
+        --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$IMAGE" "$@"
+}
+
+# Resolver execution sees only loopback and its private conventional files.
+# Product construction happens separately, before network isolation.
+run_in_resolver_network_container() {
+    prepare_work_dir
+    docker run --rm --init \
+        --platform "$PLATFORM" \
+        --cap-add=SYS_CHROOT \
+        --network none \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
@@ -4892,6 +4916,19 @@ run_lua_static_source_build_probe() {
         --timeout "${CRABC_X86_64_LUA_TIMEOUT:-120}"
 }
 
+run_owned_resolver_network_probe() {
+    prepare_work_dir
+    local state container_state
+    state="$(mktemp -d "$TMP_DIR/owned-resolver-network.XXXXXX")"
+    container_state="/workspace/.work/x86_64/tmp/${state##*/}"
+    run_in_container python3 -B /workspace/compat/resolver-network/prepare_x86_64.py \
+        --output "$container_state/products"
+    run_in_resolver_network_container python3 -B /workspace/compat/resolver-network/run_x86_64.py \
+        --static-sysroot "$container_state/products/static-sysroot" \
+        --dynamic-sysroot "$container_state/products/dynamic-sysroot" \
+        --work-root "$container_state/execution"
+}
+
 run_lua_dynamic_source_build_probe() {
     run_in_container python3 -B /workspace/compat/lua/run_x86_dynamic.py \
         --jobs "${CRABC_X86_64_LUA_JOBS:-4}" \
@@ -5536,6 +5573,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-io-cancellation) ;;
+    owned-resolver-network) ;;
     owned-dynamic-io-cancellation) ;;
     owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel) ;;
     owned-pthread-lifecycle) ;;
@@ -7535,6 +7573,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-crt1-static-tls takes no arguments"
         ensure_image
         run_libc_crt1_static_tls_probe
+        ;;
+    owned-resolver-network)
+        [ "$#" -eq 0 ] || fail "owned-resolver-network takes no arguments"
+        ensure_image
+        run_owned_resolver_network_probe
         ;;
     owned-dynamic-io-cancellation)
         [ "$#" -eq 0 ] || fail "owned-dynamic-io-cancellation takes no arguments"

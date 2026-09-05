@@ -18,16 +18,54 @@ network-isolated environment; see [Isolated resolver configuration](#isolated-re
 | [`dns_server.py`](dns_server.py) | Python-stdlib DNS server. Binds UDP and TCP on fixed private loopback role addresses at port 53: `valid`=`127.0.0.1`, `drop`=`127.0.0.2`, and `fallback`=`127.0.0.3`; it serves deterministic A/AAAA/CNAME/NXDOMAIN/NODATA and TC→TCP cases. It never reads or contacts public DNS. |
 | [`workload.c`](workload.c) | One C source/object for both links. Installs the same DNS servers and search state through public `_res`/`__res_state`; it does not write `/etc/resolv.conf`. |
 | [`run.py`](run.py) | Compiles once, links/runs both variants, compares raw observations, checks the server event contract, and atomically publishes JSON. |
+| [`prepare_x86_64.py`](prepare_x86_64.py) | Materializes the exact static and dynamic installed x86 products in the ordinary pinned container before network isolation. |
+| [`run_x86_64.py`](run_x86_64.py) | Native x86 differential: compiles one pinned-musl-header object, links the pinned-musl static reference plus four owned product artifacts, and runs the reference and six owned entry modes in private chroots. |
+| [`test_x86_64.py`](test_x86_64.py) | Stdlib contract tests for the native runner's product, ELF, report, fixture, and DNS-event boundaries. |
 | `dns-events.json` (temporary) | Server-side query evidence. The runner embeds it in the report and removes the temporary directory after the run. |
 | `compat/reports/resolver-network.json` (default) | Atomic report destination; override with `--report` or `CRABC_RESOLVER_NETWORK_REPORT`. |
 
-The runner is intentionally native-AArch64-only, matching the repository's
-other musl differential runner. The default inputs are `MUSL_ROOT` or
+`run.py` is intentionally native-AArch64-only, matching the repository's
+other historical musl differential runner. Its default inputs are `MUSL_ROOT` or
 `/opt/musl-1.2.6`, `MUSL_CC` or `musl-gcc`, and
 `target/debug/{libc.so,libldso.so}`. Input validation requires the exact
 `musl-1.2.6` directory name, `include/`, `lib/ld-musl-aarch64.so.1`, and
 `lib/libc.so`. Override paths explicitly only when retaining that pinned tree
 and architecture in the native development image.
+
+## Native x86-64 owned-product differential
+
+The native x86 gate separates product preparation from resolver execution.
+`prepare_x86_64.py` runs in the ordinary pinned container and creates a fresh
+directory below `.work/x86_64`; it invokes the fixed static and dynamic product
+builders and records their exact output paths. `run_x86_64.py` requires those
+two explicit directories. It validates each installed manifest before it
+compiles one `workload.c` object with the pinned musl 1.2.6 headers, links that
+unchanged object into a pinned-musl static ET_EXEC reference and the owned
+static ET_EXEC/static-PIE plus dynamic PIE/non-PIE artifacts, and audits the
+drivers' receipts, link traces, ELF types, interpreter, and runtime inputs.
+
+The dispatcher runs only the second phase in a native Linux/x86-64 Docker
+container with `--network none` and `SYS_CHROOT`. The runner rejects any
+network namespace that has an interface other than `lo` or a default route.
+Each reference/candidate invocation receives a disposable chroot containing
+only runner-written `etc/hosts` and `etc/resolv.conf`; dynamic chroots also
+contain the validated owned dynamic sysroot. The fixture server remains on the
+same loopback-only namespace. No runner path reads, writes, snapshots, or
+restores the container's `/etc` files.
+
+The reference, static ET_EXEC, static PIE, dynamic PIE ordinary entry, dynamic
+PIE direct interpreter entry, dynamic non-PIE ordinary entry, and dynamic
+non-PIE direct interpreter entry must all produce the same raw exit status,
+stdout, and stderr. The report is published under
+`compat/reports/resolver-network/x86_64/` only on a complete pass. This is an
+evidence gate for the named products and resolver/network workload; it does
+not complete or promote the `compat.resolver-network` family.
+
+Run the two phases through the pinned dispatcher:
+
+```sh
+./scripts/dev-x86_64.sh owned-resolver-network
+```
 
 ## Subcases
 
