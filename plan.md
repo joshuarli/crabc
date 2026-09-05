@@ -126,10 +126,10 @@ M8 integration and M10 promotion must wait for their actual owned-runtime
 prerequisites. Neither an oracle-hosted allocator test nor a runtime test with
 the C backend proves final native Rust allocator integration.
 
-Use independent agents for bounded parallel work when applicable routing rules
-allow it. Never use Terra or Sol without explicit user permission. Give each
-worker a concrete deliverable, nonoverlapping ownership, required evidence,
-and a repository-local worktree; the root reviews and integrates results.
+Use independent agents for bounded parallel work under the current orchestration
+skill and explicit user model restrictions; do not duplicate that routing policy
+here. Give each worker a concrete deliverable, nonoverlapping ownership, required
+evidence, and a repository-local worktree. The root reviews and integrates results.
 
 ### Relationship to `sysroot.md`
 
