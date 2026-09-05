@@ -17,14 +17,19 @@
 //!
 //! The x86 static worker seam intentionally has neither musl's full TCB nor
 //! its cancellation signal/syscall-cancellation assembly. Accordingly this
-//! artifact admits only selected pointer-returning `pthread_create` workers:
-//! `pthread_cancel` records a request, and only the target's explicit
-//! `pthread_testcancel` observes it. It installs no signal handler, does not
-//! interrupt blocking syscalls, and adds no implicit cancellation points. A
-//! request for asynchronous cancellation fails with `ENOTSUP` without changing
-//! state. C11 workers, foreign threads, stale handles, and unsupported state
-//! records fail closed. This is not general pthread cancellation, C11
-//! cancellation, signal coordination, or a public x86 pthread-runtime claim.
+//! artifact admits selected pointer-returning `pthread_create` workers. A
+//! request is delivered at the explicit `pthread_testcancel` point and at the
+//! paired selected private `pthread_cond_wait` point. The latter uses the
+//! worker control mapping's durable waiter barrier: a request changes that
+//! barrier before waking it, so no wake can be lost between publication and
+//! futex sleep. The condition leaf repairs its waiter list, relocks the
+//! mutex, and only then asks this leaf to deliver cancellation and drain the
+//! user cleanup chain. It installs no cancellation signal handler and does
+//! not interrupt arbitrary blocking syscalls. A request for asynchronous
+//! cancellation fails with `ENOTSUP` without changing state. C11 workers,
+//! foreign threads, stale handles, and unsupported state records fail closed.
+//! This is not general pthread cancellation, C11 cancellation, signal
+//! coordination, or a public x86 pthread-runtime claim.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread cancellation leaf requires little-endian Linux/x86-64");
@@ -75,6 +80,12 @@ pub(super) struct SelectedWorkerCancellation {
     pending: AtomicU8,
     state: AtomicU8,
     cleanup_head: AtomicUsize,
+    // A selected pthread condition wait uses a waiter in the private control
+    // mapping, rather than automatic storage, only while it is an implicit
+    // cancellation point. Its barrier stays mapped through join/detach
+    // reclamation, so a canceller that validated this control under the
+    // registry lock can change the barrier without a stack-lifetime race.
+    active_condition_barrier: AtomicUsize,
 }
 
 impl SelectedWorkerCancellation {
@@ -84,20 +95,33 @@ impl SelectedWorkerCancellation {
             pending: AtomicU8::new(0),
             state: AtomicU8::new(PTHREAD_CANCEL_ENABLE),
             cleanup_head: AtomicUsize::new(0),
+            active_condition_barrier: AtomicUsize::new(0),
         }
     }
 }
 
-/// Mark one lock-validated selected pthread worker pending.
+/// Mark one lock-validated selected pthread worker pending and return its
+/// currently published condition barrier, when it may be interrupted.
 ///
 /// The caller holds the create/join registry lock for the complete target
-/// lookup and this store. It must not call user code or release a mapping.
-pub(super) fn mark_selected_worker_pending(state: &SelectedWorkerCancellation) -> bool {
+/// lookup and this store. It must not issue a syscall while holding that lock;
+/// the create/join owner pins the control mapping and performs any barrier
+/// wake after it releases the lock.
+pub(super) fn mark_selected_worker_pending(
+    state: &SelectedWorkerCancellation,
+) -> Option<*mut c_int> {
     if state.kind.load(Ordering::Acquire) != SLOT_PTHREAD {
-        return false;
+        return None;
     }
     state.pending.store(1, Ordering::Release);
-    true
+    // `PTHREAD_CANCEL_DISABLE` records the request but does not interrupt a
+    // selected condition wait. ENABLE and musl's retained MASKED state must
+    // both leave the wait so its list/barrier protocol can complete; delivery
+    // remains deferred until the condition leaf restores the prior state.
+    if state.state.load(Ordering::Acquire) != PTHREAD_CANCEL_DISABLE {
+        return Some(state.active_condition_barrier.load(Ordering::Acquire) as *mut c_int);
+    }
+    Some(core::ptr::null_mut())
 }
 
 #[inline]
@@ -108,6 +132,86 @@ fn current_pthread_slot() -> Option<&'static SelectedWorkerCancellation> {
     // immediate C ABI operation; no caller can retain it across that exit.
     let state = unsafe { &*state };
     (state.kind.load(Ordering::Acquire) == SLOT_PTHREAD).then_some(state)
+}
+
+/// Deliver one pending request at any selected deferred cancellation point.
+///
+/// This private form lets a sibling point preserve its own cleanup/relock
+/// transaction without routing through the interposable public symbol.
+#[inline(always)]
+pub(super) fn test_current_selected_pthread_cancellation() {
+    let Some(slot) = current_pthread_slot() else {
+        return;
+    };
+    if slot.pending.load(Ordering::Acquire) != 0
+        && slot.state.load(Ordering::Acquire) == PTHREAD_CANCEL_ENABLE
+    {
+        // SAFETY: current-pthread-slot admitted this exact selected
+        // pointer-returning worker. The sibling runs active cleanup handlers,
+        // then selected TSD destructors, publishes PTHREAD_CANCELED, and exits
+        // this task through its existing clear-child-tid lifecycle seam.
+        unsafe { pthread_create_join::exit_selected_pthread_worker(PTHREAD_CANCELED) }
+    }
+}
+
+/// Enter the list-repair portion of a selected condition cancellation point.
+///
+/// The returned state is restored only after the condition leaf has removed
+/// or consumed its waiter and relocked the caller mutex. As in musl, a
+/// disabled caller remains disabled while it waits; masking an enabled caller
+/// prevents delivery until that repair transaction is complete.
+pub(super) fn begin_current_selected_pthread_condition_cancellation() -> Option<u8> {
+    let slot = current_pthread_slot()?;
+    let previous = slot.state.swap(PTHREAD_CANCEL_MASKED, Ordering::AcqRel);
+    if previous == PTHREAD_CANCEL_DISABLE {
+        slot.state.store(previous, Ordering::Release);
+    }
+    Some(previous)
+}
+
+/// Publish the durable barrier of the current selected condition waiter.
+///
+/// The waiter must already be linked and its mutex released. Publishing first
+/// and then inspecting `pending` closes both request-before-publication and
+/// request-between-publication-and-futex-sleep races: the wake helper changes
+/// the barrier value, rather than merely issuing a lossy futex wake.
+pub(super) fn activate_current_selected_pthread_condition_waiter(barrier: *mut c_int) {
+    let Some(slot) = current_pthread_slot() else {
+        return;
+    };
+    slot.active_condition_barrier
+        .store(barrier as usize, Ordering::Release);
+    if slot.pending.load(Ordering::Acquire) != 0
+        && slot.state.load(Ordering::Acquire) != PTHREAD_CANCEL_DISABLE
+    {
+        // SAFETY: this current worker just published its mapped waiter
+        // barrier, which stays live until the condition leaf clears it.
+        unsafe { super::pthread_cond::wake_selected_pthread_condition_waiter(barrier) };
+    }
+}
+
+/// Stop exposing the current selected condition waiter's barrier.
+///
+/// A concurrent canceller may have loaded the old pointer before this swap,
+/// but it still names the worker control mapping and is harmless after the
+/// condition leaf owns the completed list/barrier transition.
+pub(super) fn deactivate_current_selected_pthread_condition_waiter(barrier: *mut c_int) {
+    let Some(slot) = current_pthread_slot() else {
+        return;
+    };
+    let _ = slot.active_condition_barrier.compare_exchange(
+        barrier as usize,
+        0,
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    );
+}
+
+/// Restore the cancellation state saved at a selected condition point.
+pub(super) fn restore_current_selected_pthread_condition_cancellation(state: u8) {
+    if let Some(slot) = current_pthread_slot() {
+        slot.state.store(state, Ordering::Release);
+    }
 }
 
 /// Execute all active cleanup handlers for the current selected pthread worker.
@@ -216,18 +320,7 @@ pub unsafe extern "C" fn pthread_setcanceltype(type_: c_int, old_type: *mut c_in
 /// point. This does not return when it observes an enabled pending request.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_testcancel() {
-    let Some(slot) = current_pthread_slot() else {
-        return;
-    };
-    if slot.pending.load(Ordering::Acquire) != 0
-        && slot.state.load(Ordering::Acquire) == PTHREAD_CANCEL_ENABLE
-    {
-        // SAFETY: current-pthread-slot admitted this exact selected
-        // pointer-returning worker. The sibling runs active cleanup handlers,
-        // then selected TSD destructors, publishes PTHREAD_CANCELED, and exits
-        // this task through its existing clear-child-tid lifecycle seam.
-        unsafe { pthread_create_join::exit_selected_pthread_worker(PTHREAD_CANCELED) }
-    }
+    test_current_selected_pthread_cancellation();
 }
 
 /// Push one caller-owned cleanup node onto the current selected pthread worker.

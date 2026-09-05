@@ -159,6 +159,65 @@ static void *cancellation_worker(void *opaque)
     return 0;
 }
 
+/*
+ * Musl's condition cancellation path must first remove or consume the
+ * private waiter, then reacquire the caller's mutex before it runs the
+ * selected pthread cleanup chain.  The cleanup below makes that ordering
+ * observable: it can unlock the mutex exactly once, and the joining thread
+ * subsequently acquires it again.  Main waits for a successful mutex handoff
+ * before requesting cancellation, so this is a blocked condition-wait
+ * cancellation-point regression rather than an explicit pthread_testcancel
+ * exercise.
+ */
+struct condition_cancellation_round {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    volatile int ready;
+    volatile int cleanup_seen;
+    volatile int destructor_seen;
+    volatile int failure;
+};
+
+static void condition_cancellation_cleanup(void *opaque)
+{
+    struct condition_cancellation_round *round = opaque;
+
+    if (errno != ENOMSG)
+        __atomic_store_n(&round->failure, 1, __ATOMIC_RELEASE);
+    if (pthread_mutex_unlock(&round->mutex) != 0)
+        __atomic_store_n(&round->failure, 2, __ATOMIC_RELEASE);
+    __atomic_store_n(&round->cleanup_seen, 1, __ATOMIC_RELEASE);
+}
+
+static void condition_cancellation_destructor(void *opaque)
+{
+    struct condition_cancellation_round *round = opaque;
+
+    if (pthread_getspecific(crabc_teardown_key) != 0 || errno != ENOMSG)
+        __atomic_store_n(&round->failure, 3, __ATOMIC_RELEASE);
+    __atomic_store_n(&round->destructor_seen, 1, __ATOMIC_RELEASE);
+}
+
+static void *condition_cancellation_worker(void *opaque)
+{
+    struct condition_cancellation_round *round = opaque;
+
+    errno = ENOMSG;
+    if (pthread_setspecific(crabc_teardown_key, round) != 0 ||
+        pthread_mutex_lock(&round->mutex) != 0) {
+        __atomic_store_n(&round->failure, 4, __ATOMIC_RELEASE);
+        return 0;
+    }
+    pthread_cleanup_push(condition_cancellation_cleanup, round);
+    __atomic_store_n(&round->ready, 1, __ATOMIC_RELEASE);
+    if (pthread_cond_wait(&round->condition, &round->mutex) != 0)
+        __atomic_store_n(&round->failure, 5, __ATOMIC_RELEASE);
+    pthread_cleanup_pop(0);
+    if (pthread_mutex_unlock(&round->mutex) != 0)
+        __atomic_store_n(&round->failure, 6, __ATOMIC_RELEASE);
+    return round;
+}
+
 struct detached_round {
     volatile int done;
 };
@@ -375,6 +434,22 @@ static int run_attr_and_cancellation(void)
         .destructor_seen = 0,
         .failure = 0,
     };
+    struct condition_cancellation_round condition_cancellation = {
+        .mutex = { 0 },
+        .condition = { 0 },
+        .ready = 0,
+        .cleanup_seen = 0,
+        .destructor_seen = 0,
+        .failure = 0,
+    };
+    struct condition_cancellation_round signal_then_cancellation = {
+        .mutex = { 0 },
+        .condition = { 0 },
+        .ready = 0,
+        .cleanup_seen = 0,
+        .destructor_seen = 0,
+        .failure = 0,
+    };
 
     /* Pinned musl's initialized and null-attribute creation defaults are a
      * 128 KiB stack and 8 KiB guard. The owned installed runtime must not
@@ -414,6 +489,53 @@ static int run_attr_and_cancellation(void)
         pthread_key_delete(crabc_teardown_key) != 0 ||
         pthread_attr_destroy(&attributes) != 0)
         return 3;
+
+    if (pthread_mutex_init(&condition_cancellation.mutex, 0) != 0 ||
+        pthread_cond_init(&condition_cancellation.condition, 0) != 0 ||
+        pthread_key_create(&crabc_teardown_key, condition_cancellation_destructor) != 0 ||
+        pthread_create(&thread, 0, condition_cancellation_worker,
+            &condition_cancellation) != 0 ||
+        wait_for_nonzero(&condition_cancellation.ready) != 0 ||
+        /* Acquiring this mutex proves the worker enrolled in cond_wait and
+         * released it, rather than merely observing its ready publication. */
+        pthread_mutex_lock(&condition_cancellation.mutex) != 0 ||
+        pthread_mutex_unlock(&condition_cancellation.mutex) != 0 ||
+        pthread_cancel(thread) != 0 ||
+        pthread_join(thread, &result) != 0 || result != PTHREAD_CANCELED ||
+        __atomic_load_n(&condition_cancellation.cleanup_seen, __ATOMIC_ACQUIRE) != 1 ||
+        __atomic_load_n(&condition_cancellation.destructor_seen, __ATOMIC_ACQUIRE) != 1 ||
+        __atomic_load_n(&condition_cancellation.failure, __ATOMIC_ACQUIRE) != 0 ||
+        pthread_mutex_lock(&condition_cancellation.mutex) != 0 ||
+        pthread_mutex_unlock(&condition_cancellation.mutex) != 0 ||
+        pthread_key_delete(crabc_teardown_key) != 0 ||
+        pthread_cond_destroy(&condition_cancellation.condition) != 0 ||
+        pthread_mutex_destroy(&condition_cancellation.mutex) != 0)
+        return 4;
+
+    /* Pinned musl suppresses cancellation when this wait has already consumed
+     * a condition signal. Keep the mutex held between signal and cancel so
+     * the worker cannot complete the relock before the request races its
+     * signaled waiter state. The normal return must pop without cleanup. */
+    if (pthread_mutex_init(&signal_then_cancellation.mutex, 0) != 0 ||
+        pthread_cond_init(&signal_then_cancellation.condition, 0) != 0 ||
+        pthread_key_create(&crabc_teardown_key, condition_cancellation_destructor) != 0 ||
+        pthread_create(&thread, 0, condition_cancellation_worker,
+            &signal_then_cancellation) != 0 ||
+        wait_for_nonzero(&signal_then_cancellation.ready) != 0 ||
+        pthread_mutex_lock(&signal_then_cancellation.mutex) != 0 ||
+        pthread_cond_signal(&signal_then_cancellation.condition) != 0 ||
+        pthread_cancel(thread) != 0 ||
+        pthread_mutex_unlock(&signal_then_cancellation.mutex) != 0 ||
+        pthread_join(thread, &result) != 0 || result != &signal_then_cancellation ||
+        __atomic_load_n(&signal_then_cancellation.cleanup_seen, __ATOMIC_ACQUIRE) != 0 ||
+        __atomic_load_n(&signal_then_cancellation.destructor_seen, __ATOMIC_ACQUIRE) != 1 ||
+        __atomic_load_n(&signal_then_cancellation.failure, __ATOMIC_ACQUIRE) != 0 ||
+        pthread_mutex_lock(&signal_then_cancellation.mutex) != 0 ||
+        pthread_mutex_unlock(&signal_then_cancellation.mutex) != 0 ||
+        pthread_key_delete(crabc_teardown_key) != 0 ||
+        pthread_cond_destroy(&signal_then_cancellation.condition) != 0 ||
+        pthread_mutex_destroy(&signal_then_cancellation.mutex) != 0)
+        return 5;
     return 0;
 }
 

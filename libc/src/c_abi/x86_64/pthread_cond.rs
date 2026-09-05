@@ -29,23 +29,29 @@
 //! `PTHREAD_MUTEX_NORMAL` object. The exact musl private path keeps a
 //! stack-local linked waiter list; it does not reuse the public `_c_seq` or
 //! `_c_waiters` words, which are process-shared overlays. It excludes
-//! condition attributes; process-shared state; timed waits; cancellation;
-//! non-normal, robust, PI, or shared mutexes; destruction while waiters
-//! exist; dynamic TLS; loader/CRT integration; a general pthread runtime; and
-//! public x86 support. The separate C11 plain-synchronization sibling maps
-//! distinct `cnd_t` storage through this exact private path. A non-null
-//! initialization attribute or a non-private marker fails closed with
+//! condition attributes; process-shared state; timed waits; non-normal,
+//! robust, PI, or shared mutexes; destruction while waiters exist; dynamic
+//! TLS; loader/CRT integration; a general pthread runtime; and public x86
+//! support. A selected pthread worker additionally admits deferred
+//! cancellation at `pthread_cond_wait`: the condition transaction removes or
+//! consumes its waiter, relocks the normal mutex, and then asks the sibling
+//! cancellation leaf to drain cleanup. It does not install musl's SIGCANCEL
+//! handler or make other waits/syscalls cancellation points. The separate C11
+//! plain-synchronization sibling maps distinct `cnd_t` storage through this
+//! exact private path without acquiring pthread cancellation behavior. A
+//! non-null initialization attribute or a non-private marker fails closed with
 //! `ENOTSUP`; this is a selected-artifact boundary, not a musl-differential
 //! claim.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 private pthread-condition leaf requires little-endian Linux/x86-64");
 
+use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_void};
 use core::mem::{align_of, offset_of, size_of};
 use core::ptr::null_mut;
 
-use super::{atomic, pthread_mutex, raw_syscall};
+use super::{atomic, pthread_cancel, pthread_create_join, pthread_mutex, raw_syscall};
 
 const ENOTSUP: c_int = 95;
 
@@ -102,6 +108,18 @@ struct Waiter {
     notify: *mut c_int,
 }
 
+impl Waiter {
+    const fn empty() -> Self {
+        Self {
+            prev: null_mut(),
+            next: null_mut(),
+            state: WAITER_WAITING,
+            barrier: PRIVATE_CONTENDED,
+            notify: null_mut(),
+        }
+    }
+}
+
 const _: () = {
     assert!(size_of::<Waiter>() == 32);
     assert!(align_of::<Waiter>() == 8);
@@ -111,6 +129,38 @@ const _: () = {
     assert!(offset_of!(Waiter, barrier) == 20);
     assert!(offset_of!(Waiter, notify) == 24);
 };
+
+/// One selected pthread worker's durable condition waiter.
+///
+/// Musl normally puts a private-condition waiter on the caller stack. That is
+/// sufficient when SIGCANCEL interrupts its cancellation-point syscall, but
+/// this selected signal-free seam lets another worker change the target's
+/// futex barrier directly. Keeping just this selected waiter in the already
+/// live worker control mapping gives that request a stable lifetime through
+/// the list-removal and join/detach handoff. A worker can be blocked in at
+/// most one condition wait, and C11 workers deliberately keep the normal
+/// stack waiter because they have no pthread cancellation state.
+pub(super) struct SelectedPthreadConditionWaiter {
+    waiter: UnsafeCell<Waiter>,
+}
+
+// All access to the enclosed raw waiter fields follows the surrounding
+// condition-list/barrier atomic protocol. `UnsafeCell` avoids claiming a Rust
+// shared-reference data-race guarantee for C-owned concurrent storage.
+unsafe impl Sync for SelectedPthreadConditionWaiter {}
+
+impl SelectedPthreadConditionWaiter {
+    pub(super) const fn new() -> Self {
+        Self {
+            waiter: UnsafeCell::new(Waiter::empty()),
+        }
+    }
+
+    #[inline(always)]
+    pub(super) fn as_mut_ptr(&self) -> *mut Waiter {
+        self.waiter.get()
+    }
+}
 
 /// Return a raw byte pointer to the condition record without creating a Rust
 /// reference to caller-owned storage that may be concurrently accessed.
@@ -348,6 +398,41 @@ unsafe fn private_unlock_requeue(barrier: *mut c_int, mutex_lock: *mut c_int) {
     };
 }
 
+/// Change and wake a selected worker's published condition barrier.
+///
+/// This is deliberately a value change before the wake: an ordinary futex
+/// wake could be lost if cancellation lands immediately before the target
+/// enters `FUTEX_WAIT_PRIVATE`. A racing signaler performs the same transition
+/// through [`private_unlock`]; either winner leaves zero and the waiter
+/// resolves the signal-versus-leave race with its `state` CAS.
+///
+/// # Safety
+///
+/// `barrier` must be a live selected worker-control waiter barrier published
+/// by `pthread_cancel`'s sibling state. It is never a caller-stack address.
+pub(super) unsafe fn wake_selected_pthread_condition_waiter(barrier: *mut c_int) {
+    if unsafe {
+        atomic::x86_64_compare_exchange_acqrel_i32(
+            barrier,
+            PRIVATE_CONTENDED,
+            PRIVATE_UNLOCKED,
+        )
+    } == PRIVATE_CONTENDED
+    {
+        // SAFETY: the published barrier remains live through this wake and
+        // is an aligned private futex word in the selected waiter record.
+        let _ = unsafe {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_FUTEX,
+                barrier as usize as i64,
+                FUTEX_WAKE_PRIVATE,
+                1,
+                0,
+            )
+        };
+    }
+}
+
 /// Remove an unsignaled stack waiter while holding the condition-list lock.
 ///
 /// # Safety
@@ -581,6 +666,11 @@ pub(super) unsafe fn wait_selected_private_cond(
     condition: *mut c_void,
     mutex: *mut c_void,
 ) -> c_int {
+    // Musl tests for an already-pending request before it enrolls the
+    // waiter. This private direct call keeps the same cancellation-point
+    // placement without using an interposable public C symbol.
+    pthread_cancel::test_current_selected_pthread_cancellation();
+
     let condition = condition.cast::<PublicPthreadCond>();
     // SAFETY: the caller provides the complete record and its shared marker
     // is immutable through the selected condition lifetime.
@@ -593,16 +683,22 @@ pub(super) unsafe fn wait_selected_private_cond(
         return ENOTSUP;
     };
 
-    let mut node = Waiter {
-        prev: null_mut(),
-        next: null_mut(),
-        state: WAITER_WAITING,
-        barrier: PRIVATE_CONTENDED,
-        notify: null_mut(),
+    // Only pointer-returning selected pthread workers obtain the durable
+    // control-mapped waiter needed by the signal-free cancellation wake path.
+    // C11 and foreign callers retain musl's automatic-storage waiter.
+    let selected_waiter = pthread_create_join::current_selected_pthread_condition_waiter();
+    let mut stack_waiter = Waiter::empty();
+    let node = match selected_waiter {
+        Some(waiter) => unsafe { (*waiter).as_mut_ptr() },
+        None => core::ptr::addr_of_mut!(stack_waiter),
     };
-    let node = core::ptr::addr_of_mut!(node);
+    // SAFETY: `node` is either the current worker's control-mapped private
+    // waiter or this invocation's automatic waiter. Neither is reachable by
+    // another task until the fully initialized record is linked below.
+    unsafe { core::ptr::write(node, Waiter::empty()) };
     let condition_lock = unsafe { cond_lock_word(condition) };
-    // SAFETY: condition and the stack node remain live for this C call; this
+    // SAFETY: condition and the selected control-mapped or stack waiter remain
+    // live for this C call; this
     // list lock serializes all head/tail/pointer mutation and publishes the
     // fully initialized node before the mutex release below.
     unsafe { private_lock(condition_lock) };
@@ -638,8 +734,27 @@ pub(super) unsafe fn wait_selected_private_cond(
         return unlock_result;
     }
 
+    // Mask an enabled selected pthread while its waiter/list state is exposed;
+    // a disabled worker stays disabled. The published mapped barrier makes a
+    // concurrent request either change this value or be observed by the
+    // activation recheck, so a request cannot be lost between enrollment and
+    // the futex wait below.
+    let saved_cancellation = selected_waiter.and_then(|_| {
+        pthread_cancel::begin_current_selected_pthread_condition_cancellation()
+    });
+    if saved_cancellation.is_some() {
+        pthread_cancel::activate_current_selected_pthread_condition_waiter(
+            unsafe { waiter_barrier_word(node) },
+        );
+    }
+
     // SAFETY: the stack waiter and its barrier remain live through this loop.
     unsafe { wait_private_while(waiter_barrier_word(node), PRIVATE_CONTENDED) };
+    if saved_cancellation.is_some() {
+        pthread_cancel::deactivate_current_selected_pthread_condition_waiter(
+            unsafe { waiter_barrier_word(node) },
+        );
+    }
     // SAFETY: the CAS arbitrates a concurrent signaler against a locally
     // leaving waiter exactly as musl's private cancellation/timeout path does.
     let old_state = unsafe {
@@ -688,9 +803,19 @@ pub(super) unsafe fn wait_selected_private_cond(
     // the caller the mutex ownership required by pthread_cond_wait's return.
     let relock_result = unsafe { pthread_mutex::lock_selected_normal_mutex(mutex) };
     if relock_result != 0 {
+        if let Some(saved) = saved_cancellation {
+            pthread_cancel::restore_current_selected_pthread_condition_cancellation(saved);
+        }
         return relock_result;
     }
     if old_state == WAITER_WAITING {
+        if let Some(saved) = saved_cancellation {
+            pthread_cancel::restore_current_selected_pthread_condition_cancellation(saved);
+            // A request that won the unsignaled waiter race is delivered only
+            // after this relock. Active cleanup therefore observes the mutex
+            // held, exactly as musl's condition cancellation path requires.
+            pthread_cancel::test_current_selected_pthread_cancellation();
+        }
         return 0;
     }
 
@@ -727,6 +852,12 @@ pub(super) unsafe fn wait_selected_private_cond(
         // This was the lone detached waiter, so balance its temporary mutex
         // waiter hint after no successor needs requeueing.
         unsafe { atomic::x86_64_fetch_sub_acqrel_i32(mutex_words.waiters_word(), 1) };
+    }
+    if let Some(saved) = saved_cancellation {
+        // A signaler that won the waiter-state race consumed a condition
+        // signal. Musl suppresses cancellation for that completed handoff;
+        // leave any request pending for a later selected point.
+        pthread_cancel::restore_current_selected_pthread_condition_cancellation(saved);
     }
     0
 }

@@ -211,4 +211,4 @@ run_installed_mode -static et-exec
 run_installed_mode -static-pie static-pie
 
 printf '%s\n' \
-    'x86 owned pthread lifecycle: PASS (pinned musl + installed ET_EXEC/static-PIE attributes, C11, cancellation teardown, detached reaping, atfork)'
+    'x86 owned pthread lifecycle: PASS (pinned musl + installed ET_EXEC/static-PIE attributes, C11, explicit/condition cancellation teardown, detached reaping, atfork)'
