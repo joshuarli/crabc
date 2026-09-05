@@ -800,6 +800,11 @@ run_static_mode() {
             expected_output=''
             minimum_tls_alignment=1
             ;;
+        sysv-message-cancellation)
+            probe=owned_sysv_message_cancellation_probe.c
+            expected_output="$(cat "$printf_matrix_reference")"
+            minimum_tls_alignment=1
+            ;;
         entropy-cancellation)
             probe=owned_entropy_cancellation_probe.c
             expected_output="$(cat "$printf_matrix_reference")"
@@ -1125,6 +1130,8 @@ run_static_mode() {
             "$label sleep-wait cancellation" sleep-wait-cancellation "$printf_matrix_reference.sleep-wait-cancellation"
         run_static_mode "$installed_root" "$mode" "$mode_root/open-lock-cancellation" \
             "$label open/lock cancellation" open-lock-cancellation "$printf_matrix_reference.open-lock-cancellation"
+        run_static_mode "$installed_root" "$mode" "$mode_root/sysv-message-cancellation" \
+            "$label SysV message cancellation" sysv-message-cancellation "$printf_matrix_reference.sysv-message-cancellation"
         run_static_mode "$installed_root" "$mode" "$mode_root/entropy-cancellation" \
             "$label entropy cancellation" entropy-cancellation "$printf_matrix_reference.entropy-cancellation"
         run_static_mode "$installed_root" "$mode" "$mode_root/signal-wait-cancellation" \
@@ -1522,6 +1529,14 @@ env -i "$header_consumer/open-lock-cancellation-reference" "$header_consumer/ope
     fail "pinned-musl open/lock cancellation reference failed"
 grep -qx owned-open-lock-cancellation-ok "$printf_matrix_reference.open-lock-cancellation" ||
     fail "pinned-musl open/lock cancellation completion missing"
+
+"$ORACLE_CC" -std=c11 -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_sysv_message_cancellation_probe.c" \
+    -o "$header_consumer/sysv-message-cancellation-reference"
+env -i "$header_consumer/sysv-message-cancellation-reference" >"$printf_matrix_reference.sysv-message-cancellation" ||
+    fail "pinned-musl SysV message cancellation reference failed"
+grep -qx owned-sysv-message-cancellation-ok "$printf_matrix_reference.sysv-message-cancellation" ||
+    fail "pinned-musl SysV message cancellation completion missing"
 
 "$ORACLE_CC" -std=c11 -pthread -fno-builtin \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_entropy_cancellation_probe.c" \

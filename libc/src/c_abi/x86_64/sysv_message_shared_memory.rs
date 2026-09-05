@@ -20,9 +20,9 @@
 //! - `src/ipc/ipc.h` and `arch/x86_64/syscall_arch.h` map to
 //!   [`ipc_command`]'s target-specific direct-command rule.
 //!
-//! Musl routes `msgsnd` and `msgrcv` through pthread-cancellation machinery.
-//! The selected static archive deliberately issues direct Linux calls because
-//! no general cancellation lifecycle is selected yet. Linux 5.10 supplies
+//! The owned runtime maps musl's `msgsnd` and `msgrcv` cancellation-point
+//! syscalls. The standalone archive retains its direct raw syscall profile.
+//! Queue lifetime stays with the caller in both profiles. Linux 5.10 supplies
 //! every syscall used here, so this target-specific leaf carries no legacy
 //! compatibility fallback.
 
@@ -89,8 +89,8 @@ pub extern "C" fn msgget(key: c_int, flags: c_int) -> c_int {
 ///
 /// `message` must designate a readable System V message record whose leading
 /// `long` type word and following `length` data bytes remain accessible for
-/// Linux. Blocking and signal policy are caller-owned. This direct static
-/// leaf intentionally omits musl's pthread cancellation point.
+/// Linux. Blocking and signal policy are caller-owned. The owned runtime
+/// checks cancellation before Linux observes the message.
 #[no_mangle]
 pub unsafe extern "C" fn msgsnd(
     queue_id: c_int,
@@ -100,6 +100,19 @@ pub unsafe extern "C" fn msgsnd(
 ) -> c_int {
     // SAFETY: the caller owns the full kernel message-buffer contract. The
     // raw helper moves C's fourth word to Linux x86-64 r10.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_MSGSND,
+            i64::from(queue_id),
+            message as usize as i64,
+            length as i64,
+            i64::from(flags),
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_MSGSND,
@@ -118,8 +131,8 @@ pub unsafe extern "C" fn msgsnd(
 ///
 /// `message` must designate writable System V message-record storage for a
 /// leading `long` type plus up to `length` data bytes. The caller owns queue
-/// lifetime, selector semantics, blocking, and signal policy. This direct
-/// static leaf intentionally omits musl's pthread cancellation point.
+/// lifetime, selector semantics, blocking, and signal policy. The owned
+/// runtime checks cancellation before Linux consumes a queued message.
 #[no_mangle]
 pub unsafe extern "C" fn msgrcv(
     queue_id: c_int,
@@ -130,6 +143,19 @@ pub unsafe extern "C" fn msgrcv(
 ) -> isize {
     // SAFETY: the caller supplies the full writable message-record contract.
     // The raw helper places type and flags in Linux x86-64 r10/r8.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_MSGRCV,
+            i64::from(queue_id),
+            message as usize as i64,
+            length as i64,
+            message_type as i64,
+            i64::from(flags),
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall5(
             raw_syscall::SYS_MSGRCV,

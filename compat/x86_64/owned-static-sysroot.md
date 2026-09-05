@@ -289,6 +289,17 @@ fixture also qualifies pending `msync` cancellation before kernel validation;
 it makes no file-durability claim. Every fixture child is released and reaped,
 and successful fixtures remove their scratch directory.
 
+`owned_sysv_message_cancellation_probe.c` qualifies owned `msgsnd` and `msgrcv`
+as cancellation points, including pending requests before `IPC_NOWAIT` and
+invalid-queue errors. Actual blocked sends and receives preserve message
+contents and queue capacity when canceled. With cancellation disabled, the
+cancellation signal still interrupts these non-restarting Linux syscalls with
+`EINTR`; ordinary handled signals do the same with or without `SA_RESTART`.
+A supervisor owns the fixture's private queue and removes it after every child
+outcome, including failed assertions and timeout. The implementation preserves
+musl's caller-owned queue lifetime and adds no rollback or removal cleanup.
+The standalone archive retains its raw syscall profile.
+
 `owned_entropy_cancellation_probe.c` checks the source distinction between
 `getrandom` and `getentropy`. Pending `getrandom` requests cancel even for
 zero-length reads and invalid flags; masked requests return `ECANCELED`
