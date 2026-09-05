@@ -183,6 +183,11 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                 record["artifacts"] = qualification.artifact_snapshot(log, str(self.root))
                 with self.assertRaisesRegex(qualification.QualificationError, "isolated live loopback"):
                     qualification.validate_case(record, "installed", "classic-netdb", self.source, self.manifest)
+    def test_unix_mechanisms_case_stays_bound_to_its_same_object_runner(self):
+        self.assertEqual(
+            qualification.CASES["unix-mechanisms"],
+            ("run_owned_unix_mechanisms.sh", None),
+        )
 
     def test_materialization_binds_payload_source_and_contracts_without_publication(self):
         product = self.work / "installed"

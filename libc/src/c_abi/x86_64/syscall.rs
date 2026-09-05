@@ -417,9 +417,14 @@ pub(crate) const SYS_MLOCK: i64 = 149;
 pub(crate) const SYS_MUNLOCK: i64 = 150;
 pub(crate) const SYS_MLOCKALL: i64 = 151;
 pub(crate) const SYS_MUNLOCKALL: i64 = 152;
+/// Linux x86-64 controlling-terminal hangup request.
+pub(crate) const SYS_VHANGUP: i64 = 153;
 pub(crate) const SYS_PRCTL: i64 = 157;
 pub(crate) const SYS_SETRLIMIT: i64 = 160;
 pub(crate) const SYS_CHROOT: i64 = 161;
+/// Linux x86-64 mount and unmount requests use five and two words.
+pub(crate) const SYS_MOUNT: i64 = 165;
+pub(crate) const SYS_UMOUNT2: i64 = 166;
 pub(crate) const SYS_ARCH_PRCTL: i64 = 158;
 pub(crate) const SYS_SETHOSTNAME: i64 = 170;
 pub(crate) const SYS_SETDOMAINNAME: i64 = 171;
@@ -465,6 +470,8 @@ pub(crate) const SYS_PSELECT6: i64 = 270;
 pub(crate) const SYS_PPOLL: i64 = 271;
 pub(crate) const SYS_SET_ROBUST_LIST: i64 = 273;
 pub(crate) const SYS_SYNC_FILE_RANGE: i64 = 277;
+/// Linux x86-64 vmsplice uses fd, iovec pointer/count, and splice flags.
+pub(crate) const SYS_VMSPLICE: i64 = 278;
 pub(crate) const SYS_UTIMENSAT: i64 = 280;
 pub(crate) const SYS_EPOLL_PWAIT: i64 = 281;
 pub(crate) const SYS_TIMERFD_CREATE: i64 = 283;

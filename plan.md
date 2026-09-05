@@ -9,8 +9,8 @@ product manifests. Host validation and explicit local publication passed for
 `.work/x86_64/owned-dynamic-integrated-batch.log`. The same revision passed the
 native header provider audit and standalone group, message-queue, legacy-time,
 filename-pattern, and GNU thread-join matrices, including both static modes.
-The classic-netdb case extends the catalog to 41; its integration requires
-fresh qualification. Subsequent source changes invalidate the earlier
+The classic-netdb and Unix-mechanism cases extend the catalog to 42; their
+integration requires fresh qualification. Subsequent source changes invalidate the earlier
 selection. These component results do not close the planned runtime families
 or promotion chain. The paused narrative below records the preceding boundary,
 not a renewed instruction to stop.

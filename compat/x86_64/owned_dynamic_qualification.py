@@ -70,6 +70,7 @@ CASES = {
     "passwd": ("run_owned_passwd.sh", None),
     "pattern": ("run_owned_pattern.sh", None),
     "classic-netdb": ("run_owned_classic_netdb.sh", None),
+    "unix-mechanisms": ("run_owned_unix_mechanisms.sh", None),
 }
 MATERIALIZATION_PROFILE = "retained dlclose mappings; default NOW with declared lazy imports; runtime GD growth; new runtime IE rejected"
 MATERIALIZATION_QUALIFICATION = "separate live three-product receipt and review required"

@@ -111,6 +111,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "passwd",
                 "pattern",
                 "classic-netdb",
+                "unix-mechanisms",
             ],
         )
         self.assertEqual(report["status"], "implemented-unqualified")

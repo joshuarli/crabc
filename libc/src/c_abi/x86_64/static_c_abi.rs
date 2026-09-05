@@ -1034,6 +1034,12 @@ mod owned_spawn;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_linux_control.rs"]
 mod owned_linux_control;
+// These direct Linux/filesystem/terminal mechanisms reuse the selected
+// allocator, pathname, cancellation, descriptor, and raw-syscall owners.
+// Keep their eight public names out of the frozen selected-static archive.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_unix_mechanisms.rs"]
+mod owned_unix_mechanisms;
 // This product-only block completes one source-mapped set of filesystem C
 // mechanisms without widening the frozen selected-static archive.
 #[cfg(feature = "x86-owned-static-runtime")]

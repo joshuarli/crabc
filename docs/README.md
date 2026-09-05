@@ -20,6 +20,9 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Owned filesystem mechanism evidence](../compat/x86_64/owned-filesystem-mechanisms.md)
   — source-mapped installed filesystem C ABI slice across owned products;
   neither POSIX-family completion nor public support.
+- [Owned Linux/filesystem/terminal mechanism evidence](../compat/x86_64/owned-unix-mechanisms.md)
+  — source-mapped installed Unix C ABI slice across owned products;
+  neither POSIX-family completion nor public support.
 - [Owned C11 quick-termination evidence](../compat/x86_64/owned-quick-exit.md)
   — fixed-capacity `at_quick_exit`/`quick_exit` behavior across the installed
   native products; neither runtime-family completion nor public support.

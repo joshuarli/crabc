@@ -571,6 +571,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-atfork-registry  test installed resource-sized atfork callback ordering
   owned-pty [DYNAMIC_SYSROOT]  test installed PTY naming, lifecycle and session handoff
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
+  owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
   owned-signal-helpers [DYNAMIC_SYSROOT]  test installed signal aliases, bookkeeping and reporting
   owned-pthread-join-cancel  test installed ordinary/try/timed join ownership and cancellation
   owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
@@ -5643,7 +5644,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
-    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers|owned-pty|owned-passwd) ;;
+    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers|owned-pty|owned-passwd|owned-unix-mechanisms) ;;
     owned-assert|owned-legacy-time|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -7689,6 +7690,11 @@ case "$command" in
         [ "$#" -le 1 ] || fail "owned-passwd takes at most one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_passwd.sh "$@"
+        ;;
+    owned-unix-mechanisms)
+        [ "$#" -le 1 ] || fail "owned-unix-mechanisms takes at most one dynamic sysroot"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_unix_mechanisms.sh "$@"
         ;;
     owned-signal-helpers)
         [ "$#" -le 1 ] || fail "owned-signal-helpers takes at most one dynamic sysroot"

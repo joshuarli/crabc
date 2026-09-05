@@ -217,6 +217,16 @@ owned static/static-PIE, and dynamic PIE/non-PIE products. The
 [component contract](owned-vm-mechanisms.md) records the exact musl mapping,
 VM-lifetime seam, same-object matrix, and remaining scope.
 
+## Owned Linux/filesystem/terminal mechanisms
+
+`./scripts/dev-x86_64.sh owned-unix-mechanisms` compares installed C
+`get_current_dir_name`, `mount`, `umount`, `umount2`, `tcdrain`, `vhangup`,
+`vmsplice`, and `isastream` with pinned musl through one source object, owned
+static/static-PIE, and dynamic PIE/non-PIE kernel and direct-interpreter
+products. The [component contract](owned-unix-mechanisms.md) records the
+source mapping, Linux/cancellation boundary, contained privileged-error probe,
+and remaining scope.
+
 ## Owned C11 quick termination
 
 `./scripts/dev-x86_64.sh owned-quick-exit` compares one installed-header C11

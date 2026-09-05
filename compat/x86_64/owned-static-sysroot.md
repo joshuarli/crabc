@@ -578,3 +578,11 @@ multibyte/classification, `glob_t` allocation, local passwd lookup, directory,
 and dropped-privilege error boundaries, along with the same-object
 musl/static/dynamic product evidence. They do not complete the broader C
 pattern, locale, filesystem, or account contracts.
+
+The installed Linux/filesystem/terminal C mechanism block is qualified by
+`owned-unix-mechanisms`: `get_current_dir_name`, mount lifecycle spellings,
+`tcdrain`, `vhangup`, `vmsplice`, and Linux's `isastream` behavior share
+pinned-musl/static/dynamic same-object evidence. [`owned-unix-mechanisms.md`](owned-unix-mechanisms.md)
+records its source mapping, syscall/cancellation boundary, and contained
+privileged-error evidence. It does not select mount policy, STREAMS emulation,
+or a general filesystem or terminal runtime.

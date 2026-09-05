@@ -511,6 +511,14 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "warnx",
                 "wprintf",
                 "wscanf",
+                "get_current_dir_name",
+                "isastream",
+                "mount",
+                "tcdrain",
+                "umount",
+                "umount2",
+                "vhangup",
+                "vmsplice",
             },
         )
         self.assertEqual(
@@ -1855,6 +1863,30 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertTrue(owned_group <= planned["x86-owned-static-runtime"])
         self.assertFalse(owned_group & set(partition["unprovided"]["members"]))
         self.assertFalse(owned_group & set(partition["default_static"]["members"]))
+
+    def test_owned_unix_mechanisms_are_planned_not_unprovided_or_default_static(self) -> None:
+        """The Linux/filesystem/terminal block stays a selected product provider."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        unix_mechanisms = {
+            "get_current_dir_name",
+            "isastream",
+            "mount",
+            "tcdrain",
+            "umount",
+            "umount2",
+            "vhangup",
+            "vmsplice",
+        }
+        partition = report["callable_provider_partition"]
+        planned = {
+            row["id"]: set(row["members"])
+            for row in partition["declared_unverified_feature_archives"]
+        }
+        self.assertTrue(unix_mechanisms <= planned["x86-owned-static-runtime"])
+        self.assertFalse(unix_mechanisms & set(partition["unprovided"]["members"]))
+        self.assertFalse(unix_mechanisms & set(partition["default_static"]["members"]))
 
     @unittest.skipUnless(all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm")), "requires native binutils and C compiler")
     def test_audit_uses_ordinary_archive_extraction_and_reports_finite_complement(self) -> None:

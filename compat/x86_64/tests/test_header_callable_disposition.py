@@ -362,6 +362,32 @@ class HeaderCallableDispositionTests(unittest.TestCase):
             pattern & set(report["primary_disposition"]["default_static"]["members"])
         )
 
+    def test_owned_unix_mechanisms_are_planned_owned_static_not_deferred(self) -> None:
+        """The source-mapped Linux/filesystem/terminal block has one provider."""
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        unix_mechanisms = {
+            "get_current_dir_name",
+            "isastream",
+            "mount",
+            "tcdrain",
+            "umount",
+            "umount2",
+            "vhangup",
+            "vmsplice",
+        }
+
+        self.assertTrue(unix_mechanisms <= providers["x86-owned-static-runtime"])
+        self.assertFalse(unix_mechanisms & deferred)
+
     def test_owned_filesystem_mechanisms_are_planned_owned_static_providers(self) -> None:
         contract = DISPOSITION.load_contract()
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
