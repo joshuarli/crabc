@@ -12,9 +12,10 @@
 //! - `src/thread/pthread_create.c::__pthread_exit` supplies the selected
 //!   cleanup-before-TSD-destructor-before-result ordering, selected list
 //!   transitions, initial-thread `pthread_exit`, and the last-thread ordinary
-//!   exit decision. The separate deferred cancellation leaf owns only active
-//!   selected-worker cleanup records and explicit `pthread_testcancel`;
-//!   signal, robust-list, and implicit cancellation remain unselected.
+//!   exit decision. The separate deferred cancellation leaf owns active
+//!   selected-worker cleanup records, explicit `pthread_testcancel`, and one
+//!   paired private `pthread_cond_wait` cancellation point; signal-driven
+//!   cancellation and robust lists remain unselected.
 //! - `src/thread/x86_64/clone.s::__clone` supplies the seven-argument SysV
 //!   entry layout, `clone=56` register shuffle, aligned child-stack callback,
 //!   and `exit=60` tail. The assembly below is a lexical private-symbol rename
@@ -53,7 +54,7 @@
 //! reaping shape; it is not a claim of general detached-thread reclamation or
 //! full pthread parity. It provides the selected static initial-thread
 //! `pthread_exit` and static fork child-list/TLS/TSD reset paths, but not
-//! signal-driven or implicit-point cancellation, robust lists, dynamic
+//! signal-driven cancellation, robust lists, dynamic
 //! main-thread exit/fork, scheduler application, GNU default attributes,
 //! affinity attributes, live-thread inspection, or general pthread semantics.
 //! Dynamic workers retain the loader's opaque allocation/release token through
@@ -72,7 +73,7 @@ use core::ffi::{c_int, c_void};
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
-use super::{pthread_cancel, pthread_identity, pthread_tsd, raw_syscall, static_tls};
+use super::{pthread_cancel, pthread_cond, pthread_identity, pthread_tsd, raw_syscall, static_tls};
 
 const EAGAIN: c_int = 11;
 const EINTR: c_int = 4;
@@ -363,6 +364,12 @@ struct ThreadControl {
     // pre-clone `Detached + child_tid == 0` ambiguity and a fast child's exit
     // before the creating caller receives its handle.
     creator_handoff_pending: AtomicU8,
+    // A pthread_cancel caller that found this control under the registry lock
+    // may need to wake its mapped condition barrier after that lock is
+    // released. This count pins the control mapping for exactly that tiny
+    // post-lock syscall interval; join/detached reclamation waits for zero
+    // before unmapping. It is not a worker quota or lifecycle state.
+    cancellation_wake_leases: AtomicUsize,
     // This is the worker's logical task-list state, not its join/detach
     // ownership. A worker marks ExitCommitted while the registry lock is
     // held, after cleanup/TSD/result publication but before it reaches
@@ -412,6 +419,11 @@ struct ThreadControl {
     // not in the Static Initial TLS v1 `%fs:0` self word. The mapping remains
     // live through the destructor phase and clear-child-tid handoff.
     tsd: pthread_tsd::SelectedTsdValues,
+    // The selected pthread-only condition cancellation point cannot expose a
+    // stack waiter to a concurrent pthread_cancel caller. This durable node
+    // stays inside the control mapping that already outlives task exit until
+    // join/detach reclamation. C11 workers retain ordinary stack waiters.
+    condition_waiter: pthread_cond::SelectedPthreadConditionWaiter,
     // Each control allocation contributes its own intrusive list node. The
     // registry lock owns every link update, so this removes the former
     // artifact-only fixed worker ceiling without an allocator or side table.
@@ -782,15 +794,47 @@ pub(super) fn request_selected_pthread_cancellation(thread: *mut c_void) -> bool
         return false;
     }
     lock_selected_worker_registry();
+    let mut wake = None;
     let requested = selected_worker_by_thread_pointer_locked(thread as usize)
         .filter(|control| unsafe { matches!((**control).start, SelectedWorkerStart::Pthread(_)) })
         .map(|control| {
             // SAFETY: list membership holds this control mapping live for the
-            // pending store, and only a pthread-mode record is selected.
-            unsafe { pthread_cancel::mark_selected_worker_pending(&(*control).cancellation) }
+            // pending store, and only a pthread-mode record is selected. A
+            // non-null returned barrier is inside this same mapping; pin it
+            // before the lock is released so a completed join/detached reaper
+            // cannot unmap it before the post-lock futex wake below.
+            let barrier = unsafe { pthread_cancel::mark_selected_worker_pending(&(*control).cancellation) };
+            if let Some(barrier) = barrier {
+                if !barrier.is_null() {
+                    unsafe {
+                        (*control)
+                            .cancellation_wake_leases
+                            .fetch_add(1, Ordering::AcqRel)
+                    };
+                    wake = Some((control, barrier));
+                }
+                true
+            } else {
+                false
+            }
         })
         .unwrap_or(false);
     unlock_selected_worker_registry();
+    if let Some((control, barrier)) = wake {
+        // SAFETY: the registry-protected lease keeps this control-mapped
+        // barrier valid until the matching decrement. The helper changes the
+        // word before waking, so the target cannot lose a request that lands
+        // immediately before its futex sleep.
+        unsafe { pthread_cond::wake_selected_pthread_condition_waiter(barrier) };
+        // SAFETY: the same lease proves the control remains mapped for this
+        // final bounded atomic decrement; reclaimers wait for it to reach zero
+        // before they release any mapping from this record.
+        unsafe {
+            (*control)
+                .cancellation_wake_leases
+                .fetch_sub(1, Ordering::Release)
+        };
+    }
     requested
 }
 
@@ -887,6 +931,24 @@ unsafe fn wait_for_creator_handoff(control: *mut ThreadControl) {
     }
 }
 
+/// Wait for post-registry cancellation barrier wakes to finish.
+///
+/// A join claim or detached-reclamation withdrawal already prevents any new
+/// caller from taking a lease. An earlier canceller may still be between its
+/// registry unlock and futex wake, so no control/TLS/stack mapping may be
+/// released until that short lease drains.
+#[inline]
+unsafe fn wait_for_cancellation_wake_leases(control: *mut ThreadControl) {
+    while unsafe {
+        (*control)
+            .cancellation_wake_leases
+            .load(Ordering::Acquire)
+    } != 0
+    {
+        core::hint::spin_loop();
+    }
+}
+
 /// Claim one exited detached worker while its control mapping remains linked.
 fn claim_finished_detached_selected_worker() -> Option<*mut ThreadControl> {
     lock_selected_worker_registry();
@@ -948,6 +1010,10 @@ fn claim_finished_detached_selected_worker() -> Option<*mut ThreadControl> {
 /// access it after this function successfully unmaps its control/stack range.
 #[inline(always)]
 unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Result<(), c_int> {
+    // SAFETY: registry withdrawal admits no new wake lease, and an existing
+    // one can still dereference only this control-mapped barrier. Drain it
+    // before releasing any mapping that might otherwise invalidate that wake.
+    unsafe { wait_for_cancellation_wake_leases(control) };
     // SAFETY: the caller proves the record remains mapped for this first read.
     let tls_block = unsafe { (*control).tls_block };
     if unsafe { (*control).tls_released.load(Ordering::Acquire) } == 0 {
@@ -1042,6 +1108,20 @@ pub(super) fn current_selected_pthread_worker_cancellation(
     // this task exits; C11 controls are intentionally not cancellation-aware.
     matches!(unsafe { (*control).start }, SelectedWorkerStart::Pthread(_))
         .then(|| unsafe { core::ptr::addr_of!((*control).cancellation) })
+}
+
+/// Return the current selected pthread worker's durable condition waiter.
+///
+/// The pointer is private to the condition cancellation transaction. Current
+/// identity validation keeps this control mapping live until the worker exits;
+/// the registry keeps it mapped after that exit until join/detach reclamation.
+/// C11 workers intentionally return no waiter because their C11 condition
+/// path is not a pthread cancellation point.
+pub(super) fn current_selected_pthread_condition_waiter(
+) -> Option<*const pthread_cond::SelectedPthreadConditionWaiter> {
+    let control = current_selected_worker_control()?;
+    matches!(unsafe { (*control).start }, SelectedWorkerStart::Pthread(_))
+        .then(|| unsafe { core::ptr::addr_of!((*control).condition_waiter) })
 }
 
 /// Return the current selected worker's bounded TSD table.
@@ -1468,6 +1548,7 @@ unsafe fn create_selected_worker_with_attributes(
                 child_tid: AtomicI32::new(0),
                 start_ready: AtomicU8::new(0),
                 creator_handoff_pending: AtomicU8::new(1),
+                cancellation_wake_leases: AtomicUsize::new(0),
                 #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
                 task_state: AtomicU8::new(SelectedRuntimeTaskState::ACTIVE),
                 lifecycle: AtomicU8::new(
@@ -1490,6 +1571,7 @@ unsafe fn create_selected_worker_with_attributes(
                 control_mapping,
                 tls_block,
                 tsd: pthread_tsd::SelectedTsdValues::empty(),
+                condition_waiter: pthread_cond::SelectedPthreadConditionWaiter::new(),
                 registry_previous: core::ptr::null_mut(),
                 registry_next: core::ptr::null_mut(),
                 cancellation: pthread_cancel::SelectedWorkerCancellation::new(matches!(

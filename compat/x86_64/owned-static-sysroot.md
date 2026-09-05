@@ -106,9 +106,9 @@ CRT in both modes and the extracted package. Two workers compose errno isolation
 mutex/condition handoff, rwlock exclusion, once publication, and clear-before-call
 TSD destructors before join. This reuses the existing differential body without
 its private startup object. The separate lifecycle consumer below covers
-attributes, C11 adapters, explicit deferred cancellation, and selected-runtime
-fork repair. Allocator-wide fork recovery and dynamic TLS remain separate
-qualification boundaries.
+attributes, C11 adapters, explicit and private-condition deferred cancellation,
+and selected-runtime fork repair. Allocator-wide fork recovery and dynamic
+TLS remain separate qualification boundaries.
 
 The existing `libc_allocator_basic_runtime_v1_probe.c` also runs through both
 installed modes and the extracted package: allocation/reallocation/alignment
@@ -175,14 +175,18 @@ The 24 bounded jobs now cover 72 installed binaries.
 Each TLS job also runs `owned_pthread_lifecycle_consumer.c` through a separate
 installed link: initialized attributes, private guarded and caller-owned
 stacks, 96 simultaneously live workers, concurrent detached creator/reaper
-handoffs, typed C11 results, deferred cancellation cleanup/TSD, and atfork order.
+handoffs, typed C11 results, cleanup/TSD teardown at explicit and blocked
+private-condition deferred cancellation points, and atfork order. Condition
+cancellation repairs the waiter and relocks its mutex before user cleanup;
+registry-serialized withdrawal drains outstanding wake leases before waiter reuse.
 Fork repairs the selected pthread/TSD, stdio, timezone, and shared process-lock
 state; a worker becomes the child's adopted main thread. Logical task exit is
 serialized separately from kernel clear-child-TID: the final live task owns
 ordinary exit, including when the adopted main returns while a child worker
 remains alive. Controls remain owned until creator handoff and kernel
-clear-child-TID both complete. Explicit scheduling, implicit cancellation
-points, allocator-wide fork recovery, and dynamic TLS lifetime remain open.
+clear-child-TID both complete. Explicit scheduling, asynchronous and arbitrary
+syscall cancellation, robust mutexes, allocator-wide fork recovery, and dynamic
+TLS lifetime remain open.
 
 Each POSIX job separately links `owned_spawn_probe.c`: spawn/spawnp file-action
 ordering, working-directory and PATH search, signal/process attributes, worker
