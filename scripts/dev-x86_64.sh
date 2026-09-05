@@ -577,6 +577,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pty [DYNAMIC_SYSROOT]  test installed PTY naming, lifecycle and session handoff
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
   owned-posix-composition [DYNAMIC_SYSROOT] test shared POSIX process state and cancellation
+  owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
   owned-posix-filesystem [DYNAMIC_SYSROOT] test installed POSIX filesystem provider composition
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
   owned-posix-signals [DYNAMIC_SYSROOT]  test residual installed signal state and boundaries
@@ -5704,7 +5705,7 @@ case "$command" in
     owned-posix-timers|owned-pthread-scheduling|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
     qualification-manifest) ;;
-    owned-static-sysroot) ;;
+    owned-static-sysroot|owned-posix-static-products) ;;
     lua-static-source-build) ;;
     lua-dynamic-source-build) ;;
     libc-owned-wordexp) ;;
@@ -7754,6 +7755,21 @@ case "$command" in
         [ "$#" -le 1 ] || fail "owned-posix-composition takes at most one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_posix_composition.sh "$@"
+        ;;
+    owned-posix-static-products)
+        [ "$#" -eq 1 ] || fail "owned-posix-static-products requires one fresh host checkout .work path"
+        container_work="$(python3 -B - "$ROOT_DIR" "$1" <<'PY'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+path = Path(sys.argv[2]).absolute()
+if path.resolve() != path or not path.is_relative_to(root / '.work') or path == root / '.work':
+    raise SystemExit('static preparation requires a physical host checkout .work child')
+print('/workspace/' + path.relative_to(root).as_posix())
+PY
+        )"
+        ensure_image
+        run_in_container python3 -B /workspace/compat/x86_64/owned_posix_static_products.py prepare "$container_work"
         ;;
     owned-unix-mechanisms)
         [ "$#" -le 1 ] || fail "owned-unix-mechanisms takes at most one dynamic sysroot"
