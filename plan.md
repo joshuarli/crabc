@@ -2,28 +2,31 @@
 
 ## Active integration — 2026-09-05
 
-The dynamic catalog now contains 50 cases. The installed POSIX components
-cover the residual filesystem, process-control, credential-profile,
-environment-lifecycle, signal, and kernel-administration workloads, plus a
-shared-state composition workload. The complete 50-case, three-product dynamic
-gate passed at `ce661094`: 150 case receipts, identical product manifests and
-byte-identical packages. Host validation and explicit local publication passed
-for `.work/x86_64/tmp/materialized-dynamic.QXpUta/qualification.json`; log
-`.work/x86_64/owned-dynamic-posix-50-integrated.log`. The seven new POSIX
-workload objects were byte-identical across all three products.
+At `730cafc1`, the complete 50-case dynamic gate passed for both independent
+builds and the extracted package: 150 case receipts, identical product
+manifests and byte-identical packages. Host validation and explicit local
+publication passed for
+`.work/x86_64/tmp/materialized-dynamic.sDElBH/qualification.json`; log
+`.work/x86_64/owned-dynamic-posix-matrix.log`. The same revision passed static
+preparation with two reproducible builds, extraction and host validation:
+`.work/x86_64/posix-static-products-matrix/preparation.json`.
 
-That same revision passed the new static-product preparation command: two
-independent builds, identical packages, matching extracted tree, and independent
-host validation. Its preparation-only receipt is
-`.work/x86_64/posix-static-products-integrated/preparation.json`; it contains no
-runtime or family qualification claim. Subsequent replay/retention changes
-invalidate the prior source selection. They add supplied-static execution for
-the focused workloads, but the complete family coordinator remains open.
-The exact family roster and remaining evidence are in
-`compat/x86_64/owned-posix-runtime.md` and its catalog. The family coordinator
-must still bind all 149 frozen spellings to the six static and twelve dynamic
-product cells and the required native aggregate. Neither these component passes
-nor dynamic product qualification alone closes `libc.posix-runtime`.
+The complete POSIX workload matrix then passed at that revision, including
+host validation: `.work/x86_64/posix-family-matrix/execution.json`; log
+`.work/x86_64/posix-family-matrix.log`. All eighteen workloads ran for each
+product pair. The receipt binds all 149 frozen spellings to six static and
+twelve dynamic cells and checks identical bytes for all 34 object roles
+across the three replays.
+
+The required native aggregate remains open. Supplied-product differential,
+signal/process and source-correct pthread stress components are integrated;
+full OS-test, libc-test and composite aggregate qualification remain required.
+The pthread component preserves the original fixture and failed observations;
+its exact two-call native adaptation requires complementary same-product
+I/O-cancellation evidence. See `compat/x86_64/owned-posix-runtime.md` for the
+aggregate boundary. The later component and driver integrations invalidate the
+earlier source selection. The recorded matrix is a measurement at `730cafc1`,
+not current family closure or public x86 support.
 
 The combined goal remains active and incomplete. Continue the sequence below;
 the historical pause does not instruct current work to stop.
@@ -152,9 +155,10 @@ These are component measurements, not final same-revision qualification.
    cleanup now has a focused installed-product regression; retain it alongside
    the parser-ordering evidence and complete the later resolver family through
    its own aggregate contract.
-6. Continue allocator M2–M11 and Rust-std only after resolving the existing
-   automatic tool-review restrictions described below. Requalify installed
-   products after native Rust allocator promotion. All 223 capabilities,
+6. Continue independent allocator M2–M11 work while preserving the specific
+   metadata and unwinder tool-review restrictions described below. Resume
+   those restricted routes only after their restrictions are resolved.
+   Requalify installed products after native Rust allocator promotion. All 223 capabilities,
    26 families, full product/corpus/performance gates and both plans' final
    predicates must hold at one final source revision.
 
