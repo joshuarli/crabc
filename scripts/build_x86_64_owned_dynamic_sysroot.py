@@ -23,6 +23,7 @@ FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import crabc_cc_owned_dynamic as installed_driver
 import owned_static_sysroot_package as shared_package
+import owned_dynamic_qualification as qualification
 
 
 def audit_shared_elf(path: Path) -> dict[str, str]:
@@ -41,6 +42,7 @@ def audit_shared_elf(path: Path) -> dict[str, str]:
 
 def build(output: Path) -> None:
     common.assert_native_target()
+    source_before_build = qualification.source_digest()
     output = common.validate_output_path(output)
     if not output.is_relative_to(ROOT / ".work"):
         raise common.BuildError("dynamic output must remain below checkout .work")
@@ -52,6 +54,8 @@ def build(output: Path) -> None:
     stage.mkdir(parents=True, mode=0o700)
     staged_output = stage / "installed"
     build_staged_payload(staged_output, stage)
+    if qualification.source_digest() != source_before_build:
+        raise common.BuildError("source changed during dynamic product build")
     try:
         installed_driver.validate(staged_output)
         shared_package.publish_noreplace(staged_output, output, "dynamic sysroot output")
@@ -172,13 +176,16 @@ def build_staged_payload(output: Path, stage: Path) -> None:
                   "libc_command": [arg.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for arg in libc_command],
                   "loader_imports": sorted(allowed)}
     common.write_json(metadata / "libc-shared.provenance.json", provenance)
+    payload_files = {path.relative_to(output).as_posix(): common.sha256_file(path)
+                     for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}
     common.write_json(metadata / "dynamic-product-state.json", {
-        "schema": 1, "status": "materialized-runtime-loader-component",
-        "campaign_complete": False, "public_support": False,
+        "schema": "crabc.x86_64-owned-dynamic-materialization/v1",
+        "status": "materialized-unqualified", "source_sha256": qualification.source_digest(),
+        "contracts": qualification.contract_digests(), "payload_files": payload_files,
+        "runtime_v1_published": False, "campaign_complete": False, "public_support": False,
         "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
-        "dlfcn": "general retained runtime graphs, eager relocation, all-thread DTV growth",
-        "remaining": ["complete-runtime-search-policy",
-                      "dynamic-fork-repair", "dynamic-main-last-pthread-exit", "complete-dynamic-campaign"]})
+        "runtime_profile": qualification.MATERIALIZATION_PROFILE,
+        "qualification": qualification.MATERIALIZATION_QUALIFICATION})
     files = {path.relative_to(output).as_posix(): common.sha256_file(path)
              for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}
     common.write_json(metadata / "manifest.json", {"schema": 1, "format": FORMAT,

@@ -167,24 +167,14 @@ def load_static_product_contract() -> dict[str, Any]:
 
 
 def validate_dynamic_product_contract() -> dict[str, Any]:
-    """Validate the non-promoting dynamic product seed and its digest-bound state."""
-    try:
-        state = json.loads(dynamic_product.STATE_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise CampaignReportError(
-            "cannot load dynamic product state "
-            f"{dynamic_product.STATE_PATH.relative_to(ROOT)}: {error}"
-        ) from error
-    require(isinstance(state, Mapping), "dynamic product state must be a JSON object")
-    report = dynamic_product.validate_contract_and_state(
-        dynamic_product.load_toml(dynamic_product.CONTRACT_PATH), state
-    )
+    """Validate the current product and any live reviewed qualification receipt."""
+    report = dynamic_product.load_current_report()
     require(
         report.get("owner_family") == DYNAMIC_PRODUCT_GATE_ANCHOR,
         "dynamic product contract owner family is invalid",
     )
     require(
-        report.get("status") == "not-materialized",
+        report.get("status") in ("implemented-unqualified", "materialized"),
         "dynamic product contract cannot claim an unproved installed product",
     )
     for field in ("dynamic_family_ids", "prerequisite_families"):
@@ -203,7 +193,7 @@ def validate_dynamic_product_contract() -> dict[str, Any]:
             "promotion_ready": False,
             "public_support": False,
         },
-        "dynamic product seed must remain non-promoting",
+        "dynamic product contract must remain non-promoting",
     )
     return report
 
@@ -279,17 +269,17 @@ def validate_qualification_manifest() -> dict[str, Any]:
 def validate_tls_runtime_v1_contract() -> dict[str, Any]:
     """Keep static/dynamic TLS ownership assumptions visible and fail-closed.
 
-    This does not convert the planned RuntimeV1 handoff into evidence.  It
-    prevents the campaign from aggregating a future loader or sysroot product
-    against a drifted mode-selection, TCB, DTV, or pre-growth rejection rule.
+    The loader contract is implemented but unqualified unless its reviewed
+    publication receipt validates against current source and every product.
+    Private foundation evidence remains separate from this eligibility.
     """
     value = tls_runtime_v1.load_contract()
     require(
-        value.get("status") == "planned",
+        value.get("status") in ("implemented-unqualified", "verified"),
         "loader/libc TLS RuntimeV1 contract cannot claim an unproved status",
     )
     require(
-        value.get("runtime_v1_published") is False,
+        value.get("runtime_v1_published") is (value.get("status") == "verified"),
         "loader/libc TLS RuntimeV1 contract cannot claim a published runtime",
     )
     process_modes = value.get("process_modes")
@@ -545,6 +535,13 @@ def build_report() -> dict[str, Any]:
         tls_runtime_v1_report["status"] == "verified"
         and tls_runtime_v1_report["runtime_v1_published"] is True
     )
+    if tls_runtime_v1_eligible and dynamic_product_report["status"] == "materialized":
+        require(
+            tls_runtime_v1_report.get("qualification_source_sha256")
+            == dynamic_product_report.get("qualification_source_sha256")
+            and isinstance(dynamic_product_report.get("qualification_source_sha256"), str),
+            "dynamic product and RuntimeV1 qualification sources differ",
+        )
     dynamic_product_status = (
         COMPLETED_STATUS
         if dynamic_product_report["status"] == "materialized" and tls_runtime_v1_eligible

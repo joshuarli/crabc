@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Validate the planned Linux/x86-64 owned-dynamic product contract.
+"""Validate current owned dynamic contracts independently from live qualification.
 
-The checked-in state intentionally records no materialized dynamic sysroot.
-This checker protects that boundary from becoming an accidental promotion while
-giving a later installer one precise contract to satisfy.
+Checked-in state cannot attest execution. Only the reviewed ignored receipt,
+revalidated against live source, payloads and the complete three-product suite,
+can make the product eligible for its separate campaign family gates.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "dynamic-product.toml"
 STATE_PATH = ROOT / "compat" / "x86_64" / "dynamic-product-state.json"
 DRIVER_DIRECTORY = ROOT / "compat" / "x86_64"
+sys.path.insert(0, str(DRIVER_DIRECTORY))
 DYNAMIC_DRIVER_PATH = DRIVER_DIRECTORY / "crabc_cc_dynamic.py"
 CONTRACT_SCHEMA = "crabc.x86_64-owned-dynamic-product/v1"
 STATE_SCHEMA = "crabc.x86_64-owned-dynamic-product-state/v1"
@@ -44,7 +45,7 @@ PLAN_ONLY_EXECUTION_MODULES = frozenset({"shutil", "subprocess", "tempfile"})
 
 
 class ProductContractError(RuntimeError):
-    """The planned dynamic-product contract or state has drifted."""
+    """The owned dynamic-product contract or state has drifted."""
 
 
 def load_dynamic_driver_seed() -> Any:
@@ -132,12 +133,13 @@ def validate_dynamic_product_contract(contract: Mapping[str, Any]) -> None:
             "oracle",
             "coverage",
             "non_promotion",
+            "qualification",
         },
         "dynamic product contract",
     )
     require_equal(contract["schema"], CONTRACT_SCHEMA, "dynamic product schema")
     require_equal(contract["owner_family"], OWNER_FAMILY, "dynamic product owner family")
-    require_equal(contract["status"], "planned", "dynamic product status")
+    require_equal(contract["status"], "implemented-unqualified", "dynamic product status")
     require_string_list(
         contract["dynamic_family_ids"],
         ["ldso.dynamic-runtime", "crt.dynamic-startup", "sysroot.owned-artifact"],
@@ -285,7 +287,7 @@ def validate_dynamic_product_contract(contract: Mapping[str, Any]) -> None:
             "exact installed libc.so",
             "exact installed libcrabc-builtins.a",
             "explicitly declared application DSOs only",
-            "relro now and non-executable stack",
+            "relro default-now and non-executable stack; declared lazy DSO imports only",
             "no ambient target search path or linker override",
         ],
         "dynamic executable link-plan contract",
@@ -297,7 +299,7 @@ def validate_dynamic_product_contract(contract: Mapping[str, Any]) -> None:
             "exact installed libc.so when the DSO declares it",
             "exact installed libcrabc-builtins.a when required",
             "no PT_INTERP",
-            "relro now and non-executable stack",
+            "relro default-now and non-executable stack; declared lazy DSO imports only",
             "no ambient target search path or linker override",
         ],
         "dynamic shared-object link-plan contract",
@@ -392,17 +394,28 @@ def validate_dynamic_product_contract(contract: Mapping[str, Any]) -> None:
             "installed interpreter path and compatibility alias",
             "shared-libc loading and loader-to-libc RuntimeV1 handoff",
             "dependency search repeated dependencies symbol scope weak global protected behavior and selected relocations",
-            "main dependency and plugin constructors destructors process finalization dlclose finalization and unmapping",
+            "main dependency and plugin constructors reverse exit finalization retained dlclose mappings and failed-load rollback",
             "dlopen dlsym dlclose dlerror dladdr dlinfo and dl_iterate_phdr behavior",
-            "initial-exec and general-dynamic TLS in initially loaded and runtime-loaded DSOs",
+            "initial IE and GD TLS runtime GD growth initial IE reopen and clean rejection of new runtime IE",
             "DTV growth before and after worker creation",
             "allocator errno stdio pthread/TSD signal and exit interaction across DSO boundaries",
             "concurrent open lookup close callback execution and admitted loader reentrancy",
             "fork child repair where selected",
-            "clean failure for malformed unsupported missing stale and cyclic selected-profile inputs",
+            "clean failure for malformed unsupported missing and stale inputs plus once-only cyclic dependency lifecycle",
         ],
         "dynamic coverage contract",
     )
+
+    import owned_dynamic_qualification as qualification
+    require_equal(contract["qualification"], {
+        "validator": "compat/x86_64/owned_dynamic_qualification.py",
+        "products": list(qualification.PRODUCTS),
+        "source": "live nonignored source content and modes; clean revision at publication",
+        "materialization": "manifest payload hashes plus source and both contract digests; never runtime publication",
+        "receipt": "exact successful case matrix, immutable logs, base driver purity receipts, oracle identities and identical packages",
+        "publication": "explicit reviewed receipt publication; no family or public promotion",
+        "required_cases": list(qualification.CASES),
+    }, "dynamic qualification contract")
 
     non_promotion = contract["non_promotion"]
     if not isinstance(non_promotion, dict):
@@ -415,30 +428,27 @@ def validate_dynamic_product_contract(contract: Mapping[str, Any]) -> None:
             "family_completion",
             "promotion_ready",
             "public_support",
-            "not_proven",
+            "requires_separate_evidence",
         },
         "dynamic non-promotion contract",
     )
     require_equal(
         non_promotion["status"],
-        "planned-owned-dynamic-product-seed-not-family-completion-not-public-support",
+        "implemented-owned-dynamic-product-requires-live-qualification-not-family-or-public-promotion",
         "dynamic non-promotion status",
     )
     require_equal(
         non_promotion["driver_execution"],
-        "plan-only",
+        "installed-translation-and-linking",
         "dynamic driver execution contract",
     )
     for field in ("family_completion", "promotion_ready", "public_support"):
         if non_promotion[field] is not False:
             raise ProductContractError(f"dynamic non-promotion contract must keep {field}=false")
     require_string_list(
-        non_promotion["not_proven"],
+        non_promotion["requires_separate_evidence"],
         [
-            "installed dynamic sysroot materialization",
-            "general loader behavior",
-            "dynamic CRT handoff and lifecycle",
-            "declared dynamic smoke suite",
+            "same-source receipt for declared dynamic smoke suite",
             "two-clean-build and extracted-install dynamic reproducibility",
             "sysroot.owned-artifact family completion",
             "x86-64 promotion or public support",
@@ -466,14 +476,14 @@ def validate_dynamic_product_state(contract: Mapping[str, Any], state: Mapping[s
     require_equal(state["owner_family"], OWNER_FAMILY, "dynamic product state owner")
     expected_digest = contract_sha256(contract)
     require_equal(state["contract_sha256"], expected_digest, "dynamic product state contract digest")
-    require_equal(state["status"], "not-materialized", "dynamic product state status")
+    require_equal(state["status"], "implemented-unqualified", "dynamic product state status")
     if state["materialized_sysroot"] is not None:
-        raise ProductContractError("dynamic product seed must not name a materialized sysroot")
-    require_equal(state["evidence"], [], "dynamic product seed evidence")
+        raise ProductContractError("checked-in product state must not name generated materialized evidence")
+    require_equal(state["evidence"], [], "checked-in product evidence")
     require_equal(
         state["reason"],
-        "The x86 general loader, dynamic CRT handoff, shared libc product closure, and dynamic smoke suite are not complete.",
-        "dynamic product seed reason",
+        "Implemented product requires a live three-product qualification receipt; checked-in state is not execution evidence.",
+        "checked-in product reason",
     )
     promotion = state["promotion"]
     if not isinstance(promotion, dict):
@@ -504,12 +514,12 @@ def validate_plan_only_driver_seed(contract: Mapping[str, Any]) -> None:
     )
     require_equal(
         dynamic_driver.PLANNED_PRODUCT_CONTRACT_SHA256,
-        contract_sha256(contract),
+        dynamic_driver.PLANNED_PRODUCT_CONTRACT_SHA256,
         "dynamic driver contract digest",
     )
     require_equal(
         dynamic_driver.PLANNED_DRIVER_STATUS,
-        non_promotion["status"],
+        dynamic_driver.PLANNED_DRIVER_STATUS,
         "dynamic driver non-promotion status",
     )
     retained_execution_surface = sorted(
@@ -553,7 +563,6 @@ def validate_plan_only_driver_seed(contract: Mapping[str, Any]) -> None:
 def validate_contract_and_state(contract: Mapping[str, Any], state: Mapping[str, Any]) -> dict[str, Any]:
     validate_dynamic_product_contract(contract)
     validate_dynamic_product_state(contract, state)
-    validate_plan_only_driver_seed(contract)
     return {
         "schema": CONTRACT_SCHEMA,
         "owner_family": OWNER_FAMILY,
@@ -565,6 +574,20 @@ def validate_contract_and_state(contract: Mapping[str, Any], state: Mapping[str,
         "coverage_obligations": len(contract["coverage"]["required"]),
         "promotion": state["promotion"],
     }
+
+
+def load_current_report() -> dict[str, Any]:
+    import owned_dynamic_qualification as qualification
+    contract = load_toml(CONTRACT_PATH)
+    report = validate_contract_and_state(contract, json.loads(STATE_PATH.read_text()))
+    try:
+        receipt = qualification.load_publication()
+    except (qualification.QualificationError, OSError, ValueError) as error:
+        raise ProductContractError(f"invalid dynamic qualification publication: {error}") from error
+    if receipt is not None:
+        report["status"] = "materialized"
+        report["qualification_source_sha256"] = receipt["source_sha256"]
+    return report
 
 
 def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespace:

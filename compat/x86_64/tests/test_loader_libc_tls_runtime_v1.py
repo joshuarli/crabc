@@ -76,7 +76,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
         report = runtime_v1.validate_contract(self.contract())
 
         self.assertEqual(report["id"], "x86-loader-libc-tls-runtime-v1")
-        self.assertEqual(report["status"], "planned")
+        self.assertEqual(report["status"], "implemented-unqualified")
         self.assertFalse(report["runtime_v1_published"])
         self.assertTrue(report["private_initial_tls_foundation"])
         self.assertTrue(report["private_initial_tls_registry_foundation"])
@@ -107,11 +107,12 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
             [
                 "ldso-general-initial-tls-runtime-v1",
                 "ldso-dynamic-main-thread-runtime-v1",
+                "owned-dynamic-runtime-v1",
             ],
         )
         self.assertEqual(report["process_modes"], ["static", "dynamic"])
         self.assertEqual(
-            report["evidence_states"], ["private-foundation-complete"] * 4 + ["planned"] * 5
+            report["evidence_states"], ["private-foundation-complete"] * 4 + ["implemented-unqualified"] * 5
         )
 
     def test_static_dynamic_selection_and_owner_are_not_interchangeable(self) -> None:
@@ -164,7 +165,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
             (
                 "unsafe growth",
                 lambda contract: contract["dtv"].__setitem__(
-                    "runtime_tls_load_before_growth", "allow-fixed-dtv"
+                    "runtime_tls_load", "allow-fixed-dtv"
                 ),
                 "DTV contract drifted",
             ),
@@ -248,7 +249,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
             runtime_v1.validate_contract(contract)
 
         contract = self.contract()
-        integration = contract["future_integration"]
+        integration = contract["integration"]
         assert isinstance(integration, list)
         first = integration[0]
         assert isinstance(first, dict)
@@ -257,7 +258,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
             runtime_v1.validate_contract(contract)
 
         contract = self.contract()
-        integration = contract["future_integration"]
+        integration = contract["integration"]
         assert isinstance(integration, list)
         general_initial_tls = next(
             row
@@ -269,7 +270,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
             runtime_v1.validate_contract(contract)
 
         contract = self.contract()
-        integration = contract["future_integration"]
+        integration = contract["integration"]
         assert isinstance(integration, list)
         general_runtime_v1 = next(
             row
@@ -401,7 +402,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
 
     def test_general_initial_tls_materialization_is_private_and_transactional(self) -> None:
         contract = self.contract()
-        integration = contract["future_integration"]
+        integration = contract["integration"]
         assert isinstance(integration, list)
         materialization = next(
             row
@@ -494,7 +495,7 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
         self.assertFalse(foundation["general_dynamic_product"])
         self.assertFalse(foundation["capability_or_family_promotion"])
 
-        integration = contract["future_integration"]
+        integration = contract["integration"]
         assert isinstance(integration, list)
         publication = next(
             row

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate the planned, private x86 loader/libc TLS RuntimeV1 contract.
+"""Validate the current private x86 loader/libc TLS RuntimeV1 contract.
 
 The contract is intentionally stricter than a checklist: it pins one owner
 for each process mode and refuses to relabel either existing fixed-TLS fixture
@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import tomllib
+import sys
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -21,6 +22,8 @@ CONTRACT_PATH = ROOT / "compat" / "x86_64" / "loader-libc-tls-runtime-v1.toml"
 
 SCHEMA = "crabc.x86_64-loader-libc-tls-runtime/v1"
 CONTRACT_ID = "x86-loader-libc-tls-runtime-v1"
+
+OWNED_RUNTIME = {'state': 'implemented-unqualified', 'producer': 'ldso/src/x86_64_general_initial_tls_state.rs:GeneralInitialTlsState::commit_runtime_v1', 'entry': 'ldso/src/x86_64_general_initial_graph.rs:run_with_initial_tls', 'attachment': 'libc/src/c_abi/x86_64/owned_dynamic_attachment.rs', 'carrier': 'crt/src/x86_64_dynamic_startup.rs', 'worker_adapter': 'libc/src/c_abi/x86_64/dynamic_tls.rs', 'runtime_view': 'ldso/src/x86_64_runtime_tls_view.rs', 'worker_owner': 'ldso/src/x86_64_initial_worker_tls.rs', 'initial_wire': 'FS+8 initial DTV and FS+16 initial count remain immutable', 'current_view': 'FS+24 atomically publishes current generation and module-count view', 'module_ids': 'monotonic registry IDs; all live threads prepared before publication', 'old_views': 'retained until worker quiescence; initial thread storage retained for process lifetime', 'worker_operation': 'loader allocates current generation under runtime guard and owns release token', 'attachment_order': 'validate 72-byte descriptor and 144-byte owned CRT record before libc TLS access', 'fork': 'loader registry and surviving TLS repair before libc thread registry repair', 'qualification': 'owned_dynamic_qualification.py live three-product receipt only'}
 
 TARGET = {
     "system": "Linux",
@@ -42,7 +45,7 @@ PROCESS_MODES = {
         "selector": "pt-interp-installed-crabc-ldso",
         "tcb_owner": "crabc-ldso/runtime-v1",
         "dtv_owner": "crabc-ldso/runtime-v1",
-        "runtime_tls_modules": "reject-until-dtv-growth-protocol-complete",
+        "runtime_tls_modules": "loader-owned-all-thread-dtv-growth",
         "thread_creation": "libc-consumes-ldso-runtime-v1",
     },
 }
@@ -172,10 +175,10 @@ DTV = {
     "module_ids": "nonzero-stable-loader-owned-while-module-is-addressable",
     "generation": "monotonic-loader-owned-registry-generation",
     "initial_population": "all-initial-pt-tls-modules-before-dynamic-tls-relocations-or-libc-handoff",
-    "runtime_tls_load_before_growth": "reject-before-map-relocation-constructor-or-generation-change",
+    "runtime_tls_load": "prepare-all-live-thread-views-before-atomic-registry-and-view-publication",
     "growth_completion": "registry-growth-current-thread-refresh-new-thread-current-generation-and-safe-old-dtv-reclamation",
     "old_dtv_reclamation": "retain-until-no-thread-or-loader-reader-can-observe-old-dtv",
-    "tls_module_unload": "reject-or-retain-until-thread-lifetime-and-dtv-slot-safety-are-proved",
+    "tls_module_unload": "retain-successful-load-mappings-and-module-ids-through-exit; rollback-failed-transactions-before-publication",
 }
 
 CURRENT_ARTIFACTS = [
@@ -211,12 +214,20 @@ CURRENT_ARTIFACTS = [
     },
 ]
 
-FUTURE_INTEGRATION = [
+CURRENT_ARTIFACTS.append({
+    "id": "owned-dynamic-runtime-v1",
+    "path": "ldso/src/x86_64_general_initial_tls_state.rs",
+    "mode": "owned-dynamic",
+    "boundary": "owned-producer-with-growth-worker-adapter-and-crt-attachment-requires-live-product-qualification",
+    "runtime_v1_producer": True,
+})
+
+INTEGRATION = [
     {
         "id": "ldso-runtime-v1-producer",
-        "path": "ldso/src/loader.rs",
+        "path": "ldso/src/x86_64_general_initial_tls_state.rs",
         "boundary": "own-the-registry-generation-dtv-growth-and-private-descriptor",
-        "state": "planned",
+        "state": "implemented-unqualified",
     },
     {
         "id": "ldso-x86-main-thread-materialization",
@@ -241,25 +252,25 @@ FUTURE_INTEGRATION = [
         "id": "libc-dynamic-pthread-consumer",
         "path": "libc/src/c_abi/x86_64/pthread_create_join.rs",
         "boundary": "consume-runtime-v1-new-thread-operation-instead-of-static-tls-allocation",
-        "state": "planned",
+        "state": "implemented-unqualified",
     },
     {
         "id": "libc-static-mode-separation",
         "path": "libc/src/c_abi/x86_64/static_tls.rs",
         "boundary": "retain-no-pt-interp-static-owner-and-refuse-dynamic-runtimev1-substitution",
-        "state": "planned",
+        "state": "implemented-unqualified",
     },
     {
         "id": "crt-private-handoff-carrier",
         "path": "ldso/src/x86_64_initial_graph.rs",
-        "boundary": "carry-validated-runtime-v1-only-through-the-future-owned-dynamic-crt-handoff",
-        "state": "planned",
+        "boundary": "carry-validated-runtime-v1-through-owned-dynamic-crt-record-before-libc-tls-access",
+        "state": "implemented-unqualified",
     },
     {
         "id": "dynamic-tls-regression-to-product",
         "path": "compat/x86_64/run_ldso_initial_tls.sh",
         "boundary": "retain-fixed-graph-tls-as-regression-while-installed-dynamic-product-gains-runtimev1-evidence",
-        "state": "planned",
+        "state": "implemented-unqualified",
     },
 ]
 
@@ -300,27 +311,27 @@ EVIDENCE = [
     },
     {
         "id": "initial-dynamic-variant-ii-layout",
-        "state": "planned",
+        "state": "implemented-unqualified",
         "required": "installed-dynamic-pie-and-non-pie-prove-tls-template-copy-tbss-alignment-fs-self-and-dtv",
     },
     {
         "id": "pthread-dynamic-thread-materialization",
-        "state": "planned",
+        "state": "implemented-unqualified",
         "required": "owned-pthread-workers-observe-fresh-libc-and-dso-tls-with-clone_settls-from-runtimev1",
     },
     {
         "id": "runtime-tls-dtv-growth",
-        "state": "planned",
+        "state": "implemented-unqualified",
         "required": "runtime-pt-tls-dso-before-and-after-worker-creation-proves-generation-refresh-and-safe-reclamation",
     },
     {
-        "id": "runtime-tls-rejection-before-growth",
-        "state": "planned",
-        "required": "pre-growth-loader-rejects-runtime-pt-tls-dso-without-map-constructor-module-id-or-dtv-mutation",
+        "id": "runtime-new-ie-rejection",
+        "state": "implemented-unqualified",
+        "required": "runtime-new-ie-rejected-before-callback-and-publication-while-gd-growth-and-initial-ie-reopen-remain-supported",
     },
     {
         "id": "fork-cancellation-and-tls-lifetime",
-        "state": "planned",
+        "state": "implemented-unqualified",
         "required": "loader-pthread-fork-repair-cancellation-and-dlclose-or-retention-stress-runs-through-owned-dynamic-artifacts",
     },
 ]
@@ -368,21 +379,23 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         "variant_ii",
         "dtv",
         "current_artifact",
-        "future_integration",
+        "integration",
         "evidence",
+        "owned_runtime",
     }
     if set(document) != expected_top_level:
         raise TlsRuntimeContractError("TLS RuntimeV1 top-level contract drifted")
     if document.get("schema") != SCHEMA or document.get("id") != CONTRACT_ID:
         raise TlsRuntimeContractError("TLS RuntimeV1 identity contract drifted")
-    if document.get("status") != "planned" or document.get("non_promoting") is not True:
-        raise TlsRuntimeContractError("TLS RuntimeV1 status must remain planned and non-promoting")
+    if document.get("status") != "implemented-unqualified" or document.get("non_promoting") is not True:
+        raise TlsRuntimeContractError("TLS RuntimeV1 status must remain implemented-unqualified and non-promoting")
     if document.get("oracle") != (
         "musl-1.2.6 ldso/dynlink.c initial TLS and DTV lifecycle; "
         "Linux 5.10 x86-64 ARCH_SET_FS and CLONE_SETTLS"
     ):
         raise TlsRuntimeContractError("TLS RuntimeV1 oracle contract drifted")
 
+    require_exact_mapping(document.get("owned_runtime"), OWNED_RUNTIME, "owned runtime")
     require_exact_mapping(document.get("target"), TARGET, "TLS RuntimeV1 target")
     process_modes = document.get("process_modes")
     if not isinstance(process_modes, Mapping) or set(process_modes) != set(PROCESS_MODES):
@@ -413,14 +426,14 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
     require_exact_mapping(document.get("variant_ii"), VARIANT_II, "Variant-II")
     require_exact_mapping(document.get("dtv"), DTV, "DTV")
     require_exact_rows(document.get("current_artifact"), CURRENT_ARTIFACTS, "current-artifact")
-    require_exact_rows(document.get("future_integration"), FUTURE_INTEGRATION, "future-integration")
+    require_exact_rows(document.get("integration"), INTEGRATION, "future-integration")
     require_exact_rows(document.get("evidence"), EVIDENCE, "evidence")
 
     for row in CURRENT_ARTIFACTS:
         path = ROOT / row["path"]
         if not path.is_file():
             raise TlsRuntimeContractError(f"current-artifact path is missing: {row['path']}")
-    for row in FUTURE_INTEGRATION:
+    for row in INTEGRATION:
         path = ROOT / row["path"]
         if not path.exists():
             raise TlsRuntimeContractError(f"future-integration path is missing: {row['path']}")
@@ -450,18 +463,18 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         if not path.is_file():
             raise TlsRuntimeContractError(f"initial-TLS foundation path is missing: {path.relative_to(ROOT)}")
 
-    future_integration_by_id = {row["id"]: row for row in FUTURE_INTEGRATION}
+    integration_by_id = {row["id"]: row for row in INTEGRATION}
     return {
         "schema": SCHEMA,
         "id": CONTRACT_ID,
-        "status": "planned",
+        "status": "implemented-unqualified",
         "runtime_v1_published": False,
         "private_initial_tls_foundation": True,
         "initial_tls_foundation_state": INITIAL_TLS_FOUNDATION["state"],
         "private_initial_tls_registry_foundation": True,
         "initial_tls_registry_foundation_state": INITIAL_TLS_REGISTRY_FOUNDATION["state"],
         "private_general_initial_tls_foundation": True,
-        "general_initial_tls_materialization_state": future_integration_by_id[
+        "general_initial_tls_materialization_state": integration_by_id[
             "ldso-x86-main-thread-materialization"
         ]["state"],
         "private_general_initial_tls_runtime_v1_foundation": True,
@@ -477,12 +490,23 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         ],
         "process_modes": list(PROCESS_MODES),
         "evidence_states": [row["state"] for row in EVIDENCE],
-        "future_integration": [row["id"] for row in FUTURE_INTEGRATION],
+        "integration": [row["id"] for row in INTEGRATION],
     }
 
 
 def load_contract() -> dict[str, object]:
-    return validate_contract(load_toml(CONTRACT_PATH))
+    report = validate_contract(load_toml(CONTRACT_PATH))
+    sys.path.insert(0, str(CONTRACT_PATH.parent))
+    import owned_dynamic_qualification as qualification
+    try:
+        receipt = qualification.load_publication()
+    except (qualification.QualificationError, OSError, ValueError) as error:
+        raise TlsRuntimeContractError(f"invalid RuntimeV1 publication evidence: {error}") from error
+    if receipt is not None:
+        report["status"] = "verified"
+        report["runtime_v1_published"] = True
+        report["qualification_source_sha256"] = receipt["source_sha256"]
+    return report
 
 
 def main(argv: list[str] | None = None) -> int:

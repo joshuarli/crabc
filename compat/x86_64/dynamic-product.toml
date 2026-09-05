@@ -1,9 +1,10 @@
-# This is the planned campaign-level owned-dynamic product contract. It is a
-# fail-closed integration seed, not evidence that `sysroot.owned-artifact`,
-# any prerequisite family, or Linux/x86-64 public support has completed.
+# Current owned dynamic product contract. Building produces an unqualified
+# installed artifact; only a live reviewed three-product receipt supplies
+# qualification. Product evidence never completes prerequisite families or
+# all-26/public-support promotion by itself.
 schema = "crabc.x86_64-owned-dynamic-product/v1"
 owner_family = "sysroot.owned-artifact"
-status = "planned"
+status = "implemented-unqualified"
 dynamic_family_ids = ["ldso.dynamic-runtime", "crt.dynamic-startup", "sysroot.owned-artifact"]
 prerequisite_families = ["ldso.dynamic-runtime", "crt.dynamic-startup", "sysroot.static-tls"]
 
@@ -77,7 +78,7 @@ executable_required = [
   "exact installed libc.so",
   "exact installed libcrabc-builtins.a",
   "explicitly declared application DSOs only",
-  "relro now and non-executable stack",
+  "relro default-now and non-executable stack; declared lazy DSO imports only",
   "no ambient target search path or linker override",
 ]
 shared_object_required = [
@@ -85,7 +86,7 @@ shared_object_required = [
   "exact installed libc.so when the DSO declares it",
   "exact installed libcrabc-builtins.a when required",
   "no PT_INTERP",
-  "relro now and non-executable stack",
+  "relro default-now and non-executable stack; declared lazy DSO imports only",
   "no ambient target search path or linker override",
 ]
 
@@ -133,28 +134,36 @@ required = [
   "installed interpreter path and compatibility alias",
   "shared-libc loading and loader-to-libc RuntimeV1 handoff",
   "dependency search repeated dependencies symbol scope weak global protected behavior and selected relocations",
-  "main dependency and plugin constructors destructors process finalization dlclose finalization and unmapping",
+  "main dependency and plugin constructors reverse exit finalization retained dlclose mappings and failed-load rollback",
   "dlopen dlsym dlclose dlerror dladdr dlinfo and dl_iterate_phdr behavior",
-  "initial-exec and general-dynamic TLS in initially loaded and runtime-loaded DSOs",
+  "initial IE and GD TLS runtime GD growth initial IE reopen and clean rejection of new runtime IE",
   "DTV growth before and after worker creation",
   "allocator errno stdio pthread/TSD signal and exit interaction across DSO boundaries",
   "concurrent open lookup close callback execution and admitted loader reentrancy",
   "fork child repair where selected",
-  "clean failure for malformed unsupported missing stale and cyclic selected-profile inputs",
+  "clean failure for malformed unsupported missing and stale inputs plus once-only cyclic dependency lifecycle",
 ]
 
 [non_promotion]
-status = "planned-owned-dynamic-product-seed-not-family-completion-not-public-support"
-driver_execution = "plan-only"
+status = "implemented-owned-dynamic-product-requires-live-qualification-not-family-or-public-promotion"
+driver_execution = "installed-translation-and-linking"
 family_completion = false
 promotion_ready = false
 public_support = false
-not_proven = [
-  "installed dynamic sysroot materialization",
-  "general loader behavior",
-  "dynamic CRT handoff and lifecycle",
-  "declared dynamic smoke suite",
+requires_separate_evidence = [
+  "same-source receipt for declared dynamic smoke suite",
   "two-clean-build and extracted-install dynamic reproducibility",
   "sysroot.owned-artifact family completion",
   "x86-64 promotion or public support",
 ]
+
+# A build is materialization only. Qualification is an ignored live-source
+# receipt; its publication is reviewed separately from all family/platform gates.
+[qualification]
+validator = "compat/x86_64/owned_dynamic_qualification.py"
+products = ["installed", "second", "extracted"]
+source = "live nonignored source content and modes; clean revision at publication"
+materialization = "manifest payload hashes plus source and both contract digests; never runtime publication"
+receipt = "exact successful case matrix, immutable logs, base driver purity receipts, oracle identities and identical packages"
+publication = "explicit reviewed receipt publication; no family or public promotion"
+required_cases = ["cycle", "cli", "elf-scope-alias", "dlopen-pie", "dlopen-non-pie", "lazy-pie", "lazy-non-pie", "constructor-exit", "pthread-signal", "pthread-exit", "fork", "pthread-getattr", "pthread-join-cancel", "pthread-cond-cancel", "io-cancellation"]

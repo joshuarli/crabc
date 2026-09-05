@@ -1,11 +1,11 @@
 {
   "schema": "crabc.x86_64-owned-dynamic-product-state/v1",
   "owner_family": "sysroot.owned-artifact",
-  "contract_sha256": "fe5053e696b158d69d98e96e0e78e5c935261a360c750b6892278eed752663a8",
-  "status": "not-materialized",
+  "contract_sha256": "caef76c08d3b27719a6129ed1aeb37f4fd188032e04eb497c40db1e1fb0973a7",
+  "status": "implemented-unqualified",
   "materialized_sysroot": null,
   "evidence": [],
-  "reason": "The x86 general loader, dynamic CRT handoff, shared libc product closure, and dynamic smoke suite are not complete.",
+  "reason": "Implemented product requires a live three-product qualification receipt; checked-in state is not execution evidence.",
   "promotion": {
     "family_completion": false,
     "promotion_ready": false,

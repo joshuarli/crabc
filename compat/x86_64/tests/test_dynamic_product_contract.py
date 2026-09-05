@@ -50,7 +50,10 @@ class DynamicProductContractTests(unittest.TestCase):
 
         destination = root / "share" / "crabc" / "dynamic-product-state.json"
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(STATE_PATH, destination)
+        state = self.state_data()
+        state["status"] = "not-materialized"
+        state["contract_sha256"] = DRIVER.PLANNED_PRODUCT_CONTRACT_SHA256
+        destination.write_text(json.dumps(state))
         return destination
 
     def test_checked_in_seed_is_planned_and_non_promoting(self) -> None:
@@ -58,14 +61,14 @@ class DynamicProductContractTests(unittest.TestCase):
         state = self.state_data()
         report = PRODUCT.validate_contract_and_state(contract, state)
 
-        self.assertEqual(contract["status"], "planned")
+        self.assertEqual(contract["status"], "implemented-unqualified")
         self.assertEqual(contract["owner_family"], "sysroot.owned-artifact")
         self.assertEqual(
             [mode["id"] for mode in contract["mode"]],
             ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
         )
-        self.assertEqual(report["status"], "not-materialized")
-        self.assertEqual(contract["non_promotion"]["driver_execution"], "plan-only")
+        self.assertEqual(report["status"], "implemented-unqualified")
+        self.assertEqual(contract["non_promotion"]["driver_execution"], "installed-translation-and-linking")
         self.assertEqual(
             report["dynamic_family_ids"],
             ["ldso.dynamic-runtime", "crt.dynamic-startup", "sysroot.owned-artifact"],
@@ -156,7 +159,7 @@ class DynamicProductContractTests(unittest.TestCase):
             side_effect=(plan, plan),
         ):
             with self.assertRaisesRegex(PRODUCT.ProductContractError, "driver seed"):
-                PRODUCT.validate_contract_and_state(contract, state)
+                PRODUCT.validate_plan_only_driver_seed(contract)
 
     def test_dynamic_driver_seed_has_no_translation_or_link_execution_surface(self) -> None:
         execution_surface = (
@@ -166,7 +169,7 @@ class DynamicProductContractTests(unittest.TestCase):
 
         with mock.patch.object(PRODUCT.dynamic_driver, "compile_source", object(), create=True):
             with self.assertRaisesRegex(PRODUCT.ProductContractError, "executable helper surface"):
-                PRODUCT.validate_contract_and_state(self.contract_data(), self.state_data())
+                PRODUCT.validate_plan_only_driver_seed(self.contract_data())
 
     def test_dynamic_driver_plans_owned_pie_non_pie_and_shared_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -323,7 +326,7 @@ class DynamicProductContractTests(unittest.TestCase):
             self.assertEqual(materialized_claim.returncode, 1)
             self.assertIn("not-materialized", materialized_claim.stderr)
 
-    def test_runner_only_checks_the_contract_and_default_path_is_explicitly_red(self) -> None:
+    def test_runner_contract_check_is_unqualified_and_default_routes_to_product_gate(self) -> None:
         syntax = subprocess.run(
             ["bash", "-n", str(RUNNER_PATH)],
             cwd=ROOT,
@@ -344,18 +347,20 @@ class DynamicProductContractTests(unittest.TestCase):
             text=True,
         )
         self.assertEqual(contract_only.returncode, 0, contract_only.stderr)
-        self.assertIn("not product evidence", contract_only.stdout)
+        self.assertIn("implemented-unqualified", contract_only.stdout)
 
-        incomplete = subprocess.run(
-            [str(RUNNER_PATH)],
-            cwd=ROOT,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self.assertEqual(incomplete.returncode, 1)
-        self.assertIn("INCOMPLETE", incomplete.stderr)
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture = Path(temporary) / "compat/x86_64"
+            fixture.mkdir(parents=True)
+            runner = fixture / RUNNER_PATH.name
+            shutil.copyfile(RUNNER_PATH, runner)
+            (fixture / "run_materialized_dynamic_sysroot.sh").write_text(
+                "#!/usr/bin/env bash\nprintf 'isolated materialized gate\\n'\nexit 37\n"
+            )
+            completed = subprocess.run(["bash", str(runner)], capture_output=True, text=True)
+            self.assertEqual(completed.returncode, 37)
+            self.assertEqual(completed.stdout, "isolated materialized gate\n")
+
 
 
 if __name__ == "__main__":

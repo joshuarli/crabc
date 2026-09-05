@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import sys
 import unittest
 from pathlib import Path
@@ -13,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 REPORTER = ROOT / "compat" / "x86_64" / "campaign_report.py"
 sys.path.insert(0, str(REPORTER.parent))
 import campaign_report as report  # noqa: E402
+import owned_dynamic_qualification as qualification
 
 
 class CampaignReportTests(unittest.TestCase):
@@ -21,7 +23,8 @@ class CampaignReportTests(unittest.TestCase):
         # Validation is intentionally part of report construction.  Keep the
         # focused tests focused by exercising that real boundary once, then
         # inspect the one generated value in the remaining shape tests.
-        cls.value = report.build_report()
+        with mock.patch.object(qualification, "load_publication", return_value=None):
+            cls.value = report.build_report()
 
     def test_report_is_derived_from_current_validated_contract(self) -> None:
         value = self.value
@@ -47,7 +50,7 @@ class CampaignReportTests(unittest.TestCase):
         )
         self.assertEqual(
             value["validation"]["loader_libc_tls_runtime_v1_check"]["status"],
-            "planned",
+            "implemented-unqualified",
         )
         self.assertFalse(
             value["validation"]["loader_libc_tls_runtime_v1_check"][
@@ -98,7 +101,7 @@ class CampaignReportTests(unittest.TestCase):
         )
         self.assertEqual(
             value["validation"]["dynamic_product_contract_check"]["status"],
-            "not-materialized",
+            "implemented-unqualified",
         )
         self.assertEqual(
             len(value["capabilities"]),
@@ -150,6 +153,27 @@ class CampaignReportTests(unittest.TestCase):
         self.assertEqual(passed["state"], "passed")
         self.assertTrue(passed["pass"])
         self.assertEqual(passed["transition_commands"], [])
+
+    def test_reviewed_product_does_not_complete_prerequisite_families_or_platform(self):
+        with mock.patch.object(qualification, "load_publication", return_value=None):
+            inputs = copy.deepcopy(report.load_validated_campaign_inputs())
+        inputs[4]["status"] = "materialized"
+        inputs[4]["qualification_source_sha256"] = "a" * 64
+        inputs[7]["status"] = "verified"
+        inputs[7]["runtime_v1_published"] = True
+        inputs[7]["qualification_source_sha256"] = "a" * 64
+        with mock.patch.object(report, "load_validated_campaign_inputs", return_value=inputs):
+            value = report.build_report()
+            dynamic = value["gates"]["dynamic_product"]
+            self.assertEqual(dynamic["contract_status"], report.COMPLETED_STATUS)
+            self.assertFalse(dynamic["pass"])
+            self.assertTrue(dynamic["incomplete_families"])
+            self.assertEqual(len(value["families"]), 26)
+            self.assertFalse(value["campaign"]["promotion_ready"])
+            self.assertFalse(value["campaign"]["public_support"])
+            inputs[7]["qualification_source_sha256"] = "b" * 64
+            with self.assertRaisesRegex(report.CampaignReportError, "qualification sources differ"):
+                report.build_report()
 
     def test_external_validation_errors_are_wrapped_as_campaign_errors(self) -> None:
         with mock.patch.object(
