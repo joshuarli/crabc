@@ -227,15 +227,6 @@ impl PreparedInitialRegistry {
             let edges = graph.edges(index)?;
             for (slot, child) in edges.iter().enumerate() {
                 unsafe { (*node).needed[slot] = by_index.as_slice()[*child]; }
-                let child_node = by_index.as_slice()[*child];
-                if unsafe { (*child_node).name[0] } == 0 {
-                    let object = &objects[index];
-                    let offset = object.needed[slot];
-                    let name = unsafe { object.strtab.add(offset) };
-                    let length = unsafe { bounded_nul(name, object.strsz.checked_sub(offset)?) }?;
-                    if length >= MAX_PATH { return None; }
-                    unsafe { core::ptr::copy_nonoverlapping(name, (*child_node).name.as_mut_ptr(), length); }
-                }
             }
             unsafe { (*node).needed_count = edges.len(); }
         }

@@ -48,7 +48,7 @@ output; the executable modes select their actual owned dynamic entry. The
 non-PIE mode emits ET_EXEC with the same canonical interpreter, initial TLS
 and lifecycle handoff, without a static-TLS bootstrap. Applications name each DSO explicitly; SONAME, transitive NEEDED,
 imports and search ownership are checked before linkage. `/usr/lib` is the
-default; `--application-runpath PATHS` declares and receipts an application
+default emitted application RUNPATH; `--application-runpath PATHS` declares and receipts an application
 path without adding ambient link inputs. Nondefault DSO paths require a
 matching output receipt.
 
@@ -134,10 +134,13 @@ mapping stays process-lifetime storage when the initial task exits early.
 The focused host command is `./scripts/dev-x86_64.sh owned-dynamic-pthread-exit`;
 the aggregate runs the consumer against installed and extracted products.
 
-The shared initial/runtime search matrix proves thirteen musl decisions through
-installed/extracted PIE and non-PIE consumers; its limits are recorded in
+The shared initial/runtime search matrix proves 37 musl decisions through
+installed/extracted PIE and non-PIE consumers, including conventional system
+path configuration, preload TLS/lifecycle, main ORIGIN with contained proc,
+and real setuid AT_SECURE execution. Direct interpreter CLI remains open;
+the full policy and evidence limits are recorded in
 [runtime-dynamic-loader.md](runtime-dynamic-loader.md). Remaining product
-work includes full system-path/preload policy, broader introspection/order
+work includes direct interpreter CLI, broader introspection/order
 qualification and dynamic fork repair (still explicitly `EAGAIN`), followed
 by the complete installed dynamic campaign. Musl's
 retained dlclose mappings, not physical unloading, are the parity target.

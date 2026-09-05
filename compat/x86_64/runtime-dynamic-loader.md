@@ -207,63 +207,91 @@ main/last-thread pthread_exit remain explicitly unqualified and cfg-excluded
 from the separate static lifecycle work. No new RuntimeV1 fields, public
 support promotion or AArch64 qualification follows from these prerequisites.
 
-## Installed library search
+## Installed library search and preload admission
 
 `ldso/src/x86_64_library_search.rs` maps musl 1.2.6 `ldso/dynlink.c`
 `path_open`, `fixup_rpath`, `load_library`, and initial environment admission
 (revision `9fa28ece75d8a2191de7c5bb53bed224c5947417`, MIT). Names containing
 slashes open directly. Short names first reuse retained first-load names and
-file identities, then search the startup `LD_LIBRARY_PATH`, the requesting
-object's path and its first-load ancestors, and the installed `/usr/lib`.
-`DT_RUNPATH` overrides `DT_RPATH`; musl follows ancestry for either tag.
-Empty colon/newline components are skipped. ENOENT, ENOTDIR, EACCES and
-ENAMETOOLONG permit another component; other open failures stop selection.
+file identities, then search startup `LD_LIBRARY_PATH`, the requesting
+object's path and first-load ancestors, and the system tier. `DT_RUNPATH`
+overrides `DT_RPATH`; musl follows ancestry for either tag. Empty colon/newline
+components are skipped. ENOENT, ENOTDIR, EACCES and ENAMETOOLONG permit another
+component; other open failures stop selection.
+
+For the canonical installed interpreter `/lib/ld-crabc-x86_64.so.1`, musl's
+installation prefix is empty, so the system tier reads
+`/etc/ld-musl-x86_64.path`. This conventional compatibility pathname also
+serves the installed interpreter alias. An absent file selects
+`/lib:/usr/local/lib:/usr/lib` in that order. A present empty file, an open
+error other than ENOENT, or a read/allocation failure suppresses defaults.
+The first system-tier lookup retains its decision and a loader-owned mmap
+copy of a present file. It never reopens that file after `dlopen`, `chdir`,
+`setenv` or `unlink`; it calls neither libc allocation nor application code.
+System directories in product evidence contain only installed libc/loader
+files and explicitly built application DSOs, never the oracle runtime.
 
 Musl `dlopen` calls `load_library(file, head)`: it starts from the executable,
 including when a DSO invokes it. It does not use the return-address caller's
-RUNPATH. The private libc/loader open ABI therefore remains unchanged.
+RUNPATH. The private libc/loader open ABI remains unchanged.
 `x86_64_general_initial_graph.rs` retains first-load pathname/ancestry;
 `x86_64_runtime_registry.rs` preserves that ancestry across retained dlclose,
 reopen and duplicate identities. Failed loads retain no new ancestor nodes.
 
+`load_preload` and `load_direct_deps` map to the same initial graph admission
+in `x86_64_general_initial_graph.rs`. Nonsecure `LD_PRELOAD` is split on colon
+and C whitespace, including vertical tab. Preloads are searched without a
+requesting object: the main executable's RUNPATH does not select them.
+Successful preloads become main pseudo-dependencies before ordinary
+DT_NEEDED, preserving main-first global scope, once-only identity, initial
+TLS materialization, and dependency-first constructors. Unused successful
+preloads remain retained and finalize at exit. Missing/unmappable optional
+preloads are ignored as in musl; an admitted object's missing dependency or
+unresolved relocation fails the whole initial transaction before main.
+Graph-capacity failures cannot masquerade as ignored optional preloads.
+
 `$ORIGIN` and `${ORIGIN}` expand from the admitted DSO pathname. The main
 executable obtains its name from `/proc/self/exe`; an unavailable proc path
 suppresses that expansion as in musl. Unknown variables suppress the entire
-object path. Initial UID/EUID/GID/EGID and AT_SECURE disable environment
-search for privileged images; secure mode also disables main ORIGIN and
-nonabsolute DSO origins. Environment selection is fixed at startup rather
-than refreshed after `setenv`. These secure decisions have isolated synthetic
-initial-stack tests; they are not full privileged-execution qualification.
+object path. Initial UID/EUID/GID/EGID and AT_SECURE disable environment path
+and preload admission for privileged images; secure mode also disables main
+ORIGIN and nonabsolute DSO origins. Environment selection is fixed at startup
+rather than refreshed after `setenv`.
 
 The installed driver accepts `--application-runpath PATHS` and records that
-explicit application policy in both its link plan and hashed output receipt.
-A declared DSO with a nondefault RUNPATH must carry a matching receipt bound
-to its bytes, RUNPATH and canonical absolute `output_path`. Moving the DSO
-and unchanged receipt to another directory requires a new declaration.
-This does not add target libraries to the link command.
-The owned default system directory remains `/usr/lib`; musl system-path
-configuration, host directories, preloading and loader command-line execution
-are not introduced. Existing 512-byte admitted pathname storage and a
-4096-byte expanded search-list bound remain explicit selected limits.
+explicit policy in its link plan and output receipt. A declared DSO with a
+nondefault RUNPATH must carry a matching receipt bound to its bytes, RUNPATH
+and canonical absolute `output_path`. Moving the DSO and unchanged receipt to
+another directory requires a new declaration. Runtime path selection does
+not add libraries to the final link command. Existing 512-byte admitted
+pathname storage, a 4096-byte expanded object/environment/preload-list bound,
+and initial graph/per-object admission bounds remain selected limits.
 
-`run_general_dynamic_search.sh` runs thirteen identical candidate/pinned-musl
-process decisions: runtime ancestor fallback, environment precedence,
-DSO ORIGIN, main-root search from a caller DSO, initial loading, initial
-environment precedence, relative direct paths, colon/newline separators,
-missing paths, an ELOOP error that must stop search, and initial breadth-first
-identity selection against a conflicting grandchild, legacy RPATH, and
-RUNPATH precedence over RPATH. The last two variants make exact dynamic-tag
-substitutions in the installed executable, retaining the same required output
-in the separately built musl executable; they do not weaken the driver’s
-normal RUNPATH emission contract. The materialized aggregate runs these through installed and extracted drivers in PIE and
-non-PIE modes. The isolated regression failed with status 2 before ancestor
-search, then returned `search=7` with the same installed dependency placement.
-The breadth-first regression separately returned `search=8` before the
-discovery correction; the pinned oracle and corrected candidate return 7.
-Main ORIGIN with mounted proc and privileged process execution remain
-qualification limits rather than inferred evidence. The inherited installed
-`/usr/lib` policy does not establish full musl system search parity: musl's
-`/etc/ld-musl-x86_64.path` and default `/lib:/usr/local/lib:/usr/lib` are not
-implemented here. Preload admission and interpreter command-line execution
-also remain broader loader obligations; this slice does not redefine those
-obligations as deliberately unsupported.
+`run_general_dynamic_search.sh` runs the same 37 process decisions against
+installed candidate and separately built pinned-musl roots, in PIE and
+non-PIE modes, including extracted installations. It covers ancestry,
+environment precedence, duplicate identity, legacy RPATH and RUNPATH
+precedence, default directories, pathfile absence/content/empty/open/read
+errors/cache, initial and privileged configured search, preload TLS and
+lifecycle, C whitespace, ignored optional preloads, and unresolved failure.
+Legacy-tag tests make exact dynamic-entry substitutions while preserving the
+required process result; the driver normally emits RUNPATH.
+
+Main ORIGIN is checked both without proc and with a read-only proc mount in
+the disposable container namespace. Real setuid execution drops the launcher
+to uid 65534, then executes root-owned fixture copies; each consumer requires
+ruid=65534, euid=0 and AT_SECURE=1. It proves environment/preload suppression,
+main ORIGIN rejection, absolute DSO ORIGIN admission, and relative DSO ORIGIN
+rejection. The runner requires mount authority, never skips these proofs,
+and unmounts proc and removes temporary setuid bits on completion or failure.
+The coordinator's dedicated materialized-loader dispatcher supplies only
+that command's additional namespace-mount authority.
+
+The preceding fixed search returned status 2 for a dependency available only
+through main ancestry or `/lib`, and 7 instead of the preloaded 8. Initial
+breadth-first identity selection separately failed with 8 instead of 7. The
+retained regressions now match musl. Direct interpreter command-line entry
+remains open: it needs an AT_BASE-independent self-entry path, mapped-main
+ownership and stack/auxv handoff before CLI search/preload options can reuse
+this policy. This is an unfinished product obligation, not a permanent
+exclusion or a reason to weaken installed search evidence.

@@ -2,14 +2,18 @@
 //!
 //! musl 1.2.6 `ldso/dynlink.c` path_open, fixup_rpath and load_library
 //! (MIT, 9fa28ece75d8a2191de7c5bb53bed224c5947417): environment first,
-//! first-load ancestors next, installed system directory last. Empty colon
-//! and newline components are skipped; unexpected open errors stop search.
-//! The installed product owns /usr/lib; musl path configuration files and
-//! ambient host directories are not candidate inputs.
+//! first-load ancestors next, configured/default system directories last.
+//! Empty colon and newline components are skipped; unexpected open errors stop search.
+//! The installed interpreter at /lib/ld-crabc-x86_64.so.1 has musl
+//! installation prefix "". Its path file is /etc/ld-musl-x86_64.path; test
+//! roots supply only declared application DSOs and the installed libc.
 use super::*;
+use super::x86_64_runtime_memory::LoaderBuffer;
+use core::cell::UnsafeCell;
 
 const PATH_CAPACITY: usize = 4096;
 static mut ENVIRONMENT_PATH: *const u8 = core::ptr::null();
+static mut ENVIRONMENT_PRELOAD: *const u8 = core::ptr::null();
 static mut SECURE: bool = true;
 
 /// Initial stack strings have process lifetime, as in musl's env_path. This
@@ -18,11 +22,16 @@ pub(super) unsafe fn initialize(sp: usize) {
     let argc = unsafe { *(sp as *const usize) };
     let mut cursor = (sp + 8 + (argc + 1) * 8) as *const usize;
     let mut environment: *const u8 = core::ptr::null();
+    let mut preload: *const u8 = core::ptr::null();
     while unsafe { *cursor } != 0 {
         let value = unsafe { *cursor } as *const u8;
         let key = b"LD_LIBRARY_PATH=";
         if environment.is_null() && key.iter().enumerate().all(|(index, byte)| unsafe { *value.add(index) == *byte }) {
             environment = unsafe { value.add(key.len()) };
+        }
+        let key = b"LD_PRELOAD=";
+        if preload.is_null() && key.iter().enumerate().all(|(index, byte)| unsafe { *value.add(index) == *byte }) {
+            preload = unsafe { value.add(key.len()) };
         }
         cursor = unsafe { cursor.add(1) };
     }
@@ -37,7 +46,70 @@ pub(super) unsafe fn initialize(sp: usize) {
         cursor = unsafe { cursor.add(2) };
     }
     secure |= ids.iter().any(Option::is_none) || ids[0] != ids[1] || ids[2] != ids[3];
-    unsafe { SECURE = secure; ENVIRONMENT_PATH = if secure { core::ptr::null() } else { environment }; }
+    unsafe {
+        SECURE = secure;
+        ENVIRONMENT_PATH = if secure { core::ptr::null() } else { environment };
+        ENVIRONMENT_PRELOAD = if secure { core::ptr::null() } else { preload };
+    }
+}
+
+/// A missing or malformed optional preload is ignored by musl load_preload;
+/// successful admissions still participate in the complete initial graph.
+/// Overlong selected lists are rejected rather than silently truncated.
+pub(super) unsafe fn preloads() -> Result<&'static [u8], i32> {
+    let preload = unsafe { ENVIRONMENT_PRELOAD };
+    if preload.is_null() { return Ok(&[]); }
+    let length = unsafe { bounded_nul(preload, PATH_CAPACITY) }.ok_or(36)?;
+    Ok(unsafe { core::slice::from_raw_parts(preload, length) })
+}
+
+// The initial transaction is single-threaded; runtime selection holds the
+// loader lock. The snapshot is initialized only on the first system-tier
+// search and never reopened, including after later chdir/setenv/unlink calls.
+enum SystemPath { Uninitialized, Defaults, Disabled, File(LoaderBuffer<u8>) }
+struct SystemPathOwner(UnsafeCell<SystemPath>);
+unsafe impl Sync for SystemPathOwner {}
+static SYSTEM_PATH: SystemPathOwner = SystemPathOwner(UnsafeCell::new(SystemPath::Uninitialized));
+
+unsafe fn load_system_path() -> SystemPath {
+    let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, b"/etc/ld-musl-x86_64.path\0".as_ptr() as i64, 0x80000, 0) };
+    if fd < 0 { return if fd == -2 { SystemPath::Defaults } else { SystemPath::Disabled }; }
+    // Musl uses zero bytes when fstat fails, and never retries with defaults
+    // after a present configuration cannot be read or allocated.
+    let size = unsafe { file_size_from_fd(fd) }.unwrap_or(0);
+    let length = usize::try_from(size).ok().and_then(|size| size.checked_add(1));
+    let loaded = (|| {
+        let mut contents = LoaderBuffer::new(length?, 0u8)?;
+        let bytes = contents.as_mut_slice();
+        let mut count = 0;
+        while count + 1 < bytes.len() {
+            let read = unsafe { syscall3(0, fd, bytes.as_mut_ptr().add(count) as i64, (bytes.len() - count - 1) as i64) };
+            if read == -4 { continue; }
+            if read < 0 { return None; }
+            if read == 0 { break; }
+            count += read as usize;
+        }
+        Some(SystemPath::File(contents))
+    })();
+    unsafe { syscall1(SYS_CLOSE, fd); }
+    loaded.unwrap_or(SystemPath::Disabled)
+}
+
+unsafe fn system_paths() -> &'static [u8] {
+    let state = unsafe { &mut *SYSTEM_PATH.0.get() };
+    if matches!(state, SystemPath::Uninitialized) {
+        *state = unsafe { load_system_path() };
+    }
+    match state {
+        SystemPath::Defaults => b"/lib:/usr/local/lib:/usr/lib",
+        SystemPath::File(contents) => {
+            let bytes = contents.as_slice();
+            // Embedded NUL and early EOF terminate the file's C string.
+            let end = bytes.iter().position(|byte| *byte == 0).unwrap_or(bytes.len());
+            &bytes[..end]
+        }
+        SystemPath::Disabled | SystemPath::Uninitialized => &[],
+    }
 }
 
 pub(super) type Opened = (i64, [u8; MAX_PATH], usize);
@@ -128,7 +200,7 @@ pub(super) unsafe fn open<'a>(name: &[u8], ancestors: impl Iterator<Item = &'a O
         let length = unsafe { object_paths(object, &mut paths) }?;
         if let Some(opened) = unsafe { path_open(&paths[..length], name) }? { return Ok(opened); }
     }
-    unsafe { path_open(b"/usr/lib", name) }?.ok_or(2)
+    unsafe { path_open(system_paths(), name) }?.ok_or(2)
 }
 
 #[cfg(test)]
