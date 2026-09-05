@@ -205,6 +205,27 @@ reserved SIGCANCEL (33) in the creator through the raw kernel mask interface
 and proves a new worker unblocks it. `pthread_create_join::worker_entry`
 publishes the owned FS+32 cancellation pointer before that unmask.
 
+The focused `./scripts/dev-x86_64.sh owned-pthread-getattr` gate observes live
+attributes through `pthread_getattr_np` followed by `pthread_attr_getstack`,
+`pthread_attr_getguardsize`, and `pthread_attr_destroy`, the sequence used by
+Rust std's Unix stack-overflow owner. Worker records report actual aligned
+usable stack bounds and page-rounded private guards; caller-owned stacks have
+no guard. TLS and runtime control mappings are separate and excluded. Registry
+snapshots preserve current detach state and completed joinable records; static
+fork copies the surviving worker's bounds into the adopted main record.
+Unknown or withdrawn handles return `ESRCH` without changing output or errno.
+
+The original main stack follows musl 1.2.6 `pthread_getattr_np.c`: round the
+initial auxiliary-vector anchor upward to a page boundary, then probe downward
+with `mremap` until an error other than `ENOMEM`. Raw failure updates errno even
+when the API succeeds. A seccomp-denied `EPERM` probe proves this terminating
+error and forbids an invented fallback. Tests also grow the main stack before
+re-querying it, inspect default/custom/caller stacks, prove guard accessibility,
+and observe detach transitions and fork adoption against pinned musl. The
+live-attribute implementation is `pthread_attr::pthread_getattr_np`; lifecycle
+snapshots belong to `pthread_create_join::selected_thread_attributes`. This
+qualifies the stack-observation boundary, not the complete Rust std runtime.
+
 `pthread_create_join::with_selected_pthread_signal_target` is the private
 signal-delivery lifetime boundary: registry lookup acquires a mapping lease,
 then releases the registry before taking the per-target kill lock. The

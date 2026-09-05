@@ -527,6 +527,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
+  owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-pthread-lifecycle  run pinned-musl and installed pthread lifetime consumers
   owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
   lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
@@ -5523,6 +5524,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-io-cancellation) ;;
+    owned-pthread-getattr) ;;
     owned-pthread-lifecycle) ;;
     owned-static-sysroot) ;;
     lua-static-source-build) ;;
@@ -7521,6 +7523,10 @@ case "$command" in
     owned-io-cancellation)
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_owned_io_cancellation.sh "$@"
+        ;;
+    owned-pthread-getattr)
+        [ "$#" -eq 0 ] || fail "owned-pthread-getattr takes no arguments"
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_getattr.sh
         ;;
     owned-pthread-lifecycle)
         [ "$#" -eq 0 ] || fail "owned-pthread-lifecycle takes no arguments"

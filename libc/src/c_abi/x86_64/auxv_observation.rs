@@ -60,6 +60,17 @@ pub(super) unsafe fn install_initial(auxv: *const usize) {
     INITIAL_AUXV.store(auxv as usize, Ordering::Release);
 }
 
+/// Borrow the startup-published vector address as the original stack anchor.
+///
+/// `pthread_getattr_np` uses this exact address for musl's initial-stack
+/// mapping probe. Both owned CRT paths publish it before application code;
+/// this accessor neither exposes the vector publicly nor changes its owner.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) fn initial_stack_anchor() -> Option<usize> {
+    let address = INITIAL_AUXV.load(Ordering::Acquire);
+    (address != 0).then_some(address)
+}
+
 /// Return one raw value from the validated Linux initial auxiliary vector.
 ///
 /// A found zero-valued record, including normal unprivileged `AT_SECURE=0`,

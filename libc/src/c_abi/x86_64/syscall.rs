@@ -305,6 +305,7 @@ pub(crate) const SYS_ACCESS: i64 = 21;
 pub(crate) const SYS_PIPE: i64 = 22;
 pub(crate) const SYS_SELECT: i64 = 23;
 pub(crate) const SYS_SCHED_YIELD: i64 = 24;
+pub(crate) const SYS_MREMAP: i64 = 25;
 pub(crate) const SYS_MINCORE: i64 = 27;
 pub(crate) const SYS_MADVISE: i64 = 28;
 pub(crate) const SYS_SHMGET: i64 = 29;

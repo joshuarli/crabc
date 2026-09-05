@@ -134,6 +134,16 @@ mapping stays process-lifetime storage when the initial task exits early.
 The focused host command is `./scripts/dev-x86_64.sh owned-dynamic-pthread-exit`;
 the aggregate runs the consumer against installed and extracted products.
 
+`./scripts/dev-x86_64.sh owned-pthread-getattr` also runs the ordinary live
+stack/guard/detach and filtered-main stack-probe differential through installed
+PIE and non-PIE entry; the aggregate repeats these checks with installed and
+extracted sysroots. Both startup paths publish the auxiliary vector used by
+`pthread_attr::pthread_getattr_np`; workers retain their actual application
+stack metadata independently of loader TLS storage. The initial executable's
+pure-TBSS TLS fixture ensures caller-stack checks do not depend on a guessed
+musl TLS/control size. Static fork adoption remains in the static arm because
+dynamic fork still returns `EAGAIN`.
+
 The shared initial/runtime search matrix proves 37 musl decisions through
 installed/extracted PIE and non-PIE consumers, including conventional system
 path configuration, preload TLS/lifecycle, main ORIGIN with contained proc,

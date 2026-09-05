@@ -376,6 +376,35 @@ impl SelectedWorkerLifecycleState {
     }
 }
 
+/// Actual usable stack bounds after allocation and the clone alignment rule.
+///
+/// `top - size` excludes the private lower guard. TLS/control mappings have
+/// separate owners and are never included in this application stack range.
+#[derive(Clone, Copy)]
+pub(super) struct SelectedThreadStackBounds {
+    pub(super) top: usize,
+    pub(super) size: usize,
+    pub(super) guard_size: usize,
+}
+
+/// A registry-protected value snapshot for the GNU live-attribute query.
+///
+/// Only the original kernel-stack task has `stack == None`; its stack grows
+/// independently of pthread creation and uses musl's auxv/mremap probe. A
+/// fork-adopted worker retains its actual inherited stack bounds instead.
+#[derive(Clone, Copy)]
+pub(super) struct SelectedThreadAttributes {
+    pub(super) stack: Option<SelectedThreadStackBounds>,
+    pub(super) detached: bool,
+}
+
+// Protected by SELECTED_WORKER_REGISTRY_LOCK. Only the sole fork child changes
+// this process-lifetime snapshot when it adopts a worker as its initial task.
+static mut INITIAL_THREAD_ATTRIBUTES: SelectedThreadAttributes = SelectedThreadAttributes {
+    stack: None,
+    detached: false,
+};
+
 /// One opaque pthread handle for the admitted lifecycle.
 ///
 /// The handle has no public Rust representation. C observes it only through
@@ -458,6 +487,9 @@ struct ThreadControl {
     stack_released: AtomicU8,
     stack_mapping: *mut u8,
     stack_mapping_size: usize,
+    // Immutable usable bounds are distinct from the mapping span reclaimed
+    // by join: caller-provided stacks have bounds but no owned mapping.
+    stack_bounds: SelectedThreadStackBounds,
     control_mapping: *mut u8,
     tls_block: static_tls::StaticInitialTlsBlock,
     // The selected TSD leaf owns its values in this private worker mapping,
@@ -793,12 +825,22 @@ pub(super) unsafe fn pthread_fork_parent() {
 /// and values before this reset. Future child workers start a fresh list.
 pub(super) unsafe fn pthread_fork_child() {
     let thread_pointer = pthread_identity::current_thread_pointer();
-    let inherited_worker_list = selected_worker_by_thread_pointer_locked(thread_pointer as usize)
-        .map(|control| {
-            // SAFETY: the copied registry lock keeps this inherited control
-            // mapped until this function clears the child list head.
-            unsafe { core::ptr::addr_of_mut!((*control).robust_list) }
-        });
+    let inherited_worker = selected_worker_by_thread_pointer_locked(thread_pointer as usize);
+    if let Some(control) = inherited_worker {
+        // SAFETY: the fork coordinator retains the copied registry lock and
+        // this caller's mapped control through the complete child adoption.
+        unsafe {
+            core::ptr::write(
+                core::ptr::addr_of_mut!(INITIAL_THREAD_ATTRIBUTES),
+                selected_worker_attributes_locked(control),
+            );
+        }
+    }
+    let inherited_worker_list = inherited_worker.map(|control| {
+        // SAFETY: the copied registry lock keeps this inherited control
+        // mapped until this function clears the child list head.
+        unsafe { core::ptr::addr_of_mut!((*control).robust_list) }
+    });
     if let Some(list) = inherited_worker_list {
         // SAFETY: retain the fork caller's linked robust nodes in its still
         // mapped control record, but force a fresh child kernel registration
@@ -911,6 +953,44 @@ fn selected_worker_by_thread_pointer_locked(thread_pointer: usize) -> Option<*mu
         control = unsafe { (*control).registry_next };
     }
     None
+}
+
+/// Copy a linked worker's immutable stack bounds and current detach state.
+/// The caller holds the registry lock, which serializes detach and withdrawal.
+unsafe fn selected_worker_attributes_locked(control: *mut ThreadControl) -> SelectedThreadAttributes {
+    let lifecycle = unsafe { (*control).lifecycle.load(Ordering::Acquire) };
+    SelectedThreadAttributes {
+        stack: Some(unsafe { (*control).stack_bounds }),
+        detached: lifecycle == SelectedWorkerLifecycleState::DETACHED
+            || lifecycle == SelectedWorkerLifecycleState::DETACHED_RECLAIMING,
+    }
+}
+
+/// Observe owned pthread metadata without retaining a mapped-control pointer.
+///
+/// Registry withdrawal and detach serialize with this copy. The returned
+/// integers describe a snapshot, not a lease permitting later stack access.
+/// The caller must still own the public handle lifetime while using it.
+pub(super) fn selected_thread_attributes(thread: *mut c_void) -> Option<SelectedThreadAttributes> {
+    if thread.is_null() {
+        return None;
+    }
+    // A signal handler can reenter the registry, and asynchronous cancellation
+    // can exit without unwinding. Neither may interrupt this snapshot lock.
+    let mut saved_mask = 0_u64;
+    unsafe { super::signal_execution::block_all_signals(&mut saved_mask) };
+    lock_selected_worker_registry();
+    let attributes = if thread as usize == INITIAL_SIGNAL_TARGET_TP.load(Ordering::Acquire) {
+        // SAFETY: this process-lifetime value is written only by the sole
+        // fork child under the same copied registry lock.
+        Some(unsafe { core::ptr::read(core::ptr::addr_of!(INITIAL_THREAD_ATTRIBUTES)) })
+    } else {
+        selected_worker_by_thread_pointer_locked(thread as usize)
+            .map(|control| unsafe { selected_worker_attributes_locked(control) })
+    };
+    unlock_selected_worker_registry();
+    unsafe { super::signal_execution::restore_application_signals(&saved_mask) };
+    attributes
 }
 
 /// Mark one live selected pthread worker for deferred cancellation.
@@ -1482,12 +1562,12 @@ unsafe fn publish_selected_worker_result(
 
 /// One selected worker's stack handoff and owned-map reclamation record.
 ///
-/// The `stack_top` is the only value passed to clone. `mapping`/`mapping_size`
+/// The bounds' `top` is passed to clone. `mapping`/`mapping_size`
 /// are null/zero for a caller-owned stack and otherwise retain the exact
 /// private guard-plus-stack map that a later join or reaper must release.
 #[derive(Clone, Copy)]
 struct SelectedWorkerStack {
-    stack_top: *mut u8,
+    bounds: SelectedThreadStackBounds,
     mapping: *mut u8,
     mapping_size: usize,
 }
@@ -1534,13 +1614,15 @@ unsafe fn map_private_range(length: usize, protection: i64) -> *mut u8 {
 unsafe fn allocate_selected_worker_stack(
     attributes: super::pthread_attr::SelectedWorkerAttributes,
 ) -> Option<SelectedWorkerStack> {
-    if let Some(stack_top) = attributes.caller_stack_top {
-        let stack_top = (stack_top & !0xf) as *mut u8;
-        if stack_top.is_null() {
+    if let Some(requested_top) = attributes.caller_stack_top {
+        let stack_base = requested_top.checked_sub(attributes.stack_size)?;
+        let stack_top = requested_top & !0xf;
+        let stack_size = stack_top.checked_sub(stack_base)?;
+        if stack_top == 0 || stack_size == 0 {
             return None;
         }
         return Some(SelectedWorkerStack {
-            stack_top,
+            bounds: SelectedThreadStackBounds { top: stack_top, size: stack_size, guard_size: 0 },
             mapping: core::ptr::null_mut(),
             mapping_size: 0,
         });
@@ -1573,7 +1655,11 @@ unsafe fn allocate_selected_worker_stack(
         // `mapping_size` has already checked the sum, so this points one byte
         // past the owned writable stack. The clone assembly realigns it before
         // reserving its one callback argument word.
-        stack_top: unsafe { mapping.add(mapping_size) },
+        bounds: SelectedThreadStackBounds {
+            top: unsafe { mapping.add(mapping_size) } as usize,
+            size: stack_size,
+            guard_size,
+        },
         mapping,
         mapping_size,
     })
@@ -1906,6 +1992,7 @@ unsafe fn create_selected_worker_with_attributes(
                 stack_released: AtomicU8::new(worker_stack.mapping.is_null() as u8),
                 stack_mapping: worker_stack.mapping,
                 stack_mapping_size: worker_stack.mapping_size,
+                stack_bounds: worker_stack.bounds,
                 control_mapping,
                 tls_block,
                 tsd: pthread_tsd::SelectedTsdValues::empty(),
@@ -1953,7 +2040,7 @@ unsafe fn create_selected_worker_with_attributes(
     let clone_result = unsafe {
         __crabc_x86_pthread_clone(
             worker_entry,
-            worker_stack.stack_top,
+            worker_stack.bounds.top as *mut u8,
             PTHREAD_CLONE_FLAGS,
             control.cast(),
             child_tid,

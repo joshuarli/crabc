@@ -1,6 +1,6 @@
-//! Linux/x86-64 pthread attribute-record metadata.
+//! Linux/x86-64 pthread attribute records and owned live-thread inspection.
 //!
-//! This private selected-static leaf ports the record-only behavior from the
+//! This private selected-static leaf ports attribute behavior from the
 //! pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license
 //! recorded in `COPYRIGHT`:
@@ -20,18 +20,21 @@
 //!   scheduler record rules.
 //! - `src/thread/pthread_attr_get.c` defines every selected getter, including
 //!   the `pthread_attr_getstack` no-address `EINVAL` result.
+//! - `src/thread/pthread_getattr_np.c` defines live stack, guard and detach
+//!   observation, including the original main stack auxiliary-vector probe.
 //!
 //! On SysV AMD64, musl's public `pthread_attr_t` is a 56-byte, align-8 union.
 //! Its seven unsigned-long words carry stack size, guard size, a caller stack's
 //! one-past-top address, and packed pairs of `int` detach/inherit and
 //! policy/priority fields. This module owns exactly the eighteen standard
-//! lifecycle and metadata entry points over that record.
+//! lifecycle and metadata entry points over that record, plus owned-runtime
+//! `pthread_getattr_np` inspection.
 //!
 //! `pthread_create_join.rs` decodes this exact record only for its selected
 //! worker policy.  That sibling consumes detached-at-create, a supplied stack
 //! or a private guarded stack, and the requested stack size.  It rejects an
 //! explicit scheduler request with `ENOTSUP`; it does not claim scheduler,
-//! GNU default-attribute, affinity-attribute, live-thread inspection, or
+//! GNU default-attribute, affinity-attribute, or
 //! general pthread behavior.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
@@ -40,6 +43,8 @@ compile_error!("the x86 pthread attribute leaf requires little-endian Linux/x86-
 use core::ffi::{c_int, c_void};
 use core::mem::{align_of, size_of};
 
+#[cfg(feature = "x86-owned-static-runtime")]
+const ESRCH: c_int = 3;
 const EINVAL: c_int = 22;
 const ENOTSUP: c_int = 95;
 const PTHREAD_CREATE_DETACHED: u32 = 1;
@@ -598,5 +603,80 @@ pub unsafe extern "C" fn pthread_attr_getschedparam(
     // SAFETY: the public sched_param ABI places its priority int first; musl
     // leaves the rest of the caller's record untouched.
     unsafe { core::ptr::write(parameters.cast::<c_int>(), value.sched_priority()) };
+    0
+}
+
+/// Observe the owned thread's usable stack, guard and current detach state.
+///
+/// Musl 1.2.6 `src/thread/pthread_getattr_np.c` starts with a zero public
+/// record and copies actual stack/guard metadata, not the creation request.
+/// Our TLS/control allocations are separate from the application stack; its
+/// reported bounds therefore exclude those mappings rather than inventing
+/// musl's coallocated-TLS overhead. Unknown or withdrawn owned handles return
+/// ESRCH without touching output or errno; musl leaves such handles undefined.
+///
+/// The original main stack has no fixed pthread allocation record. Preserve
+/// musl's page-rounded auxv anchor and `mremap` probe below it. A failed probe
+/// sets errno even though this API returns success; only ENOMEM continues the
+/// scan, and any other kernel result ends it with the accumulated size. No
+/// rlimit, /proc, or guessed-stack fallback is substituted for that contract.
+///
+/// # Safety
+/// `thread` must belong to this owned runtime and retain its pthread lifetime
+/// through this call. `attributes` must designate writable, aligned storage
+/// for one pthread_attr_t; prior initialization is not required. The returned
+/// stack coordinates do not extend the target's lifetime or permit access to
+/// its stack without separate application synchronization.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn pthread_getattr_np(
+    thread: *mut c_void,
+    attributes: *mut c_void,
+) -> c_int {
+    let Some(snapshot) = super::pthread_create_join::selected_thread_attributes(thread) else {
+        return ESRCH;
+    };
+    let mut value = PublicPthreadAttr { words: [0; ATTR_WORDS] };
+    value.set_detach_state(if snapshot.detached { 1 } else { 0 });
+    if let Some(stack) = snapshot.stack {
+        value.words[STACK_TOP_WORD_INDEX] = stack.top;
+        value.words[STACK_SIZE_WORD_INDEX] = stack.size;
+        value.words[GUARD_SIZE_WORD_INDEX] = stack.guard_size;
+    } else {
+        let Some(anchor) = super::auxv_observation::initial_stack_anchor() else {
+            return EINVAL;
+        };
+        const PAGE_SIZE: usize = 4096;
+        const ENOMEM: i64 = 12;
+        let top = anchor.wrapping_add(anchor.wrapping_neg() & (PAGE_SIZE - 1));
+        let mut size = PAGE_SIZE;
+        loop {
+            // SAFETY: this is musl's address-space metadata probe, not a
+            // dereference. No MREMAP_MAYMOVE/FIXED flag or new address is
+            // supplied. Kernel errors retain the source errno side effect.
+            let result = unsafe {
+                super::raw_syscall::syscall5(
+                    super::raw_syscall::SYS_MREMAP,
+                    top.wrapping_sub(size).wrapping_sub(PAGE_SIZE) as i64,
+                    PAGE_SIZE as i64,
+                    (2 * PAGE_SIZE) as i64,
+                    0,
+                    0,
+                )
+            };
+            if (-4095..0).contains(&result) {
+                unsafe { super::errno::set_errno((-result) as c_int) };
+                if result == -ENOMEM {
+                    size = size.wrapping_add(PAGE_SIZE);
+                    continue;
+                }
+            }
+            break;
+        }
+        value.words[STACK_TOP_WORD_INDEX] = top;
+        value.words[STACK_SIZE_WORD_INDEX] = size;
+    }
+    // SAFETY: the public caller owns exactly one writable output record.
+    unsafe { core::ptr::write(attributes.cast::<PublicPthreadAttr>(), value) };
     0
 }

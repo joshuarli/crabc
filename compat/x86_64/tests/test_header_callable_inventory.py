@@ -344,6 +344,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "posix_spawn",
                 "posix_spawnp",
                 "prctl",
+                "pthread_getattr_np",
                 "pthread_kill",
                 "pthread_sigmask",
                 "putc_unlocked",
