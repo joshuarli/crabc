@@ -4,96 +4,96 @@
 
 The combined goal is **not complete**. AArch64 remains paused, C mimalloc
 remains the production backend, and x86 public promotion remains false.
-Continue from the integrated runtime and allocator components below.
+Continue the current product, qualification, and allocator work; do not
+restart completed leaf implementations or treat private evidence as closure.
 
-### Integrated runtime and allocator
+### Integrated runtime components
 
-- `05e491dd` and `04bc4f3e`: deferred GOT/PLT transactions, all-thread TLS
-  publication, rollback/RELRO restoration, and correct kernel-main `dladdr`
-  mapped-page identity. The musl GOT/RELRO fault is a documented safety
-  correction, not a parity claim.
-- `7461c67b`, `3369c153`, `d0088750`, `6fd2ac10`, and `408dc7e5`: target
-  mapping leases/kill locks, dynamic initial/last-thread exit, public
-  `pthread_kill` for pthread/C11 handles, and live `pthread_getattr_np` stack,
-  guard and detach snapshots. Main stack probing uses the retained auxiliary
-  stack anchor; static worker-fork adoption retains real stack bounds.
-- `00ffdba3`: owned `pthread_sigmask` and child-contained `chroot`, with
-  musl's invalid-mask-operation error ordering. It also repairs the default
-  roster's three missing, already implemented robust-mutex exports.
-- `1ee958ae`, `31438d28`, and `6ea4b2ee`: syscall-PC-window cancellation
-  across descriptor, socket, sleep, child-wait, open, blocking record-lock and
-  memory-sync operations. `afb545e6` adds source-compatible unnamed
-  semaphore wait/timed-wait cancellation and cleanup/token conservation.
-  Ordinary FILE backends, `wait3/wait4`, empty
-  `sendmmsg`, and nonblocking fcntl commands retain their source non-CP
-  behavior. SIGCANCEL is **33**, timer signal is 32. Clone blocks SIG33 until
-  FS+32 publication; requester signal transactions release leases/locks before
-  restoring the complete mask.
-- `6b5af4ec`, `4cb7f815`, and `ebf8b30f`: canonical-path-bound application
-  receipts, shared initial/runtime musl search, system path caching, preloads,
-  ORIGIN/real setuid AT_SECURE, and pure-TBSS templates whose zero fill extends
-  beyond file mappings. `6cd722ff` adds direct-interpreter PIE/non-PIE entry,
-  CLI options and argv/auxv handoff, keeping executable role separate from
-  mapping ownership.
-- `f57b0aae` and `781dbd67`: scalar `fma/fmaf`, `hypot/hypotf`, `log1p/log1pf`
-  and existing binary80 `fmal/hypotl/log1pl` installed differential evidence.
-- `5a48b06f`: typed process-registry huge backing, durable failed-page cleanup,
-  exact retry/statistics ownership, reserve-at/interleaved callers and
-  huge-before-regular startup. This integrates `d6905b56` with the reviewed
-  harness fix to use `run.temporary_directory` for contained scratch state.
-  Native M2 remains partial.
-- `6b754fab`: central runner contracts now follow the integrated positive
-  worker-fork behavior and owned/standalone feature boundaries. Do not restore
-  stale negative robust-export or whole-archive cancellation assertions.
+- Loader: canonical-path-bound application receipts, initial/runtime musl
+  search and preloads, ORIGIN/AT_SECURE, pure TBSS, coherent all-thread DTV
+  growth, deferred GOT/PLT transactions, rollback/RELRO restoration, retained
+  close, and kernel-main `dladdr` mapping identity. Direct interpreter entry
+  preserves executable role independently of mapping ownership. Its listing
+  retains the first admission name even after a later short-name inode alias.
+  Initial dependency cycles now follow musl constructor order. Installed ELF
+  weak/protected/hidden scope and both interpreter-alias entry paths have
+  direct differential evidence.
+- Thread/process lifecycle: target mapping leases and kill locks, main/last
+  thread exit, pthread/C11 signal handles, live stack/guard/detach attributes,
+  and dynamic fork with graph/callback locking, child TID registration and
+  surviving TLS/TSD/robust/canary state. Join cancellation restores the target
+  claim before user cleanup. Main/worker condition cancellation repairs its
+  waiter list and reacquires the mutex before cleanup. Join/condition blocked
+  probes observe actual kernel futex waits through an inherited proc descriptor.
+- Syscall cancellation: descriptor/vector/positioned I/O, readiness, sockets,
+  sleep/child waits, open/record locks, memory sync, unnamed semaphores, signal
+  waits, entropy and SysV messages. Shared fixture selection now qualifies
+  static and dynamic products separately. `getentropy` preserves its source
+  suppression window; ordinary FILE backends, `pclose`, `wait3/wait4`, empty
+  `sendmmsg`, and nonblocking fcntl retain source non-CP behavior. SIGCANCEL is
+  **33**, timer signal is 32; FS+32 publication and target leases precede signal
+  delivery. `system` wait cancellation remains an active separate slice.
+- Scalar and binary80 math completion probes, owned `pthread_sigmask`,
+  child-contained `chroot`, and positive 65-live-thread pthread/C11 registry
+  growth are integrated. The default export roster includes the three
+  previously omitted, already implemented robust-mutex exports.
+- Lua source build: static and dynamic source/bytecode graphs execute through
+  owned products. `lua-dynamic-source-build` admits versioned application DSOs,
+  validates receipt/link/ELF/runtime identity, compares pinned-musl outcomes,
+  and repeats through an extracted package. Failure and artifact-drift tests
+  prevent publishing a successful latest report.
 
-### Current component evidence
+### Current evidence and boundaries
 
-- Root `owned-static-sysroot` passes 56 harness tests and all 24 scheduled
-  installed/extracted ET_EXEC/static-PIE jobs, including nested pthread,
-  signal, descriptor/socket/open/lock/wait cancellation consumers and two-build
-  reproducibility. Latest log: `.work/x86_64/open-sequence-static-integrated.log`
-  at `5a48b06f`. Successful static scratch products are cleaned by the runner.
-- The integrated dynamic gate passes 50 loader tests, 21 driver tests, two CRT
-  tests, 37 search decisions and 40 CLI cases per oracle/candidate arm,
-  41-module worker TLS, pure TBSS, live attributes through both kernel and
-  direct-interpreter entry, signal transactions, semaphore cancellation,
-  scope/rollback, finalization and reproducibility. Log:
-  `.work/x86_64/cli-semaphore-getattr-integrated.log`; retained product:
-  `.work/x86_64/tmp/materialized-dynamic.T4IHj9`. This includes `6cd722ff` and
-  the direct-interpreter attribute regression committed with this record.
-- `allocator-huge-reservation` passes 69 C differential values and ten focused
-  tests at clean root `5a48b06f`; log:
-  `.work/x86_64/allocator-huge-reservation-integrated.log`. The worker also
-  qualified 956 allocator unit tests, quick evidence and performance smoke.
-  Simulated primitives do not replace hardware huge-page success. The current
-  host has zero configured/free 1-GiB hugetlb pages and one visible NUMA node.
+- The latest three-product dynamic run at the `550bb254` runtime plus the
+  `906e6d6c` harness change passes 51 loader, 22 driver and two CRT tests, then
+  the same complete then-current suite through both clean builds and the
+  extracted package. Log: `.work/x86_64/three-dynamic-products-integrated.log`;
+  product: `.work/x86_64/tmp/materialized-dynamic.uyzJLv`. This corrects the old
+  second-build comparison without execution. Subsequent join-witness,
+  condition-wait and dynamic I/O composition changes need the next combined
+  run; historical output must not be relabeled as current qualification.
+- Shared-runtime I/O cancellation at `88fcc133` passes all 40 ordinary/direct
+  PIE/non-PIE fixture runs against pinned musl. Log:
+  `.work/x86_64/dynamic-cancellation-integrated.log`; product:
+  `.work/x86_64/tmp/owned-dynamic-io-cancellation.gft0iz`. Root runner/dispatcher
+  checks pass 303 tests. Individual cancellation slices also pass the static
+  56-test/24-job installed/extracted/reproducibility gate. Successful static
+  scratch products are cleaned; retain their logs.
+- Dynamic Lua passes installed/extracted source execution and artifact
+  reproducibility: `.work/x86_64/lua-dynamic-source-integrated.log`, report
+  `.work/x86_64/lua-dynamic-source-build/run-0t1zwhlc/report.json`.
+- `5a48b06f` integrates typed process-registry huge backing, durable failed-page
+  cleanup, exact retry/statistics ownership and huge-before-regular startup.
+  `allocator-huge-reservation` passes 69 C differential values and ten tests;
+  log `.work/x86_64/allocator-huge-reservation-integrated.log`. The worker also
+  passed 956 allocator unit tests, quick evidence and performance smoke.
+  Native M2 remains partial. Simulated primitives do not replace native huge
+  page success; this host has zero configured/free 1-GiB pages and one NUMA node.
 
 These are component measurements, not final same-revision qualification.
 
-### Remaining independent work
+### Remaining work and ownership
 
-All worktrees are beneath `.work/worktrees/`; inspect their branches and dirty
-state before integration. No uncommitted checkpoint is a completed feature.
+All new worktrees and mutable state stay beneath checkout `.work`. Preserve
+historical dirty worktrees; no uncommitted checkpoint is a completed feature.
 
 | Worktree | Current task |
 | --- | --- |
-| `owned_pthread_lifecycle` | Dynamic fork transaction across loader graph and callback ownership, surviving-thread TLS adoption, libc/TSD/robust repair, recursive constructor fork and vanished-constructor rejection. |
-| `header_declaration_parity` | Generic matrices are green; finish the complete native aggregate and promote the header family only when its executable predicates pass. Public support remains separate. |
-| `rust_std_unwinder` | Automatic tool review paused this task. Initial provider commit `d3ca0e79` and unfinished producer/driver/metadata changes remain isolated and unqualified; resolve the restriction before resuming. |
-| `native_source_build` | Pinned Lua source build through owned installed inputs, ordinary workload, purity and extracted/reproducibility evidence. |
-| `allocator_m2_metadata` | Quiescent arena-destruction ownership design is paused by automatic tool review. Partial uncommitted snapshot/destruction files are unqualified; preserve them and resolve that tool restriction before resuming the subtask. |
+| `owned_dynamic_sysroot` | Replace impossible planned-only RuntimeV1/product predicates with current source/manifest-bound materialization and fresh per-case receipts. Building alone must not qualify a product; historical foundations and full-family/public promotion remain separate. Root owns the three-product runner and final integration. |
+| `owned_pthread_lifecycle` | Timed/clock-selected and process-shared condition waits with their source-required mutex dependencies; reconcile remaining legacy machine-code evidence without imposing incidental symbol layout on runtime code. |
+| `owned_stdio_engine` | `system` child-wait cancellation with source `pclose` separation and deterministic child/wait ownership evidence. |
+| `header_declaration_parity` | Generic matrices pass; complete the native aggregate/provider audit and qualify the header family only when its executable predicates pass. |
+| `native_resolver_network` | Controlled same-source/object musl/owned resolver differential across static/dynamic installed/extracted products. Build in the ordinary pinned container, then execute with no external network and private conventional files. |
+| `qualification_execution_boundary` | Pinned execution boundary is integrated as `255ec048`; source/tool/runtime-bound completed receipts and independently runnable qualification prefixes still need completion. Private five-case admission remains private. |
+| `rust_std_unwinder` | Automatic tool review paused the task. Initial provider `d3ca0e79` and unfinished producer/driver/metadata changes remain isolated and unqualified; resolve the restriction before resuming. |
+| `allocator_m2_metadata` | Automatic tool review paused quiescent arena-destruction ownership work. Preserve partial uncommitted snapshot/destruction files and resolve the restriction before resuming. |
 
 The user approved the unwind configuration and delegated dependency selection
 on 2026-09-05. `AGENTS.md` and `SCOPE.md` retain scope/audit/qualification rules
-without dependency approval round trips. The concrete unwind record is
-`docs/design/x86-rust-unwinder-proposal.md`; do not substitute libgcc, dummy
-unwind symbols or reduced Rust-std fixtures.
-
-Dynamic fork must preserve FS+24/32/40, source callback/lock ordering and
-logical task identity. Arena destruction must not free its own retry metadata;
-its preflight snapshot design and source-order evidence are still unfinished.
-Preserve unrelated historical dirty worktrees. Use the normal sharded Python
-runner for broad accounting checks, with all scratch beneath checkout `.work`.
+without dependency approval round trips. The concrete record is
+`docs/design/x86-rust-unwinder-proposal.md`; libgcc, dummy unwind symbols and
+reduced Rust-std fixtures cannot replace the required behavior.
 
 ## Goal prompt
 
