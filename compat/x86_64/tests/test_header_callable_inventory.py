@@ -355,6 +355,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "putwchar",
                 "putwchar_unlocked",
                 "realpath",
+                "sem_timedwait",
                 "setbuf",
                 "setbuffer",
                 "setlinebuf",

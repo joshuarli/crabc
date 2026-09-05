@@ -84,8 +84,10 @@ done
     -I"$ROOT_DIR/include" compat/x86_64/libc_posix_semaphore_probe.c -o "$reference"
 timeout 10s "$reference" || fail "pinned-musl POSIX-semaphore fixture failed"
 
+# The instruction judge requires the raw futex adapter in the selected
+# wrapper. One codegen unit makes that boundary deterministic.
 CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
-    --target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort
+    --target x86_64-unknown-linux-musl -- -C relocation-model=static -C code-model=small -C panic=abort -C codegen-units=1
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
@@ -106,7 +108,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
 fi
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_POSIX_SEMAPHORE_FREESTANDING \
-    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+    -I"$ROOT_DIR/include" -nostdlib -static -Wl,--gc-sections -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_posix_semaphore_probe.c \
     compat/x86_64/libc_posix_semaphore_start.S "$archive" -o "$candidate"

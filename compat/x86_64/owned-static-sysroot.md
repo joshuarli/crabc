@@ -283,6 +283,22 @@ fixture also qualifies pending `msync` cancellation before kernel validation;
 it makes no file-durability claim. Every fixture child is released and reaped,
 and successful fixtures remove their scratch directory.
 
+`owned_semaphore_wait_cancellation_probe.c` isolates the source's mandatory
+cancellation check before consuming an available token. Its companion
+`owned_semaphore_cancellation_probe.c` qualifies owned `sem_wait` and the new
+owned-only `sem_timedwait` in every TLS job. Waiter accounting uses explicit
+pthread cleanup registration because signal-driven cancellation bypasses Rust
+Drop. Tests check cleanup-before-user ordering, multiple waiters after one is
+canceled, private and shared futex modes, a process-shared wake, and token
+conservation under post/cancel and post/timeout races. Absolute realtime
+nanosecond validation and expiry follow both initial token attempts; available
+tokens bypass invalid or expired deadlines. The source's sticky signal-handler
+flag preserves timed-wait `EINTR` behavior, including `SA_RESTART` after an
+interrupting handler was previously installed and a kernel-rejected handler
+installation. Overflow leaves the semaphore unchanged. The default standalone
+six-function semaphore archive retains its earlier raw wait boundary and does
+not export `sem_timedwait`; named semaphore operations remain unselected.
+
 Each POSIX job separately links `owned_spawn_probe.c`: spawn/spawnp file-action
 ordering, working-directory and PATH search, signal/process attributes, worker
 calls, and failure cleanup compare against pinned musl. The installed and

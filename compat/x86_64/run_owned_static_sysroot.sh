@@ -800,6 +800,16 @@ run_static_mode() {
             expected_output=''
             minimum_tls_alignment=1
             ;;
+        semaphore-wait-cancellation)
+            probe=owned_semaphore_wait_cancellation_probe.c
+            expected_output="$(cat "$printf_matrix_reference")"
+            minimum_tls_alignment=1
+            ;;
+        semaphore-cancellation)
+            probe=owned_semaphore_cancellation_probe.c
+            expected_output="$(cat "$printf_matrix_reference")"
+            minimum_tls_alignment=1
+            ;;
         open-lock-cancellation)
             probe=owned_open_lock_cancellation_probe.c
             expected_output="$(cat "$printf_matrix_reference")"
@@ -1105,6 +1115,10 @@ run_static_mode() {
             "$label sleep-wait cancellation" sleep-wait-cancellation "$printf_matrix_reference.sleep-wait-cancellation"
         run_static_mode "$installed_root" "$mode" "$mode_root/open-lock-cancellation" \
             "$label open/lock cancellation" open-lock-cancellation "$printf_matrix_reference.open-lock-cancellation"
+        run_static_mode "$installed_root" "$mode" "$mode_root/semaphore-wait-cancellation" \
+            "$label semaphore wait cancellation" semaphore-wait-cancellation "$printf_matrix_reference.semaphore-wait-cancellation"
+        run_static_mode "$installed_root" "$mode" "$mode_root/semaphore-cancellation" \
+            "$label semaphore cancellation" semaphore-cancellation "$printf_matrix_reference.semaphore-cancellation"
     fi
     if [ "$consumer_kind" = posix ]; then
         run_static_mode "$installed_root" "$mode" "$mode_root/temp" \
@@ -1494,6 +1508,22 @@ env -i "$header_consumer/open-lock-cancellation-reference" "$header_consumer/ope
     fail "pinned-musl open/lock cancellation reference failed"
 grep -qx owned-open-lock-cancellation-ok "$printf_matrix_reference.open-lock-cancellation" ||
     fail "pinned-musl open/lock cancellation completion missing"
+
+"$ORACLE_CC" -std=c11 -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_semaphore_wait_cancellation_probe.c" \
+    -o "$header_consumer/semaphore-wait-cancellation-reference"
+env -i "$header_consumer/semaphore-wait-cancellation-reference" >"$printf_matrix_reference.semaphore-wait-cancellation" ||
+    fail "pinned-musl semaphore-wait cancellation reference failed"
+grep -qx owned-semaphore-wait-cancellation-ok "$printf_matrix_reference.semaphore-wait-cancellation" ||
+    fail "pinned-musl semaphore-wait cancellation completion missing"
+
+"$ORACLE_CC" -std=c11 -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_semaphore_cancellation_probe.c" \
+    -o "$header_consumer/semaphore-cancellation-reference"
+env -i "$header_consumer/semaphore-cancellation-reference" >"$printf_matrix_reference.semaphore-cancellation" ||
+    fail "pinned-musl semaphore cancellation reference failed"
+grep -qx owned-semaphore-cancellation-ok "$printf_matrix_reference.semaphore-cancellation" ||
+    fail "pinned-musl semaphore cancellation completion missing"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -I"$ROOT_DIR/include" \

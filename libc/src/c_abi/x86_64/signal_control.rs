@@ -23,10 +23,11 @@
 //! bytes remain caller-resident. `sigprocmask` still forwards the caller's raw
 //! kernel-visible word and only clears musl's reserved 32–34 bits when it
 //! reports an old mask. The intentionally excluded `sigaction.c` behavior is
-//! the `handler_set`/`__eintr_valid_flag` bookkeeping, first-real-handler
+//! the `handler_set` bookkeeping and first-real-handler
 //! internal-signal unmask. SIGABRT lock wrapping is selected only by the owned
 //! runtime via owned_process_lock; the default fixture retains its old boundary.
-//! The remaining bookkeeping requires the
+//! The owned runtime also preserves the sticky `__eintr_valid_flag` contract
+//! consumed by semaphore timed waits. The remaining bookkeeping requires the
 //! pthread/runtime policy this static artifact does not claim.
 
 use core::ffi::{c_int, c_void};
@@ -41,6 +42,19 @@ const EINVAL: c_int = 22;
 const SIG_ERR: usize = usize::MAX;
 const APPLICATION_SIGNAL_MAX: c_int = 64;
 const SA_RESTART: i32 = 0x1000_0000;
+// musl 1.2.6 src/signal/sigaction.c::__eintr_valid_flag is sticky: a real
+// non-SA_RESTART handler makes timed-futex EINTR observable process-wide,
+// even if the kernel subsequently rejects that installation. Queries, DFL,
+// IGN, and restoration do not reset it. Only the owned runtime consumes it.
+#[cfg(feature = "x86-owned-static-runtime")]
+static INTERRUPTING_SIGNAL_HANDLER_INSTALLED: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) fn interrupting_signal_handler_installed() -> bool {
+    INTERRUPTING_SIGNAL_HANDLER_INSTALLED.load(core::sync::atomic::Ordering::Acquire)
+}
+
 const RESERVED_SIGNAL_MASK: u64 = (1_u64 << 31) | (1_u64 << 32) | (1_u64 << 33);
 
 // Pinned musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`
@@ -102,6 +116,12 @@ unsafe fn sigaction_impl(
     let action_pointer = if action.is_null() {
         core::ptr::null()
     } else {
+        #[cfg(feature = "x86-owned-static-runtime")]
+        // Match musl's predicate and pre-syscall placement, including failed
+        // attempts to install a handler for SIGKILL or SIGSTOP.
+        if unsafe { (*action).handler > 1 && (*action).flags & SA_RESTART == 0 } {
+            INTERRUPTING_SIGNAL_HANDLER_INSTALLED.store(true, core::sync::atomic::Ordering::Release);
+        }
         // SAFETY: `action` satisfies this C entry point's public-record
         // contract, and `kernel_action` is writable local storage.
         unsafe { signal_foundation::pack_public_action(action, kernel_action.as_mut_ptr()) };
