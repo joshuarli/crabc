@@ -166,3 +166,13 @@ unmounts it on completion or failure, and retires temporary setuid permissions.
 Other chroot consumers use the existing narrower container helper.
 `tests/test_dynamic_loader_dispatch.py` observes actual Docker arguments for
 the dynamic product, wordexp, and CRT dispatches to guard that boundary.
+
+`run_general_dynamic_pthread_signal.sh` reuses the ordinary pthread/C11 signal
+consumer under installed and extracted PIE/non-PIE entries. Its read-only proc
+mount observes completed kernel tasks before checking still-valid joinable
+handles, and is unmounted by the runner's exit trap. The integrated dynamic
+gate passed with search policy, pure-TBSS, live pthread attributes, signal
+transactions and existing cancellation/lifecycle consumers; retained log:
+`.work/x86_64/pthread-signals-getattr-search-integrated.log`, product:
+`.work/x86_64/tmp/materialized-dynamic.irVBKA`. This is component evidence,
+not final same-revision platform qualification.
