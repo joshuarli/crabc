@@ -35,15 +35,16 @@ compile_error!("the x86 POSIX spawn-attribute initializer requires little-endian
 // This is the installed `<spawn.h>` `posix_spawnattr_t` layout. It stays
 // private because the selected C boundary owns only zero initialization.
 #[repr(C)]
-struct PosixSpawnAttr {
-    flags: c_int,
-    process_group: c_int,
-    default_signals: [c_ulong; 16],
-    signal_mask: [c_ulong; 16],
-    priority: c_int,
-    policy: c_int,
-    implementation: *mut c_void,
-    padding: [u8; 64 - size_of::<*mut c_void>()],
+#[derive(Clone, Copy)]
+pub(super) struct PosixSpawnAttr {
+    pub(super) flags: c_int,
+    pub(super) process_group: c_int,
+    pub(super) default_signals: [c_ulong; 16],
+    pub(super) signal_mask: [c_ulong; 16],
+    pub(super) priority: c_int,
+    pub(super) policy: c_int,
+    pub(super) implementation: *mut c_void,
+    pub(super) padding: [u8; 64 - size_of::<*mut c_void>()],
 }
 
 const _: [(); 336] = [(); size_of::<PosixSpawnAttr>()];

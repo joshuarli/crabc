@@ -930,6 +930,12 @@ mod owned_static_realpath;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_static_abort.rs"]
 mod owned_static_abort;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_process_lock.rs"]
+mod owned_process_lock;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_spawn.rs"]
+mod owned_spawn;
 // The installed owned-static composition additionally needs Lua's complete
 // binary32/binary64 inverse-trigonometry set. Keep it at this aggregate
 // boundary: the frozen default archive must not acquire any of these entries.

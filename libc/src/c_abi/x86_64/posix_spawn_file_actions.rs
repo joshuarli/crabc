@@ -40,10 +40,10 @@ const FDOP_CHDIR: c_int = 4;
 const FDOP_FCHDIR: c_int = 5;
 
 #[repr(C)]
-struct PosixSpawnFileActions {
-    _pad0: [c_int; 2],
-    actions: *mut c_void,
-    _pad: [c_int; 16],
+pub(super) struct PosixSpawnFileActions {
+    pub(super) _pad0: [c_int; 2],
+    pub(super) actions: *mut c_void,
+    pub(super) _pad: [c_int; 16],
 }
 
 /// The fixed prefix of musl's flexible-array `struct fdop`.
@@ -54,14 +54,14 @@ struct PosixSpawnFileActions {
 /// `sizeof *op` allocation.  Keeping the explicit links is necessary even
 /// though execution belongs to the future spawn aggregate.
 #[repr(C)]
-struct FdOp {
-    next: *mut FdOp,
-    prev: *mut FdOp,
-    cmd: c_int,
-    fd: c_int,
-    srcfd: c_int,
-    oflag: c_int,
-    mode: c_uint,
+pub(super) struct FdOp {
+    pub(super) next: *mut FdOp,
+    pub(super) prev: *mut FdOp,
+    pub(super) cmd: c_int,
+    pub(super) fd: c_int,
+    pub(super) srcfd: c_int,
+    pub(super) oflag: c_int,
+    pub(super) mode: c_uint,
 }
 
 const _: () = assert!(core::mem::size_of::<PosixSpawnFileActions>() == 80);

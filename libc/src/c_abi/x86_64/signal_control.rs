@@ -22,7 +22,9 @@
 //! kernel-visible word and only clears musl's reserved 32–34 bits when it
 //! reports an old mask. The intentionally excluded `sigaction.c` behavior is
 //! the `handler_set`/`__eintr_valid_flag` bookkeeping, first-real-handler
-//! internal-signal unmask, and SIGABRT abort-lock wrapping; those require the
+//! internal-signal unmask. SIGABRT lock wrapping is selected only by the owned
+//! runtime via owned_process_lock; the default fixture retains its old boundary.
+//! The remaining bookkeeping requires the
 //! pthread/runtime policy this static artifact does not claim.
 
 use core::ffi::{c_int, c_void};
@@ -85,6 +87,14 @@ unsafe fn sigaction_impl(
     if !is_application_signal(signal) {
         return invalid_argument();
     }
+
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let _abort_transaction = if signal == 6 {
+        match unsafe { super::owned_process_lock::SignalGuard::acquire() } {
+            Ok(guard) => Some(guard),
+            Err(error) => { unsafe { errno::set_errno(error) }; return -1; }
+        }
+    } else { None };
 
     let mut kernel_action = MaybeUninit::<KernelSigAction>::uninit();
     let action_pointer = if action.is_null() {

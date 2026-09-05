@@ -20,7 +20,7 @@ compile_error!("the x86 execvp PATH leaf requires little-endian Linux/x86-64");
 
 use core::{ffi::{c_char, c_int}, ptr};
 
-use super::{byte_strings, environment, errno, process_exec, process_exec_env};
+use super::{environment, errno, process_exec_env, raw_syscall};
 
 const ENOENT: c_int = 2;
 const EACCES: c_int = 13;
@@ -44,27 +44,63 @@ unsafe fn execvpe_impl(
     // SAFETY: this is `__execvpe`'s initial no-candidate error state.
     unsafe { errno::set_errno(ENOENT) };
 
+    let result = unsafe { execvpe_raw(file, argv, envp, inherited_path, ptr::null_mut()) };
+    if result < 0 { unsafe { errno::set_errno(-result as c_int) }; -1 }
+    else { result as c_int }
+}
+
+// These scalar string walks keep the clone-vfork child inside private Rust
+// code, not an interposable public C string function or a TLS/loader callback.
+unsafe fn bounded_length(p: *const c_char, maximum: usize) -> usize {
+    let mut n = 0;
+    unsafe { while n < maximum && *p.add(n) != 0 { n += 1; } }
+    n
+}
+unsafe fn delimiter(mut p: *const c_char, byte: u8) -> *const c_char {
+    unsafe { while *p != 0 && *p as u8 != byte { p = p.add(1); } }
+    p
+}
+unsafe fn record_error(error: c_int, slot: *mut c_int) -> i64 {
+    if !slot.is_null() { unsafe { slot.write(error) }; }
+    -(error as i64)
+}
+
+/// Shared musl PATH algorithm with no errno/TLS/allocator access. Spawn passes
+/// its parent's inherited PATH, not envp's PATH. An optional parent-owned slot
+/// records each source errno transition across CLONE_VM, including a failed
+/// candidate followed by successful exec; the suspended parent publishes it.
+/// # Safety
+/// File/vectors/PATH remain valid through exec. A non-null error slot names
+/// exclusively writable int storage, not a TLS errno address. This function
+/// may replace the process and never calls application callbacks.
+pub(super) unsafe fn execvpe_raw(
+    file: *const c_char, argv: *const *const c_char, envp: *const *const c_char,
+    inherited_path: *const c_char, error_slot: *mut c_int,
+) -> i64 {
+    unsafe { record_error(ENOENT, error_slot); }
+
     // Like musl, C callers own a non-null readable `file` C string.
     if unsafe { file.cast::<u8>().read() } == 0 {
-        return -1;
+        return -(ENOENT as i64);
     }
-    if !unsafe { byte_strings::strchr(file, b'/' as c_int) }.is_null() {
-        return unsafe { process_exec::execve_result(file, argv, envp) };
+    if unsafe { *delimiter(file, b'/') } != 0 {
+        let result = unsafe { raw_syscall::syscall3(59, file as i64, argv as i64, envp as i64) };
+        if result < 0 { unsafe { record_error(-result as c_int, error_slot); } }
+        return result;
     }
 
     let path = if inherited_path.is_null() {
         DEFAULT_PATH.as_ptr().cast::<c_char>()
     } else {
-        inherited_path.cast_const()
+        inherited_path
     };
     // This is musl's `strnlen(path, PATH_MAX-1)+1` VLA prefix bound.
-    let path_limit = unsafe { byte_strings::strnlen(path, PATH_MAX - 1) } + 1;
-    let file_length = unsafe { byte_strings::strnlen(file, NAME_MAX + 1) };
+    let path_limit = unsafe { bounded_length(path, PATH_MAX - 1) } + 1;
+    let file_length = unsafe { bounded_length(file, NAME_MAX + 1) };
     if file_length > NAME_MAX {
         // SAFETY: musl rejects a bare search name longer than NAME_MAX before
         // building any candidate pathname.
-        unsafe { errno::set_errno(ENAMETOOLONG) };
-        return -1;
+        return unsafe { record_error(ENAMETOOLONG, error_slot) };
     }
 
     // `path_limit <= PATH_MAX`; a nonempty component is strictly shorter than
@@ -74,12 +110,13 @@ unsafe fn execvpe_impl(
     let mut candidate = [0u8; PATH_MAX + NAME_MAX + 1];
     let mut cursor = path;
     let mut seen_eacces = false;
+    let mut last_error = ENOENT;
 
     loop {
         // SAFETY: `cursor` stays within the caller's or default terminated
-        // PATH string. The selected byte-string leaf implements musl's
-        // scalar `__strchrnul` behavior.
-        let boundary = unsafe { byte_strings::strchrnul(cursor, b':' as c_int) }.cast_const();
+        // PATH string. The private scalar delimiter preserves musl's
+        // __strchrnul behavior without an interposable C call in the child.
+        let boundary = unsafe { delimiter(cursor, b':') };
         // SAFETY: `boundary` is the colon or terminator found within the same
         // C string that starts at `cursor`.
         let directory_length = unsafe { boundary.offset_from(cursor) as usize };
@@ -108,17 +145,19 @@ unsafe fn execvpe_impl(
                 )
             };
 
-            let result = unsafe { process_exec::execve_result(candidate.as_ptr().cast(), argv, envp) };
-            if result != -1 {
+            let result = unsafe { raw_syscall::syscall3(59, candidate.as_ptr() as i64, argv as i64, envp as i64) };
+            if result >= 0 {
                 // Linux execve never normally returns a successful result;
                 // preserve any unexpected non-error return rather than
                 // inventing a pathname-search errno.
                 return result;
             }
-            match unsafe { errno::get_errno() } {
+            last_error = -result as c_int;
+            unsafe { record_error(last_error, error_slot); }
+            match last_error {
                 EACCES => seen_eacces = true,
                 ENOENT | ENOTDIR => {}
-                _ => return -1,
+                _ => return result,
             }
         }
 
@@ -135,9 +174,9 @@ unsafe fn execvpe_impl(
         // SAFETY: match musl's final EACCES precedence over later ENOENT or
         // ENOTDIR candidates. Without EACCES, preserve the final candidate
         // errno exactly as musl does.
-        unsafe { errno::set_errno(EACCES) };
+        last_error = EACCES;
     }
-    -1
+    unsafe { record_error(last_error, error_slot) }
 }
 
 /// Search the selected process `PATH` before replacing the current image.

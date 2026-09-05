@@ -7,16 +7,11 @@
 //! installs `SIG_DFL`, sends the calling task `SIGABRT`, and unblocks that one
 //! signal so the default abnormal termination occurs.
 //!
-//! Musl's full implementation serializes this with `__abort_lock`, backed by
-//! `abort_lock.c`, `lock.c`, and private `struct pthread`/`__libc` state.  The
-//! owned-static runtime intentionally has no concurrent sigaction policy or
-//! that internal state owner.  This translation preserves the observable
-//! default/blocked/ignored/returning-handler termination sequence with raw
-//! Linux 5.10 syscalls and the existing selected `raise` boundary, without
-//! importing fake lock or `__libc` baggage merely to satisfy archive linkage.
-//!
-//! Concurrent disposition mutation remains outside this narrow static runtime
-//! contract.  The direct final `SIGKILL` and `_Exit(127)` paths are defensive
+//! The final disposition transaction uses owned_process_lock, shared with
+//! SIGABRT sigaction, spawn, and the inner fork transaction, as in musl's
+//! __abort_lock protocol. This preserves default/blocked/ignored/returning-
+//! handler termination without allocator or TLS calls under that lock.
+//! The direct final `SIGKILL` and `_Exit(127)` paths are defensive
 //! only: after a successful default `SIGABRT` delivery they are unreachable.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
@@ -64,15 +59,22 @@ pub extern "C" fn abort() -> ! {
     let all_signals = u64::MAX;
     // SAFETY: these are complete local one-word Linux signal-mask records;
     // Linux x86's rt_sigprocmask consumes exactly eight mask bytes.
-    unsafe {
-        let _ = raw_syscall::syscall4(
+    let blocked = unsafe {
+        raw_syscall::syscall4(
             raw_syscall::SYS_RT_SIGPROCMASK,
             SIG_BLOCK,
             (&all_signals as *const u64) as usize as i64,
             0,
             KERNEL_SIGSET_SIZE,
-        );
-    }
+        )
+    };
+    // A seccomp-denied mask cannot satisfy the lock's signal invariant.
+    // Use the existing defensive terminal path instead of risking reentry.
+    if blocked < 0 { force_termination(); }
+
+    // Signals are blocked; hold through abnormal termination so no concurrent
+    // sigaction can replace the final disposition or spawn can observe it.
+    let _transaction = unsafe { super::owned_process_lock::ProcessGuard::acquire_blocked() };
 
     let default_action = KernelSigAction {
         handler: 0,
@@ -81,8 +83,7 @@ pub extern "C" fn abort() -> ! {
         mask: 0,
     };
     // SAFETY: Linux reads one complete all-zero default-action record and no
-    // output record.  This direct private transition intentionally does not
-    // expose or depend on musl's abort-lock bookkeeping.
+    // output record. The shared process lock protects this final transition.
     unsafe {
         let _ = raw_syscall::syscall4(
             raw_syscall::SYS_RT_SIGACTION,
@@ -120,6 +121,10 @@ pub extern "C" fn abort() -> ! {
     // The raw default delivery above is terminal.  Retain musl's defensive
     // no-return intent if an invalid execution environment nevertheless lets
     // it return, without allocating or consulting a private runtime lock.
+    force_termination()
+}
+
+fn force_termination() -> ! {
     let process_id = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETPID) };
     unsafe {
         let _ = raw_syscall::syscall2(
