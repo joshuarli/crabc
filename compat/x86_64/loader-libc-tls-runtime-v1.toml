@@ -313,3 +313,5 @@ worker_operation = "loader allocates current generation under runtime guard and 
 attachment_order = "validate 72-byte descriptor and 144-byte owned CRT record before libc TLS access"
 fork = "loader registry and surviving TLS repair before libc thread registry repair"
 qualification = "owned_dynamic_qualification.py live three-product receipt only"
+
+timer_callback_reset = "__crabc_x86_64_reset_current_tls_v1: unsafe extern C fn() -> i32; registered current TP, application signals blocked after TSD cleanup; loader guard, no allocation, validate all modules then reset relocated template and TBSS bytes; preserve TCB/DTV/token; 0 success or -EINVAL private invariant failure"

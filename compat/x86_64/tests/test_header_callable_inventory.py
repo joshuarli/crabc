@@ -447,6 +447,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "symlinkat",
                 "syscall",
                 "system",
+                "timer_create",
                 "tzset",
                 "ungetwc",
                 "vasprintf",

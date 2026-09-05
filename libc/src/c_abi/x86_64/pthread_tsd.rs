@@ -561,3 +561,16 @@ pub unsafe extern "C" fn tss_set(key: c_uint, value: *mut c_void) -> c_int {
         THRD_ERROR
     }
 }
+
+/// Finish one timer notification's TSD phase, then reopen the same task's
+/// destructor iteration guard. Unlike actual pthread teardown this task will
+/// execute another callback. Preserve values rearmed beyond the bounded
+/// iterations, as musl __pthread_tsd_run_dtors does.
+/// # Safety
+/// `values` is the current timer worker's live value table; no other task runs
+/// its destructors or resets this guard.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn run_timer_callback_tsd_destructors(values: *const SelectedTsdValues) {
+    unsafe { run_selected_worker_tsd_destructors(values); }
+    unsafe { (*values).teardown.store(TSD_TEAR_DOWN_IDLE, Ordering::Release); }
+}

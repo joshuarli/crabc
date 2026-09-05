@@ -82,6 +82,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "pthread-exit",
                 "fork",
                 "atfork-registry",
+                "posix-timers",
                 "pthread-scheduling",
                 "signal-helpers",
                 "fcntl",

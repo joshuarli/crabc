@@ -113,3 +113,16 @@ pub(super) fn adopt_current_thread_after_fork() -> bool {
     MAIN_ID.store(tid as i32, Ordering::Relaxed);
     true
 }
+
+unsafe extern "C" { fn __crabc_x86_64_reset_current_tls_v1() -> i32; }
+
+/// Reset every current module image through its retained loader owner.
+/// # Safety
+/// The calling timer worker completed callback/TSD cleanup and blocked
+/// application signals. It alone may access its ELF TLS during reset.
+pub(super) unsafe fn reset_current_thread_images() {
+    if unsafe { __crabc_x86_64_reset_current_tls_v1() } != 0 {
+        unsafe { raw_syscall::syscall1(231, 127); }
+        loop { core::hint::spin_loop(); }
+    }
+}

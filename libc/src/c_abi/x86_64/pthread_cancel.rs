@@ -460,3 +460,16 @@ pub unsafe extern "C" fn _pthread_cleanup_pop(cleanup: *mut CleanupNode, run: c_
         }
     }
 }
+
+/// musl timer_create.c::cleanup_fromsig resets logical callback cancellation
+/// after TSD cleanup and blocking application/SIGTIMER signals. This current
+/// task owns its popped cleanup chain; pending cancellation is consumed here.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) fn reset_timer_callback_cancellation() {
+    if let Some(slot) = current_pthread_slot() {
+        slot.pending.store(0, Ordering::Release);
+        slot.cleanup_head.store(0, Ordering::Release);
+        slot.state.store(PTHREAD_CANCEL_ENABLE, Ordering::Release);
+        slot.asynchronous.store(0, Ordering::Release);
+    }
+}

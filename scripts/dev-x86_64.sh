@@ -558,6 +558,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
+  owned-posix-timers      test installed POSIX timer lifecycle and callback TLS reset
   owned-pthread-scheduling test installed pthread scheduling/default attributes
   owned-fcntl  test installed descriptor-control commands and variadic ABI
   owned-named-ipc  test installed named semaphore and shared-memory lifecycles
@@ -5632,7 +5633,7 @@ case "$command" in
     owned-io-cancellation) ;;
     owned-resolver-network) ;;
     owned-dynamic-io-cancellation) ;;
-    owned-pthread-scheduling|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
+    owned-posix-timers|owned-pthread-scheduling|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
     qualification-manifest) ;;
     owned-static-sysroot) ;;
@@ -7732,6 +7733,9 @@ case "$command" in
     owned-pthread-mutex)
         [ "$#" -eq 0 ] || fail "owned-pthread-mutex takes no arguments"
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_mutex.sh
+        ;;
+    owned-posix-timers)
+        run_in_container bash /workspace/compat/x86_64/run_owned_posix_timers.sh "$@"
         ;;
     owned-pthread-scheduling)
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_scheduling.sh "$@"

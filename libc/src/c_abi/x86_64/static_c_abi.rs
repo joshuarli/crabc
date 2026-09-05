@@ -646,12 +646,19 @@ mod clock_gettime;
 mod clock_settime;
 #[path = "clock_adjtime.rs"]
 mod clock_adjtime;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_posix_timers.rs"]
+mod owned_posix_timers;
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[path = "timer_getoverrun.rs"]
 mod timer_getoverrun;
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[path = "timer_delete.rs"]
 mod timer_delete;
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[path = "timer_gettime.rs"]
 mod timer_gettime;
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[path = "timer_settime.rs"]
 mod timer_settime;
 #[path = "clock_getcpuclockid.rs"]

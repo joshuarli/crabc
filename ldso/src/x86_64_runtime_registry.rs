@@ -724,6 +724,7 @@ pub(super) unsafe fn attach_worker_tls(guard: &RuntimeGuard, tp: *mut u8) -> Opt
 
 pub(super) fn runtime_function(name: &[u8]) -> Option<u64> {
     match name {
+        b"__crabc_x86_64_reset_current_tls_v1" => Some(reset_current_tls as *const () as usize as u64),
         b"__crabc_x86_64_runtime_open" => Some(runtime_open as *const () as usize as u64),
         b"__crabc_x86_64_runtime_symbol" => Some(runtime_symbol as *const () as usize as u64),
         b"__crabc_x86_64_runtime_close" => Some(runtime_close as *const () as usize as u64),
@@ -913,6 +914,31 @@ unsafe extern "C" fn runtime_iterate(callback: ProgramHeaderCallback, data: *mut
         if result != 0 { return result; }
         let _guard = RuntimeGuard::acquire();
         node = unsafe { (*node).next };
+    }
+    0
+}
+
+/// Private owned-libc timer cleanup boundary v1, source-mapped to musl
+/// src/env/__reset_tls.c (1.2.6, MIT). The loader owns templates and current
+/// module publication. Reset touches only calling-task ELF TLS bytes, never
+/// its TCB, cancellation cache, DTV descriptors, allocation token or stack.
+/// Application signals are blocked by the caller after TSD cleanup. This is
+/// not a signal-handler entry point. No allocation or application call occurs.
+unsafe extern "C" fn reset_current_tls() -> i32 {
+    let guard = RuntimeGuard::acquire();
+    let tp = unsafe { read_thread_pointer() } as *mut u8;
+    if !unsafe { x86_64_initial_worker_tls::contains_thread(&guard, tp) } { return -22; }
+    let registry = unsafe { &*REGISTRY.0.get() };
+    let mut node = registry.head;
+    // Validate every module before the first write; malformed private state
+    // must not leave some images reset and others carrying callback state.
+    for write in [false, true] {
+        while !node.is_null() {
+            let Some(object) = (unsafe { (*node).object() }) else { return -22; };
+            if !unsafe { x86_64_runtime_tls_view::reset_module_image(tp, object, write) } { return -22; }
+            node = unsafe { (*node).next };
+        }
+        node = registry.head;
     }
     0
 }

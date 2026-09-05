@@ -115,6 +115,20 @@ class LoaderLibcTlsRuntimeV1ContractTests(unittest.TestCase):
             report["evidence_states"], ["private-foundation-complete"] * 4 + ["implemented-unqualified"] * 5
         )
 
+    def test_timer_callback_reset_preserves_its_versioned_signature_and_preconditions(self) -> None:
+        for before, after in (("fn() -> i32", "fn() -> void"),
+                              ("registered current TP", "arbitrary TP"),
+                              ("no allocation", "allocation permitted"),
+                              ("after TSD cleanup", "before TSD cleanup"),
+                              ("preserve TCB/DTV/token", "replace TCB/DTV/token")):
+            with self.subTest(before=before):
+                contract = self.contract()
+                operation = contract["owned_runtime"]["timer_callback_reset"]
+                self.assertIn(before, operation)
+                contract["owned_runtime"]["timer_callback_reset"] = operation.replace(before, after)
+                with self.assertRaisesRegex(runtime_v1.TlsRuntimeContractError, "owned runtime contract drifted"):
+                    runtime_v1.validate_contract(contract)
+
     def test_static_dynamic_selection_and_owner_are_not_interchangeable(self) -> None:
         mutations = (
             (

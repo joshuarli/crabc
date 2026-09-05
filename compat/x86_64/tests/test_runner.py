@@ -2108,7 +2108,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "owned-io-cancellation",
                 "owned-resolver-network",
                 "owned-dynamic-io-cancellation",
-                "owned-pthread-scheduling|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
+                "owned-posix-timers|owned-pthread-scheduling|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
                 "owned-pthread-lifecycle",
                 "qualification-manifest",
             )

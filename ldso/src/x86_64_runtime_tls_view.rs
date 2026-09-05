@@ -335,3 +335,76 @@ mod tests {
         assert_eq!(unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) }, 0);
     }
 }
+
+/// Validate/reset a retained module's image on one exclusively borrowed TP.
+/// The caller holds the loader mutation guard and application TLS is quiescent.
+/// A current DTV generation covers both initial and dlopen-added modules.
+/// The false pass validates the entire population before any bytes are reset.
+pub(super) unsafe fn reset_module_image(tp: *mut u8, object: &Object, write: bool) -> bool {
+    if object.tls_memsz == 0 { return true; }
+    if object.tls_module_id == 0 || object.tls_filesz > object.tls_memsz
+        || (object.tls_filesz != 0 && object.tls_image.is_null()) { return false; }
+    let view = unsafe { current(tp) };
+    let (destination, size) = if view.is_null() {
+        let dtv = unsafe { *tp.add(8).cast::<*const usize>() };
+        let sizes = unsafe { *tp.add(TLS_TCB_MODULE_SIZE_TABLE_OFFSET).cast::<*const usize>() };
+        if dtv.is_null() || sizes.is_null() || object.tls_module_id > unsafe { *dtv } { return false; }
+        unsafe { (*dtv.add(object.tls_module_id) as *mut u8, *sizes.add(object.tls_module_id)) }
+    } else {
+        if object.tls_module_id > unsafe { (*view).module_count } { return false; }
+        unsafe { (*(*view).dtv.add(object.tls_module_id) as *mut u8, *(*view).sizes.add(object.tls_module_id)) }
+    };
+    if destination.is_null() || size != object.tls_memsz { return false; }
+    if write { unsafe {
+        if object.tls_filesz != 0 { core::ptr::copy_nonoverlapping(object.tls_image, destination, object.tls_filesz); }
+        core::ptr::write_bytes(destination.add(object.tls_filesz), 0, object.tls_memsz - object.tls_filesz);
+    } }
+    true
+}
+
+#[cfg(test)]
+mod timer_reset_tests {
+    use super::*;
+
+    #[test]
+    fn timer_reset_restores_initial_and_runtime_images_without_replacing_tcb_or_dtv() {
+        let first_image = [11u8, 13];
+        let later_image = [17u8, 19, 23];
+        let mut initial = [EMPTY_OBJECT; MAX_OBJECTS];
+        initial[0] = Object { tls_image: first_image.as_ptr(), tls_filesz: 2,
+            tls_memsz: 32, tls_align: 16, tls_module_id: 1,
+            tls_offset_below_tp: 32, ..EMPTY_OBJECT };
+        let block = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
+        let tp = block.thread_pointer;
+        let first = unsafe { *block.dtv.add(1) } as *mut u8;
+        unsafe {
+            first.write(99);
+            first.add(20).write(99);
+            *tp.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET).cast::<usize>() = 0x12345;
+        }
+        assert!(unsafe { reset_module_image(tp, &initial[0], false) });
+        assert_eq!(unsafe { first.read() }, 99);
+        assert!(unsafe { reset_module_image(tp, &initial[0], true) });
+        assert_eq!(unsafe { first.read() }, 11);
+        assert_eq!(unsafe { first.add(20).read() }, 0);
+        let later = Object { tls_image: later_image.as_ptr(), tls_filesz: 3,
+            tls_memsz: 4097, tls_align: 4096, tls_module_id: 2, ..EMPTY_OBJECT };
+        let modules = [initial[0], later];
+        unsafe { PreparedTlsView::prepare(tp, &modules).unwrap().publish(tp); }
+        let view = unsafe { current(tp) };
+        let second = unsafe { resolve(view, 2, 0) }.cast::<u8>();
+        unsafe { first.write(77); second.write(77); second.add(4096).write(77); }
+        let malformed = Object { tls_memsz: 4098, ..later };
+        assert!(!unsafe { reset_module_image(tp, &malformed, true) });
+        assert_eq!(unsafe { second.read() }, 77);
+        for module in &modules { assert!(unsafe { reset_module_image(tp, module, true) }); }
+        assert_eq!(unsafe { core::slice::from_raw_parts(second, 3) }, later_image);
+        assert_eq!(unsafe { second.add(4096).read() }, 0);
+        assert_eq!(unsafe { first.read() }, 11);
+        assert_eq!(unsafe { current(tp) }, view);
+        assert_eq!(unsafe { *block.dtv }, 1);
+        assert_eq!(unsafe { *tp.add(TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET).cast::<usize>() }, 0x12345);
+        assert_eq!(unsafe { release(tp) }, 0);
+        assert_eq!(unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) }, 0);
+    }
+}

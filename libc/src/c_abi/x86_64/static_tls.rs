@@ -850,3 +850,19 @@ const _: () = {
     assert!(thread_pointer & (alignment - 1) == 0);
     assert!(destination & (alignment - 1) == image & (alignment - 1));
 };
+
+/// musl src/env/__reset_tls.c: reset the current timer task's ELF template,
+/// preserving its TCB, stack guard and cancellation-state ownership.
+/// # Safety
+/// Called on a live owned TLS task after callback/TSD cleanup, with application
+/// signals blocked. No application reference to its TLS may be used meanwhile.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn reset_current_thread_images() {
+    let plan = unsafe { STATIC_INITIAL_TLS_PLAN };
+    let tp = super::pthread_identity::current_thread_pointer();
+    let destination = unsafe { tp.sub(plan.image_offset_below_tp) };
+    unsafe {
+        copy_bytes(plan.image, destination, plan.filesz);
+        zero_bytes(destination.add(plan.filesz), plan.memsz - plan.filesz);
+    }
+}

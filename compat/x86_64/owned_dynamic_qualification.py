@@ -41,6 +41,7 @@ CASES = {
     "pthread-exit": ("run_general_dynamic_pthread_exit.sh", None),
     "fork": ("run_general_dynamic_fork.sh", None),
     "atfork-registry": ("run_owned_atfork_registry.sh", None),
+    "posix-timers": ("run_owned_posix_timers.sh", None),
     "pthread-scheduling": ("run_owned_pthread_scheduling.sh", None),
     "signal-helpers": ("run_owned_signal_helpers.sh", None),
     "fcntl": ("run_owned_fcntl.sh", None),
