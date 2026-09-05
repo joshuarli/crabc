@@ -159,13 +159,18 @@ PY
 run_in_disposable_root() {
     local role_dir="$1" linkage="$2" candidate="$3"
     local execution_root="$role_dir/$linkage/root"
+    local execution_consumer="$execution_root/workload/consumer"
     local raw_prefix="$role_dir/$linkage/ordinary"
     local status
 
     mkdir -p "$execution_root/workload"
     chmod a+rx "$execution_root" "$execution_root/workload"
-    cp "$candidate" "$execution_root/workload/consumer"
-    chmod a+rx "$execution_root/workload/consumer"
+    sha256sum "$candidate" >"$role_dir/$linkage/candidate-before-execution.sha256"
+    cp -- "$candidate" "$execution_consumer"
+    chmod a+rx "$execution_consumer"
+    cmp -- "$candidate" "$execution_consumer" ||
+        fail "$linkage/$role_dir copied consumer differs before execution"
+    sha256sum "$execution_consumer" >"$role_dir/$linkage/executed-consumer-before-execution.sha256"
     set +e
     timeout 60 env -i PATH=/ LC_ALL=C "$CHROOT" "$execution_root" /workload/consumer \
         >"$raw_prefix.stdout" 2>"$raw_prefix.stderr"
@@ -219,7 +224,7 @@ for role in atfork-registry static-posix-forkexec; do
     done
 
     sha256sum "$readonly_source" >"$role_dir/source-after.sha256"
-    python3 -B "$EVIDENCE" role "$role" "$readonly_source" "$role_dir" "$PROVIDED_STATIC"
+    python3 -B "$EVIDENCE" role "$ROOT" "$role" "$readonly_source" "$role_dir" "$PROVIDED_STATIC"
     printf 'owned POSIX static fork %s: PASS\n' "$role"
 done
 

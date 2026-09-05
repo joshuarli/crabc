@@ -32,9 +32,13 @@ complete supplied payload. There is no positional dynamic-product argument,
 dynamic driver call, or hidden producer path.
 
 For each role, `compile.json` binds the source and object hashes to the
-installed headers, the current `crabc_cc_static.py` hash, the selected source
-translator and its identity, the exact static-PIE `-fPIE` command, and the
-complete dependency/include traces. The object hash is rechecked after the
+installed headers, the current checkout and installed `crabc_cc_static.py`
+identities, the current evidence-helper identity, the helper-selected and
+resolved compiler identity, the pinned clean environment, and the exact
+static-PIE `-fPIE` compile and `-M -H` audit vectors. Final sealing derives
+those vectors again from the current static driver, reparses `headers.d`, and
+requires the exact role-specific installed-header closure; it does not accept
+a source-only or ambient-header trace. The object hash is rechecked after the
 musl link and after each sealed static link. The shared
 `owned_posix_product_evidence.validate_link` validator binds each product link
 to its static receipt, selected CRT, owned archives, map, trace, final ELF, and
@@ -43,12 +47,13 @@ produce a second workload object.
 
 Every ordinary run uses a fresh retained root at
 `<role>/<linkage>/root/workload/consumer`; this lets the POSIX source's own
-child root change and self-exec path run without exposing a host path. Raw
-files are retained as
+child root change and self-exec path run without exposing a host path. Before
+execution, the runner hashes the original candidate and the copied consumer,
+and byte-compares them. Raw files are retained as
 `<role>/<musl|static|static-pie>/ordinary.{stdout,stderr,status}` and each
 candidate triplet must match the musl triplet exactly. The role `evidence.json`
-binds the source, compile receipt, object, sealed-link identities, executables,
-and raw transcripts.
+binds the source, compile receipt, object, sealed-link identities, each copied
+consumer, and raw transcripts.
 
 This adapter does not rerun or subsume the dynamic `fork` case, its DSO/TLS and
 loader-state coverage, `owned-process-trio`, or a fork-family completion

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Receipts for the two immutable supplied-static fork workloads.
 
-This helper owns only the adapter's source/header/object/link/raw binding.  It
+This helper owns only the adapter's source/header/object/link/raw binding. It
 uses the shared ``owned_posix_product_evidence.validate_link`` validator for a
 sealed static link and never builds a product or runs a workload.
 """
@@ -17,11 +17,12 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, Sequence
 
 
-COMPILE_FORMAT = "crabc.x86_64-owned-posix-static-fork-compile/v1"
-WORKLOAD_FORMAT = "crabc.x86_64-owned-posix-static-fork-workload/v1"
+COMPILE_FORMAT = "crabc.x86_64-owned-posix-static-fork-compile/v2"
+WORKLOAD_FORMAT = "crabc.x86_64-owned-posix-static-fork-workload/v2"
 IDENTITY_FIELDS = {
     "linkage",
     "product",
@@ -39,9 +40,81 @@ COMPILE_FIELDS = {
     "workload",
     "product",
     "translation",
+    "evidence_helper",
     "headers",
 }
 SHA256_HEX = frozenset("0123456789abcdef")
+STATIC_SOURCE_FLAGS = ("-std=c11",)
+PINNED_CLEAN_ENV = {
+    "LC_ALL": "C",
+    "PATH": "/usr/bin:/bin",
+    "SOURCE_DATE_EPOCH": "1",
+    "TZ": "UTC",
+}
+
+# The adapter is intentionally closed over these two existing sources. Keeping
+# their paths and preprocessor closure here makes a changed source/header graph
+# a receipt failure rather than a silently broadened workload contract.
+ROLE_SOURCES = {
+    "atfork-registry": Path("compat/x86_64/owned_atfork_registry_probe.c"),
+    "static-posix-forkexec": Path("compat/x86_64/owned_static_posix_probe.c"),
+}
+ROLE_HEADER_CLOSURES = {
+    "atfork-registry": (
+        "errno.h",
+        "features.h",
+        "bits/errno.h",
+        "pthread.h",
+        "bits/alltypes.h",
+        "sched.h",
+        "time.h",
+        "stdio.h",
+        "stdlib.h",
+        "alloca.h",
+        "sys/prctl.h",
+        "stdint.h",
+        "bits/stdint.h",
+        "sys/syscall.h",
+        "bits/syscall.h",
+        "sys/wait.h",
+        "signal.h",
+        "bits/signal.h",
+        "sys/resource.h",
+        "sys/time.h",
+        "sys/select.h",
+        "unistd.h",
+    ),
+    "static-posix-forkexec": (
+        "errno.h",
+        "features.h",
+        "bits/errno.h",
+        "fcntl.h",
+        "bits/alltypes.h",
+        "bits/fcntl.h",
+        "poll.h",
+        "bits/poll.h",
+        "pthread.h",
+        "sched.h",
+        "time.h",
+        "signal.h",
+        "bits/signal.h",
+        "stddef.h",
+        "stdlib.h",
+        "alloca.h",
+        "string.h",
+        "strings.h",
+        "sys/stat.h",
+        "bits/stat.h",
+        "sys/types.h",
+        "endian.h",
+        "sys/select.h",
+        "sys/uio.h",
+        "sys/wait.h",
+        "sys/resource.h",
+        "sys/time.h",
+        "unistd.h",
+    ),
+}
 
 
 class EvidenceError(RuntimeError):
@@ -60,6 +133,18 @@ def physical_regular(path: Path, description: str) -> Path:
     if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
         fail(f"{description} is not a physical regular file: {path}")
     return path.resolve(strict=True)
+
+
+def resolved_regular(path: Path, description: str) -> Path:
+    """Resolve a driver-selected executable while retaining its selected path."""
+
+    if not path.is_absolute():
+        fail(f"{description} is not an absolute selected path: {path}")
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise EvidenceError(f"{description} is unreadable: {path}") from error
+    return physical_regular(resolved, description)
 
 
 def physical_directory(path: Path, description: str) -> Path:
@@ -86,6 +171,20 @@ def digest(path: Path) -> str:
 
 def is_sha256(value: object) -> bool:
     return isinstance(value, str) and len(value) == 64 and set(value) <= SHA256_HEX
+
+
+def strict_equal(left: object, right: object) -> bool:
+    """Compare JSON-shaped values without accepting ``True == 1`` aliases."""
+
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return set(left) == set(right) and all(strict_equal(left[key], right[key]) for key in left)
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            strict_equal(value, expected) for value, expected in zip(left, right)
+        )
+    return left == right
 
 
 def no_duplicate_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -132,11 +231,39 @@ def load_static_driver(path: Path) -> Any:
         fail("cannot load the current static driver contract")
     module = importlib.util.module_from_spec(spec)
     sys.modules[loader.name] = module
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as error:
+        raise EvidenceError("cannot load the current static driver contract") from error
     return module
 
 
+def role_source(checkout: Path, role: str) -> Path:
+    try:
+        relative = ROLE_SOURCES[role]
+    except KeyError:
+        fail(f"unknown immutable workload role: {role}")
+    return physical_regular(checkout / relative, f"{role} workload source")
+
+
+def role_dependency_paths(role: str, source: Path, headers: Path) -> list[Path]:
+    try:
+        closure = ROLE_HEADER_CLOSURES[role]
+    except KeyError:
+        fail(f"unknown immutable workload role: {role}")
+    paths = [source]
+    for relative in closure:
+        paths.append(physical_regular(headers / relative, f"{role} installed header {relative}"))
+    return paths
+
+
+def dependency_records(paths: Sequence[Path]) -> list[dict[str, str]]:
+    return [{"path": str(path), "sha256": digest(path)} for path in paths]
+
+
 def parse_dependencies(path: Path, source: Path, headers: Path) -> list[dict[str, str]]:
+    """Parse the retained GCC ``-M`` file, never treating its digest as proof."""
+
     try:
         text = physical_regular(path, "header dependency trace").read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as error:
@@ -144,19 +271,18 @@ def parse_dependencies(path: Path, source: Path, headers: Path) -> list[dict[str
     _, separator, values = text.replace("\\\n", " ").partition(":")
     if not separator:
         fail("header dependency trace lacks its target separator")
-    values = values.split()
-    if not values:
+    if "\\" in values:
+        fail("header dependency trace contains an escaped or malformed input")
+    tokens = values.split()
+    if not tokens:
         fail("header dependency trace is empty")
     records: list[dict[str, str]] = []
     seen: set[str] = set()
-    for value in values:
+    for value in tokens:
         candidate = Path(value)
         if not candidate.is_absolute():
             fail(f"header dependency trace names a relative input: {value}")
-        try:
-            resolved = candidate.resolve(strict=True)
-        except OSError as error:
-            raise EvidenceError(f"header dependency is unreadable: {value}") from error
+        resolved = physical_regular(candidate, "header dependency")
         if resolved != source:
             try:
                 resolved.relative_to(headers)
@@ -168,6 +294,148 @@ def parse_dependencies(path: Path, source: Path, headers: Path) -> list[dict[str
         seen.add(rendered)
         records.append({"path": rendered, "sha256": digest(resolved)})
     return records
+
+
+def current_evidence_helper(checkout: Path) -> dict[str, str]:
+    checkout_helper = physical_regular(
+        checkout / "compat/x86_64/owned_static_fork_evidence.py",
+        "current checkout evidence helper",
+    )
+    executing_helper = physical_regular(Path(__file__), "executing evidence helper")
+    if checkout_helper != executing_helper:
+        fail("current checkout evidence helper is not this validator")
+    return {"path": str(checkout_helper), "sha256": digest(checkout_helper)}
+
+
+def derive_static_translation(
+    checkout: Path, product: Path, role: str, source: Path, workload: Path
+) -> dict[str, Any]:
+    """Derive the actual installed static-driver compile and audit vectors.
+
+    ``crabc-cc`` has no separate preprocessor command surface. The adapter
+    captures its real static-PIE compile vector from ``compile_source`` and
+    derives the read-only ``-M -H`` audit by replacing only that vector's final
+    ``-c SOURCE -o OBJECT`` action.
+    """
+
+    checkout = physical_directory(checkout, "checkout")
+    product = physical_directory(product, "static product")
+    source = physical_regular(source, "workload source")
+    workload = physical_regular(workload, "workload object")
+    if source != role_source(checkout, role):
+        fail("workload source differs from the immutable role source")
+    project_driver = physical_regular(
+        checkout / "compat/x86_64/crabc_cc_static.py", "checkout static driver"
+    )
+    installed_driver = physical_regular(product / "bin/crabc-cc", "installed static driver")
+    manifest = physical_regular(product / "share/crabc/manifest.json", "static product manifest")
+    headers = physical_directory(product / "usr/include", "installed headers")
+    if digest(project_driver) != digest(installed_driver):
+        fail("installed static driver differs from the current source translator contract")
+
+    contract = load_static_driver(project_driver)
+    try:
+        mode = contract.static_mode("static-pie")
+    except Exception as error:
+        raise EvidenceError("current static driver no longer exposes static-PIE translation") from error
+    if getattr(mode, "identifier", None) != "static-pie" or getattr(mode, "compiler_flag", None) != "-fPIE":
+        fail("current static-PIE translation mode drifted")
+
+    calls: list[tuple[list[str], object]] = []
+    original_run = contract.subprocess.run
+
+    def capture(command: Sequence[str], **kwargs: object) -> SimpleNamespace:
+        if not isinstance(command, (list, tuple)) or not all(isinstance(item, str) for item in command):
+            fail("current static driver emitted a malformed compile command")
+        calls.append((list(command), kwargs.get("env")))
+        return SimpleNamespace(returncode=0)
+
+    contract.subprocess.run = capture
+    try:
+        contract.compile_source(product, mode, source, workload, STATIC_SOURCE_FLAGS)
+    except EvidenceError:
+        raise
+    except Exception as error:
+        raise EvidenceError("cannot derive the current static driver compile vector") from error
+    finally:
+        contract.subprocess.run = original_run
+    if len(calls) != 1:
+        fail("current static driver compile path did not issue exactly one translation")
+    compile_command, environment = calls[0]
+    if not isinstance(environment, dict) or not strict_equal(environment, PINNED_CLEAN_ENV):
+        fail("current static driver compile environment drifted")
+    selected = compile_command[0] if compile_command else None
+    if not isinstance(selected, str):
+        fail("current static driver did not select a compiler")
+    resolved = resolved_regular(Path(selected), "static driver selected compiler")
+    expected_compile = [
+        selected,
+        "-nostdinc",
+        "-isystem",
+        str(headers),
+        "-ffreestanding",
+        "-fno-builtin",
+        "-fno-stack-protector",
+        *STATIC_SOURCE_FLAGS,
+        "-fPIE",
+        "-c",
+        str(source),
+        "-o",
+        str(workload),
+    ]
+    if compile_command != expected_compile:
+        fail("current static driver compile vector drifted")
+    dependency_command = [*compile_command[:-4], "-M", "-H", str(source)]
+    expected_dependency = [
+        selected,
+        "-nostdinc",
+        "-isystem",
+        str(headers),
+        "-ffreestanding",
+        "-fno-builtin",
+        "-fno-stack-protector",
+        *STATIC_SOURCE_FLAGS,
+        "-fPIE",
+        "-M",
+        "-H",
+        str(source),
+    ]
+    if dependency_command != expected_dependency:
+        fail("current static driver preprocessor vector drifted")
+    return {
+        "product": {
+            "path": str(product),
+            "manifest_sha256": digest(manifest),
+            "installed_static_driver": {
+                "path": str(installed_driver),
+                "sha256": digest(installed_driver),
+            },
+            "checkout_static_driver": {
+                "path": str(project_driver),
+                "sha256": digest(project_driver),
+            },
+        },
+        "evidence_helper": current_evidence_helper(checkout),
+        "translation": {
+            "compiler": {
+                "selected_path": selected,
+                "resolved_path": str(resolved),
+                "sha256": digest(resolved),
+            },
+            "environment": dict(PINNED_CLEAN_ENV),
+            "compile_command": compile_command,
+            "dependency_audit_command": dependency_command,
+        },
+    }
+
+
+def require_exact_dependency_closure(
+    role: str, source: Path, headers: Path, records: object, description: str
+) -> list[dict[str, str]]:
+    expected = dependency_records(role_dependency_paths(role, source, headers))
+    if not strict_equal(records, expected):
+        fail(f"{description} differs from the exact role-specific installed-header closure")
+    return expected
 
 
 def record_compile(
@@ -186,44 +454,16 @@ def record_compile(
     product = physical_directory(product, "static product")
     source = physical_regular(source, "workload source")
     workload = physical_regular(workload, "workload object")
-    project_driver = physical_regular(
-        checkout / "compat/x86_64/crabc_cc_static.py", "checkout static driver"
-    )
-    installed_driver = physical_regular(product / "bin/crabc-cc", "installed static driver")
+    translation = derive_static_translation(checkout, product, role, source, workload)
     headers = physical_directory(product / "usr/include", "installed headers")
-    manifest = physical_regular(product / "share/crabc/manifest.json", "static product manifest")
-    if digest(project_driver) != digest(installed_driver):
-        fail("installed static driver differs from the current source translator contract")
-
-    contract = load_static_driver(project_driver)
-    mode = contract.static_mode("static-pie")
-    if mode.compiler_flag != "-fPIE":
-        fail("current static-PIE translation mode drifted")
-    compiler = physical_regular(Path(contract.compiler()), "fixed source translator")
-    environment = contract.clean_environment()
-    if environment.get("PATH") != "/usr/bin:/bin":
-        fail("static driver translator environment drifted")
-    translation = [
-        str(compiler),
-        "-nostdinc",
-        "-isystem",
-        str(headers),
-        "-ffreestanding",
-        "-fno-builtin",
-        "-fno-stack-protector",
-        "-std=c11",
-        mode.compiler_flag,
-    ]
-    compile_command = [*translation, "-c", str(source), "-o", str(workload)]
-    dependency_command = [*translation, "-M", "-H", str(source)]
     new_output(record_path, "compile record")
     new_output(dependencies_path, "header dependency trace")
     new_output(headers_trace_path, "header include trace")
     try:
         with dependencies_path.open("xb") as dependencies, headers_trace_path.open("xb") as headers_trace:
             completed = subprocess.run(
-                dependency_command,
-                env=environment,
+                translation["translation"]["dependency_audit_command"],
+                env=translation["translation"]["environment"],
                 stdin=subprocess.DEVNULL,
                 stdout=dependencies,
                 stderr=headers_trace,
@@ -234,29 +474,29 @@ def record_compile(
     if completed.returncode != 0:
         fail(f"installed-header dependency audit failed: {completed.returncode}")
     records = parse_dependencies(dependencies_path, source, headers)
+    require_exact_dependency_closure(
+        role, source, headers, records, "reparsed dependency trace"
+    )
     record = {
-        "schema": 1,
+        "schema": 2,
         "format": COMPILE_FORMAT,
         "role": role,
         "source": {"path": str(source), "sha256": digest(source)},
         "workload": {"path": str(workload), "sha256": digest(workload)},
-        "product": {
-            "path": str(product),
-            "manifest_sha256": digest(manifest),
-            "installed_static_driver_sha256": digest(installed_driver),
-            "checkout_static_driver_sha256": digest(project_driver),
-        },
-        "translation": {
-            "compiler": {"path": str(compiler), "sha256": digest(compiler)},
-            "environment": environment,
-            "compile_command": compile_command,
-            "dependency_audit_command": dependency_command,
-        },
+        "product": translation["product"],
+        "translation": translation["translation"],
+        "evidence_helper": translation["evidence_helper"],
         "headers": {
             "root": str(headers),
             "dependencies": records,
-            "dependency_trace": {"path": str(dependencies_path), "sha256": digest(dependencies_path)},
-            "include_trace": {"path": str(headers_trace_path), "sha256": digest(headers_trace_path)},
+            "dependency_trace": {
+                "path": str(dependencies_path),
+                "sha256": digest(dependencies_path),
+            },
+            "include_trace": {
+                "path": str(headers_trace_path),
+                "sha256": digest(headers_trace_path),
+            },
         },
     }
     write_json_new(record_path, record, "compile record")
@@ -297,17 +537,36 @@ def load_identity(path: Path, linkage: str, workload_hash: str, product: Path) -
     return {key: record[key] for key in IDENTITY_FIELDS}
 
 
+def require_file_record(value: object, expected: Path, description: str) -> None:
+    if not isinstance(value, dict) or set(value) != {"path", "sha256"}:
+        fail(f"{description} fields drifted")
+    if value.get("path") != str(expected) or value.get("sha256") != digest(expected):
+        fail(f"{description} differs from its current physical artifact")
+
+
 def load_compile(
-    path: Path, role: str, source: Path, source_hash: str, workload: Path, workload_hash: str,
+    checkout: Path,
+    path: Path,
+    role: str,
+    source: Path,
+    source_hash: str,
+    workload: Path,
+    workload_hash: str,
     product: Path,
 ) -> dict[str, str]:
-    """Require the retained header audit to describe this exact object."""
+    """Recompute every source-translation input before accepting one object."""
 
+    checkout = physical_directory(checkout, "checkout")
+    product = physical_directory(product, "static product")
+    source = physical_regular(source, "workload source")
+    workload = physical_regular(workload, "workload object")
+    if source != role_source(checkout, role):
+        fail("workload source differs from the immutable role source")
     record_path = physical_regular(path, "compile record")
     record = json_object(record_path, "compile record")
     if set(record) != COMPILE_FIELDS:
         fail("compile record fields drifted")
-    if type(record.get("schema")) is not int or record.get("schema") != 1:
+    if type(record.get("schema")) is not int or record.get("schema") != 2:
         fail("compile record schema drifted")
     if record.get("format") != COMPILE_FORMAT or record.get("role") != role:
         fail("compile record identity drifted")
@@ -320,86 +579,39 @@ def load_compile(
             fail(f"compile record {key} fields drifted")
         if item.get("path") != str(expected_path) or item.get("sha256") != expected_hash:
             fail(f"compile record {key} differs from the immutable workload boundary")
-    product_record = record.get("product")
-    if not isinstance(product_record, dict) or set(product_record) != {
-        "path",
-        "manifest_sha256",
-        "installed_static_driver_sha256",
-        "checkout_static_driver_sha256",
-    }:
-        fail("compile record product fields drifted")
-    if product_record.get("path") != str(product):
-        fail("compile record product differs from the sealed links")
-    if not all(is_sha256(product_record.get(key)) for key in product_record if key != "path"):
-        fail("compile record product hashes are malformed")
-    if product_record["manifest_sha256"] != digest(
-        product / "share/crabc/manifest.json"
-    ):
-        fail("compile record product manifest differs from the sealed links")
-    if product_record["installed_static_driver_sha256"] != digest(product / "bin/crabc-cc"):
-        fail("compile record installed static driver differs from the sealed links")
-    translation = record.get("translation")
-    if not isinstance(translation, dict) or set(translation) != {
-        "compiler", "environment", "compile_command", "dependency_audit_command",
-    }:
-        fail("compile record translation fields drifted")
-    command = translation.get("compile_command")
-    if (
-        not isinstance(command, list)
-        or not all(isinstance(item, str) for item in command)
-        or command[-4:] != ["-c", str(source), "-o", str(workload)]
-        or "-fPIE" not in command
-        or "-nostdinc" not in command
-    ):
-        fail("compile record no longer describes the static-PIE object translation")
-    dependency_command = translation.get("dependency_audit_command")
-    if (
-        not isinstance(dependency_command, list)
-        or not all(isinstance(item, str) for item in dependency_command)
-        or dependency_command[-1:] != [str(source)]
-        or "-M" not in dependency_command
-        or "-H" not in dependency_command
-        or "-fPIE" not in dependency_command
-        or "-nostdinc" not in dependency_command
-    ):
-        fail("compile record no longer describes the installed-header audit")
+
+    current = derive_static_translation(checkout, product, role, source, workload)
+    if not strict_equal(record.get("product"), current["product"]):
+        fail("compile record product translator identities differ from the current files")
+    if not strict_equal(record.get("evidence_helper"), current["evidence_helper"]):
+        fail("compile record evidence helper differs from the current checkout helper")
+    if not strict_equal(record.get("translation"), current["translation"]):
+        fail("compile record no longer describes the exact static-PIE translation")
+
     headers = record.get("headers")
     if not isinstance(headers, dict) or set(headers) != {
         "root", "dependencies", "dependency_trace", "include_trace",
     }:
         fail("compile record header fields drifted")
-    dependencies = headers.get("dependencies")
-    if not isinstance(dependencies, list) or not dependencies:
-        fail("compile record has no installed-header dependencies")
     headers_root = physical_directory(product / "usr/include", "installed headers")
     if headers.get("root") != str(headers_root):
         fail("compile record header root differs from the sealed links")
-    for item in dependencies:
-        if (
-            not isinstance(item, dict)
-            or set(item) != {"path", "sha256"}
-            or not is_sha256(item.get("sha256"))
-        ):
-            fail("compile record header dependency drifted")
-        dependency = physical_regular(Path(item["path"]), "compile header dependency")
-        if dependency != source:
-            try:
-                dependency.relative_to(headers_root)
-            except ValueError:
-                fail("compile record header dependency escapes the sealed headers")
-        if item["sha256"] != digest(dependency):
-            fail("compile record header dependency hash differs from its artifact")
-    for key, filename in (("dependency_trace", "headers.d"), ("include_trace", "headers.trace")):
-        trace = headers.get(key)
-        expected = record_path.parent / filename
-        if not isinstance(trace, dict) or set(trace) != {"path", "sha256"}:
-            fail(f"compile record {key} fields drifted")
-        if trace.get("path") != str(expected) or trace.get("sha256") != digest(expected):
-            fail(f"compile record {key} differs from its retained artifact")
+    dependency_trace = headers.get("dependency_trace")
+    include_trace = headers.get("include_trace")
+    dependency_path = record_path.parent / "headers.d"
+    include_path = record_path.parent / "headers.trace"
+    require_file_record(dependency_trace, dependency_path, "compile record dependency trace")
+    require_file_record(include_trace, include_path, "compile record include trace")
+    reparsed = parse_dependencies(dependency_path, source, headers_root)
+    expected_dependencies = require_exact_dependency_closure(
+        role, source, headers_root, reparsed, "reparsed dependency trace"
+    )
+    if not strict_equal(headers.get("dependencies"), expected_dependencies):
+        fail("compile record header closure differs from the reparsed dependency trace")
     return {
         "path": str(record_path),
         "sha256": digest(record_path),
-        "product_manifest_sha256": product_record["manifest_sha256"],
+        "product_manifest_sha256": current["product"]["manifest_sha256"],
     }
 
 
@@ -417,12 +629,52 @@ def bind_static_link_artifacts(
 
 
 def raw_record(
-    linkage: str, role_directory: Path, oracle: dict[str, dict[str, str]] | None
-) -> dict[str, dict[str, str]]:
-    result: dict[str, dict[str, str]] = {}
+    linkage: str,
+    role_directory: Path,
+    oracle: dict[str, Any] | None,
+    expected_candidate_hash: str | None = None,
+) -> dict[str, Any]:
+    """Bind the copied chroot executable before accepting its raw transcript."""
+
+    linkage_directory = physical_directory(role_directory / linkage, f"{linkage} evidence directory")
+    candidate = physical_regular(linkage_directory / "consumer", f"{linkage} candidate consumer")
+    executed = physical_regular(
+        linkage_directory / "root/workload/consumer", f"{linkage} executed consumer"
+    )
+    candidate_before = checksum_record(
+        linkage_directory / "candidate-before-execution.sha256",
+        candidate,
+        f"{linkage} candidate-before-execution record",
+    )
+    executed_before = checksum_record(
+        linkage_directory / "executed-consumer-before-execution.sha256",
+        executed,
+        f"{linkage} executed-consumer-before-execution record",
+    )
+    candidate_hash = digest(candidate)
+    executed_hash = digest(executed)
+    if candidate_before != executed_before or candidate_hash != executed_hash:
+        fail(f"{linkage} executed consumer differs from its original candidate")
+    if expected_candidate_hash is not None and candidate_hash != expected_candidate_hash:
+        fail(f"{linkage} executed consumer differs from its sealed link identity")
+
+    result: dict[str, Any] = {
+        "consumer": {
+            "candidate": {
+                "path": str(candidate),
+                "before_execution_sha256": candidate_before,
+                "sha256": candidate_hash,
+            },
+            "executed": {
+                "path": str(executed),
+                "before_execution_sha256": executed_before,
+                "sha256": executed_hash,
+            },
+        }
+    }
     for suffix in ("stdout", "stderr", "status"):
         path = physical_regular(
-            role_directory / linkage / f"ordinary.{suffix}", f"{linkage} raw {suffix}"
+            linkage_directory / f"ordinary.{suffix}", f"{linkage} raw {suffix}"
         )
         value = digest(path)
         if suffix == "status":
@@ -438,10 +690,15 @@ def raw_record(
     return result
 
 
-def write_workload_evidence(role: str, source: Path, role_directory: Path, product: Path) -> None:
+def write_workload_evidence(
+    checkout: Path, role: str, source: Path, role_directory: Path, product: Path
+) -> None:
     """Seal one role after all three immutable-object links and runs exist."""
 
+    checkout = physical_directory(checkout, "checkout")
     source = physical_regular(source, "workload source")
+    if source != role_source(checkout, role):
+        fail("workload source differs from the immutable role source")
     role_directory = physical_directory(role_directory, "role evidence directory")
     product = physical_directory(product, "static product")
     workload = physical_regular(role_directory / "workload.o", "workload object")
@@ -457,6 +714,7 @@ def write_workload_evidence(role: str, source: Path, role_directory: Path, produ
     if source_before != source_after:
         fail("workload source changed during evidence collection")
     compile_record = load_compile(
+        checkout,
         role_directory / "compile.json",
         role,
         source,
@@ -479,11 +737,15 @@ def write_workload_evidence(role: str, source: Path, role_directory: Path, produ
     bind_static_link_artifacts(role_directory, "static", static_identity)
     bind_static_link_artifacts(role_directory, "static-pie", static_pie_identity)
     oracle_raw = raw_record("musl", role_directory, None)
-    static_raw = raw_record("static", role_directory, oracle_raw)
-    static_pie_raw = raw_record("static-pie", role_directory, oracle_raw)
+    static_raw = raw_record(
+        "static", role_directory, oracle_raw, static_identity["executable_sha256"]
+    )
+    static_pie_raw = raw_record(
+        "static-pie", role_directory, oracle_raw, static_pie_identity["executable_sha256"]
+    )
     musl = physical_regular(role_directory / "musl/consumer", "musl executable")
     record = {
-        "schema": 1,
+        "schema": 2,
         "format": WORKLOAD_FORMAT,
         "role": role,
         "source": {"path": str(source), "sha256": source_before},
@@ -520,6 +782,7 @@ def arguments() -> argparse.Namespace:
     compile_parser.add_argument("dependencies", type=Path)
     compile_parser.add_argument("headers_trace", type=Path)
     role_parser = command.add_parser("role")
+    role_parser.add_argument("checkout", type=Path)
     role_parser.add_argument("role")
     role_parser.add_argument("source", type=Path)
     role_parser.add_argument("role_directory", type=Path)
@@ -543,7 +806,11 @@ def main() -> int:
             )
         else:
             write_workload_evidence(
-                parsed.role, parsed.source, parsed.role_directory, parsed.product
+                parsed.checkout,
+                parsed.role,
+                parsed.source,
+                parsed.role_directory,
+                parsed.product,
             )
     except EvidenceError as error:
         print(f"owned POSIX static fork evidence: {error}", file=sys.stderr)
