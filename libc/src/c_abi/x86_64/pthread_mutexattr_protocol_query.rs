@@ -11,13 +11,14 @@
 //! the installed four-byte `pthread_mutexattr_t` word. It has no allocation,
 //! syscall, C-`errno`, TLS, TCB, attribute lifecycle, mutex state-machine,
 //! synchronization, cancellation, or thread lifecycle behavior. In particular,
-//! it does not select `pthread_mutexattr_setprotocol`: musl's
+//! the frozen artifact does not select `pthread_mutexattr_setprotocol`: musl's
 //! `PTHREAD_PRIO_INHERIT` setter probes and caches `FUTEX_LOCK_PI` support,
-//! which is outside this direct record-query boundary. The adjacent selected
-//! normal-mutex artifact continues to reject every non-null attribute rather
-//! than consume a record queried here. A raw protocol bit is not priority-inheritance mutex operation,
-//! a futex-PI capability claim, general pthread
-//! support, or public x86 support.
+//! which is outside this direct record-query boundary. The cfg-owned runtime
+//! selects that setter separately. The adjacent frozen normal-mutex artifact
+//! continues to reject every non-null attribute rather than consume a record
+//! queried here. A raw protocol bit is not priority-inheritance mutex
+//! operation, a futex-PI capability claim, general pthread support, or public
+//! x86 support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread mutex-attribute protocol-query leaf requires little-endian Linux/x86-64");

@@ -32,9 +32,10 @@ owners:
    Wide stdio, scalar math, signal transactions, semaphore cancellation, and
    loader search/direct-interpreter entry compose in installed products.
    Timed/shared conditions and installed/extracted resolver differential
-   evidence are integrated. PI mutexes, family closure, fresh dynamic product
-   publication and ordered qualification receipts remain open. Do not restart
-   an export-by-export queue.
+   evidence are integrated. Priority-inheritance mutexes are implemented;
+   priority-protect retains musl's unsupported status. Family closure and
+   ordered qualification receipts remain open.
+   Do not restart an export-by-export queue.
 2. Allocator: use the contained `compat/allocator/run-x86_64.sh` launcher,
    then complete native x86 M2 qualification. Imported
    AArch64 milestone passes do not count as x86 passes.
@@ -48,9 +49,10 @@ owners:
    backend; requalify installed x86 products after native allocator promotion.
    Installed static/static-PIE consumers cover allocator, TLS, POSIX, wide and
    byte stdio, filesystem traversal, IPC, spawn, selected fork/exit, and normal,
-   recursive, and error-checking robust mutexes, including extracted-package
-   and two-clean-build checks. Complete runtime composition and allocator
-   lifecycle remain open; this is not static-product completion.
+   recursive and error-checking robust mutexes. Earlier extracted-package and
+   two-clean-build checks remain recorded measurements. Priority-inheritance
+   mutexes add focused installed-product evidence; refreshed aggregate checks,
+   runtime composition and allocator lifecycle remain open.
    Installed/extracted dynamic PIE and non-PIE consumers cover runtime-new
    dependency graphs, existing/new-worker DTV growth, retained close, scope,
    rollback, and constructor exit with reproducible builds. Deferred GOT/PLT binding and kernel-main `dladdr` mapping results are

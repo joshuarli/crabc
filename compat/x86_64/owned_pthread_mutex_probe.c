@@ -24,7 +24,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/prctl.h>
 #include <sys/syscall.h>
+#include <sys/wait.h>
 #include <threads.h>
 #include <time.h>
 #include <unistd.h>
@@ -294,6 +297,298 @@ static int c11_case(void)
     return 0;
 }
 
+/*
+ * PI uses the Linux futex state machine, but this fixture never changes a
+ * scheduler policy or priority.  It checks the pinned-musl ABI transition
+ * under ordinary tasks: attribute admission, try/lock/timed lock, robust
+ * private and process-shared death recovery, and the condition relock seam.
+ */
+static pthread_mutex_t pi_mutex;
+static pthread_cond_t pi_condition;
+static pthread_t pi_worker;
+static atomic_int pi_ready, pi_release, pi_acquired;
+
+/* Linux 5.10 classic-BPF ABI, kept fixture-local. The filter rejects only
+ * FUTEX_TRYLOCK_PI|FUTEX_PRIVATE_FLAG. Pinned musl never issues that
+ * operation from pthread_mutex_trylock, so a direct EBUSY result proves the
+ * source's failed-owner/CAS path did not acquire through the kernel. */
+struct pi_bpf_instruction {
+    uint16_t code;
+    uint8_t yes;
+    uint8_t no;
+    uint32_t value;
+};
+
+struct pi_bpf_program {
+    uint16_t length;
+    struct pi_bpf_instruction *instructions;
+};
+
+enum {
+    PI_BPF_LD = 0x00,
+    PI_BPF_W = 0x00,
+    PI_BPF_ABS = 0x20,
+    PI_BPF_JMP = 0x05,
+    PI_BPF_JEQ = 0x10,
+    PI_BPF_K = 0x00,
+    PI_BPF_RET = 0x06,
+    PI_SECCOMP_SET_MODE_FILTER = 1,
+    PI_SECCOMP_RET_ALLOW = 0x7fff0000U,
+    PI_SECCOMP_RET_ERRNO = 0x00050000U,
+    PI_SECCOMP_ARGUMENT_ONE_LOW = 24,
+    PI_FUTEX_TRYLOCK_PRIVATE = 8 | 128,
+};
+
+_Static_assert(sizeof(struct pi_bpf_instruction) == 8,
+    "Linux classic-BPF instruction ABI");
+_Static_assert(sizeof(struct pi_bpf_program) == 16 &&
+    __builtin_offsetof(struct pi_bpf_program, instructions) == 8,
+    "Linux sock_fprog ABI");
+_Static_assert(SYS_futex == 202 && SYS_prctl == 157 && SYS_seccomp == 317,
+    "Linux/x86-64 PI trylock source witness syscalls");
+
+static int reject_kernel_pi_trylock(void)
+{
+    struct pi_bpf_instruction instructions[] = {
+        { PI_BPF_LD | PI_BPF_W | PI_BPF_ABS, 0, 0, 0 },
+        { PI_BPF_JMP | PI_BPF_JEQ | PI_BPF_K, 0, 3, SYS_futex },
+        { PI_BPF_LD | PI_BPF_W | PI_BPF_ABS, 0, 0,
+            PI_SECCOMP_ARGUMENT_ONE_LOW },
+        { PI_BPF_JMP | PI_BPF_JEQ | PI_BPF_K, 0, 1,
+            PI_FUTEX_TRYLOCK_PRIVATE },
+        { PI_BPF_RET | PI_BPF_K, 0, 0, PI_SECCOMP_RET_ERRNO | EBADE },
+        { PI_BPF_RET | PI_BPF_K, 0, 0, PI_SECCOMP_RET_ALLOW },
+    };
+    struct pi_bpf_program program = {
+        .length = sizeof(instructions) / sizeof(instructions[0]),
+        .instructions = instructions,
+    };
+
+    if (syscall(SYS_prctl, PR_SET_NO_NEW_PRIVS, 1L, 0L, 0L, 0L) != 0)
+        return -1;
+    return syscall(SYS_seccomp, PI_SECCOMP_SET_MODE_FILTER, 0L,
+        &program) == 0 ? 0 : -1;
+}
+
+static int init_pi_mutex(pthread_mutex_t *target, int kind, int robust, int shared)
+{
+    pthread_mutexattr_t attributes;
+    int result = pthread_mutexattr_init(&attributes);
+    if (!result) result = pthread_mutexattr_settype(&attributes, kind);
+    if (!result) result = pthread_mutexattr_setprotocol(&attributes, PTHREAD_PRIO_INHERIT);
+    if (!result && robust)
+        result = pthread_mutexattr_setrobust(&attributes, PTHREAD_MUTEX_ROBUST);
+    if (!result && shared)
+        result = pthread_mutexattr_setpshared(&attributes, PTHREAD_PROCESS_SHARED);
+    if (!result) result = pthread_mutex_init(target, &attributes);
+    int destroy = pthread_mutexattr_destroy(&attributes);
+    return result ? result : destroy;
+}
+
+static void reset_pi_state(void)
+{
+    atomic_store(&pi_ready, 0);
+    atomic_store(&pi_release, 0);
+    atomic_store(&pi_acquired, 0);
+}
+
+static void *pi_holder(void *unused)
+{
+    (void)unused;
+    if (pthread_mutex_lock(&pi_mutex)) _Exit(70);
+    atomic_store(&pi_ready, 1);
+    while (!atomic_load(&pi_release)) sched_yield();
+    if (pthread_mutex_unlock(&pi_mutex)) _Exit(71);
+    return 0;
+}
+
+static void *pi_dead_owner(void *unused)
+{
+    (void)unused;
+    if (pthread_mutex_lock(&pi_mutex)) _Exit(72);
+    return 0;
+}
+
+static void *pi_condition_waiter(void *unused)
+{
+    (void)unused;
+    if (pthread_mutex_lock(&pi_mutex)) _Exit(73);
+    atomic_store(&pi_ready, 1);
+    if (pthread_cond_wait(&pi_condition, &pi_mutex)) _Exit(74);
+    atomic_store(&pi_acquired, 1);
+    if (pthread_mutex_unlock(&pi_mutex)) _Exit(75);
+    return 0;
+}
+
+static int pi_protocol_and_ceiling_case(void)
+{
+    pthread_mutexattr_t attributes;
+    pthread_mutex_t opaque = { 0 };
+    int protocol = -1;
+    int ceiling = 0x5a5a1234;
+
+    errno = E2BIG;
+    if (pthread_mutexattr_setprotocol(0, -1) != EINVAL ||
+        pthread_mutexattr_setprotocol(0, PTHREAD_PRIO_PROTECT) != ENOTSUP ||
+        pthread_mutexattr_init(&attributes)) return 76;
+    if (pthread_mutexattr_setprotocol(&attributes, PTHREAD_PRIO_NONE) ||
+        pthread_mutexattr_getprotocol(&attributes, &protocol) ||
+        protocol != PTHREAD_PRIO_NONE) return 77;
+    if (pthread_mutexattr_setprotocol(&attributes, PTHREAD_PRIO_INHERIT) ||
+        pthread_mutexattr_getprotocol(&attributes, &protocol) ||
+        protocol != PTHREAD_PRIO_INHERIT) return 78;
+    if (pthread_mutexattr_setprotocol(&attributes, PTHREAD_PRIO_PROTECT) != ENOTSUP ||
+        pthread_mutexattr_setprotocol(&attributes, 3) != EINVAL || errno != E2BIG ||
+        pthread_mutexattr_destroy(&attributes)) return 79;
+
+    if (pthread_mutex_getprioceiling(0, 0) != EINVAL ||
+        pthread_mutex_setprioceiling(0, 0, 0) != EINVAL ||
+        pthread_mutex_getprioceiling(&opaque, &ceiling) != EINVAL ||
+        ceiling != 0x5a5a1234 ||
+        pthread_mutex_setprioceiling(&opaque, 7, &ceiling) != EINVAL ||
+        ceiling != 0x5a5a1234 || errno != E2BIG) return 80;
+    return 0;
+}
+
+static int pi_contention_and_deadline_case(void)
+{
+    struct timespec future;
+    reset_pi_state();
+    if (init_pi_mutex(&pi_mutex, PTHREAD_MUTEX_NORMAL, 0, 0) ||
+        pthread_create(&pi_worker, 0, pi_holder, 0)) return 81;
+    wait_for(&pi_ready);
+    errno = E2BIG;
+    future = realtime_after(10);
+    if (pthread_mutex_trylock(&pi_mutex) != EBUSY ||
+        pthread_mutex_timedlock(&pi_mutex, &future) != ETIMEDOUT || errno != E2BIG) return 82;
+    atomic_store(&pi_release, 1);
+    if (pthread_join(pi_worker, 0) || pthread_mutex_destroy(&pi_mutex)) return 83;
+
+    if (init_pi_mutex(&pi_mutex, PTHREAD_MUTEX_ERRORCHECK, 0, 0) ||
+        pthread_mutex_lock(&pi_mutex)) return 84;
+    if (pthread_mutex_trylock(&pi_mutex) != EBUSY ||
+        pthread_mutex_lock(&pi_mutex) != EDEADLK ||
+        pthread_mutex_timedlock(&pi_mutex, &future) != EDEADLK ||
+        pthread_mutex_unlock(&pi_mutex) || pthread_mutex_destroy(&pi_mutex) || errno != E2BIG) return 85;
+    return 0;
+}
+
+/*
+ * `__pthread_mutex_trylock_owner` has no FUTEX_TRYLOCK_PI fallback. The
+ * target stays visibly owned while the caller's filter turns precisely that
+ * invented operation into EBADE. Musl's direct owner check still returns
+ * EBUSY without changing errno; a kernel fallback would expose EBADE.
+ */
+static int pi_trylock_source_failure_case(void)
+{
+    reset_pi_state();
+    if (init_pi_mutex(&pi_mutex, PTHREAD_MUTEX_NORMAL, 0, 0) ||
+        pthread_create(&pi_worker, 0, pi_holder, 0)) return 86;
+    wait_for(&pi_ready);
+    if (reject_kernel_pi_trylock() != 0) return 87;
+    errno = E2BIG;
+    if (pthread_mutex_trylock(&pi_mutex) != EBUSY || errno != E2BIG) return 88;
+    atomic_store(&pi_release, 1);
+    if (pthread_join(pi_worker, 0) || pthread_mutex_destroy(&pi_mutex)) return 89;
+    return 0;
+}
+
+/*
+ * This child deliberately constructs the private source-form PI waiter
+ * sentinel after normal initialization. It is not an API for mutating an
+ * opaque mutex: it isolates musl's post-CAS `(type&8) && _m_waiters` guard.
+ * For a robust PI object that guard releases the kernel handoff and reports
+ * ENOTRECOVERABLE rather than linking a usable owner record.
+ */
+static int pi_robust_waiter_guard_case(void)
+{
+    pid_t child = fork();
+    if (child < 0) return 90;
+    if (!child) {
+        pthread_mutex_t local;
+
+        if (init_pi_mutex(&local, PTHREAD_MUTEX_NORMAL, 1, 0)) _Exit(91);
+        local.__u.__i[2] = 1;
+        errno = E2BIG;
+        if (pthread_mutex_trylock(&local) != ENOTRECOVERABLE || errno != E2BIG)
+            _Exit(92);
+        _Exit(0);
+    }
+    int status = 0;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+        WEXITSTATUS(status) != 0) return 93;
+    return 0;
+}
+
+static int pi_robust_private_case(void)
+{
+    reset_pi_state();
+    if (init_pi_mutex(&pi_mutex, PTHREAD_MUTEX_NORMAL, 1, 0) ||
+        pthread_create(&pi_worker, 0, pi_dead_owner, 0) || pthread_join(pi_worker, 0)) return 86;
+    errno = E2BIG;
+    if (pthread_mutex_lock(&pi_mutex) != EOWNERDEAD || errno != E2BIG ||
+        pthread_mutex_consistent(&pi_mutex) || pthread_mutex_unlock(&pi_mutex) ||
+        pthread_mutex_destroy(&pi_mutex)) return 87;
+    return 0;
+}
+
+struct pi_shared_state {
+    pthread_mutex_t mutex;
+};
+
+static int pi_robust_shared_case(void)
+{
+    struct pi_shared_state *shared = mmap(0, sizeof(*shared), PROT_READ | PROT_WRITE,
+        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (shared == MAP_FAILED) return 88;
+    if (init_pi_mutex(&shared->mutex, PTHREAD_MUTEX_NORMAL, 1, 1)) return 89;
+    pid_t child = fork();
+    if (child < 0) return 90;
+    if (!child) {
+        int result = pthread_mutex_lock(&shared->mutex);
+        _Exit(result ? 91 : 0);
+    }
+    int status = 0;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status)) return 92;
+    errno = E2BIG;
+    if (pthread_mutex_lock(&shared->mutex) != EOWNERDEAD || errno != E2BIG ||
+        pthread_mutex_consistent(&shared->mutex) || pthread_mutex_unlock(&shared->mutex) ||
+        pthread_mutex_destroy(&shared->mutex) || munmap(shared, sizeof(*shared))) return 93;
+    return 0;
+}
+
+static int pi_condition_reacquire_case(void)
+{
+    struct timespec future;
+    reset_pi_state();
+    if (init_pi_mutex(&pi_mutex, PTHREAD_MUTEX_NORMAL, 0, 0) ||
+        pthread_cond_init(&pi_condition, 0) ||
+        pthread_create(&pi_worker, 0, pi_condition_waiter, 0)) return 94;
+    wait_for(&pi_ready);
+    if (pthread_mutex_lock(&pi_mutex) || pthread_cond_signal(&pi_condition)) return 95;
+    for (int index = 0; index != 1000; ++index) sched_yield();
+    if (atomic_load(&pi_acquired) || pthread_mutex_unlock(&pi_mutex) ||
+        pthread_join(pi_worker, 0) || !atomic_load(&pi_acquired)) return 96;
+
+    if (pthread_mutex_lock(&pi_mutex)) return 97;
+    future = realtime_after(10);
+    errno = E2BIG;
+    if (pthread_cond_timedwait(&pi_condition, &pi_mutex, &future) != ETIMEDOUT ||
+        errno != E2BIG || pthread_mutex_unlock(&pi_mutex) ||
+        pthread_cond_destroy(&pi_condition) || pthread_mutex_destroy(&pi_mutex)) return 98;
+    return 0;
+}
+
+static int pi_case(void)
+{
+    if (pi_protocol_and_ceiling_case() || pi_contention_and_deadline_case() ||
+        pi_trylock_source_failure_case() || pi_robust_waiter_guard_case() ||
+        pi_robust_private_case() || pi_robust_shared_case() ||
+        pi_condition_reacquire_case()) return 99;
+    puts("pthread PI protocol, direct trylock, robust owner death, condition relock, and rejected priority ceilings: PASS");
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc != 2) return 80;
@@ -303,5 +598,6 @@ int main(int argc, char **argv)
     if (!strcmp(argv[1], "robust")) return robust_case();
     if (!strcmp(argv[1], "recursive-condition")) return recursive_condition_case();
     if (!strcmp(argv[1], "c11")) return c11_case();
+    if (!strcmp(argv[1], "pi")) return pi_case();
     return 81;
 }

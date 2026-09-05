@@ -272,9 +272,9 @@ pub(super) unsafe fn wait(condition: *mut c_void, mutex: *mut c_void,
     if relock != 0 { error = relock; }
     if old_state != WAITER_WAITING {
         let next = unsafe { core::ptr::read(core::ptr::addr_of!((*node).next)) };
-        // All currently admitted mutex kinds are non-PI. Musl's PI branch
-        // omits this hint and uses wake rather than requeue when implemented.
-        if next.is_null() {
+        // Musl's PI branch omits the ordinary mutex waiter hint: kernel PI
+        // owns contention state rather than the non-PI futex-requeue target.
+        if next.is_null() && !mutex.pi() {
             unsafe { atomic::x86_64_fetch_add_acqrel_i32(mutex.waiters_word(), 1) };
         }
         let previous = unsafe { core::ptr::read(core::ptr::addr_of!((*node).prev)) };
@@ -287,13 +287,16 @@ pub(super) unsafe fn wait(condition: *mut c_void, mutex: *mut c_void,
                 };
             }
             let barrier = unsafe { waiter_barrier_word(previous) };
-            if mutex.shared() {
+            // PI cannot receive a requeued ordinary futex waiter. Just as
+            // musl's `unlock_requeue(..., m->_m_type & (8|128))`, wake the
+            // predecessor barrier for either PI or process-shared mutexes.
+            if mutex.pi() || mutex.shared() {
                 unsafe { atomic::x86_64_swap_acqrel_i32(barrier, PRIVATE_UNLOCKED) };
                 unsafe { wake(barrier, 1, true) };
             } else {
                 unsafe { private_unlock_requeue(barrier, lock) };
             }
-        } else if next.is_null() {
+        } else if next.is_null() && !mutex.pi() {
             unsafe { atomic::x86_64_fetch_sub_acqrel_i32(mutex.waiters_word(), 1) };
         }
         if error == ECANCELED { error = 0; }

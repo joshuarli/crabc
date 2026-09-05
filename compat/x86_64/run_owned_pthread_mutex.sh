@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Installed static/dynamic recursive, error-checking, and timed mutex evidence.
+# Installed static/dynamic extended and priority-inheritance mutex evidence.
 set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_pthread_mutex_probe.c"
-readonly -a SCENARIOS=(recursive errorcheck timed robust recursive-condition c11)
+readonly -a SCENARIOS=(recursive errorcheck timed robust recursive-condition c11 pi)
 
 [ "$#" -eq 0 ] || [ "$#" -eq 1 ] || {
     printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -45,6 +45,17 @@ run_case() {
     local root="$1" executable="$2" scenario="$3" output="$4"
     timeout 30 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" \
         "$root" "$executable" "$scenario" >"$output"
+}
+
+# This is a second dynamic entry route over the installed consumer produced
+# with CRABC_OWNED_WITNESS. It is intentionally not a same-object comparison:
+# the pinned-musl oracle uses its own compiler/linker product. It verifies that
+# the owned loader's explicit invocation preserves the same scenario witness
+# as the consumer's PT_INTERP entry.
+run_dynamic_direct_case() {
+    local root="$1" mode="$2" scenario="$3" output="$4"
+    timeout 30 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" \
+        "$root" /lib/ld-crabc-x86_64.so.1 "/consumer-$mode" "$scenario" >"$output"
 }
 
 "$ORACLE_CC" -std=c11 -pthread -I"$ROOT/include" "$PROBE" -o "$work/oracle"
@@ -87,7 +98,13 @@ for mode in pie non-pie; do
             fail "owned dynamic $mode $scenario regression failed"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout" ||
             fail "owned dynamic $mode $scenario output differs from pinned musl"
+        run_dynamic_direct_case "$work/execution-root" "$mode" "$scenario" \
+            "$work/dynamic-$mode-direct-$scenario.stdout" ||
+            fail "owned dynamic direct $mode $scenario regression failed"
+        cmp "$work/dynamic-$mode-$scenario.stdout" \
+            "$work/dynamic-$mode-direct-$scenario.stdout" ||
+            fail "owned dynamic direct $mode $scenario output differs from PT_INTERP entry"
     done
 done
 
-printf 'owned pthread mutexes: PASS (musl + installed static ET_EXEC/static-PIE and dynamic PIE/non-PIE recursive, error-checking, timed, robust-owner, condition, and C11 behavior)\n'
+printf 'owned pthread mutexes: PASS (musl + installed static ET_EXEC/static-PIE and dynamic PIE/non-PIE recursive, error-checking, timed, robust-owner, condition, C11, and PI behavior; dynamic PT_INTERP and direct-loader entries)\n'

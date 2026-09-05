@@ -10083,7 +10083,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
     def test_libc_static_c_abi_pthread_normal_mutex_artifact_stays_private(
         self,
     ) -> None:
-        """Keep the selected normal mutex apart from pthread/C11 promotion."""
+        """Keep selected mutex routes apart from pthread/C11 promotion."""
 
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -10103,6 +10103,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         artifact_runner_path = (
             ROOT / "compat" / "x86_64" / "run_libc_pthread_mutex_normal.sh"
         )
+        owned_probe_path = (
+            ROOT / "compat" / "x86_64" / "owned_pthread_mutex_probe.c"
+        )
+        owned_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_owned_pthread_mutex.sh"
+        )
         c_header_probe = (
             ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
         ).read_text(encoding="utf-8")
@@ -10121,11 +10127,19 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         runner = RUNNER.read_text(encoding="utf-8")
 
-        for path in (probe_path, start_path, artifact_runner_path):
+        for path in (
+            probe_path,
+            start_path,
+            artifact_runner_path,
+            owned_probe_path,
+            owned_runner_path,
+        ):
             self.assertTrue(path.is_file(), f"missing normal mutex artifact input: {path}")
         probe = probe_path.read_text(encoding="utf-8")
         start = start_path.read_text(encoding="utf-8")
         artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        owned_probe = owned_probe_path.read_text(encoding="utf-8")
+        owned_runner = owned_runner_path.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "atomic.rs"]', static_root)
         self.assertIn('#[path = "pthread_mutex.rs"]', static_root)
@@ -10150,6 +10164,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "src/thread/pthread_mutex_timedlock.c::__pthread_mutex_timedlock",
             "src/thread/pthread_mutex_unlock.c::__pthread_mutex_unlock",
             "src/thread/pthread_mutex_destroy.c",
+            "pthread_mutexattr_setprotocol.c",
+            "pthread_mutex_getprioceiling.c",
+            "pthread_mutex_setprioceiling.c",
             "The normal route admits a zero-initialized or null-attribute",
             "Process-shared robust transitions",
             "struct PublicPthreadMutex",
@@ -10162,6 +10179,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "size_of::<PublicPthreadMutex>() == 40",
             "align_of::<PublicPthreadMutex>() == 8",
             "FUTEX_PRIVATE_FLAG",
+            "FUTEX_LOCK_PI",
+            "FUTEX_UNLOCK_PI",
+            "wait_for_selected_pi_deadlock",
+            "MUTEX_ROBUST_BIT | MUTEX_PRIO_INHERIT_BIT",
             "futex_wait(lock, marked, mutex_is_private(selected_mutex_type(mutex)))",
             "futex_wake(lock, mutex_is_private(selected_mutex_type(mutex)))",
             "raw_syscall::SYS_FUTEX",
@@ -10180,6 +10201,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "x86 support. The",
         ):
             self.assertIn(required, pthread_mutex)
+        self.assertNotIn("FUTEX_TRYLOCK_PI", pthread_mutex)
+        self.assertNotIn("try_lock_selected_pi_mutex_via_kernel", pthread_mutex)
         mutex_exports = set(
             re.findall(
                 r'(?m)^pub\s+(?:unsafe\s+)?extern\s+"C"\s+fn\s+(\w+)\s*\(',
@@ -10191,6 +10214,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             {
                 "pthread_mutexattr_setrobust",
                 "pthread_mutexattr_setpshared",
+                "pthread_mutexattr_setprotocol",
+                "pthread_mutex_setprioceiling",
                 "pthread_mutex_consistent",
                 "pthread_mutex_init",
                 "pthread_mutex_destroy",
@@ -10200,10 +10225,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "pthread_mutex_timedlock",
             },
         )
-        self.assertIn(
-            '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\npub unsafe extern "C" fn pthread_mutex_timedlock',
-            pthread_mutex,
-        )
+        for name in (
+            "pthread_mutexattr_setprotocol",
+            "pthread_mutex_setprioceiling",
+            "pthread_mutex_timedlock",
+        ):
+            self.assertIn(
+                '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\n'
+                f'pub unsafe extern "C" fn {name}',
+                pthread_mutex,
+            )
         for forbidden in (
             "pub unsafe extern \"C\" fn pthread_cond_",
             "pub unsafe extern \"C\" fn pthread_rwlock_",
@@ -10278,9 +10309,35 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertTrue(
             {
                 "pthread_mutex_timedlock",
+                "pthread_mutexattr_setprotocol",
+                "pthread_mutex_setprioceiling",
                 "pthread_cond_timedwait",
             }.isdisjoint(static_exports)
         )
+        for required in (
+            "PTHREAD_PRIO_INHERIT",
+            "PTHREAD_PRIO_PROTECT",
+            "pthread_mutexattr_setprotocol(0, -1) != EINVAL",
+            "pthread_mutex_setprioceiling(0, 0, 0) != EINVAL",
+            "pi_robust_private_case",
+            "pi_robust_shared_case",
+            "pi_condition_reacquire_case",
+            "pi_trylock_source_failure_case",
+            "reject_kernel_pi_trylock",
+            "PI_FUTEX_TRYLOCK_PRIVATE",
+            "pi_robust_waiter_guard_case",
+            "(type&8) && _m_waiters",
+        ):
+            self.assertIn(required, owned_probe)
+        for required in (
+            "readonly -a SCENARIOS=(recursive errorcheck timed robust recursive-condition c11 pi)",
+            "run_dynamic_direct_case",
+            "/lib/ld-crabc-x86_64.so.1",
+            '"/consumer-$mode"',
+            "CRABC_OWNED_WITNESS",
+            "output differs from PT_INTERP entry",
+        ):
+            self.assertIn(required, owned_runner)
         for header_probe in (c_header_probe, cxx_header_probe):
             for required in (
                 "crabc_pthread_mutex_init_signature",

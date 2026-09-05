@@ -11,10 +11,11 @@
 //! priority-protect query. It retains the public C signature but owns no
 //! mutex record, priority ceiling, scheduler state, errno/TLS state, syscall,
 //! allocation, synchronization, cancellation, or thread lifecycle behavior.
-//! In particular, it does not select `pthread_mutex_setprioceiling`, mutex
-//! initialization/locking/destruction, or a priority-protect mutex state
-//! machine. The direct status result is not a mutex capability claim, general
-//! pthread support, or public x86 support.
+//! In particular, this frozen leaf does not select
+//! `pthread_mutex_setprioceiling`, mutex initialization/locking/destruction,
+//! or a priority-protect mutex state machine. The cfg-owned runtime provides
+//! the same direct `EINVAL` setter separately. The direct status result is not
+//! a mutex capability claim, general pthread support, or public x86 support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread mutex priority-ceiling query leaf requires little-endian Linux/x86-64");

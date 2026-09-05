@@ -38,9 +38,12 @@ acceptance criteria below and in the two execution plans remain unchanged.
   condition transactions, C11 timed status, a typed mutex relock seam,
   normal/shared mutex futex keys, and robust relock error precedence.
   The owned runtime now adds recursive/error-checking mutexes, robust owner
-  tracking for those types, and realtime timed locking with C11 timed status.
-  PI mutexes remain implementation work. The frozen archive is separate from
-  the expanded owned runtime.
+  tracking for those types, realtime timed locking with C11 timed status, and
+  Linux 5.10 futex-PI mutexes through `PTHREAD_PRIO_INHERIT`. Its protocol
+  setter retains musl's capability probe/cache; `PTHREAD_PRIO_PROTECT` remains
+  `ENOTSUP`, mutex priority-ceiling get/set remain direct `EINVAL`, and the
+  header-declared attribute-ceiling pair has no musl provider. The frozen
+  archive is separate from the expanded owned runtime.
 - `44f1684b` repairs the legacy condition evidence check: follow exact owned
   atomic helpers and raw syscall edges instead of requiring incidental
   inlining in public symbols. It changes evidence, not runtime algorithms.
