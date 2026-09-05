@@ -109,7 +109,18 @@ pub(super) unsafe fn publish_initial_selected_pthread_cancellation_state() {
             pthread_cancel::main_cancellation_state(),
         )
     };
+    INITIAL_SIGNAL_TARGET_TP.store(pthread_identity::current_thread_pointer() as usize, Ordering::Relaxed);
+    INITIAL_SIGNAL_TARGET_CANCELLATION.store(pthread_cancel::main_cancellation_state() as usize, Ordering::Relaxed);
+    INITIAL_SIGNAL_TARGET_TID.store(current_linux_thread_id().unwrap_or(0), Ordering::Release);
 }
+
+// The initial task has no reclaimable registry mapping. Fork may adopt a
+// worker's permanently retained mapping as main, including its cancellation
+// state; these identities are republished only by startup or the sole child.
+static INITIAL_SIGNAL_TARGET_LOCK: AtomicU8 = AtomicU8::new(0);
+static INITIAL_SIGNAL_TARGET_TID: AtomicI32 = AtomicI32::new(0);
+static INITIAL_SIGNAL_TARGET_TP: AtomicUsize = AtomicUsize::new(0);
+static INITIAL_SIGNAL_TARGET_CANCELLATION: AtomicUsize = AtomicUsize::new(0);
 
 const CLONE_VM: i32 = 0x0000_0100;
 const CLONE_FS: i32 = 0x0000_0200;
@@ -416,6 +427,18 @@ struct ThreadControl {
     // than relying on the kernel clear-tid write to synchronize a different
     // user-space atomic object.
     finished: AtomicU8,
+    // Musl's per-thread killlock prevents a caller from targeting a recycled
+    // Linux TID while this worker commits to retirement. The syscall-
+    // cancellation owner blocks all caller signals before it takes this
+    // target lock; an exiting worker clears `worker_tid` under it after
+    // the static task-list decision and before its non-final Linux exit. It is neither the registry lock nor a public pthread lock.
+    signal_target_lock: AtomicU8,
+    // A target syscall starts with a registry-protected lookup, then retains
+    // this mapping lease while it acquires `signal_target_lock` and issues its
+    // raw `tgkill`. Registry withdrawal closes new leases; reclamation drains
+    // existing ones before it can unmap this control record. This is distinct
+    // from the condition-wait barrier lease above.
+    signal_target_leases: AtomicUsize,
     // The selected child publishes its kernel task ID before the callback can
     // call pthread_exit. Matching it alongside `%fs:0` prevents a foreign
     // thread from impersonating a live worker merely by installing its TLS
@@ -580,6 +603,21 @@ fn current_linux_thread_id() -> Option<c_int> {
     Some(result as c_int)
 }
 
+/// Read the current process's Linux thread-group identifier for a targeted
+/// signal transaction.
+///
+/// Linux's `getpid` result is the `tgid` accepted by `tgkill`. Keep this raw
+/// scalar observation beside the worker target-lifetime seam: it neither
+/// reads the process-global C ABI state nor exposes a public process API.
+#[inline(always)]
+fn current_linux_thread_group_id() -> Option<c_int> {
+    let result = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETPID) };
+    if is_linux_error(result) || result <= 0 || result > i64::from(c_int::MAX) {
+        return None;
+    }
+    Some(result as c_int)
+}
+
 /// Acquire the bounded registry lock without entering a broader pthread lock.
 fn lock_selected_worker_registry() {
     while SELECTED_WORKER_REGISTRY_LOCK
@@ -595,6 +633,35 @@ fn lock_selected_worker_registry() {
 /// Release the bounded registry lock after its local identity operation.
 fn unlock_selected_worker_registry() {
     SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
+}
+
+/// Acquire one worker's private source-shaped kill/exit exclusion lock.
+///
+/// The caller must not hold the selected-worker registry lock. A cancellation
+/// requester blocks all signals before this spin acquisition; an exiting
+/// worker has disabled cancellation and blocked application signals before it
+/// begins the matching retirement transition. Those two admission rules avoid
+/// an asynchronously abandoned target lock without turning this into a public
+/// signal or pthread synchronization primitive.
+#[inline]
+unsafe fn lock_selected_worker_signal_target(control: *mut ThreadControl) {
+    while unsafe {
+        (*control)
+            .signal_target_lock
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+    }
+    .is_err()
+    {
+        while unsafe { (*control).signal_target_lock.load(Ordering::Relaxed) } != 0 {
+            core::hint::spin_loop();
+        }
+    }
+}
+
+/// Release one worker's private target kill/exit exclusion lock.
+#[inline]
+unsafe fn unlock_selected_worker_signal_target(control: *mut ThreadControl) {
+    unsafe { (*control).signal_target_lock.store(0, Ordering::Release) };
 }
 
 #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
@@ -733,6 +800,13 @@ pub(super) unsafe fn pthread_fork_child() {
         // musl `_Fork` clears only copied registration/pending state.
         unsafe { pthread_mutex::reset_selected_initial_robust_list_after_fork() };
     }
+    INITIAL_SIGNAL_TARGET_LOCK.store(0, Ordering::Relaxed);
+    INITIAL_SIGNAL_TARGET_TP.store(thread_pointer as usize, Ordering::Relaxed);
+    INITIAL_SIGNAL_TARGET_CANCELLATION.store(
+        pthread_identity::current_selected_cancellation_state() as usize,
+        Ordering::Relaxed,
+    );
+    INITIAL_SIGNAL_TARGET_TID.store(current_linux_thread_id().unwrap_or(0), Ordering::Release);
     SELECTED_WORKER_REGISTRY_HEAD.store(0, Ordering::Release);
     #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
     SELECTED_INITIAL_THREAD_TASK_STATE.store(SelectedRuntimeTaskState::ACTIVE, Ordering::Release);
@@ -885,6 +959,85 @@ pub(super) fn request_selected_pthread_cancellation(thread: *mut c_void) -> bool
         };
     }
     requested
+}
+
+/// Execute one signal transaction while the target's Linux TID cannot retire.
+///
+/// Lookup pins the mapping under the registry lock, then drops that lock before
+/// acquiring the target kill lock. The callback may update pending state and
+/// issue raw `tgkill`; it must not retain the cancellation pointer, invoke user
+/// code, or enter another lifecycle transaction. `None` rejects an unknown or
+/// C11 handle; `Some(0)` accepts an already retired target without invoking the
+/// callback. A target that has not entered its trampoline uses the kernel's
+/// parent-written child TID until the worker publishes its identity.
+///
+/// # Safety
+/// The caller must block all signals through this entire call, including the
+/// lease decrement, so asynchronous cancellation cannot abandon either lock
+/// or the mapping lease. The callback must return normally.
+pub(super) unsafe fn with_selected_pthread_signal_target(
+    thread: *mut c_void,
+    callback: impl FnOnce(c_int, c_int, *const pthread_cancel::SelectedWorkerCancellation) -> c_int,
+) -> Option<c_int> {
+    if thread.is_null() {
+        return None;
+    }
+    let tgid = current_linux_thread_group_id()?;
+    if thread as usize == INITIAL_SIGNAL_TARGET_TP.load(Ordering::Acquire) {
+        while INITIAL_SIGNAL_TARGET_LOCK.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed).is_err() {
+            core::hint::spin_loop();
+        }
+        let tid = INITIAL_SIGNAL_TARGET_TID.load(Ordering::Acquire);
+        let result = if tid > 0 {
+            callback(tgid, tid, INITIAL_SIGNAL_TARGET_CANCELLATION.load(Ordering::Acquire) as *const _)
+        } else { 0 };
+        INITIAL_SIGNAL_TARGET_LOCK.store(0, Ordering::Release);
+        return Some(result);
+    }
+    lock_selected_worker_registry();
+    let control = selected_worker_by_thread_pointer_locked(thread as usize)
+        .filter(|control| unsafe { matches!((**control).start, SelectedWorkerStart::Pthread(_)) });
+    if let Some(control) = control {
+        unsafe { (*control).signal_target_leases.fetch_add(1, Ordering::AcqRel) };
+    }
+    unlock_selected_worker_registry();
+    let control = control?;
+    // SAFETY: this lease survives withdrawal and pins the target lock and
+    // cancellation state until the final decrement below.
+    unsafe { lock_selected_worker_signal_target(control) };
+    let mut tid = unsafe { (*control).worker_tid.load(Ordering::Acquire) };
+    if tid == -1 {
+        tid = unsafe { (*control).child_tid.load(Ordering::Acquire) };
+    }
+    let result = if tid > 0 {
+        callback(tgid, tid, unsafe { core::ptr::addr_of!((*control).cancellation) })
+    } else { 0 };
+    unsafe {
+        unlock_selected_worker_signal_target(control);
+        (*control).signal_target_leases.fetch_sub(1, Ordering::Release);
+    }
+    Some(result)
+}
+
+/// Withdraw the current target TID before the task can reach Linux exit.
+/// Cancellation is disabled and application signals are blocked by the caller.
+unsafe fn retire_selected_worker_signal_target(control: *mut ThreadControl) {
+    let mut saved_mask = 0_u64;
+    unsafe {
+        super::signal_execution::block_all_signals(&mut saved_mask);
+        lock_selected_worker_signal_target(control);
+        (*control).worker_tid.store(0, Ordering::Release);
+        unlock_selected_worker_signal_target(control);
+        super::signal_execution::restore_application_signals(&saved_mask);
+    }
+}
+
+unsafe fn retire_initial_signal_target() {
+    while INITIAL_SIGNAL_TARGET_LOCK.compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        core::hint::spin_loop();
+    }
+    INITIAL_SIGNAL_TARGET_TID.store(0, Ordering::Release);
+    INITIAL_SIGNAL_TARGET_LOCK.store(0, Ordering::Release);
 }
 
 /// Resolve one live selected-worker handle to Linux's parent-written TID.
@@ -1063,6 +1216,11 @@ unsafe fn reclaim_withdrawn_selected_worker(control: *mut ThreadControl) -> Resu
     // one can still dereference only this control-mapped barrier. Drain it
     // before releasing any mapping that might otherwise invalidate that wake.
     unsafe { wait_for_cancellation_wake_leases(control) };
+    // Registry withdrawal closes new target leases before any mapping unmap.
+    while unsafe { (*control).signal_target_leases.load(Ordering::Acquire) } != 0 {
+        core::hint::spin_loop();
+    }
+
     // SAFETY: the caller proves the record remains mapped for this first read.
     let tls_block = unsafe { (*control).tls_block };
     if unsafe { (*control).tls_released.load(Ordering::Acquire) } == 0 {
@@ -1503,6 +1661,19 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
             core::ptr::addr_of!((*control).cancellation),
         )
     };
+    // Musl pthread_create.c clears SIGCANCEL (33, not SIGTIMER 32)
+    // in the child's inherited mask. Publish FS+32 first: delivery may begin
+    // immediately after this syscall, before the application callback.
+    let cancellation_signal = 1_u64 << 32;
+    let _ = unsafe {
+        raw_syscall::syscall4(
+            raw_syscall::SYS_RT_SIGPROCMASK,
+            1, // SIG_UNBLOCK
+            core::ptr::addr_of!(cancellation_signal) as usize as i64,
+            0,
+            8,
+        )
+    };
     // SAFETY: pthread_create initialized this private record before clone;
     // the child owns the callback invocation and parent only reads result
     // after `finished` is published and the child has exited.
@@ -1546,6 +1717,7 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
             unsafe { super::static_startup::exit(0) }
         }
     }
+    unsafe { retire_selected_worker_signal_target(control) };
     // SAFETY: a non-final worker has completed its selected state users and
     // returns only to the private clone tail that ends this Linux task. A
     // future orphaned-FILE repair runs immediately before this clear.
@@ -1718,7 +1890,9 @@ unsafe fn create_selected_worker_with_attributes(
                 result: AtomicUsize::new(0),
                 result_kind: AtomicU8::new(SelectedWorkerResultKind::NONE),
                 finished: AtomicU8::new(0),
-                worker_tid: AtomicI32::new(0),
+                signal_target_lock: AtomicU8::new(0),
+                signal_target_leases: AtomicUsize::new(0),
+                worker_tid: AtomicI32::new(-1),
                 registry_retired: AtomicU8::new(0),
                 tls_released: AtomicU8::new(0),
                 stack_released: AtomicU8::new(worker_stack.mapping.is_null() as u8),
@@ -1749,6 +1923,21 @@ unsafe fn create_selected_worker_with_attributes(
     }
     publish_selected_worker(control);
     let child_tid = unsafe { core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>() };
+    // The child must inherit SIGCANCEL blocked: an externally delivered
+    // cancellation signal must not run between clone installing FS and the
+    // trampoline publishing FS+32. Preserve every other inherited mask bit;
+    // the parent restores its exact mask immediately after clone returns.
+    let cancellation_signal = 1_u64 << 32;
+    let mut creator_signal_mask = 0_u64;
+    let _ = unsafe {
+        raw_syscall::syscall4(
+            raw_syscall::SYS_RT_SIGPROCMASK,
+            0, // SIG_BLOCK
+            core::ptr::addr_of!(cancellation_signal) as usize as i64,
+            core::ptr::addr_of_mut!(creator_signal_mask) as usize as i64,
+            8,
+        )
+    };
     // SAFETY: the private clone seam uses musl's exact x86 argument shuffle.
     // The selected stack is either caller-owned or the writable upper portion
     // of a private guarded map; the separate control and v1 blocks retain the
@@ -1764,6 +1953,8 @@ unsafe fn create_selected_worker_with_attributes(
             child_tid,
         )
     };
+    // SAFETY: paired restoration is required on success and clone failure.
+    unsafe { super::signal_execution::restore_application_signals(&creator_signal_mask) };
     if is_linux_error(clone_result) {
         if !release_selected_worker(control) {
             // The private list can still expose `control` to the selected
@@ -1819,7 +2010,10 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         // SAFETY: selected pthread-exit disables cancellation before any
         // cleanup/TSD or final-task transition. The current implementation
         // retains no C11 cancellation state.
-        unsafe { pthread_cancel::disable_current_selected_pthread_cancellation_for_exit() };
+        unsafe {
+            pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
+            pthread_cancel::run_current_selected_pthread_cleanup_handlers();
+        }
         // SAFETY: this is the static bootstrapped task's process-lifetime TSD
         // table. Destructors run before the musl-shaped list/last-thread
         // decision, so they may still use selected lifecycle operations.
@@ -1841,6 +2035,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             // task-state transition, so pthread_exit is ordinary process exit.
             unsafe { super::static_startup::exit(0) }
         }
+        unsafe { retire_initial_signal_target() };
         // SAFETY: only a non-final initial task reaches this point. Its
         // cancellation state is disabled and no ordinary-exit callback will
         // run; clear the signal-safe pointer before Linux task retirement.
@@ -1882,6 +2077,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
                 unsafe { super::static_startup::exit(0) }
             }
         }
+        unsafe { retire_selected_worker_signal_target(control) };
     }
     // SAFETY: a selected non-final worker reaches only the immediate Linux
     // task exit below after cancellation is disabled for pthread-mode exits

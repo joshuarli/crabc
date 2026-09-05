@@ -526,6 +526,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-static-tls-v1  run the static x86 crabc-libc initial TLS template slice
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
+  owned-pthread-lifecycle  run pinned-musl and installed pthread lifetime consumers
   owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
   lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
   libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
@@ -5489,6 +5490,7 @@ case "$command" in
     memfd-create-header-abi) ;;
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
+    owned-pthread-lifecycle) ;;
     owned-static-sysroot) ;;
     lua-static-source-build) ;;
     libc-owned-wordexp) ;;
@@ -7481,6 +7483,10 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-crt1-static-tls takes no arguments"
         ensure_image
         run_libc_crt1_static_tls_probe
+        ;;
+    owned-pthread-lifecycle)
+        [ "$#" -eq 0 ] || fail "owned-pthread-lifecycle takes no arguments"
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_lifecycle.sh
         ;;
     owned-static-sysroot)
         [ "$#" -eq 0 ] || fail "owned-static-sysroot takes no arguments"
