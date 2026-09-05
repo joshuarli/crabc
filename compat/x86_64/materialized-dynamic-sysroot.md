@@ -264,3 +264,13 @@ uses it for the existing exact blocked-syscall observations. No proc mount,
 new mount authority, host shell, or ambient loader is needed. Without a
 supplied descriptor, ordinary static runs retain their existing proc path.
 The optional no-argument runner invocation first builds a fresh dynamic product.
+
+`run_owned_system_cancellation.sh INSTALLED_SYSROOT` separately qualifies
+`system` and `pclose` child-wait cancellation in PIE/non-PIE and direct
+interpreter modes. A same-runtime protocol target occupies `/bin/sh` inside
+each private root; no ambient shell or runtime is copied into the candidate.
+Both consumer and child are sealed-driver outputs with owned interpreter and
+libc dependency checks. The pinned-musl reference uses static copies of those
+same fixture sources in its own root. Normal cancellation tests and injected
+tester failure/timeout verify source wait semantics and supervisor child
+ownership. This is process/wait evidence, not a shell implementation claim.

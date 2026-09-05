@@ -529,6 +529,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
   owned-resolver-network  compare owned products with musl in isolated loopback DNS fixtures
   owned-dynamic-io-cancellation  qualify shared-runtime cancellation through kernel and direct entry
+
+  owned-system-cancellation  qualify isolated system/pclose cancellation and child wait ownership
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-pthread-join-cancel  test installed join cancellation and target reclamation
@@ -5572,6 +5574,7 @@ case "$command" in
     memfd-create-header-abi) ;;
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
+    owned-system-cancellation) ;;
     owned-io-cancellation) ;;
     owned-resolver-network) ;;
     owned-dynamic-io-cancellation) ;;
@@ -7583,6 +7586,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-dynamic-io-cancellation takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_dynamic_io_cancellation.sh
+        ;;
+    owned-system-cancellation)
+        [ "$#" -eq 0 ] || fail "owned-system-cancellation takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_system_cancellation.sh
         ;;
     owned-io-cancellation)
         ensure_image

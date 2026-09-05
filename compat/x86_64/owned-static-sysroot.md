@@ -440,3 +440,26 @@ boundary replaces the old worker-only signal-free route, so the original main
 task participates in the same list repair and mutex reacquisition contract.
 Timed waits, shared conditions, and non-normal mutexes remain outside this
 component's admitted boundary.
+
+`./scripts/dev-x86_64.sh owned-system-cancellation` qualifies the distinct
+source waits in `owned_stdio_process.rs`: `system` calls public `waitpid` and
+retains its `EINTR` errno across retries, while `pclose` calls
+`wait_process_stream_raw` and retries without publishing the interrupted raw
+result. The fixture observes the worker inside wait4 before cancellation.
+Enabled cancellation leaves the system child alive and does not run the
+source's later signal-disposition/mask restoration; masked cancellation
+returns `ECANCELED` through the normal restoration path. Disabled waits and
+all pclose waits finish and reap their child before a later explicit
+cancellation check. Pending null commands preserve the initial source check.
+
+`owned_system_cancellation_child.c` is a test protocol executable installed
+at `/bin/sh` only inside private roots. It checks the exact `sh`, `-c`, command
+argument sequence, environment, reset/ignored dispositions, and inherited
+signal mask, then publishes its PID and waits for a release byte. It does not
+implement shell language. Pinned musl and each owned entry run the same
+consumer and child source in separate roots. A fixture supervisor adopts
+orphan descendants and retains its waitable tester identity through cleanup;
+normal completion, injected tester failure, and timeout all prove child-group
+removal and reaping. This harness cleanup is separate from libc's source
+contract. Ordinary shell semantics remain covered by the existing process
+stream composition.
