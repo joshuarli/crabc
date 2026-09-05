@@ -2,8 +2,9 @@
 
 `scripts/build_x86_64_owned_dynamic_sysroot.py` produces a real native x86-64
 shared runtime. `run_materialized_dynamic_sysroot.sh` builds and executes
-ordinary C consumers through the installed `bin/crabc-cc-dynamic`, repeats
-through an extracted package, and compares two fresh builds byte for byte.
+ordinary C consumers through the installed `bin/crabc-cc-dynamic`, compares
+two fresh builds byte for byte, and executes the complete consumer matrix
+through each clean build and an extracted package.
 It also executes retained runtime graphs and all-thread DTV growth. This is
 component evidence, not completion of `dynamic-product.toml`.
 Run it from the host with `./scripts/dev-x86_64.sh materialized-dynamic-sysroot`.
@@ -222,3 +223,13 @@ installed driver and compares both dependency orders, PIE/non-PIE, and kernel
 /direct interpreter entry against pinned musl. It verifies constructor and
 reverse finalizer ordering, initial and worker TLS, and repeated `dlopen`
 without reinitialization. Both installed and extracted products run this gate.
+
+The three-product execution regression rejects the earlier artifact whose
+second clean build had only a manifest/archive comparison and no consumer
+outcome. `check_basic_product` now requires matching musl output, spawn
+interposition and non-PIE startup for each product; `check_runtime_suites`
+runs the same leaf roster for all three. The integrated gate passed at the
+`550bb254` runtime plus this harness change; log
+`.work/x86_64/three-dynamic-products-integrated.log`, retained product
+`.work/x86_64/tmp/materialized-dynamic.uyzJLv`. Dedicated dynamic cancellation
+composition and current publication receipts remain separate work.

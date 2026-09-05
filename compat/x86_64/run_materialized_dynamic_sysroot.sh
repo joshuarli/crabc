@@ -58,69 +58,63 @@ bash "$ROOT/compat/x86_64/run_musl_oracle.sh"
 /usr/local/bin/crabc-x86_64-musl-gcc -fPIE -pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
     -L"$work" -Wl,-rpath,"$work" -l:liboracle-dependency.so -o "$work/oracle"
 timeout 20 "$work/oracle" >"$work/oracle.stdout"
+# Each clean build and the extracted package execute the same product matrix.
+# Byte equality is a separate prerequisite, not an execution receipt.
+check_basic_product() {
+    local product="$1" label="$2"
+    local driver="$product/bin/crabc-cc-dynamic"
+    local dependency="$work/lib$label.so"
+    local consumer="$work/$label-consumer"
+    local execution_root="$work/$label-execution-root"
+    "$driver" --dynamic-shared-object "$ROOT/compat/x86_64/owned_dynamic_dependency.c" -o "$dependency"
+    "$driver" --dynamic-pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
+        --application-dso "$dependency" -o "$consumer"
+    for artifact in "$product/lib/ld-crabc-x86_64.so.1" "$product/usr/lib/libc.so"; do
+        readelf -dW "$artifact" >"$work/$label-$(basename "$artifact").dynamic.txt"
+        ! grep -E '\(NEEDED\)|\(TEXTREL\)' "$work/$label-$(basename "$artifact").dynamic.txt"
+    done
+    readelf -lW "$consumer" >"$consumer.segments.txt"
+    grep -Fq '/lib/ld-crabc-x86_64.so.1' "$consumer.segments.txt"
+    # The complete execution root and its writable scratch remain below .work.
+    cp -a "$product" "$execution_root"
+    mkdir "$execution_root/tmp"
+    cp "$consumer" "$execution_root/consumer"
+    cp "$dependency" "$execution_root/usr/lib/$(basename "$dependency")"
+    timeout 20 chroot "$execution_root" /consumer >"$consumer.stdout"
+    cmp "$work/expected.stdout" "$consumer.stdout"
+    cmp "$work/oracle.stdout" "$consumer.stdout"
+    check_spawn_interposition "$product" "$execution_root" "spawn-$label"
+    check_non_pie "$product" "$execution_root" "$dependency" "non-pie-$label"
+}
+
+check_runtime_suites() {
+    local product="$1"
+    bash "$ROOT/compat/x86_64/run_general_dynamic_elf_scope.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_general_dynamic_cycle.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_general_dynamic_cli.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_general_dynamic_constructor_exit.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_signal.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_exit.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_general_dynamic_fork.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_owned_pthread_getattr.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_owned_pthread_join_cancel.sh" "$product"
+    CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$product"
+    CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$product"
+}
+
 python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/installed"
-driver="$work/installed/bin/crabc-cc-dynamic"
-"$driver" --dynamic-shared-object "$ROOT/compat/x86_64/owned_dynamic_dependency.c" -o "$work/libapplication.so"
-"$driver" --dynamic-pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
-    --application-dso "$work/libapplication.so" -o "$work/consumer"
-for artifact in "$work/installed/lib/ld-crabc-x86_64.so.1" "$work/installed/usr/lib/libc.so"; do
-    readelf -dW "$artifact" >"$work/$(basename "$artifact").dynamic.txt"
-    ! grep -E '\(NEEDED\)|\(TEXTREL\)' "$work/$(basename "$artifact").dynamic.txt"
-done
-readelf -lW "$work/consumer" >"$work/consumer.segments.txt"
-grep -Fq '/lib/ld-crabc-x86_64.so.1' "$work/consumer.segments.txt"
-# Chroot changes only pathname resolution inside this private container. The
-# complete runtime image and its writable scratch still live below .work.
-cp -a "$work/installed" "$work/execution-root"
-mkdir "$work/execution-root/tmp"
-cp "$work/consumer" "$work/execution-root/consumer"
-cp "$work/libapplication.so" "$work/execution-root/usr/lib/libapplication.so"
-timeout 20 chroot "$work/execution-root" /consumer >"$work/consumer.stdout"
-printf 'installed dynamic: allocation errno stdio threads\nordinary exit\n' >"$work/expected.stdout"
-cmp "$work/expected.stdout" "$work/consumer.stdout"
-cmp "$work/oracle.stdout" "$work/consumer.stdout"
-check_spawn_interposition "$work/installed" "$work/execution-root" spawn-installed
-check_non_pie "$work/installed" "$work/execution-root" "$work/libapplication.so" non-pie-installed
-python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/installed" "$work/runtime.tar"
-python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" extract "$work/runtime.tar" "$work/extracted"
-extracted_driver="$work/extracted/bin/crabc-cc-dynamic"
-"$extracted_driver" --dynamic-shared-object "$ROOT/compat/x86_64/owned_dynamic_dependency.c" -o "$work/libextracted.so"
-"$extracted_driver" --dynamic-pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
-    --application-dso "$work/libextracted.so" -o "$work/extracted-consumer"
-cp -a "$work/extracted" "$work/extracted-execution-root"
-mkdir "$work/extracted-execution-root/tmp"
-cp "$work/extracted-consumer" "$work/extracted-execution-root/consumer"
-cp "$work/libextracted.so" "$work/extracted-execution-root/usr/lib/libextracted.so"
-timeout 20 chroot "$work/extracted-execution-root" /consumer >"$work/extracted-consumer.stdout"
-cmp "$work/expected.stdout" "$work/extracted-consumer.stdout"
-check_spawn_interposition "$work/extracted" "$work/extracted-execution-root" spawn-extracted
-check_non_pie "$work/extracted" "$work/extracted-execution-root" "$work/libextracted.so" non-pie-extracted
 python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/second"
 cmp "$work/installed/share/crabc/manifest.json" "$work/second/share/crabc/manifest.json"
+python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/installed" "$work/runtime.tar"
 python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/second" "$work/second-runtime.tar"
 cmp "$work/runtime.tar" "$work/second-runtime.tar"
-bash "$ROOT/compat/x86_64/run_general_dynamic_cycle.sh" "$work/installed"
-bash "$ROOT/compat/x86_64/run_general_dynamic_cycle.sh" "$work/extracted"
-bash "$ROOT/compat/x86_64/run_general_dynamic_cli.sh" "$work/installed"
-bash "$ROOT/compat/x86_64/run_general_dynamic_cli.sh" "$work/extracted"
-bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/installed"
-bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/extracted"
-bash "$ROOT/compat/x86_64/run_general_dynamic_constructor_exit.sh" "$work/installed"
-bash "$ROOT/compat/x86_64/run_general_dynamic_constructor_exit.sh" "$work/extracted"
-bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_signal.sh" "$work/installed"
-bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_signal.sh" "$work/extracted"
-bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_exit.sh" "$work/installed"
-bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_exit.sh" "$work/extracted"
-bash "$ROOT/compat/x86_64/run_general_dynamic_fork.sh" "$work/installed"
-bash "$ROOT/compat/x86_64/run_general_dynamic_fork.sh" "$work/extracted"
-bash "$ROOT/compat/x86_64/run_owned_pthread_getattr.sh" "$work/installed"
-bash "$ROOT/compat/x86_64/run_owned_pthread_getattr.sh" "$work/extracted"
-bash "$ROOT/compat/x86_64/run_owned_pthread_join_cancel.sh" "$work/installed"
-bash "$ROOT/compat/x86_64/run_owned_pthread_join_cancel.sh" "$work/extracted"
-CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/installed"
-CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/extracted"
-bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$work/installed"
-bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$work/extracted"
-CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$work/installed"
-CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$work/extracted"
-printf 'materialized dynamic sysroot: PASS (initial and retained runtime graphs); evidence: %s\n' "$work"
+python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" extract "$work/runtime.tar" "$work/extracted"
+printf 'installed dynamic: allocation errno stdio threads\nordinary exit\n' >"$work/expected.stdout"
+for label in installed second extracted; do
+    check_basic_product "$work/$label" "$label"
+    check_runtime_suites "$work/$label"
+    printf 'materialized dynamic product: PASS (%s)\n' "$label"
+done
+printf 'materialized dynamic sysroot: PASS (two clean builds and extracted initial/runtime graphs); evidence: %s\n' "$work"
