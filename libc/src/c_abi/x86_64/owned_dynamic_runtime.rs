@@ -25,3 +25,13 @@ pub(super) unsafe fn prepare(argc: core::ffi::c_int, argv: *const *const core::f
 pub(super) unsafe fn flush_on_exit() {
     unsafe { super::stdio_standard::flush_all_on_exit() };
 }
+
+/// Complete ordinary process exit for the final selected pthread task.
+///
+/// The shared pthread registry has committed the unique final live task after
+/// cleanup/TSD teardown. This startup owner still owns process registrations,
+/// executable and loader finalization, and buffered stdio; the loader's main
+/// TLS mapping remains process-lifetime storage throughout those callbacks.
+pub(super) unsafe fn exit(status: core::ffi::c_int) -> ! {
+    unsafe { startup::exit(status) }
+}

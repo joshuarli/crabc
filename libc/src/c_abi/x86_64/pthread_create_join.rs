@@ -53,13 +53,14 @@
 //! TLS/control mappings only after `CLONE_CHILD_CLEARTID` has cleared the
 //! child TID. This follows the existing AArch64 runtime's safe external
 //! reaping shape; it is not a claim of general detached-thread reclamation or
-//! full pthread parity. It provides the selected static initial-thread
-//! `pthread_exit` and static fork child-list/TLS/TSD reset paths, but not
-//! dynamic main-thread exit/fork, scheduler application, GNU default attributes,
+//! full pthread parity. It provides selected initial-thread `pthread_exit`
+//! in both owned products and static fork child-list/TLS/TSD repair, but not
+//! dynamic fork, scheduler application, GNU default attributes,
 //! affinity attributes, live-thread inspection, or general pthread semantics.
 //! Dynamic workers retain the loader's opaque allocation/release token through
-//! the same create/join seam, while the static-only initial/last-task and fork
-//! repair paths are cfg-excluded until the loader supplies its own transaction.
+//! the same create/join seam and logical initial/last-task accounting. The
+//! dynamic startup owner runs executable/loader finalization for the final
+//! task; dynamic fork still requires a separate loader transaction.
 //! It
 //! leaves caller `errno` untouched because pthread APIs report errors as
 //! positive return values. Each selected worker carries its
@@ -339,14 +340,12 @@ enum SelectedWorkerLifecycleState {
 /// state commits a running task to `pthread_exit`.  Keeping both task-state
 /// publications under the list lock gives exactly one final selected task the
 /// ordinary process-exit route while all earlier tasks use `SYS_exit`.
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum SelectedRuntimeTaskState {
     Active,
     ExitCommitted,
 }
 
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 impl SelectedRuntimeTaskState {
     const ACTIVE: u8 = 0;
     const EXIT_COMMITTED: u8 = 1;
@@ -409,9 +408,8 @@ struct ThreadControl {
     // ownership. A worker marks ExitCommitted while the registry lock is
     // held, after cleanup/TSD/result publication but before it reaches
     // SYS_exit. The one transition that observes no other Active task owns
-    // ordinary process exit. Dynamic main/last-thread exit remains loader
-    // work, so it has no corresponding local task state.
-    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+    // ordinary process exit through the selected static or dynamic startup
+    // owner; loader-owned TLS mappings retain their independent lifetime.
     task_state: AtomicU8,
     // A joiner or detacher makes the sole state transition out of Joinable
     // while the registry lock still proves this control mapping is live.
@@ -498,10 +496,10 @@ static SELECTED_WORKER_REGISTRY_HEAD: AtomicUsize = AtomicUsize::new(0);
 // deadlock here.
 static SELECTED_WORKER_REGISTRY_LOCK: AtomicU8 = AtomicU8::new(0);
 
-// The bootstrapped static thread is not backed by a worker control mapping,
-// but it still participates in the same locked last-thread transition. This
-// remains static-only: dynamic main-thread exit must stay loader-owned.
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+// The bootstrapped initial task is not backed by a worker control mapping,
+// but participates in the same locked last-thread transition in both owned
+// products. The static TLS or dynamic loader owner retains its mapping for
+// process lifetime, including after this initial Linux task has exited.
 static SELECTED_INITIAL_THREAD_TASK_STATE: AtomicU8 =
     AtomicU8::new(SelectedRuntimeTaskState::ACTIVE);
 
@@ -664,10 +662,23 @@ unsafe fn unlock_selected_worker_signal_target(control: *mut ThreadControl) {
     unsafe { (*control).signal_target_lock.store(0, Ordering::Release) };
 }
 
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 #[inline]
 fn current_is_selected_initial_thread() -> bool {
     static_tls::is_initial_thread_pointer(pthread_identity::current_thread_pointer())
+}
+
+/// Enter ordinary process exit after the unique final-task transition.
+///
+/// The pthread registry owns only logical task accounting. The selected
+/// startup owner retains atexit/executable/loader finalization and stdio
+/// ordering; loader TLS is never released merely because its initial task
+/// retired while another worker remained alive.
+#[inline(always)]
+unsafe fn exit_selected_final_runtime_task() -> ! {
+    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    unsafe { super::owned_dynamic_runtime::exit(0) }
+    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+    unsafe { super::static_startup::exit(0) }
 }
 
 /// Mark the selected initial task committed to exit and report whether it is
@@ -677,7 +688,6 @@ fn current_is_selected_initial_thread() -> bool {
 /// see the other's still-positive TID and each take `SYS_exit`. The logical
 /// task-state store and the following scan occur under one list lock, so only
 /// the transition that commits the final Active task returns true.
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 fn selected_initial_thread_is_final_runtime_task() -> bool {
     lock_selected_worker_registry();
     SELECTED_INITIAL_THREAD_TASK_STATE.store(
@@ -710,7 +720,6 @@ fn selected_initial_thread_is_final_runtime_task() -> bool {
 /// thread-list unlink point, but keeps the control mapped for join/detach
 /// reclamation. Once committed, a task cannot be counted as another thread's
 /// live sibling even if Linux has not yet cleared its child-TID word.
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 fn selected_worker_is_final_runtime_task(control: *mut ThreadControl) -> bool {
     lock_selected_worker_registry();
     // SAFETY: current-worker identity retains this linked control mapping
@@ -1700,7 +1709,6 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
         pthread_mutex::mark_current_selected_robust_mutexes_owner_dead();
         publish_selected_worker_result(control, result);
     }
-    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
     {
         let mut saved_signal_mask = 0_u64;
         // SAFETY: this is musl's application-signal exclusion around the
@@ -1714,7 +1722,7 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
             unsafe { super::signal_execution::restore_application_signals(&saved_signal_mask) };
             // SAFETY: the initial selected task already called pthread_exit
             // and this locked task-state transition is uniquely final.
-            unsafe { super::static_startup::exit(0) }
+            unsafe { exit_selected_final_runtime_task() }
         }
     }
     unsafe { retire_selected_worker_signal_target(control) };
@@ -1879,7 +1887,6 @@ unsafe fn create_selected_worker_with_attributes(
                 start_ready: AtomicU8::new(0),
                 creator_handoff_pending: AtomicU8::new(1),
                 cancellation_wake_leases: AtomicUsize::new(0),
-                #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
                 task_state: AtomicU8::new(SelectedRuntimeTaskState::ACTIVE),
                 lifecycle: AtomicU8::new(
                     if attributes.detached {
@@ -2007,7 +2014,6 @@ unsafe fn create_selected_worker_with_attributes(
 /// result must remain valid until its joining caller consumes it.
 #[inline(always)]
 unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
-    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
     if current_is_selected_initial_thread() {
         // SAFETY: selected pthread-exit disables cancellation before any
         // cleanup/TSD or final-task transition. The current implementation
@@ -2016,7 +2022,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
             pthread_cancel::run_current_selected_pthread_cleanup_handlers();
         }
-        // SAFETY: this is the static bootstrapped task's process-lifetime TSD
+        // SAFETY: this is the bootstrapped task's process-lifetime TSD
         // table. Destructors run before the musl-shaped list/last-thread
         // decision, so they may still use selected lifecycle operations.
         unsafe { pthread_tsd::run_selected_main_tsd_destructors() };
@@ -2035,7 +2041,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             unsafe { super::signal_execution::restore_application_signals(&saved_signal_mask) };
             // SAFETY: no selected worker remains after the locked logical
             // task-state transition, so pthread_exit is ordinary process exit.
-            unsafe { super::static_startup::exit(0) }
+            unsafe { exit_selected_final_runtime_task() }
         }
         unsafe { retire_initial_signal_target() };
         // SAFETY: only a non-final initial task reaches this point. Its
@@ -2067,7 +2073,6 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             pthread_mutex::mark_current_selected_robust_mutexes_owner_dead();
             publish_selected_worker_result(control, result);
         }
-        #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
         {
             let mut saved_signal_mask = 0_u64;
             // SAFETY: no user cleanup remains. Block application signals
@@ -2078,7 +2083,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
                 // SAFETY: only the unique final task restores this mask before
                 // ordinary process exit and its atexit callbacks.
                 unsafe { super::signal_execution::restore_application_signals(&saved_signal_mask) };
-                unsafe { super::static_startup::exit(0) }
+                unsafe { exit_selected_final_runtime_task() }
             }
         }
         unsafe { retire_selected_worker_signal_target(control) };

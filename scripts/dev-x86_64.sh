@@ -532,6 +532,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
   libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
   owned-dynamic-sysroot  inspect the legacy plan-only dynamic-product gate
+  owned-dynamic-pthread-exit  test installed dynamic main and last pthread exit
   materialized-dynamic-sysroot  build and test the installed initial-graph shared runtime
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
   crt-dynamic-startup  run the private x86 Scrt1.o dynamic-PIE startup artifact
@@ -5499,6 +5500,7 @@ case "$command" in
     lua-static-source-build) ;;
     libc-owned-wordexp) ;;
     owned-dynamic-sysroot) ;;
+    owned-dynamic-pthread-exit) ;;
     materialized-dynamic-sysroot) ;;
     crt-object-bundle) ;;
     crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto) ;;
@@ -7515,6 +7517,10 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-dynamic-sysroot takes no arguments"
         ensure_image
         run_owned_dynamic_sysroot_probe
+        ;;
+    owned-dynamic-pthread-exit)
+        [ "$#" -eq 0 ] || fail "owned-dynamic-pthread-exit takes no arguments"
+        run_in_container bash /workspace/compat/x86_64/run_owned_dynamic_pthread_exit.sh
         ;;
     materialized-dynamic-sysroot)
         [ "$#" -eq 0 ] || fail "materialized-dynamic-sysroot takes no arguments"

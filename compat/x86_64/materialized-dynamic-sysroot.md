@@ -112,7 +112,26 @@ and rollback consumers now run through installed and extracted products with
 pinned musl differentials for both PIE and non-PIE entry. Initial/runtime-loaded constructors that call exit
 must skip their own incomplete destructor, while completed objects finalize;
 `run_general_dynamic_constructor_exit.sh` checks both installed product arms.
+`run_general_dynamic_pthread_exit.sh INSTALLED_SYSROOT` runs an ordinary
+TLS-bearing DSO and executable in both PIE and non-PIE modes. The main-only
+case and eight simultaneous surviving workers prove cleanup-before-TSD and
+ordinary atexit -> executable fini -> DSO fini ordering. Its external parent
+waits for the initial kernel task's zombie state before releasing workers
+through stdin, so worker TLS use occurs after actual main-task retirement.
+Main/worker cancellation uses the same exit path. Successful ordinary-exit
+cases unlock explicit FILE ownership in cleanup; separate `_Exit` probes
+check that orphaned FILEs remain unavailable to another thread, matching
+musl's permanent owner sentinel without asserting recoverable locks.
+
+`pthread_create_join::exit_selected_final_runtime_task` keeps static and
+dynamic logical task accounting together. The dynamic arm calls
+`owned_dynamic_runtime::exit`, whose existing startup owner retains atexit,
+executable/loader finalization, and stdio flushing. The loader's initial TLS
+mapping stays process-lifetime storage when the initial task exits early.
+The focused host command is `./scripts/dev-x86_64.sh owned-dynamic-pthread-exit`;
+the aggregate runs the consumer against installed and extracted products.
+
 Remaining product work includes complete runtime search policy and broader
-introspection/order qualification, dynamic fork repair and main-thread pthread_exit
-composition, followed by the complete installed dynamic campaign. Musl's
+introspection/order qualification and dynamic fork repair (still explicitly
+`EAGAIN`), followed by the complete installed dynamic campaign. Musl's
 retained dlclose mappings, not physical unloading, are the parity target.

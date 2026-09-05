@@ -8,8 +8,11 @@
 //!
 //! Ordinary return and exit drain the shared bounded registration owner,
 //! then invoke executable finalization and rtld_fini. No fixture callback or
-//! success marker participates in this runtime. Worker creation, concurrent
-//! registration, recursive exit, and buffered stdio remain unqualified here.
+//! success marker participates in this runtime. The shared pthread owner also
+//! enters this exit path after the unique final-task transition, preserving
+//! cleanup/TSD ordering and loader TLS lifetime when main exits first.
+//! Concurrent registration and recursive ordinary exit remain outside this
+//! startup owner's caller contract.
 
 use core::ffi::{c_char, c_int};
 use core::sync::atomic::{AtomicU8, Ordering};
