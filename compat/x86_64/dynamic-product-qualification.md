@@ -55,6 +55,18 @@ rejection, retained scope/lifecycle and rollback differentials. Both clean
 builds and the extracted package must run the complete same roster; neither
 identical manifests nor another product's pass substitutes for execution.
 
+The spawn case links one unchanged application object into the pinned musl
+reference and installed PIE/non-PIE consumers, then executes both kernel and
+direct-interpreter parent entry. `owned_spawn_probe.c` uses the explicit
+`/consumer` path in each private chroot, preserving its host-static default
+`/proc/self/exe` path. The workload checks attributes, signal masks/defaults,
+sessions, ordered file actions and descriptor collisions, directory actions,
+PATH search, worker spawn, denied syscalls, descriptor exhaustion and rollback.
+`run_owned_dynamic_spawn.sh` retains the object, link receipts, ELF inspections
+and observations; the qualification catalog executes it on both clean products
+and the extracted package. Run its focused gate with
+`./scripts/dev-x86_64.sh owned-dynamic-spawn`.
+
 The main thread keeps the initial wire DTV/count at FS+8/FS+16. The loader
 publishes current runtime TLS views at FS+24 and owns generation and module
 IDs, worker allocation/release, and old-view lifetime. The private 72-byte

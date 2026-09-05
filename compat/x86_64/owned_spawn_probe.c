@@ -12,6 +12,13 @@
 #include <sys/resource.h>
 #include <pthread.h>
 
+/* Installed chroots use an explicit owned executable; the static host
+ * fixture retains Linux's self-executable path. Both oracle and candidate
+ * compile the same pathname and exercise the same spawn transitions. */
+#ifndef CRABC_SPAWN_EXECUTABLE
+#define CRABC_SPAWN_EXECUTABLE "/proc/self/exe"
+#endif
+
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"spawn:%d errno=%d\n",__LINE__,errno); return 1; } } while (0)
 static void returning_handler(int signal) { (void)signal; }
 static int reap(pid_t pid, int expected) {
@@ -47,7 +54,7 @@ static int denied_spawn(const char *mode) {
     char *environment[]={"SPAWN_TOKEN=child-environment",NULL};
     for (int attempt=0;attempt<3;attempt++) {
         pid_t pid=-123; errno=ENOSPC;
-        CHECK(posix_spawn(&pid,"/proc/self/exe",NULL,NULL,arguments,environment)==expected && pid==-123);
+        CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,environment)==expected && pid==-123);
         CHECK(errno==(syscall_number==56 ? ENOSPC : expected));
         CHECK(!sigprocmask(SIG_SETMASK,NULL,&after));
         for (int signal=1;signal<65;signal++)
@@ -94,7 +101,7 @@ static char *child_environment[] = {"SPAWN_TOKEN=child-environment","PATH=/not-t
 static void *worker(void *unused) {
     (void)unused; pid_t pid;
     char *arguments[]={"spawn-child","child","basic",NULL};
-    if (posix_spawn(&pid,"/proc/self/exe",NULL,NULL,arguments,child_environment) || reap(pid,23)) return (void *)1;
+    if (posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,child_environment) || reap(pid,23)) return (void *)1;
     return NULL;
 }
 int main(int argc, char **argv) {
@@ -108,22 +115,22 @@ int main(int argc, char **argv) {
     snprintf(output,sizeof output,"%s/spawn-output",argv[1]);
     snprintf(missing,sizeof missing,"%s/missing",argv[1]);
     snprintf(text_file,sizeof text_file,"%s/spawn-text",argv[1]);
-    CHECK(!symlink("/proc/self/exe",executable));
+    CHECK(!symlink(CRABC_SPAWN_EXECUTABLE,executable));
     int fd=open(marker,O_CREAT|O_RDWR,0600); CHECK(fd>=0 && !close(fd));
     char *arguments[]={"spawn-child","child","basic",NULL};
     pid_t pid=-123;
-    CHECK(!posix_spawn(&pid,"/proc/self/exe",NULL,NULL,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,child_environment) && !reap(pid,23));
     const char *abort_modes[]={"abort-default","abort-ignore","abort-handler","abort-block"};
     for (int i=0;i<4;i++) {
         arguments[2]=(char *)abort_modes[i];
-        CHECK(!posix_spawn(&pid,"/proc/self/exe",NULL,NULL,arguments,child_environment));
+        CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,child_environment));
         int status; CHECK(waitpid(pid,&status,0)==pid && WIFSIGNALED(status) && WTERMSIG(status)==SIGABRT);
     }
     arguments[2]="basic";
     const char *denied_modes[]={"deny-clone","deny-exec","deny-pipe"};
     for (int i=0;i<3;i++) {
         arguments[2]=(char *)denied_modes[i];
-        CHECK(!posix_spawn(&pid,"/proc/self/exe",NULL,NULL,arguments,child_environment) && !reap(pid,23));
+        CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,child_environment) && !reap(pid,23));
     }
     arguments[2]="basic";
     CHECK(!setenv("PATH",argv[1],1));
@@ -137,7 +144,7 @@ int main(int argc, char **argv) {
     CHECK(!setenv("PATH",search,1));
     CHECK(posix_spawnp(&pid,"spawn-marker",NULL,NULL,arguments,child_environment)==EACCES && pid==-123 && errno==EACCES);
     errno=ENOSPC;
-    CHECK(!posix_spawnp(&pid,"/proc/self/exe",NULL,NULL,arguments,child_environment) && errno==ENOENT && !reap(pid,23));
+    CHECK(!posix_spawnp(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,child_environment) && errno==ENOENT && !reap(pid,23));
     CHECK(!setenv("PATH",argv[1],1));
     char long_name[257]; memset(long_name,'x',sizeof long_name-1); long_name[sizeof long_name-1]=0;
     pid=-123;
@@ -155,14 +162,14 @@ int main(int argc, char **argv) {
     CHECK(!posix_spawnattr_setpgroup(&attributes,0));
     CHECK(!posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETSIGDEF|POSIX_SPAWN_SETSIGMASK|POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_RESETIDS));
     arguments[2]="attributes";
-    CHECK(!posix_spawn(&pid,"/proc/self/exe",NULL,&attributes,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,&attributes,arguments,child_environment) && !reap(pid,23));
     sigset_t parent_mask; CHECK(!sigprocmask(SIG_SETMASK,NULL,&parent_mask) && !sigismember(&parent_mask,SIGUSR2));
     CHECK(!sigaction(SIGUSR1,&old,NULL));
     CHECK(!posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETSID)); arguments[2]="session";
-    CHECK(!posix_spawn(&pid,"/proc/self/exe",NULL,&attributes,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,&attributes,arguments,child_environment) && !reap(pid,23));
     CHECK(!posix_spawnattr_setflags(&attributes,POSIX_SPAWN_SETSID|POSIX_SPAWN_SETPGROUP));
     pid=-123; errno=ENOSPC;
-    CHECK(posix_spawn(&pid,"/proc/self/exe",NULL,&attributes,arguments,child_environment)==EPERM && pid==-123 && errno==ENOSPC);
+    CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,&attributes,arguments,child_environment)==EPERM && pid==-123 && errno==ENOSPC);
     CHECK(!posix_spawnattr_destroy(&attributes));
     posix_spawn_file_actions_t actions;
     CHECK(!posix_spawn_file_actions_init(&actions));
@@ -171,7 +178,7 @@ int main(int argc, char **argv) {
     CHECK(!posix_spawn_file_actions_adddup2(&actions,3,9));
     CHECK(!posix_spawn_file_actions_addclose(&actions,10));
     arguments[2]="descriptor";
-    CHECK(!posix_spawn(&pid,"/proc/self/exe",&actions,NULL,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment) && !reap(pid,23));
     CHECK(!posix_spawn_file_actions_destroy(&actions));
     fd=open(output,O_RDONLY); char bytes[32]={0};
     CHECK(fd>=0 && read(fd,bytes,sizeof bytes)==15 && !strcmp(bytes,"ordered-actions") && !close(fd));
@@ -180,29 +187,29 @@ int main(int argc, char **argv) {
     CHECK(!posix_spawn_file_actions_adddup2(&actions,4,4));
     CHECK(!posix_spawn_file_actions_adddup2(&actions,4,9));
     arguments[2]="collision";
-    CHECK(!posix_spawn(&pid,"/proc/self/exe",&actions,NULL,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment) && !reap(pid,23));
     CHECK(!posix_spawn_file_actions_destroy(&actions));
     CHECK(!posix_spawn_file_actions_init(&actions));
     CHECK(!posix_spawn_file_actions_addchdir_np(&actions,argv[1])); arguments[2]="directory";
-    CHECK(!posix_spawn(&pid,"/proc/self/exe",&actions,NULL,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment) && !reap(pid,23));
     CHECK(!setenv("PATH",":",1));
     CHECK(!posix_spawnp(&pid,"spawn-image",&actions,NULL,arguments,child_environment) && !reap(pid,23));
     CHECK(!posix_spawn_file_actions_destroy(&actions));
     fd=open(argv[1],O_RDONLY|O_DIRECTORY); CHECK(fd>=0);
     CHECK(!posix_spawn_file_actions_init(&actions));
     CHECK(!posix_spawn_file_actions_addfchdir_np(&actions,fd));
-    CHECK(!posix_spawn(&pid,"/proc/self/exe",&actions,NULL,arguments,child_environment) && !reap(pid,23));
+    CHECK(!posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment) && !reap(pid,23));
     CHECK(!posix_spawn_file_actions_destroy(&actions) && !close(fd));
     CHECK(!posix_spawn_file_actions_init(&actions));
     CHECK(!posix_spawn_file_actions_adddup2(&actions,123,9)); pid=-123;
     errno=ENOSPC;
-    CHECK(posix_spawn(&pid,"/proc/self/exe",&actions,NULL,arguments,child_environment)==EBADF && pid==-123 && errno==ENOSPC);
+    CHECK(posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,&actions,NULL,arguments,child_environment)==EBADF && pid==-123 && errno==ENOSPC);
     CHECK(!posix_spawn_file_actions_destroy(&actions));
     pthread_t thread; void *result;
     CHECK(!pthread_create(&thread,NULL,worker,NULL) && !pthread_join(thread,&result) && !result);
     struct rlimit limit, low; CHECK(!getrlimit(RLIMIT_NOFILE,&limit)); low=limit; low.rlim_cur=3;
     CHECK(!setrlimit(RLIMIT_NOFILE,&low)); pid=-123;
-    int error=posix_spawn(&pid,"/proc/self/exe",NULL,NULL,arguments,child_environment);
+    int error=posix_spawn(&pid,CRABC_SPAWN_EXECUTABLE,NULL,NULL,arguments,child_environment);
     CHECK(!setrlimit(RLIMIT_NOFILE,&limit) && error==EMFILE && pid==-123);
     fd=dup(0); CHECK(fd==3 && !close(fd));
     CHECK(waitpid(-1,NULL,WNOHANG)==-1 && errno==ECHILD);

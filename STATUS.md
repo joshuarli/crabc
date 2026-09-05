@@ -2,8 +2,8 @@
 
 ## Active program
 
-The current session is paused at the user’s request. Resume from the committed
-wind-down handoff in [`plan.md`](plan.md). The combined goal remains incomplete.
+Work has resumed from the committed wind-down handoff in [`plan.md`](plan.md).
+The combined goal remains incomplete.
 
 Implement [`plan.md`](plan.md): native Linux/x86-64 runtime parity and native
 x86-64 mimalloc, in parallel where dependencies permit. AArch64 implementation

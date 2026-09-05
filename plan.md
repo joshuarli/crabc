@@ -2,6 +2,16 @@
 
 ## Paused handoff — 2026-09-05
 
+Work resumed on 2026-09-05. The first fresh 17-case dynamic gate passed at
+`715deef2`: both clean builds and extraction, 51 case receipts, identical
+product manifests. Host validation and explicit local publication passed for
+`.work/x86_64/tmp/materialized-dynamic.M76mni/qualification.json`; log
+`.work/x86_64/resume-owned-dynamic-sysroot.log`. Subsequent source changes
+invalidate that selection. The expanded catalog now includes the existing
+spawn semantic workload through installed dynamic entry; requalification of
+that expanded catalog remains required. The paused narrative below records
+the preceding boundary, not a renewed instruction to stop.
+
 The user requested winding down the current work, letting the active tasks
 finish and commit, and leaving this handoff. Resume only when asked. The
 combined goal is **not complete**: AArch64 remains paused, C mimalloc remains
