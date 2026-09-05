@@ -6,6 +6,8 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly PROBE="$ROOT/compat/x86_64/owned_mimalloc_startup_errno_probe.c"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
+readonly CHROOT="$(command -v chroot)"
 
 [ "$#" -le 1 ] || {
     printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -37,8 +39,11 @@ assert_owned_lifecycle_entries() {
     nm -a "$library" >"$symbols"
     for symbol in __crabc_x86_owned_mimalloc_process_initializer \
         __crabc_x86_owned_mimalloc_process_finalizer; do
-        [ "$(awk -v symbol="$symbol" '$3 == symbol { count += 1 } END { print count + 0 }' "$symbols")" -eq 1 ] || {
-            printf 'owned mimalloc startup errno: libc lacks one local %s entry\n' "$symbol" >&2
+        awk -v symbol="$symbol" '
+            $3 == symbol { all += 1; if ($2 == "d") local_data += 1 }
+            END { exit all == 1 && local_data == 1 ? 0 : 1 }
+        ' "$symbols" || {
+            printf 'owned mimalloc startup errno: libc lacks one local-data %s entry\n' "$symbol" >&2
             return 1
         }
     done
@@ -48,31 +53,56 @@ assert_owned_lifecycle_entries() {
     fi
 }
 
+run_captured() {
+    local label="$1" status=0
+    shift
+
+    timeout 20 "$@" >"$work/$label.stdout" 2>"$work/$label.stderr" || status=$?
+    printf '%s\n' "$status" >"$work/$label.status"
+    [ "$status" -eq 0 ]
+    [ ! -s "$work/$label.stdout" ]
+    [ ! -s "$work/$label.stderr" ]
+}
+
+run_in_root() {
+    local root="$1" label="$2"
+    shift 2
+
+    run_captured "$label" env -i PATH=/usr/bin:/bin "$CHROOT" "$root" "$@"
+}
+
 run_static_mode() {
     local product="$1" mode="$2" candidate="$work/static-$mode" root="$work/static-$mode-root"
 
     "$product/bin/crabc-cc" "-$mode" "$PROBE" -o "$candidate"
     mkdir -p "$root/work"
     cp "$candidate" "$root/work/probe"
-    timeout 20 chroot "$root" /work/probe
+    run_in_root "$root" "static-$mode" /work/probe
 }
 
 run_dynamic_mode() {
-    local product="$1" mode="$2" candidate="$work/dynamic-$mode" root="$work/dynamic-$mode-root"
+    local product="$1" mode="$2" candidate="$work/dynamic-$mode" entry root
 
     "$product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$PROBE" -o "$candidate"
-    mkdir -p "$root/lib" "$root/usr/lib" "$root/work"
-    cp "$product/lib/ld-crabc-x86_64.so.1" "$root/lib/ld-crabc-x86_64.so.1"
-    cp "$product/usr/lib/libc.so" "$root/usr/lib/libc.so"
-    cp "$candidate" "$root/work/probe"
-    timeout 20 chroot "$root" /work/probe
+    for entry in kernel direct; do
+        root="$work/dynamic-$mode-$entry-root"
+        mkdir -p "$root/lib" "$root/usr/lib" "$root/work"
+        cp "$product/lib/ld-crabc-x86_64.so.1" "$root/lib/ld-crabc-x86_64.so.1"
+        cp "$product/usr/lib/libc.so" "$root/usr/lib/libc.so"
+        cp "$candidate" "$root/work/probe"
+        if [ "$entry" = direct ]; then
+            run_in_root "$root" "dynamic-$mode-$entry" "$INTERPRETER" /work/probe
+        else
+            run_in_root "$root" "dynamic-$mode-$entry" /work/probe
+        fi
+    done
 }
 
 "$ORACLE_CC" -DCRABC_MIMALLOC_STARTUP_ERRNO_ORACLE "$PROBE" -o "$work/oracle-dynamic"
 "$ORACLE_CC" -static -fno-pie -no-pie -DCRABC_MIMALLOC_STARTUP_ERRNO_ORACLE "$PROBE" \
     -o "$work/oracle-static"
-timeout 20 "$work/oracle-dynamic"
-timeout 20 "$work/oracle-static"
+run_captured oracle-dynamic "$work/oracle-dynamic"
+run_captured oracle-static "$work/oracle-static"
 
 if [ -z "$provided_dynamic" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
@@ -90,4 +120,4 @@ for mode in pie non-pie; do
     run_dynamic_mode "$provided_dynamic" "$mode"
 done
 
-printf 'owned mimalloc startup errno: PASS (musl reference; preinit allocation and sentinel; user constructor and main allocations; static ET_EXEC/static-PIE when self-built; dynamic PIE/non-PIE in empty chroots); evidence: %s\n' "$work"
+printf 'owned mimalloc startup errno: PASS (musl reference; preinit allocation and sentinel; user constructor and main allocations; static ET_EXEC/static-PIE when self-built; dynamic PIE/non-PIE through kernel and direct loader entry in isolated chroots; retained stdout/stderr/status evidence); evidence: %s\n' "$work"

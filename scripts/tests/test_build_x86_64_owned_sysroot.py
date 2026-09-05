@@ -376,6 +376,11 @@ class BuildX86OwnedSysrootTests(unittest.TestCase):
             for symbol in (builder.MIMALLOC_LIFECYCLE_INIT_SYMBOL, builder.MIMALLOC_LIFECYCLE_FINI_SYMBOL):
                 with self.subTest(duplicate=symbol), self.assertRaisesRegex(builder.BuildError, "exactly one"):
                     run_with(b"", entries + f"0010 d {symbol}\n".encode())
+                globally_bound_entries = entries.replace(
+                    f" d {symbol}\n".encode(), f" D {symbol}\n".encode(),
+                )
+                with self.subTest(globally_bound=symbol), self.assertRaisesRegex(builder.BuildError, "local-data"):
+                    run_with(b"", globally_bound_entries)
 
     def test_accepted_allocator_pin_rejects_changed_or_duplicate_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

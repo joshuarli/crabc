@@ -391,8 +391,11 @@ def owned_mimalloc_lifecycle_profile(
 
     rust_symbols = run([llvm_nm, "--defined-only", str(raw_libc)]).decode("utf-8", errors="replace")
     for symbol in (MIMALLOC_LIFECYCLE_INIT_SYMBOL, MIMALLOC_LIFECYCLE_FINI_SYMBOL):
-        if len(re.findall(rf"(?m)^.*\b{re.escape(symbol)}$", rust_symbols)) != 1:
-            raise BuildError(f"raw libc lacks exactly one owned mimalloc lifecycle entry: {symbol}")
+        entry_types = re.findall(
+            rf"(?m)^[0-9A-Fa-f]+\s+([A-Za-z])\s+{re.escape(symbol)}$", rust_symbols,
+        )
+        if entry_types != ["d"]:
+            raise BuildError(f"raw libc lacks exactly one local-data owned mimalloc lifecycle entry: {symbol}")
     return {
         "c_define": MIMALLOC_LIFECYCLE_C_FLAG,
         "rust_cfg": MIMALLOC_LIFECYCLE_RUST_CFG,

@@ -136,7 +136,7 @@ buffered file I/O and ordinary-exit flushing. Its stdout equals pinned musl
 `libmimalloc-sys` 0.1.49 mimalloc v3.3.2 backend with
 `MI_PRIM_HAS_PROCESS_ATTACH=1`. That suppresses its C-owned implicit
 attach/detach entries only because the same Cargo build selects exactly one
-private Rust `.init_array` and `.fini_array` entry in the libc image. Each
+private local-data Rust `.init_array` and `.fini_array` entry in the libc image. Each
 entry calls the matching upstream automatic process operation and restores the
 incoming application `errno`: allocator probes of
 `/proc/sys/vm/overcommit_memory` or sysfs can otherwise leave `ENOENT` in an
@@ -144,7 +144,8 @@ intentionally empty chroot. The builder rejects a missing or duplicate C/Rust
 profile or lifecycle entry and attests the resulting profile in libc
 provenance. `compat/x86_64/run_owned_mimalloc_startup_errno.sh` runs the musl
 reference and proves a preinit allocation, a user-constructor allocation, and
-main retain the sentinel through the owned dynamic PIE/non-PIE image. Each
+main retain the sentinel through kernel and direct-loader entry to owned
+dynamic PIE/non-PIE images. Each
 worker's initial errno is still required to be zero, independent of the
 main's live errno.
 
