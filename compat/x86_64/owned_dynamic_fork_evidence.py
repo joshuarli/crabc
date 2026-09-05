@@ -29,6 +29,9 @@ PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 TARGET = "x86_64-unknown-linux-musl"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 COMPILE_SCHEMA = "crabc.dynamic-fork-compile/v1"
+ORACLE_PRODUCTS_SCHEMA = "crabc.dynamic-fork-oracle-products/v1"
+EXECUTION_PAYLOAD_SCHEMA = "crabc.dynamic-fork-execution-payload/v1"
+ORACLE_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 LIBRARY = ROOT / "compat/x86_64/general_dynamic_fork_library.c"
 CONSUMER = ROOT / "compat/x86_64/general_dynamic_fork_consumer.c"
 DSO_TOPOLOGY = (
@@ -168,7 +171,31 @@ def compiler_contract(product: Path):
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
-    return {"compiler": module.compiler, "clean_environment": module.clean_environment}
+    return {"helper": helper, "compiler": module.compiler, "clean_environment": module.clean_environment}
+
+
+def artifact_identity(path: Path, description: str) -> dict[str, str]:
+    path = physical(path, description)
+    return {"path": str(path), "sha256": digest(path)}
+
+
+def selected_compiler(contract: dict[str, Any]) -> Path:
+    return physical(Path(contract["compiler"]()), "selected dynamic compiler")
+
+
+def require_identity(value: object, expected: Path, description: str) -> None:
+    record = require_keys(value, {"path", "sha256"}, description)
+    expected = physical(expected, description)
+    if record["path"] != str(expected):
+        fail(f"{description} path drifted")
+    require_hash(record["sha256"], digest(expected), description)
+
+
+def evidence_work(work: Path) -> Path:
+    work = physical(work, "evidence work directory", directory=True)
+    if not work.is_relative_to(ROOT / ".work"):
+        fail("evidence work directory escapes checkout .work")
+    return work
 
 
 def run(command: list[str], *, output: Path, environment: dict[str, str]) -> None:
@@ -217,12 +244,12 @@ def dependency_names(path: Path, source: Path, headers: Path) -> list[Path]:
 
 def unit_record(
     contract: dict[str, Any], product: Path, work: Path, identifier: str, source: Path,
-    object_path: Path, codegen: str, defines: list[str], extra: dict[str, Any],
+    object_path: Path, codegen: str, defines: list[str], driver_mode: str, extra: dict[str, Any],
 ) -> dict[str, Any]:
     source = physical(source, f"{identifier} source")
     object_path = physical(object_path, f"{identifier} object")
     headers = physical(product / "usr/include", "installed headers", directory=True)
-    compiler = contract["compiler"]()
+    compiler = str(selected_compiler(contract))
     environment = contract["clean_environment"]()
     base = [compiler, "-nostdinc", "-isystem", str(headers), "-std=c11", "-ffreestanding",
             "-fno-builtin", "-fstack-protector-strong", codegen, *(f"-D{item}" for item in defines)]
@@ -237,6 +264,10 @@ def unit_record(
         "source_sha256": digest(source),
         "object": str(object_path),
         "object_sha256": digest(object_path),
+        "driver_compile_command": [
+            str(product / "bin/crabc-cc-dynamic"), driver_mode, "-std=c11", "-fno-builtin",
+            *(f"-D{item}" for item in defines), "-c", str(source), "-o", str(object_path),
+        ],
         "codegen": codegen,
         "defines": defines,
         "preprocessed": str(preprocessed_path),
@@ -250,9 +281,7 @@ def unit_record(
 
 def record_compile(product: Path, work: Path) -> None:
     manifest = product_manifest(product)
-    work = physical(work, "evidence work directory", directory=True)
-    if not work.is_relative_to(ROOT / ".work"):
-        fail("evidence work directory escapes checkout .work")
+    work = evidence_work(work)
     (work / "dependencies").mkdir(exist_ok=True)
     (work / "preprocessed").mkdir(exist_ok=True)
     contract = compiler_contract(product)
@@ -260,12 +289,12 @@ def record_compile(product: Path, work: Path) -> None:
     for name, tag, _, _ in DSO_TOPOLOGY:
         libraries.append(unit_record(
             contract, product, work, name, LIBRARY, work / "objects" / f"libfork-{name}.o",
-            "-fPIC", [f"FORK_LIBRARY_TAG={tag}"], {"tag": tag},
+            "-fPIC", [f"FORK_LIBRARY_TAG={tag}"], "--dynamic-shared-object", {"tag": tag},
         ))
     consumers = [
         unit_record(
             contract, product, work, role, CONSUMER, work / "objects" / f"{role}.o",
-            "-fPIE", list(defines), {},
+            "-fPIE", list(defines), "--dynamic-pie", {},
         )
         for role, _, defines in CONSUMER_ROLES
     ]
@@ -276,6 +305,9 @@ def record_compile(product: Path, work: Path) -> None:
     record = {
         "schema": COMPILE_SCHEMA,
         "driver_sha256": digest(product / "bin/crabc-cc-dynamic"),
+        "driver": artifact_identity(product / "bin/crabc-cc-dynamic", "installed dynamic driver"),
+        "compiler_helper": artifact_identity(contract["helper"], "dynamic compiler helper"),
+        "selected_compiler": artifact_identity(selected_compiler(contract), "selected dynamic compiler"),
         "manifest_sha256": digest(manifest),
         "libraries": libraries,
         "consumers": consumers,
@@ -415,11 +447,20 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
 
 def audit_compile(product: Path, work: Path, manifest: Path) -> None:
     record = json_object(work / "compile.json", "compile record")
-    expected_keys = {"schema", "driver_sha256", "manifest_sha256", "libraries", "consumers"}
+    expected_keys = {
+        "schema", "driver_sha256", "driver", "compiler_helper", "selected_compiler",
+        "manifest_sha256", "libraries", "consumers",
+    }
     require_keys(record, expected_keys, "compile record")
     if record.get("schema") != COMPILE_SCHEMA:
         fail("compile record schema drifted")
-    require_hash(record.get("driver_sha256"), digest(product / "bin/crabc-cc-dynamic"), "compile driver")
+    driver = product / "bin/crabc-cc-dynamic"
+    require_hash(record.get("driver_sha256"), digest(driver), "compile driver")
+    require_identity(record["driver"], driver, "compile driver")
+    contract = compiler_contract(product)
+    require_identity(record["compiler_helper"], contract["helper"], "compile helper")
+    compiler_path = selected_compiler(contract)
+    require_identity(record["selected_compiler"], compiler_path, "selected compile compiler")
     require_hash(record.get("manifest_sha256"), digest(manifest), "compile manifest")
     libraries = record.get("libraries")
     consumers = record.get("consumers")
@@ -428,23 +469,22 @@ def audit_compile(product: Path, work: Path, manifest: Path) -> None:
     if not isinstance(consumers, list) or len(consumers) != len(CONSUMER_ROLES):
         fail("compile record consumer roster drifted")
     expected_units = [
-        (name, LIBRARY, work / "objects" / f"libfork-{name}.o", "-fPIC", [f"FORK_LIBRARY_TAG={tag}"], tag)
+        (name, LIBRARY, work / "objects" / f"libfork-{name}.o", "-fPIC", [f"FORK_LIBRARY_TAG={tag}"], "--dynamic-shared-object", tag)
         for name, tag, _, _ in DSO_TOPOLOGY
     ]
     expected_units += [
-        (role, CONSUMER, work / "objects" / f"{role}.o", "-fPIE", list(defines), None)
+        (role, CONSUMER, work / "objects" / f"{role}.o", "-fPIE", list(defines), "--dynamic-pie", None)
         for role, _, defines in CONSUMER_ROLES
     ]
     headers = physical(product / "usr/include", "installed headers", directory=True)
-    contract = compiler_contract(product)
-    compiler = contract["compiler"]()
+    compiler = str(compiler_path)
     environment = contract["clean_environment"]()
     units = [*libraries, *consumers]
     preprocessed: set[str] = set()
     for unit, expected in zip(units, expected_units):
-        identifier, source, object_path, codegen, defines, tag = expected
+        identifier, source, object_path, codegen, defines, driver_mode, tag = expected
         keys = {
-            "id", "source", "source_sha256", "object", "object_sha256", "codegen", "defines",
+            "id", "source", "source_sha256", "object", "object_sha256", "driver_compile_command", "codegen", "defines",
             "preprocessed", "preprocessed_sha256", "dependencies", "dependency_audit_command", "preprocessor_command",
         } | ({"tag"} if tag is not None else set())
         unit = require_keys(unit, keys, "compile unit")
@@ -456,6 +496,12 @@ def audit_compile(product: Path, work: Path, manifest: Path) -> None:
             fail("compile unit source tag drifted")
         require_hash(unit["source_sha256"], digest(source), "compile source")
         require_hash(unit["object_sha256"], digest(object_path), "compile object")
+        expected_driver_command = [
+            str(driver), driver_mode, "-std=c11", "-fno-builtin", *(f"-D{item}" for item in defines),
+            "-c", str(source), "-o", str(object_path),
+        ]
+        if unit["driver_compile_command"] != expected_driver_command:
+            fail("installed driver compile command or prescribed flags drifted")
         # The exact installed-driver compiler contract and role flags are
         # recomputed here, rather than trusting the recorded command fields.
         expected_base = [compiler, "-nostdinc", "-isystem", str(headers), "-std=c11", "-ffreestanding",
@@ -491,6 +537,251 @@ def audit_compile(product: Path, work: Path, manifest: Path) -> None:
             fail("compile dependency roster or installed-header hashes drifted")
     if len(preprocessed) != len(DSO_TOPOLOGY) + len(CONSUMER_ROLES):
         fail("compile preprocessor identities collapsed")
+
+
+def oracle_library_spec(work: Path, name: str, filename: str) -> tuple[str, Path, list[str], Path, list[str]]:
+    object_path = work / "objects" / f"libfork-{name}.o"
+    binary = work / "oracle" / filename
+    flags = ["-shared"]
+    command = [str(ORACLE_COMPILER), "-shared", str(object_path)]
+    if name != "initial":
+        flags += [f"-L{work / 'oracle'}", "-l:libfork-initial.so"]
+        command += [f"-L{work / 'oracle'}", "-l:libfork-initial.so"]
+    soname = f"-Wl,-z,now,-soname,{filename}"
+    flags.append(soname)
+    command += [soname, "-o", str(binary)]
+    return name, object_path, flags, binary, command
+
+
+def oracle_consumer_spec(work: Path, mode: str) -> tuple[str, Path, list[str], Path, list[str]]:
+    object_path = work / "objects" / "semantic-consumer.o"
+    binary = work / "oracle" / f"consumer-{mode}"
+    entry = ["-fPIE", "-pie"] if mode == "pie" else ["-fno-pie", "-no-pie"]
+    flags = ["-std=c11", *entry, f"-L{work / 'oracle'}", f"-Wl,-rpath,{work / 'oracle'}", "-l:libfork-initial.so"]
+    command = [
+        str(ORACLE_COMPILER), "-std=c11", *entry, str(object_path), f"-L{work / 'oracle'}",
+        f"-Wl,-rpath,{work / 'oracle'}", "-l:libfork-initial.so", "-o", str(binary),
+    ]
+    return f"semantic-consumer-{mode}", object_path, flags, binary, command
+
+
+def oracle_product_record(
+    role: str, object_path: Path, flags: list[str], binary: Path, command: list[str],
+) -> dict[str, Any]:
+    return {
+        "role": role,
+        "object": str(object_path),
+        "object_sha256": digest(object_path),
+        "flags": flags,
+        "binary": str(binary),
+        "binary_sha256": digest(binary),
+        "link_command": command,
+    }
+
+
+def record_oracle(work: Path) -> None:
+    """Record the pinned-musl products before they are allowed to execute."""
+
+    work = evidence_work(work)
+    compiler = physical(ORACLE_COMPILER, "pinned musl compiler")
+    libraries = [
+        oracle_product_record(*oracle_library_spec(work, name, filename))
+        for name, _, filename, _ in DSO_TOPOLOGY
+    ]
+    consumers = [
+        oracle_product_record(*oracle_consumer_spec(work, mode))
+        for mode in ("pie", "non-pie")
+    ]
+    record = {
+        "schema": ORACLE_PRODUCTS_SCHEMA,
+        "compiler": artifact_identity(compiler, "pinned musl compiler"),
+        "libraries": libraries,
+        "consumers": consumers,
+    }
+    path = work / "oracle-products.json"
+    if path.exists() or path.is_symlink():
+        fail("oracle product record already exists")
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def audit_oracle_record(
+    value: object, role: str, object_path: Path, flags: list[str], binary: Path, command: list[str],
+) -> None:
+    record = require_keys(
+        value,
+        {"role", "object", "object_sha256", "flags", "binary", "binary_sha256", "link_command"},
+        "oracle product",
+    )
+    if (record["role"], record["object"], record["flags"], record["binary"], record["link_command"]) != (
+        role, str(object_path), flags, str(binary), command,
+    ):
+        fail("oracle product role/object/flags command drifted")
+    require_hash(record["object_sha256"], digest(object_path), "oracle product object")
+    require_hash(record["binary_sha256"], digest(binary), "oracle product binary")
+
+
+def audit_oracle(work: Path) -> str:
+    """Recheck the pre-run pinned-musl DSO and consumer products."""
+
+    work = evidence_work(work)
+    record = json_object(work / "oracle-products.json", "oracle product record")
+    require_keys(record, {"schema", "compiler", "libraries", "consumers"}, "oracle product record")
+    if record["schema"] != ORACLE_PRODUCTS_SCHEMA:
+        fail("oracle product record schema drifted")
+    require_identity(record["compiler"], ORACLE_COMPILER, "pinned musl compiler")
+    libraries = record["libraries"]
+    consumers = record["consumers"]
+    if not isinstance(libraries, list) or len(libraries) != len(DSO_TOPOLOGY):
+        fail("oracle product library roster drifted")
+    if not isinstance(consumers, list) or len(consumers) != 2:
+        fail("oracle product consumer roster drifted")
+    for item, (name, _, filename, _) in zip(libraries, DSO_TOPOLOGY):
+        audit_oracle_record(item, *oracle_library_spec(work, name, filename))
+    for item, mode in zip(consumers, ("pie", "non-pie")):
+        audit_oracle_record(item, *oracle_consumer_spec(work, mode))
+    return digest(work / "oracle-products.json")
+
+
+APPLICATION_COPY_ROSTER = (
+    ("initial-dso-workload", "libfork-initial.so", "libfork-initial.so"),
+    ("one-dso-workload", "libfork-one.so", "libfork-one.so"),
+    ("two-dso-workload", "libfork-two.so", "libfork-two.so"),
+    ("initial-dso-runtime", "libfork-initial.so", "usr/lib/libfork-initial.so"),
+    ("semantic-consumer-pie", "consumer-pie", "consumer-pie"),
+    ("owned-layout-consumer-pie", "consumer-owned-layout-pie", "consumer-owned-layout-pie"),
+    ("semantic-consumer-non-pie", "consumer-non-pie", "consumer-non-pie"),
+    ("owned-layout-consumer-non-pie", "consumer-owned-layout-non-pie", "consumer-owned-layout-non-pie"),
+)
+
+
+def copied_payload_record(source: Path, execution: Path, description: str) -> dict[str, str]:
+    source = physical(source, f"{description} source")
+    execution = physical(execution, f"{description} execution copy")
+    source_hash = digest(source)
+    execution_hash = digest(execution)
+    if source_hash != execution_hash:
+        fail(f"{description} execution copy differs from its source")
+    return {
+        "source": str(source),
+        "source_sha256": source_hash,
+        "execution": str(execution),
+        "execution_sha256": execution_hash,
+    }
+
+
+def product_payload_paths(product: Path, manifest: Path) -> dict[str, Path]:
+    record = json_object(manifest, "dynamic product manifest")
+    files = record["files"]
+    if not isinstance(files, dict):
+        fail("dynamic product manifest has no file roster")
+    return {
+        "share/crabc/manifest.json": manifest,
+        **{relative: product / relative for relative in sorted(files)},
+    }
+
+
+def record_execution(product: Path, work: Path) -> None:
+    """Record every physical file copied into the private execution root."""
+
+    product = physical(product, "dynamic product", directory=True)
+    work = evidence_work(work)
+    manifest = product_manifest(product)
+    execution_root = physical(work / "execution-root", "execution root", directory=True)
+    payload = {
+        relative: copied_payload_record(source, execution_root / relative, f"installed payload {relative}")
+        for relative, source in product_payload_paths(product, manifest).items()
+    }
+    applications = []
+    for role, source_relative, execution_relative in APPLICATION_COPY_ROSTER:
+        applications.append({
+            "role": role,
+            **copied_payload_record(
+                work / source_relative, execution_root / execution_relative, f"application payload {role}",
+            ),
+        })
+    record = {
+        "schema": EXECUTION_PAYLOAD_SCHEMA,
+        "product": {
+            "path": str(product),
+            "manifest": str(manifest),
+            "manifest_sha256": digest(manifest),
+        },
+        "execution_root": str(execution_root),
+        "product_payload": payload,
+        "application_payload": applications,
+    }
+    path = work / "execution-payload.json"
+    if path.exists() or path.is_symlink():
+        fail("execution payload record already exists")
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def audit_copied_payload(value: object, source: Path, execution: Path, description: str) -> None:
+    record = require_keys(value, {"source", "source_sha256", "execution", "execution_sha256"}, description)
+    if (record["source"], record["execution"]) != (str(source), str(execution)):
+        fail(f"{description} paths drifted")
+    source_hash = digest(source)
+    execution_hash = digest(execution)
+    require_hash(record["source_sha256"], source_hash, f"{description} source")
+    require_hash(record["execution_sha256"], execution_hash, f"{description} execution copy")
+    if source_hash != execution_hash:
+        fail(f"{description} execution copy differs from its source")
+
+
+def audit_execution(product: Path, work: Path) -> str:
+    """Recheck the copied runtime and workload files that candidate runs use."""
+
+    product = physical(product, "dynamic product", directory=True)
+    work = evidence_work(work)
+    manifest = product_manifest(product)
+    execution_root = physical(work / "execution-root", "execution root", directory=True)
+    record = json_object(work / "execution-payload.json", "execution payload record")
+    require_keys(
+        record,
+        {"schema", "product", "execution_root", "product_payload", "application_payload"},
+        "execution payload record",
+    )
+    if record["schema"] != EXECUTION_PAYLOAD_SCHEMA:
+        fail("execution payload record schema drifted")
+    product_record = require_keys(record["product"], {"path", "manifest", "manifest_sha256"}, "execution product")
+    if (product_record["path"], product_record["manifest"]) != (str(product), str(manifest)):
+        fail("execution product paths drifted")
+    require_hash(product_record["manifest_sha256"], digest(manifest), "execution product manifest")
+    if record["execution_root"] != str(execution_root):
+        fail("execution root path drifted")
+    expected_product_payload = product_payload_paths(product, manifest)
+    payload = record["product_payload"]
+    if not isinstance(payload, dict) or set(payload) != set(expected_product_payload):
+        fail("execution product payload roster drifted")
+    for relative, source in expected_product_payload.items():
+        audit_copied_payload(payload[relative], source, execution_root / relative, f"installed payload {relative}")
+    applications = record["application_payload"]
+    if not isinstance(applications, list) or len(applications) != len(APPLICATION_COPY_ROSTER):
+        fail("execution application payload roster drifted")
+    for item, (role, source_relative, execution_relative) in zip(applications, APPLICATION_COPY_ROSTER):
+        item = require_keys(
+            item, {"role", "source", "source_sha256", "execution", "execution_sha256"},
+            "execution application payload",
+        )
+        if item["role"] != role:
+            fail("execution application payload role drifted")
+        audit_copied_payload(
+            {key: item[key] for key in ("source", "source_sha256", "execution", "execution_sha256")},
+            work / source_relative, execution_root / execution_relative, f"application payload {role}",
+        )
+    return digest(work / "execution-payload.json")
+
+
+def validate_consumed(product: Path, work: Path) -> dict[str, Any]:
+    """Audit source products and the exact files that were actually executed."""
+
+    validation = validate(product, work)
+    return {
+        **validation,
+        "oracle_products_sha256": audit_oracle(work),
+        "execution_payload_sha256": audit_execution(product, work),
+    }
+
 
 def validate(product: Path, work: Path) -> dict[str, Any]:
     product = physical(product, "dynamic product", directory=True)
@@ -566,10 +857,10 @@ def worker_survivor_observation(path: Path) -> dict[str, Any]:
 def seal_observations(work: Path, product: Path) -> None:
     work = physical(work, "evidence work directory", directory=True)
     # This is the final seal after execution, rather than a mere list of raw
-    # files.  Recheck the product, source/header/object identities, link
-    # receipts, and ELF topology so no completed observation can outlive the
-    # product it claims to exercise.
-    validation = validate(product, work)
+    # files. Recheck the source product, compile/header/object identities,
+    # link receipts, ELF topology, pinned-musl products, and execution-root
+    # copies so no completed observation can outlive what it claims to run.
+    validation = validate_consumed(product, work)
     scenarios = ("main", "worker", "kernel-main", "kernel-worker", "recursive", "abandoned", "failure", "finalizer-single")
     special = ("finalizer-held", "worker-survivor")
     semantic_oracle: dict[str, dict[str, Any]] = {}
@@ -615,10 +906,12 @@ def seal_observations(work: Path, product: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for command in ("record-compile", "validate"):
+    for command in ("record-compile", "validate", "record-execution"):
         subparser = commands.add_parser(command)
         subparser.add_argument("--product", type=Path, required=True)
         subparser.add_argument("--work", type=Path, required=True)
+    oracle = commands.add_parser("record-oracle")
+    oracle.add_argument("--work", type=Path, required=True)
     observations = commands.add_parser("seal-observations")
     observations.add_argument("--product", type=Path, required=True)
     observations.add_argument("--work", type=Path, required=True)
@@ -628,6 +921,10 @@ def main(argv: list[str] | None = None) -> int:
             record_compile(args.product, args.work)
         elif args.command == "validate":
             validate(args.product, args.work)
+        elif args.command == "record-oracle":
+            record_oracle(args.work)
+        elif args.command == "record-execution":
+            record_execution(args.product, args.work)
         else:
             seal_observations(args.work, args.product)
     except (EvidenceError, OSError, KeyError, TypeError) as error:

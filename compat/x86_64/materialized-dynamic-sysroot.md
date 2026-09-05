@@ -155,9 +155,14 @@ each. A separate `owned-layout-consumer` object adds the existing
 `CRABC_OWNED_WITNESS` FS+24/FS+32 assertions to those four candidate entries.
 Those slots are the crabc loader/libc ABI, not the musl C/POSIX ABI, so the
 layout witness is sealed as candidate-only evidence rather than compiled into
-the musl differential. `compile.json` records both consumer roles and the
-three `FORK_LIBRARY_TAG` preprocessing identities; producer receipts and ELF
-checks bind the initial/runtime DSO topology, and `observations.json` requires
+the musl differential. `compile.json` records both consumer roles, the three
+`FORK_LIBRARY_TAG` preprocessing identities, the exact five installed-driver
+compile argument vectors, and hashes for the driver, installed compiler helper,
+and selected compiler. Before execution, `oracle-products.json` records the
+pinned-musl DSO and semantic-consumer roles, objects, flags, commands, and
+binary hashes; `execution-payload.json` records every installed runtime and
+workload file copied into the private root. Producer receipts and ELF checks
+bind the source initial/runtime DSO topology, and `observations.json` requires
 all retained semantic and private-witness results. The worker-survivor protocol
 first emits its process-specific positive PID so the host parent can observe
 the adopted initial task's retirement. Each such complete stream is retained
@@ -166,8 +171,10 @@ PID plus exact fixed body, while `<label>.stdout` retains only that fixed body
 for the ordinary musl comparison. Raw PID streams are therefore evidence of
 the synchronization protocol, never byte-equality inputs across independently
 created processes. The final observation seal revalidates the installed
-product, compile/header closure, link receipts, and ELF topology and binds
-those hashes in its receipt. Its pinned-musl cases cover initial and worker callers with a live sibling,
+product, compile/header closure, link receipts, ELF topology, pinned-musl
+products, and every private-root copy that candidate execution consumed, then
+binds those hashes in its receipt. Its pinned-musl cases cover initial and
+worker callers with a live sibling,
 reverse-prepare/forward-parent-or-child hooks that call loader APIs, inherited
 TLS/TSD/cleanup, postfork module growth and fresh workers, ordinary and kernel
 robust owner death, raw `EAGAIN` unwind, nested constructor fork, and rejected

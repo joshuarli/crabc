@@ -120,6 +120,9 @@ for mode in pie non-pie; do
         -L"$work/oracle" -Wl,-rpath,"$work/oracle" -l:libfork-initial.so \
         -o "$work/oracle/consumer-$mode"
 done
+# Freeze the pinned-musl DSO/consumer roles before any oracle process runs.
+python3 -B "$ROOT/compat/x86_64/owned_dynamic_fork_evidence.py" record-oracle \
+    --work "$work"
 python3 -B "$ROOT/compat/x86_64/owned_dynamic_fork_evidence.py" validate \
     --product "$installed" --work "$work"
 
@@ -132,6 +135,9 @@ for mode in pie non-pie; do
     cp "$work/consumer-$mode" "$execution_root/consumer-$mode"
     cp "$work/consumer-owned-layout-$mode" "$execution_root/consumer-owned-layout-$mode"
 done
+# Record the actual private-root copies before candidate processes can run.
+python3 -B "$ROOT/compat/x86_64/owned_dynamic_fork_evidence.py" record-execution \
+    --product "$installed" --work "$work"
 
 # The held-finalizer and adopted-main tests need a host parent to synchronize
 # with the private chroot.  Each target retains stdout/stderr/status before
