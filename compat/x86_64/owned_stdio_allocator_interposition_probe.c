@@ -2,6 +2,7 @@
 // malloc-family provider through fclose.  This is the upstream libc-test
 // flockfile-list lifetime sequence with a self-contained failure protocol.
 #define _GNU_SOURCE
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,7 +15,7 @@ struct allocation {
     int released;
 };
 
-static unsigned char storage[STORAGE_BYTES];
+static _Alignas(max_align_t) unsigned char storage[STORAGE_BYTES];
 static struct allocation allocations[MAXIMUM_ALLOCS];
 static size_t storage_used;
 static size_t allocation_count;
@@ -30,16 +31,32 @@ static struct allocation *find_allocation(void *pointer)
     return 0;
 }
 
+static int reserve_storage(size_t length, size_t *offset)
+{
+    size_t alignment = _Alignof(max_align_t);
+    size_t padding = storage_used % alignment;
+
+    if (padding != 0)
+        padding = alignment - padding;
+    if (padding > STORAGE_BYTES - storage_used)
+        return 0;
+    *offset = storage_used + padding;
+    if (length > STORAGE_BYTES - *offset)
+        return 0;
+    storage_used = *offset + length;
+    return 1;
+}
+
 void *malloc(size_t length)
 {
     unsigned char *result;
+    size_t offset;
 
     if (length == 0)
         length = 1;
-    if (allocation_count == MAXIMUM_ALLOCS || length > STORAGE_BYTES - storage_used)
+    if (allocation_count == MAXIMUM_ALLOCS || !reserve_storage(length, &offset))
         return 0;
-    result = storage + storage_used;
-    storage_used += length;
+    result = storage + offset;
     allocations[allocation_count++] = (struct allocation){ result, length, 0 };
     return result;
 }
@@ -51,7 +68,7 @@ void free(void *pointer)
     if (pointer == 0)
         return;
     allocation = find_allocation(pointer);
-    if (allocation == 0) {
+    if (allocation == 0 || allocation->released) {
         allocator_misuse = 1;
         return;
     }
@@ -67,7 +84,7 @@ void *realloc(void *pointer, size_t length)
     if (pointer == 0)
         return malloc(length);
     allocation = find_allocation(pointer);
-    if (allocation == 0) {
+    if (allocation == 0 || allocation->released) {
         allocator_misuse = 1;
         return 0;
     }
