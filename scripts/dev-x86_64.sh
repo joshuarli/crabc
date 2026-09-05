@@ -184,7 +184,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   campaign-static  run the owned-static product gate when its prerequisites close
   campaign-dynamic  run the owned-dynamic product gate when its prerequisites close
   campaign-qualification  run the ordered qualification gate when it is ready
-  qualification-manifest  execute declared qualification cases in the pinned native container
+  qualification-manifest  execute or validate pinned non-promoting qualification receipts in the native container
   campaign-promotion-check  run the final promotion gate when it is ready
   campaign-all  run the complete native x86 campaign gate sequence
   routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
@@ -3467,7 +3467,7 @@ run_libc_same_object_static_c_abi_differential() {
 }
 
 run_qualification_posix_abi_admission() {
-    run_in_container python3 /workspace/compat/x86_64/run_qualification_posix_abi.py
+    run_in_container python3 /workspace/compat/x86_64/run_qualification_manifest.py --private-admission
 }
 
 run_libc_header_layouts_baseline() {
@@ -7696,13 +7696,19 @@ case "$command" in
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_lifecycle.sh
         ;;
     qualification-manifest)
-        if [ "$#" -ne 0 ]; then
-            [ "$#" -eq 2 ] && [ "$1" = --through ] ||
-                fail "qualification-manifest accepts only --through GATE"
-            case "$2" in
-                compat.abi-differential|compat.posix-process|compat.resolver-network|compat.loader-corpus|consumer.rust-std-lto|consumer.source-build|capability.accounting|performance.release) ;;
-                *) fail "qualification-manifest has an unknown prefix endpoint" ;;
-            esac
+        if [ "$#" -eq 0 ]; then
+            :
+        elif [ "$#" -eq 1 ] && [ "$1" = --private-admission ]; then
+            :
+        elif [ "$#" -eq 2 ] && [ "$1" = --validate-receipt ]; then
+            :
+        elif [ "$#" -eq 2 ] && [ "$1" = --through ]; then
+                case "$2" in
+                    compat.abi-differential|compat.posix-process|compat.resolver-network|compat.loader-corpus|consumer.rust-std-lto|consumer.source-build|capability.accounting|performance.release) ;;
+                    *) fail "qualification-manifest has an unknown prefix endpoint" ;;
+                esac
+        else
+            fail "qualification-manifest accepts --private-admission, --validate-receipt PATH, or --through GATE"
         fi
         ensure_image
         run_in_container python3 /workspace/compat/x86_64/run_qualification_manifest.py "$@"

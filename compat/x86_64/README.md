@@ -45,12 +45,18 @@ until their real gates pass; a private fixture or focused leaf never promotes.
 
 The case-pinned qualification runner executes only through the pinned
 `qualification-manifest` dispatcher surface. Inside that native image it
-requires the checkout-local `.work/x86_64` work and temporary directories and
-the pinned musl oracle compiler before starting a registered case. It never
-executes a qualification case directly on the host. Ready ordered prefixes may
-be selected with `qualification-manifest --through GATE`; planned predecessors
-remain blockers, and prefix execution makes no completion claim. The remaining
-receipt requirements are recorded in [qualification-prefix-execution.md](qualification-prefix-execution.md).
+requires the checkout-local `.work/x86_64` work, temporary and mutable Cargo
+directories, the fixed `/opt/cargo/bin` and `/opt/rustup` Rust paths, and the
+pinned musl oracle compiler before starting a registered case. It never
+executes a qualification case directly on the host. Its
+`qualification-manifest --private-admission` operation records the closed
+five-case POSIX/ABI admission as ignored per-case and prefix receipts; it is
+explicitly non-promoting. `qualification-manifest --validate-receipt PATH`
+rechecks the current source, tools, musl inputs, logs and retained same-object
+artifacts. Ready ordered prefixes may be selected with
+`qualification-manifest --through GATE`; planned predecessors remain blockers,
+and prefix execution makes no completion claim. The full receipt contract and
+remaining gates are recorded in [qualification-prefix-execution.md](qualification-prefix-execution.md).
 
 Use `./scripts/dev-x86_64.sh --help` and the owning ledger's evidence commands
 for focused gates. The dispatcher owns the command roster; this guide does not

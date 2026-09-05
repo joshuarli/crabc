@@ -7,6 +7,32 @@ complete. A checked-in receipt containing an outcome string and case count is
 no longer accepted as completion evidence. The generated projection reports
 readiness separately and always leaves completion/promotion false.
 
+`./scripts/dev-x86_64.sh qualification-manifest --private-admission` is the
+first receipt transaction. It runs the closed five-case POSIX/ABI admission in
+its declared order and writes a fresh ignored transaction below
+`.work/x86_64/qualification-receipts/`. Every child has an immutable receipt
+with its runner hash, actual command and status, timing, raw stdout/stderr,
+and clean revision/content identities before and after it ran. The prefix
+receipt binds that ordered roster, the private runner and case-manifest hashes,
+the actual allowlisted tools and their version output, the pinned musl runtime,
+loader, specs, source/specification manifests and complete header-tree digest.
+It checks those source, tool, runtime, log and artifact identities again before
+accepting `qualification-manifest --validate-receipt PATH`.
+
+The scrubbed child environment fixes `/opt/cargo/bin` and `/opt/rustup`, while
+`CARGO_HOME` and temporary state remain under the mounted checkout
+`.work/x86_64/` tree. The same-object ABI leaf receives a receipt-owned
+artifact directory. Its builder and comparator use the physical checkout
+`TMPDIR`, retain the selected `libc.a`, shared workload object, pinned-musl
+reference, freestanding candidate, and the ELF/stream inspection outputs, then
+the case receipt seals every retained entry without following symlinks.
+
+This is deliberately a private, non-promoting admission receipt. Its prefix
+record fixes `non_promoting: true`, `promotion_ready: false`, and zero completed
+promotion gates. It cannot make `compat.abi-differential` ready, replace a
+full-family manifest, or turn its final stdout marker into a qualification
+claim.
+
 `./scripts/dev-x86_64.sh qualification-manifest --through GATE` selects the
 contiguous prefix from `compat.abi-differential` through the named gate. Every
 predecessor must be ready and is executed again in that invocation. A planned
@@ -24,21 +50,6 @@ the source/tool/runtime/artifact-bound receipts required by `plan.md` and
 executable prefix infrastructure, not final qualification or promotion.
 
 ## Remaining implementation before qualification
-
-- Produce durable ignored per-case and per-prefix execution receipts, including
-  logs, actual command/status/timing, dependency order and artifact identities.
-  Bind clean committed revision and tracked content before/after execution;
-  keep generated results outside tracked source to avoid a self-hash cycle.
-- Attest actual pinned tool binaries, musl runtime/specs/headers, Rust toolchain,
-  installed runtime and candidate/oracle artifacts. Reject drift or absent
-  artifacts when validating a result; a completion marker alone is insufficient.
-- Repair the scrubbed execution environment's fixed Rust paths (`/opt/cargo/bin`
-  and `/opt/rustup`) before Rust-building cases execute. Preserve the allowlist
-  and checkout-local mutable Cargo/temp state.
-- Add retained-artifact publication to the same-object ABI harness and its
-  temporary-path handling, then qualify an explicitly non-promoting private
-  prefix as the first real receipt transaction. Its five-case admission remains
-  private, even if every selected case passes.
 - Register dependency-ready full-family case manifests and execute their real
   ordered prefixes. All eight current promotion gates are still planned; the
   native `--through compat.abi-differential` check currently rejects that planned

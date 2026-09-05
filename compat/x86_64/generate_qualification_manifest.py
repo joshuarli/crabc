@@ -36,6 +36,13 @@ EXECUTION_CONTRACT = {
     "dispatcher_command": ["./scripts/dev-x86_64.sh", "qualification-manifest"],
     "work_directory": "/workspace/.work/x86_64",
     "temporary_directory": "/workspace/.work/x86_64/tmp",
+    # The receipt runner starts from an allowlist, so it must name the pinned
+    # Rust toolchain explicitly rather than inheriting the image's PATH/HOME.
+    # CARGO_HOME is mutable only beneath the checkout bind.
+    "rust_bin_directory": "/opt/cargo/bin",
+    "rustup_home": "/opt/rustup",
+    "cargo_home": "/workspace/.work/x86_64/cargo",
+    "receipt_directory": "/workspace/.work/x86_64/qualification-receipts",
     "oracle_compiler": "/usr/local/bin/crabc-x86_64-musl-gcc",
 }
 CHAIN = (
@@ -54,6 +61,7 @@ PRIVATE_ADMISSION = (
         "compat/x86_64/qualification_posix_abi.json",
         "0afebd7ed94da8236d29a93c54b10dd6e9ea7519ca179ac61659d76d2c346446",
         ("python3", "compat/x86_64/run_qualification_posix_abi.py"),
+        "64300e5a5594fb56f2116f12c46b91c5b40198fb08001c7a20765c559c4ddb56",
     ),
 )
 GATE_CONTRACTS = (
@@ -200,16 +208,19 @@ def validate_private_admission(value: object) -> list[dict[str, object]]:
     for index, expected in enumerate(PRIVATE_ADMISSION):
         entry = value[index]
         require(isinstance(entry, Mapping), f"private_admission[{index}] must be an object")
-        exact_keys(entry, {"id", "case_manifest", "case_manifest_sha256", "command", "non_promoting"}, f"private_admission[{index}]")
-        identifier, manifest_path, manifest_hash, command = expected
+        exact_keys(entry, {"id", "case_manifest", "case_manifest_sha256", "command", "runner_sha256", "non_promoting"}, f"private_admission[{index}]")
+        identifier, manifest_path, manifest_hash, command, runner_hash = expected
         require(entry.get("id") == identifier, "private admission identifier or order drifted")
         declared_path, resolved = repository_file(entry.get("case_manifest"), f"private_admission[{index}].case_manifest")
         require(declared_path == manifest_path, "private admission case manifest path drifted")
         require(entry.get("case_manifest_sha256") == manifest_hash, "private admission case manifest hash drifted")
         require(sha256_file(resolved) == manifest_hash, "private admission case manifest bytes drifted")
         require(validated_command(entry.get("command"), f"private_admission[{index}].command") == command, "private admission command drifted")
+        require(entry.get("runner_sha256") == runner_hash, "private admission runner hash drifted")
+        _, runner = repository_file(command[1], f"private_admission[{index}].command[1]")
+        require(sha256_file(runner) == runner_hash, "private admission runner bytes drifted")
         require(entry.get("non_promoting") is True, "private admission must be explicitly non-promoting")
-        result.append({"id": identifier, "case_manifest": manifest_path, "case_manifest_sha256": manifest_hash, "command": list(command), "non_promoting": True})
+        result.append({"id": identifier, "case_manifest": manifest_path, "case_manifest_sha256": manifest_hash, "command": list(command), "runner_sha256": runner_hash, "non_promoting": True})
     return result
 
 

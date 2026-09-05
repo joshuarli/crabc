@@ -97,6 +97,59 @@ class QualificationPosixAbiTests(unittest.TestCase):
         self.assertEqual(environment["LANG"], "C")
         self.assertEqual(environment["TZ"], "UTC")
 
+    def test_receipt_mode_has_fixed_rust_paths_and_per_case_artifact_directory(self) -> None:
+        environment = qualification.controlled_environment()
+        self.assertEqual(environment["RUSTUP_HOME"], "/opt/rustup")
+        self.assertEqual(environment["CARGO_HOME"], "/workspace/.work/x86_64/cargo")
+        self.assertEqual(environment["PATH"].split(":")[0], "/opt/cargo/bin")
+
+        same_object = qualification.load_contract()[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = qualification.case_artifact_directory(same_object, root)
+            self.assertEqual(artifact, root / "001-same-object-static-c-abi" / "artifacts")
+            self.assertIsNone(
+                qualification.case_artifact_directory(qualification.load_contract()[1], root)
+            )
+
+    def test_same_object_harness_uses_checkout_tmpdir_and_can_retain_artifacts(self) -> None:
+        builder = (ROOT / "compat/x86_64/run_libc_same_object_static_c_abi_differential.sh").read_text(
+            encoding="utf-8"
+        )
+        comparator = (ROOT / "compat/x86_64/run_same_object_static_c_abi_differential.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("mktemp -d /tmp", builder)
+        self.assertNotIn("mktemp -d /tmp", comparator)
+        self.assertIn("CRABC_QUALIFICATION_ARTIFACT_DIR", builder)
+        self.assertIn("--artifact-directory", comparator)
+
+    def test_receipted_case_seals_its_command_logs_timing_and_source_identity(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp/qualification-receipt-case-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            case = qualification.load_contract()[1]
+            process = unittest.mock.Mock()
+            process.returncode = 0
+            process.communicate.return_value = (case.expected_stdout_line + b"\n", b"child diagnostics\n")
+            identity = {"revision": "a" * 40, "content_sha256": "b" * 64}
+            with patch.object(qualification, "source_identity", return_value=identity), patch.object(
+                qualification.subprocess, "Popen", return_value=process
+            ):
+                receipt = qualification.run_case(case, root, 2)
+            assert receipt is not None
+            record = json.loads(receipt.read_text(encoding="utf-8"))
+            self.assertEqual(record["command"], ["bash", str(case.runner)])
+            self.assertEqual(record["source_before"], identity)
+            self.assertEqual(record["source_after"], identity)
+            self.assertEqual(record["outcome"], "passed")
+            self.assertEqual(record["exit_status"], 0)
+            self.assertEqual(record["artifacts"], None)
+            self.assertEqual((root / record["stdout"]["path"]).read_bytes(), case.expected_stdout_line + b"\n")
+            self.assertEqual((root / record["stderr"]["path"]).read_bytes(), b"child diagnostics\n")
+            self.assertGreaterEqual(record["duration_ns"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

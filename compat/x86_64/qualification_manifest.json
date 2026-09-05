@@ -16,6 +16,10 @@
     "dispatcher_command": ["./scripts/dev-x86_64.sh", "qualification-manifest"],
     "work_directory": "/workspace/.work/x86_64",
     "temporary_directory": "/workspace/.work/x86_64/tmp",
+    "rust_bin_directory": "/opt/cargo/bin",
+    "rustup_home": "/opt/rustup",
+    "cargo_home": "/workspace/.work/x86_64/cargo",
+    "receipt_directory": "/workspace/.work/x86_64/qualification-receipts",
     "oracle_compiler": "/usr/local/bin/crabc-x86_64-musl-gcc"
   },
   "private_admission": [
@@ -24,6 +28,7 @@
       "case_manifest": "compat/x86_64/qualification_posix_abi.json",
       "case_manifest_sha256": "0afebd7ed94da8236d29a93c54b10dd6e9ea7519ca179ac61659d76d2c346446",
       "command": ["python3", "compat/x86_64/run_qualification_posix_abi.py"],
+      "runner_sha256": "64300e5a5594fb56f2116f12c46b91c5b40198fb08001c7a20765c559c4ddb56",
       "non_promoting": true
     }
   ],

@@ -26,7 +26,7 @@ fail() {
 }
 
 usage() {
-    printf 'usage: %s --archive PATH\n' "${0##*/}" >&2
+    printf 'usage: %s --archive PATH [--artifact-directory PATH]\n' "${0##*/}" >&2
     exit 2
 }
 
@@ -57,11 +57,17 @@ normalize_output() {
 }
 
 archive=""
+artifact_directory=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --archive)
             [ "$#" -ge 2 ] || usage
             archive="$2"
+            shift 2
+            ;;
+        --artifact-directory)
+            [ "$#" -ge 2 ] || usage
+            artifact_directory="$2"
             shift 2
             ;;
         --help|-h) usage ;;
@@ -72,7 +78,7 @@ done
 [ -f "$archive" ] || fail "candidate archive is not a file: $archive"
 
 require_native_linux_x86_64
-for tool in cmp diff gcc grep mktemp readelf sha256sum timeout tr; do
+for tool in cmp diff gcc grep mktemp readelf realpath sha256sum timeout tr; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -84,8 +90,30 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 # cannot be mistaken for candidate-header closure.
 bash "$ROOT_DIR/compat/x86_64/run_memfd_create_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-same-object-static-c-abi.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+temporary_root="${TMPDIR:-}"
+case "$temporary_root" in
+    "$ROOT_DIR"/.work/*) ;;
+    *) fail "same-object TMPDIR must be a physical checkout .work directory" ;;
+esac
+[ -d "$temporary_root" ] && [ ! -L "$temporary_root" ] &&
+    [ "$(realpath "$temporary_root")" = "$temporary_root" ] ||
+    fail "same-object TMPDIR must be a physical checkout .work directory"
+
+if [ -n "$artifact_directory" ]; then
+    case "$artifact_directory" in
+        "$ROOT_DIR"/.work/*) ;;
+        *) fail "same-object artifact directory must be a physical checkout .work directory" ;;
+    esac
+    [ ! -e "$artifact_directory" ] && [ ! -L "$artifact_directory" ] ||
+        fail "same-object artifact directory already exists or is unsafe"
+    mkdir "$artifact_directory"
+    [ "$(realpath "$artifact_directory")" = "$artifact_directory" ] ||
+        fail "same-object artifact directory must be physical"
+    work_dir="$artifact_directory"
+else
+    work_dir="$(mktemp -d "$temporary_root/crabc-x86-64-same-object-static-c-abi.XXXXXX")"
+    trap 'rm -rf -- "$work_dir"' EXIT
+fi
 workload_object="$work_dir/workload.o"
 start_object="$work_dir/start.o"
 reference="$work_dir/musl-reference"

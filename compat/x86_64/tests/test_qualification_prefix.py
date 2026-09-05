@@ -96,5 +96,42 @@ class QualificationPrefixTests(unittest.TestCase):
             self.assertEqual(runner.main([]), 1)
         execute.assert_not_called()
 
+    def test_private_admission_is_a_receipted_non_promoting_prefix(self):
+        report = manifest.load_contract()
+        selected = runner.select_private_admission(report)
+        self.assertEqual(selected["id"], "posix-abi-admission")
+        self.assertTrue(selected["non_promoting"])
+        self.assertNotIn(selected["id"], manifest.CHAIN)
+
+        parser = runner.argument_parser()
+        parsed = parser.parse_args(["--private-admission"])
+        self.assertTrue(parsed.private_admission)
+        self.assertIsNone(parsed.through)
+
+    def test_private_admission_rejects_dirty_source_before_starting_a_child(self):
+        report = manifest.load_contract()
+        with patch.object(runner, "require_pinned_native_execution"), patch.object(
+            runner, "source_identity", side_effect=runner.QualificationRunError("clean committed source")
+        ), patch.object(runner.subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(runner.QualificationRunError, "clean committed source"):
+                runner.run_private_admission(report)
+        popen.assert_not_called()
+
+    def test_private_admission_runner_loads_without_an_ambient_import_path(self):
+        loaded = runner.private_admission_runner_module()
+        self.assertEqual(loaded.EXPECTED_ID, "qualification-posix-abi-admission")
+
+    def test_stdout_only_claim_is_not_a_private_admission_receipt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipt = Path(directory) / "receipt.json"
+            receipt.write_text(json.dumps({
+                "schema": manifest.RECEIPT_SCHEMA,
+                "outcome": "passed-non-promoting",
+                "stdout": "PASS",
+            }))
+            with patch.object(runner, "evidence_path", side_effect=lambda path: path):
+                with self.assertRaisesRegex(runner.QualificationRunError, "fields drifted"):
+                    runner.validate_private_admission_receipt(receipt)
+
 if __name__ == '__main__':
     unittest.main()

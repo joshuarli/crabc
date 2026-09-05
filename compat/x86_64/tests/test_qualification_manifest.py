@@ -51,6 +51,7 @@ class QualificationManifestTests(unittest.TestCase):
                 "case_manifest": "compat/x86_64/qualification_posix_abi.json",
                 "case_manifest_sha256": qualification.PRIVATE_ADMISSION[0][2],
                 "command": ["python3", "compat/x86_64/run_qualification_posix_abi.py"],
+                "runner_sha256": qualification.PRIVATE_ADMISSION[0][4],
                 "non_promoting": True,
             }
         ])
@@ -61,6 +62,9 @@ class QualificationManifestTests(unittest.TestCase):
             {
                 "CRABC_WORK_DIR": qualification.EXECUTION_CONTRACT["work_directory"],
                 "TMPDIR": qualification.EXECUTION_CONTRACT["temporary_directory"],
+                "RUSTUP_HOME": qualification.EXECUTION_CONTRACT["rustup_home"],
+                "CARGO_HOME": qualification.EXECUTION_CONTRACT["cargo_home"],
+                "PATH": qualification.EXECUTION_CONTRACT["rust_bin_directory"] + ":/usr/bin",
             },
             clear=True,
         ), patch.object(runner.Path, "is_dir", return_value=True), patch.object(
@@ -76,6 +80,18 @@ class QualificationManifestTests(unittest.TestCase):
         self.assertEqual(
             environment["TMPDIR"],
             qualification.EXECUTION_CONTRACT["temporary_directory"],
+        )
+        self.assertEqual(
+            environment["RUSTUP_HOME"],
+            qualification.EXECUTION_CONTRACT["rustup_home"],
+        )
+        self.assertEqual(
+            environment["CARGO_HOME"],
+            qualification.EXECUTION_CONTRACT["cargo_home"],
+        )
+        self.assertEqual(
+            environment["PATH"].split(":")[0],
+            qualification.EXECUTION_CONTRACT["rust_bin_directory"],
         )
 
         with patch.dict(runner.os.environ, {}, clear=True):
@@ -94,8 +110,13 @@ class QualificationManifestTests(unittest.TestCase):
             with patch.dict(qualification.EXECUTION_CONTRACT, {
                 "work_directory": str(work),
                 "temporary_directory": str(temporary),
+                "rust_bin_directory": str(work),
+                "rustup_home": str(work),
+                "cargo_home": str(work),
             }), patch.dict(runner.os.environ, {
                 "CRABC_WORK_DIR": str(work), "TMPDIR": str(temporary),
+                "RUSTUP_HOME": str(work), "CARGO_HOME": str(work),
+                "PATH": str(work) + ":/usr/bin",
             }, clear=True), patch.object(runner.Path, "is_file", return_value=True):
                 with self.assertRaisesRegex(runner.QualificationRunError, "physical"):
                     runner.require_pinned_native_execution()
@@ -191,7 +212,7 @@ class QualificationManifestTests(unittest.TestCase):
             private_runner = root / "compat/x86_64/run_qualification_posix_abi.py"
             private_manifest.parent.mkdir(parents=True)
             private_manifest.write_bytes(qualification.CONTRACT_PATH.parent.joinpath("qualification_posix_abi.json").read_bytes())
-            private_runner.write_text("raise SystemExit(0)\n", encoding="utf-8")
+            private_runner.write_bytes((ROOT / "compat/x86_64/run_qualification_posix_abi.py").read_bytes())
             case_runner = root / "runner.py"
             case_runner.write_text("raise SystemExit(0)\n", encoding="utf-8")
             contract_path = root / "compat/x86_64/qualification_manifest.json"
