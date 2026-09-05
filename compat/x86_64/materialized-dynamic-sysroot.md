@@ -148,7 +148,17 @@ the complete loader/libc transaction below.
 `./scripts/dev-x86_64.sh owned-dynamic-fork` qualifies the loader/libc fork
 transaction through ordinary initial/runtime DSOs. The aggregate repeats
 `run_general_dynamic_fork.sh` for installed and extracted PIE/non-PIE products.
-Its pinned-musl cases cover initial and worker callers with a live sibling,
+The runner retains one installed-header `semantic-consumer` object without
+private layout flags, links that exact object into the pinned-musl reference
+and all four candidate entries, and retains raw stdout, stderr, and status for
+each. A separate `owned-layout-consumer` object adds the existing
+`CRABC_OWNED_WITNESS` FS+24/FS+32 assertions to those four candidate entries.
+Those slots are the crabc loader/libc ABI, not the musl C/POSIX ABI, so the
+layout witness is sealed as candidate-only evidence rather than compiled into
+the musl differential. `compile.json` records both consumer roles and the
+three `FORK_LIBRARY_TAG` preprocessing identities; producer receipts and ELF
+checks bind the initial/runtime DSO topology, and `observations.json` requires
+all retained semantic and private-witness results. Its pinned-musl cases cover initial and worker callers with a live sibling,
 reverse-prepare/forward-parent-or-child hooks that call loader APIs, inherited
 TLS/TSD/cleanup, postfork module growth and fresh workers, ordinary and kernel
 robust owner death, raw `EAGAIN` unwind, nested constructor fork, and rejected
