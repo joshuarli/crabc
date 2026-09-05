@@ -1296,12 +1296,21 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
         publish_selected_worker_result(control, result);
     }
     #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
-    if selected_worker_is_final_runtime_task(control) {
-        // SAFETY: the initial selected task already called pthread_exit and
-        // this is the last live worker under the registry transition. Match
-        // musl's last-thread route through ordinary process exit so atexit and
-        // owned stdio finalization run before exit_group.
-        unsafe { super::static_startup::exit(0) }
+    {
+        let mut saved_signal_mask = 0_u64;
+        // SAFETY: this is musl's application-signal exclusion around the
+        // locked final-task decision. Earlier cleanup/TSD/result work is
+        // already complete, and a non-final worker leaves with this mask
+        // blocked through SYS_exit just as musl does.
+        unsafe { super::signal_execution::block_application_signals(&mut saved_signal_mask) };
+        if selected_worker_is_final_runtime_task(control) {
+            // SAFETY: a final ordinary process exit must restore the caller's
+            // prior application mask before it runs atexit callbacks.
+            unsafe { super::signal_execution::restore_application_signals(&saved_signal_mask) };
+            // SAFETY: the initial selected task already called pthread_exit
+            // and this locked task-state transition is uniquely final.
+            unsafe { super::static_startup::exit(0) }
+        }
     }
     0
 }
@@ -1564,9 +1573,17 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         // table. Destructors run before the musl-shaped list/last-thread
         // decision, so they may still use selected lifecycle operations.
         unsafe { pthread_tsd::run_selected_main_tsd_destructors() };
+        let mut saved_signal_mask = 0_u64;
+        // SAFETY: match musl's block-before-thread-list-transition rule. A
+        // signal handler cannot enter a competing selected lifecycle path
+        // after this task begins its final-task decision.
+        unsafe { super::signal_execution::block_application_signals(&mut saved_signal_mask) };
         if selected_initial_thread_is_final_runtime_task() {
-            // SAFETY: no selected worker remains after the locked observation,
-            // so pthread_exit on the initial task is ordinary process exit.
+            // SAFETY: restore before ordinary exit invokes application atexit
+            // callbacks, exactly as musl restores after its one-thread check.
+            unsafe { super::signal_execution::restore_application_signals(&saved_signal_mask) };
+            // SAFETY: no selected worker remains after the locked logical
+            // task-state transition, so pthread_exit is ordinary process exit.
             unsafe { super::static_startup::exit(0) }
         }
         // SAFETY: another selected worker remains. End only this initial task;
@@ -1592,11 +1609,18 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             publish_selected_worker_result(control, result);
         }
         #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
-        if selected_worker_is_final_runtime_task(control) {
-            // SAFETY: after result/TSD publication, this final selected worker
-            // owns the ordinary process-exit transition for an initial task
-            // that previously left through pthread_exit.
-            unsafe { super::static_startup::exit(0) }
+        {
+            let mut saved_signal_mask = 0_u64;
+            // SAFETY: no user cleanup remains. Block application signals
+            // before the locked logical withdrawal, leaving them blocked for
+            // the non-final SYS_exit path.
+            unsafe { super::signal_execution::block_application_signals(&mut saved_signal_mask) };
+            if selected_worker_is_final_runtime_task(control) {
+                // SAFETY: only the unique final task restores this mask before
+                // ordinary process exit and its atexit callbacks.
+                unsafe { super::signal_execution::restore_application_signals(&saved_signal_mask) };
+                unsafe { super::static_startup::exit(0) }
+            }
         }
     }
     // SAFETY: Linux SYS_exit terminates precisely the calling task and does
