@@ -148,6 +148,22 @@ TMP_DIR="$(resolve_bounded_directory TMPDIR "$WORK_DIR/tmp" "$WORK_DIR")" || exi
 REPORT_DIR="$(resolve_bounded_directory REPORT_DIR "$WORK_DIR/reports" "$WORK_DIR")" || exit 2
 readonly TMP_DIR REPORT_DIR
 
+# Linked worktrees contain an absolute host gitdir pointer. Preserve that
+# pointer inside the container so source-bound builders can read their own
+# index and HEAD. Mount only shared Git metadata, read-only; the worktree
+# itself remains at /workspace and mutable build state remains below .work.
+GIT_METADATA_MOUNT=()
+if [ -f "$ROOT_DIR/.git" ]; then
+    git_common_directory="$(GIT_OPTIONAL_LOCKS=0 git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)" || exit 2
+    git_common_directory="$(resolve_existing_directory "$git_common_directory")" || exit 2
+    if [[ "$git_common_directory" == *:* ]]; then
+        configuration_error "Git metadata path must not contain Docker mount syntax"
+        exit 2
+    fi
+    GIT_METADATA_MOUNT=(--volume "$git_common_directory:$git_common_directory:ro")
+fi
+readonly -a GIT_METADATA_MOUNT
+
 prepare_work_dir() {
     mkdir -p "$TARGET_VOLUME" "$CARGO_VOLUME" "$TMP_DIR" "$REPORT_DIR"
 }
@@ -2638,12 +2654,14 @@ run_in_container() {
     # Older fixtures spell /tmp explicitly. This compatibility bind contains
     # their writes too; new runners use the repository-local TMPDIR directly.
     docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
@@ -2660,6 +2678,7 @@ run_in_container() {
 run_in_network_none_container() {
     prepare_work_dir
     docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --network none \
         --workdir /workspace \
@@ -2667,6 +2686,7 @@ run_in_network_none_container() {
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
@@ -2683,6 +2703,7 @@ run_in_network_none_container() {
 run_in_chroot_cap_container() {
     prepare_work_dir
     docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         --workdir /workspace \
@@ -2690,6 +2711,7 @@ run_in_chroot_cap_container() {
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
@@ -2705,6 +2727,7 @@ run_in_chroot_cap_container() {
 run_in_resolver_network_container() {
     prepare_work_dir
     docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         --network none \
@@ -2713,6 +2736,7 @@ run_in_resolver_network_container() {
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
@@ -2730,6 +2754,7 @@ run_in_resolver_network_container() {
 run_in_dynamic_loader_mount_container() {
     prepare_work_dir
     docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
         --cap-add=SYS_ADMIN \
@@ -2739,6 +2764,7 @@ run_in_dynamic_loader_mount_container() {
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
@@ -2756,6 +2782,7 @@ run_in_dynamic_loader_mount_container() {
 run_in_uts_cap_container() {
     prepare_work_dir
     docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_ADMIN \
         --workdir /workspace \
@@ -2763,6 +2790,7 @@ run_in_uts_cap_container() {
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
         --env TMPDIR=/workspace/.work/x86_64/tmp \
         --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
