@@ -178,3 +178,13 @@ x86-64.md passes: frozen accounting, all 26 families, reproducible owned
 static and dynamic products, complete ordered qualification, native
 performance, promotion validation, public-document update, and a final clean
 aggregate rerun. Until then, describe results as private foundation evidence.
+
+## Owned pthread scheduling and defaults
+
+`./scripts/dev-x86_64.sh owned-pthread-scheduling` links one project-header
+object to pinned musl and the installed static, static PIE, dynamic PIE and
+non-PIE products; both dynamic entry paths run. The runner accepts an existing
+dynamic product for aggregate qualification. The [component contract](owned-pthread-scheduling.md)
+records source mapping, lifecycle ownership, failure reclamation and the GNU/C11
+default rules. This component is registered in the dynamic product matrix; it
+does not itself complete the pthread family or qualify a public platform.

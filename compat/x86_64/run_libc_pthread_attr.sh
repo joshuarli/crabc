@@ -66,7 +66,7 @@ assert_direct_record_paths() {
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump python3 readelf rustup sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -151,10 +151,17 @@ for marker in \
     grep -Fq "$marker" libc/src/c_abi/x86_64/pthread_attr.rs ||
         fail "pthread attribute source lacks $marker"
 done
-if grep -Eq 'use super|raw_syscall::|static_tls::|pthread_create_join::|Atomic' \
-    libc/src/c_abi/x86_64/pthread_attr.rs; then
-    fail "pthread attribute source must not import a runtime seam"
-fi
+# The source also carries cfg-owned live-thread inspection and coherent GNU
+# defaults. Scope the source boundary to record operations; the compiled private
+# export ratchet and ordinary fixture below judge the selected artifact.
+python3 -B - <<'PY_BOUNDARY'
+from pathlib import Path
+source = Path('libc/src/c_abi/x86_64/pthread_attr.rs').read_text()
+metadata = source.split("/// Observe the owned thread's usable stack, guard and current detach state.", 1)[0]
+for forbidden in ('use super', 'raw_syscall::', 'static_tls::', 'pthread_create_join::'):
+    if forbidden in metadata:
+        raise SystemExit('pthread attribute records import a live runtime seam: ' + forbidden)
+PY_BOUNDARY
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_PTHREAD_ATTR_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \

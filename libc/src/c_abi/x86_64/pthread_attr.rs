@@ -28,14 +28,14 @@
 //! one-past-top address, and packed pairs of `int` detach/inherit and
 //! policy/priority fields. This module owns exactly the eighteen standard
 //! lifecycle and metadata entry points over that record, plus owned-runtime
-//! `pthread_getattr_np` inspection.
+//! `pthread_getattr_np` inspection and GNU default-attribute get/set.
 //!
 //! `pthread_create_join.rs` decodes this exact record only for its selected
 //! worker policy.  That sibling consumes detached-at-create, a supplied stack
-//! or a private guarded stack, and the requested stack size.  It rejects an
-//! explicit scheduler request with `ENOTSUP`; it does not claim scheduler,
-//! GNU default-attribute, affinity-attribute, or
-//! general pthread behavior.
+//! or a private guarded stack, and the requested stack size. Owned builds also
+//! consume explicit scheduling through musl's child-control handshake and GNU
+//! default attributes from `pthread_setattr_default_np.c`; frozen private
+//! builds retain their explicit-scheduler rejection and fixed defaults.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread attribute leaf requires little-endian Linux/x86-64");
@@ -69,8 +69,8 @@ const LOW_C_INT_MASK: usize = u32::MAX as usize;
 /// This is a private, plain-Copy decode boundary shared with the selected
 /// worker seam.  Keeping the source-shaped record layout and the decode next
 /// to its setters/getters prevents the clone owner from guessing public
-/// `pthread_attr_t` offsets.  A scheduler request remains outside that
-/// bounded seam and is represented explicitly rather than silently ignored.
+/// `pthread_attr_t` offsets. Explicit scheduling retains its policy/priority
+/// alongside the selector; inert scheduler metadata is ignored on inheritance.
 #[derive(Clone, Copy)]
 pub(super) struct SelectedWorkerAttributes {
     pub(super) stack_size: usize,
@@ -78,24 +78,74 @@ pub(super) struct SelectedWorkerAttributes {
     pub(super) caller_stack_top: Option<usize>,
     pub(super) detached: bool,
     pub(super) scheduler_requested: bool,
+    #[cfg(feature = "x86-owned-static-runtime")]
+    pub(super) sched_policy: c_int,
+    #[cfg(feature = "x86-owned-static-runtime")]
+    pub(super) sched_priority: c_int,
 }
 
 /// Owned-runtime default when `pthread_create` receives a null attribute
 /// pointer and when the C11 adapter creates a worker.
 ///
-/// This is the same 128 KiB stack and 8 KiB guard selected by musl's default
-/// attribute record. The old one-megabyte/zero-guard private-fixture policy
+/// This snapshots the defaults initialized to musl's 128 KiB stack and 8 KiB
+/// guard. GNU setters can increase both sizes in owned builds. The old
+/// one-megabyte/zero-guard private-fixture policy
 /// was neither a public POSIX default nor an owned-runtime guarantee, so it
 /// must not leak into ordinary installed consumers.
 #[inline]
-pub(super) const fn selected_worker_default_attributes() -> SelectedWorkerAttributes {
-    SelectedWorkerAttributes {
-        stack_size: DEFAULT_STACK_SIZE,
-        guard_size: DEFAULT_GUARD_SIZE,
-        caller_stack_top: None,
-        detached: false,
-        scheduler_requested: false,
+pub(super) fn selected_worker_default_attributes() -> SelectedWorkerAttributes {
+    current_default_attributes().selected_worker_attributes()
+}
+
+// Musl pthread_setattr_default_np.c serializes a pair of monotonic maxima
+// with the pthread-create lock. A single atomic pair supplies the same coherent
+// snapshot without a process-global lock that a fork child could inherit held.
+#[cfg(feature = "x86-owned-static-runtime")]
+static DEFAULT_ATTRIBUTES: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(
+    DEFAULT_STACK_SIZE as u64 | ((DEFAULT_GUARD_SIZE as u64) << 32),
+);
+
+fn current_default_attributes() -> PublicPthreadAttr {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        let pair = DEFAULT_ATTRIBUTES.load(core::sync::atomic::Ordering::Acquire);
+        let mut value = PublicPthreadAttr::musl_default();
+        value.words[0] = pair as u32 as usize;
+        value.words[1] = (pair >> 32) as usize;
+        value
     }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    PublicPthreadAttr::musl_default()
+}
+
+/// Snapshot the GNU default attributes (only stack and guard are nonzero).
+/// # Safety
+/// `attributes` must point to writable, aligned pthread_attr_t storage.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn pthread_getattr_default_np(attributes: *mut c_void) -> c_int {
+    unsafe { attributes.cast::<PublicPthreadAttr>().write(current_default_attributes()) };
+    0
+}
+
+/// Increase the GNU default stack/guard sizes, capped at 8 MiB/1 MiB.
+/// All other record bytes must be zero, as in musl 1.2.6
+/// src/thread/pthread_setattr_default_np.c (MIT).
+/// # Safety
+/// `attributes` must point to a readable, initialized, aligned pthread_attr_t.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn pthread_setattr_default_np(attributes: *const c_void) -> c_int {
+    let value = unsafe { attributes.cast::<PublicPthreadAttr>().read() };
+    if value.words[2..].iter().any(|word| *word != 0) { return EINVAL; }
+    let stack = value.stack_size().min(8 << 20) as u64;
+    let guard = value.guard_size().min(1 << 20) as u64;
+    let _ = DEFAULT_ATTRIBUTES.fetch_update(
+        core::sync::atomic::Ordering::AcqRel,
+        core::sync::atomic::Ordering::Acquire,
+        |old| Some(stack.max(old & 0xffff_ffff) | (guard.max(old >> 32) << 32)),
+    );
+    0
 }
 
 /// Exact public `pthread_attr_t` storage on Linux/x86-64 LP64.
@@ -223,9 +273,11 @@ impl PublicPthreadAttr {
             // selector asks for explicit scheduling. Policy/priority fields
             // may be recorded while inheriting and are then source-ignored;
             // preserve that distinction instead of rejecting inert metadata.
-            // The selected clone seam has no explicit scheduler ownership, so
-            // its caller rejects this one source-visible request.
             scheduler_requested: self.inherit_sched() != 0,
+            #[cfg(feature = "x86-owned-static-runtime")]
+            sched_policy: self.sched_policy(),
+            #[cfg(feature = "x86-owned-static-runtime")]
+            sched_priority: self.sched_priority(),
         }
     }
 }
@@ -272,7 +324,7 @@ pub unsafe extern "C" fn pthread_attr_init(attributes: *mut c_void) -> c_int {
     unsafe {
         core::ptr::write(
             attributes.cast::<PublicPthreadAttr>(),
-            PublicPthreadAttr::musl_default(),
+            current_default_attributes(),
         )
     };
     0

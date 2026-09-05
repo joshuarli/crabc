@@ -2106,7 +2106,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "owned-io-cancellation",
                 "owned-resolver-network",
                 "owned-dynamic-io-cancellation",
-                "owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
+                "owned-pthread-scheduling|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
                 "owned-pthread-lifecycle",
                 "qualification-manifest",
             )
@@ -9668,7 +9668,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "raw_syscall::",
             "static_tls::",
             "pthread_create_join::",
-            "Atomic",
         ):
             self.assertNotIn(forbidden, metadata_implementation)
         for symbol in symbols:

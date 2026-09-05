@@ -421,6 +421,9 @@ mod signal_altstack;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "pthread_signal.rs"]
 mod pthread_signal;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "pthread_scheduling.rs"]
+mod pthread_scheduling;
 #[path = "pthread_identity.rs"]
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]

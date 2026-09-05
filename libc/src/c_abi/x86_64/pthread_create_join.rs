@@ -8,7 +8,8 @@
 //!
 //! - `src/thread/pthread_create.c::__pthread_create` supplies the exact
 //!   Linux thread clone flags and the `EAGAIN` translation for allocation or
-//!   clone failure.
+//!   clone failure. Owned explicit scheduling ports its `start` 1/2/3
+//!   futex handshake; `start_c11` retains its blocked application mask.
 //! - `src/thread/pthread_create.c::__pthread_exit` supplies the selected
 //!   cleanup-before-TSD-destructor-before-result ordering, selected list
 //!   transitions, initial-thread `pthread_exit`, and the last-thread ordinary
@@ -36,8 +37,10 @@
 //! initialized attribute record with a private guarded stack or an aligned
 //! caller stack, a normal returning start routine or selected-worker
 //! `pthread_exit`, and one `pthread_join` **or** `pthread_detach`. An
-//! initialized record may request detached-at-create, but scheduler fields
-//! fail closed with `ENOTSUP`; no scheduler transition is silently discarded.
+//! initialized record may request detached-at-create. Frozen private builds
+//! reject explicit scheduling with `ENOTSUP`; owned builds apply it through
+//! the pre-callback handshake below. Inherited scheduler metadata is ignored
+//! as in musl.
 //! The private C11 lifecycle sibling reuses the default allocation/clone/
 //! join/detach seam through a distinct typed `int (*)(void *)` start mode; it
 //! never reinterprets that callback as the pointer-returning pthread type.
@@ -57,13 +60,15 @@
 //! child TID. This follows the existing AArch64 runtime's safe external
 //! reaping shape; it is not a claim of general detached-thread reclamation or
 //! full pthread parity. It provides selected initial-thread `pthread_exit`
-//! in both owned products and static fork child-list/TLS/TSD repair, but not
-//! dynamic fork, scheduler application, GNU default attributes,
-//! affinity attributes, live-thread inspection, or general pthread semantics.
+//! in both owned products and static fork child-list/TLS/TSD repair. Owned
+//! builds additionally provide scheduler application, GNU default attributes
+//! and live-thread inspection through their corresponding leaves. Dynamic
+//! fork composes through its separate loader transaction; affinity attributes
+//! and full pthread parity are not established by this component.
 //! Dynamic workers retain the loader's opaque allocation/release token through
 //! the same create/join seam and logical initial/last-task accounting. The
 //! dynamic startup owner runs executable/loader finalization for the final
-//! task; dynamic fork still requires a separate loader transaction.
+//! task; dynamic fork is coordinated by its separate loader transaction.
 //! It
 //! leaves caller `errno` untouched because pthread APIs report errors as
 //! positive return values. Each selected worker carries its
@@ -423,6 +428,10 @@ struct ThreadControl {
     // the record visible with this release flag before clone. The child first
     // acquires it, rather than treating clone as a Rust memory-ordering edge.
     start_ready: AtomicU8,
+    #[cfg(feature = "x86-owned-static-runtime")]
+    startup_signal_mask: Option<u64>,
+    #[cfg(feature = "x86-owned-static-runtime")]
+    scheduler_control: AtomicI32,
     // A linked detached record begins with a zero child-TID before clone has
     // installed the kernel clear-child-tid ownership. It therefore remains
     // reaper-ineligible until the parent has completed the clone result and
@@ -1818,6 +1827,24 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     while unsafe { (*control).start_ready.load(Ordering::Acquire) } == 0 {
         core::hint::spin_loop();
     }
+    // Musl pthread_create.c::start: 1 is parent setup pending, 2 means
+    // child waiting, 0 admits the callback, and 3 aborts creation. Preserve
+    // the compare-exchange/wake protocol so a preempted creator does not make
+    // the child busy-wait. The existing child_tid supplies the kernel exit
+    // acknowledgement instead of redirecting clear-child-tid into control.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe {
+        let state = &(*control).scheduler_control;
+        if state.load(Ordering::Acquire) != 0 {
+            if state.compare_exchange(1, 2, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+                while state.load(Ordering::Acquire) == 2 {
+                    raw_syscall::syscall6(raw_syscall::SYS_FUTEX,
+                        state as *const AtomicI32 as i64, 128, 2, 0, 0, 0);
+                }
+            }
+            if state.load(Ordering::Acquire) != 0 { return 0; }
+        }
+    }
     let Some(worker_tid) = current_linux_thread_id() else {
         // This cannot occur for Linux 5.10 SYS_gettid, but completing the
         // admitted result handoff avoids leaving a joiner to spin forever if
@@ -1838,14 +1865,19 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
             core::ptr::addr_of!((*control).cancellation),
         )
     };
-    // Musl pthread_create.c clears SIGCANCEL (33, not SIGTIMER 32)
-    // in the child's inherited mask. Publish FS+32 first: delivery may begin
-    // immediately after this syscall, before the application callback.
-    let cancellation_signal = 1_u64 << 32;
+    // Musl pthread_create.c::start clears SIGCANCEL (33, not SIGTIMER
+    // 32) in the inherited mask; start_c11 instead retains the blocked
+    // application mask. Publish FS+32 first: restoring can deliver signals
+    // immediately, before the callback.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let startup_mask = unsafe { (*control).startup_signal_mask };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    let startup_mask: Option<u64> = None;
+    let cancellation_signal = startup_mask.unwrap_or(1_u64 << 32);
     let _ = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_RT_SIGPROCMASK,
-            1, // SIG_UNBLOCK
+            if startup_mask.is_some() { 2 } else { 1 }, // SETMASK or UNBLOCK
             core::ptr::addr_of!(cancellation_signal) as usize as i64,
             0,
             8,
@@ -1907,11 +1939,12 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
 ///
 /// `thread` must designate writable `pthread_t` storage; `start` must be a
 /// valid pthread callback and `argument` must remain valid until that function
-/// stops reading it. A null `attributes` pointer selects the musl-shaped 128
-/// KiB private stack with its 8 KiB guard. An initialized record may select a guarded
-/// private stack, a caller-owned stack, or detached-at-create. Explicit
-/// scheduler fields return `ENOTSUP` because this bounded seam has no
-/// scheduler transition. The private C11 sibling calls
+/// stops reading it. Null `attributes` selects the current default stack/guard
+/// sizes (initially 128 KiB/8 KiB). An initialized record may select a guarded
+/// private stack, a caller-owned stack, or detached-at-create. Owned explicit
+/// scheduling completes before callback admission; setup failure reclaims the
+/// child before returning its scheduler error. Frozen private builds retain
+/// `ENOTSUP` for explicit scheduling. The C11 sibling calls
 /// [`create_selected_worker`] with its own typed callback mode instead of
 /// reaching this C ABI through an incompatible cast.
 ///
@@ -1943,6 +1976,7 @@ pub unsafe extern "C" fn pthread_create(
         // lifecycle owner.
         unsafe { super::pthread_attr::selected_worker_attributes(attributes) }
     };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     if attributes.scheduler_requested {
         return ENOTSUP;
     }
@@ -1994,8 +2028,8 @@ pub(super) unsafe fn create_selected_worker(
 /// Create one selected worker after its public attribute record was decoded.
 ///
 /// The caller must retain the ordinary selected-worker output/callback
-/// obligations and pass only a decoded record whose scheduler request has
-/// already been rejected. This private helper keeps stack ownership and
+/// obligations and pass a decoded initialized attribute record. Owned explicit
+/// scheduling uses musl's child-control handshake. This helper keeps stack ownership and
 /// detached-at-create state in the same registry transaction as TLS/control
 /// allocation and clone publication.
 unsafe fn create_selected_worker_with_attributes(
@@ -2007,6 +2041,7 @@ unsafe fn create_selected_worker_with_attributes(
     if thread.is_null() {
         return EINVAL;
     }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     if attributes.scheduler_requested {
         return ENOTSUP;
     }
@@ -2053,6 +2088,10 @@ unsafe fn create_selected_worker_with_attributes(
             ThreadControl {
                 child_tid: AtomicI32::new(0),
                 start_ready: AtomicU8::new(0),
+                #[cfg(feature = "x86-owned-static-runtime")]
+                startup_signal_mask: None,
+                #[cfg(feature = "x86-owned-static-runtime")]
+                scheduler_control: AtomicI32::new(if attributes.scheduler_requested { 1 } else { 0 }),
                 creator_handoff_pending: AtomicU8::new(1),
                 cancellation_wake_leases: AtomicUsize::new(0),
                 task_state: AtomicU8::new(SelectedRuntimeTaskState::ACTIVE),
@@ -2097,15 +2136,18 @@ unsafe fn create_selected_worker_with_attributes(
         pthread_mutex::initialize_selected_robust_list(core::ptr::addr_of_mut!(
             (*control).robust_list
         ));
-        (*control).start_ready.store(1, Ordering::Release);
     }
     publish_selected_worker(control);
     let child_tid = unsafe { core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>() };
     // The child must inherit SIGCANCEL blocked: an externally delivered
     // cancellation signal must not run between clone installing FS and the
-    // trampoline publishing FS+32. Preserve every other inherited mask bit;
-    // the parent restores its exact mask immediately after clone returns.
-    let cancellation_signal = 1_u64 << 32;
+    // trampoline publishing FS+32. Explicit scheduling additionally blocks all
+    // signals until setup/reclamation ends; the child restores the inherited
+    // mask after successful setup and before entering application code.
+    let cancellation_signal = if cfg!(feature = "x86-owned-static-runtime")
+        && (attributes.scheduler_requested || !matches!(start, SelectedWorkerStart::Pthread(_))) {
+        u64::MAX
+    } else { 1_u64 << 32 };
     let mut creator_signal_mask = 0_u64;
     let _ = unsafe {
         raw_syscall::syscall4(
@@ -2120,6 +2162,23 @@ unsafe fn create_selected_worker_with_attributes(
     // The selected stack is either caller-owned or the writable upper portion
     // of a private guarded map; the separate control and v1 blocks retain the
     // live record and full fresh final-image TLS copy.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        // Musl start_c11 never restores the application mask blocked around
+        // clone; unlike pthread start, it also leaves inherited internal bits
+        // unchanged. Both modes still consume only default stack/guard sizes
+        // when invoked by thrd_create (no scheduler selector is synthesized).
+        let mask = if !matches!(start, SelectedWorkerStart::Pthread(_)) {
+            Some(creator_signal_mask | 0xffff_fffc_7fff_ffff)
+        } else if attributes.scheduler_requested {
+            Some(creator_signal_mask & !(1_u64 << 32))
+        } else { None };
+        unsafe { (*control).startup_signal_mask = mask };
+    }
+    // Publish after the final startup-mask write. The child's acquire must
+    // cover every non-atomic field, rather than relying on clone as a Rust
+    // memory-ordering edge.
+    unsafe { (*control).start_ready.store(1, Ordering::Release) };
     let clone_result = unsafe {
         __crabc_x86_pthread_clone(
             worker_entry,
@@ -2131,8 +2190,38 @@ unsafe fn create_selected_worker_with_attributes(
             child_tid,
         )
     };
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let scheduler_result = if clone_result >= 0 && attributes.scheduler_requested {
+        let result = unsafe { raw_syscall::syscall3(
+            144, clone_result, attributes.sched_policy as i64,
+            core::ptr::addr_of!(attributes.sched_priority) as i64,
+        ) };
+        unsafe {
+            if (*control).scheduler_control.swap(if result < 0 { 3 } else { 0 }, Ordering::AcqRel) == 2 {
+                raw_syscall::syscall3(raw_syscall::SYS_FUTEX,
+                    core::ptr::addr_of!((*control).scheduler_control) as i64, 129, 1);
+            }
+        }
+        if result < 0 {
+            // The child has no user-visible handle and creator_handoff_pending
+            // excludes detached reaping. Wait for Linux to stop using its stack
+            // and TLS, then withdraw before draining leases and unmapping.
+            loop {
+                let tid = unsafe { (*control).child_tid.load(Ordering::Acquire) };
+                if tid == 0 { break; }
+                unsafe { raw_syscall::syscall6(raw_syscall::SYS_FUTEX,
+                    child_tid as i64, 0, tid as i64, 0, 0, 0); }
+            }
+            if release_selected_worker(control) {
+                let _ = unsafe { reclaim_withdrawn_selected_worker(control) };
+            }
+        }
+        result
+    } else { 0 };
     // SAFETY: paired restoration is required on success and clone failure.
     unsafe { super::signal_execution::restore_application_signals(&creator_signal_mask) };
+    #[cfg(feature = "x86-owned-static-runtime")]
+    if scheduler_result < 0 { return (-scheduler_result) as c_int; }
     if is_linux_error(clone_result) {
         if !release_selected_worker(control) {
             // The private list can still expose `control` to the selected
