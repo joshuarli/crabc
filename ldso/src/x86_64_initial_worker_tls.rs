@@ -176,6 +176,8 @@ unsafe extern "C" fn release(token: *const WorkerTlsAllocation) -> i64 {
         let node = unsafe { *link };
         if node.is_null() { return -22; }
         if unsafe { (*node).token } == token {
+            let views = unsafe { x86_64_runtime_tls_view::release(token.thread_pointer) };
+            if views != 0 { return views; }
             let next = unsafe { (*node).next };
             let result = syscall2(SYS_MUNMAP, token.mapping as i64, token.mapping_size as i64);
             if result == 0 { unsafe { *link = next; } }

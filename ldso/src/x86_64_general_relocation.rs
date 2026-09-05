@@ -30,7 +30,20 @@ struct InitialSymbolScope {
     count: usize,
 }
 
+/// A borrowed lookup order over one transaction's metadata snapshot. Runtime
+/// views may grow independently of the legacy initial stack-array capacity.
+struct SymbolScope<'a> {
+    indices: &'a [usize],
+    module_count: usize,
+    static_tls_count: usize,
+    initial: bool,
+}
+
 impl InitialSymbolScope {
+    fn view(&self) -> SymbolScope<'_> {
+        SymbolScope { indices: &self.indices[..self.count], module_count: TLS_DTV_WORDS - 1,
+            static_tls_count: TLS_DTV_WORDS - 1, initial: true }
+    }
     fn from_graph(graph: &InitialGraphState) -> Option<Self> {
         let mut scope = Self { indices: [0; MAX_OBJECTS], count: 1 };
         let mut next = 0;
@@ -60,7 +73,7 @@ struct Definition {
     section: u16,
 }
 
-unsafe fn definition(objects: &[Object; MAX_OBJECTS], owner: usize, index: usize) -> Option<Definition> {
+unsafe fn definition(objects: &[Object], owner: usize, index: usize) -> Option<Definition> {
     let object = objects.get(owner)?;
     if index == 0 || index >= object.symcount { return None; }
     let symbol = unsafe { object.symtab.add(index * 24) };
@@ -89,7 +102,7 @@ unsafe fn symbol_name(object: &Object, index: usize) -> Option<&[u8]> {
 /// for external references. Musl accepts the first weak definition in scope;
 /// it does not search on for a later strong definition.
 unsafe fn lookup(
-    scope: &InitialSymbolScope, objects: &[Object; MAX_OBJECTS],
+    scope: &SymbolScope<'_>, objects: &[Object],
     requestor: usize, index: usize, tls: bool, copy: bool,
 ) -> Option<Option<Definition>> {
     let requested = unsafe { definition(objects, requestor, index) }?;
@@ -103,7 +116,7 @@ unsafe fn lookup(
     }
     let name = unsafe { symbol_name(&objects[requestor], index) }?;
     if name.is_empty() { return None; }
-    for &owner in &scope.indices[..scope.count] {
+    for &owner in scope.indices {
         if copy && owner == 0 { continue; }
         for candidate in 1..objects[owner].symcount {
             let found = unsafe { definition(objects, owner, candidate) }?;
@@ -129,7 +142,7 @@ unsafe fn lookup(
     }
 }
 
-unsafe fn ordinary_address(objects: &[Object; MAX_OBJECTS], symbol: Definition) -> Option<u64> {
+unsafe fn ordinary_address(objects: &[Object], symbol: Definition) -> Option<u64> {
     if symbol.section == SHN_ABS && matches!(symbol.kind, 0 | 1) {
         return Some(symbol.value);
     }
@@ -145,7 +158,7 @@ unsafe fn ordinary_address(objects: &[Object; MAX_OBJECTS], symbol: Definition) 
 
 #[cfg(crabc_general_initial_tls_materialization_v1)]
 unsafe fn tls_coordinates(
-    scope: &InitialSymbolScope, objects: &[Object; MAX_OBJECTS], requestor: usize,
+    scope: &SymbolScope<'_>, objects: &[Object], requestor: usize,
     index: usize,
 ) -> Option<(usize, u64)> {
     let (owner, offset, size) = if index == 0 {
@@ -156,8 +169,10 @@ unsafe fn tls_coordinates(
         (symbol.owner, symbol.value, symbol.size)
     };
     let object = &objects[owner];
-    if object.tls_module_id == 0 || object.tls_module_id >= TLS_DTV_WORDS
-        || object.tls_memsz == 0 || object.tls_offset_below_tp < object.tls_memsz
+    if object.tls_module_id == 0 || object.tls_module_id > scope.module_count
+        || object.tls_memsz == 0
+        || (object.tls_module_id <= scope.static_tls_count && object.tls_offset_below_tp < object.tls_memsz)
+        || (object.tls_module_id > scope.static_tls_count && object.tls_offset_below_tp != 0)
         || offset.checked_add(size)? > object.tls_memsz as u64
     { return None; }
     Some((owner, offset))
@@ -175,7 +190,7 @@ fn is_private_runtime_symbol(name: &[u8]) -> bool {
 }
 
 unsafe fn word_value(
-    scope: &InitialSymbolScope, objects: &[Object; MAX_OBJECTS], owner: usize,
+    scope: &SymbolScope<'_>, objects: &[Object], owner: usize,
     kind: u32, index: usize, addend: i64,
 ) -> Option<u64> {
     let object = &objects[owner];
@@ -190,9 +205,20 @@ unsafe fn word_value(
         }
     }
     if index != 0 && is_private_runtime_symbol(unsafe { symbol_name(object, index) }?) {
+        if !scope.initial {
+            #[cfg(crabc_general_initial_tls_materialization_v1)]
+            if unsafe { symbol_name(object, index) }? == b"__tls_get_addr" {
+                let requested = unsafe { definition(objects, owner, index) }?;
+                return (matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT)
+                    && addend == 0 && requested.section == 0 && requested.binding == 1
+                    && requested.visibility == 0 && matches!(requested.kind, 0 | 2))
+                    .then_some(__tls_get_addr as *const () as usize as u64);
+            }
+            return None;
+        }
         // Preserve the existing exact weak/main-only data-wire admission;
         // this path must not turn the private descriptor into global scope.
-        return unsafe { relocation_value(kind, object, objects, index, addend) };
+        return unsafe { relocation_value(kind, object, objects.try_into().ok()?, index, addend) };
     }
     match kind {
         R_X86_64_RELATIVE if index == 0 => add_signed(object.base, addend),
@@ -215,6 +241,7 @@ unsafe fn word_value(
             let offset = add_signed(value, addend)?;
             if offset > module.tls_memsz as u64 { return None; }
             if kind == R_X86_64_DTPOFF64 { return Some(offset); }
+            if module.tls_module_id > scope.static_tls_count { return None; }
             let offset = i64::try_from(offset).ok()?;
             let placement = i64::try_from(module.tls_offset_below_tp).ok()?;
             Some(offset.checked_sub(placement)? as u64)
@@ -241,7 +268,7 @@ unsafe fn readable_memory(object: &Object, start: u64, length: u64) -> bool {
 }
 
 unsafe fn copy_relocation(
-    scope: &InitialSymbolScope, objects: &[Object; MAX_OBJECTS], owner: usize,
+    scope: &SymbolScope<'_>, objects: &[Object], owner: usize,
     offset: u64, index: usize, addend: i64,
 ) -> Option<CopyRelocation> {
     let destination = unsafe { definition(objects, owner, index) }?;
@@ -313,7 +340,7 @@ unsafe fn write_span(object: &Object, start: u64, length: u64, word: bool) -> Op
     Some(WriteSpan { start, length })
 }
 
-unsafe fn preflight_object(scope: &InitialSymbolScope, objects: &[Object; MAX_OBJECTS], owner: usize) -> Option<()> {
+unsafe fn preflight_object(scope: &SymbolScope<'_>, objects: &[Object], owner: usize) -> Option<()> {
     let object = &objects[owner];
     preflight_relocation_table_layout(object)?;
     let mut scratch = unsafe { RelocationScratch::new(object) }?;
@@ -356,6 +383,22 @@ unsafe fn preflight_object(scope: &InitialSymbolScope, objects: &[Object; MAX_OB
     Some(())
 }
 
+unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], owner: usize) -> Option<()> {
+    let object = &objects[owner];
+    for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
+        for index in 0..bytes / ELF64_RELA_SIZE {
+            let entry = unsafe { table.add(index * ELF64_RELA_SIZE) };
+            let info = unsafe { read_u64(entry.add(8)) };
+            let kind = info as u32;
+            if kind == R_NONE || kind == R_COPY { continue; }
+            let value = unsafe { word_value(scope, objects, owner, kind, (info >> 32) as usize, read_i64(entry.add(16))) }?;
+            let address = runtime_address(object.base, unsafe { read_u64(entry) })?;
+            unsafe { core::ptr::write_unaligned(address as *mut u64, value); }
+        }
+    }
+    unsafe { apply_relr_table(object) }
+}
+
 /// Relocate one admitted initial graph before protection, TLS copying, or callbacks.
 ///
 /// # Safety
@@ -363,26 +406,15 @@ unsafe fn preflight_object(scope: &InitialSymbolScope, objects: &[Object; MAX_OB
 /// table ranges were validated by parsing, destinations remain writable, and
 /// the caller exclusively owns mappings and metadata until this returns.
 pub(super) unsafe fn relocate_initial_graph(graph: &InitialGraphState, objects: &[Object; MAX_OBJECTS]) -> Option<()> {
-    let scope = InitialSymbolScope::from_graph(graph)?;
-    for owner in 0..scope.count {
+    let initial_scope = InitialSymbolScope::from_graph(graph)?;
+    let scope = initial_scope.view();
+    for owner in 0..scope.indices.len() {
         unsafe { preflight_object(&scope, objects, owner) }?;
     }
     // Libraries first, main last, matching musl. All copies form the final
     // phase so their source data includes ordinary symbol/relative fixups.
-    for owner in (1..scope.count).chain(core::iter::once(0)) {
-        let object = &objects[owner];
-        for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
-            for index in 0..bytes / ELF64_RELA_SIZE {
-                let entry = unsafe { table.add(index * ELF64_RELA_SIZE) };
-                let info = unsafe { read_u64(entry.add(8)) };
-                let kind = info as u32;
-                if kind == R_NONE || kind == R_COPY { continue; }
-                let value = unsafe { word_value(&scope, objects, owner, kind, (info >> 32) as usize, read_i64(entry.add(16))) }?;
-                let address = runtime_address(object.base, unsafe { read_u64(entry) })?;
-                unsafe { core::ptr::write_unaligned(address as *mut u64, value) };
-            }
-        }
-        unsafe { apply_relr_table(object) }?;
+    for owner in (1..scope.indices.len()).chain(core::iter::once(0)) {
+        unsafe { apply_word_relocations(&scope, objects, owner) }?;
     }
     let main = &objects[0];
     for index in 0..main.relasz / ELF64_RELA_SIZE {
@@ -393,6 +425,27 @@ pub(super) unsafe fn relocate_initial_graph(graph: &InitialGraphState, objects: 
         for index in 0..usize::try_from(copy.length).ok()? {
             unsafe { *(copy.destination as *mut u8).add(index) = *(copy.source as *const u8).add(index) };
         }
+    }
+    Some(())
+}
+
+/// Relocate only this transaction's runtime-new suffix. Existing mappings
+/// provide scope but are never rewritten; failure before apply leaves every
+/// destination untouched. The caller rolls back only newly mapped objects.
+/// # Safety
+/// Snapshot records borrow loader-owned readable ELF mappings under the
+/// mutation lock. `indices` contains only valid object indices and follows the
+/// admitted global-plus-dependency lookup order. New mappings are writable;
+/// their module IDs are monotonic, and only initial modules have IE placement.
+pub(super) unsafe fn relocate_runtime_objects(
+    objects: &[Object], indices: &[usize], first_new: usize, static_tls_count: usize,
+) -> Option<()> {
+    if first_new == 0 || first_new > objects.len() || indices.iter().any(|index| *index >= objects.len()) { return None; }
+    let scope = SymbolScope { indices, module_count: objects.iter().map(|object| object.tls_module_id).max().unwrap_or(0),
+        static_tls_count, initial: false };
+    for owner in first_new..objects.len() { unsafe { preflight_object(&scope, objects, owner) }?; }
+    for owner in first_new..objects.len() {
+        unsafe { apply_word_relocations(&scope, objects, owner) }?;
     }
     Some(())
 }

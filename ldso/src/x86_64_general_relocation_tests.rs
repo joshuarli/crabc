@@ -91,6 +91,52 @@ fn general_relr_scratch_exceeds_legacy_table_and_target_limits_without_weakening
     assert!(unsafe { RelocationScratch::new(&oversized) }.is_none());
 }
 
+#[test]
+fn runtime_relocation_scope_grows_past_initial_capacity_and_never_rewrites_retained_objects() {
+    let mut images: self::std::vec::Vec<Image> = (0..40).map(|_| Image::new()).collect();
+    for (index, image) in images.iter_mut().enumerate() {
+        image.data[0] = 0xfeed;
+        image.rela(0x1000, if index < 32 { 65535 } else { R_X86_64_RELATIVE }, 0, 0x1000);
+    }
+    let objects: self::std::vec::Vec<Object> = images.iter().enumerate().map(|(index, image)| image.object(index != 0)).collect();
+    let order: self::std::vec::Vec<usize> = (0..objects.len()).collect();
+    assert!(unsafe { relocate_runtime_objects(&objects, &order, 32, 0) }.is_some());
+    for (index, image) in images.iter().enumerate() {
+        assert_eq!(image.data[0], if index < 32 { 0xfeed } else { image.data.as_ptr() as u64 });
+    }
+}
+
+#[test]
+#[cfg(crabc_general_initial_tls_materialization_v1)]
+fn runtime_new_tls_supports_gd_but_rejects_ie_before_any_new_object_write() {
+    let mut main = Image::new();
+    let mut first = Image::new();
+    let mut provider = Image::new();
+    main.data[0] = 0xfeed;
+    first.data[0] = 0xbeef;
+    provider.data[0] = 0xcafe;
+    first.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1000);
+    provider.rela(0x1000, R_X86_64_TPOFF64, 0, 0);
+    let mut objects = [main.object(false), first.object(true), provider.object(true)];
+    objects[0].tls_module_id = 1;
+    objects[0].tls_memsz = 16;
+    objects[0].tls_offset_below_tp = 16;
+    objects[2].tls_module_id = 2;
+    objects[2].tls_memsz = 32;
+    assert!(unsafe { relocate_runtime_objects(&objects, &[0, 1, 2], 1, 1) }.is_none());
+    assert_eq!(main.data[0], 0xfeed);
+    assert_eq!(first.data[0], 0xbeef);
+    assert_eq!(provider.data[0], 0xcafe);
+    provider.relocations[0][1] = R_X86_64_DTPMOD64 as u64;
+    assert!(unsafe { relocate_runtime_objects(&objects, &[0, 1, 2], 1, 1) }.is_some());
+    assert_eq!(provider.data[0], 2);
+    assert_eq!(main.data[0], 0xfeed);
+    provider.relocations[0][1] = R_X86_64_DTPOFF64 as u64;
+    provider.relocations[0][2] = 31;
+    assert!(unsafe { relocate_runtime_objects(&objects, &[0, 1, 2], 2, 1) }.is_some());
+    assert_eq!(provider.data[0], 31);
+}
+
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
 fn installed_runtime_function_imports_validate_shape_before_any_graph_write() {
@@ -253,8 +299,9 @@ fn symbol_scope_is_breadth_first_and_first_weak_definition_wins() {
     }
     graph.attach_needed(0, 1).unwrap(); graph.attach_needed(1, 2).unwrap();
     graph.attach_needed(0, 3).unwrap(); graph.finish_discovery(0).unwrap();
-    let scope = InitialSymbolScope::from_graph(&graph).unwrap();
-    assert_eq!(&scope.indices[..scope.count], &[0, 1, 3, 2]);
+    let initial_scope = InitialSymbolScope::from_graph(&graph).unwrap();
+    let scope = initial_scope.view();
+    assert_eq!(scope.indices, &[0, 1, 3, 2]);
     let mut main = Image::new(); let mut left = Image::new();
     let mut shared = Image::new(); let mut right = Image::new();
     main.symbol(1, 1, 1, 0, 0, 0, 8);
@@ -272,7 +319,8 @@ fn symbol_scope_is_breadth_first_and_first_weak_definition_wins() {
 fn local_protected_hidden_and_undefined_weak_references_keep_distinct_scopes() {
     let mut main = Image::new(); let mut provider = Image::new();
     main.symbol(1, 1, 1, 0, 1, 0x1000, 8);
-    let scope = InitialSymbolScope::from_graph(&graph(2)).unwrap();
+    let initial_scope = InitialSymbolScope::from_graph(&graph(2)).unwrap();
+    let scope = initial_scope.view();
     let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
     objects[0] = main.object(false); objects[1] = provider.object(true);
     for (binding, visibility) in [(0, 0), (1, 2), (1, 3)] {
@@ -297,7 +345,8 @@ fn initial_exec_and_dynamic_offsets_share_retained_module_coordinates_and_checke
     objects[0] = main.object(false); objects[1] = provider.object(true);
     objects[1].tls_module_id = 2; objects[1].tls_memsz = 64;
     objects[1].tls_offset_below_tp = 8192; objects[1].tls_align = 4096;
-    let scope = InitialSymbolScope::from_graph(&graph(2)).unwrap();
+    let initial_scope = InitialSymbolScope::from_graph(&graph(2)).unwrap();
+    let scope = initial_scope.view();
     for addend in [-8, 0, 4, 56] {
         let offset = 8 + addend;
         assert_eq!(unsafe { word_value(&scope, &objects, 0, R_X86_64_DTPOFF64, 1, addend) }, Some(offset as u64));

@@ -75,6 +75,9 @@ mod x86_64_general_initial_tls_state;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_initial_worker_tls.rs"]
 mod x86_64_initial_worker_tls;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_runtime_tls_view.rs"]
+mod x86_64_runtime_tls_view;
 #[cfg(crabc_general_initial_graph)]
 use x86_64_initial_graph_state::ObjectIdentity;
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
@@ -2331,6 +2334,13 @@ pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
     let thread_pointer = read_thread_pointer();
     if thread_pointer == 0 {
         return core::ptr::null_mut();
+    }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    {
+        let view = unsafe { x86_64_runtime_tls_view::current(thread_pointer as *mut u8) };
+        if !view.is_null() {
+            return unsafe { x86_64_runtime_tls_view::resolve(view, module_id, offset) };
+        }
     }
     let dtv = core::ptr::read_unaligned(
         (thread_pointer as *const u8).add(core::mem::size_of::<usize>()) as *const usize,
