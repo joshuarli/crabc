@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -18,6 +20,35 @@ DISPATCHER = ROOT / "scripts/dev-x86_64.sh"
 
 
 class OwnedEnvironmentLifecycleTests(unittest.TestCase):
+    def assert_parser_usage(self, *arguments: str) -> None:
+        temporary_root = ROOT / ".work" / "x86_64" / "tmp"
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="owned-environment-lifecycle-parser.", dir=temporary_root
+        ) as temporary:
+            tools = Path(temporary) / "tools"
+            tools.mkdir()
+            python = tools / "python3"
+            python.write_text("#!/bin/sh\nexit 79\n", encoding="utf-8")
+            python.chmod(0o755)
+            environment = dict(os.environ)
+            environment["PATH"] = f"{tools}{os.pathsep}{environment['PATH']}"
+            result = subprocess.run(
+                ["bash", str(RUNNER), *arguments],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(
+            result.stderr,
+            f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n",
+        )
+
     def test_installed_lifecycle_matrix_is_musl_shaped_and_caller_serialized(
         self,
     ) -> None:
@@ -119,20 +150,18 @@ class OwnedEnvironmentLifecycleTests(unittest.TestCase):
         )
 
     def test_static_replay_parser_rejects_a_missing_sysroot_path(self) -> None:
-        result = subprocess.run(
-            ["bash", str(RUNNER), "--static-sysroot"],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        self.assert_parser_usage("--static-sysroot")
 
-        self.assertEqual(result.returncode, 2)
-        self.assertEqual(result.stdout, "")
-        self.assertEqual(
-            result.stderr,
-            f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n",
-        )
+    def test_static_replay_parser_rejects_ambiguous_supplied_products(self) -> None:
+        for label, arguments in (
+            ("empty static", ("--static-sysroot", "")),
+            ("empty dynamic", ("",)),
+            ("option static", ("--static-sysroot", "--not-a-sysroot")),
+            ("duplicate static", ("--static-sysroot", "/one", "--static-sysroot", "/two")),
+            ("duplicate dynamic", ("/one", "/two")),
+        ):
+            with self.subTest(label=label):
+                self.assert_parser_usage(*arguments)
 
     def test_static_replay_parser_keeps_one_dynamic_positional_product(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")
@@ -140,9 +169,12 @@ class OwnedEnvironmentLifecycleTests(unittest.TestCase):
         for required in (
             "provided_static=''",
             "provided_dynamic=''",
+            "static_was_supplied=0",
             "dynamic_was_supplied=0",
             "--static-sysroot)",
-            "[ -z \"$provided_dynamic\" ] || usage",
+            "[ \"$static_was_supplied\" -eq 0 ] || usage",
+            "[ \"$dynamic_was_supplied\" -eq 0 ] || usage",
+            "case \"$2\" in --*) usage ;; esac",
             "owned environment-lifecycle {name} product must be a checkout .work directory",
             "elif [ \"$dynamic_was_supplied\" -eq 0 ]; then",
             'static_product="$provided_static"',

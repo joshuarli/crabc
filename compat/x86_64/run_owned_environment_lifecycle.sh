@@ -23,30 +23,35 @@ usage() {
 
 provided_static=''
 provided_dynamic=''
+static_was_supplied=0
 dynamic_was_supplied=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --static-sysroot)
             [ "$#" -ge 2 ] || usage
-            [ -z "$provided_static" ] || usage
+            [ "$static_was_supplied" -eq 0 ] || usage
+            [ -n "$2" ] || usage
+            case "$2" in --*) usage ;; esac
             provided_static="$2"
+            static_was_supplied=1
             shift 2
             ;;
         --*)
             usage
             ;;
         *)
-            [ -z "$provided_dynamic" ] || usage
+            [ "$dynamic_was_supplied" -eq 0 ] || usage
+            [ -n "$1" ] || usage
             provided_dynamic="$1"
             dynamic_was_supplied=1
             shift
             ;;
     esac
 done
-if [ -n "$provided_static" ]; then
+if [ "$static_was_supplied" -eq 1 ]; then
     provided_static="$(realpath -e "$provided_static")"
 fi
-if [ -n "$provided_dynamic" ]; then
+if [ "$dynamic_was_supplied" -eq 1 ]; then
     provided_dynamic="$(realpath -e "$provided_dynamic")"
 fi
 
@@ -240,7 +245,7 @@ assert_dynamic_providers() {
     done
 }
 
-if [ -z "$provided_dynamic" ]; then
+if [ "$dynamic_was_supplied" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
         --output "$work/dynamic-product" >"$work/dynamic-build.json"
     provided_dynamic="$work/dynamic-product"
@@ -271,7 +276,7 @@ for scenario in "$NORMAL_SCENARIO" "$ALLOCATION_SCENARIO"; do
 done
 
 static_product=''
-if [ -n "$provided_static" ]; then
+if [ "$static_was_supplied" -eq 1 ]; then
     static_product="$provided_static"
 elif [ "$dynamic_was_supplied" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
