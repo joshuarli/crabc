@@ -140,10 +140,11 @@ artifacts are not equivalent.
 upstream libc-test aggregate. It keeps the pinned source graph, installed
 header traces, same-object pinned-musl links, sealed full product and oracle
 identities, and fresh raw/candidate runtime roots in one non-promoting report.
-Its source-selected normal kernel-PIE corpus is separate from the 50-case
-all-entry dynamic-product qualification. Its leaf requires a materialized
-dynamic product and runs only through the root-capable native container command
-registered by the dispatcher.
+Its source-selected normal kernel-PIE corpus includes only audited private-root
+fixtures for named shared memory, `posix_spawnp("echo")`, and the one `$ORIGIN`
+loader case; it is separate from the 50-case all-entry dynamic-product
+qualification. Its leaf requires a materialized dynamic product and runs only
+through the root-capable native container command registered by the dispatcher.
 
 The ordered qualification chain is:
 

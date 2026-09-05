@@ -91,10 +91,18 @@ a test target never acquires a second `main` from the runner.
 
 For every runtime unit, raw musl and candidate each receive a fresh root. The
 candidate root comes from the retained copied product; the raw root contains
-only pinned musl's loader and `libc.so`. Both receive only private `/tmp`,
+only pinned musl's loader and `libc.so`. Both receive private `/tmp`,
 `/dev/null`, and `/dev/zero` plus the runner, test binary, and declared DSO
-payload. The raw root records the actual copied loader and libc hashes before
-it is reclaimed.
+payload. Four source-audited exceptions add no broader host topology:
+`functional/sem_open`, `functional/pthread_cancel-points`, and
+`regression/sem_close-unmap` receive an empty mode-01777 `/dev/shm` for musl's
+named-semaphore and shared-memory backing; `regression/tls_get_new-dtv`
+receives only `/proc`, `/proc/self`, and
+`/proc/self/exe -> /regression/tls_get_new-dtv`. Musl 1.2.6 reads that
+kernel-entry link while expanding the target's source-selected `$ORIGIN`
+runpath. The runner does not mount `/proc`, emulate any other procfs node, or
+share those roots between units. The raw root records the actual copied loader
+and libc hashes before it is reclaimed.
 
 The four upstream shell-dependent targets receive a declared control fixture.
 It copies the pinned-image BusyBox and the exact pinned-musl oracle loader to `/control/busybox` and
@@ -106,13 +114,24 @@ keeps the candidate product's `/lib/ld-musl-x86_64.so.1` alias intact; the
 control closure is fixture input, never a candidate provider or an extra
 libc-test unit.
 
+`functional/spawn` separately receives an `external_echo_fixture`: its source
+calls `posix_spawnp("echo", ...)`, so each side gets its own installed-driver
+`/bin/echo` launcher. That launcher enters the same pinned BusyBox and musl
+control closure with the explicit `echo` applet. Its source, installed-driver
+object, header trace, and candidate/raw links are retained independently from
+the shell fixture. Neither fixture admits a host executable or changes a
+candidate loader alias.
+
 Before and after each execution, the runner writes a retained
 `execution/<unit>/<side>.root-payload-{before,after}.json`. Each phase binds
 the copied candidate payload and aliases, or the copied raw loader/libc,
-along with the declared programs and controls. The runtime record exposes the
-two phase artifacts as `root_payload.before` and `root_payload.after`, with
-`unchanged: true`, before the private root is reclaimed. No target link or
-runtime root obtains a host libc, CRT, loader, or header.
+along with the declared programs and controls. Its sorted
+`filesystem_fixture` roster binds every source-selected directory mode or
+literal symlink target before and after execution; fixture-owned directories
+reject undeclared children. The runtime record exposes the two phase artifacts
+as `root_payload.before` and `root_payload.after`, with `unchanged: true`,
+before the private root is reclaimed. No target link or runtime root obtains a
+host libc, CRT, loader, header, or general procfs view.
 
 Execution uses upstream `src/common/runtest.c` through its normal Makefile
 form, `/runtest -w '' TARGET`: the explicit empty `-w` preserves the empty

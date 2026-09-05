@@ -110,6 +110,22 @@ SHELL_RUNTIME_UNITS = frozenset(
         "regression/execle-env",
     }
 )
+ECHO_RUNTIME_UNITS = frozenset({"functional/spawn"})
+
+# These are the only upstream source units whose normal runtime behavior needs
+# a private-root node beyond the generic `/tmp`, `/dev/null`, and `/dev/zero`
+# topology.  Named semaphores and `shm_open` use musl's `/dev/shm` backing;
+# `tls_get_new-dtv` links its helper with `$ORIGIN`, which musl 1.2.6 obtains
+# from `/proc/self/exe` on a kernel-entry executable.  Keep this a finite
+# source-derived mapping rather than mounting or emulating a general `/proc`.
+SHARED_MEMORY_RUNTIME_UNITS = frozenset(
+    {
+        "functional/sem_open",
+        "functional/pthread_cancel-points",
+        "regression/sem_close-unmap",
+    }
+)
+TLS_ORIGIN_RUNTIME_UNIT = "regression/tls_get_new-dtv"
 
 
 class EvidenceError(RuntimeError):
@@ -1002,6 +1018,25 @@ int main(int argc, char *argv[])
 	return 127;
 }
 '''
+CONTROL_ECHO_SOURCE = b'''#include <unistd.h>
+
+extern char **environ;
+
+int main(int argc, char *argv[])
+{
+	char *command[argc + 3];
+	int index;
+
+	command[0] = "/control/ld-musl-x86_64.so.1";
+	command[1] = "/control/busybox";
+	command[2] = "echo";
+	for (index = 1; index < argc; index++)
+		command[index + 2] = argv[index];
+	command[argc + 2] = 0;
+	execve(command[0], command, environ);
+	return 127;
+}
+'''
 
 
 def physical_control_file(path: Path, description: str) -> Path:
@@ -1018,7 +1053,7 @@ def pinned_control_loader() -> Path:
     """Return the exact pinned-musl loader used by the raw oracle roots.
 
     The image may expose another musl loader at its conventional host path.
-    A shell fixture must not make that ambient runtime part of either side's
+    A control fixture must not make that ambient runtime part of either side's
     execution closure: its BusyBox process is explicitly started by the same
     byte-identified loader as the pinned raw runtime.
     """
@@ -1026,41 +1061,41 @@ def pinned_control_loader() -> Path:
     return physical(ORACLE_LIBC, "pinned musl control loader", executable=True)
 
 
-def shell_fixture(
+def fixed_control_fixture(
     work: Path, product: Path, compiler: Path, compiler_environment: dict[str, str],
-    link_environment: dict[str, str], driver_ready: bool,
-    oracle: dict[str, Any],
+    link_environment: dict[str, str], driver_ready: bool, oracle: dict[str, Any], *,
+    fixture_name: str, launcher: str, source_bytes: bytes,
 ) -> dict[str, Any]:
-    """Build the explicit `/bin/sh` control fixture without changing aliases.
+    """Build one explicit BusyBox control launcher through both runtimes.
 
-    The product keeps its complete loader payload, including the musl-name
-    alias.  A side-specific launcher at `/bin/sh` enters a separately copied
-    BusyBox+musl control closure under `/control`; its one installed-driver
-    object is linked once against each runtime.  This is fixture evidence, not
-    a 435th libc-test source unit or a candidate runtime provider.
+    The launcher is compiled once through the installed driver and linked once
+    against each runtime.  Its process immediately enters the separately
+    copied pinned-musl+BusyBox closure, so the control program cannot select a
+    product loader alias or an ambient host executable.
     """
 
     work.mkdir(parents=True, exist_ok=False)
-    physical(work, "external shell evidence directory", directory=True)
+    physical(work, f"external {fixture_name} evidence directory", directory=True)
     busybox = physical_control_file(Path("/bin/busybox"), "controlled BusyBox")
     loader = pinned_control_loader()
-    source = work / "shell-launcher.c"
-    source.write_bytes(CONTROL_SHELL_SOURCE)
-    source_record = artifact(source, "control shell launcher source")
+    source = work / f"{fixture_name}-launcher.c"
+    source.write_bytes(source_bytes)
+    source_record = artifact(source, f"control {fixture_name} launcher source")
     loader_record = artifact(loader, "controlled musl loader")
     oracle_files = oracle.get("files")
     if not isinstance(oracle_files, dict) or loader_record["sha256"] != oracle_files.get("loader", {}).get("sha256"):
-        fail("controlled shell loader differs from the pinned musl runtime")
+        fail(f"controlled {fixture_name} loader differs from the pinned musl runtime")
     control = {
         "busybox": artifact(busybox, "controlled BusyBox"),
         "loader": loader_record,
-        "layout": {"busybox": CONTROL_BUSYBOX, "loader": CONTROL_LOADER, "launcher": "/bin/sh"},
+        "layout": {"busybox": CONTROL_BUSYBOX, "loader": CONTROL_LOADER, "launcher": launcher},
     }
-    output = work / "shell-launcher.o"
-    trace = work / "shell-launcher.headers.stderr"
+    output = work / f"{fixture_name}-launcher.o"
+    trace = work / f"{fixture_name}-launcher.headers.stderr"
     header = run_capture(
         header_command(compiler, product, source, shared_object=False, quote_dirs=(), kind="runtime"),
-        cwd=work, environment=compiler_environment, stdout=work / "shell-launcher.headers.stdout", stderr=trace,
+        cwd=work, environment=compiler_environment,
+        stdout=work / f"{fixture_name}-launcher.headers.stdout", stderr=trace,
     )
     paths = header_trace_paths(trace)
     headers = {
@@ -1069,7 +1104,7 @@ def shell_fixture(
             for path in paths
         ) else "failed",
         "record": header,
-        "trace": artifact(trace, "control shell header trace"),
+        "trace": artifact(trace, f"control {fixture_name} header trace"),
         "trace_paths": paths,
     }
     command = compile_command(product, source, output, shared_object=False, quote_dirs=(), kind="runtime")
@@ -1081,33 +1116,63 @@ def shell_fixture(
         }
     translation = run_capture(
         command, cwd=work, environment=compiler_environment,
-        stdout=work / "shell-launcher.compile.stdout", stderr=work / "shell-launcher.compile.stderr",
+        stdout=work / f"{fixture_name}-launcher.compile.stdout",
+        stderr=work / f"{fixture_name}-launcher.compile.stderr",
     )
     if translation["exit_status"] != 0 or not output.is_file() or output.is_symlink():
         return {
-            "status": "failed", "reason": "control shell launcher did not translate through the installed driver",
+            "status": "failed", "reason": f"control {fixture_name} launcher did not translate through the installed driver",
             "source": source_record, "control": control, "header_translation": headers,
             "candidate_translation": {"status": "failed", "record": translation, "object": None},
         }
-    object_record = artifact(output, "control shell launcher object")
-    candidate_output = work / "candidate-shell-launcher"
-    oracle_output = work / "oracle-shell-launcher"
+    object_record = artifact(output, f"control {fixture_name} launcher object")
+    candidate_output = work / f"candidate-{fixture_name}-launcher"
+    oracle_output = work / f"oracle-{fixture_name}-launcher"
     candidate = candidate_link(
-        product=product, environment=link_environment, output=candidate_output, evidence=work / "shell-launcher.candidate-link",
-        objects=[output], runpath="/usr/lib",
+        product=product, environment=link_environment, output=candidate_output,
+        evidence=work / f"{fixture_name}-launcher.candidate-link", objects=[output], runpath="/usr/lib",
     )
-    oracle = oracle_link(
-        output=oracle_output, evidence=work / "shell-launcher.oracle-link", environment=link_environment,
-        objects=[output], runpath="/usr/lib",
+    oracle_link_result = oracle_link(
+        output=oracle_output, evidence=work / f"{fixture_name}-launcher.oracle-link",
+        environment=link_environment, objects=[output], runpath="/usr/lib",
     )
-    status = "passed" if headers["status"] == "passed" and candidate.get("status") == "passed" and oracle.get("status") == "passed" else "failed"
+    status = "passed" if (
+        headers["status"] == "passed" and candidate.get("status") == "passed"
+        and oracle_link_result.get("status") == "passed"
+    ) else "failed"
     return {
         "status": status, "source": source_record, "control": control, "header_translation": headers,
         "candidate_translation": {"status": "passed", "record": translation, "object": object_record},
-        "candidate_link": candidate, "oracle_link": oracle,
-        "candidate_launcher": artifact(candidate_output, "candidate control shell launcher") if candidate.get("status") == "passed" else None,
-        "oracle_launcher": artifact(oracle_output, "pinned-musl control shell launcher") if oracle.get("status") == "passed" else None,
+        "candidate_link": candidate, "oracle_link": oracle_link_result,
+        "candidate_launcher": artifact(candidate_output, f"candidate control {fixture_name} launcher")
+        if candidate.get("status") == "passed" else None,
+        "oracle_launcher": artifact(oracle_output, f"pinned-musl control {fixture_name} launcher")
+        if oracle_link_result.get("status") == "passed" else None,
     }
+
+
+def shell_fixture(
+    work: Path, product: Path, compiler: Path, compiler_environment: dict[str, str],
+    link_environment: dict[str, str], driver_ready: bool, oracle: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the existing source-selected `/bin/sh` control closure."""
+
+    return fixed_control_fixture(
+        work, product, compiler, compiler_environment, link_environment, driver_ready, oracle,
+        fixture_name="shell", launcher="/bin/sh", source_bytes=CONTROL_SHELL_SOURCE,
+    )
+
+
+def echo_fixture(
+    work: Path, product: Path, compiler: Path, compiler_environment: dict[str, str],
+    link_environment: dict[str, str], driver_ready: bool, oracle: dict[str, Any],
+) -> dict[str, Any]:
+    """Build the narrow `/bin/echo` closure required by `functional/spawn`."""
+
+    return fixed_control_fixture(
+        work, product, compiler, compiler_environment, link_environment, driver_ready, oracle,
+        fixture_name="echo", launcher="/bin/echo", source_bytes=CONTROL_ECHO_SOURCE,
+    )
 
 
 def make_candidate_root(product: Path, destination: Path) -> None:
@@ -1165,6 +1230,132 @@ def prepare_execution_root(root: Path) -> None:
     (root / "dev").mkdir(mode=0o755, exist_ok=False)
     make_char_device(root / "dev/null", 3)
     make_char_device(root / "dev/zero", 5)
+
+
+def filesystem_fixture_for_unit(unit_id: str) -> list[dict[str, str]]:
+    """Return the exact source-required filesystem nodes for one runtime unit.
+
+    The returned JSON-safe records are intentionally separate from copied
+    program/control files: directories and a kernel-visible symlink have no
+    source byte hash, but their type, mode, target, and absence of undeclared
+    children are still part of the observed private-root contract.
+    """
+
+    if unit_id in SHARED_MEMORY_RUNTIME_UNITS:
+        return [{"path": "/dev/shm", "type": "directory", "mode": "01777"}]
+    if unit_id == TLS_ORIGIN_RUNTIME_UNIT:
+        return [
+            {"path": "/proc", "type": "directory", "mode": "0755"},
+            {"path": "/proc/self", "type": "directory", "mode": "0755"},
+            {"path": "/proc/self/exe", "type": "symlink", "target": f"/{unit_id}"},
+        ]
+    return []
+
+
+def fixture_relative_path(value: str, description: str) -> Path:
+    """Validate one canonical absolute private-root fixture pathname."""
+
+    if not isinstance(value, str) or not value.startswith("/"):
+        fail(f"{description} is not an absolute pathname")
+    relative = Path(value[1:])
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        fail(f"{description} has a non-canonical pathname")
+    canonical = "/" + relative.as_posix()
+    if value != canonical:
+        fail(f"{description} has a non-canonical pathname")
+    return relative
+
+
+def normalized_filesystem_fixture(entries: Sequence[dict[str, str]]) -> list[dict[str, str]]:
+    """Reject malformed or broad fixtures before a root is populated."""
+
+    normalized: list[dict[str, str]] = []
+    paths: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            fail("filesystem fixture entry is not an object")
+        path = entry.get("path")
+        kind = entry.get("type")
+        if not isinstance(path, str) or not isinstance(kind, str):
+            fail("filesystem fixture entry has no path or type")
+        fixture_relative_path(path, "filesystem fixture path")
+        if path in paths:
+            fail("filesystem fixture repeats a pathname")
+        paths.add(path)
+        if kind == "directory":
+            if set(entry) != {"path", "type", "mode"}:
+                fail("filesystem fixture directory fields drifted")
+            mode = entry.get("mode")
+            if not isinstance(mode, str) or re.fullmatch(r"0[0-7]{3,4}", mode) is None:
+                fail("filesystem fixture directory mode is malformed")
+            normalized.append({"path": path, "type": kind, "mode": mode})
+        elif kind == "symlink":
+            if set(entry) != {"path", "type", "target"}:
+                fail("filesystem fixture symlink fields drifted")
+            target = entry.get("target")
+            if not isinstance(target, str):
+                fail("filesystem fixture symlink target is malformed")
+            fixture_relative_path(target, "filesystem fixture symlink target")
+            normalized.append({"path": path, "type": kind, "target": target})
+        else:
+            fail("filesystem fixture type is unsupported")
+    if normalized != sorted(normalized, key=lambda item: item["path"]):
+        fail("filesystem fixture paths are not sorted")
+    return normalized
+
+
+def fixture_directory_children(entries: Sequence[dict[str, str]], directory: str) -> list[str]:
+    """Return only declared immediate children of a fixture-owned directory."""
+
+    return sorted(
+        Path(entry["path"]).name for entry in entries
+        if str(Path(entry["path"]).parent) == directory
+    )
+
+
+def materialize_filesystem_fixture(root: Path, entries: Sequence[dict[str, str]]) -> list[dict[str, str]]:
+    """Create one narrow source-selected fixture without replacing root inputs."""
+
+    normalized = normalized_filesystem_fixture(entries)
+    for entry in normalized:
+        destination = root / fixture_relative_path(entry["path"], "filesystem fixture destination")
+        if destination.exists() or destination.is_symlink():
+            fail(f"filesystem fixture would replace an existing root path: {entry['path']}")
+        physical(destination.parent, "filesystem fixture parent", directory=True)
+        if entry["type"] == "directory":
+            destination.mkdir(mode=int(entry["mode"], 8), exist_ok=False)
+            os.chmod(destination, int(entry["mode"], 8))
+        else:
+            target = root / fixture_relative_path(entry["target"], "filesystem fixture symlink target")
+            physical(target, "filesystem fixture symlink target", executable=True)
+            os.symlink(entry["target"], destination)
+    return verify_filesystem_fixture(root, normalized)
+
+
+def verify_filesystem_fixture(root: Path, entries: Sequence[dict[str, str]]) -> list[dict[str, str]]:
+    """Bind type, mode, target, and exact fixture-owned children pre and post run."""
+
+    normalized = normalized_filesystem_fixture(entries)
+    for entry in normalized:
+        destination = root / fixture_relative_path(entry["path"], "filesystem fixture destination")
+        try:
+            mode = destination.lstat().st_mode
+        except OSError as error:
+            raise EvidenceError(f"filesystem fixture path is absent: {entry['path']}") from error
+        if entry["type"] == "directory":
+            if not stat.S_ISDIR(mode) or stat.S_ISLNK(mode):
+                fail(f"filesystem fixture directory type drifted: {entry['path']}")
+            observed_mode = f"0{stat.S_IMODE(mode):o}"
+            if observed_mode != entry["mode"]:
+                fail(f"filesystem fixture directory mode drifted: {entry['path']}")
+            observed_children = sorted(child.name for child in destination.iterdir())
+            expected_children = fixture_directory_children(normalized, entry["path"])
+            if observed_children != expected_children:
+                fail(f"filesystem fixture directory has undeclared child: {entry['path']}")
+        else:
+            if not stat.S_ISLNK(mode) or os.readlink(destination) != entry["target"]:
+                fail(f"filesystem fixture symlink target drifted: {entry['path']}")
+    return normalized
 
 
 def unit_dso_roles(unit_id: str) -> dict[str, Any]:
@@ -1400,32 +1591,58 @@ def copied_payload_at_root(root: Path, source: Path, destination: Path, descript
     }
 
 
-def copy_shell_fixture_record(root: Path, fixture: dict[str, Any], side: str) -> list[dict[str, Any]]:
-    """Install the declared control closure without changing product aliases."""
+def copy_control_fixture_record(
+    root: Path, fixture: dict[str, Any], side: str, *, fixture_name: str, launcher_destination: str,
+) -> list[dict[str, Any]]:
+    """Install one declared BusyBox closure without changing product aliases."""
 
     if fixture.get("status") != "passed":
-        fail("shell-dependent source has no complete declared control fixture")
+        fail(f"{fixture_name}-dependent source has no complete declared control fixture")
     control = fixture.get("control")
     launcher = fixture.get(f"{side}_launcher")
     if not isinstance(control, dict) or not isinstance(launcher, dict):
-        fail("shell control fixture record is malformed")
+        fail(f"{fixture_name} control fixture record is malformed")
     busybox = control.get("busybox")
     loader = control.get("loader")
     if not isinstance(busybox, dict) or not isinstance(loader, dict):
-        fail("shell control fixture lacks BusyBox or loader identity")
-    destinations = (root / "control", root / "bin/sh")
+        fail(f"{fixture_name} control fixture lacks BusyBox or loader identity")
+    expected_layout = {
+        "busybox": CONTROL_BUSYBOX,
+        "loader": CONTROL_LOADER,
+        "launcher": launcher_destination,
+    }
+    if control.get("layout") != expected_layout:
+        fail(f"{fixture_name} control fixture layout drifted")
+    destination = root / launcher_destination.lstrip("/")
+    destinations = (root / "control", destination)
     if any(path.exists() or path.is_symlink() for path in destinations):
-        fail("shell control fixture would replace a product payload path")
+        fail(f"{fixture_name} control fixture would replace a product payload path")
     return [
         copied_payload_at_root(root, Path(busybox["path"]), root / CONTROL_BUSYBOX.lstrip("/"), "controlled BusyBox"),
         copied_payload_at_root(root, Path(loader["path"]), root / CONTROL_LOADER.lstrip("/"), "controlled musl loader"),
-        copied_payload_at_root(root, Path(launcher["path"]), root / "bin/sh", f"{side} control shell launcher"),
+        copied_payload_at_root(root, Path(launcher["path"]), destination, f"{side} control {fixture_name} launcher"),
     ]
+
+
+def copy_shell_fixture_record(root: Path, fixture: dict[str, Any], side: str) -> list[dict[str, Any]]:
+    """Install the source-selected shell control closure."""
+
+    return copy_control_fixture_record(
+        root, fixture, side, fixture_name="shell", launcher_destination="/bin/sh",
+    )
+
+
+def copy_echo_fixture_record(root: Path, fixture: dict[str, Any], side: str) -> list[dict[str, Any]]:
+    """Install the source-selected `posix_spawnp("echo")` control closure."""
+
+    return copy_control_fixture_record(
+        root, fixture, side, fixture_name="echo", launcher_destination="/bin/echo",
+    )
 
 
 def runtime_root_payload_record(
     *, root: Path, runner: Path, executable: Path, unit_id: str, support: dict[str, Path],
-    external_shell: dict[str, Any] | None, side: str,
+    external_shell: dict[str, Any] | None, external_echo: dict[str, Any] | None, side: str,
 ) -> dict[str, Any]:
     """Populate one private root according to the upstream unit topology."""
 
@@ -1444,7 +1661,16 @@ def runtime_root_payload_record(
             f"initial {dso_id} DSO",
         ))
     shell = copy_shell_fixture_record(root, external_shell, side) if external_shell is not None else []
-    return {"program": copied, "control_fixture": shell, "topology": roles}
+    echo = copy_echo_fixture_record(root, external_echo, side) if external_echo is not None else []
+    if shell and echo:
+        fail("one runtime unit cannot install two conflicting control closures")
+    filesystem_fixture = materialize_filesystem_fixture(root, filesystem_fixture_for_unit(unit_id))
+    return {
+        "program": copied,
+        "control_fixture": [*shell, *echo],
+        "filesystem_fixture": filesystem_fixture,
+        "topology": roles,
+    }
 
 
 def copied_product_payload_at_root(root: Path, expected: dict[str, Any]) -> dict[str, Any]:
@@ -1518,6 +1744,7 @@ def write_root_payload_phase(
 
     entries = [*payload["program"], *payload["control_fixture"]]
     copied = copied_root_files(root, entries)
+    filesystem_fixture = verify_filesystem_fixture(root, payload["filesystem_fixture"])
     if side == "candidate":
         runtime = {"candidate_product": copied_product_payload_at_root(root, candidate_product)}
         source_bindings = {
@@ -1539,6 +1766,7 @@ def write_root_payload_phase(
         "runtime": runtime,
         "copied_files": copied,
         "control_fixture": payload["control_fixture"],
+        "filesystem_fixture": filesystem_fixture,
         "topology": payload["topology"],
         "canonical_source_bindings": source_bindings,
     }
@@ -1560,7 +1788,8 @@ def remove_execution_root(root: Path, work: Path) -> None:
 
 def execute_runtime_side(
     *, side: str, work: Path, product: Path, unit_id: str, runner: Path, executable: Path,
-    support: dict[str, Path], external_shell: dict[str, Any] | None, oracle: dict[str, Any],
+    support: dict[str, Path], external_shell: dict[str, Any] | None, external_echo: dict[str, Any] | None,
+    oracle: dict[str, Any],
     candidate_product: dict[str, Any],
 ) -> dict[str, Any]:
     """Observe one candidate or raw runtime independently in a fresh root."""
@@ -1581,7 +1810,7 @@ def execute_runtime_side(
         prepare_execution_root(root)
         payload = runtime_root_payload_record(
             root=root, runner=runner, executable=executable, unit_id=unit_id,
-            support=support, external_shell=external_shell, side=side,
+            support=support, external_shell=external_shell, external_echo=external_echo, side=side,
         )
         root_before = write_root_payload_phase(
             roots=roots, root=root, side=side, phase="before", runtime_base=runtime_base,
@@ -1619,12 +1848,20 @@ def runtime_observation(
     *, work: Path, product: Path, unit_id: str, candidate_runner: Path | None, oracle_runner: Path | None,
     candidate_executable: Path | None, oracle_executable: Path | None,
     candidate_support: dict[str, Path], oracle_support: dict[str, Path], external_shell: dict[str, Any] | None,
+    external_echo: dict[str, Any] | None,
     oracle_identity: dict[str, Any], candidate_product: dict[str, Any],
 ) -> dict[str, Any]:
     """Run raw and candidate sides independently, then compare exact outputs."""
 
     if external_shell is not None and external_shell.get("status") != "passed":
         reason = "the declared control shell fixture is incomplete"
+        return {
+            "oracle": blocked(reason),
+            "candidate": blocked(reason),
+            "comparison": blocked(reason),
+        }
+    if external_echo is not None and external_echo.get("status") != "passed":
+        reason = "the declared control echo fixture is incomplete"
         return {
             "oracle": blocked(reason),
             "candidate": blocked(reason),
@@ -1641,7 +1878,8 @@ def runtime_observation(
             execute_runtime_side(
                 side="oracle", work=work, product=product, unit_id=unit_id,
                 runner=oracle_runner, executable=oracle_executable, support=oracle_support,
-                external_shell=external_shell, oracle=oracle_identity, candidate_product=candidate_product,
+                external_shell=external_shell, external_echo=external_echo,
+                oracle=oracle_identity, candidate_product=candidate_product,
             )
         )
     )
@@ -1651,7 +1889,8 @@ def runtime_observation(
             execute_runtime_side(
                 side="candidate", work=work, product=product, unit_id=unit_id,
                 runner=candidate_runner, executable=candidate_executable, support=candidate_support,
-                external_shell=external_shell, oracle=oracle_identity, candidate_product=candidate_product,
+                external_shell=external_shell, external_echo=external_echo,
+                oracle=oracle_identity, candidate_product=candidate_product,
             )
         )
     )
@@ -1783,6 +2022,7 @@ def update_runtime_links(
     *, records: dict[str, dict[str, Any]], product: Path, environment: dict[str, str], work: Path,
     common_objects: Sequence[Path], candidate_runner: Path | None, oracle_runner: Path | None,
     candidate_support: dict[str, Path], oracle_support: dict[str, Path], shell: dict[str, Any] | None,
+    echo: dict[str, Any] | None,
     oracle_identity: dict[str, Any], candidate_product: dict[str, Any],
     candidate_blocker: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
@@ -1841,6 +2081,7 @@ def update_runtime_links(
             oracle_executable=oracle_output if oracle_link_result.get("status") == "passed" else None,
             candidate_support=candidate_support, oracle_support=oracle_support,
             external_shell=shell if unit_id in SHELL_RUNTIME_UNITS else None,
+            external_echo=echo if unit_id in ECHO_RUNTIME_UNITS else None,
             oracle_identity=oracle_identity, candidate_product=candidate_product,
         )
     return candidate_blocker
@@ -1982,10 +2223,14 @@ def run_campaign(product_input: Path, evidence: Path) -> dict[str, Any]:
             evidence / "external-shell", product, compiler, compiler_environment, environment,
             support["complete"], oracle_before,
         )
+        echo = echo_fixture(
+            evidence / "external-echo", product, compiler, compiler_environment, environment,
+            support["complete"], oracle_before,
+        )
         candidate_blocker = update_runtime_links(
             records=records, product=product, environment=environment, work=evidence,
             common_objects=common_objects, candidate_runner=candidate_runner, oracle_runner=oracle_runner,
-            candidate_support=candidate_support, oracle_support=oracle_support, shell=shell,
+            candidate_support=candidate_support, oracle_support=oracle_support, shell=shell, echo=echo,
             oracle_identity=oracle_before, candidate_product=sealed_product_before,
             candidate_blocker=candidate_blocker,
         )
@@ -2005,6 +2250,7 @@ def run_campaign(product_input: Path, evidence: Path) -> dict[str, Any]:
             "inventory": inventory,
             "candidate_link_blocker": candidate_blocker,
             "external_shell_fixture": shell,
+            "external_echo_fixture": echo,
             "units": [records[name] for name in sorted(records)],
             "counts": campaign_counts(records),
         })

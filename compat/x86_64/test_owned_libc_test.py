@@ -137,6 +137,52 @@ class OwnedLibcTestGraphTests(unittest.TestCase):
     def test_control_launcher_declares_the_exec_environment_abi(self) -> None:
         self.assertIn(b"extern char **environ;", aggregate.CONTROL_SHELL_SOURCE)
 
+    def test_echo_launcher_has_a_separate_pinned_control_closure(self) -> None:
+        """`posix_spawnp("echo")` may not resolve through an ambient root."""
+
+        self.assertIn(b"extern char **environ;", aggregate.CONTROL_ECHO_SOURCE)
+        self.assertIn(b'command[2] = "echo";', aggregate.CONTROL_ECHO_SOURCE)
+        self.assertNotEqual(aggregate.CONTROL_ECHO_SOURCE, aggregate.CONTROL_SHELL_SOURCE)
+
+    def test_source_selected_filesystem_fixtures_are_narrow_and_exact(self) -> None:
+        """Only the named upstream units receive their required root topology."""
+
+        shared_memory = [{"path": "/dev/shm", "type": "directory", "mode": "01777"}]
+        for unit in (
+            "functional/sem_open",
+            "regression/sem_close-unmap",
+            "functional/pthread_cancel-points",
+        ):
+            self.assertEqual(aggregate.filesystem_fixture_for_unit(unit), shared_memory)
+        self.assertEqual(aggregate.filesystem_fixture_for_unit("regression/tls_get_new-dtv"), [
+            {"path": "/proc", "type": "directory", "mode": "0755"},
+            {"path": "/proc/self", "type": "directory", "mode": "0755"},
+            {"path": "/proc/self/exe", "type": "symlink", "target": "/regression/tls_get_new-dtv"},
+        ])
+        self.assertEqual(aggregate.filesystem_fixture_for_unit("functional/argv"), [])
+
+    def test_filesystem_fixture_rejects_undeclared_nodes_and_retains_kernel_exe_mapping(self) -> None:
+        """The artificial `/proc` tree is only the source-required `$ORIGIN` link."""
+
+        root = self.root / "root"
+        (root / "dev").mkdir(parents=True)
+        executable = root / "regression/tls_get_new-dtv"
+        executable.parent.mkdir()
+        executable.write_bytes(b"runtime target")
+        executable.chmod(0o755)
+        fixture = aggregate.filesystem_fixture_for_unit("regression/tls_get_new-dtv")
+
+        aggregate.materialize_filesystem_fixture(root, fixture)
+        self.assertEqual(aggregate.verify_filesystem_fixture(root, fixture), fixture)
+        self.assertTrue((root / "proc/self/exe").is_symlink())
+        self.assertEqual(os.readlink(root / "proc/self/exe"), "/regression/tls_get_new-dtv")
+
+        shared = aggregate.filesystem_fixture_for_unit("functional/sem_open")
+        aggregate.materialize_filesystem_fixture(root, shared)
+        (root / "dev/shm/left-behind").write_bytes(b"unexpected")
+        with self.assertRaisesRegex(aggregate.EvidenceError, "undeclared child"):
+            aggregate.verify_filesystem_fixture(root, shared)
+
     def test_known_common_linker_failure_blocks_unattempted_candidates(self) -> None:
         stderr = self.root / "candidate-link.stderr"
         stderr.write_text("ld.lld: error: input.o is compressed with ELFCOMPRESS_ZLIB\n")
@@ -226,6 +272,7 @@ class OwnedLibcTestGraphTests(unittest.TestCase):
                 executable=self.root / "example",
                 support={},
                 external_shell=None,
+                external_echo=None,
                 oracle={},
                 candidate_product={"manifest": {"sha256": "4" * 64}, "files": {}, "aliases": {}},
             )
@@ -286,6 +333,11 @@ class OwnedLibcTestGraphTests(unittest.TestCase):
             "control": {
                 "busybox": aggregate.artifact(busybox, "BusyBox"),
                 "loader": aggregate.artifact(loader, "control loader"),
+                "layout": {
+                    "busybox": aggregate.CONTROL_BUSYBOX,
+                    "loader": aggregate.CONTROL_LOADER,
+                    "launcher": "/bin/sh",
+                },
             },
             "candidate_launcher": aggregate.artifact(launcher, "launcher"),
         }
@@ -296,6 +348,39 @@ class OwnedLibcTestGraphTests(unittest.TestCase):
         self.assertTrue((root / "lib/ld-musl-x86_64.so.1").is_symlink())
         self.assertEqual(os.readlink(root / "lib/ld-musl-x86_64.so.1"), "ld-crabc-x86_64.so.1")
         self.assertEqual((root / "bin/sh").read_bytes(), launcher.read_bytes())
+        self.assertEqual((root / "control/busybox").read_bytes(), busybox.read_bytes())
+
+    def test_control_echo_copy_preserves_candidate_loader_alias(self) -> None:
+        root = self.root / "runtime"
+        (root / "lib").mkdir(parents=True)
+        (root / "lib/ld-crabc-x86_64.so.1").write_bytes(b"candidate-loader")
+        (root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+        busybox = self.root / "busybox"
+        loader = self.root / "control-loader"
+        launcher = self.root / "candidate-echo-launcher"
+        for path in (busybox, loader, launcher):
+            path.write_bytes(path.name.encode())
+            path.chmod(0o755)
+        fixture = {
+            "status": "passed",
+            "control": {
+                "busybox": aggregate.artifact(busybox, "BusyBox"),
+                "loader": aggregate.artifact(loader, "control loader"),
+                "layout": {
+                    "busybox": aggregate.CONTROL_BUSYBOX,
+                    "loader": aggregate.CONTROL_LOADER,
+                    "launcher": "/bin/echo",
+                },
+            },
+            "candidate_launcher": aggregate.artifact(launcher, "launcher"),
+        }
+
+        records = aggregate.copy_echo_fixture_record(root, fixture, "candidate")
+
+        self.assertEqual(len(records), 3)
+        self.assertTrue((root / "lib/ld-musl-x86_64.so.1").is_symlink())
+        self.assertEqual(os.readlink(root / "lib/ld-musl-x86_64.so.1"), "ld-crabc-x86_64.so.1")
+        self.assertEqual((root / "bin/echo").read_bytes(), launcher.read_bytes())
         self.assertEqual((root / "control/busybox").read_bytes(), busybox.read_bytes())
 
     def test_raw_root_retains_actual_loader_and_libc_copy_hashes(self) -> None:
@@ -349,6 +434,7 @@ class OwnedLibcTestGraphTests(unittest.TestCase):
                 candidate_executable=self.root / "candidate-argv",
                 oracle_executable=self.root / "oracle-argv",
                 candidate_support={}, oracle_support={}, external_shell=None,
+                external_echo=None,
                 oracle_identity=oracle_identity, candidate_product=candidate_product,
             )
 
@@ -384,6 +470,7 @@ class OwnedLibcTestGraphTests(unittest.TestCase):
                 records=records, product=self.root, environment={}, work=self.root,
                 common_objects=[], candidate_runner=self.root / "candidate-runtest",
                 oracle_runner=self.root / "oracle-runtest", candidate_support={}, oracle_support={}, shell=None,
+                echo=None,
                 oracle_identity=oracle_identity,
                 candidate_product={"manifest": {"sha256": "c" * 64}, "files": {}, "aliases": {}},
             )
