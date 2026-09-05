@@ -90,6 +90,16 @@ def require_native_linux_x86_64() -> None:
         raise QualificationRunError(f"qualification refuses emulation on {platform.machine()}")
 
 
+def require_unconfigured_cargo_home(cargo_home: Path) -> None:
+    """Reject ignored Cargo configuration that can alter a pinned build."""
+    for name in ("config", "config.toml"):
+        path = cargo_home / name
+        if path.exists() or path.is_symlink():
+            raise QualificationRunError(
+                f"qualification mutable Cargo home must not contain {name}"
+            )
+
+
 def require_pinned_native_execution() -> None:
     """Refuse to execute cases outside the pinned dispatcher environment."""
     require_native_linux_x86_64()
@@ -121,6 +131,7 @@ def require_pinned_native_execution() -> None:
             raise QualificationRunError("qualification work and temporary directories must be physical paths")
     if not Path(manifest.EXECUTION_CONTRACT["oracle_compiler"]).is_file():
         raise QualificationRunError("qualification pinned musl oracle compiler is unavailable")
+    require_unconfigured_cargo_home(Path(expected_cargo))
 
 
 def load_case_manifest(gate: Mapping[str, object]) -> dict[str, Any]:
@@ -267,12 +278,19 @@ def physical_directory_identity(path_text: str, label: str) -> dict[str, str]:
         raise QualificationRunError(f"{label} is unavailable: {path}") from error
     if not resolved.is_dir() or resolved.is_symlink() or resolved != path:
         raise QualificationRunError(f"{label} is not a physical directory: {path}")
+    return {
+        "path": str(path),
+        "sha256": directory_tree_sha256(resolved, label),
+    }
+
+
+def directory_tree_sha256(root: Path, label: str) -> str:
     digest = hashlib.sha256()
-    pending = [resolved]
+    pending = [root]
     while pending:
         directory = pending.pop()
         for child in sorted(directory.iterdir(), reverse=True):
-            relative = child.relative_to(resolved).as_posix().encode("utf-8")
+            relative = child.relative_to(root).as_posix().encode("utf-8")
             mode = child.lstat().st_mode
             digest.update(relative + b"\0" + str(stat.S_IMODE(mode)).encode("ascii") + b"\0")
             if stat.S_ISREG(mode):
@@ -286,7 +304,23 @@ def physical_directory_identity(path_text: str, label: str) -> dict[str, str]:
                 digest.update(b"symlink\0" + os.fsencode(os.readlink(child)))
             else:
                 raise QualificationRunError(f"{label} has an unsupported file type")
-    return {"path": str(path), "sha256": digest.hexdigest()}
+    return digest.hexdigest()
+
+
+def resolved_directory_identity(path_text: str, label: str) -> dict[str, str]:
+    """Hash an actual PATH/toolchain directory, recording symlink resolution."""
+    path = Path(path_text)
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise QualificationRunError(f"{label} is unavailable: {path}") from error
+    if not resolved.is_dir() or resolved.is_symlink():
+        raise QualificationRunError(f"{label} is not a directory: {path}")
+    return {
+        "path": str(path),
+        "resolved_path": str(resolved),
+        "sha256": directory_tree_sha256(resolved, label),
+    }
 
 
 def tool_identity(command: str) -> dict[str, object]:
@@ -312,8 +346,80 @@ def tool_identity(command: str) -> dict[str, object]:
     return identity
 
 
+def trusted_tool_directories() -> list[dict[str, str]]:
+    """Bind every executable directory reachable from the scrubbed PATH."""
+    result: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for path in controlled_environment()["PATH"].split(":"):
+        configured = Path(path)
+        if not configured.exists() and not configured.is_symlink():
+            result.append({"path": path, "state": "absent"})
+            continue
+        identity = resolved_directory_identity(path, f"tool directory {path}")
+        if identity["resolved_path"] not in seen:
+            seen.add(identity["resolved_path"])
+            result.append(identity)
+    return result
+
+
+def pinned_rust_toolchain_identity() -> dict[str, dict[str, str]]:
+    """Bind rustup's selected executables and their complete sysroot."""
+    rustup = shutil.which("rustup", path=controlled_environment()["PATH"])
+    if rustup is None:
+        raise QualificationRunError("qualification required rustup is unavailable")
+    selected: dict[str, dict[str, str]] = {}
+    for command in ("cargo", "rustc"):
+        process = subprocess.run(
+            [rustup, "which", command],
+            cwd=ROOT,
+            env=controlled_environment(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        location = process.stdout.decode("utf-8", errors="strict").strip()
+        if process.returncode != 0 or not location or "\n" in location:
+            raise QualificationRunError(f"rustup could not select pinned {command}")
+        selected[command] = physical_file_identity(location, f"pinned {command}")
+    sysroot = subprocess.run(
+        [selected["rustc"]["resolved_path"], "--print", "sysroot"],
+        cwd=ROOT,
+        env=controlled_environment(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    sysroot_path = sysroot.stdout.decode("utf-8", errors="strict").strip()
+    if sysroot.returncode != 0 or not sysroot_path or "\n" in sysroot_path:
+        raise QualificationRunError("pinned rustc could not identify its sysroot")
+    selected["sysroot"] = physical_directory_identity(sysroot_path, "pinned Rust sysroot")
+    return selected
+
+
+def gcc_builtin_include_identity() -> dict[str, str]:
+    """Bind GCC's builtin header tree used by the same-object workload."""
+    gcc = shutil.which("gcc", path=controlled_environment()["PATH"])
+    if gcc is None:
+        raise QualificationRunError("qualification required gcc is unavailable")
+    process = subprocess.run(
+        [gcc, "-print-file-name=include"],
+        cwd=ROOT,
+        env=controlled_environment(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    include = process.stdout.decode("utf-8", errors="strict").strip()
+    if process.returncode != 0 or not include or "\n" in include:
+        raise QualificationRunError("gcc could not identify its builtin include directory")
+    return physical_directory_identity(include, "gcc builtin headers")
+
+
 def execution_inputs() -> dict[str, object]:
-    """Capture the actual binaries and pinned runtime used by the receipt."""
+    """Capture the complete selected tool, compiler, and runtime closure."""
     runtime: dict[str, dict[str, str]] = {}
     for name, path in MUSL_RUNTIME_PATHS.items():
         runtime[name] = (
@@ -324,6 +430,9 @@ def execution_inputs() -> dict[str, object]:
     return {
         "environment": controlled_environment(),
         "tools": [tool_identity(command) for command in TOOL_COMMANDS],
+        "tool_directories": trusted_tool_directories(),
+        "rust_toolchain": pinned_rust_toolchain_identity(),
+        "gcc_builtin_include": gcc_builtin_include_identity(),
         "runtime": runtime,
     }
 
@@ -347,15 +456,36 @@ def ensure_physical_receipt_directory() -> Path:
     return receipt
 
 
-def evidence_path(path: Path) -> Path:
-    candidate = path.resolve()
+def evidence_path(path: Path, owner: Path | None = None) -> Path:
+    """Return an existing receipt path contained by its physical owner.
+
+    A receipt references only paths below its transaction. Resolve neither a
+    final symlink nor a parent symlink before checking that lexical boundary:
+    otherwise a sibling transaction can donate a matching log or a final
+    symlink can silently escape the evidence tree.
+    """
+    candidate = Path(os.path.abspath(ROOT / path if not path.is_absolute() else path))
     receipt_root = ensure_physical_receipt_directory()
     try:
-        candidate.relative_to(receipt_root)
+        relative = candidate.relative_to(receipt_root)
     except ValueError as error:
         raise QualificationRunError("qualification receipt escapes pinned work") from error
-    if candidate.is_symlink():
-        raise QualificationRunError("qualification receipt path is a symlink")
+    if ".." in relative.parts:
+        raise QualificationRunError("qualification receipt path has parent traversal")
+    if owner is not None:
+        try:
+            owner_relative = candidate.relative_to(owner)
+        except ValueError as error:
+            raise QualificationRunError("qualification receipt escapes its transaction") from error
+        if ".." in owner_relative.parts:
+            raise QualificationRunError("qualification receipt path has parent traversal")
+    current = receipt_root
+    for component in relative.parts:
+        current = current / component
+        if current.is_symlink():
+            raise QualificationRunError("qualification receipt path is a symlink")
+    if candidate.exists() and candidate.resolve() != candidate:
+        raise QualificationRunError("qualification receipt path is not physical")
     return candidate
 
 
@@ -379,8 +509,8 @@ def write_new_json(path: Path, value: Mapping[str, object]) -> None:
     write_new_bytes(path, (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8"))
 
 
-def read_json(path: Path, label: str) -> dict[str, Any]:
-    evidence_path(path)
+def read_json(path: Path, label: str, owner: Path | None = None) -> dict[str, Any]:
+    evidence_path(path, owner)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -450,11 +580,44 @@ def private_admission_runner_module() -> Any:
     return value
 
 
+def terminate_active_private_case(private_runner: Any, cases_root: Path) -> None:
+    """Kill a receipt leaf's own session before killing its Python supervisor."""
+    record = private_runner.active_child_record(cases_root)
+    try:
+        mode = record.lstat().st_mode
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(mode) or record.is_symlink():
+        raise QualificationRunError("private admission active-child record is unsafe")
+    try:
+        value = record.read_text(encoding="ascii")
+        process_group = int(value.strip(), 10)
+    except (OSError, UnicodeDecodeError, ValueError) as error:
+        raise QualificationRunError("private admission active-child record is invalid") from error
+    if process_group <= 0 or value != f"{process_group}\n":
+        raise QualificationRunError("private admission active-child record is invalid")
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def terminate_private_admission_process(
+    process: subprocess.Popen[bytes], private_runner: Any, cases_root: Path
+) -> None:
+    """Reap the nested leaf group before its owner can leave its pipes open."""
+    terminate_active_private_case(private_runner, cases_root)
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def private_case_receipts(transaction: Path) -> list[dict[str, object]]:
     """Load and seal the finite private roster written by its runner."""
     private_runner = private_admission_runner_module()
     cases_root = transaction / "cases"
-    evidence_path(cases_root)
+    evidence_path(cases_root, transaction)
     source = source_identity()
     expected_cases = private_runner.load_contract()
     result: list[dict[str, object]] = []
@@ -463,7 +626,7 @@ def private_case_receipts(transaction: Path) -> list[dict[str, object]]:
         directory = private_runner.case_receipt_directory(case, cases_root)
         receipt = directory / "receipt.json"
         expected_names.add(directory.name)
-        record = read_json(receipt, f"private case {case.identifier} receipt")
+        record = read_json(receipt, f"private case {case.identifier} receipt", directory)
         expected = {
             "schema": private_runner.CASE_RECEIPT_SCHEMA,
             "id": case.identifier,
@@ -497,8 +660,11 @@ def private_case_receipts(transaction: Path) -> list[dict[str, object]]:
             value = record[stream]
             if not isinstance(value, Mapping) or set(value) != {"path", "sha256"} or not isinstance(value.get("path"), str) or not isinstance(value.get("sha256"), str):
                 raise QualificationRunError(f"private case receipt {stream} is invalid: {case.identifier}")
-            path = cases_root / value["path"]
-            if evidence_path(path) != path or sha256_file(path, f"private {stream}") != value["sha256"]:
+            expected_path = f"{directory.name}/{stream}.log"
+            if value["path"] != expected_path:
+                raise QualificationRunError(f"private case receipt {stream} escapes its case: {case.identifier}")
+            path = cases_root / expected_path
+            if evidence_path(path, directory) != path or sha256_file(path, f"private {stream}") != value["sha256"]:
                 raise QualificationRunError(f"private case receipt {stream} changed: {case.identifier}")
             if stream == "stdout":
                 lines = [line for line in path.read_bytes().splitlines() if line]
@@ -514,6 +680,7 @@ def private_case_receipts(transaction: Path) -> list[dict[str, object]]:
                 raise QualificationRunError(f"same-object artifact receipt is invalid")
             if artifact.get("path") != private_runner.receipt_relative(cases_root, expected_artifact):
                 raise QualificationRunError("same-object artifact receipt path drifted")
+            evidence_path(expected_artifact, directory)
             if artifact.get("entries") != private_runner.artifact_snapshot(expected_artifact):
                 raise QualificationRunError("same-object retained artifact bytes changed")
         result.append(
@@ -524,7 +691,14 @@ def private_case_receipts(transaction: Path) -> list[dict[str, object]]:
                 "receipt_sha256": sha256_file(receipt, f"private case {case.identifier} receipt"),
             }
         )
-    actual_names = {path.name for path in cases_root.iterdir() if path.is_dir()}
+    actual_names = set()
+    for path in cases_root.iterdir():
+        if path.is_symlink():
+            raise QualificationRunError("private case receipt roster contains a symlink")
+        if path.is_dir():
+            actual_names.add(path.name)
+        else:
+            raise QualificationRunError("private case receipt roster has transient supervisor state")
     if actual_names != expected_names:
         raise QualificationRunError("private case receipt roster drifted")
     return result
@@ -584,7 +758,9 @@ def prefix_record(
 def validate_private_admission_receipt(path: Path) -> dict[str, object]:
     """Reject stale source, tool, log, runtime, or retained-artifact proof."""
     path = evidence_path(path)
-    receipt = read_json(path, "private admission receipt")
+    transaction = path.parent
+    evidence_path(transaction)
+    receipt = read_json(path, "private admission receipt", transaction)
     required = {
         "schema",
         "kind",
@@ -643,13 +819,15 @@ def validate_private_admission_receipt(path: Path) -> dict[str, object]:
     if receipt["inputs_before"] != inputs or receipt["inputs_after"] != inputs:
         raise QualificationRunError("private admission receipt tool or runtime inputs drifted")
     verify_private_admission_runner(admission)
-    transaction = path.parent
     for stream in ("stdout", "stderr"):
         record = receipt[stream]
         if not isinstance(record, Mapping) or set(record) != {"path", "sha256"}:
             raise QualificationRunError(f"private admission receipt {stream} is invalid")
-        stream_path = transaction / str(record.get("path"))
-        if evidence_path(stream_path) != stream_path or sha256_file(stream_path, stream) != record.get("sha256"):
+        expected_path = f"{stream}.log"
+        if record.get("path") != expected_path:
+            raise QualificationRunError(f"private admission receipt {stream} escapes its transaction")
+        stream_path = transaction / expected_path
+        if evidence_path(stream_path, transaction) != stream_path or sha256_file(stream_path, stream) != record.get("sha256"):
             raise QualificationRunError(f"private admission receipt {stream} changed")
     cases = private_case_receipts(transaction)
     if receipt["cases"] != cases:
@@ -691,8 +869,15 @@ def run_private_admission(report: Mapping[str, object]) -> Path:
             timeout=sum(case.timeout_seconds for case in private_runner.load_contract())
         )
     except subprocess.TimeoutExpired as timeout:
-        os.killpg(process.pid, signal.SIGKILL)
-        stdout, stderr = process.communicate()
+        terminate_private_admission_process(process, private_runner, cases_root)
+        try:
+            stdout, stderr = process.communicate(timeout=10)
+        except subprocess.TimeoutExpired as cleanup:
+            # The supervisor and its published leaf group were killed above.
+            # Do not let a misbehaving descendant retaining a pipe turn a
+            # bounded failed admission into an unbounded parent wait.
+            stdout = cleanup.stdout or b""
+            stderr = cleanup.stderr or b""
         error = QualificationRunError("private admission prefix timed out")
         error.__cause__ = timeout
     finished_at_unix_ns = time.time_ns()

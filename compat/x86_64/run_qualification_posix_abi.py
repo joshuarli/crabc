@@ -36,6 +36,7 @@ TRUSTED_PATH = \
     RUST_BIN_DIRECTORY + ":/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 RECEIPT_ROOT_ENVIRONMENT = "CRABC_QUALIFICATION_RECEIPT_ROOT"
 ARTIFACT_DIRECTORY_ENVIRONMENT = "CRABC_QUALIFICATION_ARTIFACT_DIR"
+ACTIVE_CHILD_RECORD_NAME = ".active-child-pgid"
 EXPECTED_CASES = (
     (
         "same-object-static-c-abi",
@@ -286,6 +287,36 @@ def case_artifact_directory(case: Case, root: Path) -> Path | None:
     return case_receipt_directory(case, root) / "artifacts"
 
 
+def active_child_record(root: Path) -> Path:
+    """Name the one leaf process group an enclosing receipt may reap."""
+    return root / ACTIVE_CHILD_RECORD_NAME
+
+
+def register_active_child(root: Path, process: subprocess.Popen[bytes]) -> Path:
+    """Publish a fresh leaf process group before its output can be awaited."""
+    path = active_child_record(root)
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="ascii", closefd=True) as output:
+            output.write(f"{process.pid}\n")
+            output.flush()
+            os.fsync(output.fileno())
+    except OSError as error:
+        raise EvidenceError("could not record active receipted child process group") from error
+    return path
+
+
+def clear_active_child(path: Path) -> None:
+    """Remove the supervisor record after its child pipes have closed."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(mode) or path.is_symlink():
+        raise EvidenceError("active receipted child record is unsafe")
+    path.unlink()
+
+
 def write_new_bytes(path: Path, value: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("xb") as output:
@@ -426,15 +457,26 @@ def run_case(case: Case, receipt_root: Path | None = None, order: int | None = N
         stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    active_record: Path | None = None
+    if receipt_root is not None:
+        try:
+            active_record = register_active_child(receipt_root, process)
+        except EvidenceError:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            raise
     try:
         stdout, stderr = process.communicate(timeout=case.timeout_seconds)
-    except subprocess.TimeoutExpired as error:
+    except subprocess.TimeoutExpired as timeout:
         os.killpg(process.pid, signal.SIGKILL)
         stdout, stderr = process.communicate()
         outcome = "timed-out"
         failure = EvidenceError(f"{case.identifier} timed out after {case.timeout_seconds}s")
-        failure.__cause__ = error
+        failure.__cause__ = timeout
         error = failure
+    finally:
+        if active_record is not None:
+            clear_active_child(active_record)
     try:
         if error is None:
             validate_completed_process(case, process.returncode, stdout, stderr)

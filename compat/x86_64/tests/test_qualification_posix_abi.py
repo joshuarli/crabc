@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -123,6 +124,45 @@ class QualificationPosixAbiTests(unittest.TestCase):
         self.assertNotIn("mktemp -d /tmp", comparator)
         self.assertIn("CRABC_QUALIFICATION_ARTIFACT_DIR", builder)
         self.assertIn("--artifact-directory", comparator)
+
+    def test_retained_artifact_snapshot_rejects_missing_artifacts_and_detects_changes(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp/qualification-artifact-snapshot-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(qualification.EvidenceError, "did not retain artifacts"):
+                qualification.artifact_snapshot(root)
+            artifact = root / "candidate"
+            artifact.write_bytes(b"first artifact bytes")
+            before = qualification.artifact_snapshot(root)
+            artifact.write_bytes(b"changed artifact bytes")
+            after = qualification.artifact_snapshot(root)
+            self.assertNotEqual(before, after)
+
+    def test_receipted_timeout_retains_a_timed_out_case_before_raising(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp/qualification-receipt-timeout-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            root = Path(directory)
+            case = qualification.load_contract()[1]
+            process = unittest.mock.Mock(pid=4312, returncode=-9)
+            process.communicate.side_effect = [
+                subprocess.TimeoutExpired(["bash", str(case.runner)], case.timeout_seconds),
+                (b"partial stdout\n", b"partial stderr\n"),
+            ]
+            identity = {"revision": "a" * 40, "content_sha256": "b" * 64}
+            with patch.object(qualification, "source_identity", return_value=identity), patch.object(
+                qualification.subprocess, "Popen", return_value=process
+            ), patch.object(qualification.os, "killpg") as killpg:
+                with self.assertRaisesRegex(qualification.EvidenceError, "timed out"):
+                    qualification.run_case(case, root, 2)
+            killpg.assert_called_once_with(4312, qualification.signal.SIGKILL)
+            receipt = root / "002-static-process-context" / "receipt.json"
+            record = json.loads(receipt.read_text(encoding="utf-8"))
+            self.assertEqual(record["outcome"], "timed-out")
+            self.assertEqual(record["exit_status"], -9)
+            self.assertEqual((root / record["stdout"]["path"]).read_bytes(), b"partial stdout\n")
+            self.assertEqual((root / record["stderr"]["path"]).read_bytes(), b"partial stderr\n")
 
     def test_receipted_case_seals_its_command_logs_timing_and_source_identity(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp/qualification-receipt-case-tests"

@@ -26,6 +26,14 @@ artifact directory. Its builder and comparator use the physical checkout
 `TMPDIR`, retain the selected `libc.a`, shared workload object, pinned-musl
 reference, freestanding candidate, and the ELF/stream inspection outputs, then
 the case receipt seals every retained entry without following symlinks.
+The mutable Cargo home must contain no `config` or `config.toml`, so ignored
+wrapper, linker, or rustflags injection cannot alter the recorded build. Input
+identity covers every resolved directory on the scrubbed `PATH`, the actual
+rustup-selected Cargo/Rustc executables and their Rust sysroot, and GCC's
+builtin include tree as well as the pinned musl inputs. A prefix timeout first
+reaps the active leaf's separately created process group, then its Python
+supervisor; that nested cleanup prevents an inherited log pipe from keeping a
+failed transaction alive.
 
 This is deliberately a private, non-promoting admission receipt. Its prefix
 record fixes `non_promoting: true`, `promotion_ready: false`, and zero completed

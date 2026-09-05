@@ -12,6 +12,7 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly STATIC_C_ABI_EXPORTS="$ROOT_DIR/compat/x86_64/static_c_abi_exports.txt"
+readonly REACHABLE_SYSCALL_CHECK="$ROOT_DIR/compat/x86_64/check_reachable_syscall.py"
 
 fail() {
     printf 'ERROR: x86 static libc process context: %s\n' "$*" >&2
@@ -59,7 +60,7 @@ assert_selected_c_abi_surface() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff nm objdump python3 readelf rustup; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -87,13 +88,15 @@ errno_disassembly="$work_dir/errno-disassembly"
 assert_named_syscall() {
     local symbol="$1"
     local syscall_word="$2"
-    local disassembly="$work_dir/${symbol}-disassembly"
+    local syscall_arity="$3"
+    local proof="$work_dir/${symbol}-syscall-proof"
 
-    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    grep -Eq "\\\$0x${syscall_word}" "$disassembly" \
-        || fail "${symbol} lacks the fixed syscall ${syscall_word}"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" \
-        || fail "${symbol} lacks its named Linux syscall"
+    python3 "$REACHABLE_SYSCALL_CHECK" \
+        --objdump "$(command -v objdump)" \
+        --candidate "$candidate" \
+        --symbol "$symbol" \
+        --syscall "$syscall_word" \
+        --arity "$syscall_arity" >"$proof"
 }
 
 cd "$ROOT_DIR"
@@ -178,18 +181,18 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" \
 # The C fixture differentially proves identity, group/session, and mask
 # behavior. These named emitted-code gates additionally pin every selected
 # Linux syscall word instead of inferring the boundary from a successful run.
-assert_named_syscall getpid 27
-assert_named_syscall getppid 6e
-assert_named_syscall getuid 66
-assert_named_syscall getgid 68
-assert_named_syscall geteuid 6b
-assert_named_syscall getegid 6c
-assert_named_syscall umask 5f
-assert_named_syscall setsid 70
-assert_named_syscall setpgid 6d
-assert_named_syscall getpgid 79
-assert_named_syscall getsid 7c
-assert_named_syscall getpgrp 79
+assert_named_syscall getpid 27 0
+assert_named_syscall getppid 6e 0
+assert_named_syscall getuid 66 0
+assert_named_syscall getgid 68 0
+assert_named_syscall geteuid 6b 0
+assert_named_syscall getegid 6c 0
+assert_named_syscall umask 5f 1
+assert_named_syscall setsid 70 0
+assert_named_syscall setpgid 6d 2
+assert_named_syscall getpgid 79 1
+assert_named_syscall getsid 7c 1
+assert_named_syscall getpgrp 79 1
 
 setpgrp_disassembly="$work_dir/setpgrp-disassembly"
 objdump -d --disassemble=setpgrp "$candidate" >"$setpgrp_disassembly"

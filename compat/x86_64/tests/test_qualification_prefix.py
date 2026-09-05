@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import json
 import sys
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -121,6 +122,76 @@ class QualificationPrefixTests(unittest.TestCase):
         loaded = runner.private_admission_runner_module()
         self.assertEqual(loaded.EXPECTED_ID, "qualification-posix-abi-admission")
 
+    def test_timeout_cleanup_kills_a_leaf_that_started_its_own_session(self):
+        scratch = ROOT / ".work/x86_64/tmp/qualification-timeout-supervisor-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            cases_root = Path(directory) / "cases"
+            cases_root.mkdir()
+            leaf = subprocess.Popen(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+                start_new_session=True,
+            )
+            record = cases_root / ".active-child-pgid"
+            record.write_text(f"{leaf.pid}\n", encoding="ascii")
+
+            class PrivateRunner:
+                @staticmethod
+                def active_child_record(root):
+                    return root / ".active-child-pgid"
+
+            try:
+                runner.terminate_active_private_case(PrivateRunner, cases_root)
+                self.assertEqual(leaf.wait(timeout=3), -9)
+            finally:
+                if leaf.poll() is None:
+                    leaf.kill()
+                    leaf.wait()
+
+    def test_receipt_log_cannot_be_transplanted_from_a_sibling_transaction(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipts = Path(directory) / "qualification-receipts"
+            first = receipts / "first"
+            sibling = receipts / "sibling"
+            first.mkdir(parents=True)
+            sibling.mkdir()
+            sibling_log = sibling / "stdout.log"
+            sibling_log.write_bytes(b"matching log\n")
+            with patch.object(runner, "ensure_physical_receipt_directory", return_value=receipts):
+                with self.assertRaisesRegex(runner.QualificationRunError, "transaction"):
+                    runner.evidence_path(sibling_log, first)
+
+    def test_receipt_final_symlink_is_rejected_before_resolution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            receipts = Path(directory) / "qualification-receipts"
+            transaction = receipts / "transaction"
+            transaction.mkdir(parents=True)
+            target = transaction / "target.log"
+            target.write_bytes(b"log\n")
+            link = transaction / "stdout.log"
+            link.symlink_to(target.name)
+            with patch.object(runner, "ensure_physical_receipt_directory", return_value=receipts):
+                with self.assertRaisesRegex(runner.QualificationRunError, "symlink"):
+                    runner.evidence_path(link, transaction)
+
+    def test_mutable_cargo_configuration_is_rejected_before_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cargo_home = Path(directory)
+            (cargo_home / "config.toml").write_text("[build]\nrustflags = ['--cfg=poison']\n")
+            with self.assertRaisesRegex(runner.QualificationRunError, "mutable Cargo home"):
+                runner.require_unconfigured_cargo_home(cargo_home)
+
+    def test_builtin_header_tree_identity_changes_with_header_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            headers = Path(directory) / "include"
+            headers.mkdir()
+            header = headers / "stdint.h"
+            header.write_text("#define WIDTH 32\n")
+            before = runner.physical_directory_identity(str(headers), "test headers")
+            header.write_text("#define WIDTH 64\n")
+            after = runner.physical_directory_identity(str(headers), "test headers")
+            self.assertNotEqual(before["sha256"], after["sha256"])
+
     def test_stdout_only_claim_is_not_a_private_admission_receipt(self):
         with tempfile.TemporaryDirectory() as directory:
             receipt = Path(directory) / "receipt.json"
@@ -129,7 +200,7 @@ class QualificationPrefixTests(unittest.TestCase):
                 "outcome": "passed-non-promoting",
                 "stdout": "PASS",
             }))
-            with patch.object(runner, "evidence_path", side_effect=lambda path: path):
+            with patch.object(runner, "evidence_path", side_effect=lambda path, *unused: path):
                 with self.assertRaisesRegex(runner.QualificationRunError, "fields drifted"):
                     runner.validate_private_admission_receipt(receipt)
 
