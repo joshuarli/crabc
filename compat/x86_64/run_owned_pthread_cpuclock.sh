@@ -71,4 +71,4 @@ for mode in pie non-pie; do
 done
 
 printf '%s\n' \
-    'owned pthread CPU clock: PASS (pinned musl + installed static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct entries; worker self and parent-to-live-worker CPU-clock IDs, clock_gettime acceptance, and errno preservation); evidence:' "$work"
+    'owned pthread CPU clock: PASS (pinned musl + installed static ET_EXEC/static-PIE and dynamic PIE/non-PIE kernel/direct entries; worker-to-held-main, worker-self, and parent-to-live-worker CPU-clock IDs, clock_gettime acceptance, and errno preservation); evidence:' "$work"

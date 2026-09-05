@@ -9,24 +9,29 @@
 //! Static Initial TLS v1 deliberately owns just the x86 Variant-II `%fs:0`
 //! self word, not musl's dereferenceable TCB. This leaf therefore admits the
 //! bootstrapped process-main task through that task's own `pthread_self()`
-//! handle and a live handle published by the selected worker registry. Main
-//! identity uses the existing `%fs:0` plus Linux-TID discriminator and reads
-//! direct `gettid=186`. The worker registry instead copies its positive
-//! `CLONE_PARENT_SETTID` child-TID while its private control record is still
-//! linked. Neither route dereferences public `pthread_t`.
+//! handle, a held live process-main target queried by a selected worker, and
+//! a live handle published by the selected worker registry. The current-main
+//! route preserves the existing `%fs:0` plus Linux-TID discriminator and
+//! reads direct `gettid=186`; the initial-target route copies the Static
+//! Initial TLS owner's recorded TID. The worker registry instead copies its
+//! positive `CLONE_PARENT_SETTID` child-TID while its private control record
+//! is still linked. No route dereferences public `pthread_t`.
 //!
 //! Registry lookup releases its lock before this leaf returns the encoded
 //! clock ID. A caller querying a worker must therefore keep that selected
 //! target executing and must not race target completion, `pthread_join`,
 //! `pthread_detach`, or a later selected lifecycle/reaping boundary that can
-//! clear its TID, withdraw its mapping, or permit TID reuse. A null, foreign,
-//! finished, or withdrawn handle fails closed with `ESRCH` before observing
-//! the output slot; that diagnostic is candidate-only because musl's full-TCB
-//! implementation requires a valid handle.
+//! clear its TID, withdraw its mapping, or permit TID reuse. The initial
+//! target is the same scalar snapshot: a worker querying a saved main handle
+//! must keep main executing. A null, foreign, finished, or withdrawn handle
+//! fails closed with `ESRCH` before observing the output slot; that diagnostic
+//! is candidate-only because musl's full-TCB implementation requires a valid
+//! handle.
 //!
 //! The leaf selects only `pthread_getcpuclockid` for the bootstrapped main
-//! thread and a live selected worker. It does not select `clock_getcpuclockid`,
-//! general C clock APIs, a public TCB/thread list, lifecycle ownership,
+//! thread, a held process-main target, and a live selected worker. It does not
+//! select `clock_getcpuclockid`, general C clock APIs, a public TCB/thread
+//! list, lifecycle ownership,
 //! affinity or scheduling attributes, cancellation, synchronization, TSS,
 //! dynamic/loader TLS, CRT, sysroot, general pthread/TLS behavior, or public x86 support.
 //! Pthread errors are positive return values: this entry does not write C `errno`.
@@ -87,6 +92,10 @@ fn selected_thread_id(thread: *mut c_void) -> Result<c_int, c_int> {
         return gettid_status(unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) });
     }
 
+    if let Some(thread_id) = static_tls::selected_initial_thread_id(thread.cast()) {
+        return Ok(thread_id);
+    }
+
     pthread_create_join::selected_worker_linux_thread_id(thread).ok_or(ESRCH)
 }
 
@@ -96,11 +105,12 @@ fn selected_thread_id(thread: *mut c_void) -> Result<c_int, c_int> {
 ///
 /// `clock_id` must point to writable x86-64 `clockid_t` (`int`) storage for
 /// the duration of the call. `thread` must be the caller's bootstrapped-main
-/// `pthread_self()` value or a currently live selected worker handle. A worker
-/// target must remain executing and must not race selected completion, join,
-/// detach, or reaping ownership. Passing an unadmitted handle is outside the
-/// selected musl differential; this bounded candidate returns `ESRCH` without
-/// reading the handle or writing `clock_id`.
+/// `pthread_self()` value, a held live process-main handle, or a currently
+/// live selected worker handle. A saved initial target and every worker target
+/// must remain executing and must not race selected completion, join, detach,
+/// or reaping ownership. Passing an unadmitted handle is outside the selected
+/// musl differential; this bounded candidate returns `ESRCH` without reading
+/// the handle or writing `clock_id`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_getcpuclockid(
     thread: *mut c_void,

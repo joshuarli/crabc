@@ -4,8 +4,9 @@
  * crabc static and dynamic products.  A worker stays alive until its parent
  * has queried its opaque pthread_t, so the observation is not a completion,
  * join, detach, reaping, or reusable-TID race.  Both worker-self and
- * parent-to-live-worker queries must preserve caller errno, reproduce musl's
- * 32-bit Linux clock encoding, and yield a clock accepted by clock_gettime.
+ * parent-to-live-worker and worker-to-held-main queries must preserve caller
+ * errno, reproduce musl's 32-bit Linux clock encoding, and yield a clock
+ * accepted by clock_gettime.
  */
 
 #ifndef _GNU_SOURCE
@@ -37,8 +38,11 @@ _Static_assert(__builtin_types_compatible_p(__typeof__(&pthread_getcpuclockid),
 struct worker_state {
     volatile int ready;
     volatile int release;
+    pthread_t main_thread;
+    int main_task_id;
     int task_id;
-    int status;
+    int main_status;
+    int self_status;
 };
 
 static long raw_syscall0(long number)
@@ -106,47 +110,58 @@ static void *holding_worker(void *opaque)
     struct worker_state *state = opaque;
 
     state->task_id = (int)raw_syscall0(SYS_gettid);
-    state->status = check_cpu_clock(pthread_self(), state->task_id, E2BIG);
+    state->main_status = check_cpu_clock(state->main_thread,
+        state->main_task_id, EILSEQ);
+    state->self_status = check_cpu_clock(pthread_self(), state->task_id, E2BIG);
     __atomic_store_n(&state->ready, 1, __ATOMIC_RELEASE);
     while (!__atomic_load_n(&state->release, __ATOMIC_ACQUIRE))
         __asm__ volatile("pause" ::: "memory");
     return state;
 }
 
-static int run_live_worker_cpu_clock(void)
+/* Main stays executing in this caller while the worker resolves its saved
+ * handle. That holds the initial target live through the worker observation. */
+static int run_live_worker_cpu_clock(struct worker_state *worker)
 {
-    struct worker_state worker = { 0 };
     pthread_t thread = 0;
     void *result = 0;
     int status;
 
     errno = ERANGE;
-    if (pthread_create(&thread, NULL, holding_worker, &worker) != 0 ||
+    if (pthread_create(&thread, NULL, holding_worker, worker) != 0 ||
         errno != ERANGE)
         return 10;
-    if (wait_until_set(&worker.ready))
+    if (wait_until_set(&worker->ready))
         return 11;
-    if (worker.status != 0) {
-        __atomic_store_n(&worker.release, 1, __ATOMIC_RELEASE);
+    if (worker->main_status != 0) {
+        __atomic_store_n(&worker->release, 1, __ATOMIC_RELEASE);
         (void)pthread_join(thread, &result);
-        return 20 + worker.status;
+        return 20 + worker->main_status;
     }
-    status = check_cpu_clock(thread, worker.task_id, ERANGE);
-    __atomic_store_n(&worker.release, 1, __ATOMIC_RELEASE);
-    if (pthread_join(thread, &result) != 0 || result != &worker ||
+    if (worker->self_status != 0) {
+        __atomic_store_n(&worker->release, 1, __ATOMIC_RELEASE);
+        (void)pthread_join(thread, &result);
+        return 30 + worker->self_status;
+    }
+    status = check_cpu_clock(thread, worker->task_id, ERANGE);
+    __atomic_store_n(&worker->release, 1, __ATOMIC_RELEASE);
+    if (pthread_join(thread, &result) != 0 || result != worker ||
         errno != ERANGE)
-        return 40;
+        return 60;
     return status == 0 ? 0 : 50 + status;
 }
 
 int main(void)
 {
-    long main_task_id = raw_syscall0(SYS_gettid);
-    int status = check_cpu_clock(pthread_self(), main_task_id, E2BIG);
+    struct worker_state worker = {
+        .main_thread = pthread_self(),
+        .main_task_id = (int)raw_syscall0(SYS_gettid),
+    };
+    int status = check_cpu_clock(worker.main_thread, worker.main_task_id, E2BIG);
 
     if (status != 0)
         return status;
-    status = run_live_worker_cpu_clock();
+    status = run_live_worker_cpu_clock(&worker);
     if (status != 0)
         return 64 + status;
     puts("pthread_getcpuclockid live worker: ok");

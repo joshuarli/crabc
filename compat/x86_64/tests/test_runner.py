@@ -9484,6 +9484,12 @@ unsafe fn join_selected_worker_inner(
         pthread_cpuclock = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_cpuclock.rs"
         ).read_text(encoding="utf-8")
+        static_tls = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_tls.rs"
+        ).read_text(encoding="utf-8")
+        dynamic_tls = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "dynamic_tls.rs"
+        ).read_text(encoding="utf-8")
         probe_path = ROOT / "compat" / "x86_64" / "libc_pthread_cpuclock_probe.c"
         start_path = ROOT / "compat" / "x86_64" / "libc_pthread_cpuclock_start.S"
         artifact_runner_path = (
@@ -9538,6 +9544,7 @@ unsafe fn join_selected_worker_inner(
             "gettid=186",
             "current_thread_pointer",
             "is_initial_thread_pointer",
+            "selected_initial_thread_id",
             "pthread_create_join",
             "selected_worker_linux_thread_id",
             "CLONE_PARENT_SETTID",
@@ -9557,6 +9564,41 @@ unsafe fn join_selected_worker_inner(
             "crabc_mimalloc",
         ):
             self.assertNotIn(forbidden, pthread_cpuclock)
+
+        current_initial_identity = static_tls.split(
+            "fn is_initial_thread_pointer", 1
+        )[1].split("/// Copy the recorded initial-task", 1)[0]
+        for required in (
+            "STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.load",
+            "STATIC_INITIAL_TLS_MAIN_THREAD_ID.load",
+            "raw_syscall::SYS_GETTID",
+        ):
+            self.assertIn(required, current_initial_identity)
+        initial_target_lookup = static_tls.split(
+            "fn selected_initial_thread_id", 1
+        )[1].split("/// Adopt the calling selected static thread", 1)[0]
+        for required in (
+            "STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.load",
+            "STATIC_INITIAL_TLS_MAIN_THREAD_ID.load",
+            "thread_pointer as usize",
+        ):
+            self.assertIn(required, initial_target_lookup)
+        self.assertNotIn("SYS_GETTID", initial_target_lookup)
+        dynamic_initial_target_lookup = dynamic_tls.split(
+            "fn selected_initial_thread_id", 1
+        )[1].split("pub(super) unsafe fn allocate_thread", 1)[0]
+        for required in (
+            "MAIN_POINTER.load",
+            "MAIN_ID.load",
+            "pointer as usize",
+        ):
+            self.assertIn(required, dynamic_initial_target_lookup)
+        self.assertNotIn("SYS_GETTID", dynamic_initial_target_lookup)
+        dynamic_current_initial_identity = dynamic_tls.split(
+            "fn is_initial_thread_pointer", 1
+        )[1].split("/// Copy the recorded initial-task", 1)[0]
+        for required in ("MAIN_POINTER.load", "MAIN_ID.load", "SYS_GETTID"):
+            self.assertIn(required, dynamic_current_initial_identity)
 
         for required in (
             "#include <errno.h>",
@@ -9623,6 +9665,9 @@ unsafe fn join_selected_worker_inner(
             "pthread_create",
             "pthread_join",
             "holding_worker",
+            "main_thread",
+            "main_task_id",
+            "EILSEQ",
             "expected_thread_cpu_clock",
             "clock_gettime",
             "E2BIG",
@@ -9638,6 +9683,7 @@ unsafe fn join_selected_worker_inner(
             "chroot",
             "for mode in pie non-pie",
             "--dynamic-$mode",
+            "worker-to-held-main",
         ):
             self.assertIn(required, owned_runner)
         self.assertIn(

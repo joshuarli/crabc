@@ -245,7 +245,9 @@ pub(super) fn is_ready() -> bool {
 /// Static Initial TLS v1 owner still exposes no dereferenceable TCB or general
 /// thread registry. Requiring the task ID prevents a raw foreign task that
 /// inherits or copies the main FS base from accessing the selected main TSD
-/// table or obtaining the selected main CPU-clock ID.
+/// table or being admitted as the current main CPU-clock caller. The separate
+/// CPU-clock target lookup intentionally resolves only a saved, live main
+/// handle without changing this current-caller predicate.
 #[inline]
 pub(super) fn is_initial_thread_pointer(thread_pointer: *mut u8) -> bool {
     if thread_pointer.is_null()
@@ -260,6 +262,32 @@ pub(super) fn is_initial_thread_pointer(thread_pointer: *mut u8) -> bool {
         && current_thread_id <= i64::from(c_int::MAX)
         && current_thread_id as c_int
             == STATIC_INITIAL_TLS_MAIN_THREAD_ID.load(Ordering::Acquire)
+}
+
+/// Copy the recorded initial-task TID for one opaque initial-thread target.
+///
+/// This is narrower than [`is_initial_thread_pointer`]: it deliberately does
+/// not inspect the calling task because `pthread_getcpuclockid` may be called
+/// by a selected worker for a saved, still-live process-main `pthread_t`.
+/// It only compares the opaque value numerically and copies the bootstrap or
+/// post-fork initial-task TID; it neither exposes nor dereferences a TCB.
+///
+/// The caller must keep that target task alive through its CPU-clock use. If
+/// the initial task exits while another selected worker remains, its retained
+/// TLS mapping still makes this token recognizable but Linux can recycle its
+/// former TID. Normal current-caller admission remains exclusively in
+/// [`is_initial_thread_pointer`].
+#[inline]
+pub(super) fn selected_initial_thread_id(thread_pointer: *mut u8) -> Option<c_int> {
+    if thread_pointer.is_null()
+        || !is_ready()
+        || thread_pointer as usize
+            != STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.load(Ordering::Acquire)
+    {
+        return None;
+    }
+    let thread_id = STATIC_INITIAL_TLS_MAIN_THREAD_ID.load(Ordering::Acquire);
+    (thread_id > 0).then_some(thread_id)
 }
 
 /// Adopt the calling selected static thread as the post-fork child main task.

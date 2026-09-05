@@ -5,6 +5,7 @@
 //! after the pthread owner proves CLONE_CHILD_CLEARTID and withdraws its
 //! registry entry. No FS installation or module discovery occurs here.
 
+use core::ffi::c_int;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use super::raw_syscall;
 
@@ -56,6 +57,22 @@ pub(super) fn is_ready() -> bool { MAIN_POINTER.load(Ordering::Acquire) != 0 }
 pub(super) fn is_initial_thread_pointer(pointer: *mut u8) -> bool {
     !pointer.is_null() && pointer as usize == MAIN_POINTER.load(Ordering::Acquire)
         && unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) } == MAIN_ID.load(Ordering::Relaxed) as i64
+}
+
+/// Copy the recorded initial-task TID for one opaque initial-thread target.
+///
+/// This target lookup intentionally omits the current-caller `gettid` check:
+/// a selected worker may query a saved live process-main `pthread_t`. It
+/// compares only the opaque token and copies the loader-recorded TID, without
+/// exposing or dereferencing a TCB. The caller must keep the target task live
+/// through CPU-clock use; [`is_initial_thread_pointer`] remains the separate
+/// current-caller admission predicate.
+pub(super) fn selected_initial_thread_id(pointer: *mut u8) -> Option<c_int> {
+    if pointer.is_null() || pointer as usize != MAIN_POINTER.load(Ordering::Acquire) {
+        return None;
+    }
+    let thread_id = MAIN_ID.load(Ordering::Acquire);
+    (thread_id > 0).then_some(thread_id)
 }
 
 pub(super) unsafe fn allocate_thread() -> Option<StaticInitialTlsBlock> {

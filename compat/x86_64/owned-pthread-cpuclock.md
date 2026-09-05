@@ -22,22 +22,28 @@ The source carries musl's MIT license recorded in `COPYRIGHT`.
 | --- | --- |
 | `src/thread/pthread_getcpuclockid.c::pthread_getcpuclockid` | `pthread_cpuclock.rs::pthread_getcpuclockid` |
 | `src/thread/pthread_create.c::__pthread_create` target-TID publication | `pthread_create_join.rs::selected_worker_linux_thread_id` and the selected-worker registry |
+| Initial pthread target identity | `static_tls.rs::selected_initial_thread_id` and `dynamic_tls.rs::selected_initial_thread_id` |
 
 Musl reads `t->tid` from its full pthread record and encodes Linux's
 per-thread clock as `(~tid << 3) | 6`. The owned runtime never dereferences a
-public `pthread_t`. For the bootstrapped initial task it requires the current
-`%fs:0` value plus the initial-task TID discriminator, then reads
-`gettid=186`. For a selected worker it searches the registry under its
-lifecycle lock and copies only the positive parent-written
-`CLONE_PARENT_SETTID` child-TID before releasing that lock.
+public `pthread_t`. For the bootstrapped initial caller it requires the
+current `%fs:0` value plus the initial-task TID discriminator, then reads
+`gettid=186`. A worker querying a saved, live process-main handle instead
+matches that opaque token to the initial-TLS owner and copies the recorded
+initial-task TID. It does not assume that TID is the process ID. For a
+selected worker target it searches the registry under its lifecycle lock and
+copies only the positive parent-written `CLONE_PARENT_SETTID` child-TID before
+releasing that lock.
 
-The copied worker TID is a snapshot. The caller must keep the target executing
-and must not race completion, `pthread_join`, `pthread_detach`, or later
-reaping that can clear the child-TID word, withdraw the mapping, or permit
-Linux TID reuse. The consumer makes that condition concrete: its worker
+Every copied target TID is a snapshot. The caller must keep the target
+executing and must not race completion, `pthread_join`, `pthread_detach`, or
+later reaping that can clear the child-TID word, withdraw the mapping, or
+permit Linux TID reuse. The consumer makes that condition concrete: main stays
+executing while its worker resolves the saved main handle; the worker then
 publishes readiness, spins until the parent releases it, and only then exits.
-It checks worker-self and parent-to-live-worker IDs, their exact 32-bit
-encoding, `clock_gettime` acceptance, and separate caller-errno preservation.
+It checks worker-to-held-main, worker-self, and parent-to-live-worker IDs,
+their exact 32-bit encoding, `clock_gettime` acceptance, and separate
+caller-errno preservation.
 
 Null, foreign, finished, and withdrawn handles fail closed with positive
 `ESRCH` before the output slot is observed. This is candidate behavior outside
