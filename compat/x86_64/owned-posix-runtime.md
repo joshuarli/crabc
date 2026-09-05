@@ -231,7 +231,17 @@ expectations do not apply to musl's FILE contract. Its remaining workload must
 pass cleanly; the composite must also bind the matrix's `io-cancellation`
 receipt, including `READ_FILE` and `ASYNC_LOOP`, to the same selected products
 and required entries. The frozen fixture, comparator and original failed run
-remain unchanged. A null replacement receipt is an unmet condition.
+remain unchanged. A null replacement receipt at the composite boundary is an
+unmet condition; the child stress receipt retains its null field because the
+composite owns this binding.
+
+`./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --output NEW_DIR`
+executes this contract through `owned_posix_native_execution.py`. Its
+`native-execution.json` binds all five source-aware component observations and
+all three I/O replay receipts, including the eighteen cells. Host validation
+reconstructs those bindings without running target programs. See
+`owned-posix-native-execution.md` for inputs, failure retention, and the exact
+non-promoting completion boundary.
 
 Measurements may run before dependent compatibility families are promoted.
 Requiring `compat.posix-process` or `libc.pthread-tls` completion to execute

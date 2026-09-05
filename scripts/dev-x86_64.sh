@@ -591,6 +591,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
   owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  execute the prepared static and dynamic POSIX family matrix
+  owned-posix-native --family-execution FILE --output NEW_DIR  execute the five native POSIX components on the matrix's installed product
   owned-posix-filesystem [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX filesystem provider composition
   owned-nftw-relative-base [DYNAMIC_SYSROOT]  regress installed nftw relative FTW.base callback metadata
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
@@ -2756,6 +2757,30 @@ prepare_owned_posix_family_arguments() {
     POSIX_FAMILY_ARGUMENTS=(--static-preparation "$static_receipt" --dynamic-qualification "$dynamic_receipt" --output "$output")
 }
 
+prepare_owned_posix_native_arguments() {
+    local family_receipt='' output=''
+    local expected='usage: ./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --output NEW_DIR'
+    while [ "$#" -gt 0 ]; do
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$expected"
+        case "$1" in
+            --family-execution)
+                [ -z "$family_receipt" ] || fail "$expected"
+                family_receipt="$2"
+                ;;
+            --output)
+                [ -z "$output" ] || fail "$expected"
+                output="$2"
+                ;;
+            *) fail "$expected" ;;
+        esac
+        shift 2
+    done
+    [ -n "$family_receipt" ] && [ -n "$output" ] || fail "$expected"
+    family_receipt="$(translate_owned_posix_product "$family_receipt" receipt-file)" || exit 2
+    output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
+    POSIX_NATIVE_ARGUMENTS=(--family-execution "$family_receipt" --output "$output")
+}
+
 prepare_owned_posix_replay_arguments() {
     local selected_command="$1"
     shift
@@ -2978,6 +3003,11 @@ run_in_dynamic_loader_mount_container() {
     local -a family_namespace_authority=()
     if [ "$command" = owned-posix-family ]; then
         family_namespace_authority+=(--security-opt=seccomp=unconfined)
+    fi
+    # Native OS-test owns a disposable devpts fixture. All five native
+    # components use local inputs and run without an external network.
+    if [ "$command" = owned-posix-native ]; then
+        family_namespace_authority+=(--security-opt=seccomp=unconfined --network=none)
     fi
     prepare_work_dir
     docker run --rm --init \
@@ -5877,7 +5907,7 @@ case "$command" in
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
     qualification-manifest) ;;
-    owned-static-sysroot|owned-posix-static-products|owned-posix-family) ;;
+    owned-static-sysroot|owned-posix-static-products|owned-posix-family|owned-posix-native) ;;
     lua-static-source-build) ;;
     lua-dynamic-source-build) ;;
     libc-owned-wordexp) ;;
@@ -6028,6 +6058,10 @@ case "$command" in
     owned-posix-family)
         prepare_owned_posix_family_arguments "$@"
         set -- "${POSIX_FAMILY_ARGUMENTS[@]}"
+        ;;
+    owned-posix-native)
+        prepare_owned_posix_native_arguments "$@"
+        set -- "${POSIX_NATIVE_ARGUMENTS[@]}"
         ;;
     owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-process-trio|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation)
         prepare_owned_posix_replay_arguments "$command" "$@"
@@ -7960,6 +7994,10 @@ PY
     owned-posix-family)
         ensure_image
         run_in_dynamic_loader_mount_container python3 -B /workspace/compat/x86_64/owned_posix_family_execution.py run "$@"
+        ;;
+    owned-posix-native)
+        ensure_image
+        run_in_dynamic_loader_mount_container python3 -B /workspace/compat/x86_64/owned_posix_native_execution.py run "$@"
         ;;
     owned-unix-mechanisms)
         [ "$#" -le 1 ] || fail "owned-unix-mechanisms takes at most one dynamic sysroot"

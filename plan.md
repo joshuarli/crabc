@@ -21,13 +21,15 @@ across the three replays.
 The required native aggregate remains open. Supplied-product differential,
 signal/process, source-correct pthread stress, full OS-test and libc-test
 runners, and their independent observation collectors are integrated.
-The full libc-test run against the clean `78dd5ee9` product records 416 passes,
-one missing-provider link (`random`) and 17 runtime failures:
-`.work/worktrees/native_libc_test_successor_audit/.work/x86_64/tmp/owned-libc-test.ah33Fk/libc-test.json`.
-The corrected basic OS-test root reduces that suite's differences from 98 to
-56; the other suites need a fresh combined run after runtime fixes. These
-retained failures do not satisfy aggregate acceptance. The composite execution
-owner and passing full native results remain required.
+The full libc-test run against the clean `0108a9e4` product records 424 passes,
+one missing-provider link (`random`) and nine runtime failures:
+`.work/x86_64/tmp/owned-libc-test.GETcCg/libc-test.json`. The same product's
+full ten-suite OS-test run passes eight suites; include retains 37 differences
+and basic retains 43:
+`.work/x86_64/tmp/owned-os-test.suth2okb/os-test.json`. These retained failures
+do not satisfy aggregate acceptance. The composite execution owner is now
+implemented through `owned-posix-native`; passing full native results and a
+fresh prerequisite matrix remain required.
 The pthread component preserves the original fixture and failed observations;
 its exact two-call native adaptation requires complementary same-product
 I/O-cancellation evidence. See `compat/x86_64/owned-posix-runtime.md` for the
