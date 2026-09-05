@@ -1247,7 +1247,9 @@ unsafe fn manage_in_place(
 /// obligation either through [`Self::release`], through
 /// [`Self::release_for_subprocess`] when the source caller carries a
 /// subprocess identity, or, when later page lifecycle code stores the
-/// provenance, through [`release_arena_slices`]. Keeping that transfer
+/// provenance, through the same `ProcessArenaBacking::release_slices` for a
+/// process-owned claim, or the historical [`release_arena_slices`] for an
+/// explicitly external selected-arena claim. Keeping that transfer
 /// explicit prevents an implicit drop from returning slices while a page still
 /// refers to them.
 pub(crate) struct ArenaSliceClaim<'arena> {
