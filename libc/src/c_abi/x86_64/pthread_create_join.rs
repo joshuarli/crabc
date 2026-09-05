@@ -861,9 +861,17 @@ pub(super) unsafe fn register_fork_child_kernel_tid() -> c_int {
 pub(super) unsafe fn pthread_fork_child(child_tid: c_int) {
     let thread_pointer = pthread_identity::current_thread_pointer();
     let inherited_worker = selected_worker_by_thread_pointer_locked(thread_pointer as usize);
+    unsafe { adopt_process_child(child_tid, inherited_worker) };
+}
+
+// A sole child may forget the inherited registry without reading its links.
+// A fork caller supplies its locked lookup; clone supplies only its own pinned
+// control, so unrelated partially updated links are never traversed.
+unsafe fn adopt_process_child(child_tid: c_int, inherited_worker: Option<*mut ThreadControl>) {
+    let thread_pointer = pthread_identity::current_thread_pointer();
     if let Some(control) = inherited_worker {
-        // SAFETY: the fork coordinator retains the copied registry lock and
-        // this caller's mapped control through the complete child adoption.
+        // SAFETY: fork's locked lookup or clone's caller-owned snapshot
+        // retains this mapped control through sole-child adoption.
         unsafe {
             core::ptr::write(
                 core::ptr::addr_of_mut!(INITIAL_THREAD_ATTRIBUTES),
@@ -896,6 +904,47 @@ pub(super) unsafe fn pthread_fork_child(child_tid: c_int) {
     SELECTED_WORKER_REGISTRY_HEAD.store(0, Ordering::Release);
     SELECTED_INITIAL_THREAD_TASK_STATE.store(SelectedRuntimeTaskState::ACTIVE, Ordering::Release);
     SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
+}
+
+/// The calling task's control is pinned by its own execution, independently
+/// of the mutable worker registry. The cancellation cache is installed before
+/// user entry and removed only at retirement. This owned-only snapshot lets
+/// public clone perform musl's minimal __post_Fork without taking a list lock
+/// that could already be held by an interrupted thread.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[derive(Clone, Copy)]
+pub(super) struct CloneCaller(Option<*mut ThreadControl>);
+
+/// # Safety
+/// The caller is an initialized owned task with all signals blocked. Its
+/// control remains live through the raw clone result and sole-child adoption.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn clone_caller() -> CloneCaller {
+    let pointer = pthread_identity::current_thread_pointer();
+    if static_tls::is_initial_thread_pointer(pointer) {
+        CloneCaller(None)
+    } else {
+        let cancellation = pthread_identity::current_selected_cancellation_state();
+        // SAFETY: every owned non-main caller has its live control's embedded
+        // cancellation state in fs:32. Its own execution pins that mapping.
+        CloneCaller(Some(unsafe { cancellation.cast::<u8>().sub(
+            core::mem::offset_of!(ThreadControl, cancellation),
+        ) as *mut ThreadControl }))
+    }
+}
+
+/// # Safety
+/// Call once in the sole non-CLONE_VM child, with every signal still blocked
+/// and the copied caller control mapped, before restoring signals or callbacks.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn clone_child(caller: CloneCaller) {
+    let tid = unsafe { register_fork_child_kernel_tid() };
+    let values = caller.0.map(|control| unsafe { core::ptr::addr_of!((*control).tsd) });
+    unsafe { pthread_tsd::adopt_clone_caller_values(values) };
+    if !static_tls::adopt_current_thread_after_fork() {
+        super::immediate_termination::_Exit(127);
+    }
+    unsafe { adopt_process_child(tid, caller.0) };
 }
 
 /// Return an inherited worker's TSD table during a child fork reset.

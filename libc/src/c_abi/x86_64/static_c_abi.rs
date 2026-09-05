@@ -441,6 +441,9 @@ mod pthread_barrier;
 mod pthread_spin_init;
 #[path = "pthread_cancel.rs"]
 mod pthread_cancel;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_process_trio.rs"]
+mod owned_process_trio;
 #[path = "pthread_atfork.rs"]
 mod pthread_atfork;
 #[path = "pthread_tsd.rs"]

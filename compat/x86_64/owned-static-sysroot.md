@@ -510,3 +510,8 @@ Owned `pthread_atfork` registrations use an allocation-backed process-lifetime
 list rather than the frozen private archive's 32-record table. The source
 contract and installed ordering/child/error evidence are documented in
 [`owned-atfork-registry.md`](owned-atfork-registry.md).
+
+The installed process creation trio (`clone`, `vfork`, and `daemon`) has a
+separate source mapping and ordinary application differential gate in
+[`owned-process-trio.md`](owned-process-trio.md). It includes static and
+static-PIE entry, child thread identity/lifecycle, and process-error rollback.

@@ -441,6 +441,27 @@ pub(super) unsafe fn run_selected_main_tsd_destructors() {
     unsafe { run_selected_worker_tsd_destructors(core::ptr::addr_of!(MAIN_SELECTED_TSD_VALUES)) }
 }
 
+/// Public clone preserves only its caller's per-thread values. Unlike fork,
+/// musl's __post_Fork does not repair the key registry lock. Keep that copied
+/// metadata untouched and copy only the caller-owned atomic value table when
+/// the owned representation changes a worker into the child main task.
+///
+/// # Safety
+/// Run in the sole clone child before adopting main TLS identity. A supplied
+/// source is this caller's copied, still-mapped worker value table.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn adopt_clone_caller_values(source: Option<*const SelectedTsdValues>) {
+    let Some(source) = source else { return; };
+    let source = unsafe { &*source };
+    for index in 0..PTHREAD_KEYS_MAX {
+        MAIN_SELECTED_TSD_VALUES.values[index].store(
+            source.values[index].load(Ordering::Acquire), Ordering::Relaxed,
+        );
+    }
+    MAIN_SELECTED_TSD_VALUES.used.store(source.used.load(Ordering::Acquire), Ordering::Relaxed);
+    MAIN_SELECTED_TSD_VALUES.teardown.store(source.teardown.load(Ordering::Acquire), Ordering::Relaxed);
+}
+
 /// Preserve the calling selected thread's TSD values in a post-fork child.
 ///
 /// Before the selected TLS adapter adopts the caller as its new main task,

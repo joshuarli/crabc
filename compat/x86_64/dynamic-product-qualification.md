@@ -76,6 +76,12 @@ dynamic linkage forms and direct interpreter entry. Its source and private
 archive boundary are in
 [`owned-atfork-registry.md`](owned-atfork-registry.md).
 
+The `process-trio` catalog case runs the installed `clone`, `vfork`, and
+`daemon` differential in both dynamic forms and direct interpreter entry.
+Its source mapping, child-state contract, and static companion evidence are
+in [`owned-process-trio.md`](owned-process-trio.md). Run the focused full
+linkage matrix with `./scripts/dev-x86_64.sh owned-process-trio`.
+
 The main thread keeps the initial wire DTV/count at FS+8/FS+16. The loader
 publishes current runtime TLS views at FS+24 and owns generation and module
 IDs, worker allocation/release, and old-view lifetime. The private 72-byte

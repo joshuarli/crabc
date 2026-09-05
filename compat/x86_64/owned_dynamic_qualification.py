@@ -53,6 +53,7 @@ CASES = {
     "assert": ("run_owned_assert.sh", None),
     "syslog": ("run_owned_syslog.sh", None),
     "pthread-spin": ("run_owned_pthread_spin.sh", None),
+    "process-trio": ("run_owned_process_trio.sh", None),
 }
 MATERIALIZATION_PROFILE = "retained dlclose mappings; default NOW with declared lazy imports; runtime GD growth; new runtime IE rejected"
 MATERIALIZATION_QUALIFICATION = "separate live three-product receipt and review required"

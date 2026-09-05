@@ -552,6 +552,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-linux-control  test owned Linux C mechanisms and kernel error translation
   owned-pthread-spin  qualify installed private/shared pthread spin locking
   owned-syslog  qualify owned C syslog delivery and state against musl
+  owned-process-trio   qualify installed clone/vfork/daemon semantics against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-atfork-registry  test installed resource-sized atfork callback ordering
@@ -5613,7 +5614,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
-    owned-dynamic-spawn|owned-atfork-registry) ;;
+    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio) ;;
     owned-assert|owned-linux-control) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -7638,6 +7639,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-atfork-registry takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_atfork_registry.sh
+        ;;
+    owned-process-trio)
+        [ "$#" -eq 0 ] || fail "owned-process-trio takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_process_trio.sh
         ;;
     owned-dynamic-spawn)
         [ "$#" -eq 0 ] || fail "owned-dynamic-spawn takes no arguments"
