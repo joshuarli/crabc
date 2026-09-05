@@ -45,6 +45,7 @@ CASES = {
     "pthread-join-cancel": ("run_owned_pthread_join_cancel.sh", None),
     "pthread-cond-cancel": ("run_owned_pthread_cond_cancel.sh", None),
     "pthread-cond-timed": ("run_owned_pthread_cond_timed.sh", None),
+    "pthread-mutex": ("run_owned_pthread_mutex.sh", None),
     "io-cancellation": ("run_owned_dynamic_io_cancellation.sh", None),
     "system-cancellation": ("run_owned_system_cancellation.sh", None),
     "spawn": ("run_owned_dynamic_spawn.sh", None),

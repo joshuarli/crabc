@@ -196,9 +196,10 @@ remains alive. Controls remain owned until creator handoff and kernel
 clear-child-TID both complete. The same consumer proves normal robust-mutex
 owner death, `EOWNERDEAD` recovery with `pthread_mutex_consistent`,
 `ENOTRECOVERABLE` after an unrecovered unlock, and process-shared owner death
-across `fork`. Explicit scheduling, remaining syscall cancellation points,
-recursive/error-checking/PI robust mutexes, allocator-wide fork
-recovery, and dynamic TLS lifetime remain open.
+across `fork`. The separate mutex gate covers recursive/error-checking private
+and process-shared robust owner death. Explicit scheduling, remaining syscall
+cancellation points, PI robust mutexes, allocator-wide fork recovery, and
+dynamic TLS lifetime remain open.
 
 The focused `./scripts/dev-x86_64.sh owned-pthread-lifecycle` gate runs this
 consumer with pinned musl and installed ET_EXEC/static-PIE. It also blocks
@@ -447,10 +448,12 @@ consumes the existing condition attribute word, including its clock and sharing
 fields. `owned_pthread_cond.rs` maps musl's private linked waiters, shared
 sequence/count accounting, relative deadline conversion, cancellation repair,
 relock precedence, and signal/broadcast/destruction transitions. Its typed
-`pthread_mutex::ConditionMutex` seam admits the existing normal and robust
-normal mutex kinds, with private/shared normal futex selection added for
-cross-process condition use. Recursive, error-checking, and PI mutex engines
-remain implementation gaps in the pthread family, not profile exclusions.
+`pthread_mutex::ConditionMutex` seam admits normal, robust-normal, recursive,
+and error-checking mutex kinds, with private/shared futex selection added for
+cross-process condition use. Recursive waits retain musl's one-unlock,
+one-relock depth behavior; they do not widen into a full recursive-depth
+release. PI mutex engines remain an implementation gap in the pthread family,
+not a profile exclusion.
 
 `owned_pthread_cond_timed_probe.c` checks realtime/monotonic expiration, invalid
 nanoseconds, invalid-clock errno, validation before cancellation, C11
@@ -463,6 +466,17 @@ ordinary-shared, and timed-shared variants with exact kernel wait observation.
 virtual addresses in each child, then proves signal, broadcast, and ordinary
 or timed wait without process-local waiter pointers. The same fixture is used
 for pinned musl and installed static/dynamic products.
+
+`owned-pthread-mutex` qualifies recursive and error-checking state transitions
+and the owned-only `pthread_mutex_timedlock`/`mtx_timedlock` exports against
+pinned musl in static ET_EXEC/static-PIE and dynamic PIE/non-PIE products.
+`owned_pthread_mutex_probe.c` checks recursive depth and contention,
+error-checking self- and wrong-owner results, realtime timeout/invalid-deadline
+ordering without errno publication, private/shared robust recursive and
+error-checking owner death/recovery, recursive condition one-unlock relock and
+cancellation cleanup, C11 recursive/timed kind status, and `EPERM` condition
+admission for a robust `EOWNERDEAD` holder before `pthread_mutex_consistent`.
+PI, protocol, and priority-ceiling mutexes remain excluded.
 
 The pinned Rust nightly's `std/src/sys/sync/condvar/mod.rs` selects futexes for
 Linux. Its Unix pthread fallback uses monotonic condition attributes and timed

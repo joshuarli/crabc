@@ -30,9 +30,12 @@
 //! timed waits, automatic private waiters or shared sequence/count storage,
 //! MASKED cancellation, and mutex-owner validation/relock error precedence.
 //! The C11 adapter shares these private Rust seams without interposable calls.
-//! Recursive/error-checking/PI mutex implementations remain pthread-family
-//! work in the mutex owner; this component does not change the public profile
-//! or claim complete pthread parity or public x86 support.
+//! The owned mutex owner additionally admits recursive and error-checking
+//! records through the same typed relock seam. It follows musl's one-unlock,
+//! one-relock condition transaction for recursive depth rather than inventing
+//! a full depth-release protocol. PI mutexes remain pthread-family work. This
+//! component does not change the public profile or claim complete pthread
+//! parity or public x86 support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 private pthread-condition leaf requires little-endian Linux/x86-64");

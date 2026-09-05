@@ -67,6 +67,29 @@ class DynamicProductContractTests(unittest.TestCase):
             [mode["id"] for mode in contract["mode"]],
             ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
         )
+        self.assertEqual(
+            contract["qualification"]["required_cases"],
+            [
+                "cycle",
+                "cli",
+                "elf-scope-alias",
+                "dlopen-pie",
+                "dlopen-non-pie",
+                "lazy-pie",
+                "lazy-non-pie",
+                "constructor-exit",
+                "pthread-signal",
+                "pthread-exit",
+                "fork",
+                "pthread-getattr",
+                "pthread-join-cancel",
+                "pthread-cond-cancel",
+                "pthread-cond-timed",
+                "pthread-mutex",
+                "io-cancellation",
+                "system-cancellation",
+            ],
+        )
         self.assertEqual(report["status"], "implemented-unqualified")
         self.assertEqual(contract["non_promotion"]["driver_execution"], "installed-translation-and-linking")
         self.assertEqual(

@@ -36,8 +36,10 @@ acceptance criteria below and in the two execution plans remain unchanged.
   `pclose` keeps the raw wait. `e815c66f` adds timed/clock-selected and shared
   condition transactions, C11 timed status, a typed mutex relock seam,
   normal/shared mutex futex keys, and robust relock error precedence.
-  Recursive/error-checking/PI mutexes and timed locking remain implementation
-  work. The frozen archive is separate from the expanded owned runtime.
+  The owned runtime now adds recursive/error-checking mutexes, robust owner
+  tracking for those types, and realtime timed locking with C11 timed status.
+  PI mutexes remain implementation work. The frozen archive is separate from
+  the expanded owned runtime.
 - `44f1684b` repairs the legacy condition evidence check: follow exact owned
   atomic helpers and raw syscall edges instead of requiring incidental
   inlining in public symbols. It changes evidence, not runtime algorithms.

@@ -183,6 +183,7 @@
           "mkstemp",
           "mkstemps",
           "mktime",
+          "mtx_timedlock",
           "open_memstream",
           "open_wmemstream",
           "pclose",
@@ -193,6 +194,7 @@
           "pthread_cond_timedwait",
           "pthread_getattr_np",
           "pthread_kill",
+          "pthread_mutex_timedlock",
           "pthread_sigmask",
           "putc_unlocked",
           "putchar_unlocked",
@@ -1549,7 +1551,6 @@
         "mq_timedsend",
         "mq_unlink",
         "mremap",
-        "mtx_timedlock",
         "openlog",
         "openpty",
         "perror",
@@ -1560,7 +1561,6 @@
         "pthread_getattr_default_np",
         "pthread_getschedparam",
         "pthread_mutex_setprioceiling",
-        "pthread_mutex_timedlock",
         "pthread_mutexattr_getprioceiling",
         "pthread_mutexattr_setprioceiling",
         "pthread_mutexattr_setprotocol",
@@ -417406,7 +417406,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "f055a1e9c51725460a88129971b076f04f5194bafdb908176b17534810cce560",
+    "parity_ledger_sha256": "44c7c5efa6ecdfa8c60e11534a12bad74c1e0dd24a399e746ddf002821be19fc",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -436216,9 +436216,9 @@
       "macro": 5202
     },
     "callable_provider_counts": {
-      "declared_unverified_feature_archives": 117,
+      "declared_unverified_feature_archives": 119,
       "default_static": 1122,
-      "unprovided": 208,
+      "unprovided": 206,
       "verified_feature_archives": 78
     },
     "candidate_external_callable_count": 1525,

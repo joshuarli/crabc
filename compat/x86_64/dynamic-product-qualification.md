@@ -48,7 +48,8 @@ The finite `CASES` roster maps the contract to CLI, dependency cycles, ELF
 weak/protected/hidden scope and interpreter aliases, PIE/non-PIE runtime
 loading and deferred binding, constructor exit, pthread signals and exit,
 fork repair, stack attributes, join cancellation, condition-wait cancellation,
-the shared full I/O cancellation roster, and the separate `system()`
+recursive/error-checking/timed mutex state with robust recovery and C11
+mapping, the shared full I/O cancellation roster, and the separate `system()`
 cancellation protocol, the contained C `syslog` state/delivery matrix, and
 private/shared pthread spin-lock publication.
 The runtime-loading leaf also

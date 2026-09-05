@@ -25,39 +25,51 @@
 //!   recovery transitions.
 //!
 //! The normal route admits a zero-initialized or null-attribute
-//! `PTHREAD_MUTEX_NORMAL` object. The robust route additionally admits a
-//! normal (`type == 0`) robust attribute, with either process-private or
-//! process-shared storage. A selected worker or selected initial task that
-//! exits while holding such a mutex publishes `EOWNERDEAD`; a recovery owner
-//! must call `pthread_mutex_consistent` before unlock or the next owner sees
-//! `ENOTRECOVERABLE`. Process-shared robust transitions register the current
-//! task's kernel robust list and use the one shared musl `vmlock` owner while
-//! their pending node is visible. Contention uses the matching Linux private
-//! or shared futex word. Recursive, error-checking, PI, timed, protocol, and
-//! priority-ceiling mutexes remain excluded. The separate private
-//! condition-variable sibling remains normal-only; it does not admit robust
-//! mutexes. This artifact remains outside general pthread synchronization,
-//! dynamic main-thread exit/fork repair, loader/CRT integration, and public
-//! x86 support. The
-//! separately admitted private condition-variable sibling may use this exact
-//! state machine internally, and the separate C11 plain-synchronization
-//! sibling translates this exact state machine through distinct `mtx_t`
-//! storage. Unsupported non-normal, non-robust, or otherwise non-selected
-//! type words return `ENOTSUP` without being interpreted.
+//! `PTHREAD_MUTEX_NORMAL` object; it is the frozen route's sole mutex type.
+//! The owned route additionally admits normal, recursive, and error-checking
+//! type bits, each with the selected robust and
+//! process-shared modifiers. Recursive and error-checking objects use musl's
+//! owner/list state machine: recursive acquisition changes `_m_count`, while
+//! error-checking `lock` and `timedlock` report `EDEADLK` for their owner.
+//! A selected task that exits while holding an owner-tracked object records
+//! the owner-died bit. Only a robust successor receives recoverable
+//! `EOWNERDEAD`; a non-robust recursive or error-checking successor remains
+//! busy. A robust recovery owner must call `pthread_mutex_consistent` before
+//! unlock or the next owner sees `ENOTRECOVERABLE`. Process-shared robust transitions
+//! register the current task's kernel robust list and use the one
+//! shared musl `vmlock` owner while
+//! their pending node is visible. `pthread_mutex_timedlock` is an owned-only
+//! `CLOCK_REALTIME` operation: it preserves musl's fast acquisition and
+//! self-owner ordering before it reads or validates the deadline, and returns
+//! pthread status without publishing C `errno`.
+//!
+//! PI, protocol, and priority-ceiling mutexes remain excluded. This artifact
+//! remains outside general pthread synchronization, loader/CRT integration,
+//! and public x86 support. The separately admitted condition and C11 siblings
+//! use private Rust seams into this state machine. Unsupported type words
+//! return `ENOTSUP` without being interpreted.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 normal pthread-mutex leaf requires little-endian Linux/x86-64");
 
 use core::ffi::{c_int, c_void};
+#[cfg(feature = "x86-owned-static-runtime")]
+use core::ffi::c_long;
 use core::mem::{align_of, offset_of, size_of};
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use super::{atomic, pthread_create_join, pthread_identity, pthread_vmlock, raw_syscall, static_tls};
 
 const EPERM: c_int = 1;
+#[cfg(feature = "x86-owned-static-runtime")]
+const EAGAIN: c_int = 11;
 const EBUSY: c_int = 16;
 const EINTR: c_int = 4;
 const EINVAL: c_int = 22;
+#[cfg(feature = "x86-owned-static-runtime")]
+const EDEADLK: c_int = 35;
+#[cfg(feature = "x86-owned-static-runtime")]
+const ETIMEDOUT: c_int = 110;
 const EOWNERDEAD: c_int = 130;
 const ENOTRECOVERABLE: c_int = 131;
 const ENOTSUP: c_int = 95;
@@ -71,6 +83,12 @@ const MUTEX_PREVIOUS_OFFSET: usize = 24;
 const MUTEX_NEXT_OFFSET: usize = 32;
 const MUTEX_COUNT_WORD: usize = 5;
 
+#[cfg(feature = "x86-owned-static-runtime")]
+const MUTEX_TYPE_MASK: c_int = 3;
+#[cfg(feature = "x86-owned-static-runtime")]
+const MUTEX_RECURSIVE: c_int = 1;
+#[cfg(feature = "x86-owned-static-runtime")]
+const MUTEX_ERRORCHECK: c_int = 2;
 const MUTEX_ROBUST_BIT: c_int = 4;
 const MUTEX_PROCESS_SHARED_BIT: c_int = 128;
 const MUTEX_SELECTED_ROBUST_BITS: c_int = MUTEX_ROBUST_BIT | MUTEX_PROCESS_SHARED_BIT;
@@ -86,6 +104,10 @@ const LINUX_ROBUST_LIST_SIZE: usize = 3 * size_of::<usize>();
 const FUTEX_WAIT: i64 = 0;
 const FUTEX_WAKE: i64 = 1;
 const FUTEX_PRIVATE_FLAG: i64 = 128;
+#[cfg(feature = "x86-owned-static-runtime")]
+const CLOCK_REALTIME: c_int = 0;
+#[cfg(feature = "x86-owned-static-runtime")]
+const NANOS_PER_SECOND: c_long = 1_000_000_000;
 
 /// Exact public x86 `pthread_mutex_t` storage.
 ///
@@ -101,6 +123,18 @@ struct PublicPthreadMutex {
 #[repr(C)]
 struct PublicPthreadMutexAttr {
     attr: u32,
+}
+
+/// Linux x86-64's public `struct timespec` representation.
+///
+/// This is deliberately local to the owned timed-mutex seam. It is read only
+/// after acquisition cannot complete immediately, exactly where musl's
+/// `__timedwait` boundary observes it.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[repr(C)]
+struct RawTimespec {
+    tv_sec: c_long,
+    tv_nsec: c_long,
 }
 
 /// Linux's task-local robust-list head ABI.
@@ -134,6 +168,10 @@ const _: () = {
     assert!(size_of::<PublicPthreadMutexAttr>() == 4);
     assert!(align_of::<PublicPthreadMutexAttr>() == 4);
     assert!(offset_of!(PublicPthreadMutexAttr, attr) == 0);
+    #[cfg(feature = "x86-owned-static-runtime")]
+    assert!(size_of::<RawTimespec>() == 16);
+    #[cfg(feature = "x86-owned-static-runtime")]
+    assert!(align_of::<RawTimespec>() == 8);
     assert!(size_of::<SelectedRobustList>() == LINUX_ROBUST_LIST_SIZE);
     assert!(align_of::<SelectedRobustList>() == align_of::<usize>());
     assert!(offset_of!(SelectedRobustList, head) == 0);
@@ -285,9 +323,11 @@ pub(super) unsafe fn initialize_selected_robust_list(list: *mut SelectedRobustLi
 ///
 /// # Safety
 ///
-/// The caller must hold the copied selected-worker registry transaction and
-/// retain `list`'s mapping for the child process lifetime. It must run before
-/// user child callbacks can acquire or release an inherited robust mutex.
+/// The child is its sole task, `list` is the caller's own live selected-worker
+/// robust-list record captured before the child transition, and that caller
+/// mapping remains pinned for the child's lifetime. It must run before user
+/// child callbacks can acquire or release an inherited robust mutex; it never
+/// authorizes traversal of a copied parent worker registry.
 pub(super) unsafe fn adopt_selected_initial_robust_list_after_fork(
     list: *mut SelectedRobustList,
 ) {
@@ -309,9 +349,28 @@ pub(super) unsafe fn adopt_selected_initial_robust_list_after_fork(
 ///
 /// # Safety
 ///
-/// The caller must be inside the copied static fork transaction before child
-/// callbacks. No sibling can concurrently access the child copy.
+/// The caller is the child process's sole task before user callbacks. If an
+/// earlier child transition adopted its caller-worker list, that mapping is
+/// still pinned and its linked head remains authoritative across a nested
+/// child transition; only the kernel-registration offset and pending node are
+/// reset. Otherwise the process-lifetime initial-task record is initialized
+/// or reset. No copied parent registry is traversed.
 pub(super) unsafe fn reset_selected_initial_robust_list_after_fork() {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        let adopted = SELECTED_ADOPTED_INITIAL_ROBUST_LIST.load(Ordering::Acquire);
+        if adopted != 0 {
+            let list = adopted as *mut SelectedRobustList;
+            // SAFETY: this inherited caller mapping remains pinned for the child
+            // lifetime; retain its linked head through a nested child transition.
+            unsafe {
+                (*list).offset = 0;
+                publish_robust_pending_node(list, core::ptr::null_mut());
+            }
+            return;
+        }
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     SELECTED_ADOPTED_INITIAL_ROBUST_LIST.store(0, Ordering::Release);
     // SAFETY: this static record belongs only to the selected initial task.
     let list = core::ptr::addr_of_mut!(SELECTED_INITIAL_ROBUST_LIST);
@@ -373,7 +432,32 @@ unsafe fn selected_mutex_type(mutex: *mut PublicPthreadMutex) -> c_int {
 unsafe fn is_selected_robust_mutex(mutex: *mut PublicPthreadMutex) -> bool {
     // SAFETY: caller supplies a complete public record with stable type.
     let mutex_type = unsafe { selected_mutex_type(mutex) };
-    mutex_type & MUTEX_ROBUST_BIT != 0 && mutex_type & !MUTEX_SELECTED_ROBUST_BITS == 0
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        return mutex_type & MUTEX_ROBUST_BIT != 0
+            && mutex_type & !(MUTEX_TYPE_MASK | MUTEX_ROBUST_BIT | MUTEX_PROCESS_SHARED_BIT) == 0
+            && mutex_type & MUTEX_TYPE_MASK <= MUTEX_ERRORCHECK;
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    {
+        mutex_type & MUTEX_ROBUST_BIT != 0 && mutex_type & !MUTEX_SELECTED_ROBUST_BITS == 0
+    }
+}
+
+/// Whether an owned mutex uses musl's task-owner/list state machine.
+///
+/// A normal process-shared mutex still uses the normal futex route. Every
+/// recursive or error-checking type does owner tracking, as does any robust
+/// normal type. PI is intentionally excluded before a state word is decoded.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[inline(always)]
+unsafe fn is_selected_owned_owner_mutex(mutex: *mut PublicPthreadMutex) -> bool {
+    // SAFETY: the immutable type word belongs to the complete caller record.
+    let mutex_type = unsafe { selected_mutex_type(mutex) };
+    let base_type = mutex_type & MUTEX_TYPE_MASK;
+    base_type <= MUTEX_ERRORCHECK
+        && mutex_type & !(MUTEX_TYPE_MASK | MUTEX_ROBUST_BIT | MUTEX_PROCESS_SHARED_BIT) == 0
+        && (base_type != 0 || mutex_type & MUTEX_ROBUST_BIT != 0)
 }
 
 #[inline(always)]
@@ -498,6 +582,85 @@ unsafe fn futex_wait(lock: *mut c_int, expected: c_int, is_private: bool) -> c_i
     };
     if result == -i64::from(EINTR) {
         EINTR
+    } else {
+        0
+    }
+}
+
+/// Wait once through musl's owned timed-mutex `__timedwait` boundary.
+///
+/// The supplied deadline is absolute `CLOCK_REALTIME`; Linux futex consumes a
+/// relative timeout, so the conversion is local and never crosses the public
+/// clock C ABI or writes C `errno`. Ordinary futex races are retries. Only
+/// interruption and expiration reach the mutex lock loop.
+///
+/// # Safety
+///
+/// `lock` names a live aligned mutex futex word. When non-null,
+/// `absolute_timeout` names readable native x86 `struct timespec` storage for
+/// this call.
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe fn timed_futex_wait(
+    lock: *mut c_int,
+    expected: c_int,
+    absolute_timeout: *const RawTimespec,
+    is_private: bool,
+) -> c_int {
+    let mut relative_timeout = RawTimespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let timeout = if absolute_timeout.is_null() {
+        core::ptr::null()
+    } else {
+        // SAFETY: this is the caller's C `timespec`; a raw copy avoids a Rust
+        // reference to foreign storage and preserves musl's deferred read.
+        let absolute = unsafe { core::ptr::read(absolute_timeout) };
+        if absolute.tv_nsec < 0 || absolute.tv_nsec >= NANOS_PER_SECOND {
+            return EINVAL;
+        }
+        let mut now = RawTimespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: Linux writes only the complete local x86 timespec.
+        let clock_result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_CLOCK_GETTIME,
+                i64::from(CLOCK_REALTIME),
+                core::ptr::addr_of_mut!(now) as usize as i64,
+            )
+        };
+        if is_linux_error(clock_result) {
+            return EINVAL;
+        }
+        relative_timeout.tv_sec = absolute.tv_sec.wrapping_sub(now.tv_sec);
+        relative_timeout.tv_nsec = absolute.tv_nsec.wrapping_sub(now.tv_nsec);
+        if relative_timeout.tv_nsec < 0 {
+            relative_timeout.tv_sec = relative_timeout.tv_sec.wrapping_sub(1);
+            relative_timeout.tv_nsec += NANOS_PER_SECOND;
+        }
+        if relative_timeout.tv_sec < 0 {
+            return ETIMEDOUT;
+        }
+        core::ptr::addr_of!(relative_timeout)
+    };
+    let operation = FUTEX_WAIT | if is_private { FUTEX_PRIVATE_FLAG } else { 0 };
+    // SAFETY: the mutex word and optional local timeout satisfy Linux futex's
+    // raw ABI. The fourth x86 syscall argument is routed through r10.
+    let result = unsafe {
+        raw_syscall::syscall4(
+            raw_syscall::SYS_FUTEX,
+            lock as usize as i64,
+            operation,
+            i64::from(expected),
+            timeout as usize as i64,
+        )
+    };
+    if result == -i64::from(EINTR) {
+        EINTR
+    } else if result == -i64::from(ETIMEDOUT) {
+        ETIMEDOUT
     } else {
         0
     }
@@ -637,6 +800,65 @@ unsafe fn lock_selected_normal_mutex_record(mutex: *mut PublicPthreadMutex) -> c
         // a cancellation point, and timeout/cancellation result handling is
         // deliberately outside this artifact.
         let _ = result;
+    }
+}
+
+/// Acquire an admitted normal mutex until an optional realtime deadline.
+///
+/// This is the normal branch of musl's `__pthread_mutex_timedlock`: the first
+/// acquisition succeeds before it observes a deadline, while contended paths
+/// mark a waiter and use the owned raw timed-futex boundary.
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe fn timed_lock_selected_normal_mutex_record(
+    mutex: *mut PublicPthreadMutex,
+    absolute_timeout: *const RawTimespec,
+) -> c_int {
+    // SAFETY: the caller has admitted this normal object and its raw lock word
+    // belongs to this exact atomic protocol.
+    if unsafe { try_lock_selected_normal_mutex_record(mutex) } == 0 {
+        return 0;
+    }
+
+    let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
+    let waiters = unsafe { mutex_word(mutex, MUTEX_WAITERS_WORD) };
+    let is_private = mutex_is_private(unsafe { selected_mutex_type(mutex) });
+    let mut spins = 100;
+    while spins > 0
+        && unsafe { atomic::x86_64_load_acquire_i32(lock) } != 0
+        && unsafe { atomic::x86_64_load_relaxed_i32(waiters) } == 0
+    {
+        core::hint::spin_loop();
+        spins -= 1;
+    }
+    loop {
+        if unsafe { try_lock_selected_normal_mutex_record(mutex) } == 0 {
+            return 0;
+        }
+        // SAFETY: this advisory counter pairs exactly with the marked sleep.
+        unsafe { atomic::x86_64_fetch_add_acqrel_i32(waiters, 1) };
+        let observed = unsafe { atomic::x86_64_load_acquire_i32(lock) };
+        if observed == 0 {
+            // SAFETY: no marked wait was published for this retry.
+            unsafe { atomic::x86_64_fetch_sub_acqrel_i32(waiters, 1) };
+            continue;
+        }
+        let marked = observed | MUTEX_WAITER_BIT;
+        if unsafe { atomic::x86_64_compare_exchange_acqrel_i32(lock, observed, marked) }
+            != observed
+        {
+            // SAFETY: the failed compare-exchange left no waiter mark ours.
+            unsafe { atomic::x86_64_fetch_sub_acqrel_i32(waiters, 1) };
+            continue;
+        }
+        // SAFETY: the mark remains visible while Linux observes this futex.
+        let result = unsafe {
+            timed_futex_wait(lock, marked, absolute_timeout, is_private)
+        };
+        // SAFETY: the futex has stopped observing this iteration's hint.
+        unsafe { atomic::x86_64_fetch_sub_acqrel_i32(waiters, 1) };
+        if result != 0 && result != EINTR {
+            return result;
+        }
     }
 }
 
@@ -975,6 +1197,204 @@ unsafe fn unlock_selected_robust_mutex_record(mutex: *mut PublicPthreadMutex) ->
     0
 }
 
+/// Attempt one owned recursive, error-checking, or robust owner acquisition.
+///
+/// Musl links every non-normal owner-tracked mutex into the current task list,
+/// including non-robust recursive/error-checking objects. That preserves its
+/// task-exit state transition and keeps the process-shared pending-node
+/// transaction identical for all admitted owner types.
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe fn try_lock_selected_owned_owner_mutex_record(
+    mutex: *mut PublicPthreadMutex,
+) -> c_int {
+    let mutex_type = unsafe { selected_mutex_type(mutex) };
+    let base_type = mutex_type & MUTEX_TYPE_MASK;
+    let Some((thread_id, list)) = current_selected_robust_owner() else {
+        return ENOTSUP;
+    };
+    let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
+    let waiters = unsafe { mutex_word(mutex, MUTEX_WAITERS_WORD) };
+    let old = unsafe { atomic::x86_64_load_acquire_i32(lock) };
+    let owner = old & MUTEX_OWNER_MASK;
+    if owner == thread_id {
+        if base_type == MUTEX_RECURSIVE {
+            let count = unsafe { core::ptr::read(mutex_word(mutex, MUTEX_COUNT_WORD)) };
+            if (count as u32) >= c_int::MAX as u32 {
+                return EAGAIN;
+            }
+            // SAFETY: only the current owner changes its recursive depth.
+            unsafe { core::ptr::write(mutex_word(mutex, MUTEX_COUNT_WORD), count + 1) };
+            return 0;
+        }
+        return EBUSY;
+    }
+    if owner == MUTEX_OWNER_MASK {
+        return ENOTRECOVERABLE;
+    }
+    if owner != 0 || (old != 0 && mutex_type & MUTEX_ROBUST_BIT == 0) {
+        return EBUSY;
+    }
+
+    let is_private = mutex_is_private(mutex_type);
+    if !is_private {
+        // SAFETY: this covers the same pshared pending interval as musl.
+        unsafe { begin_shared_robust_transition(list, mutex) };
+    }
+    let desired = thread_id
+        | (old & MUTEX_OWNER_DIED_BIT)
+        | if !is_private && unsafe { atomic::x86_64_load_relaxed_i32(waiters) } != 0 {
+            MUTEX_WAITER_BIT
+        } else {
+            0
+        };
+    if unsafe { atomic::x86_64_compare_exchange_acqrel_i32(lock, old, desired) } != old {
+        if !is_private {
+            // SAFETY: this failed transition never linked its pending node.
+            unsafe { publish_robust_pending_node(list, core::ptr::null_mut()) };
+        }
+        return EBUSY;
+    }
+    // SAFETY: a successful owner transition makes this task the sole list
+    // mutator until its matching unlock or task-exit walk.
+    unsafe { link_robust_mutex(list, mutex) };
+    if !is_private {
+        // SAFETY: list reachability now covers the kernel-visible node.
+        unsafe { publish_robust_pending_node(list, core::ptr::null_mut()) };
+    }
+    if old != 0 {
+        // SAFETY: musl clears recovery depth before it reports EOWNERDEAD.
+        unsafe { core::ptr::write(mutex_word(mutex, MUTEX_COUNT_WORD), 0) };
+        EOWNERDEAD
+    } else {
+        0
+    }
+}
+
+/// Acquire an owned owner-tracked mutex until an optional realtime deadline.
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe fn timed_lock_selected_owned_owner_mutex_record(
+    mutex: *mut PublicPthreadMutex,
+    absolute_timeout: *const RawTimespec,
+) -> c_int {
+    let mutex_type = unsafe { selected_mutex_type(mutex) };
+    let base_type = mutex_type & MUTEX_TYPE_MASK;
+    let first = unsafe { try_lock_selected_owned_owner_mutex_record(mutex) };
+    if first != EBUSY {
+        return first;
+    }
+    let Some((thread_id, _)) = current_selected_robust_owner() else {
+        return ENOTSUP;
+    };
+    let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
+    let waiters = unsafe { mutex_word(mutex, MUTEX_WAITERS_WORD) };
+    let is_private = mutex_is_private(mutex_type);
+    let mut spins = 100;
+    while spins > 0
+        && unsafe { atomic::x86_64_load_acquire_i32(lock) } != 0
+        && unsafe { atomic::x86_64_load_relaxed_i32(waiters) } == 0
+    {
+        core::hint::spin_loop();
+        spins -= 1;
+    }
+    loop {
+        let result = unsafe { try_lock_selected_owned_owner_mutex_record(mutex) };
+        if result != EBUSY {
+            return result;
+        }
+        let observed = unsafe { atomic::x86_64_load_acquire_i32(lock) };
+        let owner = observed & MUTEX_OWNER_MASK;
+        if owner == 0
+            && (observed == 0 || mutex_type & MUTEX_ROBUST_BIT != 0)
+        {
+            continue;
+        }
+        // This follows musl's post-trylock owner check, so an error-checking
+        // self-lock wins over a malformed or expired deadline.
+        if base_type == MUTEX_ERRORCHECK && owner == thread_id {
+            return EDEADLK;
+        }
+        // SAFETY: the counter is paired with this iteration's futex wait.
+        unsafe { atomic::x86_64_fetch_add_acqrel_i32(waiters, 1) };
+        let marked = observed | MUTEX_WAITER_BIT;
+        if unsafe { atomic::x86_64_compare_exchange_acqrel_i32(lock, observed, marked) }
+            != observed
+        {
+            // SAFETY: no waiter mark survived the failed transition.
+            unsafe { atomic::x86_64_fetch_sub_acqrel_i32(waiters, 1) };
+            continue;
+        }
+        // SAFETY: the marked word remains live until this raw wait returns.
+        let result = unsafe {
+            timed_futex_wait(lock, marked, absolute_timeout, is_private)
+        };
+        // SAFETY: balances this completed wait observation.
+        unsafe { atomic::x86_64_fetch_sub_acqrel_i32(waiters, 1) };
+        if result != 0 && result != EINTR {
+            return result;
+        }
+    }
+}
+
+/// Acquire one owned owner-tracked mutex without a deadline.
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe fn lock_selected_owned_owner_mutex_record(mutex: *mut PublicPthreadMutex) -> c_int {
+    // SAFETY: a null deadline is musl's non-timed lock extension.
+    unsafe { timed_lock_selected_owned_owner_mutex_record(mutex, core::ptr::null()) }
+}
+
+/// Release an owned owner-tracked mutex after exact owner validation.
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe fn unlock_selected_owned_owner_mutex_record(
+    mutex: *mut PublicPthreadMutex,
+) -> c_int {
+    let mutex_type = unsafe { selected_mutex_type(mutex) };
+    let base_type = mutex_type & MUTEX_TYPE_MASK;
+    let Some((thread_id, list)) = current_selected_robust_owner() else {
+        return ENOTSUP;
+    };
+    let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
+    let waiters = unsafe { mutex_word(mutex, MUTEX_WAITERS_WORD) };
+    // Snapshot before publication: another owner may destroy the C object
+    // immediately after the release exchange.
+    let waiter_hint = unsafe { atomic::x86_64_load_relaxed_i32(waiters) };
+    let old = unsafe { atomic::x86_64_load_acquire_i32(lock) };
+    if old & MUTEX_OWNER_MASK != thread_id {
+        return EPERM;
+    }
+    if base_type == MUTEX_RECURSIVE
+        && unsafe { core::ptr::read(mutex_word(mutex, MUTEX_COUNT_WORD)) } != 0
+    {
+        let count = unsafe { core::ptr::read(mutex_word(mutex, MUTEX_COUNT_WORD)) };
+        // SAFETY: only the verified current recursive owner changes depth.
+        unsafe { core::ptr::write(mutex_word(mutex, MUTEX_COUNT_WORD), count - 1) };
+        return 0;
+    }
+    let new = if mutex_type & MUTEX_ROBUST_BIT != 0 && old & MUTEX_OWNER_DIED_BIT != 0 {
+        MUTEX_NOT_RECOVERABLE
+    } else {
+        0
+    };
+    let is_private = mutex_is_private(mutex_type);
+    if !is_private {
+        // SAFETY: destroy drains this exact kernel-visible pending interval.
+        unsafe { pthread_vmlock::lock() };
+        unsafe { publish_robust_pending_node(list, robust_node(mutex)) };
+    }
+    // SAFETY: the verified owner linked this node exactly once.
+    unsafe { unlink_robust_mutex(list, mutex) };
+    let previous = unsafe { atomic::x86_64_swap_acqrel_i32(lock, new) };
+    if !is_private {
+        // SAFETY: both unlink and release publication are now complete.
+        unsafe { publish_robust_pending_node(list, core::ptr::null_mut()) };
+        unsafe { pthread_vmlock::unlock() };
+    }
+    if previous < 0 || waiter_hint != 0 {
+        // SAFETY: the caller retains the public lock word through the wake.
+        unsafe { futex_wake(lock, is_private) };
+    }
+    0
+}
+
 /// Process the current selected task's remaining robust mutexes before exit.
 ///
 /// This is the musl userspace route for private mutexes and for selected
@@ -1108,7 +1528,7 @@ pub unsafe extern "C" fn pthread_mutex_consistent(mutex: *mut c_void) -> c_int {
     }
 }
 
-/// Initialize one selected normal or normal-robust mutex.
+/// Initialize one selected mutex type.
 ///
 /// # Safety
 ///
@@ -1116,7 +1536,8 @@ pub unsafe extern "C" fn pthread_mutex_consistent(mutex: *mut c_void) -> c_int {
 /// `pthread_mutex_t` that is not concurrently accessed. A non-null `attr`
 /// must designate an initialized public x86 attribute record whose type is
 /// either normal or the selected robust/private-or-shared combination. Owned
-/// products also admit normal/shared initialization.
+/// products additionally admit recursive and error-checking type bits with
+/// those same modifiers; PI and every other raw attribute bit stay excluded.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_init(
     mutex: *mut c_void,
@@ -1131,13 +1552,16 @@ pub unsafe extern "C" fn pthread_mutex_init(
         unsafe { core::ptr::read(attr.cast::<PublicPthreadMutexAttr>()) }.attr as c_int
     };
     #[cfg(feature = "x86-owned-static-runtime")]
-    let normal = mutex_type & !MUTEX_PROCESS_SHARED_BIT == 0;
+    let admitted = mutex_type & !(MUTEX_TYPE_MASK | MUTEX_ROBUST_BIT | MUTEX_PROCESS_SHARED_BIT)
+        == 0
+        && mutex_type & MUTEX_TYPE_MASK <= MUTEX_ERRORCHECK;
     #[cfg(not(feature = "x86-owned-static-runtime"))]
     let normal = mutex_type == 0;
-    if !normal
-        && (mutex_type & MUTEX_ROBUST_BIT == 0
-            || mutex_type & !MUTEX_SELECTED_ROBUST_BITS != 0)
-    {
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    let admitted = normal
+        || (mutex_type & MUTEX_ROBUST_BIT != 0
+            && mutex_type & !MUTEX_SELECTED_ROBUST_BITS == 0);
+    if !admitted {
         return ENOTSUP;
     }
     let mutex = mutex.cast::<PublicPthreadMutex>();
@@ -1150,7 +1574,7 @@ pub unsafe extern "C" fn pthread_mutex_init(
     0
 }
 
-/// Destroy one selected normal or robust mutex.
+/// Destroy one selected normal or owner-tracked mutex.
 ///
 /// A valid normal mutex owns no heap or kernel resource. Locked, invalid, or
 /// concurrently accessed objects remain outside this C boundary's contract,
@@ -1164,6 +1588,15 @@ pub unsafe extern "C" fn pthread_mutex_init(
 pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut c_void) -> c_int {
     let mutex = mutex.cast::<PublicPthreadMutex>();
     if unsafe { is_selected_normal_mutex(mutex) } {
+        return 0;
+    }
+    #[cfg(feature = "x86-owned-static-runtime")]
+    if unsafe { is_selected_owned_owner_mutex(mutex) } {
+        // Source waits only when an owner-tracked process-shared type can be
+        // visible in the current task's pending robust-list slot.
+        if unsafe { selected_mutex_type(mutex) } > MUTEX_PROCESS_SHARED_BIT {
+            unsafe { pthread_vmlock::wait() };
+        }
         return 0;
     }
     if !unsafe { is_selected_robust_mutex(mutex) } {
@@ -1190,6 +1623,11 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut c_void) -> c_int {
         // SAFETY: the record was admitted as the existing normal route.
         return unsafe { try_lock_selected_normal_mutex_record(mutex) };
     }
+    #[cfg(feature = "x86-owned-static-runtime")]
+    if unsafe { is_selected_owned_owner_mutex(mutex) } {
+        // SAFETY: the record has the selected owned owner/list type.
+        return unsafe { try_lock_selected_owned_owner_mutex_record(mutex) };
+    }
     if unsafe { is_selected_robust_mutex(mutex) } {
         // SAFETY: the record was admitted as the selected robust route.
         return unsafe { try_lock_selected_robust_mutex_record(mutex) };
@@ -1211,6 +1649,11 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut c_void) -> c_int {
     if unsafe { is_selected_normal_mutex(mutex) } {
         // SAFETY: this record passed the existing normal selected-type check.
         return unsafe { lock_selected_normal_mutex_record(mutex) };
+    }
+    #[cfg(feature = "x86-owned-static-runtime")]
+    if unsafe { is_selected_owned_owner_mutex(mutex) } {
+        // SAFETY: the record has the selected owned owner/list type.
+        return unsafe { lock_selected_owned_owner_mutex_record(mutex) };
     }
     if unsafe { is_selected_robust_mutex(mutex) } {
         // SAFETY: this record passed the selected robust type check.
@@ -1234,9 +1677,144 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut c_void) -> c_int {
         // SAFETY: this record passed the existing normal selected-type check.
         return unsafe { unlock_selected_normal_mutex_record(mutex) };
     }
+    #[cfg(feature = "x86-owned-static-runtime")]
+    if unsafe { is_selected_owned_owner_mutex(mutex) } {
+        // SAFETY: the record has the selected owned owner/list type.
+        return unsafe { unlock_selected_owned_owner_mutex_record(mutex) };
+    }
     if unsafe { is_selected_robust_mutex(mutex) } {
         // SAFETY: this record passed the selected robust type check.
         return unsafe { unlock_selected_robust_mutex_record(mutex) };
+    }
+    ENOTSUP
+}
+
+/// Acquire one owned selected mutex until an absolute realtime deadline.
+///
+/// This export belongs only to the expanded owned runtime. The frozen x86
+/// archive deliberately has no `pthread_mutex_timedlock` symbol.
+///
+/// # Safety
+///
+/// `mutex` is a live aligned selected object. If contention requires waiting,
+/// `absolute_timeout` must name a readable native x86 `struct timespec` for
+/// the operation. Its representation and lifetime remain C caller duties.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn pthread_mutex_timedlock(
+    mutex: *mut c_void,
+    absolute_timeout: *const c_void,
+) -> c_int {
+    let mutex = mutex.cast::<PublicPthreadMutex>();
+    let absolute_timeout = absolute_timeout.cast::<RawTimespec>();
+    if unsafe { is_selected_normal_mutex(mutex) } {
+        // SAFETY: the admitted normal route owns its exact raw futex state.
+        return unsafe { timed_lock_selected_normal_mutex_record(mutex, absolute_timeout) };
+    }
+    if unsafe { is_selected_owned_owner_mutex(mutex) } {
+        // SAFETY: the admitted owner route owns its list/futex transition.
+        return unsafe {
+            timed_lock_selected_owned_owner_mutex_record(mutex, absolute_timeout)
+        };
+    }
+    ENOTSUP
+}
+
+/// Initialize one C11-owned normal or recursive mutex without a public call.
+///
+/// # Safety
+///
+/// `mutex` is writable aligned C11 `mtx_t` storage and is not concurrently
+/// reachable. `mutex_type` is one of this private adapter's raw base types.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn init_selected_owned_mutex(
+    mutex: *mut c_void,
+    mutex_type: c_int,
+) -> c_int {
+    if !matches!(mutex_type, 0 | MUTEX_RECURSIVE) {
+        return ENOTSUP;
+    }
+    let mutex = mutex.cast::<PublicPthreadMutex>();
+    // SAFETY: this private C11 seam supplies a complete non-concurrent record.
+    unsafe {
+        core::ptr::write_bytes(mutex, 0, 1);
+        core::ptr::write(mutex_word(mutex, MUTEX_TYPE_WORD), mutex_type);
+    }
+    0
+}
+
+/// Destroy one C11-owned normal or recursive mutex without a public call.
+///
+/// # Safety
+///
+/// `mutex` is a complete quiescent C11 object initialized by the private
+/// helper above.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn destroy_selected_owned_mutex(mutex: *mut c_void) -> c_int {
+    let mutex = mutex.cast::<PublicPthreadMutex>();
+    if unsafe { is_selected_normal_mutex(mutex) }
+        || unsafe { is_selected_owned_owner_mutex(mutex) }
+    {
+        0
+    } else {
+        ENOTSUP
+    }
+}
+
+/// Try one C11-owned normal or recursive mutex without a public call.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn try_lock_selected_owned_mutex(mutex: *mut c_void) -> c_int {
+    let mutex = mutex.cast::<PublicPthreadMutex>();
+    if unsafe { is_selected_normal_mutex(mutex) } {
+        return unsafe { try_lock_selected_normal_mutex_record(mutex) };
+    }
+    if unsafe { is_selected_owned_owner_mutex(mutex) } {
+        return unsafe { try_lock_selected_owned_owner_mutex_record(mutex) };
+    }
+    ENOTSUP
+}
+
+/// Lock one C11-owned normal or recursive mutex without a public call.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn lock_selected_owned_mutex(mutex: *mut c_void) -> c_int {
+    let mutex = mutex.cast::<PublicPthreadMutex>();
+    if unsafe { is_selected_normal_mutex(mutex) } {
+        return unsafe { lock_selected_normal_mutex_record(mutex) };
+    }
+    if unsafe { is_selected_owned_owner_mutex(mutex) } {
+        return unsafe { lock_selected_owned_owner_mutex_record(mutex) };
+    }
+    ENOTSUP
+}
+
+/// Unlock one C11-owned normal or recursive mutex without a public call.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn unlock_selected_owned_mutex(mutex: *mut c_void) -> c_int {
+    let mutex = mutex.cast::<PublicPthreadMutex>();
+    if unsafe { is_selected_normal_mutex(mutex) } {
+        return unsafe { unlock_selected_normal_mutex_record(mutex) };
+    }
+    if unsafe { is_selected_owned_owner_mutex(mutex) } {
+        return unsafe { unlock_selected_owned_owner_mutex_record(mutex) };
+    }
+    ENOTSUP
+}
+
+/// Timed-lock one C11-owned normal or recursive mutex without a public call.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn timed_lock_selected_owned_mutex(
+    mutex: *mut c_void,
+    absolute_timeout: *const c_void,
+) -> c_int {
+    let mutex = mutex.cast::<PublicPthreadMutex>();
+    let absolute_timeout = absolute_timeout.cast::<RawTimespec>();
+    if unsafe { is_selected_normal_mutex(mutex) } {
+        return unsafe { timed_lock_selected_normal_mutex_record(mutex, absolute_timeout) };
+    }
+    if unsafe { is_selected_owned_owner_mutex(mutex) } {
+        return unsafe {
+            timed_lock_selected_owned_owner_mutex_record(mutex, absolute_timeout)
+        };
     }
     ENOTSUP
 }
@@ -1248,9 +1826,16 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut c_void) -> c_int {
 /// and coordinate detached waiters, but does not reproduce mutex acquisition.
 #[cfg(feature = "x86-owned-static-runtime")]
 #[derive(Clone, Copy)]
+enum ConditionMutexRoute {
+    Normal,
+    Owner,
+}
+
+#[cfg(feature = "x86-owned-static-runtime")]
+#[derive(Clone, Copy)]
 pub(super) struct ConditionMutex {
     record: *mut PublicPthreadMutex,
-    robust: bool,
+    route: ConditionMutexRoute,
     shared: bool,
     lock_address: *mut c_int,
     waiters_address: *mut c_int,
@@ -1266,10 +1851,11 @@ impl ConditionMutex {
     /// # Safety
     /// This admitted mutex is still live and owned by the current task.
     pub(super) unsafe fn unlock(self) -> c_int {
-        if self.robust {
-            unsafe { unlock_selected_robust_mutex_record(self.record) }
-        } else {
-            unsafe { unlock_selected_normal_mutex_record(self.record) }
+        match self.route {
+            ConditionMutexRoute::Normal => unsafe { unlock_selected_normal_mutex_record(self.record) },
+            ConditionMutexRoute::Owner => unsafe {
+                unlock_selected_owned_owner_mutex_record(self.record)
+            },
         }
     }
 
@@ -1277,10 +1863,11 @@ impl ConditionMutex {
     /// # Safety
     /// The caller retains its lifetime and type until this operation returns.
     pub(super) unsafe fn lock(self) -> c_int {
-        if self.robust {
-            unsafe { lock_selected_robust_mutex_record(self.record) }
-        } else {
-            unsafe { lock_selected_normal_mutex_record(self.record) }
+        match self.route {
+            ConditionMutexRoute::Normal => unsafe { lock_selected_normal_mutex_record(self.record) },
+            ConditionMutexRoute::Owner => unsafe {
+                lock_selected_owned_owner_mutex_record(self.record)
+            },
         }
     }
 }
@@ -1288,22 +1875,25 @@ impl ConditionMutex {
 /// Admit the mutex before a condition wait validates its deadline or cancels.
 ///
 /// Musl checks ownership first when `_m_type & 15` is nonzero. Normal mutex
-/// ownership remains the caller's POSIX obligation; supported robust types
-/// must contain this task's TID without an unresolved owner-death marker.
-/// Recursive, error-checking and PI mutex implementations remain family work;
-/// this seam follows the existing public mutex admission for those types.
+/// ownership remains the caller's POSIX obligation; every owner-tracked
+/// selected type must equal this task's TID after only the waiter marker is
+/// omitted. The owner-died marker is intentionally retained, so a robust
+/// recovery owner must call `pthread_mutex_consistent` before it can wait.
+/// Recursive condition waiting intentionally performs one mutex unlock and
+/// one relock, exactly as musl: a depth above one remains held and is not
+/// expanded into a full release/restore transaction.
 /// # Safety
 /// `mutex` is a live aligned public mutex, with an immutable initialized type.
 #[cfg(feature = "x86-owned-static-runtime")]
 pub(super) unsafe fn condition_mutex(mutex: *mut c_void) -> Result<ConditionMutex, c_int> {
     let record = mutex.cast::<PublicPthreadMutex>();
     let mutex_type = unsafe { selected_mutex_type(record) };
-    let robust = unsafe { is_selected_robust_mutex(record) };
-    if !robust && !unsafe { is_selected_normal_mutex(record) } {
+    let owner = unsafe { is_selected_owned_owner_mutex(record) };
+    if !owner && !unsafe { is_selected_normal_mutex(record) } {
         return Err(ENOTSUP);
     }
     let lock = unsafe { mutex_word(record, MUTEX_LOCK_WORD) };
-    if robust {
+    if mutex_type & 15 != 0 {
         let Some(tid) = pthread_create_join::current_selected_runtime_thread_id() else {
             return Err(ENOTSUP);
         };
@@ -1312,7 +1902,9 @@ pub(super) unsafe fn condition_mutex(mutex: *mut c_void) -> Result<ConditionMute
         }
     }
     Ok(ConditionMutex {
-        record, robust, shared: !mutex_is_private(mutex_type),
+        record,
+        route: if owner { ConditionMutexRoute::Owner } else { ConditionMutexRoute::Normal },
+        shared: !mutex_is_private(mutex_type),
         lock_address: lock,
         waiters_address: unsafe { mutex_word(record, MUTEX_WAITERS_WORD) },
     })

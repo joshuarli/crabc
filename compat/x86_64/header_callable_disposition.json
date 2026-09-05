@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "0d77e6d20cdfcd0a5e9d7b31c7e694588d448d9f221d5c9d264be5f95f97f9b2",
+    "callable_inventory_sha256": "ed0ce102a0d3caf65c1993fd67a10ef5523bc5dabd7be15f1b4e14f40b63042c",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "f055a1e9c51725460a88129971b076f04f5194bafdb908176b17534810cce560",
+    "parity_ledger_sha256": "44c7c5efa6ecdfa8c60e11534a12bad74c1e0dd24a399e746ddf002821be19fc",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "missing_reference_declaration_groups": [],
@@ -90,6 +90,7 @@
           "mkstemp",
           "mkstemps",
           "mktime",
+          "mtx_timedlock",
           "open_memstream",
           "open_wmemstream",
           "pclose",
@@ -100,6 +101,7 @@
           "pthread_cond_timedwait",
           "pthread_getattr_np",
           "pthread_kill",
+          "pthread_mutex_timedlock",
           "pthread_sigmask",
           "putc_unlocked",
           "putchar_unlocked",
@@ -1299,11 +1301,9 @@
         "linkage_owner_family": "libc.c-abi-compat",
         "linkage_owner_obligation": "final-callable-provider-archive-closure",
         "members": [
-          "mtx_timedlock",
           "pthread_getattr_default_np",
           "pthread_getschedparam",
           "pthread_mutex_setprioceiling",
-          "pthread_mutex_timedlock",
           "pthread_mutexattr_getprioceiling",
           "pthread_mutexattr_setprioceiling",
           "pthread_mutexattr_setprotocol",
@@ -1794,13 +1794,13 @@
   },
   "summary": {
     "candidate_external_callable_count": 1525,
-    "declared_unverified_feature_callable_count": 117,
+    "declared_unverified_feature_callable_count": 119,
     "default_static_callable_count": 1122,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 7,
-      "planned-provider": 199
+      "planned-provider": 197
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1811,7 +1811,7 @@
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 208,
+    "unprovided_callable_count": 206,
     "verified_feature_callable_count": 78
   },
   "target": "x86_64-unknown-linux-musl",

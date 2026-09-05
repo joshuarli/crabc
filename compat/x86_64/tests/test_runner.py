@@ -2106,7 +2106,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "owned-io-cancellation",
                 "owned-resolver-network",
                 "owned-dynamic-io-cancellation",
-                "owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed",
+                "owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
                 "owned-pthread-lifecycle",
                 "qualification-manifest",
             )
@@ -10184,10 +10184,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "pthread_mutex_trylock",
                 "pthread_mutex_lock",
                 "pthread_mutex_unlock",
+                "pthread_mutex_timedlock",
             },
         )
+        self.assertIn(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\npub unsafe extern "C" fn pthread_mutex_timedlock',
+            pthread_mutex,
+        )
         for forbidden in (
-            "pub unsafe extern \"C\" fn pthread_mutex_timedlock",
             "pub unsafe extern \"C\" fn pthread_cond_",
             "pub unsafe extern \"C\" fn pthread_rwlock_",
             "pub unsafe extern \"C\" fn pthread_once",
@@ -10847,6 +10851,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "mtx_lock.c",
             "mtx_trylock.c",
             "mtx_unlock.c",
+            "mtx_timedlock.c",
             "src/thread/cnd_init.c",
             "cnd_destroy.c",
             "cnd_wait.c",
@@ -10857,9 +10862,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "size_of::<PublicC11Mutex>() == 40",
             "size_of::<PublicC11Condition>() == 48",
             "MTX_PLAIN: c_int = 0",
+            "MTX_RECURSIVE: c_int = 1",
             "THRD_SUCCESS: c_int = 0",
             "THRD_BUSY: c_int = 1",
             "THRD_ERROR: c_int = 2",
+            "THRD_TIMEDOUT: c_int = 4",
             "pthread_mutex::init_selected_normal_mutex",
             "pthread_mutex::destroy_selected_normal_mutex",
             "pthread_mutex::lock_selected_normal_mutex",
@@ -10889,6 +10896,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "mtx_lock",
                 "mtx_trylock",
                 "mtx_unlock",
+                "mtx_timedlock",
                 "cnd_init",
                 "cnd_destroy",
                 "cnd_wait",
@@ -10897,14 +10905,17 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "cnd_broadcast",
             },
         )
-        # Timed conditions are additive only in the owned product. The frozen
-        # archive's installed-symbol rejection remains in its runtime runner.
+        # Timed C11 operations are additive only in the owned product. The
+        # frozen archive's installed-symbol rejection remains in its runner.
         self.assertIn(
             '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\npub unsafe extern "C" fn cnd_timedwait',
             c11_sync,
         )
+        self.assertIn(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\npub unsafe extern "C" fn mtx_timedlock',
+            c11_sync,
+        )
         for forbidden in (
-            'pub unsafe extern "C" fn mtx_timedlock',
             'pub unsafe extern "C" fn call_once',
             'pub unsafe extern "C" fn tss_',
             "__tls_get_addr",
@@ -10967,15 +10978,21 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "run_musl_oracle.sh",
             "run_types_header_abi.sh",
             "run_pthread_c11_header_abi.sh",
+            "owned_helper_symbol",
+            "assert_public_reaches_owned_helper",
+            "assert_owned_helper_atomic",
+            "raw_syscall_helper_symbol",
+            "assert_public_or_bound_futex_path",
             "-nostdlib -static",
             "-DCRABC_C11_PLAIN_SYNC_FREESTANDING",
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
-            "assert_private_futex_path cnd_wait wait",
-            "assert_private_futex_path cnd_wait requeue",
-            "assert_private_futex_path cnd_signal wake",
-            "assert_private_futex_path cnd_broadcast wake",
-            "mtx_lock lacks its x86 atomic compare-exchange",
+            "assert_public_reaches_owned_helper mtx_lock lock_selected_normal_mutex_record",
+            "assert_owned_helper_atomic lock_selected_normal_mutex_record",
+            "assert_public_or_bound_futex_path cnd_wait wait syscall4",
+            "assert_public_or_bound_futex_path cnd_wait requeue syscall5",
+            "assert_public_or_bound_futex_path cnd_signal wake syscall4",
+            "assert_public_or_bound_futex_path cnd_broadcast wake syscall4",
             "mtx_unlock lacks its atomic exchange release",
             "C11 plain-sync wrapper crosses an interposable pthread C ABI",
             "mtx_timedlock cnd_timedwait",
@@ -10983,6 +11000,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn(
+            "mtx_lock lacks its x86 atomic compare-exchange", artifact_runner
+        )
+        self.assertNotIn("assert_private_futex_path", artifact_runner)
         self.assertTrue(
             {
                 "mtx_init",

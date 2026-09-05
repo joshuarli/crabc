@@ -7,13 +7,12 @@
 //! recorded in `COPYRIGHT`:
 //!
 //! - `src/thread/mtx_init.c`, `mtx_destroy.c`, `mtx_lock.c`, `mtx_trylock.c`,
-//!   and `mtx_unlock.c` supply the C11 mutex result boundary and its direct
-//!   normal-mutex fast path.
+//!   `mtx_unlock.c`, and `mtx_timedlock.c` supply the C11 mutex result
+//!   boundary, recursive-kind selection, and timed status translation.
 //! - `src/thread/cnd_init.c`, `cnd_destroy.c`, `cnd_wait.c`, `cnd_signal.c`,
 //!   and `cnd_broadcast.c` supply the C11 condition-object/result boundary.
 //! - `src/thread/cnd_timedwait.c` supplies the owned timed condition adapter:
 //!   success, timeout, and other errors map to distinct C11 statuses.
-//!   `src/thread/mtx_timedlock.c` remains an unimplemented mutex obligation.
 //!
 //! The installed C header deliberately gives `mtx_t` and `cnd_t` their own C
 //! record types even though their x86 LP64 storage is layout-compatible with
@@ -21,24 +20,23 @@
 //! 40-byte/48-byte records and crosses only private Rust sibling seams; it
 //! never calls an interposable pthread C symbol.
 //!
-//! The admitted contract is `mtx_init(..., mtx_plain)`, `mtx_destroy`,
+//! The frozen contract is `mtx_init(..., mtx_plain)`, `mtx_destroy`,
 //! `mtx_lock`, `mtx_trylock`, `mtx_unlock`, and `cnd_init`, `cnd_destroy`,
 //! `cnd_wait`, `cnd_signal`, and `cnd_broadcast` on selected private objects.
+//! Owned products add `mtx_recursive`, `mtx_timed`, their combined kind, and
+//! `mtx_timedlock` through the owned mutex seam.
 //! All valid selected operations preserve C `errno`: C11 status is returned
 //! directly. A held plain mutex maps to `thrd_busy`; zero private-engine
 //! results map to `thrd_success`; selected boundary failures map to
 //! `thrd_error`, except `mtx_unlock`, which retains musl's direct raw
 //! pthread-style return because every error route is C11 undefined behavior.
 //!
-//! Musl accepts recursive and timed initialization kinds, but doing so here
-//! would select unimplemented mutex type state machines. This artifact admits
-//! only `mtx_plain` and fails every other kind closed with `thrd_error` before
-//! it interprets or initializes the record; that candidate-only policy is not
-//! a musl-differential claim. Owned products additionally admit `cnd_timedwait`
-//! through the same condition transaction. Timed mutex calls, static C11 object
-//! initialization, recursive mutexes, cancellation, TSS, once, process-shared
-//! synchronization, dynamic/loader TLS, CRT/sysroot integration, general C11
-//! or pthread parity, promotion, and public x86 support remain excluded.
+//! Owned `mtx_init` follows musl's raw recursive-bit mapping; `mtx_timed` is
+//! API admission rather than mutex storage. Owned products also admit
+//! `cnd_timedwait` through the same condition transaction. Static C11 object
+//! initialization, cancellation, TSS, once, process-shared synchronization,
+//! dynamic/loader TLS, CRT/sysroot integration, general C11 or pthread parity,
+//! promotion, and public x86 support remain excluded.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 C11 plain-synchronization leaf requires little-endian Linux/x86-64");
@@ -50,6 +48,8 @@ use super::{pthread_cond, pthread_mutex};
 
 const EBUSY: c_int = 16;
 const MTX_PLAIN: c_int = 0;
+#[cfg(feature = "x86-owned-static-runtime")]
+const MTX_RECURSIVE: c_int = 1;
 const THRD_SUCCESS: c_int = 0;
 const THRD_BUSY: c_int = 1;
 const THRD_ERROR: c_int = 2;
@@ -104,22 +104,39 @@ const fn c11_status(result: c_int) -> c_int {
     }
 }
 
-/// Initialize one selected plain C11 mutex.
+/// Initialize one selected C11 mutex.
 ///
 /// # Safety
 ///
 /// `mutex` must designate writable, aligned `mtx_t` storage that is not
-/// concurrently accessed. Only `mtx_plain` is admitted; the caller must not
-/// use the object after a non-success result and must later destroy it only
-/// after every selected operation has quiesced.
+/// concurrently accessed. The frozen route admits only `mtx_plain`; the owned
+/// route follows musl's recursive-bit mapping. The caller must not use the
+/// object after a non-success result and must later destroy it only after every
+/// selected operation has quiesced.
 #[no_mangle]
 pub unsafe extern "C" fn mtx_init(mutex: *mut c_void, kind: c_int) -> c_int {
-    if kind != MTX_PLAIN {
-        return THRD_ERROR;
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        let mutex_type = if kind & MTX_RECURSIVE != 0 {
+            MTX_RECURSIVE
+        } else {
+            MTX_PLAIN
+        };
+        // SAFETY: the C ABI obligations above establish a complete writable
+        // record for the owned C11 representation.
+        return c11_status(unsafe {
+            pthread_mutex::init_selected_owned_mutex(mutex, mutex_type)
+        });
     }
-    // SAFETY: the C ABI obligations above establish a complete writable
-    // mutex-shaped object with the exact selected all-zero representation.
-    c11_status(unsafe { pthread_mutex::init_selected_normal_mutex(mutex) })
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    {
+        if kind != MTX_PLAIN {
+            return THRD_ERROR;
+        }
+        // SAFETY: the C ABI obligations above establish a complete writable
+        // mutex-shaped object with the exact selected all-zero representation.
+        return c11_status(unsafe { pthread_mutex::init_selected_normal_mutex(mutex) });
+    }
 }
 
 /// Destroy one selected plain C11 mutex after quiescence.
@@ -132,6 +149,13 @@ pub unsafe extern "C" fn mtx_init(mutex: *mut c_void, kind: c_int) -> c_int {
 /// selected C object-lifetime contract.
 #[no_mangle]
 pub unsafe extern "C" fn mtx_destroy(mutex: *mut c_void) {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        // SAFETY: the C ABI obligations establish a quiescent owned record.
+        let _ = unsafe { pthread_mutex::destroy_selected_owned_mutex(mutex) };
+        return;
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     // SAFETY: the C ABI obligations above establish the selected private
     // record's quiescent destruction boundary. C11 has no error result here.
     let _ = unsafe { pthread_mutex::destroy_selected_normal_mutex(mutex) };
@@ -146,6 +170,12 @@ pub unsafe extern "C" fn mtx_destroy(mutex: *mut c_void) {
 /// this static route is not a cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn mtx_lock(mutex: *mut c_void) -> c_int {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        // SAFETY: the owned C11 record uses the matching private mutex seam.
+        return c11_status(unsafe { pthread_mutex::lock_selected_owned_mutex(mutex) });
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     // SAFETY: the C ABI obligations above establish the selected normal mutex
     // state machine for this private sibling call.
     c11_status(unsafe { pthread_mutex::lock_selected_normal_mutex(mutex) })
@@ -160,6 +190,16 @@ pub unsafe extern "C" fn mtx_lock(mutex: *mut c_void) -> c_int {
 /// normal-mutex protocol.
 #[no_mangle]
 pub unsafe extern "C" fn mtx_trylock(mutex: *mut c_void) -> c_int {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        // SAFETY: the owned C11 record uses the matching one-attempt seam.
+        return match unsafe { pthread_mutex::try_lock_selected_owned_mutex(mutex) } {
+            0 => THRD_SUCCESS,
+            EBUSY => THRD_BUSY,
+            _ => THRD_ERROR,
+        };
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     // SAFETY: the C ABI obligations above establish a valid selected mutex
     // record for the private one-attempt acquisition seam.
     match unsafe { pthread_mutex::try_lock_selected_normal_mutex(mutex) } {
@@ -178,12 +218,38 @@ pub unsafe extern "C" fn mtx_trylock(mutex: *mut c_void) -> c_int {
 /// outside this selected boundary.
 #[no_mangle]
 pub unsafe extern "C" fn mtx_unlock(mutex: *mut c_void) -> c_int {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    {
+        // SAFETY: C11 caller ownership establishes the selected release seam.
+        return unsafe { pthread_mutex::unlock_selected_owned_mutex(mutex) };
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     // Musl intentionally tail-calls its internal pthread unlock here: errors
     // arise only from C11 undefined behavior. Preserve that direct result
     // instead of broadly translating it through `c11_status`.
     // SAFETY: the C ABI obligations above establish the selected ownership
     // state required by the private normal-mutex release seam.
     unsafe { pthread_mutex::unlock_selected_normal_mutex(mutex) }
+}
+
+/// Timed-lock one owned C11 mutex until an absolute realtime deadline.
+///
+/// Musl maps only timeout to `thrd_timedout`; every other pthread result maps
+/// to `thrd_error` and the private mutex seam does not publish C `errno`.
+/// # Safety
+/// `mutex` is a live owned C11 object and `deadline` names a readable aligned
+/// native x86 timespec if contention requires waiting.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn mtx_timedlock(
+    mutex: *mut c_void,
+    deadline: *const c_void,
+) -> c_int {
+    match unsafe { pthread_mutex::timed_lock_selected_owned_mutex(mutex, deadline) } {
+        0 => THRD_SUCCESS,
+        ETIMEDOUT => THRD_TIMEDOUT,
+        _ => THRD_ERROR,
+    }
 }
 
 /// Initialize one selected private C11 condition object.
