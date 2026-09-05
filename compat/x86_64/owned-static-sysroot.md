@@ -407,7 +407,11 @@ and blocked cancellation against pinned musl in both static and both dynamic
 executable modes. `owned_pthread_join_cancel_probe.c` verifies user cleanup,
 continued target joinability after cancellation, joining from user cleanup,
 exact target reclamation,
-and disabled/masked state restoration. The owned join boundary registers an
+and disabled/masked state restoration. The blocked cases observe the joiner
+in its exact kernel `FUTEX_WAIT` through a read-only inherited `/proc` directory
+descriptor before cancellation; the target cannot complete during observation.
+`run_pthread_wait_witness.py` retains that descriptor across private chroot
+execution without requiring a proc mount. The owned join boundary registers an
 explicit private cleanup node before enabling cancellation while waiting;
 Rust destructors cannot restore ownership when cancellation exits the task.
 Retirement and cleanup-node removal run with cancellation disabled.

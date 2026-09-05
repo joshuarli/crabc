@@ -24,14 +24,14 @@ readonly work
 printf 'pthread-join-cancel evidence: %s\n' "$work"
 "$oracle_cc" -std=c11 -pthread -I"$ROOT/include" "$probe" -o "$work/oracle"
 for scenario in entry blocked disabled masked cleanup-rejoin; do
-    timeout 20 "$work/oracle" "$scenario" >"$work/oracle-$scenario.stdout"
+    timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "" "$work/oracle" "$scenario" >"$work/oracle-$scenario.stdout"
 done
 if [ -z "$provided_dynamic_sysroot" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-sysroot" >"$work/static-build.json"
     for mode in static static-pie; do
         "$work/static-sysroot/bin/crabc-cc" "-$mode" -std=c11 -DCRABC_OWNED_WITNESS "$probe" -o "$work/$mode"
         for scenario in entry blocked disabled masked cleanup-rejoin; do
-            timeout 20 "$work/$mode" "$scenario" >"$work/$mode-$scenario.stdout"
+            timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "" "$work/$mode" "$scenario" >"$work/$mode-$scenario.stdout"
             cmp "$work/oracle-$scenario.stdout" "$work/$mode-$scenario.stdout"
         done
     done
@@ -43,7 +43,7 @@ for mode in pie non-pie; do
     "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 -DCRABC_OWNED_WITNESS "$probe" -o "$work/dynamic-$mode"
     cp "$work/dynamic-$mode" "$work/execution-root/consumer-$mode"
     for scenario in entry blocked disabled masked cleanup-rejoin; do
-        timeout 20 chroot "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
+        timeout 20 python3 -B "$ROOT/compat/x86_64/run_pthread_wait_witness.py" "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
     done
 done
