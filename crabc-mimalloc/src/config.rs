@@ -32,6 +32,15 @@ pub(crate) const GIB: usize = MIB * KIB;
 
 pub(crate) const MAX_ALIGN_SIZE: usize = 16;
 
+/// The fixed source temporary used by `mi_option_init`.
+///
+/// `src/options.c:625-646` accepts at most 64 value bytes plus the trailing
+/// NUL copied by `_mi_prim_getenv`.  Keeping the bound here lets the real
+/// process-start reader retain the same `EAGAIN`/retry distinction for a
+/// truncated environment value without allocating or calling libc.
+const SOURCE_OPTION_VALUE_BYTES: usize = 64;
+const SOURCE_ENVIRONMENT_ENTRY_LIMIT: usize = 10_000;
+
 // `CMakeLists.txt` Release defaults plus `types.h` defaults. An unset C
 // preprocessor option evaluates to zero in the upstream `#if` expressions.
 pub(crate) const SECURE_LEVEL: usize = 0;
@@ -140,23 +149,75 @@ pub(crate) enum VmOption {
 
 impl VmOption {
     pub(crate) const ALL: [Self; 16] = [
+        // Keep the selected descriptors in their `src/options.c:111-177`
+        // order.  The source initializes every descriptor in declaration
+        // order at process start; the omitted non-VM descriptors stay outside
+        // this bounded process-policy owner rather than being silently
+        // reordered around it.
+        Self::ArenaEagerCommit,
         Self::PurgeDecommits,
         Self::AllowLargeOsPages,
         Self::ReserveHugeOsPages,
         Self::ReserveHugeOsPagesAt,
         Self::PurgeDelay,
         Self::UseNumaNodes,
-        Self::AllowThp,
-        Self::ArenaEagerCommit,
+        Self::DisallowOsAlloc,
         Self::ArenaReserve,
         Self::ArenaPurgeMult,
-        Self::ArenaMaxObjectSize,
         Self::DisallowArenaAlloc,
-        Self::DisallowOsAlloc,
         Self::PageCommitOnDemand,
-        Self::ArenaIsNumaLocal,
+        Self::AllowThp,
         Self::MinimalPurgeSize,
+        Self::ArenaMaxObjectSize,
+        Self::ArenaIsNumaLocal,
     ];
+
+    /// The source descriptor name without its `mimalloc_` environment prefix.
+    #[inline]
+    const fn source_name(self) -> &'static [u8] {
+        match self {
+            Self::PurgeDecommits => b"purge_decommits",
+            Self::AllowLargeOsPages => b"allow_large_os_pages",
+            Self::ReserveHugeOsPages => b"reserve_huge_os_pages",
+            Self::ReserveHugeOsPagesAt => b"reserve_huge_os_pages_at",
+            Self::PurgeDelay => b"purge_delay",
+            Self::UseNumaNodes => b"use_numa_nodes",
+            Self::AllowThp => b"allow_thp",
+            Self::ArenaEagerCommit => b"arena_eager_commit",
+            Self::ArenaReserve => b"arena_reserve",
+            Self::ArenaPurgeMult => b"arena_purge_mult",
+            Self::ArenaMaxObjectSize => b"arena_max_object_size",
+            Self::DisallowArenaAlloc => b"disallow_arena_alloc",
+            Self::DisallowOsAlloc => b"disallow_os_alloc",
+            Self::PageCommitOnDemand => b"page_commit_on_demand",
+            Self::ArenaIsNumaLocal => b"arena_is_numa_local",
+            Self::MinimalPurgeSize => b"minimal_purge_size",
+        }
+    }
+
+    /// The deprecated source descriptor name, if this selected descriptor has
+    /// one.  It is queried only when the canonical spelling is absent.
+    #[inline]
+    const fn legacy_source_name(self) -> Option<&'static [u8]> {
+        match self {
+            Self::PurgeDecommits => Some(b"reset_decommits"),
+            Self::AllowLargeOsPages => Some(b"large_os_pages"),
+            Self::PurgeDelay => Some(b"reset_delay"),
+            Self::ArenaEagerCommit => Some(b"eager_region_commit"),
+            Self::DisallowOsAlloc => Some(b"limit_os_alloc"),
+            Self::ReserveHugeOsPages
+            | Self::ReserveHugeOsPagesAt
+            | Self::UseNumaNodes
+            | Self::AllowThp
+            | Self::ArenaReserve
+            | Self::ArenaPurgeMult
+            | Self::ArenaMaxObjectSize
+            | Self::DisallowArenaAlloc
+            | Self::PageCommitOnDemand
+            | Self::ArenaIsNumaLocal
+            | Self::MinimalPurgeSize => None,
+        }
+    }
 
     #[inline]
     const fn default_value(self) -> i64 {
@@ -303,6 +364,45 @@ impl VmOptions {
         }
     }
 
+    /// Resolves this selected source-option image directly from the Unix
+    /// process environment.
+    ///
+    /// This is the allocation-free `MI_USE_ENVIRON` path from pinned
+    /// `src/prim/unix/prim.c:874-905`, followed by the canonical/legacy
+    /// lookup ordering in `src/options.c:624-646`.  It reads no libc helper:
+    /// process startup owns the supplied environment-vector lifetime and
+    /// invokes this before constructors can mutate it.  A null vector or an
+    /// overlong selected value maps to `Unavailable`, leaving exactly that
+    /// descriptor lazy-uninitialized for a later source attempt.
+    ///
+    /// # Safety
+    ///
+    /// `environment` must be null or point to a NUL-terminated pointer vector
+    /// whose non-null entries are valid NUL-terminated C strings for every
+    /// byte observed here.  The caller must keep that vector and its strings
+    /// stable for this call, and must coordinate direct environment mutation.
+    /// Those are the same raw `environ` obligations as the pinned C primitive.
+    pub(crate) unsafe fn initialize_from_source_environment(
+        &mut self,
+        environment: *const *const core::ffi::c_char,
+    ) {
+        let mut value = [0u8; SOURCE_OPTION_VALUE_BYTES + 1];
+        for option in VmOption::ALL {
+            if self.state(option) != VmOptionState::Uninitialized {
+                continue;
+            }
+            let observation = unsafe {
+                source_environment_option(
+                    environment,
+                    option.source_name(),
+                    option.legacy_source_name(),
+                    &mut value,
+                )
+            };
+            self.initialize_one(option, observation);
+        }
+    }
+
     /// Performs one source lazy initialization attempt.
     pub(crate) fn initialize_one(&mut self, option: VmOption, environment: VmOptionEnvironment<'_>) {
         let slot = &mut self.slots[option as usize];
@@ -367,6 +467,99 @@ impl VmOptions {
             index += 1;
         }
         true
+    }
+}
+
+/// Resolve one source `mimalloc_<descriptor>` variable with its legacy
+/// fallback.  A matching but overlong canonical value is an unavailable C
+/// primitive result, not an absence that permits consulting the old spelling.
+unsafe fn source_environment_option<'value>(
+    environment: *const *const core::ffi::c_char,
+    canonical_name: &[u8],
+    legacy_name: Option<&[u8]>,
+    value: &'value mut [u8; SOURCE_OPTION_VALUE_BYTES + 1],
+) -> VmOptionEnvironment<'value> {
+    let canonical = unsafe { source_environment_lookup(environment, canonical_name, value) };
+    match canonical {
+        SourceEnvironmentLookup::Absent => match legacy_name {
+            Some(legacy_name) => match unsafe {
+                source_environment_lookup(environment, legacy_name, value)
+            } {
+                SourceEnvironmentLookup::Absent => VmOptionEnvironment::Absent,
+                SourceEnvironmentLookup::Value(length) => VmOptionEnvironment::Value(&value[..length]),
+                SourceEnvironmentLookup::Unavailable => VmOptionEnvironment::Unavailable,
+            },
+            None => VmOptionEnvironment::Absent,
+        },
+        SourceEnvironmentLookup::Value(length) => VmOptionEnvironment::Value(&value[..length]),
+        SourceEnvironmentLookup::Unavailable => VmOptionEnvironment::Unavailable,
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SourceEnvironmentLookup {
+    Absent,
+    Value(usize),
+    Unavailable,
+}
+
+/// The raw `environ` scan from `src/prim/unix/prim.c:_mi_prim_getenv`.
+unsafe fn source_environment_lookup(
+    environment: *const *const core::ffi::c_char,
+    descriptor_name: &[u8],
+    value: &mut [u8; SOURCE_OPTION_VALUE_BYTES + 1],
+) -> SourceEnvironmentLookup {
+    if environment.is_null() {
+        return SourceEnvironmentLookup::Unavailable;
+    }
+
+    for entry_index in 0..SOURCE_ENVIRONMENT_ENTRY_LIMIT {
+        // SAFETY: `initialize_from_source_environment` carries the exact
+        // source `environ` vector validity and stability obligations.
+        let entry = unsafe { core::ptr::read(environment.add(entry_index)) };
+        if entry.is_null() {
+            return SourceEnvironmentLookup::Absent;
+        }
+        if !unsafe { source_environment_name_matches(entry, descriptor_name) } {
+            continue;
+        }
+        // SAFETY: a matching `name=` prefix remains inside the caller-owned
+        // valid C string. The bounded copy below mirrors `_mi_strlcpy`.
+        let entry_value = unsafe { entry.add(b"mimalloc_".len() + descriptor_name.len() + 1) };
+        for value_index in 0..=SOURCE_OPTION_VALUE_BYTES {
+            // SAFETY: the caller's C-string validity covers the byte read.
+            let byte = unsafe { core::ptr::read(entry_value.add(value_index).cast::<u8>()) };
+            if byte == 0 {
+                return SourceEnvironmentLookup::Value(value_index);
+            }
+            if value_index == SOURCE_OPTION_VALUE_BYTES {
+                return SourceEnvironmentLookup::Unavailable;
+            }
+            value[value_index] = byte;
+        }
+        unreachable!("the bounded source environment copy returns in-loop");
+    }
+    // `_mi_prim_getenv` scans at most 10,000 live entries. Reaching that
+    // bound without a terminator is indistinguishable from source absence.
+    SourceEnvironmentLookup::Absent
+}
+
+unsafe fn source_environment_name_matches(
+    entry: *const core::ffi::c_char,
+    descriptor_name: &[u8],
+) -> bool {
+    const PREFIX: &[u8] = b"mimalloc_";
+    for (index, expected) in PREFIX.iter().chain(descriptor_name).enumerate() {
+        // SAFETY: the caller owns the same C-string precondition as the
+        // pinned `_mi_strnicmp` comparison through this bounded name length.
+        let found = unsafe { core::ptr::read(entry.add(index).cast::<u8>()) };
+        if !found.eq_ignore_ascii_case(expected) {
+            return false;
+        }
+    }
+    // SAFETY: the source reads precisely the byte after its compared name.
+    unsafe {
+        core::ptr::read(entry.add(PREFIX.len() + descriptor_name.len()).cast::<u8>()) == b'='
     }
 }
 
@@ -659,6 +852,87 @@ mod tests {
         assert_eq!(observed, VmOption::ALL.len() - 1);
         assert!(options.all_resolved());
         assert_eq!(options.value(VmOption::AllowThp), Some(0));
+    }
+
+    #[test]
+    fn vm_options_resolve_the_selected_source_environment_in_descriptor_order() {
+        let entries = [
+            b"MIMALLOC_ARENA_EAGER_COMMIT=1\0".as_ptr().cast(),
+            b"mimalloc_reset_decommits=off\0".as_ptr().cast(),
+            b"mimalloc_allow_large_os_pages=0\0".as_ptr().cast(),
+            b"MIMALLOC_LARGE_OS_PAGES=1\0".as_ptr().cast(),
+            b"MIMALLOC_ALLOW_THP=0\0".as_ptr().cast(),
+            b"mimalloc_arena_reserve=2MiB\0".as_ptr().cast(),
+            b"mimalloc_allow_thp_not_a_descriptor=1\0".as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        let mut options = VmOptions::uninitialized();
+        // SAFETY: the test owns a null-terminated environment-pointer vector
+        // and every selected entry is a stable NUL-terminated C string.
+        unsafe { options.initialize_from_source_environment(entries.as_ptr()) };
+
+        assert!(options.all_resolved());
+        assert_eq!(options.value(VmOption::ArenaEagerCommit), Some(1));
+        assert_eq!(options.value(VmOption::PurgeDecommits), Some(0));
+        assert_eq!(
+            options.value(VmOption::AllowLargeOsPages),
+            Some(0),
+            "the canonical spelling wins before a legacy spelling is considered"
+        );
+        assert_eq!(options.value(VmOption::AllowThp), Some(0));
+        assert_eq!(options.value(VmOption::ArenaReserve), Some(2 * 1024));
+        assert_eq!(options.state(VmOption::UseNumaNodes), VmOptionState::Defaulted);
+    }
+
+    #[test]
+    fn vm_options_keep_an_overlong_canonical_environment_value_uninitialized() {
+        const NAME: &[u8] = b"mimalloc_allow_large_os_pages=";
+        let mut oversized = [0u8; NAME.len() + SOURCE_OPTION_VALUE_BYTES + 2];
+        oversized[..NAME.len()].copy_from_slice(NAME);
+        oversized[NAME.len()..NAME.len() + SOURCE_OPTION_VALUE_BYTES + 1].fill(b'1');
+        let entries = [
+            oversized.as_ptr().cast(),
+            b"mimalloc_large_os_pages=1\0".as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        let mut options = VmOptions::uninitialized();
+        // SAFETY: `oversized` and the legacy entry are stable NUL-terminated
+        // C strings for this bounded observation.
+        unsafe { options.initialize_from_source_environment(entries.as_ptr()) };
+
+        assert_eq!(
+            options.state(VmOption::AllowLargeOsPages),
+            VmOptionState::Uninitialized,
+            "a source EAGAIN from the canonical read must not consult the legacy name"
+        );
+        assert_eq!(options.value(VmOption::AllowLargeOsPages), None);
+        assert_eq!(options.state(VmOption::AllowThp), VmOptionState::Defaulted);
+    }
+
+    #[test]
+    fn vm_option_selected_descriptor_order_matches_pinned_options_c() {
+        assert_eq!(
+            VmOption::ALL,
+            [
+                VmOption::ArenaEagerCommit,
+                VmOption::PurgeDecommits,
+                VmOption::AllowLargeOsPages,
+                VmOption::ReserveHugeOsPages,
+                VmOption::ReserveHugeOsPagesAt,
+                VmOption::PurgeDelay,
+                VmOption::UseNumaNodes,
+                VmOption::DisallowOsAlloc,
+                VmOption::ArenaReserve,
+                VmOption::ArenaPurgeMult,
+                VmOption::DisallowArenaAlloc,
+                VmOption::PageCommitOnDemand,
+                VmOption::AllowThp,
+                VmOption::MinimalPurgeSize,
+                VmOption::ArenaMaxObjectSize,
+                VmOption::ArenaIsNumaLocal,
+            ],
+            "the bounded VM owner follows the selected source declaration order"
+        );
     }
 
     #[test]
