@@ -416,6 +416,19 @@ struct ThreadControl {
     // than relying on the kernel clear-tid write to synchronize a different
     // user-space atomic object.
     finished: AtomicU8,
+    // Musl's per-thread killlock prevents a caller from targeting a recycled
+    // Linux TID while this worker commits to retirement. The syscall-
+    // cancellation owner blocks all caller signals before it takes this
+    // target lock; an exiting worker holds it across the static task-list
+    // decision and clears `worker_tid` before releasing it on a non-final
+    // exit. It is neither the registry lock nor a public pthread lock.
+    signal_target_lock: AtomicU8,
+    // A target syscall starts with a registry-protected lookup, then retains
+    // this mapping lease while it acquires `signal_target_lock` and issues its
+    // raw `tgkill`. Registry withdrawal closes new leases; reclamation drains
+    // existing ones before it can unmap this control record. This is distinct
+    // from the condition-wait barrier lease above.
+    signal_target_leases: AtomicUsize,
     // The selected child publishes its kernel task ID before the callback can
     // call pthread_exit. Matching it alongside `%fs:0` prevents a foreign
     // thread from impersonating a live worker merely by installing its TLS
@@ -580,6 +593,21 @@ fn current_linux_thread_id() -> Option<c_int> {
     Some(result as c_int)
 }
 
+/// Read the current process's Linux thread-group identifier for a targeted
+/// signal transaction.
+///
+/// Linux's `getpid` result is the `tgid` accepted by `tgkill`. Keep this raw
+/// scalar observation beside the worker target-lifetime seam: it neither
+/// reads the process-global C ABI state nor exposes a public process API.
+#[inline(always)]
+fn current_linux_thread_group_id() -> Option<c_int> {
+    let result = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETPID) };
+    if is_linux_error(result) || result <= 0 || result > i64::from(c_int::MAX) {
+        return None;
+    }
+    Some(result as c_int)
+}
+
 /// Acquire the bounded registry lock without entering a broader pthread lock.
 fn lock_selected_worker_registry() {
     while SELECTED_WORKER_REGISTRY_LOCK
@@ -595,6 +623,35 @@ fn lock_selected_worker_registry() {
 /// Release the bounded registry lock after its local identity operation.
 fn unlock_selected_worker_registry() {
     SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
+}
+
+/// Acquire one worker's private source-shaped kill/exit exclusion lock.
+///
+/// The caller must not hold the selected-worker registry lock. A cancellation
+/// requester blocks all signals before this spin acquisition; an exiting
+/// worker has disabled cancellation and blocked application signals before it
+/// begins the matching retirement transition. Those two admission rules avoid
+/// an asynchronously abandoned target lock without turning this into a public
+/// signal or pthread synchronization primitive.
+#[inline]
+unsafe fn lock_selected_worker_signal_target(control: *mut ThreadControl) {
+    while unsafe {
+        (*control)
+            .signal_target_lock
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+    }
+    .is_err()
+    {
+        while unsafe { (*control).signal_target_lock.load(Ordering::Relaxed) } != 0 {
+            core::hint::spin_loop();
+        }
+    }
+}
+
+/// Release one worker's private target kill/exit exclusion lock.
+#[inline]
+unsafe fn unlock_selected_worker_signal_target(control: *mut ThreadControl) {
+    unsafe { (*control).signal_target_lock.store(0, Ordering::Release) };
 }
 
 #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
