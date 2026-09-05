@@ -112,6 +112,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "pattern",
                 "classic-netdb",
                 "unix-mechanisms",
+                "posix-composition",
             ],
         )
         self.assertEqual(report["status"], "implemented-unqualified")

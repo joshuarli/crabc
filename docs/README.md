@@ -112,3 +112,6 @@ qualification or append history to an execution plan.
 - Allocator source/oracle/differential mechanics:
   [`compat/allocator/README.md`](../compat/allocator/README.md) and
   [`crabc-mimalloc/UPSTREAM.md`](../crabc-mimalloc/UPSTREAM.md).
+
+The joint POSIX process-state workload is described in
+[`owned-posix-composition.md`](../compat/x86_64/owned-posix-composition.md).

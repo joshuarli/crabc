@@ -90,10 +90,10 @@ closure_workloads = ["credentials-profile"]
 [[capability]]
 id = "process.environment-mutation"
 symbols = ["clearenv", "setenv", "unsetenv"]
-source_bindings = ["libc/src/c_abi/x86_64/environment.rs", "libc/src/c_abi/x86_64/environment_runtime.rs"]
+source_bindings = ["libc/src/c_abi/x86_64/environment.rs", "libc/src/c_abi/x86_64/environment_runtime.rs", "compat/x86_64/owned_posix_composition_probe.c"]
 current_installed_evidence = ["compat/x86_64/owned_static_posix_probe.c via run_owned_static_sysroot.sh: selected setenv/unsetenv/clearenv and fork/exec observations on installed and extracted static products."]
 private_or_static_only_evidence = ["environment_runtime.rs is an opt-in allocator-backed owner; its own contract leaves synchronization, signal safety, fork, exec/spawn, direct environ, and borrowed-pointer obligations to callers."]
-unproven = ["No full dynamic PIE/non-PIE direct-interpreter and three-product mutation matrix.", "No installed concurrent/global-state composition covering direct environ ownership, signals, logger/FILE state, and fork or spawn.", "No complete allocation-failure, replacement/removal, and child/parent-after-fork differential across all products."]
+unproven = ["No full dynamic PIE/non-PIE direct-interpreter and three-product mutation matrix.", "The joint posix-composition workload covers caller-synchronized environment, signal, FILE/logger, fork/exec/spawn and cancellation behavior; its static reproduction/extraction and reviewed three-product dynamic receipts remain open.", "No complete allocation-failure, replacement/removal, and child/parent-after-fork differential across all products."]
 closure_workloads = ["environment-lifecycle", "global-state-composition"]
 
 [[capability]]
