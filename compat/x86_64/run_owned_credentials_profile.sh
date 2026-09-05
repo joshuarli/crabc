@@ -177,10 +177,20 @@ PY
 run_in_user_namespace_root() {
     local root="$1" stdout="$2" stderr="$3"
     shift 3
+    local status
 
+    set +e
     timeout 30 env -i PATH="$PATH" \
         unshare --user --map-root-user -- chroot "$root" "$@" \
         >"$stdout" 2>"$stderr"
+    status=$?
+    set -e
+    printf '%s\n' "$status" >"${stdout}.status"
+    if [ "$status" -ne 0 ]; then
+        printf 'owned credentials profile process failed with status %s: %s\n' \
+            "$status" "$*" >&2
+        return 1
+    fi
 }
 
 validate_transcript() {
@@ -275,12 +285,15 @@ run_candidate() {
     validate_transcript direct "$work/$label-direct.stdout"
     cmp "$work/oracle-direct.stdout" "$work/$label-direct.stdout"
     cmp "$work/oracle-direct.stderr" "$work/$label-direct.stderr"
+    cmp "$work/oracle-direct.stdout.status" "$work/$label-direct.stdout.status"
 
     run_in_user_namespace_root "$root" \
         "$work/$label-aliases-profile.stdout" "$work/$label-aliases-profile.stderr" \
         "${command[@]}" aliases-profile
     validate_transcript aliases-profile "$work/$label-aliases-profile.stdout"
     [ ! -s "$work/$label-aliases-profile.stderr" ]
+    cmp "$work/oracle-aliases-musl.stdout.status" \
+        "$work/$label-aliases-profile.stdout.status"
 }
 
 run_oracle

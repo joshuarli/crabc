@@ -167,8 +167,11 @@ compiles the single installed-driver object and runs the dynamic entries.
 Supplying both physical checkout `.work` products reuses both and invokes
 neither producer. The paths must be nonempty, the static path cannot parse as
 an option, and each is canonicalized before the shared product/link validator
-checks its manifest and receipt. This focused replay does not create a static
-reproduction/extraction or a family-completion claim.
+checks its manifest and receipt. Every per-scenario stdout retains a sibling
+`.status` record for the actual timeout/user-namespace/chroot process result;
+candidate process status is compared with its matching musl scenario even when
+the alias transcript intentionally differs. This focused replay does not create
+a static reproduction/extraction or a family-completion claim.
 
 ## Frozen aggregate shape
 
