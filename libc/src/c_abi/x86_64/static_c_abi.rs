@@ -942,6 +942,9 @@ mod owned_process_lock;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_spawn.rs"]
 mod owned_spawn;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_linux_control.rs"]
+mod owned_linux_control;
 // Word expansion is a target-local adapter over the selected environment,
 // owned spawn transaction, allocation-backed streams, and C allocator. Keep
 // it inside the aggregate so the frozen default archive remains export-free.

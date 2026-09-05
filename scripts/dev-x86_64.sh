@@ -548,6 +548,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
 
   owned-system-cancellation  qualify isolated system/pclose cancellation and child wait ownership
   owned-dynamic-spawn  qualify installed dynamic spawn semantics against musl
+  owned-linux-control  test owned Linux C mechanisms and kernel error translation
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-pthread-join-cancel  test installed join cancellation and target reclamation
@@ -5608,6 +5609,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
     owned-dynamic-spawn) ;;
+    owned-linux-control) ;;
     owned-io-cancellation) ;;
     owned-resolver-network) ;;
     owned-dynamic-io-cancellation) ;;
@@ -7629,6 +7631,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-dynamic-spawn takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_dynamic_spawn.sh
+        ;;
+    owned-linux-control)
+        [ "$#" -eq 0 ] || fail "owned-linux-control takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_linux_control.sh
         ;;
     owned-io-cancellation)
         ensure_image
