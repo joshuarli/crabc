@@ -220,6 +220,85 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                     driver.execute(self.root, ["--dynamic-pie", flag, "input.c"])
                 run.assert_not_called()
 
+    def test_quote_include_and_rounding_mode_are_explicit_application_inputs(self):
+        """The native libc-test source closure needs only quoted local headers.
+
+        The owned driver must continue to reject ordinary ``-I`` injection.
+        This deliberately narrow option affects quoted includes only, while
+        angle-bracket headers continue to come from the installed product's
+        fixed ``-isystem`` directory.
+        """
+
+        source_root = Path(self.temporary.name) / "source-root"
+        include = source_root / "common"
+        include.mkdir(parents=True)
+        (include / "local.h").write_text("#define LOCAL_VALUE 7\n")
+        source = source_root / "consumer.c"
+        source.write_text('#include "local.h"\nint value = LOCAL_VALUE;\n')
+        output = Path(self.temporary.name) / "consumer.o"
+        with patch.object(driver, "run", return_value="") as run:
+            driver.execute(
+                self.root,
+                [
+                    "--dynamic-pie",
+                    "--application-quote-include-dir",
+                    str(include),
+                    "-frounding-math",
+                    "-c",
+                    str(source),
+                    "-o",
+                    str(output),
+                ],
+            )
+        command = run.call_args.args[0]
+        self.assertIn("-iquote", command)
+        self.assertEqual(command[command.index("-iquote") + 1], str(include.resolve()))
+        self.assertIn("-frounding-math", command)
+        self.assertIn("-nostdinc", command)
+        self.assertIn(str(self.root / "usr/include"), command)
+
+    def test_quote_include_cannot_name_a_symlink_or_installed_header_tree(self):
+        source = Path(self.temporary.name) / "consumer.c"
+        source.write_text("int value;\n")
+        external = Path(self.temporary.name) / "external"
+        external.mkdir()
+        link = Path(self.temporary.name) / "external-link"
+        link.symlink_to(external)
+        for include in (link, self.root / "usr/include"):
+            with self.subTest(include=include), patch.object(driver, "run") as run:
+                with self.assertRaisesRegex(driver.shared.DriverError, "quote include"):
+                    driver.execute(
+                        self.root,
+                        [
+                            "--dynamic-pie",
+                            "--application-quote-include-dir",
+                            str(include),
+                            "-c",
+                            str(source),
+                            "-o",
+                            str(Path(self.temporary.name) / f"{include.name}.o"),
+                        ],
+                    )
+                run.assert_not_called()
+
+    def test_rdynamic_is_an_executable_only_export_contract(self):
+        output = io.StringIO()
+        with patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch("sys.stdout", output):
+            driver.execute(self.root, ["--dynamic-pie", "-rdynamic", "--print-link-plan"])
+        plan = json.loads(output.getvalue())
+        self.assertIn("--export-dynamic", plan["linker"])
+
+        source = Path(self.temporary.name) / "consumer.c"
+        source.write_text("int main(void) { return 0; }\n")
+        for arguments in (
+            ["--dynamic-shared-object", "-rdynamic", "--print-link-plan"],
+            ["--dynamic-pie", "-rdynamic", "-c", str(source)],
+        ):
+            with self.subTest(arguments=arguments), patch.object(driver, "run") as run:
+                with self.assertRaisesRegex(driver.shared.DriverError, "-rdynamic"):
+                    driver.execute(self.root, arguments)
+                run.assert_not_called()
+
     def test_install_output_cannot_be_modified(self):
         source = Path(self.temporary.name) / "input.c"
         source.write_text("int main(void) { return 0; }\n")

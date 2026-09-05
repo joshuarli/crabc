@@ -170,6 +170,28 @@ def dynamic_symbols(path: Path, temporary: Path, *, object_symbols: bool = False
     return definitions, required
 
 
+def application_quote_include_dir(root: Path, path: Path) -> Path:
+    """Admit one physical, caller-owned directory for quoted C headers.
+
+    The installed product remains the only authority for angle-bracket
+    headers.  This deliberately does not open a general ``-I`` surface: an
+    upstream source tree can name its own ``#include "test.h"`` support
+    headers, but cannot replace installed C headers or route the compiler
+    through the immutable sysroot.  Reject every existing symlink component
+    so the declared directory is the physical input that reaches GCC.
+    """
+
+    shared.reject_existing_symlink_components(path, "application quote include")
+    resolved = shared.resolved_path(path, "application quote include")
+    if not resolved.is_dir() or path.is_symlink():
+        raise shared.DriverError(f"application quote include is missing or unsafe: {path}")
+    if shared.is_within_installed_root(root, resolved):
+        raise shared.DriverError(
+            f"application quote include is inside the installed sysroot: {path}"
+        )
+    return resolved
+
+
 def execute(root: Path, arguments: list[str]) -> None:
     validate(root)
     mode = None
@@ -178,6 +200,9 @@ def execute(root: Path, arguments: list[str]) -> None:
     runtime_imports = set()
     dsos = []
     common = []
+    quote_include_inputs = []
+    rounding_math = False
+    export_dynamic = False
     index = 0
     while index < len(arguments):
         argument = arguments[index]
@@ -212,6 +237,19 @@ def execute(root: Path, arguments: list[str]) -> None:
                 raise shared.DriverError("unowned application DSO")
             application_dso_basename(path)
             dsos.append(path)
+        elif argument == "--application-quote-include-dir":
+            index += 1
+            if index == len(arguments) or arguments[index].startswith("-"):
+                raise shared.DriverError("--application-quote-include-dir requires one directory path")
+            quote_include_inputs.append(Path(arguments[index]))
+        elif argument == "-frounding-math":
+            if rounding_math:
+                raise shared.DriverError("-frounding-math may be specified only once")
+            rounding_math = True
+        elif argument == "-rdynamic":
+            if export_dynamic:
+                raise shared.DriverError("-rdynamic may be specified only once")
+            export_dynamic = True
         elif argument in ("-static", "--static-et-exec", "-static-pie", "--static-pie"):
             raise shared.DriverError("static linkage is not a dynamic mode")
         else:
@@ -230,10 +268,22 @@ def execute(root: Path, arguments: list[str]) -> None:
     if invocation.compile_only and dsos: raise shared.DriverError("compile-only accepts no DSO")
     if invocation.link_receipt is not None:
         raise shared.DriverError("dynamic link receipt path is derived from -o")
+    if export_dynamic and (mode == "shared" or invocation.compile_only):
+        raise shared.DriverError("-rdynamic requires a dynamic executable link")
+    if invocation.print_link_plan and (quote_include_inputs or rounding_math):
+        raise shared.DriverError("link plan accepts no application translation options")
+    quote_include_dirs = []
+    for path in quote_include_inputs:
+        directory = application_quote_include_dir(root, path)
+        if directory in quote_include_dirs:
+            raise shared.DriverError("duplicate application quote include directory")
+        quote_include_dirs.append(directory)
     library = root / "usr/lib"
     link = [shared.linker(), *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=sysv",
             "-z", "relro", "-z", binding, "-z", "noexecstack", "-z", "text", *([] if runtime_imports else ["--no-undefined"]),
             "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", application_runpath]
+    if export_dynamic:
+        link.append("--export-dynamic")
     entry_object = "Scrt1.o" if mode == "pie" else "crt1.o"
     if mode != "shared":
         link += ["--dynamic-linker", INTERPRETER, str(library / entry_object),
@@ -257,9 +307,12 @@ def execute(root: Path, arguments: list[str]) -> None:
         for index, source in enumerate(invocation.sources):
             source = shared.require_application_file(root, source, "source")
             obj = output if invocation.compile_only else temporary / f"source-{index}.o"
-            run([shared.compiler(), "-nostdinc", "-isystem", str(root / "usr/include"),
+            run([shared.compiler(), "-nostdinc",
+                 *(item for directory in quote_include_dirs for item in ("-iquote", str(directory))),
+                 "-isystem", str(root / "usr/include"),
                  "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
-                 *invocation.compiler_flags, "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",
+                 *invocation.compiler_flags, *(["-frounding-math"] if rounding_math else []),
+                 "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",
                  "-c", str(source), "-o", str(obj)], temporary)
             objects.append(obj)
         if invocation.compile_only:
