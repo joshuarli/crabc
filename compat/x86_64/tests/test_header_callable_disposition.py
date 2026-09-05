@@ -167,6 +167,39 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(process_streams <= providers["x86-owned-static-runtime"])
         self.assertFalse(process_streams & deferred)
 
+    def test_integrated_owned_component_providers_are_not_deferred(self) -> None:
+        """Keep installed implementation ownership distinct from family qualification."""
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        components = {
+            "word expansion": {"wordexp", "wordfree"},
+            "pthread scheduling": {
+                "pthread_getattr_default_np", "pthread_getschedparam",
+                "pthread_setattr_default_np", "pthread_setschedparam", "pthread_setschedprio",
+            },
+            "process creation": {"clone", "daemon", "vfork"},
+            "syslog": {"closelog", "openlog", "setlogmask", "syslog", "vsyslog"},
+            "assert": {"__assert_fail"},
+            "Linux control": {
+                "acct", "capget", "capset", "delete_module", "fanotify_init",
+                "fanotify_mark", "init_module", "klogctl", "process_vm_readv",
+                "process_vm_writev", "ptrace", "quotactl", "reboot", "setns",
+                "swapoff", "swapon", "unshare",
+            },
+        }
+        for component, names in components.items():
+            with self.subTest(component=component):
+                self.assertTrue(names <= providers["x86-owned-static-runtime"])
+                self.assertFalse(names & deferred)
+
     def test_pty_and_error_reporting_names_are_planned_owned_static_not_deferred(self) -> None:
         """Keep PTY and error reporting beneath the selected aggregate."""
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
