@@ -116,8 +116,8 @@ These are component measurements, not final same-revision qualification.
    family through its complete selected capability roster, realistic shared
    runtime behavior, and native differential/OS/signal-process/libc-test gates.
    Private leaf selection and component passes do not replace that aggregate.
-   Preserve the current calling-task credential-setter contract until an
-   all-thread transaction is implemented and qualified. Resolver cancellation
+   Preserve the selected credential profile: four effective-ID aliases reject
+   changes with `EOPNOTSUPP`; direct setters retain calling-task semantics. Resolver cancellation
    cleanup and malformed-record parser ordering remain explicit obligations in
    `compat/x86_64/owned-classic-netdb.md` for the later resolver family.
 6. Continue allocator M2–M11 and Rust-std only after resolving the existing

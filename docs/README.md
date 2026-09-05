@@ -30,6 +30,8 @@ them; this router should explain ownership, not duplicate command contracts.
   — source-mapped `times`, interval-timer, and seccomp-contained
   clock-adjustment behavior across installed native products; neither
   runtime-family completion nor public support.
+- [Owned POSIX family acceptance proposal](../compat/x86_64/owned-posix-runtime.md)
+  — checked frozen scope, product matrix, and remaining behavior obligations.
 - [Owned classic host and service lookup](../compat/x86_64/owned-classic-netdb.md)
   — conventional local files and bounded DNS through owned products, with
   explicit remaining resolver cancellation and parser-order obligations.
