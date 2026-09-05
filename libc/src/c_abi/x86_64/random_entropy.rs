@@ -15,13 +15,11 @@
 //! - `src/misc/getentropy.c` maps to the BSD-compatible 256-byte cap, repeated
 //!   `getrandom(..., 0)` calls, and `EINTR` retry loop below.
 //!
-//! Musl makes `getrandom` a cancellation point through `syscall_cp`, and
-//! `getentropy` temporarily disables cancellation through
-//! `pthread_setcancelstate`. This selected static leaf deliberately emits the
-//! direct Linux syscall instead: the x86 pthread/cancellation lifecycle is not
-//! yet selected. The remaining musl-visible success, partial-read, `EINTR`,
-//! `EIO`, and `errno` behavior is kept at this boundary. Linux 5.10 is the
-//! project baseline, so there is no pre-`getrandom` fallback.
+//! The owned runtime maps musl's `getrandom` cancellation-point syscall and
+//! `getentropy` cancellation disable/restore interval. The standalone archive
+//! retains its direct raw syscall profile. Both preserve source success,
+//! partial-read, `EINTR`, `EIO`, and `errno` behavior. Linux 5.10 is the project
+//! baseline, so there is no pre-`getrandom` fallback.
 
 use core::ffi::{c_int, c_uint, c_void};
 
@@ -37,8 +35,8 @@ const GETENTROPY_MAX_BYTES: usize = 256;
 ///
 /// If Linux examines the buffer, `buffer` must designate `length` writable
 /// bytes for the syscall's duration. A null buffer is valid only with zero
-/// length. The kernel validates `flags`; this direct static leaf does not
-/// supply musl's pthread cancellation-point behavior.
+/// length. The kernel validates `flags`; owned pthread cancellation is checked
+/// before the kernel observes the buffer, length, or flags.
 #[no_mangle]
 pub unsafe extern "C" fn getrandom(
     buffer: *mut c_void,
@@ -47,6 +45,19 @@ pub unsafe extern "C" fn getrandom(
 ) -> isize {
     // SAFETY: the caller supplies the complete Linux output-buffer contract;
     // the kernel validates the random-source flags and publishes raw errors.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_GETRANDOM,
+            buffer as usize as i64,
+            length as i64,
+            i64::from(flags),
+            0,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_GETRANDOM,
@@ -65,8 +76,8 @@ pub unsafe extern "C" fn getrandom(
 /// If `length` is nonzero, `buffer` must designate that many writable bytes
 /// for every retry. A null buffer is valid only with zero length. Requests
 /// larger than 256 bytes fail with `-1` and `errno = EIO` before Linux observes
-/// the pointer; this leaf otherwise retains musl's direct partial-fill/retry
-/// behavior while deliberately omitting its pthread cancellation suppression.
+/// the pointer. The owned runtime suppresses cancellation across the complete
+/// fill/retry interval and restores the caller's state on success or failure.
 #[no_mangle]
 pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int {
     if length > GETENTROPY_MAX_BYTES {
@@ -75,6 +86,32 @@ pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: usize) -> c_int
         return -1;
     }
 
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let mut previous_state = 0;
+    #[cfg(feature = "x86-owned-static-runtime")]
+    // SAFETY: PTHREAD_CANCEL_DISABLE is valid and the local previous-state
+    // word is writable. Unselected C11 tasks have no cancellation slot and
+    // keep their existing non-canceling syscall behavior.
+    let guarded = unsafe {
+        super::pthread_cancel::pthread_setcancelstate(1, &mut previous_state)
+    } == 0;
+
+    // SAFETY: the public caller owns the buffer contract across every retry.
+    let result = unsafe { fill_entropy(buffer, length) };
+    #[cfg(feature = "x86-owned-static-runtime")]
+    if guarded {
+        // SAFETY: a successful transition initialized this valid prior state.
+        // Restore it on error as well as after a complete fill, as pinned musl.
+        let _ = unsafe {
+            super::pthread_cancel::pthread_setcancelstate(previous_state, core::ptr::null_mut())
+        };
+    }
+    result
+}
+
+/// Pinned musl's complete fill/retry loop, enclosed by the owned state guard.
+/// The caller owns `length` writable bytes for the entire call.
+unsafe fn fill_entropy(buffer: *mut c_void, length: usize) -> c_int {
     let mut remaining = length;
     let mut cursor = buffer.cast::<u8>();
     while remaining != 0 {

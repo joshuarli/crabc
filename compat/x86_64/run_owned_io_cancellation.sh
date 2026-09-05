@@ -12,7 +12,7 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
-readonly PROBE_NAMES=(owned_io_cancellation owned_descriptor_cancellation owned_socket_cancellation owned_sleep_wait_cancellation owned_open_lock_cancellation owned_semaphore_wait_cancellation owned_semaphore_cancellation owned_signal_wait_cancellation)
+readonly PROBE_NAMES=(owned_io_cancellation owned_descriptor_cancellation owned_socket_cancellation owned_sleep_wait_cancellation owned_open_lock_cancellation owned_semaphore_wait_cancellation owned_semaphore_cancellation owned_signal_wait_cancellation owned_entropy_cancellation)
 
 fail() {
     printf 'ERROR: x86 owned I/O cancellation: %s\n' "$*" >&2
@@ -76,6 +76,7 @@ for probe_name in "${PROBE_NAMES[@]}"; do
         owned_semaphore_wait_cancellation) headers+=(semaphore.h) ;;
         owned_semaphore_cancellation) headers+=(semaphore.h sys/mman.h) ;;
         owned_signal_wait_cancellation) headers+=(signal.h time.h) ;;
+        owned_entropy_cancellation) headers+=(sys/random.h sys/mman.h) ;;
         owned_socket_cancellation) headers+=(sys/socket.h sys/un.h sys/uio.h) ;;
         owned_sleep_wait_cancellation) headers+=(time.h threads.h sys/wait.h sys/resource.h) ;;
         owned_descriptor_cancellation) headers+=(sys/uio.h poll.h signal.h sys/select.h sys/epoll.h sys/eventfd.h sys/mman.h) ;;
@@ -243,4 +244,4 @@ for probe_name in "${PROBE_NAMES[@]}"; do
 done
 
 printf '%s\n' \
-    'x86 owned I/O cancellation: PASS (pinned musl + installed ET_EXEC/static-PIE scalar/positioned/vector I/O, close/sync, readiness/signal/event waits, sockets, sleep/child waits, open/record-lock/msync, semaphore waits, cancellation states, FILE locks, fork inheritance)'
+    'x86 owned I/O cancellation: PASS (pinned musl + installed ET_EXEC/static-PIE scalar/positioned/vector I/O, close/sync, readiness/signal/event waits, sockets, sleep/child waits, open/record-lock/msync, semaphore waits, signal waits, entropy, cancellation states, FILE locks, fork inheritance)'

@@ -289,6 +289,15 @@ fixture also qualifies pending `msync` cancellation before kernel validation;
 it makes no file-durability claim. Every fixture child is released and reaped,
 and successful fixtures remove their scratch directory.
 
+`owned_entropy_cancellation_probe.c` checks the source distinction between
+`getrandom` and `getentropy`. Pending `getrandom` requests cancel even for
+zero-length reads and invalid flags; masked requests return `ECANCELED`
+without writing the buffer. `getentropy` suppresses cancellation during the
+fill and restores enabled, disabled, or masked state on success and `EFAULT`.
+The 256-byte limit still rejects larger requests with `EIO` before the state
+guard. The fixture checks completion, errno, untouched buffer suffixes, and
+state transitions; it never compares random bytes or asserts their values.
+
 `owned_signal_wait_cancellation_probe.c` qualifies the shared `sigtimedwait`,
 `sigwaitinfo`, and `sigwait` cancellation boundary. Pending enabled and masked
 requests leave queued signals and caller output untouched; disabled requests
