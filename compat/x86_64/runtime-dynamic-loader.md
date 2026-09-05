@@ -64,6 +64,19 @@ unpublished per-thread view under the mutation guard: partial failure drops
 only new views and leaves every live descriptor untouched. Successful admission
 publishes all views before making new object scope observable.
 
+The ELF parser validates the initialized `PT_TLS.p_filesz` prefix against a
+readable file-backed PT_LOAD. `p_memsz` describes the separate per-thread
+allocation, so a pure-TBSS or extended zero-fill tail need not occupy a mapped
+ELF extent. The aligned allocation must still fit Rust's object-size bound;
+filesz/memsz, alignment/phase, duplicate-TLS and initialized-prefix checks
+remain active. This follows musl 1.2.6 `map_library` and initial main-template
+admission in `ldso/dynlink.c`. `general_dynamic_tbss.c` proves a filesz-zero,
+8192-byte, 4096-aligned main template outside every LOAD extent, with distinct
+zero-filled worker storage in installed PIE/non-PIE processes. The same
+ordinary executable failed at `mainelf` with status 127 before the parser fix;
+the musl oracle and corrected candidate print the same result. Legacy general
+initial-TLS negative cases still reject malformed prefixes before FS changes.
+
 ## One executing runtime registry
 
 `x86_64_runtime_registry.rs` owns runtime object nodes and their dependencies in stable loader-owned

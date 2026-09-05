@@ -1332,7 +1332,12 @@ unsafe fn parse_mapped(
                     return None;
                 }
                 let align = usize::try_from(align).ok()?;
-                if memsz != 0 && !virtual_range_in_load(phdr, phnum, virtual_address, memsz) {
+                // PT_TLS describes a per-thread allocation, not another
+                // PT_LOAD extent. Its zero-filled tail (including a wholly
+                // TBSS executable) need not be mapped in the ELF image.
+                // The aligned allocation must still fit Rust's object-size
+                // bound before any TLS template can reach materialization.
+                if memsz.checked_add(align as u64 - 1)? > isize::MAX as u64 {
                     return None;
                 }
                 // The initialized prefix is copied after relocation. It must

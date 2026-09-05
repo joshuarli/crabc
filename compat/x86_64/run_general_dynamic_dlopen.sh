@@ -39,6 +39,30 @@ bash "$ROOT/compat/x86_64/run_musl_oracle.sh"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 oracle_entry_flags=(-fPIE -pie)
 [ "$entry_mode" = --dynamic-pie ] || oracle_entry_flags=(-fno-pie -no-pie)
+# A pure-TBSS main has no initialized template bytes in the executable.
+# Its per-thread zero fill can extend beyond every ordinary PT_LOAD.
+"$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_tbss.c" -o "$work/tbss-consumer"
+readelf -lW "$work/tbss-consumer" >"$work/tbss-consumer.phdr"
+python3 -B - "$work/tbss-consumer" <<'PYTHON'
+from pathlib import Path
+import struct
+import sys
+image = Path(sys.argv[1]).read_bytes()
+offset = struct.unpack_from('<Q', image, 32)[0]
+entry_size, count = struct.unpack_from('<HH', image, 54)
+headers = [struct.unpack_from('<IIQQQQQQ', image, offset + index * entry_size) for index in range(count)]
+tls, = [header for header in headers if header[0] == 7]
+assert tls[5] == 0 and tls[6] == 8192 and tls[7] == 4096
+assert not any(header[0] == 1 and header[3] <= tls[3] and tls[3] + tls[6] <= header[3] + header[6] for header in headers)
+PYTHON
+cp "$work/tbss-consumer" "$work/execution-root/tbss-consumer"
+timeout 20 chroot "$work/execution-root" /tbss-consumer >"$work/tbss-candidate.stdout"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$ROOT/compat/x86_64/general_dynamic_tbss.c" -o "$work/tbss-oracle"
+timeout 20 "$work/tbss-oracle" >"$work/tbss-oracle.stdout"
+cmp "$work/tbss-candidate.stdout" "$work/tbss-oracle.stdout"
+[ "$(<"$work/tbss-candidate.stdout")" = 'initial-tbss=8192,worker=isolated' ]
+printf 'general initial pure TBSS: PASS (mapped-prefix boundary and independent worker zero fill); evidence: %s\n' "$work"
+
 mkdir "$work/oracle"
 for generation in $(seq 0 40); do
     "$driver" --dynamic-shared-object -DGENERATION="$generation" \
