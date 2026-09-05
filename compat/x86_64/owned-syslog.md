@@ -24,12 +24,29 @@ private lock plus relaxed atomic mask publication.
 Run `./scripts/dev-x86_64.sh owned-syslog` for the focused evidence.
 `owned_syslog_probe.c` binds a receiver only after entering a disposable
 chroot below `.work`, and uses the chroot's regular `/dev/console` fixture for
-the fallback. It links the same C workload into pinned-musl, installed static
-ET_EXEC/static-PIE, and installed dynamic PIE/non-PIE products; dynamic
-parents additionally use direct interpreter entry. The witness covers main,
-worker, fork and deferred-cancellation paths and compares each result with the
+the fallback. The runner compiles a single installed-header workload object
+through the installed dynamic driver's supported PIE path, then links those
+exact bytes into pinned musl, installed static ET_EXEC/static-PIE, and
+installed dynamic PIE/non-PIE products; dynamic parents additionally use
+direct interpreter entry. The static driver deliberately rejects caller
+`-fPIC`; the dynamic PIE object has no absolute 32-bit relocations, and the
+static/static-PIE/dynamic link and runtime receipts prove the supported
+cross-mode object boundary instead. Each link uses the shared sealed-product
+validator and records the one source/object SHA-256 binding. The fixture keeps
+raw status, stdout, and stderr for every normal, worker, fork, and
+deferred-cancellation scenario, then compares all three streams with the
 pinned-musl oracle. The dynamic qualification catalog repeats its dynamic
 matrix for both clean products and the extracted package.
+
+The runner accepts `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`.
+With no arguments it builds both disposable products. A positional dynamic
+product retains the dynamic-only replay and does not run the static pair.
+`--static-sysroot` reuses a physical checkout `.work` static product; on its
+own it still builds the disposable dynamic product that compiles the shared
+workload object and supplies the dynamic cells. Supplying both sealed products
+invokes neither producer. Paths must be nonempty, cannot be parsed as options,
+and are canonicalized to physical checkout `.work` targets before validation.
+This is a replay seam for this receipt, not a family-completion claim.
 
 This is not a daemon, logger configuration, queueing, discovery, network
 logging, host `/dev` access, general locale support, or public x86 support.
