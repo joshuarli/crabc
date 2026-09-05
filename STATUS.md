@@ -26,10 +26,10 @@ owners:
 1. Runtime: complete dependency-ready components through ordinary installed
    applications, then qualify their families. The frozen 223-capability/
    26-family baseline validates; current accounting does not imply full parity.
-   Wide stdio and stream extensions compose in installed products; remaining
-   pthread/dynamic process lifecycle, additional cancellation points, scalar math,
-   and dynamic-loader completion
-   are active component work. Do not restart an export-by-export queue.
+   Wide stdio, scalar math, signal transactions, semaphore cancellation, and
+   loader search/direct-interpreter entry compose in installed products.
+   Dynamic fork qualification, header-family closure, and source-build
+   integration are active component work. Do not restart an export-by-export queue.
 2. Allocator: use the contained `compat/allocator/run-x86_64.sh` launcher,
    then complete native x86 M2 qualification. Imported
    AArch64 milestone passes do not count as x86 passes.
@@ -49,7 +49,8 @@ owners:
    Installed/extracted dynamic PIE and non-PIE consumers cover runtime-new
    dependency graphs, existing/new-worker DTV growth, retained close, scope,
    rollback, and constructor exit with reproducible builds. Deferred GOT/PLT binding and kernel-main `dladdr` mapping results are
-   integrated. Complete search policy and dynamic process lifecycle remain open; see
+   integrated, as are musl search policy and direct interpreter entry. Dynamic
+   fork qualification and campaign-level product publication remain open; see
    [`materialized-dynamic-sysroot.md`](compat/x86_64/materialized-dynamic-sysroot.md).
 4. Recovery: inspect existing worktrees before duplicating work. The legacy
    `x86/reboot-feature-20260904` branch still has unfinished uncommitted work
