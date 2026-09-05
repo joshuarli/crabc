@@ -178,6 +178,10 @@ must be explicit host paths within that boundary; named Docker volumes,
 parent traversal, and symlink escapes are rejected. Legacy container /tmp
 writes are bound to the same local scratch tree.
 
+Supplied POSIX sysroots may use existing host checkout .work paths or their
+/workspace/.work container paths. Host paths are translated through the
+configured work and Cargo mounts; hidden or nonphysical paths are rejected.
+
 Native Linux/x86-64 staged-foundation evidence commands:
   campaign-status  emit the validated native x86 campaign report
   campaign-family <family-id>  emit one validated required-family campaign report
@@ -546,28 +550,29 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-resolver-network  compare owned products with musl in isolated loopback DNS fixtures
   owned-classic-netdb [DYNAMIC_SYSROOT]  compare installed host/service C APIs in isolated loopback DNS fixtures
   owned-resolver-cancellation [DYNAMIC_SYSROOT]  compare installed DNS cancellation and descriptor cleanup
-  owned-dynamic-io-cancellation  qualify shared-runtime cancellation through kernel and direct entry
+  owned-dynamic-io-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify shared-runtime cancellation through kernel and direct entry
 
-  owned-system-cancellation  qualify isolated system/pclose cancellation and child wait ownership
-  owned-dynamic-spawn  qualify installed dynamic spawn semantics against musl
+  owned-system-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify isolated system/pclose cancellation and child wait ownership
+  owned-dynamic-spawn [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed dynamic spawn semantics against musl
   owned-assert  test installed C assertion diagnostics and termination
   owned-quick-exit  qualify installed C11 at_quick_exit/quick_exit semantics against musl
   owned-legacy-time  qualify installed legacy interval-timer and safe clock-adjustment C behavior
-  owned-environment-lifecycle [DYNAMIC_SYSROOT]  qualify installed POSIX environment lifecycle against musl
-  owned-linux-control  test owned Linux C mechanisms and kernel error translation
-  owned-kernel-residual [DYNAMIC_SYSROOT]  qualify residual system.kernel-admin C APIs against musl
+  owned-environment-lifecycle [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed POSIX environment lifecycle against musl
+  owned-linux-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test owned Linux C mechanisms and kernel error translation
+  owned-kernel-residual [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify residual system.kernel-admin C APIs against musl
   owned-vm-mechanisms  test owned VM remap, break, and legacy remap mechanisms
   owned-group  test installed local /etc/group C APIs against musl
   owned-pthread-spin  qualify installed private/shared pthread spin locking
-  owned-syslog  qualify owned C syslog delivery and state against musl
+  owned-syslog [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify owned C syslog delivery and state against musl
   owned-pattern  qualify owned C fnmatch/glob/globfree behavior against musl
-  owned-process-trio   qualify installed clone/vfork/daemon semantics against musl
-  owned-process-control [DYNAMIC_SYSROOT] qualify installed residual POSIX process control
+  owned-process-trio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed clone/vfork/daemon semantics against musl
+  owned-process-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed residual POSIX process control
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
-  owned-credentials-profile [DYNAMIC_SYSROOT]  qualify the selected credential-setter profile against musl
+  owned-credentials-profile [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify the selected credential-setter profile against musl
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
-  owned-posix-timers      test installed POSIX timer lifecycle and callback TLS reset
+  owned-pthread-signal [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test installed pthread signal delivery and task retirement
+  owned-posix-timers [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX timer lifecycle and callback TLS reset
   owned-pthread-scheduling test installed pthread scheduling/default attributes
   owned-fcntl  test installed descriptor-control commands and variadic ABI
   owned-named-ipc  test installed named semaphore and shared-memory lifecycles
@@ -576,12 +581,12 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-atfork-registry  test installed resource-sized atfork callback ordering
   owned-pty [DYNAMIC_SYSROOT]  test installed PTY naming, lifecycle and session handoff
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
-  owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT] test shared POSIX process state and cancellation
+  owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
-  owned-posix-filesystem [DYNAMIC_SYSROOT] test installed POSIX filesystem provider composition
+  owned-posix-filesystem [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX filesystem provider composition
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
-  owned-posix-signals [DYNAMIC_SYSROOT]  test residual installed signal state and boundaries
-  owned-signal-helpers [DYNAMIC_SYSROOT]  test installed signal aliases, bookkeeping and reporting
+  owned-posix-signals [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test residual installed signal state and boundaries
+  owned-signal-helpers [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed signal aliases, bookkeeping and reporting
   owned-pthread-join-cancel  test installed ordinary/try/timed join ownership and cancellation
   owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
   owned-pthread-cond-timed  test timed/shared condition transactions and mutex handoffs
@@ -2644,6 +2649,86 @@ EOF
 fail() {
     printf 'ERROR: %s\n' "$*" >&2
     exit 2
+}
+
+# Supplied POSIX products remain physical checkout inputs. Translate against
+# the actual bind mounts so a WORK_DIR override cannot select a hidden sibling.
+translate_owned_posix_product() {
+    python3 -B - "$ROOT_DIR" "$WORK_DIR" "$CARGO_VOLUME" "$1" <<'PY_PRODUCT'
+from pathlib import Path
+import os
+import sys
+
+root, work, cargo = map(Path, sys.argv[1:4])
+argument = sys.argv[4]
+container_root = Path('/workspace')
+container_work = container_root / '.work/x86_64'
+container_cargo = container_work / 'cargo'
+
+def host_path(container):
+    if container.is_relative_to(container_cargo):
+        return cargo / container.relative_to(container_cargo)
+    if container.is_relative_to(container_work):
+        return work / container.relative_to(container_work)
+    return root / container.relative_to(container_root)
+
+try:
+    raw = Path(argument)
+    if '..' in raw.parts or any(character in argument for character in ('\n', '\r')):
+        raise ValueError('product must be a physical checkout .work directory without parent traversal')
+    if raw.is_absolute() and raw.is_relative_to(container_root):
+        if not raw.is_relative_to(container_root / '.work'):
+            raise ValueError('product must be a physical checkout .work directory')
+        path = host_path(raw)
+    else:
+        path = Path(os.path.abspath(raw))
+    if path.resolve(strict=True) != path or not path.is_dir() or not path.is_relative_to(root / '.work'):
+        raise ValueError('product must be a physical checkout .work directory')
+    if path.is_relative_to(cargo):
+        container = container_cargo / path.relative_to(cargo)
+    elif path.is_relative_to(work):
+        container = container_work / path.relative_to(work)
+    else:
+        container = container_root / path.relative_to(root)
+    if host_path(container) != path:
+        raise ValueError('product is hidden by the configured container work or Cargo mount')
+    print(container.as_posix())
+except (OSError, RuntimeError, ValueError) as error:
+    raise SystemExit(f'ERROR: supplied POSIX product: {error}')
+PY_PRODUCT
+}
+
+prepare_owned_posix_replay_arguments() {
+    local selected_command="$1"
+    shift
+    local static_product=''
+    local dynamic_product=''
+    local expected="usage: ./scripts/dev-x86_64.sh $selected_command [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]"
+    if [ "$selected_command" = owned-pthread-signal ]; then
+        expected="usage: ./scripts/dev-x86_64.sh $selected_command [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT"
+    fi
+    if [ "${1:-}" = --static-sysroot ]; then
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$expected"
+        static_product="$2"
+        shift 2
+    fi
+    [ "$#" -le 1 ] || fail "$expected"
+    if [ "$#" -eq 1 ]; then
+        [ -n "$1" ] && [[ "$1" != -* ]] || fail "$expected"
+        dynamic_product="$1"
+    fi
+    if [ "$selected_command" = owned-pthread-signal ] && [ -z "$dynamic_product" ]; then
+        fail "$expected"
+    fi
+    POSIX_REPLAY_ARGUMENTS=()
+    if [ -n "$static_product" ]; then
+        static_product="$(translate_owned_posix_product "$static_product")" || exit 2
+        POSIX_REPLAY_ARGUMENTS+=(--static-sysroot "$static_product")
+    fi
+    if [ -n "$dynamic_product" ]; then
+        dynamic_product="$(translate_owned_posix_product "$dynamic_product")" || exit 2
+        POSIX_REPLAY_ARGUMENTS+=("$dynamic_product")
+    fi
 }
 
 require_native_linux_x86_64_host() {
@@ -5694,7 +5779,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
-    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -5851,6 +5936,13 @@ case "$command" in
 esac
 
 require_native_linux_x86_64_host
+
+case "$command" in
+    owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-process-trio|owned-syslog|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation)
+        prepare_owned_posix_replay_arguments "$command" "$@"
+        set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
+        ;;
+esac
 
 case "$command" in
     image)
@@ -7717,14 +7809,12 @@ case "$command" in
         run_owned_resolver_network_probe
         ;;
     owned-dynamic-io-cancellation)
-        [ "$#" -eq 0 ] || fail "owned-dynamic-io-cancellation takes no arguments"
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_dynamic_io_cancellation.sh
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_dynamic_io_cancellation.sh "$@"
         ;;
     owned-system-cancellation)
-        [ "$#" -eq 0 ] || fail "owned-system-cancellation takes no arguments"
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_system_cancellation.sh
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_system_cancellation.sh "$@"
         ;;
     owned-atfork-registry)
         [ "$#" -eq 0 ] || fail "owned-atfork-registry takes no arguments"
@@ -7732,12 +7822,10 @@ case "$command" in
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_atfork_registry.sh
         ;;
     owned-process-trio)
-        [ "$#" -eq 0 ] || fail "owned-process-trio takes no arguments"
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_process_trio.sh
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_process_trio.sh "$@"
         ;;
     owned-process-control)
-        [ "$#" -le 1 ] || fail "owned-process-control takes at most one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_process_control.sh "$@"
         ;;
@@ -7776,24 +7864,24 @@ PY
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_unix_mechanisms.sh "$@"
         ;;
     owned-posix-filesystem)
-        [ "$#" -le 1 ] || fail "owned-posix-filesystem takes at most one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_posix_filesystem.sh "$@"
         ;;
+    owned-pthread-signal)
+        ensure_image
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_pthread_signal.sh "$@"
+        ;;
     owned-posix-signals)
-        [ "$#" -le 1 ] || fail "owned-posix-signals takes at most one dynamic sysroot"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_owned_posix_signals.sh "$@"
         ;;
     owned-signal-helpers)
-        [ "$#" -le 1 ] || fail "owned-signal-helpers takes at most one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_signal_helpers.sh "$@"
         ;;
     owned-dynamic-spawn)
-        [ "$#" -eq 0 ] || fail "owned-dynamic-spawn takes no arguments"
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_dynamic_spawn.sh
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_dynamic_spawn.sh "$@"
         ;;
     owned-assert)
         [ "$#" -eq 0 ] || fail "owned-assert takes no arguments"
@@ -7811,17 +7899,14 @@ PY
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_legacy_time.sh
         ;;
     owned-environment-lifecycle)
-        [ "$#" -le 1 ] || fail "owned-environment-lifecycle takes at most one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_environment_lifecycle.sh "$@"
         ;;
     owned-linux-control)
-        [ "$#" -eq 0 ] || fail "owned-linux-control takes no arguments"
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_linux_control.sh
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_linux_control.sh "$@"
         ;;
     owned-kernel-residual)
-        [ "$#" -le 1 ] || fail "owned-kernel-residual takes at most one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_kernel_residual.sh "$@"
         ;;
@@ -7841,9 +7926,8 @@ PY
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_pthread_spin.sh
         ;;
     owned-syslog)
-        [ "$#" -eq 0 ] || fail "owned-syslog takes no arguments"
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_syslog.sh
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_syslog.sh "$@"
         ;;
     owned-pattern)
         [ "$#" -eq 0 ] || fail "owned-pattern takes no arguments"
@@ -7856,7 +7940,6 @@ PY
         run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_filesystem_mechanisms.sh
         ;;
     owned-credentials-profile)
-        [ "$#" -le 1 ] || fail "owned-credentials-profile takes at most one dynamic sysroot"
         ensure_image
         run_in_user_namespace_chroot_container bash /workspace/compat/x86_64/run_owned_credentials_profile.sh "$@"
         ;;

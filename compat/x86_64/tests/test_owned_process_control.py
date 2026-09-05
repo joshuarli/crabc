@@ -205,7 +205,7 @@ class OwnedProcessControlTests(unittest.TestCase):
         self.assertNotIn("fexecveat", document)
 
         dispatcher = DISPATCHER.read_text(encoding="utf-8")
-        self.assertIn("owned-process-control [DYNAMIC_SYSROOT]", dispatcher)
+        self.assertIn("owned-process-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]", dispatcher)
         self.assertIn("run_owned_process_control.sh", dispatcher)
 
     def test_supplied_product_escape_is_rejected_before_building(self) -> None:

@@ -19,6 +19,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
             work = Path(temporary)
+            (work / "state/supplied-product").mkdir(parents=True)
             docker = work / "docker"
             docker.write_text(
                 f"#!{sys.executable}\n"
