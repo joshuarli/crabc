@@ -559,6 +559,8 @@ def run_evidence(
     """
 
     harness.require_native_x86_64()
+    if not harness._m2_x86_64_vm_test_program_is_bound(test_program):
+        raise harness.HarnessError("native x86 M2 VM Rust test-program provenance changed")
     fragment = load_fragment(contract_fragment)
     check = _trace_check(fragment, test_program)
     pin = harness.load_pin()
@@ -609,6 +611,9 @@ def run_evidence(
     )
     rust_command = rust["command"]
     rust_count = rust["passed_test_count"]
+    rust_binary = test_program["path"]
+    if not isinstance(rust_binary, Path) or rust_command[0] != str(rust_binary):
+        raise harness.HarnessError("native x86 M2 VM Rust witness binary changed during execution")
     rust_trace = parse_trace(rust_output, source="Rust")
     comparison = _compare(c_trace, rust_trace, harness)
     trace_payload = json.dumps(c_trace, separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -623,7 +628,9 @@ def run_evidence(
         "profile": "release-no-default-features-fixed-regular-vm-thp-disabled-offset-release-fault",
         "rust_build_command": list(test_program.get("build_command", [])),
         "rust_command": rust_command,
+        "rust_execution": dict(test_program["execution"]),
         "rust_passed_test_count": rust_count,
+        "rust_test_binary": harness.artifact_record(rust_binary),
         "schema": "crabc-mimalloc-x86_64-m2-vm-primitives-evidence",
         "source_anchors": source_anchors,
         "status": "passed",

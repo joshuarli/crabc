@@ -12274,6 +12274,8 @@ def _run_m2_x86_64_bitmap_evidence(*, offline: bool, test_program: Mapping[str, 
 def _run_m2_x86_64_vm_evidence(*, offline: bool, test_program: Mapping[str, Any]) -> dict[str, Any]:
     """Run the VM producer against the aggregate's already-built native binary."""
 
+    if not _m2_x86_64_vm_test_program_is_bound(test_program):
+        raise HarnessError("native x86 M2 VM Rust test-program provenance changed")
     producer = _m2_x86_64_vm_producer()
     return producer.run_evidence(
         sys.modules[__name__],
@@ -12291,13 +12293,94 @@ def _m2_x86_64_vm_command_path_matches(argument: str, expected: str) -> bool:
     return normalized == expected or normalized.endswith("/" + expected)
 
 
+def _m2_x86_64_vm_path_tail_parts(path: str) -> list[str] | None:
+    """Return one normalized relative path tail without accepting traversal."""
+
+    normalized = path.replace("\\", "/").rstrip("/")
+    if not normalized:
+        return None
+    parts = [part for part in normalized.split("/") if part]
+    if not parts or any(part in {".", ".."} for part in parts):
+        return None
+    return parts
+
+
+def _m2_x86_64_vm_rust_execution() -> dict[str, Any]:
+    """Return the one native no-default-feature Rust witness configuration."""
+
+    return {
+        "features": [],
+        "no_default_features": True,
+        "package": "crabc-mimalloc",
+        "rust_target": X86_64_RUST_TARGET,
+        "test_threads": 1,
+        "timeout_seconds": 300,
+    }
+
+
+def _m2_x86_64_vm_rust_build_command() -> list[str]:
+    """Return the one Cargo command that produces the retained VM witness."""
+
+    return [
+        "cargo",
+        "test",
+        "-p",
+        "crabc-mimalloc",
+        "--no-default-features",
+        "--target",
+        X86_64_RUST_TARGET,
+        "--locked",
+        "--lib",
+        "--no-run",
+        "--message-format=json",
+    ]
+
+
+def _m2_x86_64_vm_rust_binary_path_is_bound(path: object) -> bool:
+    """Bind the retained executable to the M2 native Cargo target directory."""
+
+    if not isinstance(path, str) or not path:
+        return False
+    actual_parts = _m2_x86_64_vm_path_tail_parts(path)
+    expected_parts = _m2_x86_64_vm_path_tail_parts(relative(
+        M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET
+        / X86_64_RUST_TARGET
+        / "debug/deps"
+    ))
+    if actual_parts is None or expected_parts is None or len(actual_parts) <= len(expected_parts):
+        return False
+    if actual_parts[-len(expected_parts) - 1 : -1] != expected_parts:
+        return False
+    return re.fullmatch(r"crabc_mimalloc-[0-9a-f]+", actual_parts[-1]) is not None
+
+
+def _m2_x86_64_vm_test_program_is_bound(test_program: object) -> bool:
+    """Require the aggregate's actual native Cargo product, not a substitute."""
+
+    if not isinstance(test_program, Mapping) or set(test_program) != {
+        "build_command", "cargo_target", "execution", "path"
+    }:
+        return False
+    path = test_program.get("path")
+    return (
+        test_program.get("build_command") == _m2_x86_64_vm_rust_build_command()
+        and test_program.get("cargo_target") == str(M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET)
+        and test_program.get("execution") == _m2_x86_64_vm_rust_execution()
+        and isinstance(path, Path)
+        and path.is_file()
+        and _m2_x86_64_vm_rust_binary_path_is_bound(str(path))
+    )
+
+
 def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
-    """Require the direct-source C oracle's wrapper, flags, and input closure.
+    """Require the direct-source C oracle's one complete positional command.
 
     The M2 fixture directly includes pinned `src/os.c`, so its ordinary source
     input list must omit that file while retaining the complete raw primitive
-    closure.  A trace from a lookalike command would otherwise make the one
-    wrapped `munmap` failure record unverifiable.
+    closure. Every position is fixed apart from the resolved compiler, the
+    extracted-source root, the checkout fixture root, and the runner-owned
+    output root. This rejects injected preprocessor, object, archive, and
+    linker inputs before a trace can masquerade as the selected oracle.
     """
 
     if (
@@ -12308,7 +12391,7 @@ def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
     ):
         return False
 
-    required_flags = (
+    fixed_prefix = (
         "-std=c11",
         "-fPIC",
         "-ftls-model=initial-exec",
@@ -12318,59 +12401,78 @@ def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
         # `prim.c` must not run its constructor before this fixture performs
         # the explicit source startup sequence in main.
         "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
-        *CONFIGURATION_PROFILES["release"],
-        "-Wl,--wrap=munmap",
-        "-pthread",
     )
-    if any(command.count(flag) != 1 for flag in required_flags):
-        return False
-
-    output_positions = [index for index, argument in enumerate(command) if argument == "-o"]
-    if len(output_positions) != 1 or output_positions[0] + 1 >= len(command):
-        return False
-
-    include_positions = [index for index, argument in enumerate(command) if argument == "-I"]
-    if len(include_positions) != 2 or any(index + 1 >= len(command) for index in include_positions):
-        return False
-
     fixture = relative(producer.FIXTURE)
     expected_sources = tuple(M1_RAW_PRIMITIVE_ORACLE_SOURCES)
-    c_inputs = [argument for argument in command if argument.endswith(".c")]
-    if len(c_inputs) != len(expected_sources) + 1:
+    fixture_position = 1 + len(fixed_prefix) + 4 + len(CONFIGURATION_PROFILES["release"])
+    first_source_position = fixture_position + 1
+    if len(command) <= first_source_position:
         return False
-    fixture_inputs = [
-        argument
-        for argument in c_inputs
-        if _m2_x86_64_vm_command_path_matches(argument, fixture)
+    fixture_argument = command[fixture_position]
+    if not _m2_x86_64_vm_command_path_matches(fixture_argument, fixture):
+        return False
+    first_source = command[first_source_position].replace("\\", "/").rstrip("/")
+    source_suffix = "/" + expected_sources[0]
+    if not first_source.endswith(source_suffix):
+        return False
+    source_root = first_source[: -len(source_suffix)].rstrip("/")
+    if not source_root:
+        return False
+    output = command[-1]
+    expected_output = relative(
+        ARTIFACT_ROOT / "x86_64/m2-vm-primitives/m2-vm-primitives-oracle"
+    )
+    if not _m2_x86_64_vm_command_path_matches(output, expected_output):
+        return False
+
+    expected = [
+        command[0],
+        *fixed_prefix,
+        "-I",
+        f"{source_root}/include",
+        "-I",
+        f"{source_root}/src",
+        *CONFIGURATION_PROFILES["release"],
+        fixture_argument,
+        *(f"{source_root}/{source}" for source in expected_sources),
+        "-Wl,--wrap=munmap",
+        "-pthread",
+        "-o",
+        output,
     ]
-    if len(fixture_inputs) != 1:
-        return False
+    return command == expected
 
-    source_root: str | None = None
-    for expected in expected_sources:
-        matches = [
-            argument
-            for argument in c_inputs
-            if _m2_x86_64_vm_command_path_matches(argument, expected)
-        ]
-        if len(matches) != 1:
-            return False
-        normalized = matches[0].replace("\\", "/")
-        if normalized == expected:
-            return False
-        root = normalized[: -len(expected)].rstrip("/")
-        if not root:
-            return False
-        if source_root is None:
-            source_root = root
-        elif source_root != root:
-            return False
-    if source_root is None:
-        return False
 
-    expected_includes = (f"{source_root}/include", f"{source_root}/src")
-    actual_includes = tuple(command[index + 1].replace("\\", "/").rstrip("/") for index in include_positions)
-    return actual_includes == expected_includes
+def _m2_x86_64_vm_rust_receipt_is_bound(
+    build_command: object,
+    execution: object,
+    command: object,
+    test_binary: object,
+    *,
+    target: object,
+) -> bool:
+    """Bind the report to its exact native build configuration and executable."""
+
+    if (
+        build_command != _m2_x86_64_vm_rust_build_command()
+        or execution != _m2_x86_64_vm_rust_execution()
+        or not isinstance(command, list)
+        or not all(isinstance(argument, str) and argument for argument in command)
+        or len(command) != 5
+        or command[1:] != [target, "--exact", "--test-threads=1", "--nocapture"]
+        or not _m2_x86_64_vm_rust_binary_path_is_bound(command[0])
+        or not isinstance(test_binary, Mapping)
+        or set(test_binary) != {"bytes", "path", "sha256"}
+        or type(test_binary.get("bytes")) is not int
+        or test_binary.get("bytes", 0) <= 0
+        or not isinstance(test_binary.get("path"), str)
+        or not _m2_x86_64_vm_rust_binary_path_is_bound(test_binary["path"])
+        or not _m2_x86_64_vm_command_path_matches(command[0], test_binary["path"])
+        or not isinstance(test_binary.get("sha256"), str)
+        or re.fullmatch(r"[0-9a-f]{64}", str(test_binary.get("sha256"))) is None
+    ):
+        return False
+    return True
 
 
 def _m2_x86_64_vm_check_records(
@@ -12424,21 +12526,15 @@ def _m2_x86_64_vm_check_records(
     ):
         raise HarnessError("native x86 M2 VM producer result is missing or invalid")
     command = evidence.get("rust_command")
-    if (
-        not isinstance(command, list)
-        or not all(isinstance(arg, str) and arg for arg in command)
-        or len(command) != 5
-        or command[1:] != [
-            trace_check["target"], "--exact", "--test-threads=1", "--nocapture"
-        ]
-    ):
-        raise HarnessError("native x86 M2 VM trace command changed")
-    build_command = evidence.get("rust_build_command")
     c_command = evidence.get("c_command")
     if (
-        not isinstance(build_command, list)
-        or not build_command
-        or not all(isinstance(arg, str) and arg for arg in build_command)
+        not _m2_x86_64_vm_rust_receipt_is_bound(
+            evidence.get("rust_build_command"),
+            evidence.get("rust_execution"),
+            command,
+            evidence.get("rust_test_binary"),
+            target=trace_check["target"],
+        )
         or not _m2_x86_64_vm_c_command_is_bound(c_command, producer)
     ):
         raise HarnessError("native x86 M2 VM producer command provenance is invalid")

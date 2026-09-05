@@ -30,6 +30,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     seen.add(key)
                     anchors.append({"bytes": 1, **anchor})
         pin = RUNNER.load_pin()
+        rust_binary = (
+            RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CARGO_TARGET
+            / RUNNER.X86_64_RUST_TARGET
+            / "debug/deps/crabc_mimalloc-0123456789abcdef"
+        )
         c_command = [
             "musl-gcc",
             "-std=c11",
@@ -39,17 +44,20 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "-DMI_SHARED_LIB_EXPORT",
             "-DMI_LIBC_MUSL=1",
             "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
-            *RUNNER.CONFIGURATION_PROFILES["release"],
             "-I",
             "/pinned/include",
             "-I",
             "/pinned/src",
+            *RUNNER.CONFIGURATION_PROFILES["release"],
             str(RUNNER.ALLOCATOR_ROOT / "m2_vm_x86_64.c"),
             *(f"/pinned/{path}" for path in RUNNER.M1_RAW_PRIMITIVE_ORACLE_SOURCES),
             "-Wl,--wrap=munmap",
             "-pthread",
             "-o",
-            "/work/m2-vm-primitives-oracle",
+            str(
+                RUNNER.ARTIFACT_ROOT
+                / "x86_64/m2-vm-primitives/m2-vm-primitives-oracle"
+            ),
         ]
         return {
             "architecture": "x86_64",
@@ -63,14 +71,32 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "fixture": {"path": "compat/allocator/m2_vm_x86_64.c", "sha256": "b" * 64, "bytes": 1},
             "format": 1,
             "profile": "release-no-default-features-fixed-regular-vm-thp-disabled-offset-release-fault",
-            "rust_build_command": ["cargo", "test", "--no-run"],
+            "rust_build_command": [
+                "cargo",
+                "test",
+                "-p",
+                "crabc-mimalloc",
+                "--no-default-features",
+                "--target",
+                RUNNER.X86_64_RUST_TARGET,
+                "--locked",
+                "--lib",
+                "--no-run",
+                "--message-format=json",
+            ],
             "rust_command": [
-                ".work/prepared-test",
+                str(rust_binary),
                 "os::tests::emit_m2_vm_primitives_c_rust_trace",
                 "--exact",
                 "--test-threads=1",
                 "--nocapture",
             ],
+            "rust_execution": RUNNER._m2_x86_64_vm_rust_execution(),
+            "rust_test_binary": {
+                "bytes": 1,
+                "path": RUNNER.relative(rust_binary),
+                "sha256": "d" * 64,
+            },
             "rust_passed_test_count": 1,
             "schema": "crabc-mimalloc-x86_64-m2-vm-primitives-evidence",
             "source_anchors": anchors,
@@ -164,7 +190,14 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 with self.assertRaises(RUNNER.HarnessError):
                     RUNNER._m2_x86_64_vm_check_records(summary, evidence)
 
-    def test_vm_producer_receipt_requires_the_wrapped_direct_source_closure(self):
+    def test_vm_producer_receipt_accepts_the_exact_c_and_rust_producers(self):
+        records = RUNNER._m2_x86_64_vm_check_records(
+            self.summary(), self.vm_evidence(self.summary())
+        )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["id"], "native-vm-fixed-lifecycle-differential")
+
+    def test_vm_producer_receipt_requires_the_exact_c_and_rust_producers(self):
         summary = self.summary()
 
         omitted_wrapper = self.vm_evidence(summary)
@@ -176,6 +209,36 @@ class NativeVmAssemblyTests(unittest.TestCase):
         wrong_source["c_command"].append("/pinned/src/os.c")
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, wrong_source)
+
+        for case, extra_arguments in {
+            "extra-debug-macro": ["-DMI_DEBUG=1"],
+            "contradictory-musl-macro": ["-DMI_LIBC_MUSL=0"],
+            "forced-include": ["-include", "/pinned/unreviewed.h"],
+            "extra-object": ["/pinned/unreviewed.o"],
+            "extra-archive": ["/pinned/unreviewed.a"],
+            "extra-link-option": ["-Wl,--as-needed"],
+        }.items():
+            with self.subTest(case=case):
+                evidence = self.vm_evidence(summary)
+                insertion = evidence["c_command"].index("-Wl,--wrap=munmap")
+                evidence["c_command"][insertion:insertion] = extra_arguments
+                with self.assertRaises(RUNNER.HarnessError):
+                    RUNNER._m2_x86_64_vm_check_records(summary, evidence)
+
+        wrong_target = self.vm_evidence(summary)
+        target_position = wrong_target["rust_build_command"].index("--target") + 1
+        wrong_target["rust_build_command"][target_position] = "aarch64-unknown-linux-musl"
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, wrong_target)
+
+        wrong_features = self.vm_evidence(summary)
+        locked_position = wrong_features["rust_build_command"].index("--locked")
+        wrong_features["rust_build_command"][locked_position:locked_position] = [
+            "--features",
+            "native-runtime-test-fault",
+        ]
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, wrong_features)
 
 
 if __name__ == "__main__":
