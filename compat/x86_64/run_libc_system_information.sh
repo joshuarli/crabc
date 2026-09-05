@@ -32,6 +32,25 @@ require_tool() {
     command -v "$1" >/dev/null 2>&1 || fail "requires $1"
 }
 
+checkout_local_tmpdir() {
+    local physical_work_dir physical_tmpdir
+
+    [ -n "${TMPDIR:-}" ] || fail "requires a checkout-local TMPDIR"
+    physical_work_dir="$(realpath -e "$ROOT_DIR/.work")" \
+        || fail "checkout .work directory must exist"
+    [ "$physical_work_dir" = "$ROOT_DIR/.work" ] \
+        || fail "checkout .work directory must be physical"
+    physical_tmpdir="$(realpath -e "$TMPDIR")" \
+        || fail "TMPDIR must be a physical checkout .work directory"
+    [ "$physical_tmpdir" = "$TMPDIR" ] \
+        || fail "TMPDIR must be a physical checkout .work directory"
+    case "$physical_tmpdir" in
+        "$physical_work_dir"/*) ;;
+        *) fail "TMPDIR must be a physical checkout .work directory" ;;
+    esac
+    printf '%s\n' "$physical_tmpdir"
+}
+
 assert_selected_c_abi_surface() {
     local archive_path="$1"
     local symbols_path="$2"
@@ -63,16 +82,33 @@ assert_named_syscall() {
     local symbol="$1"
     local syscall_word="$2"
     local disassembly="$work_dir/${symbol}-disassembly"
+    local raw_syscall_symbol
+    local raw_syscall_disassembly="$work_dir/${symbol}-raw-syscall-disassembly"
 
     objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
     grep -Eq "\\\$0x${syscall_word}" "$disassembly" \
         || fail "${symbol} lacks the fixed syscall ${syscall_word}"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" \
-        || fail "${symbol} lacks its named Linux syscall"
+    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly"; then
+        return
+    fi
+    # Rust may retain the public helper's named syscall input while emitting a
+    # direct call to the selected local raw-syscall wrapper. That is still a
+    # direct kernel path: find that exact local target, then require its own
+    # kernel instruction. The final-artifact closure below separately rejects
+    # ambient runtime edges, system-file parsing, and sysconf indirection.
+    raw_syscall_symbol="$(
+        sed -nE 's/^.*[[:space:]]call[[:space:]]+[[:xdigit:]]+[[:space:]]+<([^>]*raw_syscall[^>]*syscall[0-9][^>]*)>.*$/\1/p' "$disassembly" |
+            sed -n '1p'
+    )"
+    [ -n "$raw_syscall_symbol" ] \
+        || fail "${symbol} lacks its named owned raw-syscall path"
+    objdump -d --disassemble="$raw_syscall_symbol" "$candidate" >"$raw_syscall_disassembly"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$raw_syscall_disassembly" \
+        || fail "${symbol} matched owned raw-syscall target lacks the kernel instruction"
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff nm objdump readelf rustup; do
+for tool in ar cargo cmp diff nm objdump readelf realpath rustup; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -80,8 +116,22 @@ done
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_system_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-system-information.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+work_tmpdir="$(checkout_local_tmpdir)"
+work_dir="$(mktemp -d "$work_tmpdir/crabc-x86-64-libc-system-information.XXXXXX")"
+# Passing runs leave no disposable build state. A failure keeps its complete
+# archive, final ELF, and disassembly receipts at this printed checkout path.
+cleanup_work_dir() {
+    local status=$?
+
+    trap - EXIT
+    if [ "$status" -eq 0 ]; then
+        rm -rf -- "$work_dir"
+    else
+        printf 'x86 static libc system-information retained failure evidence: %s\n' "$work_dir" >&2
+    fi
+    exit "$status"
+}
+trap cleanup_work_dir EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-system-information-reference"
 candidate="$work_dir/crabc-static-system-information-candidate"

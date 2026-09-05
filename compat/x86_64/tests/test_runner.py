@@ -17250,6 +17250,10 @@ unsafe fn join_selected_worker_inner(
             "-Wl,-e,_start",
             "R_X86_64_TPOFF",
             "assert_named_syscall get_nprocs cc",
+            "owned raw-syscall path",
+            "checkout_local_tmpdir",
+            "TMPDIR must be a physical checkout .work directory",
+            "retained failure evidence",
             "assert_named_syscall get_phys_pages 63",
             "sched_getaffinity",
             "sys/sysinfo.h",
@@ -17276,6 +17280,180 @@ unsafe fn join_selected_worker_inner(
             '    libc-system-information)\n        [ "$#" -eq 0 ] || fail "libc-system-information takes no arguments"',
             runner,
         )
+
+    def test_system_information_syscall_judge_accepts_the_owned_raw_wrapper(
+        self,
+    ) -> None:
+        """A public helper may call the selected raw-syscall leaf instead of inlining it."""
+
+        source = (
+            ROOT / "compat" / "x86_64" / "run_libc_system_information.sh"
+        ).read_text(encoding="utf-8")
+        signature = "assert_named_syscall()"
+        start = source.index(signature)
+        opening_brace = source.index("{", start)
+        depth = 0
+        closing_brace = None
+        for index in range(opening_brace, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    closing_brace = index
+                    break
+        self.assertIsNotNone(closing_brace)
+        helper = source[start : closing_brace + 1]
+
+        def invoke(
+            disassembly: str, raw_syscall_disassembly: str = ""
+        ) -> subprocess.CompletedProcess[str]:
+            temporary_root = Path(
+                os.environ.get("TMPDIR", ROOT / ".work" / "x86_64" / "tmp")
+            )
+            temporary_root.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(dir=temporary_root) as temporary:
+                temporary_path = Path(temporary)
+                fake_objdump = temporary_path / "objdump"
+                fake_objdump.write_text(
+                    """#!/usr/bin/env bash
+case "$*" in
+    *--disassemble=get_nprocs*) printf '%s' "$CRABC_FAKE_PUBLIC_OBJDUMP" ;;
+    *--disassemble=*) printf '%s' "$CRABC_FAKE_RAW_SYSCALL_OBJDUMP" ;;
+esac
+""",
+                    encoding="utf-8",
+                )
+                fake_objdump.chmod(fake_objdump.stat().st_mode | stat.S_IXUSR)
+                script = "\n".join(
+                    (
+                        "set -euo pipefail",
+                        "fail() { printf 'ERROR: %s\\n' \"$*\" >&2; exit 1; }",
+                        f"work_dir={temporary_path!s}",
+                        f"candidate={temporary_path / 'candidate'!s}",
+                        helper,
+                        "assert_named_syscall get_nprocs cc",
+                    )
+                )
+                environment = os.environ | {
+                    "PATH": f"{temporary_path}:{os.environ['PATH']}",
+                    "CRABC_FAKE_PUBLIC_OBJDUMP": disassembly,
+                    "CRABC_FAKE_RAW_SYSCALL_OBJDUMP": raw_syscall_disassembly,
+                }
+                return subprocess.run(
+                    ["bash", "-c", script],
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+
+        delegated = invoke(
+            """00000000004014f0 <get_nprocs>:
+ 401535: bf cc 00 00 00        mov    $0xcc,%edi
+  401541: e8 ca 16 00 00        call   402c10 <_RNvNtNtCraw_syscall8syscall3B5_>
+""",
+            """0000000000402c10 <_RNvNtNtCraw_syscall8syscall3B5_>:
+  402c1c: 0f 05                 syscall
+""",
+        )
+        self.assertEqual(delegated.returncode, 0, delegated.stderr)
+
+        wrapper_without_syscall = invoke(
+            """00000000004014f0 <get_nprocs>:
+  401535: bf cc 00 00 00        mov    $0xcc,%edi
+  401541: e8 ca 16 00 00        call   402c10 <_RNvNtNtCraw_syscall8syscall3B5_>
+""",
+            """0000000000402c10 <_RNvNtNtCraw_syscall8syscall3B5_>:
+  402c1c: c3                    ret
+""",
+        )
+        self.assertNotEqual(wrapper_without_syscall.returncode, 0)
+        self.assertIn(
+            "matched owned raw-syscall target lacks the kernel instruction",
+            wrapper_without_syscall.stderr,
+        )
+
+        missing = invoke(
+            """00000000004014f0 <get_nprocs>:
+  401535: bf cc 00 00 00        mov    $0xcc,%edi
+  401541: e8 ca 16 00 00        call   402c10 <unowned_runtime_path>
+"""
+        )
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("owned raw-syscall path", missing.stderr)
+
+    def test_system_information_tmpdir_must_be_a_physical_checkout_descendant(
+        self,
+    ) -> None:
+        """The runner must reject symlink and traversal aliases before `mktemp`."""
+
+        source = (
+            ROOT / "compat" / "x86_64" / "run_libc_system_information.sh"
+        ).read_text(encoding="utf-8")
+        signature = "checkout_local_tmpdir()"
+        start = source.index(signature)
+        opening_brace = source.index("{", start)
+        depth = 0
+        closing_brace = None
+        for index in range(opening_brace, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    closing_brace = index
+                    break
+        self.assertIsNotNone(closing_brace)
+        helper = source[start : closing_brace + 1]
+
+        temporary_root = Path(
+            os.environ.get("TMPDIR", ROOT / ".work" / "x86_64" / "tmp")
+        )
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=temporary_root) as temporary:
+            workspace = Path(temporary)
+            checkout_tmpdir = workspace / ".work" / "x86_64" / "tmp"
+            checkout_tmpdir.mkdir(parents=True)
+            symlink_tmpdir = workspace / "tmp-via-symlink"
+            symlink_tmpdir.symlink_to(checkout_tmpdir, target_is_directory=True)
+
+            def invoke(tmpdir: str) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        "\n".join(
+                            (
+                                "set -euo pipefail",
+                                "fail() { printf 'ERROR: %s\\n' \"$*\" >&2; exit 1; }",
+                                "ROOT_DIR=\"$CRABC_TEST_ROOT\"",
+                                helper,
+                                "checkout_local_tmpdir",
+                            )
+                        ),
+                    ],
+                    env=os.environ
+                    | {
+                        "CRABC_TEST_ROOT": str(workspace),
+                        "TMPDIR": tmpdir,
+                    },
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+
+            accepted = invoke(str(checkout_tmpdir))
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertEqual(accepted.stdout, f"{checkout_tmpdir}\n")
+
+            for escaped_tmpdir in (
+                str(symlink_tmpdir),
+                f"{checkout_tmpdir}/../tmp",
+            ):
+                rejected = invoke(escaped_tmpdir)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("physical checkout .work directory", rejected.stderr)
 
     def test_libc_static_c_abi_getloadavg_artifact_stays_narrow(self) -> None:
         """Historical load snapshots remain one private sysinfo-derived leaf."""
