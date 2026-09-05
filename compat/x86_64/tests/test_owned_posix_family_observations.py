@@ -79,6 +79,58 @@ class ObservationsTests(unittest.TestCase):
         with self.assertRaisesRegex(observations.ObservationError, 'exact profile'):
             observations.collect('control-residual', self.leaf, static_required=True)
 
+    def test_fork_collect_requires_raw_pid_stream_for_every_role_and_entry(self):
+        source_root = self.leaf / 'source-root'
+        for name in ('run_general_dynamic_fork.sh', 'owned_dynamic_fork_evidence.py',
+                     'general_dynamic_fork_consumer.c', 'general_dynamic_fork_library.c'):
+            path = source_root / 'compat/x86_64' / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('synthetic source identity\n')
+        evidence = self.leaf / 'evidence'
+        evidence.mkdir()
+        body = b'dynamic fork survives adopted main exit: ok\n'
+        for mode in ('pie', 'non-pie'):
+            for scenario in observations.FORK_SCENARIOS:
+                labels = [f'oracle-{mode}-{scenario}']
+                labels += [f'{role}-{mode}-{entry}-{scenario}' for role in ('semantic', 'owned-layout') for entry in ('kernel', 'direct')]
+                for index, label in enumerate(labels, 1):
+                    stdout = body if scenario == 'worker-survivor' else b'fork-observation\n'
+                    for suffix, raw in (('stdout', stdout), ('stderr', b''), ('status', b'0\n')):
+                        (evidence / f'{label}.{suffix}').write_bytes(raw)
+                    if scenario == 'worker-survivor':
+                        (evidence / f'{label}.raw.stdout').write_bytes(str(index).encode() + b'\n' + body)
+        result = observations.collect('dynamic-fork', evidence, static_required=False, root=source_root)
+        self.assertEqual(result['scenarios']['pie/worker-survivor']['kind'], 'pid-protocol-semantic-projection')
+        (evidence / 'owned-layout-non-pie-direct-worker-survivor.raw.stdout').unlink()
+        with self.assertRaises(observations.ObservationError):
+            observations.collect('dynamic-fork', evidence, static_required=False, root=source_root)
+
+    def test_fork_survivor_requires_complete_pid_transcript_and_exact_projection(self):
+        body = b'dynamic fork survives adopted main exit: ok\n'
+        path = self.leaf / 'semantic-pie-kernel-worker-survivor.raw.stdout'
+        expected = set()
+        with self.assertRaises(observations.ObservationError):
+            observations._fork_survivor(self.leaf, path.name.removesuffix('.raw.stdout'), {'stdout': body}, expected)
+        path.write_bytes(b'1234\n' + body)
+        record = observations._fork_survivor(self.leaf, path.name.removesuffix('.raw.stdout'), {'stdout': body}, expected)
+        self.assertEqual(record['survivor_pid'], 1234)
+        self.assertEqual(record['raw_stdout']['path'], path.name)
+        for raw, projection in ((b'0\n' + body, body), (body, body), (b'1234\n' + body, b'wrong projection\n'), (b'1234\n' + body + b'extra', body)):
+            path.write_bytes(raw)
+            with self.subTest(raw=raw, projection=projection):
+                with self.assertRaises(observations.ObservationError):
+                    observations._fork_survivor(self.leaf, path.name.removesuffix('.raw.stdout'), {'stdout': projection}, expected)
+
+    def test_timer_unit_filter_must_execute_the_named_test(self):
+        name = 'x86_64_initial_graph::x86_64_runtime_tls_view::timer_reset_tests::timer_reset_restores_initial_and_runtime_images_without_replacing_tcb_or_dtv'
+        valid = ('\nrunning 1 test\ntest ' + name + ' ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 51 filtered out; finished in 0.00s\n\n').encode()
+        observations._timer_unit_transcript(observations.ROOT, 'tls-reset-tests', {'stdout': valid, 'stderr': b''})
+        for invalid in (valid.replace(b'running 1 test', b'running 0 tests'),
+                        valid.replace(b'1 passed', b'0 passed'), valid.replace(name.encode(), b'unrelated_test')):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(observations.ObservationError):
+                    observations._timer_unit_transcript(observations.ROOT, 'tls-reset-tests', {'stdout': invalid, 'stderr': b''})
+
     def test_static_fork_requires_both_nested_roles_and_exact_modes(self):
         source_root = self.leaf / 'source-root'
         source = source_root / 'compat/x86_64/run_owned_posix_static_fork.sh'

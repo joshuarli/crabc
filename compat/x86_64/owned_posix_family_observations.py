@@ -167,7 +167,7 @@ def collect(case: str, leaf_root: Path, *, static_required: bool, root: Path = R
         rows[scenario] = row
     supplemental = {}
     if case == 'posix-timers':
-        supplemental = _timers(leaf, layout, modes, expected)
+        supplemental = _timers(leaf, root, layout, modes, expected)
     if case == 'global-state-composition':
         supplemental['logger-wire'] = {}
         for mode in ('oracle', *modes):
@@ -196,6 +196,13 @@ def _sources(root, layout):
     paths = [relative]
     if layout.runner == 'posix_signals':
         paths += ['compat/x86_64/owned_posix_signals.py', 'compat/x86_64/owned-posix-signals.toml']
+    if layout.runner == 'posix_timers':
+        paths += ['compat/x86_64/owned_posix_timers_probe.c', 'compat/x86_64/owned_posix_timers_tls.c',
+                  'ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs',
+                  'ldso/src/x86_64_runtime_tls_view.rs', 'ldso/src/x86_64_general_relocation_tests.rs']
+    if layout.runner == 'dynamic_fork':
+        paths += ['compat/x86_64/owned_dynamic_fork_evidence.py',
+                  'compat/x86_64/general_dynamic_fork_consumer.c', 'compat/x86_64/general_dynamic_fork_library.c']
     return {path: _file(root / path, root)[1] for path in paths}
 
 
@@ -211,7 +218,26 @@ def _roster(leaf, expected, case):
         raise ObservationError(f'{case} observation roster differs: missing={sorted(wanted-observed)}, extra={sorted(observed-wanted)}')
 
 
-def _timers(leaf, layout, modes, expected):
+
+def _timer_unit_transcript(root, stem, raw):
+    """A successful Rust test process must actually execute its named check."""
+    source, name = {
+        'tls-reset-tests': ('ldso/src/x86_64_runtime_tls_view.rs',
+            'x86_64_initial_graph::x86_64_runtime_tls_view::timer_reset_tests::timer_reset_restores_initial_and_runtime_images_without_replacing_tcb_or_dtv'),
+        'tls-import-tests': ('ldso/src/x86_64_general_relocation_tests.rs',
+            'x86_64_initial_graph::x86_64_general_relocation::tests::installed_runtime_function_imports_validate_shape_before_any_graph_write'),
+    }[stem]
+    function = name.rsplit('::', 1)[1]
+    if ('fn ' + function + '(').encode() not in _file(root / source, root)[0]:
+        raise ObservationError('timer named unit-test source changed')
+    pattern = (rb'\nrunning 1 test\ntest ' + re.escape(name.encode()) +
+               rb' \.\.\. ok\n\ntest result: ok\. 1 passed; 0 failed; 0 ignored; 0 measured; '
+               rb'[0-9]+ filtered out; finished in [0-9]+\.[0-9]+s\n\n')
+    if raw['stderr'] or re.fullmatch(pattern, raw['stdout']) is None:
+        raise ObservationError('timer unit transcript did not execute exactly the required test')
+
+
+def _timers(leaf, root, layout, modes, expected):
     supplemental = {'candidate-reclamation': {}, 'runtime-unit-checks': {}, 'oracle-race-observations': {}}
     for mode in modes:
         stem = _stem('posix-timers', layout, mode, 'failure')
@@ -219,7 +245,8 @@ def _timers(leaf, layout, modes, expected):
         if raw['stdout'] != b'creation failure reclaims detached workers under bounded address space\n' or raw['stderr']:
             raise ObservationError('timer reclamation transcript changed')
     for stem in ('tls-reset-tests', 'tls-import-tests'):
-        _, supplemental['runtime-unit-checks'][stem] = _observation(leaf, stem, layout, expected)
+        raw, supplemental['runtime-unit-checks'][stem] = _observation(leaf, stem, layout, expected)
+        _timer_unit_transcript(root, stem, raw)
     race_layout = Layout('posix_timers')
     for attempt in range(1, 17):
         stem = f'oracle-failure-{attempt}'
@@ -237,18 +264,45 @@ def _timers(leaf, layout, modes, expected):
     return supplemental
 
 
+
+def _fork_survivor(leaf, stem, semantic, expected):
+    """Preserve the live child PID; compare only its exact protocol body.
+
+    The runner must observe the child PID before releasing the surviving
+    worker. PIDs differ across executions, so they cannot participate in the
+    musl byte differential. Every byte outside that one decimal PID remains
+    fixed, and the separately retained semantic stream must equal its body.
+    """
+    name = stem + '.raw.stdout'
+    expected.add(name)
+    raw, identity = _file(leaf / name, leaf)
+    body = b'dynamic fork survives adopted main exit: ok\n'
+    match = re.fullmatch(rb'([1-9][0-9]*)\n' + re.escape(body), raw)
+    if match is None or semantic['stdout'] != body:
+        raise ObservationError('dynamic fork survivor raw protocol or semantic projection differs')
+    return {'survivor_pid': int(match.group(1)),
+            'raw_stdout': dict(identity, base64=base64.b64encode(raw).decode('ascii'))}
+
+
 def _fork(leaf, root, layout):
     expected, rows = set(), {}
     for mode in ('pie', 'non-pie'):
         for scenario in FORK_SCENARIOS:
             oracle_raw, oracle = _observation(leaf, f'oracle-{mode}-{scenario}', layout, expected)
             row = {'kind': 'differential', 'oracle': oracle, 'candidates': {}, 'owned-layout-witnesses': {}}
+            if scenario == 'worker-survivor':
+                oracle['protocol'] = _fork_survivor(leaf, f'oracle-{mode}-{scenario}', oracle_raw, expected)
+                row['kind'] = 'pid-protocol-semantic-projection'
             for entry in ('kernel', 'direct'):
                 raw, record = _observation(leaf, f'semantic-{mode}-{entry}-{scenario}', layout, expected)
                 if raw != oracle_raw:
                     raise ObservationError('dynamic fork semantic observation differs')
+                if scenario == 'worker-survivor':
+                    record['protocol'] = _fork_survivor(leaf, f'semantic-{mode}-{entry}-{scenario}', raw, expected)
                 row['candidates'][entry] = record
-                _, witness = _observation(leaf, f'owned-layout-{mode}-{entry}-{scenario}', layout, expected)
+                witness_raw, witness = _observation(leaf, f'owned-layout-{mode}-{entry}-{scenario}', layout, expected)
+                if scenario == 'worker-survivor':
+                    witness['protocol'] = _fork_survivor(leaf, f'owned-layout-{mode}-{entry}-{scenario}', witness_raw, expected)
                 row['owned-layout-witnesses'][entry] = witness
             rows[f'{mode}/{scenario}'] = row
     _roster(leaf, expected, 'dynamic-fork')
