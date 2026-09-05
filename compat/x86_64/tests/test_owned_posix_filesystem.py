@@ -329,6 +329,50 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         self.assertIn("src/stat/lchmod.c", owned_filesystem)
         self.assertIn("AT_SYMLINK_NOFOLLOW", owned_filesystem)
 
+    def assert_static_replay_usage(self, *arguments: str) -> None:
+        result = subprocess.run(
+            ["bash", str(RUNNER), *arguments],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(
+            result.stderr,
+            f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n",
+        )
+
+    def test_static_replay_parser_rejects_missing_empty_option_like_and_duplicate_arguments(self) -> None:
+        for arguments in (
+            ("--static-sysroot",),
+            ("--static-sysroot", ""),
+            ("--static-sysroot", "--another-option"),
+            ("",),
+            ("-dynamic-product",),
+            ("--unknown-option",),
+            ("dynamic-one", "dynamic-two"),
+            ("--static-sysroot", "static-one", "--static-sysroot", "static-two"),
+        ):
+            with self.subTest(arguments=arguments):
+                self.assert_static_replay_usage(*arguments)
+
+    def test_static_replay_parser_rejects_canonical_duplicate_product_paths(self) -> None:
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            workspace = Path(temporary)
+            product = workspace / "product"
+            product.mkdir()
+            alias = workspace / "product-alias"
+            alias.symlink_to(product, target_is_directory=True)
+
+            self.assert_static_replay_usage(
+                "--static-sysroot", str(product), str(alias)
+            )
+
     def test_runner_requires_one_installed_object_and_every_entry_mode(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         for required in (
@@ -352,7 +396,17 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         ):
             self.assertIn(required, source)
         self.assertEqual(source.count('if [ -z "$provided_dynamic" ]; then'), 1)
-        self.assertIn('if [ -z "${1:-}" ]; then', source)
+        for required in (
+            "provided_static=''",
+            "dynamic_was_supplied=0",
+            "--static-sysroot)",
+            "-*|'')",
+            '[ "$provided_static" = "$provided_dynamic" ]',
+            'elif [ "$dynamic_was_supplied" -eq 0 ]; then',
+            'static_product="$provided_static"',
+            'validate-static-product "$static_product"',
+        ):
+            self.assertIn(required, source)
 
         probe = PROBE.read_text(encoding="utf-8")
         for required in (
@@ -393,6 +447,9 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
             "two raw\nroot-sibling orders",
             "caller-owned,\nnon-null variable-sized storage",
             "raw return and `errno`",
+            "canonical duplicate static/dynamic paths",
+            "does not build or run a static product",
+            "invokes neither producer",
         ):
             self.assertIn(required, document)
         self.assertNotIn("null-pointer", document)
@@ -401,18 +458,23 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         scratch_root = ROOT / ".work/x86_64/tmp"
         scratch_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
-            result = subprocess.run(
-                ["bash", str(RUNNER), str(ROOT)],
-                env={**os.environ, "TMPDIR": temporary},
-                text=True,
-                capture_output=True,
-            )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn(
-            "owned POSIX filesystem product must be a checkout .work directory",
-            result.stderr,
-        )
-        self.assertNotIn("evidence:", result.stdout)
+            for arguments, expected in (
+                ((str(ROOT),), "dynamic"),
+                (("--static-sysroot", str(ROOT)), "static"),
+            ):
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(
+                        ["bash", str(RUNNER), *arguments],
+                        env={**os.environ, "TMPDIR": temporary},
+                        text=True,
+                        capture_output=True,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(
+                        f"owned POSIX filesystem {expected} product must be a checkout .work directory",
+                        result.stderr,
+                    )
+                    self.assertNotIn("evidence:", result.stdout)
 
 
 if __name__ == "__main__":

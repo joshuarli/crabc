@@ -30,8 +30,22 @@ retain ordinary driver receipts. The receipt audit validates each static or
 dynamic product's complete manifest payload before trusting it, binds the
 single workload object and hash, exact selected runtime records and linker
 trace, output, mode, and ELF boundary, and rejects application DSOs or runtime
-imports. A supplied extracted dynamic product receives that full payload check
+imports. Supplied static and dynamic products receive that full payload check
 before the runner creates mutable evidence.
+
+The runner accepts `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`.
+It rejects empty or option-looking values, repeated product arguments, and
+canonical duplicate static/dynamic paths before creating evidence. With no
+arguments it builds both disposable products. A positional dynamic product
+keeps the dynamic-only replay and does not build or run a static product.
+`--static-sysroot` selects a physical checkout `.work` static product for the
+static/static-PIE pair; when it is the only supplied product, the runner still
+builds its disposable dynamic product for the installed-driver object and
+dynamic entries. Supplying both products invokes neither producer and links one
+installed-driver workload object through pinned musl, the supplied
+static/static-PIE pair, and the supplied dynamic PIE/non-PIE kernel/direct
+entries. This is a bounded static-product replay seam for the future
+coordinator, not a family receipt or a completion claim.
 
 The workload proves arbitrary stat-version aliases and ordinary kernel errors;
 directory end/cursor behavior, C-byte and version comparison, selector-owned

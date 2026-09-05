@@ -12,34 +12,73 @@ readonly cases=(aliases directory traversal temporary handles)
 # after the callback gate releases; file-handle stdout preserves each raw
 # return/errno so filesystem support cannot compress a product difference.
 
-[ "$#" -le 1 ] || {
-    printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
+usage() {
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
 
-provided_dynamic="${1:-}"
+provided_static=''
+provided_dynamic=''
+dynamic_was_supplied=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-sysroot)
+            [ "$#" -ge 2 ] || usage
+            case "$2" in
+                ''|-*) usage ;;
+            esac
+            [ -z "$provided_static" ] || usage
+            provided_static="$2"
+            shift 2
+            ;;
+        -*|'')
+            usage
+            ;;
+        *)
+            [ -z "$provided_dynamic" ] || usage
+            provided_dynamic="$1"
+            dynamic_was_supplied=1
+            shift
+            ;;
+    esac
+done
+if [ -n "$provided_static" ]; then
+    provided_static="$(realpath "$provided_static")"
+fi
 if [ -n "$provided_dynamic" ]; then
     provided_dynamic="$(realpath "$provided_dynamic")"
+fi
+if [ -n "$provided_static" ] && [ -n "$provided_dynamic" ] &&
+        [ "$provided_static" = "$provided_dynamic" ]; then
+    usage
 fi
 
 # Validate the optional installed/extracted product before making evidence.
 # This runner owns only disposable checkout state; its chroots never operate on
 # a host pathname outside their copied execution root.
-python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
+python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_static" "$provided_dynamic" <<'PY'
 from pathlib import Path
 import sys
 
 root = Path(sys.argv[1])
 temporary = Path(sys.argv[2])
-product_argument = sys.argv[3]
+static_argument = sys.argv[3]
+dynamic_argument = sys.argv[4]
 if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / ".work"):
     raise SystemExit("owned POSIX filesystem TMPDIR must be a physical checkout .work directory")
-if product_argument:
+for product_argument, name in ((static_argument, "static"), (dynamic_argument, "dynamic")):
+    if not product_argument:
+        continue
     product = Path(product_argument)
     if not product.is_dir() or not product.is_relative_to(root / ".work"):
-        raise SystemExit("owned POSIX filesystem product must be a checkout .work directory")
+        raise SystemExit(
+            f"owned POSIX filesystem {name} product must be a checkout .work directory"
+        )
 PY
 
+if [ -n "$provided_static" ]; then
+    python3 -B "$AUDITOR" validate-static-product "$provided_static"
+fi
 if [ -n "$provided_dynamic" ]; then
     # Qualification may replay an extracted product. Validate every regular
     # payload hash and the canonical loader alias before allocating evidence.
@@ -137,7 +176,7 @@ run_in_root() {
 
 # Build the dynamic product first so exactly one installed dynamic driver emits
 # the source object consumed unchanged by musl, static/static-PIE, and dynamic
-# PIE/non-PIE links. A supplied product replaces only product creation.
+# PIE/non-PIE links. Supplied products replace only their own product creation.
 if [ -z "$provided_dynamic" ]; then
     step=build-dynamic
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
@@ -160,16 +199,21 @@ for scenario in "${cases[@]}"; do
 done
 printf 'owned POSIX filesystem pinned-musl oracle: PASS\n'
 
-# Without a supplied dynamic product the focused command qualifies both owned
-# static entries too. Product qualification calls this runner with one supplied
-# dynamic product, intentionally skipping static construction rather than
-# treating this leaf as promotion evidence.
-if [ -z "${1:-}" ]; then
+# A supplied static product retains the static/static-PIE replay even when the
+# dynamic product is supplied. A dynamic-only qualification replay intentionally
+# skips static construction; zero arguments retain both disposable builds.
+static_product=''
+if [ -n "$provided_static" ]; then
+    static_product="$provided_static"
+elif [ "$dynamic_was_supplied" -eq 0 ]; then
     step=build-static
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
         --output "$work/static-sysroot" >"$work/static-build.json"
-    python3 -B "$AUDITOR" validate-static-product "$work/static-sysroot"
-    assert_posix_filesystem_symbols "$work/static-sysroot/usr/lib/libc.a" --syms \
+    static_product="$work/static-sysroot"
+fi
+if [ -n "$static_product" ]; then
+    python3 -B "$AUDITOR" validate-static-product "$static_product"
+    assert_posix_filesystem_symbols "$static_product/usr/lib/libc.a" --syms \
         "$work/static-archive-symbols.txt"
     for mode in static static-pie; do
         candidate="$work/static-$mode"
@@ -177,10 +221,10 @@ if [ -z "${1:-}" ]; then
         step="link-static-$mode"
         (
             cd "$work"
-            "$work/static-sysroot/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$receipt")" \
+            "$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$receipt")" \
                 "$work/workload.o" -o "$candidate"
         )
-        audit_consumer static "$mode" "$candidate" "$receipt" "$work/static-sysroot" "$work/workload.o"
+        audit_consumer static "$mode" "$candidate" "$receipt" "$static_product" "$work/workload.o"
         assert_posix_filesystem_symbols "$candidate" --syms "$candidate-symbols.txt"
         root="$work/static-$mode-root"
         mkdir -p "$root/tmp"
