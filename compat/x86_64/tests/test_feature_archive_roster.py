@@ -69,6 +69,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(
             owned_static.baseline_features,
             (
+                "x86-a64l",
                 "x86-allocator-observability",
                 "x86-allocator-runtime",
                 "x86-allocator-string-duplication",
@@ -81,6 +82,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "x86-interval-timers",
                 "x86-legacy-des-compat",
                 "x86-math-long-double-completion",
+                "x86-memory-special",
                 "x86-netdb-setent",
                 "x86-process-exec",
                 "x86-resolver-runtime",
@@ -410,6 +412,10 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "putc",
                 "putchar",
                 "puts",
+                "regcomp",
+                "regerror",
+                "regexec",
+                "regfree",
                 "rewind",
                 "setvbuf",
                 "sigaltstack",

@@ -59,6 +59,35 @@ static int check_scheduler_netdb_boundary(void)
     return 0;
 }
 
+/* These existing optional C-utility providers must also be reachable through
+ * the installed owned product, with their signed/byte-range contracts intact. */
+static int check_c_utility_boundary(void)
+{
+    static const long values[] = { 0, 1, -1, 2147483647L, -2147483647L - 1, 305419896L };
+    long (*decode)(const char *) = a64l;
+    void (*swap_pairs)(const void *, void *, ssize_t) = swab;
+    void (*erase)(void *, size_t) = explicit_bzero;
+    for (size_t index = 0; index < sizeof values / sizeof values[0]; ++index) {
+        errno = EILSEQ;
+        CHECK(decode(l64a(values[index])) == values[index] && errno == EILSEQ);
+    }
+    const unsigned char source[] = { 1, 2, 3, 4, 5, 6, 7 };
+    unsigned char destination[9];
+    memset(destination, 0xa5, sizeof destination);
+    errno = EILSEQ;
+    swap_pairs(source, destination + 1, sizeof source);
+    static const unsigned char expected[] = { 0xa5, 2, 1, 4, 3, 6, 5, 0xa5, 0xa5 };
+    CHECK(!memcmp(destination, expected, sizeof expected) && errno == EILSEQ);
+    swap_pairs(0, 0, -1);
+    swap_pairs(0, 0, 0);
+    swap_pairs(0, 0, 1);
+    CHECK(errno == EILSEQ);
+    erase(destination + 1, 7);
+    CHECK(destination[0] == 0xa5 && destination[8] == 0xa5 && errno == EILSEQ);
+    for (size_t index = 1; index < 8; ++index) CHECK(destination[index] == 0);
+    return 0;
+}
+
 static int log_receiver(void)
 {
     struct sockaddr_un address;
@@ -148,6 +177,7 @@ int main(int argc, char **argv)
     if (argc == 4 && !strcmp(argv[1], "--child")) return child_image(argv[2], argv[3]);
     CHECK(argc == 1);
     CHECK(check_scheduler_netdb_boundary() == 0);
+    CHECK(check_c_utility_boundary() == 0);
     int receiver = log_receiver();
     CHECK(receiver >= 0);
     CHECK(setenv("CRABC_COMPOSITION", "worker-view", 1) == 0);

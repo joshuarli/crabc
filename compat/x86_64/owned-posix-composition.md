@@ -2,14 +2,15 @@
 
 `owned_posix_composition_probe.c` observes environment storage, signal actions
 and masks, a live buffered `FILE`, and syslog state in one process with a live
-worker. This supplies the `global-state-composition` workload from the proposed
+worker. This supplies the `global-state-composition` workload from the required
 POSIX family catalog. It does not close the family or its product matrix alone.
 
 The selected contracts follow pinned musl 1.2.6 revision
 `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under its MIT license:
 `src/process/fork.c` and `posix_spawn.c`, `src/env`, `src/signal`,
 `src/stdio/{flockfile,funlockfile,fileno}.c`, `src/misc/syslog.c`,
-`src/sched/sched_rr_get_interval.c`, and `src/network/ent.c`.
+`src/sched/sched_rr_get_interval.c`, `src/network/ent.c`,
+`src/misc/a64l.c`, and `src/string/{swab,explicit_bzero}.c`.
 
 Before creating process state, the same installed-header object calls
 `sched_rr_get_interval(0, ...)` with a stale errno and validates its canonical
@@ -20,6 +21,14 @@ existing `x86-sched-rr-interval` and `x86-netdb-setent` leaves are selected by
 default archive still selects neither added feature. This does not select
 scheduler policy mutation, netdb enumeration, resolver state, or a public x86
 support boundary.
+
+The same object also proves the existing C utility providers are installed:
+`a64l` round-trips signed 32-bit values through `l64a`, `swab` copies complete
+byte pairs while preserving an odd trailing byte and adjacent canaries, and
+`explicit_bzero` clears only its requested range. These calls preserve errno.
+The owned feature includes `x86-a64l` and `x86-memory-special`; their existing
+`a64l.rs` and `memory_special.rs` owners retain the pinned source algorithms.
+The frozen default feature selection and export manifest remain unchanged.
 
 The worker finishes its environment reads, installs a distinct signal mask,
 logs a message, locks the stream, and reports readiness through a pipe. The
