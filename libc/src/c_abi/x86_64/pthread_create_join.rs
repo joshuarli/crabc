@@ -1719,8 +1719,10 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     }
     unsafe { retire_selected_worker_signal_target(control) };
     // SAFETY: a non-final worker has completed its selected state users and
-    // returns only to the private clone tail that ends this Linux task. A
-    // future orphaned-FILE repair runs immediately before this clear.
+    // returns only to the private clone tail that ends this Linux task.
+    // Mark explicit FILE locks before retiring their FS+32 list owner.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe { pthread_cancel::orphan_current_stdio_locks() };
     unsafe { pthread_identity::clear_current_selected_cancellation_state() };
     0
 }
@@ -2021,7 +2023,9 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         unsafe { retire_initial_signal_target() };
         // SAFETY: only a non-final initial task reaches this point. Its
         // cancellation state is disabled and no ordinary-exit callback will
-        // run; clear the signal-safe pointer before Linux task retirement.
+        // run; orphan explicit FILE locks before retiring their FS+32 owner.
+        #[cfg(feature = "x86-owned-static-runtime")]
+        unsafe { pthread_cancel::orphan_current_stdio_locks() };
         unsafe { pthread_identity::clear_current_selected_cancellation_state() };
         // SAFETY: another selected worker remains. End only this initial task;
         // the final worker takes the ordinary process-exit path above.
@@ -2064,8 +2068,10 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
     }
     // SAFETY: a selected non-final worker reaches only the immediate Linux
     // task exit below after cancellation is disabled for pthread-mode exits
-    // and all current selected state users have completed. Do not move this
-    // above the future orphaned-FILE repair hook.
+    // and cleanup/TSD users have completed. FILE retirement still needs the
+    // current FS+32 list even though its signal target is already retired.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe { pthread_cancel::orphan_current_stdio_locks() };
     unsafe { pthread_identity::clear_current_selected_cancellation_state() };
     // SAFETY: Linux SYS_exit terminates precisely the calling task and does
     // not return. The CLONE_CHILD_CLEARTID lifecycle attached during clone
