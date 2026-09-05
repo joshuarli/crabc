@@ -69,6 +69,30 @@ application object/library. Any other target runtime input rejects the build.
 The header probe similarly permits only the installed public headers and the
 configured Clang resource headers.
 
+## Native x86-64 dynamic source graph
+
+`./scripts/dev-x86_64.sh lua-dynamic-source-build` is the native counterpart
+for the selected installed dynamic product. It materializes an owned dynamic
+sysroot, packages and extracts that exact product, and builds the frozen Lua
+graph through each tree with `crabc-cc-dynamic`. The candidate contains the
+versioned `liblua.so.5.4`, PIE `lua`, private-unit PIE `luac`, and independent
+`crabc_probe.so` and `crabc_fail.so` modules; `crabc_missing.so` is a separate
+copy used to exercise the missing-init-symbol path.
+
+Every candidate link has an installed-driver receipt that binds the manifest,
+output hash, exact application DSO hashes, owned CRT/libc/builtins inputs, and
+link trace. The runner rejects a foreign loader or libc in the ELF, trace, or
+candidate mappings. It runs source and bytecode workloads through the normal
+owned x86 loader, including successful, failing, and missing-symbol C-module
+loads and `io.popen`.
+
+A fresh pinned-musl 1.2.6 dynamic Lua graph is built from the same pinned
+sources as the execution oracle. It is never a candidate input. A pass also
+requires the six declared candidate artifact hashes to match between the
+installed and package-extracted sysroot lanes. The result records
+`compat/reports/lua/x86_64-dynamic-latest.json`; it proves this consumer slice
+and does not promote any incomplete runtime family.
+
 ## Reference comparison
 
 Candidate execution uses the normal kernel path through

@@ -5,6 +5,16 @@ source-build gate. It first produces the two-clean-build owned sysroot proof,
 then invokes `target/crabc-sysroot/bin/crabc-cc` for every candidate Lua
 compile and link.
 
+`./scripts/dev-x86_64.sh lua-dynamic-source-build` proves the matching native
+x86 dynamic consumer slice. It materializes the installed dynamic sysroot,
+packages and extracts it, and builds `liblua.so.5.4`, PIE `lua`, private-unit
+PIE `luac`, and the success/failure C modules through the installed dynamic
+driver in both lanes. It publishes
+`compat/reports/lua/x86_64-dynamic-latest.json` only after source and bytecode
+workloads match a fresh pinned-musl 1.2.6 source-built oracle and all six
+candidate graph artifact hashes match across the installed and extracted
+sysroots.
+
 The generated report is `compat/reports/lua/latest.json`. It retains the
 tarball pin, compiler commands, header traces, resolved linker-input audits,
 ELF metadata, raw stdout/stderr/status comparisons, candidate process maps,

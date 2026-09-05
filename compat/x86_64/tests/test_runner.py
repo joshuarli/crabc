@@ -2107,7 +2107,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         static_sysroot_index = expected_groups.index("owned-static-sysroot") + 1
         expected_groups = (
             expected_groups[:static_sysroot_index]
-            + ("lua-static-source-build", "libc-owned-wordexp")
+            + ("lua-static-source-build", "lua-dynamic-source-build", "libc-owned-wordexp")
             + expected_groups[static_sysroot_index:]
         )
         dynamic_sysroot_index = expected_groups.index("owned-dynamic-sysroot") + 1

@@ -196,16 +196,17 @@ class NativeStaticContracts(unittest.TestCase):
             )
 
     def test_x86_dispatcher_rejects_arguments_before_starting_a_container(self) -> None:
-        result = subprocess.run(
-            ["bash", str(RUNNER.ROOT / "scripts/dev-x86_64.sh"), "lua-static-source-build", "unexpected"],
-            cwd=RUNNER.ROOT,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 2)
-        self.assertIn(b"lua-static-source-build takes no arguments", result.stderr)
+        for command in ("lua-static-source-build", "lua-dynamic-source-build"):
+            result = subprocess.run(
+                ["bash", str(RUNNER.ROOT / "scripts/dev-x86_64.sh"), command, "unexpected"],
+                cwd=RUNNER.ROOT,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(f"{command} takes no arguments".encode(), result.stderr)
 
     def test_x86_dispatcher_expands_bounded_knobs_into_the_container_argv(self) -> None:
         binaries = self.temporary / "bin"
@@ -234,20 +235,25 @@ class NativeStaticContracts(unittest.TestCase):
                 "CRABC_X86_64_LUA_TIMEOUT": "7",
             }
         )
-        result = subprocess.run(
-            ["bash", str(RUNNER.ROOT / "scripts/dev-x86_64.sh"), "lua-static-source-build"],
-            cwd=RUNNER.ROOT,
-            env=environment,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
-        arguments = captured.read_text(encoding="utf-8").splitlines()
-        self.assertIn("/workspace/compat/lua/run_x86_static_dispatch.py", arguments)
-        self.assertEqual(arguments[arguments.index("--jobs") + 1], "3")
-        self.assertEqual(arguments[arguments.index("--timeout") + 1], "7")
+        for command, script in (
+            ("lua-static-source-build", "run_x86_static_dispatch.py"),
+            ("lua-dynamic-source-build", "run_x86_dynamic.py"),
+        ):
+            result = subprocess.run(
+                ["bash", str(RUNNER.ROOT / "scripts/dev-x86_64.sh"), command],
+                cwd=RUNNER.ROOT,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+            arguments = captured.read_text(encoding="utf-8").splitlines()
+            self.assertIn(f"/workspace/compat/lua/{script}", arguments)
+            self.assertEqual(arguments[arguments.index("--jobs") + 1], "3")
+            self.assertEqual(arguments[arguments.index("--timeout") + 1], "7")
+            self.assertFalse(any(argument.startswith("--cap-add") for argument in arguments))
 
     def test_x86_work_root_rejects_external_and_symlinked_state(self) -> None:
         external = RUNNER.ROOT.parent / "outside-lua-work-root"

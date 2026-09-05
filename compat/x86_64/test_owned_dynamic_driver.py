@@ -75,6 +75,48 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                     driver.execute(self.root, ["--dynamic-pie", *options])
                 run.assert_not_called()
 
+    def test_versioned_application_dso_names_reach_the_normal_dso_contract(self):
+        """Lua's upstream shared library name is an application DSO, not a runtime escape."""
+
+        accepted = (
+            "liblua.so",
+            "liblua.so.5",
+            "liblua.so.5.4",
+            "liblua.so.5.4.8",
+        )
+        rejected = (
+            "liblua.so.",
+            "liblua.so.5beta",
+            "liblua.so.5.4-beta",
+            "liblua.so.5/4",
+        )
+        for name in accepted:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(
+                    driver.shared.DriverError, "link plan accepts no application inputs"
+                ):
+                    driver.execute(
+                        self.root,
+                        [
+                            "--dynamic-pie",
+                            "--application-dso",
+                            str(Path(self.temporary.name) / name),
+                            "--print-link-plan",
+                        ],
+                    )
+        for name in rejected:
+            with self.subTest(name=name):
+                with self.assertRaisesRegex(driver.shared.DriverError, "unowned application DSO"):
+                    driver.execute(
+                        self.root,
+                        [
+                            "--dynamic-pie",
+                            "--application-dso",
+                            str(Path(self.temporary.name) / name),
+                            "--print-link-plan",
+                        ],
+                    )
+
     def test_application_search_receipt_binds_the_actual_elf_and_runpath(self):
         path = Path(self.temporary.name) / "plugin.so"
         elf = bytearray(64)

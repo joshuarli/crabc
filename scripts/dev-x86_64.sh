@@ -531,6 +531,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-lifecycle  run pinned-musl and installed pthread lifetime consumers
   owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
   lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
+  lua-dynamic-source-build  qualify pinned Lua through installed/extracted x86 dynamic sysroots
   libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
   owned-dynamic-sysroot  inspect the legacy plan-only dynamic-product gate
   owned-dynamic-pthread-exit  test installed dynamic main and last pthread exit
@@ -4886,6 +4887,12 @@ run_lua_static_source_build_probe() {
         --timeout "${CRABC_X86_64_LUA_TIMEOUT:-120}"
 }
 
+run_lua_dynamic_source_build_probe() {
+    run_in_container python3 -B /workspace/compat/lua/run_x86_dynamic.py \
+        --jobs "${CRABC_X86_64_LUA_JOBS:-4}" \
+        --timeout "${CRABC_X86_64_LUA_TIMEOUT:-180}"
+}
+
 run_libc_owned_wordexp_probe() {
     # The runner executes both static images under a private `/bin/sh` chroot
     # so ordinary expansion and missing/invalid shell behavior cannot borrow
@@ -5528,6 +5535,7 @@ case "$command" in
     owned-pthread-lifecycle) ;;
     owned-static-sysroot) ;;
     lua-static-source-build) ;;
+    lua-dynamic-source-build) ;;
     libc-owned-wordexp) ;;
     owned-dynamic-sysroot) ;;
     owned-dynamic-pthread-exit) ;;
@@ -7541,6 +7549,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "lua-static-source-build takes no arguments"
         ensure_image
         run_lua_static_source_build_probe
+        ;;
+    lua-dynamic-source-build)
+        [ "$#" -eq 0 ] || fail "lua-dynamic-source-build takes no arguments"
+        ensure_image
+        run_lua_dynamic_source_build_probe
         ;;
     libc-owned-wordexp)
         [ "$#" -eq 0 ] || fail "libc-owned-wordexp takes no arguments"

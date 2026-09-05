@@ -29,6 +29,22 @@ INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 ALIASES = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
 REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
             "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1"}
+APPLICATION_DSO_BASENAME = re.compile(r"[^/\x00]+\.so(?:\.[0-9]+)*\Z")
+
+
+def application_dso_basename(path: Path) -> str:
+    """Admit ordinary application DSOs and numeric ELF ABI-version suffixes.
+
+    A versioned library such as Lua's ``liblua.so.5.4`` remains an explicit
+    caller-owned application input.  Its full basename continues to bind the
+    SONAME and receipt hash, so accepting the conventional numeric chain does
+    not turn it into a library-search or target-runtime escape.
+    """
+
+    name = path.name
+    if APPLICATION_DSO_BASENAME.fullmatch(name) is None:
+        raise shared.DriverError("unowned application DSO")
+    return name
 
 
 @contextmanager
@@ -192,8 +208,9 @@ def execute(root: Path, arguments: list[str]) -> None:
             index += 1
             if index == len(arguments): raise shared.DriverError("missing application DSO")
             path = Path(arguments[index])
-            if path.suffix != ".so" or shared.rejects_runtime_object(path) or path.name == "libc.so":
+            if shared.rejects_runtime_object(path) or path.name == "libc.so":
                 raise shared.DriverError("unowned application DSO")
+            application_dso_basename(path)
             dsos.append(path)
         elif argument in ("-static", "--static-et-exec", "-static-pie", "--static-pie"):
             raise shared.DriverError("static linkage is not a dynamic mode")

@@ -10,22 +10,27 @@ candidate compile and link uses `crabc-cc`; resolved linker traces must contain
 only installed crabc runtime inputs and explicit Lua application objects or
 libraries.
 
-Run it through the native Docker entry point:
+Run it through the architecture-specific Docker entry point:
 
 ```bash
 ./scripts/dev.sh lua
 ./scripts/dev.sh lua --offline
 ./scripts/dev-x86_64.sh lua-static-source-build
+./scripts/dev-x86_64.sh lua-dynamic-source-build
 python3 -m unittest discover -s compat/lua/tests -p 'test_*.py'
 ```
 
-The AArch64 command builds `target/crabc-sysroot/` first. The x86 command
-materializes its sealed static sysroot first. Every x86 dispatcher invocation
-gets a distinct physical `.work/x86_64/lua-static-source-build/run-*` root
-with its own producer logs, sysroot, source extraction/cache, build state, and
-authoritative report. The conventional latest x86 report is atomically replaced
-only after that invocation passes. Both offline paths require a verified Lua
-archive cache entry; neither downloads on a cache miss.
+The AArch64 command builds `target/crabc-sysroot/` first. The x86 static and
+dynamic commands materialize their corresponding sealed sysroots first. Each
+x86 dispatcher invocation gets a distinct physical
+`.work/x86_64/lua-*-source-build/run-*` root with its own producer logs,
+sysroot, source extraction/cache, build state, and authoritative report. The
+dynamic dispatcher also packages and extracts its sysroot, then builds the
+same complete dynamic graph through both roots and requires exact hashes for
+`liblua`, `lua`, `luac`, the success/failure modules, and the missing-symbol
+copy. The conventional latest x86 report is atomically replaced only after the
+whole invocation passes. Both offline paths require a verified Lua archive
+cache entry; neither downloads on a cache miss.
 
 ## Candidate boundary
 
@@ -40,8 +45,9 @@ dynamic lane additionally records candidate `/proc/<pid>/maps` hashes for the
 owned loader/libc, `liblua`, and loaded probe extension.
 
 Candidate execution temporarily stages the otherwise-absent canonical
-`/lib/ld-crabc-aarch64.so.1` only inside the disposable native container. It
-is hash-checked and removed after execution.
+`/lib/ld-crabc-aarch64.so.1` or `/lib/ld-crabc-x86_64.so.1`, according to the
+lane, only inside the disposable native container. It is hash-checked and
+removed after execution.
 
 ## Musl oracle lanes
 
@@ -73,11 +79,13 @@ missing-symbol cases are explicitly not applicable in static mode. `io.popen`
 is not omitted: source and bytecode workloads in every candidate and oracle
 arm require it to succeed.
 
-The reports at `compat/reports/lua/latest.json` and
-`compat/reports/lua/x86_64-static-latest.json` compare source and bytecode
-streams/status byte-for-byte. The dynamic report retains non-timing `strace`
-diagnostics for normal and controlled-failure module paths. The fixtures cover
-dynamic module loading where applicable, repeated `require`, missing-symbol
-and init-failure behavior, Lua C API allocation/buffers, descriptor-relative
-I/O, stdio, strings/tables/UTF-8, math, environment/time, and a controlled
-child/pipe.
+The reports at `compat/reports/lua/latest.json`,
+`compat/reports/lua/x86_64-static-latest.json`, and
+`compat/reports/lua/x86_64-dynamic-latest.json` compare source and bytecode
+streams/status byte-for-byte. The dynamic reports retain non-timing `strace`
+diagnostics for normal and controlled-failure module paths. The native dynamic
+lane builds a fresh pinned-musl source graph as its oracle; musl artifacts are
+never candidate inputs. The fixtures cover dynamic module loading where
+applicable, repeated `require`, missing-symbol and init-failure behavior, Lua
+C API allocation/buffers, descriptor-relative I/O, stdio, strings/tables/UTF-8,
+math, environment/time, and a controlled child/pipe.
