@@ -899,6 +899,22 @@ mod allocator {
 
     include!("../../allocator_mimalloc.rs");
 
+    /// Internal owned allocation for source clients that use __libc_malloc.
+    /// This composes exactly the existing C malloc wrapper's alignment and
+    /// error translation with the same backend, without selecting an
+    /// application replacement for the weak public malloc spelling.
+    ///
+    /// # Safety
+    /// Owned TLS is ready for errno publication. The backend retains its
+    /// normal lazy initialization; successful storage obeys that allocator's
+    /// ownership and allocation lifetime.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    pub(super) unsafe fn allocate_internal(size: usize) -> *mut c_void {
+        unsafe { mimalloc_failed(libmimalloc_sys::mi_malloc_aligned(
+            size, MIMALLOC_MALLOC_ALIGNMENT,
+        )) }
+    }
+
     /// Link-time witness for the opt-in x86 allocator wrapper object.
     ///
     /// This is private evidence glue, not an installed libc interface. The

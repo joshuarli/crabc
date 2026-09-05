@@ -1,8 +1,10 @@
 //! Private Linux/x86-64 owned `pthread_atfork` and `fork` composition.
 //!
 //! This leaf admits one owned process transition: the bootstrapped task or
-//! one selected static/dynamic TLS worker may register up to 32
-//! ordinary `pthread_atfork` triples, then call `fork`. Prepare hooks run in
+//! one selected static/dynamic TLS worker may register ordinary
+//! `pthread_atfork` triples, then call `fork`. Owned products allocate one
+//! process-lifetime record per registration; the frozen private archive keeps
+//! its no-allocation 32-record table. Prepare hooks run in
 //! reverse registration order before the internal signal/list transaction;
 //! parent and child hooks run forward after that transaction has restored a
 //! callable state. A failed fork follows musl's parent path, so it still runs
@@ -19,11 +21,15 @@
 //!   `ldso/dynlink.c::__ldso_atfork` supplies outer loader lock ordering.
 //!
 //! Musl grows an allocated handler list and coordinates all of its complete
-//! pthread runtime around fork. This static archive deliberately retains only
-//! its no-allocation 32-record callback table, application-signal block/restore
-//! pair, selected TSD/worker-list/TLS child reset, and—when the owned static
-//! aggregate selects them—the stdio and timezone registry locks plus the inner
-//! process-creation lock. It reports `ENOMEM` once the callback table is full.
+//! pthread runtime around fork. The owned callback registry follows its
+//! newest-first list insertion and prepare traversal, then follows reverse
+//! links for parent/child completion. Allocation uses the existing internal
+//! owned allocator before the registry lock, matching `__libc_malloc` rather
+//! than application malloc interposition. Nodes have process lifetime and
+//! allocation failure returns `ENOMEM` without changing the list. The private
+//! table still reports `ENOMEM` at 32 records. Both forms retain the selected
+//! application-signal block/restore pair and TSD/worker-list/TLS child reset;
+//! owned products add the stdio/timezone and inner process-creation locks.
 //! The owned dynamic adapter adds the loader's graph/callback transaction and
 //! surviving TLS-root adoption around those same libc owners. Foreign threads,
 //! AIO, allocator-wide fork state, and arbitrary application locks remain
@@ -37,7 +43,11 @@
 compile_error!("x86 pthread-atfork leaf requires little-endian Linux/x86-64");
 
 use core::ffi::c_int;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
+#[cfg(not(feature = "x86-owned-static-runtime"))]
+use core::sync::atomic::AtomicUsize;
+#[cfg(feature = "x86-owned-static-runtime")]
+use core::sync::atomic::AtomicPtr;
 
 use super::c_status;
 use super::{
@@ -45,6 +55,7 @@ use super::{
     signal_execution, static_tls,
 };
 
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 const ATFORK_CAPACITY: usize = 32;
 const ENOMEM: c_int = 12;
 const EAGAIN: i64 = 11;
@@ -55,6 +66,7 @@ const LINUX_X86_64_SYS_FORK: i64 = 57;
 
 type AtforkHook = unsafe extern "C" fn();
 
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[derive(Clone, Copy)]
 struct AtforkRegistration {
     prepare: Option<AtforkHook>,
@@ -62,6 +74,7 @@ struct AtforkRegistration {
     child: Option<AtforkHook>,
 }
 
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 impl AtforkRegistration {
     const EMPTY: Self = Self {
         prepare: None,
@@ -70,13 +83,33 @@ impl AtforkRegistration {
     };
 }
 
-// The lock is intentionally a tiny no-allocation single-threaded admission
-// boundary.  `fork` retains it across the raw syscall exactly so the copied
-// child cannot observe a partially changed registry before its child hooks.
+// Both registry representations retain this lock across raw fork. Owned
+// allocation finishes before acquiring it; all links are published and read
+// while held. Retain the existing paired lock even for an empty registry so
+// a concurrent first registration cannot cross an unprotected fork snapshot.
 static ATFORK_LOCK: AtomicBool = AtomicBool::new(false);
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 static ATFORK_COUNT: AtomicUsize = AtomicUsize::new(0);
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 static mut ATFORK_REGISTRATIONS: [AtforkRegistration; ATFORK_CAPACITY] =
     [AtforkRegistration::EMPTY; ATFORK_CAPACITY];
+
+// Musl's atfork_funcs record: callbacks followed by previous/next links.
+// While the lock is held, HEAD also acts as the source's traversal cursor:
+// prepare leaves it at the oldest node, completion returns it to the newest.
+// Nodes are never freed because pthread_atfork has no deregistration API.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[repr(C)]
+struct AtforkNode {
+    prepare: Option<AtforkHook>,
+    parent: Option<AtforkHook>,
+    child: Option<AtforkHook>,
+    previous: *mut AtforkNode,
+    next: *mut AtforkNode,
+}
+
+#[cfg(feature = "x86-owned-static-runtime")]
+static OWNED_ATFORK_HEAD: AtomicPtr<AtforkNode> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Perform only the selected Linux x86-64 `fork=57` transition.
 ///
@@ -116,19 +149,21 @@ fn unlock_registry() {
     ATFORK_LOCK.store(false, Ordering::Release);
 }
 
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[inline]
 unsafe fn registrations() -> *mut AtforkRegistration {
     core::ptr::addr_of_mut!(ATFORK_REGISTRATIONS).cast::<AtforkRegistration>()
 }
 
-/// Dispatch the selected atfork registry around one raw process transition.
+/// Dispatch the frozen private callback table around one raw process transition.
 ///
-/// `who < 0` acquires the fixed registry lock and runs prepare callbacks in
+/// `who < 0` acquires the registry lock and runs prepare callbacks in
 /// reverse registration order. `who == 0` runs parent callbacks forward;
 /// `who > 0` runs child callbacks forward. Both post-fork paths release the
 /// copied lock. This is the private `__fork_handler` shape used by musl's
 /// `fork`; callers must preserve its paired prepare/post transition and never
 /// invoke it reentrantly from a callback.
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn __fork_handler(who: c_int) {
@@ -158,6 +193,39 @@ pub unsafe extern "C" fn __fork_handler(who: c_int) {
         if let Some(callback) = callback {
             unsafe { callback() };
         }
+    }
+    unlock_registry();
+}
+
+/// Dispatch musl's allocated atfork list through its paired cursor reversal.
+///
+/// # Safety
+/// A negative prepare call must have exactly one parent (zero) or child
+/// (positive) completion. Callbacks return normally and never reenter the
+/// registry while this task retains its lock.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[inline(never)]
+#[no_mangle]
+pub unsafe extern "C" fn __fork_handler(who: c_int) {
+    if who < 0 {
+        unsafe { lock_registry() };
+        let mut node = OWNED_ATFORK_HEAD.load(Ordering::Relaxed);
+        while !node.is_null() {
+            if let Some(prepare) = unsafe { (*node).prepare } {
+                unsafe { prepare() };
+            }
+            OWNED_ATFORK_HEAD.store(node, Ordering::Relaxed);
+            node = unsafe { (*node).next };
+        }
+        return;
+    }
+    let mut node = OWNED_ATFORK_HEAD.load(Ordering::Relaxed);
+    while !node.is_null() {
+        let callback = if who == 0 { unsafe { (*node).parent } }
+            else { unsafe { (*node).child } };
+        if let Some(callback) = callback { unsafe { callback() }; }
+        OWNED_ATFORK_HEAD.store(node, Ordering::Relaxed);
+        node = unsafe { (*node).previous };
     }
     unlock_registry();
 }
@@ -197,12 +265,13 @@ pub unsafe extern "C" fn __ldso_atfork(_who: c_int) {}
 #[linkage = "weak"]
 pub unsafe extern "C" fn __aio_atfork(_who: c_int) {}
 
-/// Register one fixed-capacity atfork callback triple.
+/// Register one callback triple in the frozen private fixed-capacity table.
 ///
 /// Registration is private to this static process image.  Each optional
 /// callback must remain executable until every admitted `fork` that can read
 /// it has completed.  The callbacks must return normally and must not call
 /// this leaf recursively while its registry lock is held.
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[no_mangle]
 pub unsafe extern "C" fn pthread_atfork(
     prepare: Option<AtforkHook>,
@@ -225,6 +294,41 @@ pub unsafe extern "C" fn pthread_atfork(
         };
     }
     ATFORK_COUNT.store(count + 1, Ordering::Release);
+    unlock_registry();
+    0
+}
+
+/// Register an owned atfork triple in a process-lifetime allocated record.
+///
+/// Allocation precedes locking, as in musl `pthread_atfork.c`, so failure
+/// returns `ENOMEM` before any list mutation and allocation cannot reenter
+/// while the atfork lock is held. The existing internal allocator supplies
+/// storage; this registry introduces neither an allocator nor a capacity.
+///
+/// # Safety
+/// Each non-null callback stays executable for every later fork that can
+/// reach it, returns normally, and does not reenter this locked registry.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn pthread_atfork(
+    prepare: Option<AtforkHook>,
+    parent: Option<AtforkHook>,
+    child: Option<AtforkHook>,
+) -> c_int {
+    let node = unsafe {
+        super::allocator::allocate_internal(core::mem::size_of::<AtforkNode>())
+    }.cast::<AtforkNode>();
+    if node.is_null() { return ENOMEM; }
+    unsafe { lock_registry() };
+    let head = OWNED_ATFORK_HEAD.load(Ordering::Relaxed);
+    // SAFETY: allocation returned aligned unique storage. The lock excludes
+    // every list mutator until this fully initialized node becomes its head.
+    unsafe {
+        node.write(AtforkNode { prepare, parent, child,
+            previous: core::ptr::null_mut(), next: head });
+        if !head.is_null() { (*head).previous = node; }
+    }
+    OWNED_ATFORK_HEAD.store(node, Ordering::Relaxed);
     unlock_registry();
     0
 }

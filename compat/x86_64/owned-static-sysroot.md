@@ -491,3 +491,8 @@ normal completion, injected tester failure, and timeout all prove child-group
 removal and reaping. This harness cleanup is separate from libc's source
 contract. Ordinary shell semantics remain covered by the existing process
 stream composition.
+
+Owned `pthread_atfork` registrations use an allocation-backed process-lifetime
+list rather than the frozen private archive's 32-record table. The source
+contract and installed ordering/child/error evidence are documented in
+[`owned-atfork-registry.md`](owned-atfork-registry.md).

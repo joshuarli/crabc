@@ -40,6 +40,7 @@ CASES = {
     "pthread-signal": ("run_general_dynamic_pthread_signal.sh", None),
     "pthread-exit": ("run_general_dynamic_pthread_exit.sh", None),
     "fork": ("run_general_dynamic_fork.sh", None),
+    "atfork-registry": ("run_owned_atfork_registry.sh", None),
     "pthread-getattr": ("run_owned_pthread_getattr.sh", None),
     "pthread-join-cancel": ("run_owned_pthread_join_cancel.sh", None),
     "pthread-cond-cancel": ("run_owned_pthread_cond_cancel.sh", None),

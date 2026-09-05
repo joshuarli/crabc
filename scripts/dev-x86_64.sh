@@ -552,6 +552,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-linux-control  test owned Linux C mechanisms and kernel error translation
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-getattr  test installed live pthread stack and guard metadata
+  owned-atfork-registry  test installed resource-sized atfork callback ordering
   owned-pthread-join-cancel  test installed join cancellation and target reclamation
   owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
   owned-pthread-cond-timed  test timed/shared condition transactions and mutex handoffs
@@ -5609,7 +5610,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
-    owned-dynamic-spawn) ;;
+    owned-dynamic-spawn|owned-atfork-registry) ;;
     owned-assert|owned-linux-control) ;;
     owned-io-cancellation) ;;
     owned-resolver-network) ;;
@@ -7627,6 +7628,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-system-cancellation takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_system_cancellation.sh
+        ;;
+    owned-atfork-registry)
+        [ "$#" -eq 0 ] || fail "owned-atfork-registry takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_atfork_registry.sh
         ;;
     owned-dynamic-spawn)
         [ "$#" -eq 0 ] || fail "owned-dynamic-spawn takes no arguments"

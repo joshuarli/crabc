@@ -67,6 +67,12 @@ and observations; the qualification catalog executes it on both clean products
 and the extracted package. Run its focused gate with
 `./scripts/dev-x86_64.sh owned-dynamic-spawn`.
 
+The `atfork-registry` case verifies more than 65 ordered registrations,
+parent/child/worker additions, and failed-fork parent completion in both
+dynamic linkage forms and direct interpreter entry. Its source and private
+archive boundary are in
+[`owned-atfork-registry.md`](owned-atfork-registry.md).
+
 The main thread keeps the initial wire DTV/count at FS+8/FS+16. The loader
 publishes current runtime TLS views at FS+24 and owns generation and module
 IDs, worker allocation/release, and old-view lifetime. The private 72-byte
