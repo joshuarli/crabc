@@ -20,8 +20,9 @@
 //!   fallback.
 //!
 //! Musl routes all four operations through cancellation-point machinery. The
-//! owned product routes `readv` and `writev` through its SIGCANCEL/PC-window
-//! owner. Legacy fixtures and positioned vector I/O remain direct syscalls.
+//! owned product routes all four through its SIGCANCEL/PC-window owner,
+//! including both pwritev2 and positioned fallback attempts. Legacy fixtures
+//! retain direct syscalls.
 
 use core::ffi::{c_int, c_long, c_void};
 
@@ -106,7 +107,8 @@ pub unsafe extern "C" fn writev(file_descriptor: c_int, iov: *const IoVec, iovcn
 ///
 /// `iov` and every iovec Linux may examine must remain valid and writable for
 /// the syscall duration. `offset` is passed as the exact signed LP64 `off_t`;
-/// the caller owns descriptor lifetime and concurrent file-state policy.
+/// the caller owns descriptor lifetime and concurrent file-state policy. The
+/// owned runtime supplies musl's cancellation point with caller-owned cleanup.
 #[no_mangle]
 pub unsafe extern "C" fn preadv(
     file_descriptor: c_int,
@@ -117,6 +119,19 @@ pub unsafe extern "C" fn preadv(
     // Linux/x86-64's legacy preadv ABI takes the signed 64-bit C offset as
     // two machine words in r10/r8, low word first. Arithmetic shift keeps the
     // signed high word for negative-offset kernel validation.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_PREADV,
+            i64::from(file_descriptor),
+            iov as usize as i64,
+            i64::from(iovcnt),
+            offset,
+            offset >> 32,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall5(
             raw_syscall::SYS_PREADV,
@@ -136,8 +151,8 @@ pub unsafe extern "C" fn preadv(
 ///
 /// `iov` and every iovec Linux may examine must remain valid and readable for
 /// the syscall duration. The caller owns descriptor lifetime, vector storage,
-/// and concurrent file-state policy. This direct static leaf intentionally
-/// omits musl's pthread cancellation-point behavior.
+/// and concurrent file-state policy. The owned runtime supplies musl's
+/// cancellation points with caller-owned cleanup; legacy fixtures stay raw.
 #[no_mangle]
 pub unsafe extern "C" fn pwritev(
     file_descriptor: c_int,
@@ -152,6 +167,19 @@ pub unsafe extern "C" fn pwritev(
     // SAFETY: the caller owns the vector-I/O lifetime/accessibility contract;
     // r10/r8 split the offset and r9 carries RWF_NOAPPEND exactly as Linux
     // x86-64 requires.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_PWRITEV2,
+            i64::from(file_descriptor),
+            iov as usize as i64,
+            i64::from(iovcnt),
+            kernel_offset,
+            kernel_offset >> 32,
+            RWF_NOAPPEND,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall6(
             raw_syscall::SYS_PWRITEV2,
@@ -188,6 +216,19 @@ pub unsafe extern "C" fn pwritev(
 
     // SAFETY: the caller's vector-I/O contract remains live for the fallback;
     // split offset words match Linux x86-64's preadv/pwritev ABI.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let fallback = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_PWRITEV,
+            i64::from(file_descriptor),
+            iov as usize as i64,
+            i64::from(iovcnt),
+            kernel_offset,
+            kernel_offset >> 32,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let fallback = unsafe {
         raw_syscall::syscall5(
             raw_syscall::SYS_PWRITEV,

@@ -225,7 +225,14 @@ locks, initial-task cancellation, and fork inheritance of pending state, type,
 and cleanup for initial and adopted-worker tasks. `owned_syscall_cancel.rs` maps
 musl's SIGCANCEL **33** and x86 PC window; FS+32 is a separate private TCB slot.
 The target lifecycle lease protects both TID delivery and mapped cancellation
-state after registry lookup. The focused command is
+state after registry lookup. Its companion `owned_descriptor_cancellation_probe.c`
+checks pending, disabled, and masked requests at `pread`, `pwrite`, `preadv`,
+`pwritev`, `close`, `fsync`, and `fdatasync`, including cancellation before
+positioned-write mutation and close's masked-state bypass. It observes workers
+blocked in `poll`, `ppoll`, `select`, `pselect`, `pause`, `sigsuspend`,
+`epoll_wait`, `epoll_pwait`, `eventfd_read`, and `eventfd_write`, then verifies
+cancellation cleanup and restoration of the temporary signal mask. `fclose`
+remains non-canceling even with a pending request. The focused command is
 `./scripts/dev-x86_64.sh owned-io-cancellation`; the aggregate remains the
 installed/extracted product judge. Other syscall cancellation points and dynamic
 initial-task/fork cancellation are still separate work.

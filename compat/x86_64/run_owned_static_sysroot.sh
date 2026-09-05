@@ -800,6 +800,11 @@ run_static_mode() {
             expected_output=''
             minimum_tls_alignment=1
             ;;
+        descriptor-cancellation)
+            probe=owned_descriptor_cancellation_probe.c
+            expected_output="$(cat "$printf_matrix_reference")"
+            minimum_tls_alignment=1
+            ;;
         io-cancellation)
             probe=owned_io_cancellation_probe.c
             expected_output="$(cat "$printf_matrix_reference")"
@@ -1069,6 +1074,8 @@ run_static_mode() {
             "$label pthread lifecycle" pthread-lifecycle
         run_static_mode "$installed_root" "$mode" "$mode_root/cancellation" \
             "$label I/O cancellation" io-cancellation "$printf_matrix_reference.cancellation"
+        run_static_mode "$installed_root" "$mode" "$mode_root/descriptor-cancellation" \
+            "$label descriptor cancellation" descriptor-cancellation "$printf_matrix_reference.descriptor-cancellation"
     fi
     if [ "$consumer_kind" = posix ]; then
         run_static_mode "$installed_root" "$mode" "$mode_root/temp" \
@@ -1418,6 +1425,14 @@ env -i "$header_consumer/io-cancellation-reference" >"$printf_matrix_reference.c
     fail "pinned-musl I/O cancellation reference failed"
 grep -qx owned-io-cancellation-ok "$printf_matrix_reference.cancellation" ||
     fail "pinned-musl I/O cancellation completion missing"
+
+"$ORACLE_CC" -std=c11 -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_descriptor_cancellation_probe.c" \
+    -o "$header_consumer/descriptor-cancellation-reference"
+env -i "$header_consumer/descriptor-cancellation-reference" >"$printf_matrix_reference.descriptor-cancellation" ||
+    fail "pinned-musl descriptor cancellation reference failed"
+grep -qx owned-descriptor-cancellation-ok "$printf_matrix_reference.descriptor-cancellation" ||
+    fail "pinned-musl descriptor cancellation completion missing"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -I"$ROOT_DIR/include" \

@@ -24,9 +24,10 @@
 //!
 //! Musl routes `read`, `write`, `pread`, `pwrite`, `close`, `fsync`, and
 //! `fdatasync` through cancellation-point machinery, and `close` coordinates
-//! an AIO hook. The owned product routes `read` and `write` through its
-//! SIGCANCEL/PC-window owner; legacy fixtures and the other operations remain
-//! direct Linux syscalls. It preserves musl's non-cancellation `close`
+//! an AIO hook. The owned product routes all seven transfers/close/sync
+//! entries through its SIGCANCEL/PC-window owner; legacy fixtures retain
+//! direct Linux syscalls. The close point preserves musl's masked-state bypass
+//! and post-syscall cancellation exclusion, together with its `close`
 //! `EINTR` success mapping, the `dup2`/`dup3` `EBUSY` retry loops, and the
 //! current musl `pwrite` algorithm: remap C offset `-1` to `-2` before the
 //! kernel can interpret `-1` as the pwritev2 current-offset sentinel, use
@@ -115,11 +116,25 @@ fn retry_dup3(old_descriptor: c_int, new_descriptor: c_int, flags: c_int) -> i64
 /// This selected non-pthread leaf has no AIO coordination or descriptor
 /// lifetime/race policy. It follows musl's direct wrapper convention that a
 /// raw `EINTR` result reports C success and never retries the close, because a
-/// retry could close an unrelated recycled descriptor.
+/// retry could close an unrelated recycled descriptor. In the owned runtime,
+/// ENABLE is a cancellation point before close; MASKED/DISABLE execute close
+/// without delivery, and EINTR after close never becomes cancellation.
 #[no_mangle]
 pub extern "C" fn close(file_descriptor: c_int) -> c_int {
     // SAFETY: `file_descriptor` is a scalar Linux descriptor word; the kernel
     // validates it and owns the close lifetime transition.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_CLOSE, i64::from(file_descriptor),
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall1(raw_syscall::SYS_CLOSE, i64::from(file_descriptor))
     };
@@ -197,8 +212,8 @@ pub unsafe extern "C" fn write(
 ///
 /// If Linux examines the buffer, `buffer` must designate `count` writable
 /// bytes for the syscall's duration. `offset` is passed as the exact signed
-/// x86 `off_t` word. This direct static leaf does not provide musl's pthread
-/// cancellation-point behavior.
+/// x86 `off_t` word. The owned runtime provides musl's cancellation point;
+/// callers must register cleanup for resources that cannot be abandoned.
 #[no_mangle]
 pub unsafe extern "C" fn pread(
     file_descriptor: c_int,
@@ -208,6 +223,19 @@ pub unsafe extern "C" fn pread(
 ) -> isize {
     // SAFETY: the caller supplies the complete raw Linux positioned-read
     // buffer contract; x86 passes the fourth syscall word in r10.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_PREAD64,
+            i64::from(file_descriptor),
+            buffer as usize as i64,
+            count as i64,
+            offset,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_PREAD64,
@@ -227,8 +255,8 @@ pub unsafe extern "C" fn pread(
 /// If Linux examines the buffer, `buffer` must designate `count` readable
 /// bytes for the syscall's duration. `offset` is the exact signed x86
 /// `off_t` word. The caller owns descriptor lifetime and shared file state;
-/// this direct static leaf does not provide musl's pthread
-/// cancellation-point behavior.
+/// the owned runtime provides musl's cancellation points on both the primary
+/// pwritev2 attempt and positioned fallback, with caller-owned cleanup.
 #[no_mangle]
 pub unsafe extern "C" fn pwrite(
     file_descriptor: c_int,
@@ -247,6 +275,19 @@ pub unsafe extern "C" fn pwrite(
     // SAFETY: the caller supplies the complete raw Linux buffer contract.
     // The private iovec stays live for the pwritev2 syscall, and x86's split
     // offset/flags occupy r10/r8/r9 exactly as in musl's source wrapper.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_PWRITEV2,
+            i64::from(file_descriptor),
+            core::ptr::addr_of!(iovec) as usize as i64,
+            1,
+            kernel_offset,
+            kernel_offset >> 32,
+            RWF_NOAPPEND,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall6(
             raw_syscall::SYS_PWRITEV2,
@@ -284,6 +325,19 @@ pub unsafe extern "C" fn pwrite(
 
     // SAFETY: the caller's positioned-write buffer contract still holds; the
     // fallback retains the original signed offset word in x86 r10.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let fallback = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_PWRITE64,
+            i64::from(file_descriptor),
+            buffer as usize as i64,
+            count as i64,
+            kernel_offset,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let fallback = unsafe {
         raw_syscall::syscall4(
             raw_syscall::SYS_PWRITE64,
@@ -337,11 +391,23 @@ pub extern "C" fn ftruncate(file_descriptor: c_int, length: c_long) -> c_int {
 /// Request Linux `fsync(2)` for a descriptor.
 ///
 /// A successful return is only Linux/filesystem writeback acceptance. It does
-/// not claim media-cache or power-loss durability, nor musl's pthread
-/// cancellation-point integration.
+/// not claim media-cache or power-loss durability. The owned runtime supplies
+/// musl's cancellation point; legacy fixtures retain the direct syscall.
 #[no_mangle]
 pub extern "C" fn fsync(file_descriptor: c_int) -> c_int {
     // SAFETY: `file_descriptor` is a scalar Linux descriptor word.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_FSYNC, i64::from(file_descriptor),
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall1(raw_syscall::SYS_FSYNC, i64::from(file_descriptor))
     };
@@ -351,11 +417,23 @@ pub extern "C" fn fsync(file_descriptor: c_int) -> c_int {
 /// Request Linux `fdatasync(2)` for a descriptor.
 ///
 /// A successful return is only Linux/filesystem writeback acceptance. It does
-/// not claim media-cache or power-loss durability, nor musl's pthread
-/// cancellation-point integration.
+/// not claim media-cache or power-loss durability. The owned runtime supplies
+/// musl's cancellation point; legacy fixtures retain the direct syscall.
 #[no_mangle]
 pub extern "C" fn fdatasync(file_descriptor: c_int) -> c_int {
     // SAFETY: `file_descriptor` is a scalar Linux descriptor word.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_FDATASYNC, i64::from(file_descriptor),
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall1(raw_syscall::SYS_FDATASYNC, i64::from(file_descriptor))
     };

@@ -6,7 +6,7 @@
 //! only the raw Linux syscall register boundary and the selected initial-TLS C
 //! `errno` writer. It is not epoll/eventfd support, a socket API, C
 //! open/path/fcntl or vector-I/O support, AIO, a general signal-delivery or
-//! signal-wait framework, pthread cancellation or mask policy, timers, C
+//! signal-wait framework, general pthread cancellation or mask policy, timers, C
 //! process lifecycle APIs, a general C/POSIX runtime, libc.so, CRT,
 //! pthread/TLS lifecycle, dynamic TLS, loader, sysroot, allocator, or public
 //! x86 support.
@@ -20,9 +20,8 @@
 //!   signal-interrupt wait wrappers below.
 //!
 //! Musl routes every one of those waits through cancellation-point machinery.
-//! That machinery, including pthread cancellation state and signal-mask
-//! coordination, remains deliberately outside this selected static boundary.
-//! The wrappers here issue the direct Linux syscalls instead. They retain the
+//! The owned product composes its SIGCANCEL/PC-window owner at every syscall
+//! below; legacy fixtures retain direct Linux syscalls. The wrappers retain the
 //! source-specific public-timeout copies: `ppoll` and `pselect` copy a public
 //! const `timespec` into private two-word storage, while `select` validates and
 //! normalizes a public `timeval` into private storage before Linux may mutate
@@ -121,8 +120,8 @@ const _: () = {
 /// `file_descriptors` must be null only when `count` is zero; otherwise it
 /// must designate `count` readable-and-writable eight-byte public `pollfd`
 /// records for the syscall's duration. The caller owns descriptor lifetimes,
-/// concurrent readiness consumption, and interruption policy. This direct
-/// static leaf does not provide musl's pthread cancellation-point behavior.
+/// concurrent readiness consumption, interruption policy, and cancellation
+/// cleanup. The owned runtime supplies musl's cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn poll(
     file_descriptors: *mut c_void,
@@ -131,6 +130,19 @@ pub unsafe extern "C" fn poll(
 ) -> c_int {
     // SAFETY: the caller owns the complete Linux poll-array contract. The
     // scalar count and timeout retain their x86 C ABI words exactly.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_POLL,
+            file_descriptors as usize as i64,
+            count as i64,
+            i64::from(timeout_milliseconds),
+            0,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_POLL,
@@ -150,8 +162,8 @@ pub unsafe extern "C" fn poll(
 /// null or point to one readable public x86 `timespec`; `mask` must be null or
 /// cover its first readable kernel-visible eight-byte word of a public x86
 /// `sigset_t`. Every pointer must remain live for the syscall. The caller owns
-/// temporary-mask and signal-delivery policy. Unlike musl, this direct leaf is
-/// not a pthread cancellation point.
+/// temporary-mask, signal-delivery, and cancellation-cleanup policy. The owned
+/// runtime supplies musl's cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn ppoll(
     file_descriptors: *mut c_void,
@@ -174,6 +186,19 @@ pub unsafe extern "C" fn ppoll(
     };
     // SAFETY: all pointer and signal-mask semantics remain with the C caller;
     // Linux uses x86 r10/r8 for the timeout/mask fourth and fifth words.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_PPOLL,
+            file_descriptors as usize as i64,
+            count as i64,
+            timeout_pointer,
+            mask as usize as i64,
+            KERNEL_SIGSET_SIZE as i64,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall5(
             raw_syscall::SYS_PPOLL,
@@ -200,8 +225,8 @@ pub unsafe extern "C" fn ppoll(
 /// one complete x86 public `fd_set`; `timeout` must be null or point to one
 /// readable public x86 `timeval`. The records must remain live for the syscall
 /// and satisfy the C `restrict`/descriptor-range requirements for `count`.
-/// The caller owns descriptor lifetime and signal interruption policy. This
-/// direct static leaf does not provide musl's pthread cancellation behavior.
+/// The caller owns descriptor lifetime, signal interruption, and cancellation
+/// cleanup. Validation precedes the owned cancellation point, as in musl.
 #[no_mangle]
 pub unsafe extern "C" fn select(
     count: c_int,
@@ -240,6 +265,19 @@ pub unsafe extern "C" fn select(
 
     // SAFETY: the caller owns all descriptor-set extents and syscall-visible
     // storage. Linux takes its fourth and fifth arguments in x86 r10/r8.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_SELECT,
+            i64::from(count),
+            readable as usize as i64,
+            writable as usize as i64,
+            exceptional as usize as i64,
+            timeout_pointer,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall5(
             raw_syscall::SYS_SELECT,
@@ -262,8 +300,8 @@ pub unsafe extern "C" fn select(
 /// must be null or point to one readable public x86 `timespec`; `mask` must
 /// be null or cover its first readable kernel-visible eight-byte word of a
 /// public x86 `sigset_t`. All arguments must remain live for the syscall; the
-/// caller owns temporary-mask, descriptor, and interruption policy. This
-/// direct static leaf does not provide musl's pthread cancellation behavior.
+/// caller owns temporary-mask, descriptor, interruption, and cancellation
+/// cleanup policy. The owned runtime supplies musl's cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn pselect(
     count: c_int,
@@ -290,6 +328,19 @@ pub unsafe extern "C" fn pselect(
     };
     // SAFETY: the caller owns the public record and descriptor-set contracts;
     // this local pair has the Linux `pselect6` pointer/size ABI in x86 r9.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_PSELECT6,
+            i64::from(count),
+            readable as usize as i64,
+            writable as usize as i64,
+            exceptional as usize as i64,
+            timeout_pointer,
+            &mask_argument as *const PselectMaskArgument as usize as i64,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall6(
             raw_syscall::SYS_PSELECT6,
@@ -307,11 +358,24 @@ pub unsafe extern "C" fn pselect(
 /// Suspend the calling thread until Linux interrupts it with a handled signal.
 ///
 /// The usual `pause(2)` lost-wakeup race remains the caller's signal-policy
-/// responsibility. This direct static leaf is deliberately not musl's pthread
-/// cancellation point.
+/// responsibility. The owned runtime supplies musl's cancellation point;
+/// legacy fixtures retain the direct Linux syscall.
 #[no_mangle]
 pub extern "C" fn pause() -> c_int {
     // SAFETY: pause has no user arguments and Linux owns all wait state.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_PAUSE,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe { raw_syscall::syscall0(raw_syscall::SYS_PAUSE) };
     c_status(result)
 }
@@ -322,12 +386,25 @@ pub extern "C" fn pause() -> c_int {
 ///
 /// `mask` must cover its first readable kernel-visible eight-byte word of one
 /// public x86 `sigset_t` and remain live until Linux returns. The caller owns
-/// temporary-mask and signal-handler lifetime policy. This direct static leaf
-/// does not provide musl's pthread cancellation behavior.
+/// temporary-mask, signal-handler lifetime, and cancellation-cleanup policy.
+/// The owned runtime supplies musl's cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn sigsuspend(mask: *const c_void) -> c_int {
     // SAFETY: Linux consumes one x86 kernel signal-set word from the caller's
     // public record and owns the atomic mask swap/restore transition.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_RT_SIGSUSPEND,
+            mask as usize as i64,
+            KERNEL_SIGSET_SIZE as i64,
+            0,
+            0,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall2(
             raw_syscall::SYS_RT_SIGSUSPEND,

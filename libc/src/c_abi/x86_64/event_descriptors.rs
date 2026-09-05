@@ -18,9 +18,9 @@
 //! - `src/linux/inotify.c` maps to the selected inotify wrappers below.
 //!
 //! Musl routes blocking epoll waits and eventfd transfers through
-//! cancellation-point machinery. That pthread lifecycle is deliberately
-//! outside this direct static archive, so the wrappers issue their Linux 5.10
-//! syscalls directly. `epoll_wait` is the null-mask `epoll_pwait` form and
+//! cancellation-point machinery. The owned runtime composes its SIGCANCEL/
+//! PC-window owner; legacy fixtures retain direct Linux 5.10 syscalls.
+//! `epoll_wait` is the null-mask `epoll_pwait` form and
 //! every `epoll_pwait` call passes the kernel's one-word, eight-byte signal
 //! mask size rather than the public 128-byte `sigset_t` capacity.
 //! Linux 5.10 provides every selected modern syscall, so unlike musl's wider
@@ -121,7 +121,7 @@ pub unsafe extern "C" fn epoll_ctl(
 }
 
 #[inline(always)]
-unsafe fn epoll_pwait_raw(
+unsafe fn epoll_pwait_syscall(
     epoll_descriptor: c_int,
     events: *mut c_void,
     maximum_events: c_int,
@@ -132,6 +132,19 @@ unsafe fn epoll_pwait_raw(
     // public signal-mask lifetime. Linux consumes only the first one-word
     // kernel mask and the helper moves arguments four through six into
     // r10/r8/r9 respectively.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_EPOLL_PWAIT,
+            i64::from(epoll_descriptor),
+            events as usize as i64,
+            i64::from(maximum_events),
+            i64::from(timeout_milliseconds),
+            signal_mask as usize as i64,
+            KERNEL_SIGSET_SIZE as i64,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall6(
             raw_syscall::SYS_EPOLL_PWAIT,
@@ -151,8 +164,8 @@ unsafe fn epoll_pwait_raw(
 /// # Safety
 ///
 /// `events` must designate writable storage for `maximum_events` packed x86
-/// public `epoll_event` records for the syscall duration. This direct static
-/// leaf deliberately omits musl's pthread cancellation-point behavior.
+/// public `epoll_event` records for the syscall duration. The owned runtime
+/// supplies musl's cancellation point, with caller-owned resource cleanup.
 #[no_mangle]
 pub unsafe extern "C" fn epoll_wait(
     epoll_descriptor: c_int,
@@ -163,7 +176,7 @@ pub unsafe extern "C" fn epoll_wait(
     // SAFETY: the public event-array contract is documented on this entry;
     // a null signal mask selects the ordinary epoll_wait behavior.
     unsafe {
-        epoll_pwait_raw(
+        epoll_pwait_syscall(
             epoll_descriptor,
             events,
             maximum_events,
@@ -180,8 +193,8 @@ pub unsafe extern "C" fn epoll_wait(
 /// `events` follows [`epoll_wait`]'s writable-array contract. `signal_mask`
 /// must be null or point to a readable public x86 `sigset_t`; Linux consumes
 /// only its first eight-byte kernel-visible word. The caller owns temporary
-/// mask and signal-delivery policy. This direct leaf is not a pthread
-/// cancellation point.
+/// mask, signal-delivery, and cancellation-cleanup policy. The owned runtime
+/// supplies musl's cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn epoll_pwait(
     epoll_descriptor: c_int,
@@ -192,7 +205,7 @@ pub unsafe extern "C" fn epoll_pwait(
 ) -> c_int {
     // SAFETY: the caller owns the event and optional signal-mask contracts.
     unsafe {
-        epoll_pwait_raw(
+        epoll_pwait_syscall(
             epoll_descriptor,
             events,
             maximum_events,
@@ -221,11 +234,24 @@ pub extern "C" fn eventfd(initial_value: c_uint, flags: c_int) -> c_int {
 /// # Safety
 ///
 /// `value` must designate writable, aligned `eventfd_t` storage for the call.
-/// Blocking and descriptor lifetime remain caller policy. This direct static
-/// leaf deliberately omits musl's pthread cancellation-point behavior.
+/// Blocking, descriptor lifetime, and cancellation cleanup remain caller
+/// policy. The owned runtime supplies musl's cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn eventfd_read(fd: c_int, value: *mut u64) -> c_int {
     // SAFETY: the caller supplies writable eight-byte eventfd storage.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_READ,
+            i64::from(fd),
+            value as usize as i64,
+            EVENTFD_RECORD_SIZE as i64,
+            0,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_READ,
@@ -246,11 +272,24 @@ pub unsafe extern "C" fn eventfd_read(fd: c_int, value: *mut u64) -> c_int {
 
 /// Write exactly one eight-byte eventfd counter record.
 ///
-/// Blocking and descriptor lifetime remain caller policy. This direct static
-/// leaf deliberately omits musl's pthread cancellation-point behavior.
+/// Blocking, descriptor lifetime, and cancellation cleanup remain caller
+/// policy. The owned runtime supplies musl's cancellation point.
 #[no_mangle]
 pub extern "C" fn eventfd_write(fd: c_int, value: u64) -> c_int {
     // SAFETY: the local scalar stays live and readable for the syscall.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        super::pthread_cancel::syscall_cp(
+            raw_syscall::SYS_WRITE,
+            i64::from(fd),
+            (&value as *const u64) as usize as i64,
+            EVENTFD_RECORD_SIZE as i64,
+            0,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_WRITE,
