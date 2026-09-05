@@ -846,6 +846,10 @@ struct Object {
     search_name: [u8; MAX_PATH],
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     search_short_name: bool,
+    // Listing preserves the first admission's name. Later inode matches may
+    // enable short-name search aliases, but cannot rewrite that original name.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    initial_load_name_is_short: bool,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: Option<usize>,
     needed: [usize; MAX_NEEDED],
@@ -903,6 +907,8 @@ const EMPTY_OBJECT: Object = Object {
     search_name: [0; MAX_PATH],
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     search_short_name: false,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    initial_load_name_is_short: false,
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     needed_by: None,
     needed: [0; MAX_NEEDED],

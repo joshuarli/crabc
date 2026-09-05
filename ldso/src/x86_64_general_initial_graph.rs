@@ -608,6 +608,7 @@ unsafe fn load_initial_library(
     };
     object.search_name = search_name;
     object.search_short_name = short_name;
+    object.initial_load_name_is_short = short_name;
     object.needed_by = requester;
     objects[index] = object;
     Ok(Some(index))

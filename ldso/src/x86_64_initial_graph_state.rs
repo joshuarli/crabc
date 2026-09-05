@@ -100,9 +100,10 @@ const EMPTY_SLOT: ObjectSlot = ObjectSlot {
 
 /// The graph portion of the initial-load transaction.
 ///
-/// Slot zero is always the kernel-mapped main image.  Every later slot was
-/// mapped by this transaction and is therefore eligible for reverse-order
-/// rollback.  A returned `Existing { Discovering }` is a valid cycle edge,
+/// Slot zero is the main image. This graph rolls back later admissions;
+/// `GeneralInitialLoaderState` separately owns slot zero's provenance and
+/// releases a directly mapped main last while retaining a kernel-mapped main.
+/// A returned `Existing { Discovering }` is a valid cycle edge,
 /// not a request to recurse or map the object again.
 pub(crate) struct InitialGraphState {
     slots: [ObjectSlot; MAX_INITIAL_GRAPH_OBJECTS],

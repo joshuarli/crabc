@@ -11,7 +11,7 @@ readonly source="$ROOT/compat/x86_64/general_dynamic_cli.c"
 trap 'printf "direct interpreter FAIL arm=%s mode=%s case=%s; evidence: %s\n" "${arm:-setup}" "${mode:-setup}" "${test:-build}" "$work" >&2' ERR
 for arm in oracle candidate; do
     root="$work/$arm"
-    mkdir -p "$root/lib" "$root/usr/lib" "$root/plugins" "$root/override" "$root/prefix/lib" "$root/prefix/etc"
+    mkdir -p "$root/lib" "$root/usr/lib" "$root/plugins" "$root/override" "$root/prefix/lib" "$root/prefix/etc" "$root/p"
     if [ "$arm" = candidate ]; then
         cp -a "$installed/." "$root/"
         cc=("$installed/bin/crabc-cc-dynamic")
@@ -30,6 +30,8 @@ for arm in oracle candidate; do
     cp "$root$interpreter" "$root/ldd"
     printf invalid >"$root/invalid"
     printf '/override:/usr/lib' >"$root/prefix/etc/ld-musl-x86_64.path"
+    cp "$root/plugins/libcli.so" "$root/p/libc.so"
+    case_count=0
     for mode in pie non-pie; do
         if [ "$arm" = candidate ]; then
             "${cc[@]}" "--dynamic-$mode" -DCLI_CHECK_AUXV "$source" --application-runpath '$ORIGIN/plugins:/usr/lib' --application-dso "$root/plugins/libcli.so" -o "$root/consumer-$mode"
@@ -44,7 +46,36 @@ for arm in oracle candidate; do
         cp "$root/system-$mode" "$root/system"
         cp "$root/consumer-$mode" "$root/consumer"
         cp "$root/consumer" "$root/--consumer"
-        for test in ordinary separator argv0 argv0-equals library-path library-path-equals preload preload-equals list unknown missing-value missing-program malformed missing-file prefix ldd combined library-over-environment missing-dependency invalid-executable; do
+        # The sealed driver intentionally rejects pathname DT_NEEDED. This
+        # explicit same-size dynamic-string mutation isolates the loader's
+        # existing pathname admission without relaxing the link interface.
+        python3 -B - "$root/consumer" "$root/path-needed" <<'PYTHON'
+from pathlib import Path
+import struct
+import sys
+source, output = map(Path, sys.argv[1:])
+elf = bytearray(source.read_bytes())
+phoff = struct.unpack_from('<Q', elf, 32)[0]
+phnum = struct.unpack_from('<H', elf, 56)[0]
+loads = []
+dynamic = None
+for index in range(phnum):
+    p = phoff + 56 * index
+    kind, flags, offset, address, physical, filesz, memsz, alignment = struct.unpack_from('<IIQQQQQQ', elf, p)
+    if kind == 1: loads.append((address, offset, filesz))
+    if kind == 2: dynamic = (offset, filesz)
+assert dynamic is not None
+entries = [struct.unpack_from('<QQ', elf, offset) for offset in range(dynamic[0], sum(dynamic), 16)]
+strtab = next(value for tag, value in entries if tag == 5)
+strfile = next(offset + strtab - address for address, offset, size in loads if address <= strtab < address + size)
+selected = [strfile + value for tag, value in entries if tag == 1 and elf[strfile + value:strfile + value + 10] == b'libcli.so\0']
+assert len(selected) == 1
+elf[selected[0]:selected[0] + 10] = b'p/libc.so\0'
+output.write_bytes(elf)
+PYTHON
+        for test in ordinary separator argv0 argv0-equals library-path library-path-equals preload preload-equals list unknown missing-value missing-program malformed missing-file prefix ldd combined library-over-environment missing-dependency invalid-executable list-preload list-path-needed list-preload-alias; do
+            [ -z "${CRABC_GENERAL_DYNAMIC_CLI_CASE:-}" ] || [ "$test" = "$CRABC_GENERAL_DYNAMIC_CLI_CASE" ] || continue
+            case_count=$((case_count + 1))
             selected_interpreter="$interpreter"
             options=()
             program=(/consumer argument)
@@ -65,6 +96,9 @@ for arm in oracle candidate; do
                 preload) options=(--preload /override/libcli.so);;
                 preload-equals) options=(--preload=/override/libcli.so);;
                 list) options=(--list);;
+                list-preload) options=(--list --preload /override/libcli.so);;
+                list-preload-alias) options=(--list --preload /override/libcli.so --library-path /override);;
+                list-path-needed) options=(--list); program=(/path-needed);;
                 unknown) options=(--unknown); expected=1;;
                 missing-value) options=(--argv0); program=(); expected=1;;
                 missing-program) program=(); expected=1;;
@@ -74,13 +108,33 @@ for arm in oracle candidate; do
             status=0
             CLI_ENV=preserved LD_LIBRARY_PATH="$environment_path" timeout 20 chroot "$root" "$selected_interpreter" "${options[@]}" "${program[@]}" >"$work/$arm-$mode-$test.stdout" 2>"$work/$arm-$mode-$test.stderr" || status=$?
             [ "$status" -eq "$expected" ]
-            if [ "$test" = list ] || [ "$test" = ldd ]; then
+            if [[ "$test" = list* ]] || [ "$test" = ldd ]; then
                 ! grep -q 'initialized\|application entered' "$work/$arm-$mode-$test.stdout"
-                grep -q '/plugins/libcli.so' "$work/$arm-$mode-$test.stdout"
+                python3 -B - "$work/$arm-$mode-$test.stdout" >"$work/$arm-$mode-$test.names" <<'PYTHON'
+from pathlib import Path
+import re
+import sys
+lines = Path(sys.argv[1]).read_text().splitlines()
+assert lines and re.fullmatch(r'\t/lib/ld-(crabc|musl)-x86_64\.so\.1 \(0x[0-9a-f]+\)', lines[0])
+application = []
+for line in lines[1:]:
+    match = re.fullmatch(r'\t(.+) => (.+) \(0x[0-9a-f]+\)', line)
+    assert match, line
+    requested, resolved = match.groups()
+    # crabc and musl intentionally have different libc/loader layouts.
+    if requested == 'libc.so' and resolved in ('/usr/lib/libc.so', '/lib/ld-musl-x86_64.so.1'): continue
+    application.append((requested, resolved))
+assert application
+for requested, resolved in application: print(f'{requested} => {resolved}')
+PYTHON
+                if [ "$arm" = candidate ]; then
+                    cmp "$work/oracle-$mode-$test.names" "$work/candidate-$mode-$test.names"
+                fi
             elif [ "$arm" = candidate ]; then
                 cmp "$work/oracle-$mode-$test.stdout" "$work/candidate-$mode-$test.stdout"
             fi
         done
     done
 done
-printf 'direct interpreter: PASS 40 cases per arm; evidence: %s\n' "$work"
+[ "$case_count" -gt 0 ]
+printf 'direct interpreter: PASS %s cases per arm; evidence: %s\n' "$case_count" "$work"

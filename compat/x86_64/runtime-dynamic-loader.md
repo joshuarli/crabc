@@ -81,8 +81,10 @@ initial-TLS negative cases still reject malformed prefixes before FS changes.
 
 `x86_64_runtime_registry.rs` owns runtime object nodes and their dependencies in stable loader-owned
 mappings, independent of the initial fixed stack-array capacity. The initial
-canonical map owner remains immutable and is borrowed, never remapped or made
-rollback eligible. Admission and scope changes serialize with worker TLS
+canonical map owner becomes immutable at commit and is borrowed by the runtime
+registry. Before commit, it rolls back its owned mappings, including a directly
+admitted main after its dependencies; a kernel-mapped main is always borrowed.
+Admission and scope changes serialize with worker TLS
 allocation/release under one loader mutation boundary; no pthread list lock or
 libc allocation is acquired there. The selected pthread owner calls allocate
 before list publication and release only after list withdrawal, with that list

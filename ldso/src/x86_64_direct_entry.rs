@@ -133,8 +133,10 @@ pub(super) unsafe fn list_and_exit(objects: &[Object], ldso_base: usize) {
         address_line(ldso_base as u64);
         for object in objects.iter().skip(1) {
             let name = argument(object.search_name.as_ptr() as usize);
-            let basename = name.iter().rposition(|byte| *byte == b'/').map_or(name, |index| &name[index + 1..]);
-            write(b"\t"); write(basename); write(b" => "); write(name);
+            let requested = if object.initial_load_name_is_short {
+                name.iter().rposition(|byte| *byte == b'/').map_or(name, |index| &name[index + 1..])
+            } else { name };
+            write(b"\t"); write(requested); write(b" => "); write(name);
             address_line(object.base);
         }
         syscall1(60, 0);

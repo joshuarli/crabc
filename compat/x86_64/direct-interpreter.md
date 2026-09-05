@@ -15,7 +15,9 @@ values, and absent executable operands fail before executing application code.
 Invalid command/executable admission exits 1; dependency or relocation failure
 exits 127. Listing loads and validates the dependency graph but runs neither
 constructors nor the application. Its lines report the interpreter followed
-by dependency names, resolved pathnames and load addresses. The owned libc is
+by the original dependency request names, resolved pathnames and load addresses.
+A pathname preload or pathname `DT_NEEDED` retains its slashes on the left of
+`=>`, even if later short-name lookup discovers the same inode. The owned libc is
 a separate `/usr/lib/libc.so`; musl reports its combined loader/libc image.
 The differential checks the application dependency and absence of callbacks
 without treating those different runtime layouts as an output mismatch.
@@ -64,10 +66,15 @@ this slice does not claim to remove them.
 Evidence uses separate installed candidate and pinned-musl roots. Candidate
 execution contains only the materialized owned runtime and explicitly built
 application inputs. It never invokes musl, host libc, or a host loader as a
-fallback. `run_general_dynamic_cli.sh` runs 40 process cases per arm across PIE and
+fallback. `run_general_dynamic_cli.sh` runs 46 process cases per arm across PIE and
 non-PIE: ordinary entry, `--`, separated/equal/repeated options, command path
 over environment, preloading, listing and `ldd`, relocated prefix discovery,
-invalid options/operands/files and missing dependencies. Every successful
+invalid options/operands/files and missing dependencies. Listing comparisons
+preserve both sides of `=>` for short names, pathname preloads, pathname
+`DT_NEEDED`, and a preload later found by a short-name alias. The pathname
+`DT_NEEDED` fixture explicitly replaces one same-length dynamic string in an
+owned executable; the sealed driver's rejection of pathname dependencies is
+unchanged. Every successful
 application checks main and DSO constructors, main/worker TLS isolation,
 COPY-visible data, `dlopen(NULL)`/`dlsym` main scope, argv and preserved
 environment. Main ORIGIN resolves without a proc mount. The aggregate runs
@@ -80,3 +87,10 @@ The relocated-prefix regression failed at graph admission before interpreter
 prefix selection was implemented. The source suite additionally reserves a
 real mapping, attempts colliding non-PIE admission, and checks that the
 original mapping and contents survived.
+
+The first listing comparison exposed basename-only output where musl prints
+the original pathname request. All three pathname/alias cases failed before
+`initial_load_name_is_short` preserved the first admission's name form,
+independently of the later mutable short-name search alias. The focused runner
+can select one case with `CRABC_GENERAL_DYNAMIC_CLI_CASE`; the aggregate always
+runs the full matrix.
