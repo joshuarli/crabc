@@ -48,7 +48,7 @@ use crate::main_static_page::{
 };
 use crate::meta::{MetaAllocator, MetaError};
 use crate::once::{AllocatorOnce, AllocatorOnceCompletion, OnceThreadId};
-use crate::config::VmOptions;
+use crate::config::{VmOptionEnvironmentReader, VmOptions};
 use crate::os::{MemoryConfig, VmPolicy, VmPolicyConfigurationError, VmProcess};
 use crate::page_map::PageMapHeader;
 use crate::process_arena::{
@@ -67,7 +67,7 @@ const INITIALIZING: u8 = 1;
 const READY: u8 = 2;
 const RETAINED: u8 = 3;
 
-/// How this source-startup call owns an optional resolved VM policy.
+/// How this source-startup call owns an optional source VM policy.
 ///
 /// The production path must execute the pinned Unix process-memory policy
 /// before it publishes any heap, metadata, or PageMap state. Ordinary
@@ -208,6 +208,49 @@ impl ProcessMainInitializationStorage {
         }
     }
 
+    /// Runs production source startup with the raw Unix environment reader
+    /// retained for lazy option retries.
+    ///
+    /// Pinned `_mi_options_init` does not make a temporarily unavailable
+    /// `_mi_getenv` result terminal: a later `mi_option_get` retries only the
+    /// unresolved descriptor while returning its current default meanwhile.
+    /// This route keeps that precise capability beside the permanent process
+    /// policy instead of rejecting the whole native shadow before any source
+    /// process owner exists.
+    ///
+    /// # Safety
+    ///
+    /// The requirements of [`Self::initialize_with_vm_options`] apply. In
+    /// addition, `environment_reader` must satisfy
+    /// [`VmOptionEnvironmentReader`] for every future policy option read and
+    /// remain associated with this exact process lifetime.
+    pub(crate) unsafe fn initialize_with_vm_options_from_source_environment(
+        &'static self,
+        config: MemoryConfig,
+        options: VmOptions,
+        environment_reader: VmOptionEnvironmentReader,
+    ) -> Result<ProcessMainThread, ProcessMainInitError> {
+        // SAFETY: forwarded from this process-owner boundary; `VmPolicy`
+        // retains the reader only beside the same permanent process policy.
+        let policy = unsafe { VmPolicy::new_with_source_environment(options, environment_reader) }
+            .map_err(ProcessMainInitError::VmPolicy)?;
+        // SAFETY: the caller upholds the same process-static lifecycle
+        // requirements as `initialize_with_vm_options`; `policy` is moved
+        // into this storage before any source root becomes visible.
+        unsafe {
+            self.initialize_with_components_after_claim(
+                config,
+                VmPolicyStartup::ApplyProcessMemoryPolicy(policy),
+                MainStaticAttachmentStorage::global(),
+                MainSubprocess::global(),
+                MetaAllocator::global(),
+                ProcessPageMapStorage::global(),
+                || {},
+                || {},
+            )
+        }
+    }
+
     /// Runs the same transition against isolated process-lifetime owners.
     ///
     /// # Safety
@@ -239,7 +282,7 @@ impl ProcessMainInitializationStorage {
         }
     }
 
-    /// Runs the isolated source-order transition with one resolved VM policy
+    /// Runs the isolated source-order transition with one completed VM policy
     /// retained in this test process lifetime.
     ///
     /// # Safety

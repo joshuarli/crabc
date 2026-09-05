@@ -290,6 +290,23 @@ pub(crate) enum VmOptionEnvironment<'a> {
     Unavailable,
 }
 
+/// The raw process-environment observation used by a source VM-policy owner.
+///
+/// Pinned `mi_option_get` retries an `MI_OPTION_UNINIT` descriptor through
+/// `_mi_getenv` and still returns the descriptor's current (default) value
+/// for that call when the primitive is unavailable.  A policy that outlives
+/// process startup therefore retains this narrowly typed reader rather than
+/// an environment-vector address: Unix `environ` itself may be repointed by
+/// a coordinated C environment mutation.
+///
+/// # Safety
+///
+/// Each call must return null or a stable, NUL-terminated C environment
+/// vector for the duration of the resulting observation.  The reader's owner
+/// must provide the same direct-environment mutation coordination required by
+/// pinned `src/prim/unix/prim.c:_mi_prim_getenv`.
+pub(crate) type VmOptionEnvironmentReader = unsafe fn() -> *const *const core::ffi::c_char;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct VmOptionSlot {
     value: i64,
@@ -386,21 +403,43 @@ impl VmOptions {
         &mut self,
         environment: *const *const core::ffi::c_char,
     ) {
-        let mut value = [0u8; SOURCE_OPTION_VALUE_BYTES + 1];
         for option in VmOption::ALL {
-            if self.state(option) != VmOptionState::Uninitialized {
-                continue;
-            }
-            let observation = unsafe {
-                source_environment_option(
-                    environment,
-                    option.source_name(),
-                    option.legacy_source_name(),
-                    &mut value,
-                )
-            };
-            self.initialize_one(option, observation);
+            // SAFETY: forwarded unchanged from this source-environment
+            // observation boundary.
+            unsafe { self.initialize_one_from_source_environment(option, environment) };
         }
+    }
+
+    /// Retries exactly one still-lazy source descriptor through raw Unix
+    /// `environ`.
+    ///
+    /// This is the per-`mi_option_get` counterpart of
+    /// [`Self::initialize_from_source_environment`]. A terminal descriptor is
+    /// never observed again; an unavailable canonical value leaves only this
+    /// descriptor unresolved so a later source read can retry it.
+    ///
+    /// # Safety
+    ///
+    /// `environment` carries the same validity, lifetime, and direct-mutation
+    /// coordination obligations as [`Self::initialize_from_source_environment`].
+    pub(crate) unsafe fn initialize_one_from_source_environment(
+        &mut self,
+        option: VmOption,
+        environment: *const *const core::ffi::c_char,
+    ) {
+        if self.state(option) != VmOptionState::Uninitialized {
+            return;
+        }
+        let mut value = [0u8; SOURCE_OPTION_VALUE_BYTES + 1];
+        let observation = unsafe {
+            source_environment_option(
+                environment,
+                option.source_name(),
+                option.legacy_source_name(),
+                &mut value,
+            )
+        };
+        self.initialize_one(option, observation);
     }
 
     /// Performs one source lazy initialization attempt.
@@ -455,6 +494,18 @@ impl VmOptions {
             VmOptionState::Uninitialized => None,
             VmOptionState::Defaulted | VmOptionState::Initialized => Some(slot.value),
         }
+    }
+
+    /// Returns the descriptor's current source value, including the default
+    /// that an unavailable lazy observation must return for this call.
+    ///
+    /// Pinned `mi_option_get` invokes `mi_option_init` for an uninitialized
+    /// descriptor but returns `desc->value` even if `_mi_getenv` asks it to
+    /// retry later.  This intentionally differs from [`Self::value`], whose
+    /// `None` remains useful to callers that need a completed image.
+    #[inline]
+    pub(crate) const fn current_value(&self, option: VmOption) -> i64 {
+        self.slots[option as usize].value
     }
 
     #[inline]
