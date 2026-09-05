@@ -104,6 +104,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "assert",
                 "quick-exit",
                 "legacy-time",
+                "environment-lifecycle",
                 "syslog",
                 "credentials-profile",
                 "pthread-spin",

@@ -553,6 +553,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-assert  test installed C assertion diagnostics and termination
   owned-quick-exit  qualify installed C11 at_quick_exit/quick_exit semantics against musl
   owned-legacy-time  qualify installed legacy interval-timer and safe clock-adjustment C behavior
+  owned-environment-lifecycle [DYNAMIC_SYSROOT]  qualify installed POSIX environment lifecycle against musl
   owned-linux-control  test owned Linux C mechanisms and kernel error translation
   owned-kernel-residual [DYNAMIC_SYSROOT]  qualify residual system.kernel-admin C APIs against musl
   owned-vm-mechanisms  test owned VM remap, break, and legacy remap mechanisms
@@ -5693,7 +5694,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
     owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition) ;;
-    owned-assert|owned-legacy-time|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
+    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-error-reporting) ;;
@@ -7793,6 +7794,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-legacy-time takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_legacy_time.sh
+        ;;
+    owned-environment-lifecycle)
+        [ "$#" -le 1 ] || fail "owned-environment-lifecycle takes at most one dynamic sysroot"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_environment_lifecycle.sh "$@"
         ;;
     owned-linux-control)
         [ "$#" -eq 0 ] || fail "owned-linux-control takes no arguments"
