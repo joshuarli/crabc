@@ -20274,6 +20274,27 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(data)
 
+    def test_ttyname_r_runner_accepts_outlined_syscalls_and_requires_each_edge(self) -> None:
+        family = self.family(self.data(), "libc.posix-runtime")
+        ledger.require_ttyname_r_artifact(family)
+        runner_path = ROOT / "compat" / "x86_64" / "run_libc_ttyname_r.sh"
+        read_text = Path.read_text
+        source = runner_path.read_text(encoding="utf-8")
+        for edge in (
+            "assert_terminal_syscall ttyname_r 59 3",
+            "assert_terminal_syscall ttyname_r 5 2",
+            "assert_terminal_syscall ttyname_r 106 4",
+            "assert_terminal_syscall isatty 10 3",
+            "assert_terminal_syscall ttyname_r 10 3",
+        ):
+            with self.subTest(edge=edge):
+                changed = self.replace_required(source, edge, "# omitted syscall edge", str(runner_path))
+                def read(path, *args, **kwargs):
+                    return changed if path == runner_path else read_text(path, *args, **kwargs)
+                with mock.patch.object(Path, "read_text", read):
+                    with self.assertRaisesRegex(ledger.LedgerError, "ttyname_r runner omits assert_terminal_syscall"):
+                        ledger.require_ttyname_r_artifact(family)
+
     def test_static_ttyname_r_artifact_keeps_its_nonpromoting_contract(self) -> None:
         data = self.data()
         family = self.family(data, "libc.posix-runtime")
