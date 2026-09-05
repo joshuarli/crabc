@@ -9,10 +9,11 @@
 //! distinct forward/reverse heap owners; service calls have distinct static
 //! records. Callers serialize each nonreentrant owner and borrow results only
 //! until its next call. Reentrant buffers never borrow those static owners.
-//! DNS uses the preexisting raw core exchange: it is not a deferred C
-//! cancellation point and does not prove cancellation-driven fd cleanup.
-//! Resolver-family closure still requires an owned cancellation/cleanup
-//! adapter; this slice claims no full source cancellation lifecycle parity.
+//! DNS uses owned_resolver_transport's explicit C cancellation/cleanup owner
+//! around the shared core exchange. It preserves native/private raw transport
+//! behavior and the bounded sequential scheduler rather than importing musl's
+//! parallel msend. The separate cancellation gate proves the named lifecycle;
+//! this module still claims no complete resolver-family source parity.
 use core::{ffi::{c_char,c_int,c_uint,c_void}, mem, ptr};
 use super::{c_status, errno, h_errno, hstrerror, inet_address, integer_parse,
     interface_discovery, numeric_netdb, owned_netdb_lookup as lookup,

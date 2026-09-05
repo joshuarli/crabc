@@ -14,6 +14,42 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class OwnedResolverDispatchTests(unittest.TestCase):
+    def test_cancellation_prepares_before_isolation_and_reuses_supplied_product(self):
+        scratch = ROOT / '.work/x86_64/tmp'
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            work = Path(temporary)
+            capture = work / 'docker.jsonl'
+            docker = work / 'docker'
+            docker.write_text(
+                f'#!{sys.executable}\n'
+                'import json, os, sys\n'
+                "if sys.argv[1:3] == ['image', 'inspect']: print('linux/amd64')\n"
+                "elif sys.argv[1] == 'run':\n"
+                "    with open(os.environ['DISPATCH_CAPTURE'], 'a') as output: output.write(json.dumps(sys.argv[1:])+'\\n')\n"
+                "else: raise SystemExit('unexpected Docker operation')\n")
+            docker.chmod(0o755)
+            environment = {**os.environ, 'PATH': f"{work}{os.pathsep}{os.environ['PATH']}",
+                           'DISPATCH_CAPTURE': str(capture), 'CRABC_X86_64_WORK_DIR': str(work / 'state')}
+            command = ['bash', str(ROOT / 'scripts/dev-x86_64.sh'), 'owned-resolver-cancellation']
+            result = subprocess.run(command, cwd=ROOT, env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            prepare, execute = [json.loads(line) for line in capture.read_text().splitlines()]
+            leaf = '/workspace/compat/x86_64/run_owned_resolver_cancellation.sh'
+            self.assertNotIn('--network', prepare)
+            self.assertEqual(prepare[prepare.index(leaf)+1], '--prepare')
+            self.assertEqual(execute[execute.index('--network')+1], 'none')
+            self.assertIn('--cap-add=SYS_CHROOT', execute)
+            self.assertEqual(execute[execute.index(leaf)+1], '--prepared')
+            self.assertEqual(prepare[-1], execute[-1])
+            supplied = '/workspace/.work/x86_64/preexisting-dynamic-product'
+            result = subprocess.run(command+[supplied], cwd=ROOT, env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            invocations = [json.loads(line) for line in capture.read_text().splitlines()]
+            self.assertEqual(len(invocations), 3, 'supplied products must not trigger a replacement build')
+            self.assertEqual(invocations[-1][-2:], [leaf, supplied])
+            self.assertEqual(invocations[-1][invocations[-1].index('--network')+1], 'none')
+
     def test_products_are_built_before_network_isolated_execution(self):
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)

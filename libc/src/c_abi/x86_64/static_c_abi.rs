@@ -890,6 +890,9 @@ mod h_errno;
 #[path = "resolver_runtime.rs"]
 mod resolver_runtime;
 #[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_resolver_transport.rs"]
+mod owned_resolver_transport;
+#[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_netdb_lookup.rs"]
 mod owned_netdb_lookup;
 #[cfg(feature = "x86-owned-static-runtime")]

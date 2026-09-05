@@ -10,7 +10,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crabc_core::resolver::{
-    encode_query, exchange, DnsResponse, ExchangeConfig, NameServer, TYPE_A,
+    encode_query, exchange, exchange_with_transport, DnsDatagram, DnsIoResult,
+    DnsResponse, DnsSocketAddress, DnsSocketKind, DnsTcpFailure, DnsTcpStart, DnsTransport,
+    DnsWait, ExchangeConfig, ExchangeError, NameServer, TYPE_A,
 };
 use crabc_core::Errno;
 
@@ -362,4 +364,129 @@ fn x86_64_socket_setup_failure_is_distinct_from_exhausted_dns_attempts() {
         Err(crabc_core::resolver::ExchangeError::Setup(Errno::MFILE))
     );
     assert_eq!(exchange(&config, &query[..length], 19, &mut answer), Err(Errno::TIMEDOUT));
+}
+
+#[derive(Clone, Copy)]
+enum CallbackCase { Queued(usize), DatagramCount, StartCount, SendCount, ReceiveCount, FailedStart }
+
+// A safe transport implementation can return arbitrary counts. The shared
+// engine must still bound every slice and retire the actual socket it opened.
+struct CallbackTransport {
+    case: CallbackCase,
+    live_fd: Option<i32>,
+    closes: usize,
+    waits: usize,
+    datagrams: usize,
+    stream_receives: usize,
+    sent: Vec<u8>,
+    response: Vec<u8>,
+    received: usize,
+    query: Vec<u8>,
+}
+
+impl DnsTransport for CallbackTransport {
+    fn socket_opened(&mut self, fd: i32, _kind: DnsSocketKind) {
+        assert!(self.live_fd.replace(fd).is_none(), "only one DNS descriptor is live");
+    }
+    fn close_socket(&mut self, fd: i32) {
+        assert_eq!(self.live_fd.take(), Some(fd));
+        crabc_core::io::close(fd).unwrap();
+        self.closes += 1;
+    }
+    fn wait(&mut self, fd: i32, _event: DnsWait, _timeout: u32) -> DnsIoResult<bool> {
+        self.waits += 1;
+        if fd == -1 {
+            assert!(self.live_fd.is_none(), "failed TCP descriptor closes before its deadline continuation");
+            return DnsIoResult::Complete(false);
+        }
+        DnsIoResult::Complete(self.datagrams == 0 || !matches!(self.case, CallbackCase::DatagramCount))
+    }
+    fn stream_starting(&mut self) -> DnsTcpFailure {
+        if matches!(self.case, CallbackCase::FailedStart) { DnsTcpFailure::WaitUntilDeadline }
+        else { DnsTcpFailure::Immediate }
+    }
+    fn send(&mut self, _fd: i32, bytes: &[u8], kind: DnsSocketKind) -> DnsIoResult<usize> {
+        if kind == DnsSocketKind::Stream {
+            if matches!(self.case, CallbackCase::SendCount) { return DnsIoResult::Complete(usize::MAX); }
+            self.sent.extend_from_slice(bytes);
+        }
+        DnsIoResult::Complete(bytes.len())
+    }
+    fn receive_stream(&mut self, _fd: i32, bytes: &mut [u8]) -> DnsIoResult<usize> {
+        self.stream_receives += 1;
+        let amount = bytes.len().min(self.response.len() - self.received);
+        bytes[..amount].copy_from_slice(&self.response[self.received..self.received+amount]);
+        self.received += amount;
+        DnsIoResult::Complete(if matches!(self.case, CallbackCase::ReceiveCount) { usize::MAX } else { amount })
+    }
+    fn receive_datagram(&mut self, _fd: i32, bytes: &mut [u8]) -> DnsIoResult<DnsDatagram> {
+        self.datagrams += 1;
+        if matches!(self.case, CallbackCase::DatagramCount) {
+            return DnsIoResult::Complete(DnsDatagram { length: usize::MAX, truncated: false });
+        }
+        let identifier = u16::from_be_bytes([self.query[0], self.query[1]]);
+        let response = dns_truncated(&self.query, identifier);
+        bytes[..response.len()].copy_from_slice(&response);
+        DnsIoResult::Complete(DnsDatagram { length: response.len(), truncated: false })
+    }
+    fn start_tcp(&mut self, _fd: i32, _target: &DnsSocketAddress, _query: &[u8], _deadline: i64) -> crabc_core::Result<DnsTcpStart> {
+        if matches!(self.case, CallbackCase::FailedStart) { return Err(Errno::CONNREFUSED); }
+        Ok(DnsTcpStart::Queued { frame_bytes: match self.case {
+            CallbackCase::StartCount => usize::MAX,
+            CallbackCase::Queued(amount) => amount,
+            _ => 0,
+        } })
+    }
+}
+
+fn callback_exchange(case: CallbackCase) -> (Result<usize, ExchangeError>, CallbackTransport) {
+    let mut query = vec![0u8;128];
+    let length = encode_query(b"callback.test", TYPE_A, 23, &mut query).unwrap();
+    query.truncate(length);
+    let answer = dns_answer(&query, 23, 0x8180, [198,51,100,23]);
+    let mut response = (answer.len() as u16).to_be_bytes().to_vec();
+    response.extend_from_slice(&answer);
+    let mut transport = CallbackTransport { case, live_fd: None, closes: 0, waits: 0,
+        datagrams: 0, stream_receives: 0, sent: Vec::new(), response, received: 0, query: query.clone() };
+    let mut output = [0u8;512];
+    let result = exchange_with_transport(&one_server_config(53), &query, 23, &mut output, &mut transport);
+    assert!(transport.live_fd.is_none(), "the descriptor owner is retired on every result");
+    (result, transport)
+}
+
+#[test]
+fn x86_64_dns_transport_rejects_untrusted_counts_before_framing_or_further_io() {
+    for case in [CallbackCase::DatagramCount, CallbackCase::StartCount, CallbackCase::SendCount, CallbackCase::ReceiveCount] {
+        let (result, transport) = callback_exchange(case);
+        assert_eq!(result, Err(ExchangeError::Transport(Errno::TIMEDOUT)));
+        assert_eq!(transport.closes, if matches!(case, CallbackCase::DatagramCount) { 1 } else { 2 });
+        match case {
+            CallbackCase::ReceiveCount => assert_eq!(transport.stream_receives, 1, "reject the prefix count before reading its body"),
+            _ => assert_eq!(transport.stream_receives, 0, "invalid earlier counts cannot reach stream receive"),
+        }
+    }
+}
+
+#[test]
+fn x86_64_dns_transport_advances_tcp_frame_across_every_initial_queued_boundary() {
+    let (_, full) = callback_exchange(CallbackCase::Queued(0));
+    let frame_size = full.query.len()+2;
+    for queued in [0,1,2,3,frame_size-1,frame_size] {
+        let (result, transport) = callback_exchange(CallbackCase::Queued(queued));
+        assert!(result.is_ok());
+        let mut frame = (transport.query.len() as u16).to_be_bytes().to_vec();
+        frame.extend_from_slice(&transport.query);
+        assert_eq!(transport.sent, frame[queued..], "only the unqueued suffix is transmitted");
+        assert_eq!(transport.closes, 2, "UDP retires before TCP acquisition");
+        assert_eq!(transport.waits, if queued == frame_size { 3 } else { 4 });
+    }
+}
+
+#[test]
+fn x86_64_dns_transport_retires_failed_tcp_start_before_deadline_continuation() {
+    let (result, transport) = callback_exchange(CallbackCase::FailedStart);
+    assert_eq!(result, Err(ExchangeError::Transport(Errno::TIMEDOUT)));
+    assert_eq!(transport.waits, 2, "UDP response wait and source failed-start wait");
+    assert_eq!(transport.closes, 2);
+    assert_eq!(transport.stream_receives, 0);
 }

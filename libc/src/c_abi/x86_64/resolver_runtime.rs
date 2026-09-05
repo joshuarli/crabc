@@ -816,6 +816,11 @@ unsafe fn resolver_error(error: crabc_core::Errno) {
 /// Send one caller-built query through nameservers in the calling thread's
 /// resolver state.  The shared transport owns only the finite I/O exchange;
 /// this wrapper owns C error publication and state-derived configuration.
+/// # Safety
+/// For admitted positive lengths, non-null query/answer pointers designate
+/// respectively readable query bytes and an exclusive writable answer range,
+/// with no overlap. Owned C callers may be canceled during DNS I/O and must
+/// register cleanup for their own resources that require retirement.
 #[inline(never)]
 #[no_mangle]
 pub unsafe extern "C" fn __res_send(
@@ -841,13 +846,26 @@ pub unsafe extern "C" fn __res_send(
     let query = unsafe { core::slice::from_raw_parts(query, query_length as usize) };
     let answer = unsafe { core::slice::from_raw_parts_mut(answer, answer_length as usize) };
     let query_id = u16::from_be_bytes([query[0], query[1]]);
-    match resolver::exchange(&config, query, query_id, answer) {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let (result, masked_errno) = {
+        let outcome = unsafe { super::owned_resolver_transport::exchange(&config, query, query_id, answer) };
+        (outcome.result.map_err(|error| match error {
+            resolver::ExchangeError::Setup(errno) | resolver::ExchangeError::Transport(errno) => errno,
+        }), outcome.masked_errno)
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    let (result, masked_errno) = (resolver::exchange(&config, query, query_id, answer), None::<c_int>);
+    let result = match result {
         Ok(length) => length as c_int,
         Err(error) => {
             unsafe { resolver_error(error) };
             -1
         }
-    }
+    };
+    // Consumed MASKED cancellation has a source errno lifecycle of its own;
+    // synthetic transport exhaustion must not overwrite its last syscall error.
+    if let Some(error) = masked_errno { unsafe { set_errno(error); } }
+    result
 }
 
 unsafe fn query_response(

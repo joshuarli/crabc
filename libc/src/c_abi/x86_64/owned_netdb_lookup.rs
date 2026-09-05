@@ -201,11 +201,14 @@ pub(super) unsafe fn query(config: &Config, name: &[u8], kind: u16, answer: &mut
     let id = (time[1] + time[1]/65536) as u16;
     let mut wire = [0u8;280];
     let length = resolver::encode_query(name, kind, id, &mut wire).map_err(|_| 0)?;
-    match resolver::exchange_with_setup_error(&config.exchange, &wire[..length], id, answer) {
+    let outcome = unsafe { super::owned_resolver_transport::exchange(&config.exchange, &wire[..length], id, answer) };
+    let result = match outcome.result {
         Ok(n) => Ok((n,id)),
         Err(ExchangeError::Setup(error)) => { unsafe { errno::set_errno(error.raw()) }; Err(-11) }
         Err(ExchangeError::Transport(_)) => Err(-3),
-    }
+    };
+    if let Some(error) = outcome.masked_errno { unsafe { errno::set_errno(error); } }
+    result
 }
 
 unsafe fn dns(out: &mut [Address;MAX_ADDRS], canon: &mut [u8;256], name: &[u8], family: c_int, conf: &Config) -> c_int {

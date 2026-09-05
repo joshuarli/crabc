@@ -86,13 +86,13 @@ before a later CNAME, whereas grouped extraction can still inspect it. This
 exact parser-order gap remains a resolver-family qualification obligation.
 The owned adapter distinguishes local socket-creation errno from exhausted
 transport attempts without creating probe sockets. Existing native
-`exchange` keeps its prior timeout behavior. The core transport uses raw
-ppoll and ordinary-return descriptor closure: it is **not a deferred C
-cancellation point**, and this slice does not prove cancellation-driven
-FD cleanup. An owned cancellation/cleanup adapter is required before
-resolver-family closure. Source masks around destination sorting and
-AI_ADDRCONFIG are retained, but full musl cancellation lifecycle parity is
-not claimed. Addrinfo allocation/free retains the existing opaque
+`exchange` keeps its prior timeout behavior. Owned C callers now use the
+separate [resolver cancellation owner](owned-resolver-cancellation.md): real
+send/receive/poll cancellation points, explicit descriptor cleanup, MASKED
+state transitions, and source TCP-start ordering. Native Rust and the private
+archive retain raw transport behavior. Source masks around destination sorting
+and AI_ADDRCONFIG are retained; complete resolver-family source parity remains
+unclaimed. Addrinfo allocation/free retains the existing opaque
 page-per-node owner, including IPv6 scope; all nodes share the first node's
 canonical-name pointer as in musl. It does not import musl's private aibuf
 layout or replace freeaddrinfo.

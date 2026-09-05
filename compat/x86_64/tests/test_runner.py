@@ -2106,7 +2106,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "owned-syslog",
                 "owned-error-reporting",
                 "owned-io-cancellation",
-                "owned-resolver-network|owned-classic-netdb",
+                "owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation",
                 "owned-dynamic-io-cancellation",
                 "owned-posix-timers|owned-pthread-scheduling|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
                 "owned-pthread-lifecycle",

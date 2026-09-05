@@ -78,12 +78,12 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                          "crabc-dynamic-attach.o", "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o")),
                 })
             for case, (script, mode) in qualification.CASES.items():
-                leaf = (f"qualification-scratch/{product}/classic-netdb/owned-classic-netdb.fixture"
-                        if case == "classic-netdb" else f"leaf-artifacts/{product}-{case}")
+                leaf = (f"qualification-scratch/{product}/{case}/owned-{case}.fixture"
+                        if case in qualification.DNS_CASES else f"leaf-artifacts/{product}-{case}")
                 artifact = self.put(f"{leaf}/consumer", b"actual leaf artifact")
                 log = self.put(f"qualification-cases/{product}/{case}.log", f"ordinary differential passed; evidence: {artifact.parent}\n".encode())
                 isolation = {}
-                if case == "classic-netdb":
+                if case in qualification.DNS_CASES:
                     self.put(f"{leaf}/network-isolation.json", {
                         "interfaces": ["lo"], "loopback_up": True,
                         "isolation": "user-net-namespace", "network_namespace": "net:[2]",
@@ -142,6 +142,12 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         self.assertEqual(qualification.case_command(self.work, "installed", "cycle"),
             ["bash", str(self.root / "compat/x86_64/run_general_dynamic_cycle.sh"), str(self.work / "installed")])
 
+    def test_resolver_cancellation_case_uses_isolated_namespace_and_supplied_product(self):
+        self.assertEqual(qualification.case_command(self.work, "installed", "resolver-cancellation"),
+            ["unshare", "--user", "--map-root-user", "--net", "python3", "-B",
+             str(self.root / "compat/x86_64/resolver_namespace.py"),
+             str(self.root / "compat/x86_64/run_owned_resolver_cancellation.sh"), str(self.work / "installed")])
+
     def test_classic_netdb_scratch_is_fresh_and_preserves_shared_tmpdir(self):
         shared = self.work / "shared-temporary"
         shared.mkdir(mode=0o750)
@@ -149,7 +155,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         destination.mkdir()
         environment = {"TMPDIR": str(shared)}
         original = shared.stat()
-        temporary = qualification.classic_namespace_environment(destination, "installed", environment)
+        temporary = qualification.dns_namespace_environment(destination, "installed", "classic-netdb", environment)
         self.assertEqual(temporary, destination / "qualification-scratch/installed/classic-netdb")
         self.assertEqual(environment["TMPDIR"], str(temporary))
         self.assertEqual(temporary.stat().st_uid, os.geteuid())
@@ -157,7 +163,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(temporary.stat().st_mode) & 0o777, 0o700)
         self.assertEqual((shared.stat().st_uid, shared.stat().st_mode), (original.st_uid, original.st_mode))
         with self.assertRaises(FileExistsError):
-            qualification.classic_namespace_environment(destination, "installed", environment)
+            qualification.dns_namespace_environment(destination, "installed", "classic-netdb", environment)
 
     def test_classic_netdb_receipt_rejects_a_different_temporary_directory(self):
         record = qualification.read(self.work / "qualification-cases/installed/classic-netdb.json")

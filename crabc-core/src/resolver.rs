@@ -166,11 +166,111 @@ enum UdpResponse {
     Truncated,
 }
 
-struct ServerAddress {
+/// Initialized destination for a DNS transport operation. The byte view is
+/// exactly one Linux sockaddr record; callers cannot construct invalid values.
+pub struct DnsSocketAddress {
     family: i32,
     storage: [u8; 28],
     length: u32,
 }
+
+impl DnsSocketAddress {
+    /// Linux address family of the initialized record.
+    pub fn family(&self) -> i32 { self.family }
+    /// Borrow the initialized Linux sockaddr bytes for this destination.
+    pub fn as_bytes(&self) -> &[u8] { &self.storage[..self.length as usize] }
+}
+
+/// DNS socket lifetime selected by the shared exchange.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DnsSocketKind { Datagram, Stream }
+
+/// Readiness needed by a bounded DNS operation.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DnsWait { Readable, Writable }
+
+/// The actual result of a DNS cancellation-point operation. MASKED
+/// cancellation is distinct from an ordinary syscall returning ECANCELED:
+/// its source semantics depend on whether this was UDP, TCP, or a wait.
+pub enum DnsIoResult<T> {
+    /// The syscall completed with this result.
+    Complete(T),
+    /// The syscall failed without consuming MASKED cancellation.
+    Failed(crate::Errno),
+    /// The C owner consumed MASKED cancellation and changed state to DISABLE.
+    MaskedCancellation,
+}
+
+impl<T> From<Result<T>> for DnsIoResult<T> {
+    fn from(result: Result<T>) -> Self {
+        match result { Ok(value) => Self::Complete(value), Err(error) => Self::Failed(error) }
+    }
+}
+
+/// One UDP receive result, including the kernel's truncation observation.
+pub struct DnsDatagram {
+    /// Full byte count reported by the receive operation.
+    pub length: usize,
+    /// Whether the bounded receive lost a packet suffix.
+    pub truncated: bool,
+}
+
+/// Progress made while opening the TCP connection for a DNS query.
+pub enum DnsTcpStart {
+    /// Native connect completed; the ordinary immediate frame send may begin.
+    Connected,
+    /// Source TCP-start queued this many bytes, including the two-byte length.
+    /// If the frame is incomplete, wait for writable before sending its suffix.
+    Queued { frame_bytes: usize },
+}
+
+/// Continuation after a TCP socket or initial connection could not be opened.
+pub enum DnsTcpFailure {
+    /// Preserve the native transport's immediate failed-attempt result.
+    Immediate,
+    /// The owned C source reenters its real cancellation-point poll until the
+    /// current query deadline, with no active descriptor events.
+    WaitUntilDeadline,
+}
+
+/// DNS-only syscall and descriptor-lifetime boundary. The native implementation
+/// uses raw Linux operations. An owned C implementation may execute the actual
+/// I/O through its cancellation window and explicitly register descriptor
+/// cleanup. The shared engine retains DNS framing, deadlines, and retries.
+///
+/// Calls are serial. Each successful socket acquisition is reported before
+/// any operation can cancel; `close_socket` retires it before another socket
+/// is acquired. At most one descriptor is live. Callback byte counts are
+/// checked before they can advance offsets or select a slice.
+pub trait DnsTransport {
+    /// Register a newly acquired descriptor before any cancellation point.
+    fn socket_opened(&mut self, fd: i32, kind: DnsSocketKind);
+    /// Close and retire the registered descriptor without a cancellation point.
+    fn close_socket(&mut self, fd: i32);
+    /// Observe a raw socket creation, UDP connect, or monotonic-clock failure.
+    /// These DNS operations remain outside the I/O CP methods, but a C owner
+    /// still needs their actual errno after earlier MASKED cancellation.
+    fn syscall_failed(&mut self, _error: crate::Errno) {}
+    /// Enter the disabled TCP-start phase before socket acquisition. C source
+    /// restores its original entry state after this phase even when acquisition
+    /// fails; native transport has no cancellation state and returns immediately.
+    fn stream_starting(&mut self) -> DnsTcpFailure { DnsTcpFailure::Immediate }
+    /// Execute one readiness wait with this remaining millisecond timeout.
+    fn wait(&mut self, fd: i32, event: DnsWait, timeout_ms: u32) -> DnsIoResult<bool>;
+    /// Send one datagram or a stream prefix on an already connected socket.
+    fn send(&mut self, fd: i32, bytes: &[u8], kind: DnsSocketKind) -> DnsIoResult<usize>;
+    /// Receive stream bytes into the provided writable range.
+    fn receive_stream(&mut self, fd: i32, bytes: &mut [u8]) -> DnsIoResult<usize>;
+    /// Receive one datagram into the provided writable range.
+    fn receive_datagram(&mut self, fd: i32, bytes: &mut [u8]) -> DnsIoResult<DnsDatagram>;
+    /// Start TCP with cancellation disabled in an owned C implementation.
+    /// Its source-mapped fast-open send may queue part or all of the frame.
+    /// The native implementation retains its existing raw connect/wait path.
+    fn start_tcp(&mut self, fd: i32, target: &DnsSocketAddress, query: &[u8], deadline_ms: i64)
+        -> Result<DnsTcpStart>;
+}
+
+struct RawDnsTransport;
 
 #[inline]
 fn invalid() -> crate::Errno {
@@ -487,8 +587,8 @@ fn expand_name(packet: &[u8], start: usize, output: &mut [u8]) -> Result<usize> 
     }
 }
 
-fn server_address(server: NameServer) -> Result<ServerAddress> {
-    let mut result = ServerAddress {
+fn server_address(server: NameServer) -> Result<DnsSocketAddress> {
+    let mut result = DnsSocketAddress {
         family: server.family as i32,
         storage: [0; 28],
         length: 0,
@@ -541,182 +641,175 @@ fn server_address(server: NameServer) -> Result<ServerAddress> {
     Ok(result)
 }
 
-fn monotonic_millis() -> Result<i64> {
+fn monotonic_millis(transport: &mut impl DnsTransport) -> Result<i64> {
     let mut value = Timespec {
         seconds: 0,
         nanoseconds: 0,
     };
     // SAFETY: `value` is the exact two-word admitted Linux LP64 timespec output
     // record and remains live for the direct syscall.
-    unsafe {
-        crate::time::clock_gettime_raw(CLOCK_MONOTONIC, (&mut value as *mut Timespec).cast())?
-    };
+    if let Err(error) = unsafe {
+        crate::time::clock_gettime_raw(CLOCK_MONOTONIC, (&mut value as *mut Timespec).cast())
+    } {
+        transport.syscall_failed(error);
+        return Err(error);
+    }
     Ok(value
         .seconds
         .saturating_mul(1_000)
         .saturating_add(value.nanoseconds / 1_000_000))
 }
 
-fn deadline_after(timeout_ms: u32) -> Result<i64> {
-    Ok(monotonic_millis()?.saturating_add(timeout_ms as i64))
+fn deadline_after(timeout_ms: u32, transport: &mut impl DnsTransport) -> Result<i64> {
+    Ok(monotonic_millis(transport)?.saturating_add(timeout_ms as i64))
 }
 
-fn remaining_millis(deadline: i64) -> Result<u32> {
-    let now = monotonic_millis()?;
+fn remaining_millis(deadline: i64, transport: &mut impl DnsTransport) -> Result<u32> {
+    let now = monotonic_millis(transport)?;
     if now >= deadline {
         return Ok(0);
     }
     Ok((deadline - now).min(u32::MAX as i64) as u32)
 }
 
-fn poll_until(fd: i32, events: i16, deadline: i64) -> Result<bool> {
-    loop {
-        let remaining = remaining_millis(deadline)?;
-        if remaining == 0 {
-            return Ok(false);
-        }
-        let mut poll = PollFd {
-            fd,
-            events,
-            revents: 0,
-        };
+impl DnsTransport for RawDnsTransport {
+    fn socket_opened(&mut self, _fd: i32, _kind: DnsSocketKind) {}
+    fn close_socket(&mut self, fd: i32) { let _ = crate::io::close(fd); }
+
+    fn wait(&mut self, fd: i32, event: DnsWait, remaining: u32) -> DnsIoResult<bool> {
+        let events = match event { DnsWait::Readable => POLLIN, DnsWait::Writable => POLLOUT };
+        let mut poll = PollFd { fd, events, revents: 0 };
         let timeout = Timespec {
             seconds: (remaining / 1_000) as i64,
             nanoseconds: ((remaining % 1_000) as i64) * 1_000_000,
         };
         // SAFETY: `poll` and `timeout` are valid local Linux ABI records.
-        match unsafe {
+        let result = unsafe {
             crate::event::ppoll_raw(
-                (&mut poll as *mut PollFd).cast(),
-                1,
-                (&timeout as *const Timespec).cast(),
-                core::ptr::null(),
-                8,
+                (&mut poll as *mut PollFd).cast(), 1,
+                (&timeout as *const Timespec).cast(), core::ptr::null(), 8,
             )
-        } {
-            Ok(0) => return Ok(false),
-            Ok(_) => {
-                return Ok(poll.revents & (events | POLLERR | POLLHUP | POLLNVAL) != 0);
+        };
+        result.map(|count| count != 0 && poll.revents & (events | POLLERR | POLLHUP | POLLNVAL) != 0).into()
+    }
+
+    fn send(&mut self, fd: i32, bytes: &[u8], _kind: DnsSocketKind) -> DnsIoResult<usize> {
+        // SAFETY: the borrowed slice remains readable through the syscall.
+        // A connected stream uses sendto with a null destination as before.
+        unsafe { net::sendto_raw(fd, bytes.as_ptr(), bytes.len(), MSG_NOSIGNAL, core::ptr::null(), 0) }.into()
+    }
+
+    fn receive_stream(&mut self, fd: i32, bytes: &mut [u8]) -> DnsIoResult<usize> {
+        // SAFETY: the borrowed slice remains exclusively writable through the
+        // syscall; no source-address output is requested.
+        unsafe { net::recvfrom_raw(fd, bytes.as_mut_ptr(), bytes.len(), 0, core::ptr::null_mut(), core::ptr::null_mut()) }.into()
+    }
+
+    fn receive_datagram(&mut self, fd: i32, bytes: &mut [u8]) -> DnsIoResult<DnsDatagram> {
+        let iovec = crate::io::Iovec { iov_base: bytes.as_mut_ptr(), iov_len: bytes.len() };
+        // SAFETY: the iovec covers exactly the exclusive borrowed range.
+        // MSG_TRUNC retains the existing full-datagram-length observation.
+        unsafe { net::recvmsg_raw(fd, &iovec, 1, MSG_TRUNC) }
+            .map(|(length, flags)| DnsDatagram { length, truncated: flags & MSG_TRUNC != 0 }).into()
+    }
+
+    fn start_tcp(&mut self, fd: i32, target: &DnsSocketAddress, _query: &[u8], deadline: i64) -> Result<DnsTcpStart> {
+        // SAFETY: the destination is an initialized Linux sockaddr record.
+        match unsafe { net::connect_raw(fd, target.storage.as_ptr(), target.length) } {
+            Ok(()) => {}
+            Err(error) if error == crate::Errno::INPROGRESS || error == crate::Errno::ALREADY => {
+                if !poll_until(fd, DnsWait::Writable, deadline, self)? { return Err(crate::Errno::TIMEDOUT); }
+                let pending = net::socket_error(fd)?;
+                if pending != 0 { return Err(crate::Errno::from_raw(pending).unwrap_or(crate::Errno::IO)); }
             }
-            Err(error) if error == crate::Errno::INTR => continue,
             Err(error) => return Err(error),
+        }
+        Ok(DnsTcpStart::Connected)
+    }
+}
+
+fn poll_until(fd: i32, event: DnsWait, deadline: i64, transport: &mut impl DnsTransport) -> Result<bool> {
+    loop {
+        let remaining = remaining_millis(deadline, transport)?;
+        if remaining == 0 { return Ok(false); }
+        match transport.wait(fd, event, remaining) {
+            DnsIoResult::Complete(ready) => return Ok(ready),
+            DnsIoResult::Failed(error) if error == crate::Errno::INTR => continue,
+            // musl res_msend retries its outer loop after poll returns a
+            // nonpositive result, including consumed MASKED cancellation.
+            DnsIoResult::MaskedCancellation => continue,
+            DnsIoResult::Failed(error) => return Err(error),
         }
     }
 }
 
-fn send_all(fd: i32, bytes: &[u8], deadline: i64) -> Result<()> {
+fn send_all(fd: i32, bytes: &[u8], deadline: i64, transport: &mut impl DnsTransport) -> Result<()> {
     let mut offset = 0usize;
     while offset < bytes.len() {
-        if remaining_millis(deadline)? == 0 {
-            return Err(crate::Errno::TIMEDOUT);
-        }
-        // A connected stream uses the same Linux sendto ABI with a null
-        // destination; MSG_NOSIGNAL keeps a failed DNS peer from raising
-        // SIGPIPE in the caller.
-        let sent = unsafe {
-            net::sendto_raw(
-                fd,
-                bytes[offset..].as_ptr(),
-                bytes.len() - offset,
-                MSG_NOSIGNAL,
-                core::ptr::null(),
-                0,
-            )
-        };
-        match sent {
-            Ok(0) => return Err(crate::Errno::PIPE),
-            Ok(length) => offset += length,
-            Err(error) if error == crate::Errno::INTR => continue,
-            Err(error) if error == crate::Errno::AGAIN || error == crate::Errno::WOULDBLOCK => {
-                if !poll_until(fd, POLLOUT, deadline)? {
-                    return Err(crate::Errno::TIMEDOUT);
-                }
+        if remaining_millis(deadline, transport)? == 0 { return Err(crate::Errno::TIMEDOUT); }
+        match transport.send(fd, &bytes[offset..], DnsSocketKind::Stream) {
+            DnsIoResult::Complete(0) => return Err(crate::Errno::PIPE),
+            DnsIoResult::Complete(length) if length <= bytes.len() - offset => offset += length,
+            DnsIoResult::Complete(_) => return Err(crate::Errno::OVERFLOW),
+            DnsIoResult::Failed(error) if error == crate::Errno::INTR => continue,
+            DnsIoResult::Failed(error) if error == crate::Errno::AGAIN || error == crate::Errno::WOULDBLOCK => {
+                if !poll_until(fd, DnsWait::Writable, deadline, transport)? { return Err(crate::Errno::TIMEDOUT); }
             }
-            Err(error) => return Err(error),
+            // Unlike UDP send, source TCP send failure retires the attempt.
+            DnsIoResult::MaskedCancellation => return Err(crate::Errno::CANCELED),
+            DnsIoResult::Failed(error) => return Err(error),
         }
     }
     Ok(())
 }
 
-fn send_datagram(fd: i32, bytes: &[u8], deadline: i64) -> Result<()> {
+fn send_datagram(fd: i32, bytes: &[u8], deadline: i64, transport: &mut impl DnsTransport) -> Result<()> {
     loop {
-        if remaining_millis(deadline)? == 0 {
-            return Err(crate::Errno::TIMEDOUT);
-        }
-        // A DNS query must remain one UDP datagram. A short successful
-        // send is therefore a failed server attempt, never a partial
-        // query which can be retried as a second datagram.
-        let sent = unsafe {
-            net::sendto_raw(
-                fd,
-                bytes.as_ptr(),
-                bytes.len(),
-                MSG_NOSIGNAL,
-                core::ptr::null(),
-                0,
-            )
-        };
-        match sent {
-            Ok(length) if length == bytes.len() => return Ok(()),
-            Ok(_) => return Err(crate::Errno::MSGSIZE),
-            Err(error) if error == crate::Errno::INTR => continue,
-            Err(error) if error == crate::Errno::AGAIN || error == crate::Errno::WOULDBLOCK => {
-                if !poll_until(fd, POLLOUT, deadline)? {
-                    return Err(crate::Errno::TIMEDOUT);
-                }
+        if remaining_millis(deadline, transport)? == 0 { return Err(crate::Errno::TIMEDOUT); }
+        match transport.send(fd, bytes, DnsSocketKind::Datagram) {
+            DnsIoResult::Complete(length) if length == bytes.len() => return Ok(()),
+            // A query is one datagram. A short successful send must never
+            // become a second datagram containing only its unsent suffix.
+            DnsIoResult::Complete(_) => return Err(crate::Errno::MSGSIZE),
+            // res_msend ignores a canceled UDP send and proceeds to its
+            // response wait. This is not a fabricated successful byte count.
+            DnsIoResult::MaskedCancellation => return Ok(()),
+            DnsIoResult::Failed(error) if error == crate::Errno::INTR => continue,
+            DnsIoResult::Failed(error) if error == crate::Errno::AGAIN || error == crate::Errno::WOULDBLOCK => {
+                if !poll_until(fd, DnsWait::Writable, deadline, transport)? { return Err(crate::Errno::TIMEDOUT); }
             }
-            Err(error) => return Err(error),
+            DnsIoResult::Failed(error) => return Err(error),
         }
     }
 }
 
-fn receive_exact(fd: i32, bytes: &mut [u8], deadline: i64) -> Result<()> {
+fn receive_exact(fd: i32, bytes: &mut [u8], deadline: i64, transport: &mut impl DnsTransport) -> Result<()> {
     let mut offset = 0usize;
     while offset < bytes.len() {
-        if !poll_until(fd, POLLIN, deadline)? {
-            return Err(crate::Errno::TIMEDOUT);
-        }
-        let received = unsafe {
-            net::recvfrom_raw(
-                fd,
-                bytes[offset..].as_mut_ptr(),
-                bytes.len() - offset,
-                0,
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-            )
-        };
-        match received {
-            Ok(0) => return Err(crate::Errno::CONNRESET),
-            Ok(length) => offset += length,
-            Err(error)
-                if error == crate::Errno::INTR
-                    || error == crate::Errno::AGAIN
-                    || error == crate::Errno::WOULDBLOCK =>
-            {
-                continue
-            }
-            Err(error) => return Err(error),
+        if !poll_until(fd, DnsWait::Readable, deadline, transport)? { return Err(crate::Errno::TIMEDOUT); }
+        let remaining = bytes.len() - offset;
+        match transport.receive_stream(fd, &mut bytes[offset..]) {
+            DnsIoResult::Complete(0) => return Err(crate::Errno::CONNRESET),
+            DnsIoResult::Complete(length) if length <= remaining => offset += length,
+            DnsIoResult::Complete(_) => return Err(crate::Errno::OVERFLOW),
+            DnsIoResult::Failed(error) if error == crate::Errno::INTR || error == crate::Errno::AGAIN || error == crate::Errno::WOULDBLOCK => continue,
+            DnsIoResult::MaskedCancellation => return Err(crate::Errno::CANCELED),
+            DnsIoResult::Failed(error) => return Err(error),
         }
     }
     Ok(())
 }
 
 /// Receives one connected UDP datagram without accepting a partial prefix.
-fn receive_datagram(fd: i32, bytes: &mut [u8]) -> Result<usize> {
-    let iovec = crate::io::Iovec {
-        iov_base: bytes.as_mut_ptr(),
-        iov_len: bytes.len(),
-    };
-    // SAFETY: `iovec` names exactly the live mutable `bytes` range. The
-    // private message header has no source-address or ancillary-data storage.
-    // `MSG_TRUNC` makes Linux return the full datagram length when this fixed
-    // caller buffer is too small, so a partial DNS packet is never parsed.
-    let (length, flags) = unsafe { net::recvmsg_raw(fd, &iovec, 1, MSG_TRUNC) }?;
-    if length > bytes.len() || flags & MSG_TRUNC != 0 {
-        return Err(crate::Errno::OVERFLOW);
+fn receive_datagram(fd: i32, bytes: &mut [u8], transport: &mut impl DnsTransport) -> Result<usize> {
+    match transport.receive_datagram(fd, bytes) {
+        DnsIoResult::Complete(packet) if packet.length <= bytes.len() && !packet.truncated => Ok(packet.length),
+        DnsIoResult::Complete(_) => Err(crate::Errno::OVERFLOW),
+        // res_msend leaves its inner UDP receive loop on this result, then
+        // polls again with the same socket and remaining deadline.
+        DnsIoResult::MaskedCancellation => Err(crate::Errno::AGAIN),
+        DnsIoResult::Failed(error) => Err(error),
     }
-    Ok(length)
 }
 
 /// Returns the byte after the one DNS question required by this transport.
@@ -783,12 +876,13 @@ fn udp_exchange(
     query_id: u16,
     answer: &mut [u8],
     deadline: i64,
+    transport: &mut impl DnsTransport,
 ) -> Result<UdpResponse> {
     loop {
-        if !poll_until(fd, POLLIN, deadline)? {
+        if !poll_until(fd, DnsWait::Readable, deadline, transport)? {
             return Err(crate::Errno::TIMEDOUT);
         }
-        let length = match receive_datagram(fd, answer) {
+        let length = match receive_datagram(fd, answer, transport) {
             Ok(length) => length,
             Err(error) if error == crate::Errno::OVERFLOW => continue,
             Err(error)
@@ -821,55 +915,70 @@ fn udp_exchange(
 }
 
 fn tcp_exchange(
-    target: &ServerAddress,
+    target: &DnsSocketAddress,
     query: &[u8],
     query_id: u16,
     answer: &mut [u8],
     deadline: i64,
+    transport: &mut impl DnsTransport,
 ) -> Result<usize> {
     if query.len() > u16::MAX as usize || answer.len() < 12 {
         return Err(crate::Errno::MSGSIZE);
     }
-    let fd = net::socket(target.family, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0)?;
+    let failure = transport.stream_starting();
+    let wait_failed_start = |transport: &mut _, error| {
+        if matches!(failure, DnsTcpFailure::WaitUntilDeadline) {
+            // Source res_msend keeps its failed TCP slot and zero UDP events
+            // in the outer poll. An ignored fd represents the same real CP
+            // without retaining the core's already retired UDP descriptor.
+            let _ = poll_until(-1, DnsWait::Readable, deadline, transport);
+        }
+        Err(error)
+    };
+    let fd = match net::socket(target.family, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0) {
+        Ok(fd) => fd,
+        Err(error) => { transport.syscall_failed(error); return wait_failed_start(transport, error); }
+    };
+    transport.socket_opened(fd, DnsSocketKind::Stream);
+    let started = match transport.start_tcp(fd, target, query, deadline) {
+        Ok(started) => started,
+        Err(error) => {
+            transport.close_socket(fd);
+            return wait_failed_start(transport, error);
+        }
+    };
     let result = (|| {
-        // SAFETY: `target.storage` contains the exact initialized Linux
-        // sockaddr record selected by `server_address`.
-        let connected = unsafe { net::connect_raw(fd, target.storage.as_ptr(), target.length) };
-        match connected {
-            Ok(()) => {}
-            Err(error)
-                if error == crate::Errno::INPROGRESS || error == crate::Errno::ALREADY =>
-            {
-                if !poll_until(fd, POLLOUT, deadline)? {
+        let frame_size = query.len() + 2;
+        let queued = match started {
+            DnsTcpStart::Connected => 0,
+            DnsTcpStart::Queued { frame_bytes } => {
+                if frame_bytes > frame_size { return Err(crate::Errno::OVERFLOW); }
+                if frame_bytes < frame_size && !poll_until(fd, DnsWait::Writable, deadline, transport)? {
                     return Err(crate::Errno::TIMEDOUT);
                 }
-                let pending = net::socket_error(fd)?;
-                if pending != 0 {
-                    return Err(crate::Errno::from_raw(pending).unwrap_or(crate::Errno::IO));
-                }
+                frame_bytes
             }
-            Err(error) => return Err(error),
-        }
+        };
 
         let frame_length = [(query.len() >> 8) as u8, query.len() as u8];
-        send_all(fd, &frame_length, deadline)?;
-        send_all(fd, query, deadline)?;
+        if queued < 2 { send_all(fd, &frame_length[queued..], deadline, transport)?; }
+        send_all(fd, &query[queued.saturating_sub(2)..], deadline, transport)?;
 
         let mut response_length_bytes = [0u8; 2];
-        receive_exact(fd, &mut response_length_bytes, deadline)?;
+        receive_exact(fd, &mut response_length_bytes, deadline, transport)?;
         let response_length = u16::from_be_bytes(response_length_bytes) as usize;
         if response_length < 12 || response_length > answer.len() {
             return Err(crate::Errno::MSGSIZE);
         }
         let response = &mut answer[..response_length];
-        receive_exact(fd, response, deadline)?;
+        receive_exact(fd, response, deadline, transport)?;
         let question_end = matching_question_end(response, query, query_id).ok_or_else(malformed)?;
         if response[2] & 0x02 != 0 || !has_complete_records(response, question_end) {
             return Err(malformed());
         }
         Ok(response_length)
     })();
-    let _ = crate::io::close(fd);
+    transport.close_socket(fd);
     result
 }
 
@@ -889,7 +998,7 @@ pub fn exchange(
     query_id: u16,
     answer: &mut [u8],
 ) -> Result<usize> {
-    exchange_impl(config, query, query_id, answer, false).map_err(|error| match error {
+    exchange_impl(config, query, query_id, answer, false, &mut RawDnsTransport).map_err(|error| match error {
         ExchangeError::Setup(errno) | ExchangeError::Transport(errno) => errno,
     })
 }
@@ -914,7 +1023,20 @@ pub fn exchange_with_setup_error(
     query_id: u16,
     answer: &mut [u8],
 ) -> core::result::Result<usize, ExchangeError> {
-    exchange_impl(config, query, query_id, answer, true)
+    exchange_impl(config, query, query_id, answer, true, &mut RawDnsTransport)
+}
+
+/// Performs the shared DNS exchange with an explicit C cancellation/lifetime
+/// owner. Socket setup errors remain distinct, as in
+/// [`exchange_with_setup_error`]. Native callers retain [`exchange`].
+pub fn exchange_with_transport(
+    config: &ExchangeConfig,
+    query: &[u8],
+    query_id: u16,
+    answer: &mut [u8],
+    transport: &mut impl DnsTransport,
+) -> core::result::Result<usize, ExchangeError> {
+    exchange_impl(config, query, query_id, answer, true, transport)
 }
 
 fn exchange_impl(
@@ -923,6 +1045,7 @@ fn exchange_impl(
     query_id: u16,
     answer: &mut [u8],
     preserve_setup_error: bool,
+    transport: &mut impl DnsTransport,
 ) -> core::result::Result<usize, ExchangeError> {
     if config.nameserver_count == 0
         || config.nameserver_count > MAX_NAMESERVERS
@@ -947,7 +1070,7 @@ fn exchange_impl(
                     continue;
                 }
             };
-            let deadline = match deadline_after(config.timeout_ms) {
+            let deadline = match deadline_after(config.timeout_ms, transport) {
                 Ok(value) => value,
                 Err(_) => {
                     index += 1;
@@ -960,39 +1083,41 @@ fn exchange_impl(
                 0,
             ) {
                 Ok(fd) => fd,
-                Err(error) if preserve_setup_error => return Err(ExchangeError::Setup(error)),
-                Err(_) => {
+                Err(error) => {
+                    transport.syscall_failed(error);
+                    if preserve_setup_error { return Err(ExchangeError::Setup(error)); }
                     index += 1;
                     continue;
                 }
             };
+            transport.socket_opened(fd, DnsSocketKind::Datagram);
             // SAFETY: `target.storage` contains the exact initialized
             // Linux sockaddr record and remains live across the syscall.
-            if unsafe { net::connect_raw(fd, target.storage.as_ptr(), target.length) }.is_err()
-            {
-                let _ = crate::io::close(fd);
+            if let Err(error) = unsafe { net::connect_raw(fd, target.storage.as_ptr(), target.length) } {
+                transport.syscall_failed(error);
+                transport.close_socket(fd);
                 index += 1;
                 continue;
             }
-            if send_datagram(fd, query, deadline).is_err() {
-                let _ = crate::io::close(fd);
+            if send_datagram(fd, query, deadline, transport).is_err() {
+                transport.close_socket(fd);
                 index += 1;
                 continue;
             }
-            match udp_exchange(fd, query, query_id, answer, deadline) {
+            match udp_exchange(fd, query, query_id, answer, deadline, transport) {
                 Ok(UdpResponse::Complete(length)) => {
-                    let _ = crate::io::close(fd);
+                    transport.close_socket(fd);
                     return Ok(length);
                 }
                 Ok(UdpResponse::Truncated) => {
-                    let _ = crate::io::close(fd);
-                    if let Ok(length) = tcp_exchange(&target, query, query_id, answer, deadline)
+                    transport.close_socket(fd);
+                    if let Ok(length) = tcp_exchange(&target, query, query_id, answer, deadline, transport)
                     {
                         return Ok(length);
                     }
                 }
                 Err(_) => {
-                    let _ = crate::io::close(fd);
+                    transport.close_socket(fd);
                 }
             }
             index += 1;

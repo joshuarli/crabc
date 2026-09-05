@@ -77,9 +77,11 @@ Run the two phases through the pinned dispatcher:
 The separate [owned classic netdb slice](../x86_64/owned-classic-netdb.md)
 reuses this DNS fixture for installed host/service APIs and the owned modern
 lookup backends. Its additional named records cover PTR and mixed-family
-error precedence without changing this workload's existing records. DNS
-transport cancellation and cancellation-driven descriptor cleanup remain an
-explicit resolver-family closure obligation for both owned paths.
+error precedence without changing this workload's existing records. The
+separate [owned resolver cancellation gate](../x86_64/owned-resolver-cancellation.md)
+proves the owned send/receive/wait and descriptor-retirement lifecycle through
+the same installed entry modes. Native Rust/private archive behavior and the
+remaining resolver-family obligations remain separate.
 
 ## Subcases
 
