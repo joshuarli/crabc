@@ -103,9 +103,12 @@ trap finish EXIT
 
 run_in_root() {
     local root="$1" output="$2"
+    local status=0
     shift 2
     timeout 40 env -i PATH=/ EXEC_TOKEN=parent LC_ALL=C "$CHROOT" "$root" "$@" \
-        >"$output" 2>"${output%.stdout}.stderr"
+        >"$output" 2>"${output%.stdout}.stderr" || status=$?
+    printf '%s\n' "$status" >"${output%.stdout}.status"
+    return "$status"
 }
 
 assert_static_symbols() {
@@ -504,6 +507,7 @@ if [ -n "$static_product" ]; then
         run_in_root "$work/$mode-root" "$work/$mode.stdout" /consumer
         [ ! -s "$work/$mode.stderr" ]
         cmp "$work/crabc.expected" "$work/$mode.stdout"
+        cmp "$work/oracle.status" "$work/$mode.status"
     done
 fi
 
@@ -524,6 +528,7 @@ for mode in pie non-pie; do
         fi
         [ ! -s "$work/$mode-$entry.stderr" ]
         cmp "$work/crabc.expected" "$work/$mode-$entry.stdout"
+        cmp "$work/oracle.status" "$work/$mode-$entry.status"
     done
 done
 

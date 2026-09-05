@@ -284,6 +284,31 @@ class OwnedProcessControlTests(unittest.TestCase):
         ):
             self.assertIn(required, runner)
 
+    def test_process_capture_retains_actual_status_and_failure_behavior(self) -> None:
+        runner = RUNNER.read_text(encoding="utf-8")
+        match = re.search(r"^run_in_root\(\) \{\n.*?^\}", runner, re.MULTILINE | re.DOTALL)
+        self.assertIsNotNone(match)
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            work = Path(temporary)
+            for status in (0, 7, 124):
+                with self.subTest(status=status):
+                    child = work / f"chroot-{status}"
+                    child.write_text(f"#!/bin/sh\nprintf 'raw stdout\\n'\nprintf 'raw stderr\\n' >&2\nexit {status}\n")
+                    child.chmod(0o755)
+                    output = work / f"result-{status}.stdout"
+                    body = ("set -euo pipefail\nCHROOT=$1\n" + match.group(0)
+                            + '\nrun_in_root "$2" "$3" /consumer\n')
+                    result = subprocess.run(
+                        ["bash", "-c", body, "process-capture", str(child), str(work), str(output)],
+                        cwd=ROOT, capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, status)
+                    self.assertEqual(output.read_text(), "raw stdout\n")
+                    self.assertEqual(output.with_suffix(".stderr").read_text(), "raw stderr\n")
+                    self.assertEqual(output.with_suffix(".status").read_text(), f"{status}\n")
+
 
 if __name__ == "__main__":
     unittest.main()

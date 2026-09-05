@@ -35,6 +35,11 @@ symbols. Static receipts bind the one object, selected CRT, owned archive and
 builtins hashes, manifest-recognized static payload, link trace/map, and final
 consumer. Dynamic consumer receipts bind the object, manifest, owned runtime
 inputs, interpreter, and `libc.so` dependency to the supplied product.
+Every oracle and candidate execution retains its raw stdout, stderr, and
+timeout/chroot exit status in sibling `.stdout`, `.stderr`, and `.status`
+files. Nonzero status still fails the runner after capture. Successful
+candidate statuses are compared to the oracle alongside the stream checks;
+the explicit `fexecve` stdout difference below remains separately checked.
 
 For family replay inside the pinned native environment, the leaf also accepts
 `bash compat/x86_64/run_owned_process_control.sh [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`.
