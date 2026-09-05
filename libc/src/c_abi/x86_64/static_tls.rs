@@ -63,15 +63,24 @@ const TLS_STATE_FAILED: u8 = 3;
 ///
 /// GCC's Linux/x86-64 stack protector reads the word at FS+40. Reserve its
 /// complete storage explicitly rather than relying on mmap's page rounding.
-/// The intervening words carry no runtime contract and remain zero.
+/// FS+8 through FS+24 remain zero and unowned. FS+32 is the one aligned,
+/// zero-initialized opaque `SelectedWorkerCancellation *` cache read by the
+/// signal-safe pthread-cancellation leaf; `pthread_identity` is its sole libc
+/// accessor. It is neither a full pthread record nor a public TCB field. The
+/// dynamic TLS owner reserves the identical word.
 #[repr(C)]
 struct StaticThreadControlBlock {
     self_pointer: usize,
-    reserved: [usize; 4],
+    reserved: [usize; 3],
+    cancellation_state: AtomicUsize,
     stack_guard: usize,
 }
 
-const _: () = assert!(core::mem::offset_of!(StaticThreadControlBlock, stack_guard) == 40);
+const _: () = {
+    assert!(core::mem::offset_of!(StaticThreadControlBlock, cancellation_state) == 32);
+    assert!(core::mem::offset_of!(StaticThreadControlBlock, stack_guard) == 40);
+    assert!(core::mem::size_of::<StaticThreadControlBlock>() == 48);
+};
 
 /// One validated program-header record from the live final executable.
 #[derive(Clone, Copy)]
@@ -541,7 +550,8 @@ impl StaticInitialTlsPlan {
                 tp as *mut StaticThreadControlBlock,
                 StaticThreadControlBlock {
                     self_pointer: tp,
-                    reserved: [0; 4],
+                    reserved: [0; 3],
+                    cancellation_state: AtomicUsize::new(0),
                     stack_guard: self.stack_guard,
                 },
             )

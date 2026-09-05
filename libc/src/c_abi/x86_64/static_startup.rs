@@ -44,6 +44,8 @@ use super::{
     auxv_observation, environment, immediate_termination, posix_exit, process_globals,
     startup_security, static_tls,
 };
+#[cfg(feature = "x86-owned-static-runtime")]
+use super::pthread_create_join;
 
 const MAX_STARTUP_POINTERS: usize = 1 << 20;
 const MAX_AUXV_ENTRIES: usize = 4096;
@@ -184,6 +186,13 @@ pub unsafe extern "C" fn __libc_start_main(
     if rtld_fini.is_some() || !static_tls::is_ready() {
         startup_reject();
     }
+
+    // SAFETY: the hidden CRT bootstrap established the selected initial TCB
+    // before this ABI entry.  Publish the process-lifetime cancellation state
+    // before constructors can execute; signal delivery itself remains owned
+    // by the separate cancellation leaf.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe { pthread_create_join::publish_initial_selected_pthread_cancellation_state() };
 
     // SAFETY: `startup_vectors` validated the kernel/CRT envp and auxiliary
     // vector delimiters before this sole process-wide raw-pointer publication.

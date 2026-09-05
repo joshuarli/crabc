@@ -14,23 +14,34 @@
 //!   `pthread_equal`/`thrd_equal` aliases and their exact 0-or-1 equality
 //!   result.
 //!
-//! Static Initial TLS v1 owns only the `%fs:0` self word, not musl's full
-//! `struct pthread` TCB. That is sufficient for this selected opaque-handle
-//! boundary because the installed x86 C header deliberately leaves the C
-//! `struct __pthread` incomplete. The sibling bounded create/join leaf
-//! returns the same TP value as its selected worker's `pthread_t`, so C's
+//! Static Initial TLS v1 owns the `%fs:0` self word and reserves `%fs:32` for
+//! exactly one opaque `SelectedWorkerCancellation *`. The cache lets the
+//! selected cancellation signal path read current state without a registry
+//! lock, dynamic TLS lookup, allocation, or interposition. It names no full
+//! musl `struct pthread` and exposes no field to C: create/join publishes only
+//! a live selected state before a callback can receive SIGCANCEL, and clears
+//! it before that state can be retired. The dynamic TLS owner reserves the
+//! same word and never dereferences it. The installed x86 C header deliberately
+//! leaves the C `struct __pthread` incomplete. The sibling bounded create/join
+//! leaf returns the same TP value as its selected worker's `pthread_t`, so C's
 //! `pthread_equal` macro remains correct as ordinary pointer equality.
 //!
 //! This leaf is deliberately static-only. It selects no dereferenceable TCB
-//! layout, thread list, detached lifecycle, cancellation, TSD, lock, dynamic
-//! TLS/DTV, loader handoff, or general C11 thread implementation. In
-//! particular, a future loader-owned dynamic-TLS transition must preserve this
-//! identity before it can reuse this static evidence.
+//! layout, thread list, detached lifecycle, cancellation state machine, TSD,
+//! lock, dynamic TLS/DTV, loader handoff, or general C11 thread
+//! implementation. In particular, a future loader-owned dynamic-TLS
+//! transition must preserve this identity and the opaque `%fs:32` cache before
+//! it can reuse this static evidence.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread identity leaf requires little-endian Linux/x86-64");
 
 use core::arch::asm;
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+use super::pthread_cancel::SelectedWorkerCancellation;
+
+const CANCELLATION_STATE_POINTER_OFFSET: usize = 32;
 
 /// Read the current x86-64 Variant-II thread pointer from its `%fs:0` self
 /// word.
@@ -52,6 +63,78 @@ pub(super) fn current_thread_pointer() -> *mut u8 {
         );
     }
     thread_pointer as *mut u8
+}
+
+/// Publish the current selected cancellation state in the reserved `%fs:32`
+/// word.
+///
+/// This is the only libc writer of that concrete TCB word. The caller must
+/// run on a selected x86 task whose TLS owner materialized the documented
+/// aligned zero word. It must publish the fully initialized state before
+/// callback entry or SIGCANCEL unmask, and clear it only after cancellation is
+/// disabled and any current-thread cleanup owner has finished using it.
+///
+/// # Safety
+///
+/// `state` must be either null or point to a live
+/// [`SelectedWorkerCancellation`] whose storage remains mapped until a later
+/// release store clears this task's cache. Concurrent readers use only atomic
+/// loads through [`current_selected_cancellation_state`].
+#[inline(always)]
+pub(super) unsafe fn publish_current_selected_cancellation_state(
+    state: *const SelectedWorkerCancellation,
+) {
+    let thread_pointer = current_thread_pointer();
+    debug_assert!(!thread_pointer.is_null());
+    // SAFETY: the static and dynamic x86 TLS owners reserve this exact aligned
+    // word for an atomic opaque pointer. This caller establishes the lifetime
+    // and publish/clear ordering documented above.
+    unsafe {
+        AtomicUsize::from_ptr(
+            thread_pointer
+                .add(CANCELLATION_STATE_POINTER_OFFSET)
+                .cast::<usize>(),
+        )
+    }
+    .store(state as usize, Ordering::Release);
+}
+
+/// Clear this task's selected cancellation-state cache before task retirement.
+///
+/// The caller must first disable current-task cancellation and complete any
+/// state owner that still needs the cache (such as orphaned FILE-lock repair).
+/// It must not use this for an ordinary final-process exit, whose callbacks
+/// and stream flush may still observe current cancellation state.
+#[inline(always)]
+pub(super) unsafe fn clear_current_selected_cancellation_state() {
+    // SAFETY: this is the documented null publication after the current task
+    // has finished every selected cancellation-state user.
+    unsafe { publish_current_selected_cancellation_state(core::ptr::null()) }
+}
+
+/// Load this task's opaque selected cancellation-state cache without a lock.
+///
+/// The SIGCANCEL handler and syscall-cancellation leaf use this immediate
+/// acquire load only after the owning TLS runtime established `%fs`. A null
+/// result means the task is foreign, has not reached selected callback entry,
+/// or has committed its selected cancellation state to retirement.
+#[inline(always)]
+pub(super) fn current_selected_cancellation_state() -> *const SelectedWorkerCancellation {
+    let thread_pointer = current_thread_pointer();
+    if thread_pointer.is_null() {
+        return core::ptr::null();
+    }
+    // SAFETY: both selected TLS owners reserve this aligned word for the
+    // atomic cache. An acquire load pairs with create/join's release
+    // publication and performs no registry, TLS-GD, allocator, or libc work.
+    unsafe {
+        AtomicUsize::from_ptr(
+            thread_pointer
+                .add(CANCELLATION_STATE_POINTER_OFFSET)
+                .cast::<usize>(),
+        )
+    }
+    .load(Ordering::Acquire) as *const SelectedWorkerCancellation
 }
 
 // Musl emits all four public symbols as weak, same-address pairs.  Defining
