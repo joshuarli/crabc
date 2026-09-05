@@ -49,8 +49,7 @@ claimed.
 ## Focused evidence
 
 `compat/x86_64/run_owned_strfmon.sh [DYNAMIC_SYSROOT]` is the focused runner.
-After root registers the owned module and dispatcher/catalog entries, the
-normal command is `./scripts/dev-x86_64.sh owned-strfmon [DYNAMIC_SYSROOT]`.
+The normal command is `./scripts/dev-x86_64.sh owned-strfmon [DYNAMIC_SYSROOT]`.
 The runner first compiles C11 and C++17 project-first and pinned-musl header
 witnesses from `owned_strfmon_header_abi_probe.c` and
 `owned_strfmon_header_abi_probe.cpp`. They prove the LP64 `ssize_t` and opaque
@@ -62,6 +61,9 @@ dynamic driver. That same object links against pinned static musl, owned
 static, owned static-PIE, and owned dynamic PIE/non-PIE products. Each dynamic
 binary runs once through the kernel-selected interpreter and once through the
 direct `/lib/ld-crabc-x86_64.so.1` entry, producing six candidate executions.
+When supplied a dynamic product, it checks its four dynamic entries; the
+mandatory `monetary` qualification case applies that check to each installed
+and extracted product.
 The runner records header and common-object hashes, symbol reports, final
 binaries, stdout, and stderr; every candidate byte stream must equal musl.
 

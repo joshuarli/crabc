@@ -48,6 +48,7 @@ them; this router should explain ownership, not duplicate command contracts.
   — conventional local files and bounded DNS through owned products, with
   explicit remaining resolver cancellation and parser-order obligations.
 - [Owned TRE regex evidence](evidence/x86-owned-regex.md)
+- [`evidence/x86-owned-strfmon.md`](evidence/x86-owned-strfmon.md): fixed-profile monetary formatting and installed-product evidence.
 - [Owned wide calendar evidence](evidence/x86-owned-wcsftime.md)
 - [Owned C filename-pattern evidence](../compat/x86_64/owned-pattern.md)
   — source-mapped `fnmatch`/`glob` C ABI slice across owned products; neither

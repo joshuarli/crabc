@@ -44,16 +44,6 @@ expected_transition = "Completed as a non-promoting checked disposition: every c
 evidence = ["compiler-derived inventory digest binding", "exact disjoint primary callable partition", "exact deferred-owner roster", "exact missing-reference declaration roster", "native x86 inventory regeneration plus checked report"]
 
 [[deferred_owner_group]]
-id = "x86-cabi-text-math-locale-stdio-v1"
-semantic_family = "libc.text-math-locale-stdio"
-linkage_owner_family = "libc.c-abi-compat"
-linkage_owner_obligation = "final-callable-provider-archive-closure"
-resolution = "planned-provider"
-provider_target = "future selected C ABI providers in libc.text-math-locale-stdio"
-source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["strfmon", "strfmon_l"]
-
-[[deferred_owner_group]]
 id = "x86-cabi-pthread-tls-completion-v1"
 semantic_family = "libc.pthread-tls"
 linkage_owner_family = "libc.c-abi-compat"

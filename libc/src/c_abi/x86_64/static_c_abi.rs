@@ -704,6 +704,9 @@ mod owned_strftime;
 #[path = "owned_wcsftime.rs"]
 mod owned_wcsftime;
 #[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_strfmon.rs"]
+mod owned_strfmon;
+#[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_strptime.rs"]
 mod owned_strptime;
 #[cfg(feature = "x86-owned-static-runtime")]

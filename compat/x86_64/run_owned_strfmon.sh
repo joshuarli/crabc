@@ -145,4 +145,4 @@ done
 
 sha256sum -c "$work/header-input.sha256" >"$work/header-input-verified.txt"
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"
-printf 'owned strfmon: PASS (same installed-header object; pinned musl and owned static/static-PIE/dynamic PIE/non-PIE kernel/direct entries; C/C++ declaration and unmangled-linkage witness, opaque C/C.UTF-8 locale tokens, variadic multi-value parsing, source flags/width/precision, literal and capacity boundaries, truncation/E2BIG, and byte canaries); evidence: %s\n' "$work"
+printf 'owned strfmon: PASS (same installed-header object; pinned musl and selected owned entries; C/C++ declaration and unmangled-linkage witness, opaque C/C.UTF-8 locale tokens, variadic multi-value parsing, source flags/width/precision, literal and capacity boundaries, truncation/E2BIG, and byte canaries); evidence: %s\n' "$work"

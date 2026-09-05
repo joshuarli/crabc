@@ -122,6 +122,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "pattern",
                 "regex",
                 "wide-calendar",
+                "monetary",
                 "classic-netdb",
                 "posix-filesystem",
                 "unix-mechanisms",

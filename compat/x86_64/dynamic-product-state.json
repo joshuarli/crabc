@@ -1,7 +1,7 @@
 {
   "schema": "crabc.x86_64-owned-dynamic-product-state/v1",
   "owner_family": "sysroot.owned-artifact",
-  "contract_sha256": "b5b638269d0003ad89290bb351462160bded021690bb019030b3c72d8ee383f4",
+  "contract_sha256": "e96f9c52d954ae2bbe5b3860f24466ed18b2562343c3ba5720737456d986656d",
   "status": "implemented-unqualified",
   "materialized_sysroot": null,
   "evidence": [],
