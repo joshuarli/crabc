@@ -71,6 +71,16 @@ dynamic aggregate that still must execute and retain all fifty cases for the
 required products. No individual dynamic case, including a three-product
 replay, is that aggregate.
 
+`owned_posix_family_workloads.py` makes the coordinator input executable:
+it partitions all 149 spellings among named workload records, retains each
+source-to-object role, and requires the zero-spelling composition,
+pthread-signal, timer, and static-fork workloads independently. The dynamic
+`fork` DSO workload remains its own dynamic primary owner; `static-fork` uses
+the atfork-registry and static fork/exec sources only for static evidence. Run
+`python3 -B -m unittest compat/x86_64/tests/test_owned_posix_family_workloads.py`
+to check this structural map. It does not execute a runtime workload or close
+any qualification cell.
+
 The family coordinator itself remains unimplemented. It must combine the
 focused and reused inputs into its six static cells and twelve dynamic cells,
 with one family receipt. Nothing in these current bindings closes
