@@ -1488,13 +1488,22 @@ assert_scanf_matrix_records "$printf_matrix_reference.scan" "pinned-musl scanf r
 
 # Wide parsing and stream ownership share the existing stdio/format jobs.
 # Each arm still receives a distinct pathname, link receipt, and ELF proof.
-# Use the pinned wrapper's dynamic musl reference: its extra-static wide
-# stream executable faults independently of optimization/header selection.
-# Candidate static modes remain unchanged; this is a semantic oracle only.
+# The pinned wrapper inherits a PIE default: -static alone omits the dynamic
+# interpreter but leaves constructor addresses unrelocated before main.
+# Select and prove ET_EXEC explicitly; candidate modes are independent.
 for wide_kind in stdio format; do
-    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -static -no-pie \
         -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_wide_${wide_kind}_probe.c" \
         -o "$header_consumer/wide-${wide_kind}-reference"
+    readelf -hW "$header_consumer/wide-${wide_kind}-reference" \
+        >"$header_consumer/wide-${wide_kind}-reference.elf"
+    grep -Eq 'Type:[[:space:]]+EXEC' "$header_consumer/wide-${wide_kind}-reference.elf" ||
+        fail "pinned-musl wide ${wide_kind} reference is not ET_EXEC"
+    readelf -lW "$header_consumer/wide-${wide_kind}-reference" \
+        >"$header_consumer/wide-${wide_kind}-reference.phdr"
+    if grep -Eq '^[[:space:]]*INTERP[[:space:]]' "$header_consumer/wide-${wide_kind}-reference.phdr"; then
+        fail "pinned-musl wide ${wide_kind} reference has an interpreter"
+    fi
     env -i "$header_consumer/wide-${wide_kind}-reference" \
         "$header_consumer/wide-${wide_kind}-stream" \
         >"$printf_matrix_reference.wide-${wide_kind}" ||
