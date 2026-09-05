@@ -552,6 +552,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-resolver-cancellation [DYNAMIC_SYSROOT]  compare installed DNS cancellation and descriptor cleanup
   owned-dynamic-io-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify shared-runtime cancellation through kernel and direct entry
 
+  owned-crypt-runtime [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  prove bounded SHA-crypt through installed owned products
+
   owned-system-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify isolated system/pclose cancellation and child wait ownership
   owned-dynamic-spawn [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed dynamic spawn semantics against musl
   owned-assert  test installed C assertion diagnostics and termination
@@ -5833,6 +5835,7 @@ case "$command" in
     memfd-create-header-abi) ;;
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
+    owned-crypt-runtime) ;;
     owned-system-cancellation) ;;
     owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
@@ -5997,7 +6000,7 @@ case "$command" in
         prepare_owned_posix_family_arguments "$@"
         set -- "${POSIX_FAMILY_ARGUMENTS[@]}"
         ;;
-    owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-process-trio|owned-syslog|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation)
+    owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-process-trio|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation)
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
@@ -7870,6 +7873,10 @@ case "$command" in
     owned-dynamic-io-cancellation)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_dynamic_io_cancellation.sh "$@"
+        ;;
+    owned-crypt-runtime)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_crypt_runtime.sh "$@"
         ;;
     owned-system-cancellation)
         ensure_image

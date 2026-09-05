@@ -72,6 +72,8 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "x86-allocator-observability",
                 "x86-allocator-runtime",
                 "x86-allocator-string-duplication",
+                "x86-crypt",
+                "x86-crypt-allocator-composition",
                 "x86-environment-runtime",
                 "x86-file-handles",
                 "x86-filesystem-traversal",

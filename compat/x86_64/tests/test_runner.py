@@ -2019,7 +2019,7 @@ unsafe fn join_selected_worker_inner(
             "vector-io-header-abi",
             "libc-crt1-static-tls",
             "owned-static-sysroot",
-            "owned-dynamic-sysroot",
+            "owned-loader-short-stack|owned-dynamic-sysroot",
             "crt-object-bundle",
             "crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto",
             "linux-5-10-uapi",
@@ -2199,6 +2199,7 @@ unsafe fn join_selected_worker_inner(
         expected_groups = (
             expected_groups[:static_sysroot_index]
             + (
+                "owned-crypt-runtime",
                 "owned-system-cancellation",
                 "owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|"
                 "owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition",
@@ -2221,7 +2222,7 @@ unsafe fn join_selected_worker_inner(
             + ("lua-static-source-build", "lua-dynamic-source-build", "libc-owned-wordexp")
             + expected_groups[static_sysroot_index:]
         )
-        dynamic_sysroot_index = expected_groups.index("owned-dynamic-sysroot") + 1
+        dynamic_sysroot_index = expected_groups.index("owned-loader-short-stack|owned-dynamic-sysroot") + 1
         expected_groups = (
             expected_groups[:dynamic_sysroot_index]
             + ("owned-dynamic-pthread-exit", "owned-dynamic-fork", "materialized-dynamic-sysroot")
