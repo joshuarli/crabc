@@ -333,14 +333,14 @@ unsafe fn copy_relocation(
     offset: u64, index: usize, addend: i64,
 ) -> Option<CopyRelocation> {
     let destination = unsafe { definition(objects, owner, index) }?;
-    if owner != 0 || objects[owner].mapped || addend != 0
+    if owner != 0 || objects[owner].role != ObjectRole::Main || addend != 0
         || destination.kind != 1 || !matches!(destination.binding, 1 | 2)
         || destination.visibility != 0 || destination.section == 0
         || destination.section >= 0xff00 || destination.value != offset
     { return None; }
     let source = unsafe { lookup(scope, objects, owner, index, false, true) }??;
     if source.kind != 1 || source.visibility != 0 || source.section >= 0xff00
-        || !objects[source.owner].mapped
+        || objects[source.owner].role != ObjectRole::Library
         || !unsafe { readable_memory(&objects[source.owner], source.value, source.size.max(1)) }
         || !unsafe { readable_memory(&objects[source.owner], source.value, destination.size) }
     { return None; }

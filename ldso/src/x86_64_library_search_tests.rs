@@ -19,7 +19,7 @@ fn library_search_secure_auxv_disables_environment_and_untrusted_origin() {
         unsafe { initialize(stack.as_ptr() as usize); }
         if unsafe { !SECURE || !ENVIRONMENT_PATH.is_null() } { return false; }
         let path = b"$ORIGIN/sub\0";
-        let mut object = Object { mapped: true, runpath: path.as_ptr(), runpath_len: path.len() - 1, ..EMPTY_OBJECT };
+        let mut object = Object { role: ObjectRole::Library, runpath: path.as_ptr(), runpath_len: path.len() - 1, ..EMPTY_OBJECT };
         object.search_name[..9].copy_from_slice(b"relative\0");
         let mut expanded = [0; PATH_CAPACITY];
         if unsafe { object_paths(&object, &mut expanded) } != Ok(0) { return false; }
@@ -37,7 +37,7 @@ fn library_search_secure_auxv_disables_environment_and_untrusted_origin() {
 fn library_search_unknown_expansion_discards_whole_object_path() {
     unsafe fn probe(_: &RuntimeGuard) -> bool {
         let path = b"/otherwise/valid:$LIB/plugins\0";
-        let object = Object { mapped: true, runpath: path.as_ptr(), runpath_len: path.len() - 1, ..EMPTY_OBJECT };
+        let object = Object { role: ObjectRole::Library, runpath: path.as_ptr(), runpath_len: path.len() - 1, ..EMPTY_OBJECT };
         unsafe { object_paths(&object, &mut [0; PATH_CAPACITY]) == Ok(0) }
     }
     unsafe { isolated_mapping_probe(probe); }

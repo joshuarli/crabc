@@ -304,7 +304,7 @@ The preceding fixed search returned status 2 for a dependency available only
 through main ancestry or `/lib`, and 7 instead of the preloaded 8. Initial
 breadth-first identity selection separately failed with 8 instead of 7. The
 retained regressions now match musl. Direct interpreter command-line entry
-remains open: it needs an AT_BASE-independent self-entry path, mapped-main
-ownership and stack/auxv handoff before CLI search/preload options can reuse
-this policy. This is an unfinished product obligation, not a permanent
-exclusion or a reason to weaken installed search evidence.
+now reuses this policy for owned PIE and non-PIE executables. Its independent
+main-image role, transaction mapping ownership, stack/auxv handoff, options,
+listing and relocated-interpreter prefix behavior are specified and tested
+in [direct-interpreter.md](direct-interpreter.md).

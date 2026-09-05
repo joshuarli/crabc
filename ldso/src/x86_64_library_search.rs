@@ -4,9 +4,10 @@
 //! (MIT, 9fa28ece75d8a2191de7c5bb53bed224c5947417): environment first,
 //! first-load ancestors next, configured/default system directories last.
 //! Empty colon and newline components are skipped; unexpected open errors stop search.
-//! The installed interpreter at /lib/ld-crabc-x86_64.so.1 has musl
-//! installation prefix "". Its path file is /etc/ld-musl-x86_64.path; test
-//! roots supply only declared application DSOs and the installed libc.
+//! The canonical installed interpreter has installation prefix "". Direct
+//! entry derives the prefix from its invocation name, or from the executable's
+//! PT_INTERP in listing mode. Test roots supply only declared application
+//! DSOs and the installed libc.
 use super::*;
 use super::x86_64_runtime_memory::LoaderBuffer;
 use core::cell::UnsafeCell;
@@ -15,6 +16,7 @@ const PATH_CAPACITY: usize = 4096;
 static mut ENVIRONMENT_PATH: *const u8 = core::ptr::null();
 static mut ENVIRONMENT_PRELOAD: *const u8 = core::ptr::null();
 static mut SECURE: bool = true;
+static mut INTERPRETER_NAME: *const u8 = b"/lib/ld-crabc-x86_64.so.1\0".as_ptr();
 
 /// Initial stack strings have process lifetime, as in musl's env_path. This
 /// is initialized once before discovery and never refreshed from environ.
@@ -53,6 +55,16 @@ pub(super) unsafe fn initialize(sp: usize) {
     }
 }
 
+/// Command options are explicit input, independent of environment filtering.
+pub(super) unsafe fn command_interpreter(name: *const u8) { unsafe { INTERPRETER_NAME = name; } }
+pub(super) unsafe fn interpreter_name() -> &'static [u8] {
+    let pointer = unsafe { INTERPRETER_NAME };
+    let length = unsafe { bounded_nul(pointer, PATH_CAPACITY) }.unwrap_or(0);
+    unsafe { core::slice::from_raw_parts(pointer, length) }
+}
+pub(super) unsafe fn command_path(path: *const u8) { unsafe { ENVIRONMENT_PATH = path; } }
+pub(super) unsafe fn command_preload(path: *const u8) { unsafe { ENVIRONMENT_PRELOAD = path; } }
+
 /// A missing or malformed optional preload is ignored by musl load_preload;
 /// successful admissions still participate in the complete initial graph.
 /// Overlong selected lists are rejected rather than silently truncated.
@@ -72,7 +84,18 @@ unsafe impl Sync for SystemPathOwner {}
 static SYSTEM_PATH: SystemPathOwner = SystemPathOwner(UnsafeCell::new(SystemPath::Uninitialized));
 
 unsafe fn load_system_path() -> SystemPath {
-    let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, b"/etc/ld-musl-x86_64.path\0".as_ptr() as i64, 0x80000, 0) };
+    // musl derives the installation prefix from the second-last slash of
+    // an absolute interpreter name. Relative names retain the root prefix.
+    let name = unsafe { interpreter_name() };
+    let prefix_len = if name.starts_with(b"/") {
+        name.iter().enumerate().filter(|(_, byte)| **byte == b'/')
+            .rev().nth(1).map_or(0, |(index, _)| index)
+    } else { 0 };
+    let suffix = b"/etc/ld-musl-x86_64.path\0";
+    let mut path = [0u8; PATH_CAPACITY + 32];
+    path[..prefix_len].copy_from_slice(&name[..prefix_len]);
+    path[prefix_len..prefix_len + suffix.len()].copy_from_slice(suffix);
+    let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0x80000, 0) };
     if fd < 0 { return if fd == -2 { SystemPath::Defaults } else { SystemPath::Disabled }; }
     // Musl uses zero bytes when fstat fails, and never retries with defaults
     // after a present configuration cannot be read or allocated.
@@ -157,7 +180,7 @@ unsafe fn object_paths(object: &Object, output: &mut [u8; PATH_CAPACITY]) -> Res
         remaining = &remaining[skip..];
     }
     let mut executable = [0; MAX_PATH];
-    let name = if !object.mapped {
+    let name = if object.map_provenance == ObjectMapProvenance::KernelMain {
         if unsafe { SECURE } { return Ok(0); }
         let size = unsafe { syscall3(89, b"/proc/self/exe\0".as_ptr() as i64, executable.as_mut_ptr() as i64, MAX_PATH as i64) };
         if size < 0 {

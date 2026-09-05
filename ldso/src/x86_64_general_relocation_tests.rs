@@ -35,7 +35,7 @@ impl Image {
             symtab: self.symbols.as_ptr().cast(), symcount: self.symbols.len(),
             strtab: b"\0value\0".as_ptr(), strsz: 7,
             rela: self.relocations.as_ptr().cast(), relasz: self.count * 24,
-            mapped, ..EMPTY_OBJECT
+            role: if mapped { ObjectRole::Library } else { ObjectRole::Main }, ..EMPTY_OBJECT
         }
     }
 }
@@ -249,7 +249,7 @@ fn malformed_copy_ranges_scope_and_metadata_fail_before_any_graph_write() {
         }
         let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
         objects[0] = main.object(false); objects[1] = provider.object(true);
-        if case == 11 { objects[0].mapped = true; }
+        if case == 11 { objects[0].role = ObjectRole::Library; }
         if case == 12 { objects[0].phdr = main.data.as_ptr().cast(); main.data[..7].copy_from_slice(&main.phdr); }
         let before_main = *main.data; let before_provider = *provider.data;
         assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none(), "case {case}");

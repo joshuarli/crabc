@@ -90,6 +90,9 @@ mod x86_64_runtime_registry;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_library_search.rs"]
 mod x86_64_library_search;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_direct_entry.rs"]
+mod x86_64_direct_entry;
 #[cfg(crabc_general_initial_graph)]
 use x86_64_initial_graph_state::ObjectIdentity;
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
@@ -316,6 +319,8 @@ const PROT_WRITE: i64 = 2;
 const PROT_EXEC: i64 = 4;
 const MAP_PRIVATE: i64 = 2;
 const MAP_FIXED: i64 = 0x10;
+// Linux 5.10 baseline: reserve an ET_EXEC span without replacing live maps.
+const MAP_FIXED_NOREPLACE: i64 = 0x100000;
 const MAP_ANONYMOUS: i64 = 0x20;
 const ARCH_SET_FS: i64 = 0x1002;
 const PAGE: u64 = 4096;
@@ -794,9 +799,14 @@ enum ObjectMapProvenance {
     Transaction,
 }
 
-#[derive(Copy, Clone)]
+/// ELF semantic role is independent of who owns the virtual mapping.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum ObjectRole { Main, Library }
+
+#[derive(Clone, Copy)]
 struct Object {
     base: u64,
+    entry: u64,
     phdr: *const u8,
     phnum: usize,
     #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
@@ -840,7 +850,7 @@ struct Object {
     needed_by: Option<usize>,
     needed: [usize; MAX_NEEDED],
     needed_count: usize,
-    mapped: bool,
+    role: ObjectRole,
     map_provenance: ObjectMapProvenance,
     map_span_start: u64,
     map_span_byte_len: u64,
@@ -858,6 +868,7 @@ struct Object {
 
 const EMPTY_OBJECT: Object = Object {
     base: 0,
+    entry: 0,
     phdr: core::ptr::null(),
     phnum: 0,
     #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
@@ -896,7 +907,7 @@ const EMPTY_OBJECT: Object = Object {
     needed_by: None,
     needed: [0; MAX_NEEDED],
     needed_count: 0,
-    mapped: false,
+    role: ObjectRole::Main,
     map_provenance: ObjectMapProvenance::None,
     map_span_start: 0,
     map_span_byte_len: 0,
@@ -1017,8 +1028,9 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 }
 
 // The interpreter cannot rely on any relocated Rust address before this
-// sequence.  Linux supplies AT_BASE for PT_INTERP; the loop finds this
-// object's PT_DYNAMIC and applies only the linker's self-relative records.
+// sequence. Linux supplies AT_BASE for PT_INTERP; direct entry uses the
+// link-time ELF-header symbol through RIP-relative addressing instead. The
+// loop finds this object's PT_DYNAMIC and applies its self-relative records.
 #[cfg(not(test))]
 global_asm!(
     ".global _start",
@@ -1044,6 +1056,11 @@ global_asm!(
     "add $16, %rdi",
     "jmp .Lx86_auxv",
     ".Lx86_have_base:",
+    "test %r13, %r13",
+    "jne .Lx86_self_base",
+    ".hidden __ehdr_start",
+    "lea __ehdr_start(%rip), %r13",
+    ".Lx86_self_base:",
     "mov 32(%r13), %rax",
     "movzwl 56(%r13), %ecx",
     "lea (%r13,%rax), %rdi",
@@ -1133,7 +1150,7 @@ pub unsafe extern "C" fn x86_64_initial_graph_run(sp: usize, ldso_base: usize) -
         // main and mid images remain RELA-only, while the fixed leaf carries
         // the one required packed table; accepting the same tags elsewhere
         // would silently widen this private graph's ABI.
-        objects[0] = parse_mapped(main_base, main_phdr, main_phnum, false, false, false)
+        objects[0] = parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, false)
             .unwrap_or_else(|| fail(b"mainelf\n"));
         if objects[0].needed_count != 1 || objects[0].runpath.is_null() || objects[0].relrsz != 0 {
             fail(b"mainshape\n");
@@ -1249,10 +1266,11 @@ unsafe fn parse_mapped(
     base: u64,
     phdr: *const u8,
     phnum: usize,
-    mapped: bool,
+    role: ObjectRole,
     allow_bounded_runtime_legacy_tags: bool,
     general_initial_graph: bool,
 ) -> Option<Object> {
+    let mapped = role == ObjectRole::Library;
     // Legacy DT_INIT/DT_FINI are not general mapped-object features. The only
     // caller that may opt in is the one-slot runtime transaction below; it
     // must never accidentally select main-image or startup-DSO lifecycle.
@@ -1369,7 +1387,7 @@ unsafe fn parse_mapped(
         phnum,
         #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
         dynamic,
-        mapped,
+        role,
         relro_virtual_address,
         relro_byte_len,
         ..EMPTY_OBJECT
@@ -1904,6 +1922,15 @@ unsafe fn map_elf(
     allow_bounded_runtime_legacy_tags: bool,
     general_initial_graph: bool,
 ) -> Option<Object> {
+    map_elf_for_role(fd, allow_bounded_runtime_legacy_tags, general_initial_graph, ObjectRole::Library)
+}
+
+unsafe fn map_elf_for_role(
+    fd: i64,
+    allow_bounded_runtime_legacy_tags: bool,
+    general_initial_graph: bool,
+    role: ObjectRole,
+) -> Option<Object> {
     let file_byte_len = file_size_from_fd(fd)?;
     if file_byte_len < 64 {
         return None;
@@ -1918,8 +1945,9 @@ unsafe fn map_elf(
         byte_len: header_map_len,
     };
     let header = first as *const u8;
+    let elf_type = read_u16(header.add(16));
     let valid = *header == 0x7f && *header.add(1) == b'E' && *header.add(2) == b'L' && *header.add(3) == b'F'
-        && *header.add(4) == 2 && *header.add(5) == 1 && read_u16(header.add(16)) == 3 && read_u16(header.add(18)) == 62
+        && *header.add(4) == 2 && *header.add(5) == 1 && (elf_type == 3 || (role == ObjectRole::Main && elf_type == 2)) && read_u16(header.add(18)) == 62
         && read_u16(header.add(54)) == 56;
     let phoff = usize::try_from(read_u64(header.add(32))).ok()?;
     let phnum = read_u16(header.add(56)) as usize;
@@ -1943,10 +1971,10 @@ unsafe fn map_elf(
     let reserve_len = max.checked_sub(min)?;
     let reserve = syscall6(
         SYS_MMAP,
-        0,
+        if elf_type == 2 { min as i64 } else { 0 },
         reserve_len as i64,
         PROT_READ | PROT_WRITE,
-        MAP_PRIVATE | MAP_ANONYMOUS,
+        MAP_PRIVATE | MAP_ANONYMOUS | if elf_type == 2 { MAP_FIXED_NOREPLACE } else { 0 },
         -1,
         0,
     );
@@ -2017,15 +2045,18 @@ unsafe fn map_elf(
         break;
     }
     let runtime_phdr = runtime_phdr?;
+    let entry = base.checked_add(read_u64(header.add(24)))?;
     drop(header_mapping);
     let mut object = parse_mapped(
         base,
         runtime_phdr,
         phnum,
-        true,
+        role,
         allow_bounded_runtime_legacy_tags,
         general_initial_graph,
     )?;
+    if role == ObjectRole::Main && !virtual_range_in_executable_load(runtime_phdr, phnum, entry.checked_sub(base)?, 1) { return None; }
+    object.entry = entry;
     object.map_provenance = ObjectMapProvenance::Transaction;
     object.map_span_start = reserve as u64;
     object.map_span_byte_len = reserve_len;
@@ -2704,7 +2735,7 @@ unsafe fn relocation_value(
                             length,
                         )
             ) {
-                let is_main = !requestor.mapped
+                let is_main = requestor.role == ObjectRole::Main
                     && requestor.base == objects[0].base
                     && requestor.phdr == objects[0].phdr;
                 let binding = *requested.add(4) >> 4;
@@ -2867,7 +2898,7 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
             len,
         )
     {
-        let is_main = !requestor.mapped
+        let is_main = requestor.role == ObjectRole::Main
             && requestor.base == objects[0].base
             && requestor.phdr == objects[0].phdr;
         let binding = *symbol.add(4) >> 4;
@@ -2890,7 +2921,7 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
             len,
         )
     {
-        let is_main = !requestor.mapped
+        let is_main = requestor.role == ObjectRole::Main
             && requestor.base == objects[0].base
             && requestor.phdr == objects[0].phdr;
         let binding = *symbol.add(4) >> 4;
@@ -2914,7 +2945,7 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
             len,
         )
     {
-        let is_main = !requestor.mapped
+        let is_main = requestor.role == ObjectRole::Main
             && requestor.base == objects[0].base
             && requestor.phdr == objects[0].phdr;
         let binding = *symbol.add(4) >> 4;
@@ -2936,7 +2967,7 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
             len,
         )
     {
-        let is_main = !requestor.mapped
+        let is_main = requestor.role == ObjectRole::Main
             && requestor.base == objects[0].base
             && requestor.phdr == objects[0].phdr;
         let binding = *symbol.add(4) >> 4;
@@ -2959,7 +2990,7 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
             len,
         )
     {
-        let is_main = !requestor.mapped
+        let is_main = requestor.role == ObjectRole::Main
             && requestor.base == objects[0].base
             && requestor.phdr == objects[0].phdr;
         let binding = *symbol.add(4) >> 4;
@@ -3060,7 +3091,7 @@ unsafe fn resolve_tls_symbol(
 }
 
 unsafe fn protect_segments(object: &Object) -> Option<()> {
-    if !object.mapped { return Some(()); }
+    if object.map_provenance != ObjectMapProvenance::Transaction { return Some(()); }
     for index in 0..object.phnum {
         let p = object.phdr.add(index * 56);
         if read_u32(p) != PT_LOAD { continue; }

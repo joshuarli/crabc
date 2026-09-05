@@ -147,10 +147,13 @@ dynamic fork still returns `EAGAIN`.
 The shared initial/runtime search matrix proves 37 musl decisions through
 installed/extracted PIE and non-PIE consumers, including conventional system
 path configuration, preload TLS/lifecycle, main ORIGIN with contained proc,
-and real setuid AT_SECURE execution. Direct interpreter CLI remains open;
-the full policy and evidence limits are recorded in
-[runtime-dynamic-loader.md](runtime-dynamic-loader.md). Remaining product
-work includes direct interpreter CLI, broader introspection/order
+and real setuid AT_SECURE execution. Direct interpreter entry now admits
+owned PIE/non-PIE executables through the same transaction, with musl command
+options, listing, explicit mapping ownership and reconstructed argv/auxv.
+Its 40-case-per-arm installed/extracted differential is described in
+[direct-interpreter.md](direct-interpreter.md); the shared search policy and
+limits remain in [runtime-dynamic-loader.md](runtime-dynamic-loader.md).
+Remaining product work includes broader introspection/order
 qualification and dynamic fork repair (still explicitly `EAGAIN`), followed
 by the complete installed dynamic campaign. Musl's
 retained dlclose mappings, not physical unloading, are the parity target.

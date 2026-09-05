@@ -83,7 +83,8 @@ pub(crate) enum GeneralInitialPreparationStage {
 
 /// The canonical graph/object store for a successful general initial load.
 ///
-/// Slot zero is the kernel-owned main image. Every later slot was admitted by
+/// Slot zero is the main image: borrowed for kernel entry, owned for direct
+/// entry. Every later slot was admitted by
 /// this transaction, carries its map provenance/span in [`Object`], and can
 /// be rolled back in reverse admission order before [`Ready`]. TLS module IDs
 /// and offsets live in these same object records, so the TLS route cannot
@@ -130,9 +131,11 @@ impl Drop for GeneralInitialLoaderTestPublicationGuard {
 impl GeneralInitialLoaderState {
     /// Starts the stack-local part of one initial transaction.
     pub(crate) fn new(main_identity: ObjectIdentity, mut main: Object) -> Self {
-        main.map_provenance = ObjectMapProvenance::KernelMain;
-        main.map_span_start = 0;
-        main.map_span_byte_len = 0;
+        if main.map_provenance != ObjectMapProvenance::Transaction {
+            main.map_provenance = ObjectMapProvenance::KernelMain;
+            main.map_span_start = 0;
+            main.map_span_byte_len = 0;
+        }
         let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
         objects[0] = main;
         Self {
@@ -292,7 +295,8 @@ impl GeneralInitialLoaderState {
     ///
     /// `Ready` has no rollback path. The caller owns the physical `munmap`
     /// operation and receives only the retained transaction-created object
-    /// records in exact reverse map/admission order; slot zero is excluded.
+    /// records in exact reverse map/admission order. A directly mapped main is
+    /// released last; a kernel-provided main is always borrowed.
     pub(crate) fn rollback(&mut self, mut unmap: impl FnMut(&Object)) {
         if self.phase == GeneralInitialLoaderPhase::Ready
             || self.phase == GeneralInitialLoaderPhase::Vacant
@@ -305,6 +309,10 @@ impl GeneralInitialLoaderState {
         }
         let (graph, objects) = (&mut self.graph, &mut self.objects);
         graph.rollback_to_main(|index| unmap(&objects[index]));
+        if objects[0].map_provenance == ObjectMapProvenance::Transaction {
+            unmap(&objects[0]);
+            objects[0] = EMPTY_OBJECT;
+        }
         for object in objects.iter_mut().skip(1) {
             *object = EMPTY_OBJECT;
         }
@@ -408,7 +416,7 @@ mod tests {
 
     fn transaction_object(span_start: u64, span_len: u64) -> Object {
         Object {
-            mapped: true,
+            role: ObjectRole::Library,
             map_provenance: ObjectMapProvenance::Transaction,
             map_span_start: span_start,
             map_span_byte_len: span_len,
@@ -560,7 +568,22 @@ mod tests {
     }
 
     #[test]
-    fn main_image_is_never_rollback_eligible() {
+    fn directly_mapped_main_is_rolled_back_after_its_dependencies() {
+        let mut main = transaction_object(0x400000, 0x4000);
+        main.role = ObjectRole::Main;
+        let mut state = GeneralInitialLoaderState::new(MAIN, main);
+        let (graph, objects) = state.discovery_mut().unwrap();
+        let ObjectAdmission::New { index } = graph.admit_mapped(LEFT).unwrap() else { panic!() };
+        objects[index] = transaction_object(0x800000, 0x1000);
+        let mut spans = [0; 2];
+        let mut count = 0;
+        state.rollback(|object| { spans[count] = object.map_span_start; count += 1; });
+        assert_eq!(spans, [0x800000, 0x400000]);
+        state.rollback(|_| panic!("a vacant transaction must not unmap twice"));
+    }
+
+    #[test]
+    fn kernel_main_image_is_never_rollback_eligible() {
         let (mut state, _, _, _) = diamond_state();
         let mut saw_kernel_main = false;
         state.rollback(|object| {

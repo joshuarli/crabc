@@ -114,7 +114,7 @@ impl GeneralInitialLifecycle {
         };
         for &index in order.indices() {
             let object = objects.get(index)?;
-            if !object.mapped || index == 0
+            if object.role == ObjectRole::Main || index == 0
                 || object.init_count > MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
                 || object.general_fini_count > MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
                 || (object.init_count != 0 && object.init_array.is_null())
@@ -301,7 +301,7 @@ mod tests {
             ).unwrap() else { panic!("new object required") };
             graph.attach_needed(0, index).unwrap();
             objects[index] = Object {
-                mapped: true,
+                role: ObjectRole::Library,
                 phdr: phdr.as_ptr().cast(),
                 phnum: 1,
                 init_array: init.as_ptr(),

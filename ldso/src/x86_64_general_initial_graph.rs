@@ -39,8 +39,23 @@ pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
         #[cfg(feature = "x86_64-owned-dynamic-runtime")]
         x86_64_library_search::initialize(sp);
         let (main_phdr, main_phnum, main_entry) = auxv_main(sp).unwrap_or_else(|| fail(b"auxv\n"));
-        let main_base = main_load_bias(main_phdr, main_phnum).unwrap_or_else(|| fail(b"mainbase\n"));
-        let main = parse_mapped(main_base, main_phdr, main_phnum, false, false, true)
+        // The interpreter itself need not carry PT_PHDR. Compare the kernel
+        // table with our own ELF header before applying the main-image parser.
+        let own_phdr = (ldso_base + read_u64((ldso_base + 32) as *const u8) as usize) as *const u8;
+        let main_base = if main_phdr == own_phdr { ldso_base as u64 } else {
+            main_load_bias(main_phdr, main_phnum).unwrap_or_else(|| fail(b"mainbase\n"))
+        };
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let (main, sp, main_entry) = if main_base as usize == ldso_base {
+            let (main, sp) = x86_64_direct_entry::prepare(sp, ldso_base);
+            let entry = main.entry;
+            (main, sp, entry)
+        } else {
+            (parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
+                .unwrap_or_else(|| fail(b"mainelf\n")), sp, main_entry)
+        };
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+        let main = parse_mapped(main_base, main_phdr, main_phnum, ObjectRole::Main, false, true)
             .unwrap_or_else(|| fail(b"mainelf\n"));
 
         #[cfg(crabc_general_initial_tls_materialization_v1)]
@@ -63,8 +78,8 @@ pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
 
 #[cfg(not(crabc_general_initial_tls_materialization_v1))]
 unsafe fn run_without_tls(main: Object, main_entry: u64, sp: usize, ldso_base: usize) -> ! {
-    // `u64::MAX` cannot be a Linux device number. The kernel-owned main
-    // mapping therefore cannot alias an fstat-derived DSO identity.
+    // As in musl __dls3, main admission does not assign the file identity
+    // used to deduplicate library admissions, for either entry mode.
     let mut state = GeneralInitialLoaderState::new(ObjectIdentity {
         device: u64::MAX,
         inode: u64::MAX,
@@ -228,7 +243,7 @@ unsafe fn run_with_initial_tls(
         rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::TlsRegistry);
         return Err(b"tlsstate\n");
     }
-    for index in 1..state.object_count() {
+    for index in 0..state.object_count() {
         let objects = match state.objects() {
             Ok(objects) => objects,
             Err(_) => {
@@ -282,6 +297,9 @@ unsafe fn run_with_initial_tls(
             return Err(b"ctorplan\n");
         }
     };
+
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    unsafe { x86_64_direct_entry::list_and_exit(&objects[..state.object_count()], ldso_base); }
 
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     let runtime_registry = match unsafe {
@@ -428,7 +446,7 @@ unsafe fn preflight_dependency_initializers(
     #[cfg(not(crabc_general_initial_lifecycle))]
     for &index in graph_plan.indices() {
         let object = objects.get(index)?;
-        if !object.mapped
+        if object.role == ObjectRole::Main
             || object.init_count > MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
             || (object.init_count != 0 && object.init_array.is_null())
         {
@@ -676,7 +694,6 @@ unsafe fn rollback_general_initial_state(
 
 unsafe fn unmap_object(object: &Object) {
     if object.map_provenance != ObjectMapProvenance::Transaction
-        || !object.mapped
         || object.map_span_byte_len == 0
     {
         return;
