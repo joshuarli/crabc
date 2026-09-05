@@ -485,6 +485,113 @@ static int run_main_thread_pthread_exit(void)
     return 0;
 }
 
+struct worker_fork_exit_round {
+    volatile pid_t child_process;
+    int pipefd;
+};
+
+static int crabc_worker_fork_exit_pipe = -1;
+static volatile int crabc_worker_fork_child_done;
+
+static void worker_fork_child_atexit(void)
+{
+    const unsigned char marker = __atomic_load_n(&crabc_worker_fork_child_done,
+        __ATOMIC_ACQUIRE) ? 'A' : 'X';
+
+    if (crabc_worker_fork_exit_pipe < 0 ||
+        write(crabc_worker_fork_exit_pipe, &marker, sizeof(marker)) !=
+            sizeof(marker))
+        _Exit(89);
+}
+
+static void *worker_fork_child_worker(void *opaque)
+{
+    struct worker_fork_exit_round *round = opaque;
+    static const unsigned char marker = 'W';
+
+    if (write(round->pipefd, &marker, sizeof(marker)) != sizeof(marker))
+        _Exit(88);
+    __atomic_store_n(&crabc_worker_fork_child_done, 1, __ATOMIC_RELEASE);
+    return 0;
+}
+
+static void *worker_that_forks_and_returns(void *opaque)
+{
+    struct worker_fork_exit_round *round = opaque;
+    pid_t child = fork();
+
+    if (child < 0) {
+        __atomic_store_n(&round->child_process, -1, __ATOMIC_RELEASE);
+        return 0;
+    }
+    if (child != 0) {
+        __atomic_store_n(&round->child_process, child, __ATOMIC_RELEASE);
+        return 0;
+    }
+
+    crabc_worker_fork_exit_pipe = round->pipefd;
+    crabc_worker_fork_child_done = 0;
+    if (atexit(worker_fork_child_atexit) != 0)
+        _Exit(87);
+    {
+        pthread_t child_worker;
+
+        if (pthread_create(&child_worker, 0, worker_fork_child_worker, round) != 0)
+            _Exit(86);
+    }
+    /* Returning through the original selected worker trampoline now means
+     * pthread_exit for this fork child's adopted main task. The child worker
+     * must remain alive, become the final task, and invoke atexit after W. */
+    return 0;
+}
+
+static int read_exact_bytes(int fd, unsigned char *bytes, size_t length)
+{
+    size_t used = 0;
+
+    while (used != length) {
+        ssize_t result = read(fd, bytes + used, length - used);
+
+        if (result <= 0)
+            return -1;
+        used += (size_t)result;
+    }
+    return 0;
+}
+
+/*
+ * Fork from a selected worker, create a child-local worker, then let the
+ * original callback return. The child-visible W/A ordering proves the adopted
+ * main path does not call exit_group directly and kill a post-fork worker.
+ */
+static int run_fork_from_worker_then_child_worker_exit(void)
+{
+    int pipefd[2];
+    struct worker_fork_exit_round round = {
+        .child_process = 0,
+        .pipefd = -1,
+    };
+    pthread_t worker;
+    pid_t child;
+    int status;
+    unsigned char markers[2] = { 0, 0 };
+
+    if (pipe(pipefd) != 0)
+        return 1;
+    round.pipefd = pipefd[1];
+    if (pthread_create(&worker, 0, worker_that_forks_and_returns, &round) != 0 ||
+        pthread_join(worker, 0) != 0)
+        return 2;
+    child = __atomic_load_n(&round.child_process, __ATOMIC_ACQUIRE);
+    (void)close(pipefd[1]);
+    if (child <= 0 || waitpid(child, &status, 0) != child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0 ||
+        read_exact_bytes(pipefd[0], markers, sizeof(markers)) != 0 ||
+        markers[0] != 'W' || markers[1] != 'A' || close(pipefd[0]) != 0)
+        return 3;
+    return 0;
+}
+
 struct simultaneous_last_exit_round {
     volatile int ready;
     volatile int release;
@@ -650,6 +757,7 @@ int main(void)
     const int attrs = run_attr_and_cancellation();
     const int detached = run_detached_attr_and_c11_reaper();
     const int main_exit = run_main_thread_pthread_exit();
+    const int worker_fork_exit = run_fork_from_worker_then_child_worker_exit();
     const int simultaneous_last_exit = run_simultaneous_last_thread_exit();
     const int live_fork = run_fork_with_live_selected_worker();
     const int atfork = run_atfork_after_worker_teardown();
@@ -664,6 +772,8 @@ int main(void)
         return 30 + detached;
     if (main_exit != 0)
         return 40 + main_exit;
+    if (worker_fork_exit != 0)
+        return 43 + worker_fork_exit;
     if (simultaneous_last_exit != 0)
         return 45 + simultaneous_last_exit;
     if (live_fork != 0)

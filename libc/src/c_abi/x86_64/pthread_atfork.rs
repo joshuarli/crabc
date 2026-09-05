@@ -19,12 +19,16 @@
 //! Musl grows an allocated handler list and coordinates all of its complete
 //! pthread runtime around fork. This static archive deliberately retains only
 //! its no-allocation 32-record callback table, application-signal block/restore
-//! pair, and selected worker-list/TSD/TLS child reset. It reports `ENOMEM` once
-//! the callback table is full. Foreign threads, dynamic/loader TLS, AIO,
-//! allocator state, and arbitrary application locks remain excluded. No user
-//! callback may recurse into `fork`, `pthread_atfork`, `exit`, `atexit`, or
-//! `__funcs_on_exit`; callbacks must return normally. This is a static runtime
-//! composition boundary, not general pthread or dynamic fork completion.
+//! pair, selected TSD/worker-list/TLS child reset, and—when the owned static
+//! aggregate selects them—the stdio and timezone registry locks plus the inner
+//! process-creation lock. It reports `ENOMEM` once the callback table is full.
+//! Foreign threads, dynamic/loader TLS repair, AIO, allocator state, and
+//! arbitrary application locks remain excluded. No user callback may recurse
+//! into `fork`, `pthread_atfork`, `exit`, `atexit`, or `__funcs_on_exit`;
+//! callbacks must return normally. Dynamic linkage retains registration but
+//! rejects `fork` with `EAGAIN` until the loader owns a matching transaction.
+//! This is a static runtime composition boundary, not general pthread or
+//! dynamic fork completion.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("x86 pthread-atfork leaf requires little-endian Linux/x86-64");
@@ -274,7 +278,13 @@ pub unsafe extern "C" fn fork() -> c_int {
     }
     pthread_create_join::pthread_fork_prepare();
     #[cfg(feature = "x86-owned-static-runtime")]
+    let mut saved_all_signal_mask = 0_u64;
+    #[cfg(feature = "x86-owned-static-runtime")]
     unsafe {
+        // Musl `_Fork` nests an all-signal block around __abort_lock. The
+        // outer transaction still retains its application-signal block while
+        // this inner saved mask is restored after the raw process transition.
+        signal_execution::block_all_signals(&mut saved_all_signal_mask);
         // The shared abort/process-creation lock is musl's inner `_Fork`
         // transaction. It follows every outer registry/thread-list lock and
         // contains no user callback or CLONE_VM spawn child.
@@ -284,6 +294,16 @@ pub unsafe extern "C" fn fork() -> c_int {
     // `fork=57` transition while the selected worker list cannot mutate.
     let result = unsafe { raw_selected_fork() };
     if result == 0 {
+        #[cfg(feature = "x86-owned-static-runtime")]
+        unsafe {
+            // `_Fork` completes its copied abort/process lock before the
+            // enclosing fork transaction repairs any outer TSD/list state.
+            // Restore only the nested all-signal snapshot here; the outer
+            // application block remains in force until the full transaction
+            // becomes callable below.
+            super::owned_process_lock::pthread_fork_child();
+            signal_execution::restore_application_signals(&saved_all_signal_mask);
+        }
         // SAFETY: the copied list lock retains the inherited caller control
         // while this first child-only TSD transfer runs. It also clears the
         // copied TSD lock, whose parent owner cannot exist in this child.
@@ -299,9 +319,6 @@ pub unsafe extern "C" fn fork() -> c_int {
         unsafe {
             super::stdio_standard::pthread_fork_child();
             super::owned_timezone::pthread_fork_child();
-            // Reset the innermost copied process lock only after all child
-            // state still protected by it has reached its one-task form.
-            super::owned_process_lock::pthread_fork_child();
         }
     } else {
         #[cfg(feature = "x86-owned-static-runtime")]
@@ -309,6 +326,9 @@ pub unsafe extern "C" fn fork() -> c_int {
             // A raw error follows the parent completion path. Complete the
             // inner lock before any outer registry or user callback sees it.
             super::owned_process_lock::pthread_fork_parent();
+            // Restore `_Fork`'s nested all-signal mask before the outer
+            // thread-list/registry completion, retaining its app-signal mask.
+            signal_execution::restore_application_signals(&saved_all_signal_mask);
         }
         // SAFETY: this completes the parent side of the exact list-lock pair
         // on both a successful parent return and a raw fork failure.

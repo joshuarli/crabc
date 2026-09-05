@@ -109,6 +109,29 @@ pub(super) unsafe fn block_application_signals(saved_mask: *mut u64) {
     };
 }
 
+/// Block every kernel-visible signal for one nested `_Fork` transaction.
+///
+/// The selected process-creation lock has musl's `__abort_lock` obligation:
+/// it is acquired only while every signal is blocked, not merely the public
+/// application subset. The surrounding `fork` owner restores this saved mask
+/// (which still includes its outer application block) before it completes its
+/// remaining registry transitions and user callbacks.
+#[inline(always)]
+pub(super) unsafe fn block_all_signals(saved_mask: *mut u64) {
+    let all_signals = u64::MAX;
+    // SAFETY: Linux ignores unmaskable bits and reads exactly this complete
+    // one-word mask, matching musl's private `__block_all_sigs` transition.
+    let _ = unsafe {
+        raw_syscall::syscall4(
+            raw_syscall::SYS_RT_SIGPROCMASK,
+            SIG_BLOCK,
+            (&all_signals as *const u64) as usize as i64,
+            saved_mask as usize as i64,
+            KERNEL_SIGSET_SIZE,
+        )
+    };
+}
+
 /// Restore the saved kernel mask from [`block_application_signals`].
 #[inline(always)]
 pub(super) unsafe fn restore_application_signals(saved_mask: *const u64) {

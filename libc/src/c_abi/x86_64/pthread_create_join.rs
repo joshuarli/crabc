@@ -53,9 +53,13 @@
 //! reaping shape; it is not a claim of general detached-thread reclamation or
 //! full pthread parity. It provides the selected static initial-thread
 //! `pthread_exit` and static fork child-list/TLS/TSD reset paths, but not
-//! signal-driven or implicit-point cancellation, robust lists, dynamic TLS/DTV,
-//! loader TLS, scheduler application, GNU default attributes, affinity
-//! attributes, live-thread inspection, or general pthread semantics. It
+//! signal-driven or implicit-point cancellation, robust lists, dynamic
+//! main-thread exit/fork, scheduler application, GNU default attributes,
+//! affinity attributes, live-thread inspection, or general pthread semantics.
+//! Dynamic workers retain the loader's opaque allocation/release token through
+//! the same create/join seam, while the static-only initial/last-task and fork
+//! repair paths are cfg-excluded until the loader supplies its own transaction.
+//! It
 //! leaves caller `errno` untouched because pthread APIs report errors as
 //! positive return values. Each selected worker carries its
 //! own private mapped list node; creation is limited by actual mapping/TLS
@@ -1280,13 +1284,11 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     if current_is_selected_initial_thread() {
         // This callback called fork and became the static child main task.
         // Its inherited worker control was intentionally unlinked in the
-        // child, so a normal trampoline return must use ordinary process exit
-        // rather than the parent worker's raw SYS_exit assembly tail.
-        // SAFETY: the fork child copied this worker's values into the static
-        // main table before adopting its TLS identity, so that table—not the
-        // now-unlinked inherited control—owns the final destructor phase.
-        unsafe { pthread_tsd::run_selected_main_tsd_destructors() };
-        unsafe { super::static_startup::exit(0) }
+        // child, so a normal trampoline return must become the child main
+        // task's pthread_exit transition. That path retains any worker the
+        // child created after fork; directly calling ordinary exit here would
+        // terminate it before its final-task/atexit transition.
+        unsafe { exit_selected_worker(result) }
     }
     // SAFETY: this current worker owns its control/TSD mapping until the
     // assembly tail calls SYS_exit. Destructors must finish before its result

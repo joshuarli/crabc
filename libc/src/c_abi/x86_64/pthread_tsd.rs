@@ -32,13 +32,15 @@
 //! Key deletion is selected only through this private main-plus-worker table;
 //! foreign threads receive only that fail-closed admission boundary, while
 //! their lifecycle, concurrent deletion/destructor interaction, cleanup
-//! ownership beyond the selected deferred-pthread exit ordering, main-thread process-exit destructors,
-//! fork/atfork,
-//! dynamic or loader TLS/DTV, allocator lifecycle ordering, general TCB
-//! layout, and musl's weak/same-address TSD ELF aliases remain outside this
-//! artifact. Invalid/deleted keys and non-selected callers fail closed instead
-//! of relying on musl's unchecked internal fast paths. This does not establish
-//! pthread/C11 family completion or public x86 support.
+//! ownership beyond the selected deferred-pthread exit ordering, main-thread
+//! process-exit destructors, dynamic or loader TLS/DTV, allocator lifecycle
+//! ordering, general TCB layout, and musl's weak/same-address TSD ELF aliases
+//! remain outside this artifact. The selected static fork transaction does
+//! lock this metadata before it snapshots the calling task's table, but it is
+//! not general all-thread key/TSD or dynamic-fork repair. Invalid/deleted keys
+//! and non-selected callers fail closed instead of relying on musl's unchecked
+//! internal fast paths. This does not establish pthread/C11 family completion
+//! or public x86 support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread/C11 TSD leaf requires little-endian Linux/x86-64");
