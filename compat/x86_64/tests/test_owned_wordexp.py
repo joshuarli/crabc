@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 MODULE = ROOT / "libc/src/c_abi/x86_64/owned_wordexp.rs"
+SPAWN = ROOT / "libc/src/c_abi/x86_64/owned_spawn.rs"
 SCANNER = ROOT / "libc/src/wordexp_nocmd.rs"
 PROBE = ROOT / "compat/x86_64/owned_wordexp_probe.c"
 RUNNER = ROOT / "compat/x86_64/run_libc_owned_wordexp.sh"
@@ -21,7 +22,8 @@ class OwnedWordexpContracts(unittest.TestCase):
         for boundary in (
             "WRDE_DOOFFS | WRDE_APPEND", "WRDE_REUSE", "WRDE_NOCMD",
             "WRDE_CMDSUB", "WRDE_BADCHAR", "WRDE_SYNTAX", "WRDE_UNDEF",
-            "check_freed", "owned-wordexp: PASS",
+            "check_freed", "--shell-unavailable", "unavailable_shell_case",
+            "owned-wordexp: PASS", "owned-wordexp-shell-unavailable: PASS",
         ):
             self.assertIn(boundary, source)
 
@@ -38,6 +40,17 @@ class OwnedWordexpContracts(unittest.TestCase):
         self.assertNotIn("sys_execve", source)
         self.assertIn("wordexp_nocmd_check", scanner)
 
+    def test_child_spawn_failure_preserves_the_missing_sentinel_result(self) -> None:
+        module = MODULE.read_text(encoding="utf-8")
+        spawn = SPAWN.read_text(encoding="utf-8")
+        self.assertIn("spawn_with_outcome", module)
+        self.assertIn("SpawnOutcome::ChildFailure", module)
+        self.assertIn("return WRDE_SYNTAX", module)
+        self.assertIn("pub(super) enum SpawnOutcome", spawn)
+        self.assertIn("ParentFailure", spawn)
+        self.assertIn("ChildFailure", spawn)
+        self.assertIn("pub(super) unsafe fn spawn(", spawn)
+
     def test_runner_preserves_default_boundary_and_proves_both_installed_modes(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         for boundary in (
@@ -47,14 +60,19 @@ class OwnedWordexpContracts(unittest.TestCase):
             "TMPDIR physically escapes checkout .work",
             "retained failure evidence", "run_installed_mode -static et-exec",
             "run_installed_mode -static-pie static-pie",
+            "make_private_shell_root", "missing inaccessible invalid",
+            "audit_linker_trace", "runtime allowlist or exact application-object receipt drifted",
+            "chroot_command", "controlled-shell.sha256",
         ):
             self.assertIn(boundary, source)
         self.assertNotIn("--wrap=", source)
+        self.assertNotIn('env -i CRABC_WORDEXP=\'bar baz\' "$candidate"', source)
 
     def test_dispatcher_exposes_the_dedicated_native_gate(self) -> None:
         source = DISPATCHER.read_text(encoding="utf-8")
         self.assertIn("libc-owned-wordexp", source)
         self.assertIn("run_libc_owned_wordexp.sh", source)
+        self.assertIn("run_in_chroot_cap_container bash /workspace/compat/x86_64/run_libc_owned_wordexp.sh", source)
 
 
 if __name__ == "__main__":

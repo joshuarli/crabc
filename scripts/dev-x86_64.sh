@@ -4855,7 +4855,10 @@ run_lua_static_source_build_probe() {
 }
 
 run_libc_owned_wordexp_probe() {
-    run_in_container bash /workspace/compat/x86_64/run_libc_owned_wordexp.sh
+    # The runner executes both static images under a private `/bin/sh` chroot
+    # so ordinary expansion and missing/invalid shell behavior cannot borrow
+    # the container's ambient shell namespace.
+    run_in_chroot_cap_container bash /workspace/compat/x86_64/run_libc_owned_wordexp.sh
 }
 
 run_owned_dynamic_sysroot_probe() {

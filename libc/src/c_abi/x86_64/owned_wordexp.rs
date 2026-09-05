@@ -18,7 +18,9 @@
 //! the existing owned `fdopen`/`getdelim`/`fclose` lifecycle to consume the
 //! source's NUL-delimited stream, and the selected C allocator for words and
 //! vectors. This neither creates a second process implementation nor revives
-//! the legacy raw AArch64 fork/pipe path.
+//! the legacy raw AArch64 fork/pipe path. Its private completion stage also
+//! distinguishes parent setup from a child that closed the stream before the
+//! sentinel, without treating an errno value as a failure classification.
 //!
 //! `wordexp` deliberately invokes `/bin/sh`, exactly as musl does. The
 //! `WRDE_NOCMD` scanner rejects command substitutions before a child starts;
@@ -221,17 +223,32 @@ unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) ->
     let mut process = 0;
     // SAFETY: the action/argv/environment storage remains live until spawn
     // returns; `owned_spawn` transfers only a successful child PID to us.
-    let spawn_error = unsafe {
-        owned_spawn::spawn(&mut process, SH.as_ptr().cast(), &actions, ptr::null(),
-            arguments.as_ptr(), environment.cast_const().cast(), false)
+    let spawned = unsafe {
+        owned_spawn::spawn_with_outcome(&mut process, SH.as_ptr().cast(), &actions,
+            ptr::null(), arguments.as_ptr(), environment.cast_const().cast(), false)
     };
-    if spawn_error != 0 {
-        unsafe {
-            close(pipes[0]);
-            close(pipes[1]);
-            errno::set_errno(spawn_error);
+    match spawned {
+        owned_spawn::SpawnOutcome::Success => {}
+        owned_spawn::SpawnOutcome::ParentFailure(spawn_error) => {
+            unsafe {
+                close(pipes[0]);
+                close(pipes[1]);
+                errno::set_errno(spawn_error);
+            }
+            return unsafe { no_space(words, flags) };
         }
-        return unsafe { no_space(words, flags) };
+        owned_spawn::SpawnOutcome::ChildFailure(_) => {
+            // Musl's raw child exits after an exec/dup2-side failure. The
+            // parent then observes its otherwise valid result pipe without a
+            // NUL sentinel and returns WRDE_SYNTAX. `owned_spawn` has already
+            // reaped this child-reporting branch; retire only our two pipe
+            // ends and preserve the source-visible missing-sentinel result.
+            unsafe {
+                close(pipes[0]);
+                close(pipes[1]);
+            }
+            return WRDE_SYNTAX;
+        }
     }
     // `owned_spawn` has executed /bin/sh. Its original CLOEXEC write end will
     // close at exec; the parent retains only the read end through fdopen.

@@ -171,10 +171,35 @@ static int offsets_append_reuse(void)
     return check_freed(&words) ? 0 : 6;
 }
 
-int main(void)
+/* Musl's child exits after its private `/bin/sh` exec fails; the parent sees
+ * the result pipe close before the NUL sentinel and reports WRDE_SYNTAX.
+ * Keep this separate mode so the runner can execute the exact same C source
+ * in private roots with absent, non-executable, and invalid shell images. */
+static int unavailable_shell_case(void)
+{
+    wordexp_t words = { 0 };
+
+    if (wordexp("literal", &words, 0) != WRDE_SYNTAX)
+        return 1;
+    if (words.we_wordc != 0 || words.we_wordv != NULL)
+        return 2;
+    wordfree(&words);
+    return 0;
+}
+
+int main(int argc, char *argv[])
 {
     int result;
 
+    if (argc == 2 && strcmp(argv[1], "--shell-unavailable") == 0) {
+        result = unavailable_shell_case();
+        if (result != 0)
+            return 64 + result;
+        puts("owned-wordexp-shell-unavailable: PASS");
+        return 0;
+    }
+    if (argc != 1)
+        return 127;
     result = ordinary_and_nocmd_cases();
     if (result != 0)
         return result;
