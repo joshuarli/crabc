@@ -82,6 +82,19 @@ unsafe fn execute_candidate(path: *const c_char, argv: *const *const c_char,
     }
 }
 
+// Unlike compiler-generated memcpy, this source-owned hidden alias cannot be
+// preempted by an application's allocator/TLS/callback code in shared libc.
+// Legacy selection retains the same intrinsic/archive contract as before.
+unsafe fn copy_candidate(source: *const u8, destination: *mut u8, length: usize) {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe {
+        unsafe extern "C" { fn __memcpy_fwd(destination: *mut u8, source: *const u8, length: usize) -> *mut u8; }
+        __memcpy_fwd(destination, source, length);
+    }
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    unsafe { ptr::copy_nonoverlapping(source, destination, length); }
+}
+
 /// Shared musl PATH algorithm. In owned composition it has no errno/TLS or
 /// allocator access; legacy selection retains its direct-exec owner. Spawn passes
 /// its parent's inherited PATH, not envp's PATH. An optional parent-owned slot
@@ -125,7 +138,11 @@ pub(super) unsafe fn execvpe_raw(
     // that limit and gains one slash, while the complete file C string is at
     // most NAME_MAX + 1 bytes. This is the fixed Rust storage equivalent of
     // musl's one VLA candidate, not a PATH-search cap.
-    let mut candidate = [0u8; PATH_MAX + NAME_MAX + 1];
+    // Each attempted pathname initializes its whole prefix and terminal NUL.
+    // Zeroing unused tail bytes would introduce preemptible memset in the
+    // CLONE_VM child; no typed initialized array is ever formed from storage.
+    let mut storage = core::mem::MaybeUninit::<[u8; PATH_MAX + NAME_MAX + 1]>::uninit();
+    let candidate = storage.as_mut_ptr().cast::<u8>();
     let mut cursor = path;
     let mut seen_eacces = false;
     let mut last_error = ENOENT;
@@ -145,25 +162,25 @@ pub(super) unsafe fn execvpe_raw(
                 // SAFETY: the checked component range and slash fit the
                 // fixed candidate storage described above.
                 unsafe {
-                    ptr::copy_nonoverlapping(
+                    copy_candidate(
                         cursor.cast::<u8>(),
-                        candidate.as_mut_ptr(),
+                        candidate,
                         directory_length,
                     );
-                    ptr::write(candidate.as_mut_ptr().add(directory_length), b'/');
+                    ptr::write(candidate.add(directory_length), b'/');
                 }
             }
             // SAFETY: the checked file range, including its terminal null,
             // fits immediately after the optional directory slash.
             unsafe {
-                ptr::copy_nonoverlapping(
+                copy_candidate(
                     file.cast::<u8>(),
-                    candidate.as_mut_ptr().add(file_offset),
+                    candidate.add(file_offset),
                     file_length + 1,
                 )
             };
 
-            let result = unsafe { execute_candidate(candidate.as_ptr().cast(), argv, envp) };
+            let result = unsafe { execute_candidate(candidate.cast(), argv, envp) };
             if result >= 0 {
                 // Linux execve never normally returns a successful result;
                 // preserve any unexpected non-error return rather than

@@ -181,8 +181,11 @@ pub(super) unsafe fn spawn(pid: *mut c_int, path: *const c_char,
         let creation = ProcessGuard::acquire_blocked();
         let mut result = sys::syscall2(293, args.pipe.as_mut_ptr() as i64, CLOEXEC);
         if result == 0 {
-            let mut stack = [0u8; 5120];
-            let child_pid = __crabc_x86_pthread_clone(child, stack.as_mut_ptr().add(stack.len()),
+            // The trampoline initializes its own stack words. Unused stack
+            // storage needs no zeroing: compiler-lowered memset here could
+            // call an ELF-preempted application function under ProcessGuard.
+            let mut stack = core::mem::MaybeUninit::<[u8; 5120]>::uninit();
+            let child_pid = __crabc_x86_pthread_clone(child, stack.as_mut_ptr().cast::<u8>().add(5120),
                 0x100 | 0x4000 | 17, ptr::addr_of_mut!(args).cast(),
                 ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
             close(args.pipe[1]);
