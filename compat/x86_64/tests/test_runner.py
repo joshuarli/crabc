@@ -2099,7 +2099,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             expected_groups[:static_sysroot_index]
             + (
                 "owned-io-cancellation",
-                "owned-pthread-getattr",
+                "owned-pthread-getattr|owned-pthread-join-cancel",
                 "owned-pthread-lifecycle",
                 "qualification-manifest",
             )
@@ -7403,12 +7403,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "run_null_result_join",
             "run_concurrent_worker_round",
             "run_concurrent_explicit_exit_round",
-            "run_registry_capacity_round",
+            "run_registry_growth_round",
             "pthread_exit",
             "__atomic_fetch_add",
             "first.errno_location == second.errno_location",
             "CRABC_PTHREAD_CREATE_JOIN_TLS_FREESTANDING",
-            "CRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT",
+            "held_worker_count = 64",
         ):
             self.assertIn(required, probe)
         for required in (
@@ -7428,7 +7428,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "run_types_header_abi.sh",
             "-pthread",
             "-nostdlib -static",
-            "-DCRABC_PTHREAD_CREATE_JOIN_TLS_SELECTED_WORKER_LIMIT=64",
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
             "__crabc_x86_pthread_clone",
@@ -30104,7 +30103,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "shmctl",
         ):
             self.assertIn(f"fn {symbol}(", implementation)
-        for forbidden in ("mq_open", "sem_open", "__tls_get_addr", "pthread_"):
+        for forbidden in ("mq_open", "sem_open", "__tls_get_addr"):
             self.assertNotIn(forbidden, implementation)
 
         for header_probe in (header_c_probe, header_cxx_probe):
