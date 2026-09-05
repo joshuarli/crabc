@@ -654,6 +654,104 @@ class NativeObservationsTests(unittest.TestCase):
         self.assertEqual(len(result['objects']), 14)
         self.assertFalse(any(name.startswith('include/') for name in result['objects']))
 
+    def libc_identity_fixture(self, name='regression/pthread_atfork-errno-clobber', side='candidate'):
+        fixture = {'kind': 'fixed-unprivileged-identity', 'uid': 65534, 'gid': 65534,
+            'supplementary_groups': [],
+            'required_zero_capability_sets': ['inheritable', 'permitted', 'effective', 'ambient'],
+            'source_requirement': 'RLIMIT_NPROC=0 must reject fork before checking atfork errno preservation'}
+        source = self.leaf / 'source-prepared/src' / (name + '.c')
+        if not source.exists(): self.put(source, b'unchanged atfork source fixture\n')
+        helper = self.put(self.root / 'compat/x86_64/owned_libc_test_identity.py', b'fixed host helper source fixture\n')
+        helper_copy = self.put(self.leaf / 'execution-controls/owned_libc_test_identity.py', helper.read_bytes())
+        python = self.put(self.leaf / 'execution-controls/python3', b'retained host Python fixture\n')
+        python_binding = {'path': '/usr/bin/python3.11', 'sha256': self.binding(python)['sha256']}
+        parent = {'resuid': [0, 0, 0], 'resgid': [0, 0, 0], 'groups': [0],
+            'proc': {'uids': [0]*4, 'gids': [0]*4, 'groups': [0],
+                'capabilities': {key: ('00000000a80425fb' if key in ('permitted', 'effective', 'bounding') else '0000000000000000')
+                    for key in ('inheritable', 'permitted', 'effective', 'bounding', 'ambient')}}}
+        child = {'resuid': [65534]*3, 'resgid': [65534]*3, 'groups': [],
+            'proc': {'uids': [65534]*4, 'gids': [65534]*4, 'groups': [],
+                'capabilities': {key: (parent['proc']['capabilities'][key] if key == 'bounding' else '0000000000000000')
+                    for key in ('inheritable', 'permitted', 'effective', 'bounding', 'ambient')}}}
+        execution_root = self.leaf / 'execution' / name / side
+        receipt_path = execution_root.parent / (side + '.identity.json')
+        receipt = {'schema': 'crabc.x86_64-owned-libc-test-execution-identity/v1', 'unit': name,
+            'root': self.recorded(execution_root), 'fixture': fixture, 'source': self.binding(source),
+            'command': ['/runtest', '-w', '', '/' + name], 'before_drop': parent, 'before_exec': child}
+        self.put(receipt_path, receipt)
+        record = {'fixture': fixture,
+            'helper': {'invoked_path': self.recorded(helper), 'source': self.binding(helper),
+                'retained': self.binding(helper_copy), 'after': self.binding(helper)},
+            'python': {'invoked_path': '/usr/bin/python3', 'source': python_binding,
+                'retained': self.binding(python), 'after': python_binding},
+            'source': self.binding(source), 'source_after': self.binding(source),
+            'receipt': self.binding(receipt_path), 'parent': {'before': parent, 'after': parent, 'unchanged': True}}
+        command = ['/usr/bin/timeout', '20', '/usr/bin/python3', '-B', self.recorded(helper),
+            '--root', self.recorded(execution_root), '--receipt', self.recorded(receipt_path), '--unit', name]
+        return record, command, source, receipt_path
+
+    def test_libc_test_fixed_execution_identity_contract(self):
+        record, command, source, receipt_path = self.libc_identity_fixture()
+        reader = native.Reader(self.leaf, self.mount, self.product, self.root)
+        name = 'regression/pthread_atfork-errno-clobber'
+        def validate(value=record, invocation=command, unit=name):
+            return native._libc_execution_identity(reader, value, name=unit, side='candidate', source=source, command=invocation)
+        with patch('subprocess.run', side_effect=AssertionError('host validation executed helper')), \
+             patch('subprocess.Popen', side_effect=AssertionError('host validation executed Python')):
+            self.assertIsNotNone(validate())
+        for description, change in (
+            ('missing fixture', lambda r: r.update(fixture=None)),
+            ('wrong fixed uid', lambda r: r['fixture'].update(uid=65533)),
+            ('uid scalar type', lambda r: r['fixture'].update(uid=65534.0)),
+            ('helper invocation changed', lambda r: r['helper'].update(invoked_path='/workspace/foreign.py')),
+            ('foreign Python', lambda r: r['python'].update(invoked_path='/usr/local/bin/python3')),
+            ('changed Python after use', lambda r: r['python']['after'].update(sha256='0'*64)),
+            ('changed prepared source', lambda r: r['source_after'].update(sha256='0'*64)),
+            ('parent identity changed', lambda r: r['parent']['after']['resuid'].__setitem__(0, 1)),
+            ('parent unchanged scalar type', lambda r: r['parent'].update(unchanged=1)),
+            ('undeclared field', lambda r: r.update(unexpected=True)),
+        ):
+            with self.subTest(description=description):
+                altered = json.loads(json.dumps(record))
+                change(altered)
+                with self.assertRaises(native.NativeObservationError): validate(altered)
+        with self.assertRaises(native.NativeObservationError): validate(None)
+        with self.assertRaises(native.NativeObservationError): validate(unit='functional/case_000')
+        for position, value in ((1, '1'), (4, '/workspace/foreign.py'), (6, '/workspace/.work/foreign'),
+                                (8, '/workspace/.work/other.json'), (10, 'functional/case_000')):
+            invocation = list(command)
+            invocation[position] = value
+            with self.assertRaises(native.NativeObservationError): validate(invocation=invocation)
+        before = receipt_path.read_bytes()
+        for description, change in (
+            ('wrong executed unit', lambda r: r.update(unit='functional/case_000')),
+            ('wrong target command', lambda r: r['command'].__setitem__(0, '/bin/true')),
+            ('wrong target source', lambda r: r['source'].update(sha256='0'*64)),
+            ('wrong actual uid', lambda r: r['before_exec']['resuid'].__setitem__(1, 0)),
+            ('wrong actual filesystem gid', lambda r: r['before_exec']['proc']['gids'].__setitem__(3, 0)),
+            ('retained supplementary group', lambda r: r['before_exec'].update(groups=[0])),
+            ('nonzero permitted capabilities', lambda r: r['before_exec']['proc']['capabilities'].update(permitted='0000000000000001')),
+            ('nonzero ambient capabilities', lambda r: r['before_exec']['proc']['capabilities'].update(ambient='0000000000000001')),
+            ('missing capability observation', lambda r: r['before_exec']['proc']['capabilities'].pop('inheritable')),
+            ('inconsistent before-drop observation', lambda r: r['before_drop']['proc']['uids'].__setitem__(3, 1)),
+        ):
+            with self.subTest(description=description):
+                altered = json.loads(before)
+                change(altered)
+                self.put(receipt_path, altered)
+                evidence = json.loads(json.dumps(record))
+                evidence['receipt'] = self.binding(receipt_path)
+                with self.assertRaises(native.NativeObservationError): validate(evidence)
+        self.put(receipt_path, before)
+        for role, filename in (('helper', 'owned_libc_test_identity.py'), ('python', 'python3')):
+            path = self.leaf / 'execution-controls' / filename
+            original = path.read_bytes()
+            path.write_bytes(original + b'changed retained control')
+            altered = json.loads(json.dumps(record))
+            altered[role]['retained'] = self.binding(path)
+            with self.assertRaises(native.NativeObservationError): validate(altered)
+            path.write_bytes(original)
+
     def libc_test_fixture(self):
         import owned_libc_test as contract
         stage, prepared = self.leaf / 'source-stage', self.leaf / 'source-prepared'
@@ -665,6 +763,7 @@ class NativeObservationsTests(unittest.TestCase):
             source_names[source_names.index(f'functional/case_{73-number:03d}')] = 'functional/' + name
         source_names[source_names.index('regression/case_067')] = 'regression/tls_get_new-dtv'
         source_names[source_names.index('regression/case_066')] = 'regression/sem_close-unmap'
+        source_names[source_names.index('regression/case_065')] = 'regression/pthread_atfork-errno-clobber'
         for name in source_names:
             self.put(stage / 'src' / (name + '.c'), ('/* ' + name + ' */\n').encode())
         self.put(stage / 'src/api/unistd.c', b'C(_PC_TIMESTAMP_RESOLUTION)\nC(_SC_XOPEN_UUCP)\n')
@@ -849,6 +948,9 @@ class NativeObservationsTests(unittest.TestCase):
                     unit['runtime'] = {'comparison': {'status': 'passed', 'detail': 'passed'}}
                     for side in ('oracle', 'candidate'):
                         command = ['/usr/bin/timeout', '20', '/usr/sbin/chroot', self.recorded(self.leaf / 'execution' / name / side), '/runtest', '-w', '', '/' + name]
+                        execution_identity = None
+                        if name == 'regression/pthread_atfork-errno-clobber':
+                            execution_identity, command, _, _ = self.libc_identity_fixture(name, side)
                         record = command_record(command, 'execution/' + name + '/' + side)
                         status = self.put(self.leaf / 'execution' / name / (side + '.status.json'), record)
                         copied_files = [
@@ -883,10 +985,12 @@ class NativeObservationsTests(unittest.TestCase):
                             payload_record = {'schema': 'crabc.x86_64-owned-libc-test-root-payload/v1', 'side': side, 'phase': phase,
                                 'runtime': runtime_payload, 'copied_files': copied_files, 'control_fixture': controls,
                                 'filesystem_fixture': filesystem,
+                                'execution_identity_fixture': execution_identity['fixture'] if execution_identity else None,
                                 'topology': contract.unit_dso_roles(name), 'canonical_source_bindings': source_bindings}
                             phases[phase] = self.binding(self.put(self.leaf / 'execution' / name / (side + '.root-payload-' + phase + '.json'), payload_record))
                         unit['runtime'][side] = {'status': 'passed', 'root_reclaimed': True, 'record': record,
-                                                'status_record': self.binding(status), 'root_payload': {**phases, 'unchanged': True}}
+                                                'status_record': self.binding(status), 'root_payload': {**phases, 'unchanged': True},
+                                                'execution_identity': execution_identity}
             report['units'].append(unit)
         self.put(self.leaf / 'libc-test.json', report)
         return report
@@ -913,6 +1017,9 @@ class NativeObservationsTests(unittest.TestCase):
             'ambient compiler header override': lambda r: r['product']['compiler_environment'].update(CPATH='/foreign'),
             'failed runtime hidden by summary': lambda r: next(u for u in r['units'] if u['kind'] == 'runtime')['runtime']['candidate'].update(status='failed'),
             'boolean exit status': lambda r: r['units'][0]['candidate_translation']['record'].update(exit_status=False),
+            'missing execution identity': lambda r: next(u for u in r['units'] if u['id'] == 'regression/pthread_atfork-errno-clobber')['runtime']['candidate'].pop('execution_identity'),
+            'omitted fixed execution identity': lambda r: next(u for u in r['units'] if u['id'] == 'regression/pthread_atfork-errno-clobber')['runtime']['candidate'].update(execution_identity=None),
+            'identity on unrelated unit': lambda r: next(u for u in r['units'] if u['id'] == 'functional/case_000')['runtime']['candidate'].update(execution_identity={}),
             'incomplete campaign': lambda r: r.update(status='incomplete'),
             'changed generated options': lambda r: r['source_preparation']['options']['output'].update(sha256='changed'),
             'foreign options compiler': lambda r: r['source_preparation']['options']['record']['command'].__setitem__(0, '/foreign/gcc'),
@@ -947,6 +1054,8 @@ class NativeObservationsTests(unittest.TestCase):
             ('functional/case_000', 'changed copied candidate libc', lambda record: record['runtime']['candidate_product']['files'].update({'usr/lib/libc.so': '0' * 64})),
             ('functional/case_000', 'foreign copied program', lambda record: record['copied_files'][1].update(sha256='0' * 64)),
             ('functional/case_000', 'replaced candidate loader alias', lambda record: record['runtime']['candidate_product']['aliases'].update({'lib/ld-musl-x86_64.so.1': '/control/loader'})),
+            ('regression/pthread_atfork-errno-clobber', 'omitted root execution identity', lambda record: record.update(execution_identity_fixture=None)),
+            ('functional/case_000', 'undeclared root execution identity', lambda record: record.update(execution_identity_fixture={})),
             ('functional/sem_open', 'missing shared-memory fixture', lambda record: record['filesystem_fixture'].clear()),
             ('regression/sem_close-unmap', 'changed shared-memory permissions', lambda record: record['filesystem_fixture'][0].update(mode='00755')),
             ('functional/pthread_cancel-points', 'changed filesystem mode type', lambda record: record['filesystem_fixture'][0].update(mode=0o1777)),

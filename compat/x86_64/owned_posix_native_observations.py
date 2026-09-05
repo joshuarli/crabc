@@ -654,6 +654,116 @@ def _libc_filesystem_fixture(name):
     return []
 
 
+def _libc_execution_identity_fixture(name):
+    """Only this unchanged source requires fork to honor RLIMIT_NPROC=0.
+
+    Root bypasses that Linux precondition. The fixed child identity supplies
+    the source's environment; it cannot waive a failing candidate or oracle.
+    Keep this selector independent of the producer's declaration function.
+    """
+    if name != 'regression/pthread_atfork-errno-clobber':
+        return None
+    return {'kind': 'fixed-unprivileged-identity', 'uid': 65534, 'gid': 65534,
+            'supplementary_groups': [],
+            'required_zero_capability_sets': ['inheritable', 'permitted', 'effective', 'ambient'],
+            'source_requirement': 'RLIMIT_NPROC=0 must reject fork before checking atfork errno preservation'}
+
+
+def _libc_identity_snapshot(value, *, before_exec=False):
+    keys(value, ('resuid', 'resgid', 'groups', 'proc'), 'libc-test identity snapshot')
+    proc = keys(value['proc'], ('uids', 'gids', 'groups', 'capabilities'), 'libc-test proc identity')
+    for field, count in (('resuid', 3), ('resgid', 3), ('groups', None)):
+        values = value[field]
+        require(isinstance(values, list) and (count is None or len(values) == count)
+                and all(type(item) is int and 0 <= item < 2**32 for item in values),
+                'libc-test malformed actual identity ' + field)
+    for field in ('uids', 'gids'):
+        require(isinstance(proc[field], list) and len(proc[field]) == 4
+                and all(type(item) is int and 0 <= item < 2**32 for item in proc[field]),
+                'libc-test malformed proc identity ' + field)
+    same(proc['uids'][:3], value['resuid'], 'libc-test proc/getresuid agreement')
+    same(proc['gids'][:3], value['resgid'], 'libc-test proc/getresgid agreement')
+    require(isinstance(proc['groups'], list) and all(type(item) is int and 0 <= item < 2**32
+            for item in proc['groups']), 'libc-test malformed proc supplementary groups')
+    same(sorted(proc['groups']), sorted(value['groups']), 'libc-test proc/getgroups agreement')
+    capabilities = keys(proc['capabilities'], ('inheritable', 'permitted', 'effective', 'bounding', 'ambient'),
+                        'libc-test observed capability sets')
+    require(all(isinstance(item, str) and re.fullmatch('[0-9a-f]{16}', item) for item in capabilities.values()),
+            'libc-test capability observation is not sixteen lowercase hex digits')
+    if before_exec:
+        same([value['resuid'], value['resgid'], value['groups'], proc['uids'], proc['gids']],
+             [[65534]*3, [65534]*3, [], [65534]*4, [65534]*4], 'libc-test actual fixed execution identity')
+        same({key: capabilities[key] for key in ('inheritable', 'permitted', 'effective', 'ambient')},
+             {key: '0000000000000000' for key in ('inheritable', 'permitted', 'effective', 'ambient')},
+             'libc-test zero execution capabilities')
+    else:
+        same(proc['uids'], [0]*4, 'libc-test root parent user identity')
+
+
+def _libc_execution_identity(reader, value, *, name, side, source, command):
+    """Validate retained host control bytes and actual pre-exec observations.
+
+    No host Python or helper is executed during collection. Its retained Python
+    bytes bind the historical resolved executable, while the helper must also
+    match this checkout's tracked source. The observation ends before exec;
+    runtime success still comes from the separately retained target streams.
+    """
+    fixture = _libc_execution_identity_fixture(name)
+    if fixture is None:
+        same(value, None, 'libc-test undeclared execution identity fixture')
+        require(command[0] in ('/usr/bin/timeout', '/bin/timeout') and
+                command[2] in ('/usr/sbin/chroot', '/usr/bin/chroot', '/bin/chroot'),
+                'libc-test runtime control command differs')
+        same(command[1:], ['20', command[2], reader.recorded(reader.leaf / 'execution' / name / side),
+                          '/runtest', '-w', '', '/' + name], 'libc-test bounded runtime invocation')
+        return None
+    keys(value, ('fixture', 'helper', 'python', 'source', 'source_after', 'receipt', 'parent'),
+         'libc-test execution identity fixture record')
+    same(value['fixture'], fixture, 'libc-test fixed execution identity declaration')
+    helper = reader.root / 'compat/x86_64/owned_libc_test_identity.py'
+    receipt_path = reader.leaf / 'execution' / name / (side + '.identity.json')
+    execution_root = reader.leaf / 'execution' / name / side
+    for role, retained in (('helper', 'owned_libc_test_identity.py'), ('python', 'python3')):
+        artifact = keys(value[role], ('invoked_path', 'source', 'retained', 'after'), 'libc-test identity ' + role)
+        copy = reader.leaf / 'execution-controls' / retained
+        reader.bind(artifact['retained'], copy, 'libc-test retained identity ' + role)
+        same(artifact['after'], artifact['source'], 'libc-test identity control unchanged ' + role)
+        if role == 'helper':
+            same(artifact['invoked_path'], reader.recorded(helper), 'libc-test tracked identity helper invocation')
+            reader.bind(artifact['source'], helper, 'libc-test tracked identity helper source')
+        else:
+            same(artifact['invoked_path'], '/usr/bin/python3', 'libc-test identity Python invocation')
+            keys(artifact['source'], ('path', 'sha256'), 'libc-test identity Python source')
+            require(isinstance(artifact['source']['path'], str) and
+                    re.fullmatch(r'/usr/bin/python3\.[0-9]+', artifact['source']['path']),
+                    'libc-test identity Python resolved path')
+        same(artifact['retained']['sha256'], artifact['source']['sha256'], 'libc-test retained control bytes ' + role)
+    reader.bind(value['source'], source, 'libc-test identity prepared source')
+    reader.bind(value['source_after'], source, 'libc-test identity prepared source after execution')
+    reader.bind(value['receipt'], receipt_path, 'libc-test identity child receipt')
+    same(command, ['/usr/bin/timeout', '20', '/usr/bin/python3', '-B', reader.recorded(helper),
+                   '--root', reader.recorded(execution_root), '--receipt', reader.recorded(receipt_path),
+                   '--unit', name], 'libc-test fixed identity invocation')
+    receipt = keys(read_json(receipt_path), ('schema', 'unit', 'root', 'fixture', 'source', 'command', 'before_drop', 'before_exec'),
+                   'libc-test identity child receipt')
+    same({key: receipt[key] for key in ('schema', 'unit', 'root', 'fixture', 'source', 'command')},
+         {'schema': 'crabc.x86_64-owned-libc-test-execution-identity/v1', 'unit': name,
+          'root': reader.recorded(execution_root), 'fixture': fixture, 'source': reader.binding(source),
+          'command': ['/runtest', '-w', '', '/' + name]}, 'libc-test source-bound identity execution')
+    parent = keys(value['parent'], ('before', 'after', 'unchanged'), 'libc-test parent identity phases')
+    same(parent['unchanged'], True, 'libc-test parent identity stability')
+    same(parent['before'], parent['after'], 'libc-test unchanged parent identity')
+    same(receipt['before_drop'], parent['before'], 'libc-test child inherited identity')
+    _libc_identity_snapshot(parent['before'])
+    _libc_identity_snapshot(receipt['before_exec'], before_exec=True)
+    same(receipt['before_exec']['proc']['capabilities']['bounding'],
+         parent['before']['proc']['capabilities']['bounding'], 'libc-test capability bounding set unchanged')
+    return {'fixture': fixture, 'receipt': reader.identity(receipt_path, raw=True),
+            'helper': reader.identity(helper, source=True),
+            'python': reader.identity(reader.leaf / 'execution-controls/python3'),
+            'parent': parent}
+
+
 def _libc_root_phases(reader, run, *, name, side, payload, controls, topology, product_identity, oracle, product):
     phases = run['root_payload']
     keys(phases, ('before', 'after', 'unchanged'), 'libc-test private-root phase roster')
@@ -674,6 +784,7 @@ def _libc_root_phases(reader, run, *, name, side, payload, controls, topology, p
         same(read_json(path), {'schema': 'crabc.x86_64-owned-libc-test-root-payload/v1', 'side': side, 'phase': phase,
              'runtime': runtime, 'copied_files': copied, 'control_fixture': controls, 'topology': topology,
              'filesystem_fixture': _libc_filesystem_fixture(name),
+             'execution_identity_fixture': _libc_execution_identity_fixture(name),
              'canonical_source_bindings': sources}, 'libc-test copied runtime, programs, and controls')
 
 
@@ -851,11 +962,10 @@ def _libc_test(reader):
             same(record['environment'], {'LC_ALL': 'C', 'PATH': '/usr/bin:/bin', 'SOURCE_DATE_EPOCH': '1', 'TZ': 'UTC'},
                  'libc-test private-root execution environment')
             command = record['command']
-            require(command[0] in ('/usr/bin/timeout', '/bin/timeout') and command[2] in ('/usr/sbin/chroot', '/usr/bin/chroot', '/bin/chroot'),
-                    'libc-test runtime control command differs')
-            same(command[1:], ['20', command[2], reader.recorded(leaf / 'execution' / name / side), '/runtest', '-w', '', '/' + name],
-                 'libc-test bounded runtime invocation')
-            results[side] = {**_command_streams(reader, record), 'status': reader.identity(status_path, raw=True)}
+            identity = _libc_execution_identity(reader, run['execution_identity'], name=name, side=side,
+                                                source=source, command=command)
+            results[side] = {**_command_streams(reader, record), 'status': reader.identity(status_path, raw=True),
+                             'execution_identity': identity}
             raw[side] = [read_bytes(reader.local(record[stream]['path'])) for stream in ('stdout', 'stderr')]
             roles = contract.unit_dso_roles(name)
             payload = [{'source': reader.binding(leaf / 'links' / side / 'common/runtest.exe'), 'destination': '/runtest'},
