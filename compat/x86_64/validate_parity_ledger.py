@@ -61,6 +61,7 @@ from selected_header_install_projection import (  # noqa: E402
     ProjectionError,
     load_contract as load_selected_header_install_projection_contract,
 )
+import run_qualification_manifest as qualification_manifest_runner  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14616,6 +14617,7 @@ def require_posix_process_abi_admission_artifact(family: Mapping[str, Any]) -> N
         )
     expected_sources = {
         "compat/x86_64/qualification_posix_abi.json",
+        "compat/x86_64/run_qualification_manifest.py",
         "compat/x86_64/run_qualification_posix_abi.py",
         "compat/x86_64/run_libc_same_object_static_c_abi_differential.sh",
         "compat/x86_64/run_same_object_static_c_abi_differential.sh",
@@ -14623,6 +14625,7 @@ def require_posix_process_abi_admission_artifact(family: Mapping[str, Any]) -> N
         "compat/x86_64/run_libc_signal_execution.sh",
         "compat/x86_64/run_libc_child_reaping.sh",
         "compat/x86_64/run_libc_pthread_tls_aggregate.sh",
+        "compat/x86_64/tests/test_qualification_manifest.py",
         "compat/x86_64/tests/test_qualification_posix_abi.py",
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/tests/test_runner.py",
@@ -14709,6 +14712,23 @@ def require_posix_process_abi_admission_artifact(family: Mapping[str, Any]) -> N
         len(actual_cases) == len(cases) and actual_cases == expected_cases,
         "POSIX/ABI admission case inventory drifted",
     )
+    execution = qualification_manifest_runner.manifest.EXECUTION_CONTRACT
+    expected_environment = {
+        "PATH": execution["rust_bin_directory"] + ":" + qualification_manifest_runner.TRUSTED_PATH,
+        "RUSTUP_HOME": execution["rustup_home"],
+        "CARGO_HOME": execution["cargo_home"],
+        "CRABC_WORK_DIR": execution["work_directory"],
+        "TMPDIR": execution["temporary_directory"],
+        "LC_ALL": "C",
+        "LANG": "C",
+        "TZ": "UTC",
+        "PYTHONNOUSERSITE": "1",
+        "PYTHONSAFEPATH": "1",
+    }
+    require(
+        qualification_manifest_runner.controlled_environment() == expected_environment,
+        "POSIX/ABI admission execution environment drifted",
+    )
     aggregate = (
         ROOT / "compat" / "x86_64" / "run_qualification_posix_abi.py"
     ).read_text(encoding="utf-8")
@@ -14717,18 +14737,6 @@ def require_posix_process_abi_admission_artifact(family: Mapping[str, Any]) -> N
         "qualification case roster or order drifted",
         "start_new_session=True",
         "os.killpg(process.pid, signal.SIGKILL)",
-        "LC_ALL",
-        "LD_LIBRARY_PATH",
-        "LD_PRELOAD",
-        "C_INCLUDE_PATH",
-        "GCC_EXEC_PREFIX",
-        "COMPILER_PATH",
-        "CARGO_TARGET_DIR",
-        "CARGO_ENCODED_RUSTFLAGS",
-        "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER",
-        "RUSTC_WRAPPER",
-        "RUSTC_WORKSPACE_WRAPPER",
-        "RUSTFLAGS",
         "nonempty_lines.count(case.expected_stdout_line) != 1",
         "nonempty_lines[-1] != case.expected_stdout_line",
         "selected artifact transactions; non-promoting",

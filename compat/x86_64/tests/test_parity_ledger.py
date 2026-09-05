@@ -18734,6 +18734,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             {entry["command"] for entry in posix_artifact["native_evidence"]},
             {"./scripts/dev-x86_64.sh qualification-posix-abi-admission"},
         )
+        self.assertIn(
+            "compat/x86_64/run_qualification_manifest.py",
+            posix_artifact["source_owners"],
+        )
+        self.assertIn(
+            "compat/x86_64/tests/test_qualification_manifest.py",
+            posix_artifact["source_owners"],
+        )
         for phrase in (
             "closed five-case inventory",
             "process-context archive",
@@ -18776,6 +18784,20 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-posix-process-abi-admission description omits",
         ):
             ledger.validate_ledger(changed)
+
+    def test_qualification_posix_abi_admission_rejects_manifest_environment_drift(self) -> None:
+        data = self.data()
+        family = self.family(data, "compat.posix-process")
+        environment = ledger.qualification_manifest_runner.controlled_environment()
+        with mock.patch.object(
+            ledger.qualification_manifest_runner,
+            "controlled_environment",
+            return_value={**environment, "LD_LIBRARY_PATH": "poison"},
+        ):
+            with self.assertRaisesRegex(
+                ledger.LedgerError, "execution environment drifted"
+            ):
+                ledger.require_posix_process_abi_admission_artifact(family)
 
     def test_baseline_capabilities_are_read_from_the_baseline_toml(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
