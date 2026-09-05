@@ -12,8 +12,9 @@ use core::{ffi::{c_int, c_void}, sync::atomic::{AtomicBool, Ordering}};
 use super::{current_pthread_slot, PTHREAD_CANCEL_DISABLE, PTHREAD_CANCEL_ENABLE};
 use super::super::{raw_syscall, signal_foundation};
 
-const SIGCANCEL: c_int = 32;
-const SIGNAL_BIT: u64 = 1 << 31;
+// musl pthread_impl.h reserves 32 for timers and 33 for cancellation.
+const SIGCANCEL: c_int = 33;
+const SIGNAL_BIT: u64 = 1 << (SIGCANCEL - 1);
 const ECANCELED: i64 = 125;
 static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
