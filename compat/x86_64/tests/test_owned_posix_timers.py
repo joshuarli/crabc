@@ -15,6 +15,7 @@ RUNNER = ROOT / "compat/x86_64/run_owned_posix_timers.sh"
 sys.path.insert(0, str(ROOT / "compat" / "x86_64"))
 import owned_posix_timers_evidence as timer_evidence
 from owned_posix_timers_evidence import (
+    TIMER_APPLICATION_AUDIT_SCHEMA,
     TIMER_TLS_AUDIT_SCHEMA,
     TIMER_WORKLOAD_COMPILE_AUDIT_SCHEMA,
     _write_record,
@@ -23,6 +24,115 @@ from owned_posix_product_evidence import DYNAMIC_PRODUCT_FORMAT
 
 
 class OwnedPosixTimersTests(unittest.TestCase):
+    def compile_audit_fixture(self, temporary: Path):
+        product = temporary / "product"
+        headers = product / "usr/include"
+        headers.mkdir(parents=True)
+        header = headers / "timer.h"
+        header.write_text("/* installed timer header */\n", encoding="utf-8")
+        builtin = temporary / "compiler-builtin"
+        builtin.mkdir()
+        (builtin / "stdarg.h").write_text("/* compiler builtin */\n", encoding="utf-8")
+        source = temporary / "timer.c"
+        source.write_text("#include <timer.h>\n", encoding="utf-8")
+        object_path = temporary / "timer.o"
+        object_path.write_bytes(b"timer object")
+        driver = product / "bin/crabc-cc-dynamic"
+        driver.parent.mkdir(parents=True)
+        driver.write_text("#!/bin/sh\n", encoding="utf-8")
+        driver.chmod(0o755)
+        manifest = product / "share/crabc/manifest.json"
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text("{}\n", encoding="utf-8")
+        trace = temporary / "timer.headers"
+        trace.write_text(f". {header}\n", encoding="utf-8")
+        audit = temporary / "timer.compile-audit.json"
+        command = [str(driver), "--dynamic-pie", "-std=c11", "-c", str(source), "-o", str(object_path)]
+        return product, manifest, driver, builtin, header, source, object_path, trace, audit, command
+
+    def test_compile_audit_revalidates_source_installed_header_and_driver_before_retention(self):
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            fixture = self.compile_audit_fixture(Path(temporary))
+            product, manifest, driver, builtin, header, source, object_path, trace, audit, command = fixture
+            with patch.object(timer_evidence, "_dynamic_product", return_value=(product, manifest, driver)), \
+                 patch.object(timer_evidence, "_pinned_compiler_builtin_root", return_value=builtin):
+                _write_record(
+                    audit,
+                    timer_evidence.record_compile_audit(
+                        product, "application", source, object_path, driver, trace, command,
+                    ),
+                )
+                identity = timer_evidence.validate_timer_application_compile(
+                    product, source, object_path, audit,
+                )
+                self.assertEqual(identity["schema"], TIMER_APPLICATION_AUDIT_SCHEMA)
+                self.assertEqual(identity["object_sha256"], timer_evidence._sha256(object_path))
+                for path in (source, header, driver):
+                    original = path.read_bytes()
+                    path.write_bytes(original + b"changed")
+                    with self.subTest(path=path), self.assertRaises(timer_evidence.TimerEvidenceError):
+                        timer_evidence.validate_timer_application_compile(
+                            product, source, object_path, audit,
+                        )
+                    path.write_bytes(original)
+
+    def test_compile_audit_rejects_empty_relative_and_unowned_header_trace_entries(self):
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            fixture = self.compile_audit_fixture(Path(temporary))
+            product, _manifest, _driver, builtin, header, source, _object_path, trace, _audit, _command = fixture
+            with patch.object(timer_evidence, "_pinned_compiler_builtin_root", return_value=builtin):
+                trace.write_text(
+                    f". {header}\nMultiple include guards may be useful for:\n{header}\n",
+                    encoding="utf-8",
+                )
+                self.assertEqual(len(timer_evidence._headers(trace, product)), 2)
+                for text in ("", ". relative.h\n", "not a header trace\n", f". {source}\n"):
+                    trace.write_text(text, encoding="utf-8")
+                    with self.subTest(text=text), self.assertRaises(timer_evidence.TimerEvidenceError):
+                        timer_evidence._headers(trace, product)
+
+    def test_compile_audit_rejects_a_recorded_builtin_root_not_reported_by_the_pinned_compiler(self):
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            fixture = self.compile_audit_fixture(Path(temporary))
+            product, manifest, driver, builtin, _header, source, object_path, trace, audit, command = fixture
+            alternate = Path(temporary) / "alternate-builtin"
+            alternate.mkdir()
+            with patch.object(timer_evidence, "_dynamic_product", return_value=(product, manifest, driver)), \
+                 patch.object(timer_evidence, "_pinned_compiler_builtin_root", return_value=builtin):
+                _write_record(
+                    audit,
+                    timer_evidence.record_compile_audit(
+                        product, "application", source, object_path, driver, trace, command,
+                    ),
+                )
+            with patch.object(timer_evidence, "_dynamic_product", return_value=(product, manifest, driver)), \
+                 patch.object(timer_evidence, "_pinned_compiler_builtin_root", return_value=alternate), \
+                 self.assertRaises(timer_evidence.TimerEvidenceError):
+                timer_evidence.validate_timer_application_compile(product, source, object_path, audit)
+
+    def test_shared_receipt_metadata_rejects_python_equal_wrong_json_types(self):
+        record = {
+            "schema": 1,
+            "format": DYNAMIC_PRODUCT_FORMAT,
+            "mode": "shared",
+            "binding": "now",
+            "runtime_imports": [],
+            "application_runpath": "/usr/lib",
+            "application_dsos": {},
+            "campaign_complete": False,
+        }
+        timer_evidence._validate_shared_metadata(record)
+        for field, value in (("schema", True), ("schema", 1.0), ("campaign_complete", 0), ("campaign_complete", 0.0)):
+            changed = {**record, field: value}
+            with self.subTest(field=field, value=value), self.assertRaises(timer_evidence.TimerEvidenceError):
+                timer_evidence._validate_shared_metadata(changed)
+
     def test_tls_dso_elf_audit_accepts_the_sealed_shared_shape(self):
         header = "  Type:                              DYN (Shared object file)\n  Machine:                           Advanced Micro Devices X86-64\n"
         program = "  Type           Offset             VirtAddr\n  LOAD           0x0000000000000000\n"
@@ -98,6 +208,10 @@ class OwnedPosixTimersTests(unittest.TestCase):
             "crabc.x86_64-owned-posix-timers-compile/v1",
         )
         self.assertEqual(
+            TIMER_APPLICATION_AUDIT_SCHEMA,
+            "crabc.x86_64-owned-posix-timers-application/v1",
+        )
+        self.assertEqual(
             DYNAMIC_PRODUCT_FORMAT,
             "crabc-x86-64-owned-dynamic-sysroot-v1",
         )
@@ -113,6 +227,7 @@ class OwnedPosixTimersTests(unittest.TestCase):
             "dynamic_was_supplied=0",
             '"$static_product/bin/crabc-cc" "-$mode" --link-receipt',
             "validate_timer_tls_dso",
+            "validate_timer_application_compile",
             "validate_link",
             "record_compile_audit",
             "run_capture",

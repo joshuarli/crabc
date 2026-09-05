@@ -10,6 +10,7 @@ readonly tls_source="$ROOT/compat/x86_64/owned_posix_timers_tls.c"
 readonly timer_evidence="$ROOT/compat/x86_64/owned_posix_timers_evidence.py"
 readonly interpreter=/lib/ld-crabc-x86_64.so.1
 declare -a link_identity_records=()
+application_compile_identity=''
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -127,17 +128,36 @@ PY
 }
 
 retain_link_identities() {
-    python3 -B - "$work/link-identities.json" "${link_identity_records[@]}" <<'PY'
+    python3 -B - "$work/link-identities.json" "$application_compile_identity" "${link_identity_records[@]}" <<'PY'
 import json
 from pathlib import Path
 import sys
 
+output, application_path, *items = sys.argv[1:]
 fields = {
     'linkage', 'product', 'product_format', 'product_manifest_sha256',
     'workload_sha256', 'executable_sha256', 'receipt_sha256',
 }
+application_fields = {
+    'schema', 'product', 'product_manifest_sha256', 'source_sha256', 'object_sha256',
+    'driver_sha256', 'compile_audit_sha256', 'header_trace_sha256', 'headers',
+}
+try:
+    application = json.loads(Path(application_path).read_text(encoding='utf-8'))
+except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    raise SystemExit(f'retained application compile identity is unreadable: {error}') from error
+if not isinstance(application, dict) or set(application) != application_fields:
+    raise SystemExit('retained application compile identity fields drifted')
+if application['schema'] != 'crabc.x86_64-owned-posix-timers-application/v1':
+    raise SystemExit('retained application compile identity schema drifted')
+if not all(isinstance(application[field], str) and len(application[field]) == 64
+               for field in ('product_manifest_sha256', 'source_sha256', 'object_sha256',
+                             'driver_sha256', 'compile_audit_sha256', 'header_trace_sha256')):
+    raise SystemExit('retained application compile identity hash drifted')
+if not isinstance(application['product'], str) or not isinstance(application['headers'], list):
+    raise SystemExit('retained application compile identity value drifted')
 links = {}
-for item in sys.argv[2:]:
+for item in items:
     linkage, path = item.split(':', 1)
     if linkage in links:
         raise SystemExit(f'duplicate retained link identity: {linkage}')
@@ -150,8 +170,18 @@ for item in sys.argv[2:]:
     links[linkage] = identity
 if set(links) not in ({'pie', 'non-pie'}, {'static', 'static-pie', 'pie', 'non-pie'}):
     raise SystemExit('retained timer executable link identities have the wrong matrix')
-Path(sys.argv[1]).write_text(
-    json.dumps({'schema': 'crabc.x86_64-owned-posix-timers-link-identities/v1', 'links': links},
+for linkage, identity in links.items():
+    if identity['workload_sha256'] != application['object_sha256']:
+        raise SystemExit(f'retained {linkage} workload differs from the application compile audit')
+for linkage in ('pie', 'non-pie'):
+    identity = links[linkage]
+    if (identity['product'], identity['product_manifest_sha256']) != (
+        application['product'], application['product_manifest_sha256']
+    ):
+        raise SystemExit(f'retained {linkage} link differs from the application compile product')
+Path(output).write_text(
+    json.dumps({'schema': 'crabc.x86_64-owned-posix-timers-link-identities/v1',
+                'application_compile': application, 'links': links},
                sort_keys=True, separators=(',', ':')) + '\n',
     encoding='utf-8',
 )
@@ -159,10 +189,16 @@ PY
 }
 
 record_compile_audit() {
-    local role="$1" source="$2" object="$3" headers="$4" audit="$5" driver="$6" builtin="$7"
-    shift 7
+    local role="$1" source="$2" object="$3" headers="$4" audit="$5" driver="$6"
+    shift 6
     python3 -B "$timer_evidence" record-compile "$installed" "$role" "$source" "$object" \
-        "$driver" "$headers" "$builtin" "$audit" -- "$@"
+        "$driver" "$headers" "$audit" -- "$@"
+}
+
+validate_timer_application_compile() {
+    python3 -B "$timer_evidence" validate-application-compile "$installed" "$probe" "$work/probe.o" \
+        "$work/probe.compile-audit.json" >"$work/probe-compile-identity.json"
+    application_compile_identity="$work/probe-compile-identity.json"
 }
 
 validate_timer_tls_dso() {
@@ -191,7 +227,7 @@ run_capture "$work/probe-compile.stdout" \
 run_capture "$work/probe-headers.i" \
     "$oracle_cc" -std=c11 -nostdinc -I "$installed/usr/include" -isystem "$oracle_builtin" -E -H "$probe"
 record_compile_audit application "$probe" "$work/probe.o" "$work/probe-headers.i.stderr" \
-    "$work/probe.compile-audit.json" "$installed/bin/crabc-cc-dynamic" "$oracle_builtin" \
+    "$work/probe.compile-audit.json" "$installed/bin/crabc-cc-dynamic" \
     "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -c "$probe" -o "$work/probe.o"
 
 run_capture "$work/tls-compile.stdout" \
@@ -199,7 +235,7 @@ run_capture "$work/tls-compile.stdout" \
 run_capture "$work/tls-headers.i" \
     "$oracle_cc" -std=c11 -nostdinc -I "$installed/usr/include" -isystem "$oracle_builtin" -E -H "$tls_source"
 record_compile_audit timer-tls-dso "$tls_source" "$work/tls.o" "$work/tls-headers.i.stderr" \
-    "$work/tls.compile-audit.json" "$installed/bin/crabc-cc-dynamic" "$oracle_builtin" \
+    "$work/tls.compile-audit.json" "$installed/bin/crabc-cc-dynamic" \
     "$installed/bin/crabc-cc-dynamic" -shared -std=c11 -c "$tls_source" -o "$work/tls.o"
 
 run_capture "$work/oracle-link.stdout" "$oracle_cc" -pthread "$work/probe.o" -o "$work/oracle"
@@ -305,6 +341,7 @@ for mode in pie non-pie; do
     run_capture "$work/direct-$mode-failure.stdout" \
         chroot "$work/execution-root" "$interpreter" "/consumer-$mode" failure
 done
+validate_timer_application_compile
 retain_link_identities
 
 printf 'owned POSIX timers: PASS (separate source-bound application and callback TLS objects through musl and sealed static/static-PIE/dynamic PIE/non-PIE links; raw stdout/stderr/status, executable receipts and callback-loaded shared-DSO receipt retained; timer lifecycle, callback TSD/TLS/cancel/exit reset, failure reclamation)\n'

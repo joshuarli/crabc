@@ -28,8 +28,10 @@ from owned_posix_product_evidence import (
 )
 
 TIMER_WORKLOAD_COMPILE_AUDIT_SCHEMA = "crabc.x86_64-owned-posix-timers-compile/v1"
+TIMER_APPLICATION_AUDIT_SCHEMA = "crabc.x86_64-owned-posix-timers-application/v1"
 TIMER_TLS_AUDIT_SCHEMA = "crabc.x86_64-owned-posix-timers-tls-dso/v1"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+PINNED_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 
 
 class TimerEvidenceError(RuntimeError):
@@ -123,7 +125,31 @@ def _dynamic_product(product: Path) -> tuple[Path, Path, Path]:
     return root, manifest, driver
 
 
-def _headers(trace: Path, product: Path, compiler_builtin: Path) -> list[dict[str, str]]:
+def _pinned_compiler_builtin_root() -> Path:
+    """Derive the only admitted compiler include root from the pinned compiler."""
+
+    compiler = _physical(PINNED_COMPILER, "pinned compiler")
+    if not compiler.lstat().st_mode & 0o111:
+        _fail("pinned compiler is not executable")
+    try:
+        result = subprocess.run(
+            [str(compiler), "-print-file-name=include"], stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
+        )
+    except OSError as error:
+        raise TimerEvidenceError("pinned compiler cannot report its builtin header root") from error
+    if result.returncode or result.stderr or not result.stdout.endswith("\n"):
+        _fail("pinned compiler did not report one builtin header root")
+    reported = result.stdout[:-1]
+    if not reported or "\n" in reported:
+        _fail("pinned compiler reported an invalid builtin header root")
+    return _physical(Path(reported), "pinned compiler builtin header root", directory=True)
+
+
+def _header_records(
+    trace: Path, product: Path, compiler_builtin: Path, *, require_installed: bool
+) -> list[dict[str, str]]:
+    """Parse one GCC ``-H`` closure; only the headerless TLS source may be empty."""
     trace = _physical(trace, "installed-header trace")
     include_root = _physical(product / "usr/include", "installed header root", directory=True)
     compiler_builtin = _physical(compiler_builtin, "pinned compiler builtin header root", directory=True)
@@ -132,10 +158,20 @@ def _headers(trace: Path, product: Path, compiler_builtin: Path) -> list[dict[st
         lines = trace.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as error:
         raise TimerEvidenceError(f"installed-header trace is unreadable: {trace}") from error
+    guard_suggestions = False
     for line in lines:
-        candidate = line.lstrip(". ")
-        if not candidate.startswith("/"):
+        if line == "Multiple include guards may be useful for:":
+            if guard_suggestions or not headers:
+                _fail("installed-header trace has an unexpected guard-suggestion section")
+            guard_suggestions = True
             continue
+        if guard_suggestions:
+            match = re.fullmatch(r"(/.+)", line)
+        else:
+            match = re.fullmatch(r"\.+[ \t]+(/.+)", line)
+        if match is None:
+            _fail(f"installed-header trace has an unrecognized entry: {line!r}")
+        candidate = match.group(1)
         header = _physical(Path(candidate), "installed header")
         for root, kind in ((include_root, "installed"), (compiler_builtin, "compiler-builtin")):
             try:
@@ -146,7 +182,18 @@ def _headers(trace: Path, product: Path, compiler_builtin: Path) -> list[dict[st
                 continue
         else:
             _fail(f"header trace escaped the installed and compiler-builtin roots: {header}")
+    if require_installed:
+        if not headers:
+            _fail("installed-header trace has no admitted headers")
+        if not any(header["root"] == "installed" for header in headers):
+            _fail("installed-header trace has no installed product header")
     return headers
+
+
+def _headers(trace: Path, product: Path) -> list[dict[str, str]]:
+    return _header_records(
+        trace, product, _pinned_compiler_builtin_root(), require_installed=True
+    )
 
 
 def _compile_command(role: str, driver: Path, source: Path, output: Path) -> list[str]:
@@ -166,7 +213,6 @@ def record_compile_audit(
     output: Path,
     driver: Path,
     header_trace: Path,
-    compiler_builtin: Path,
     command: Sequence[str],
 ) -> dict[str, Any]:
     """Return one source/object/driver/header identity for a compile step."""
@@ -181,7 +227,7 @@ def record_compile_audit(
     if list(command) != expected_command:
         _fail(f"{role} compile command differs from the sealed timer invocation")
     trace = _physical(header_trace, f"{role} installed-header trace")
-    compiler_builtin = _physical(compiler_builtin, "pinned compiler builtin header root", directory=True)
+    compiler_builtin = _pinned_compiler_builtin_root()
     return {
         "schema": TIMER_WORKLOAD_COMPILE_AUDIT_SCHEMA,
         "role": role,
@@ -196,7 +242,9 @@ def record_compile_audit(
         "headers": {
             "trace": {"path": str(trace), "sha256": _sha256(trace)},
             "compiler_builtin": str(compiler_builtin),
-            "resolved": _headers(trace, root, compiler_builtin),
+            "resolved": _header_records(
+                trace, root, compiler_builtin, require_installed=role == "application"
+            ),
         },
     }
 
@@ -231,10 +279,12 @@ def _validate_compile_audit(
     _recorded_file(trace_record, trace, f"{role} compile header trace")
     if not isinstance(headers["compiler_builtin"], str):
         _fail(f"{role} compile compiler builtin root is malformed")
-    compiler_builtin = _physical(
-        Path(headers["compiler_builtin"]), "pinned compiler builtin header root", directory=True
-    )
-    if headers["resolved"] != _headers(trace, root, compiler_builtin):
+    compiler_builtin = _pinned_compiler_builtin_root()
+    if headers["compiler_builtin"] != str(compiler_builtin):
+        _fail(f"{role} compile compiler builtin root differs from the pinned compiler")
+    if headers["resolved"] != _header_records(
+        trace, root, compiler_builtin, require_installed=role == "application"
+    ):
         _fail(f"{role} compile headers differ from the installed trace")
     return root, manifest, driver, _sha256(audit)
 
@@ -263,6 +313,21 @@ def _shared_link_command(root: Path, object_path: Path, output: Path, linker: Pa
     ]
 
 
+def _validate_shared_metadata(record: dict[str, Any]) -> None:
+    """Require exact JSON scalar types before comparing a sealed receipt."""
+
+    if type(record["schema"]) is not int:
+        _fail("timer TLS DSO receipt schema must be an integer")
+    if type(record["campaign_complete"]) is not bool:
+        _fail("timer TLS DSO receipt campaign state must be a boolean")
+    if (
+        record["schema"], record["format"], record["mode"], record["binding"],
+        record["runtime_imports"], record["application_runpath"], record["application_dsos"],
+        record["campaign_complete"],
+    ) != (1, DYNAMIC_PRODUCT_FORMAT, "shared", "now", [], "/usr/lib", {}, False):
+        _fail("timer TLS DSO receipt is not the sealed callback-loaded shared link")
+
+
 def _validate_shared_receipt(
     root: Path, manifest: Path, object_path: Path, output: Path, receipt: Path
 ) -> str:
@@ -277,12 +342,7 @@ def _validate_shared_receipt(
     }
     if set(record) != fields:
         _fail("timer TLS DSO receipt fields drifted")
-    if (
-        record["schema"], record["format"], record["mode"], record["binding"],
-        record["runtime_imports"], record["application_runpath"], record["application_dsos"],
-        record["campaign_complete"],
-    ) != (1, DYNAMIC_PRODUCT_FORMAT, "shared", "now", [], "/usr/lib", {}, False):
-        _fail("timer TLS DSO receipt is not the sealed callback-loaded shared link")
+    _validate_shared_metadata(record)
     if record["output_path"] != str(output):
         _fail("timer TLS DSO receipt output path differs from this evidence invocation")
     if record["output_sha256"] != _sha256(output):
@@ -343,6 +403,32 @@ def _validate_tls_elf(output: Path) -> tuple[str, list[str]]:
     return sonames[0], needed
 
 
+def validate_timer_application_compile(
+    product: Path, source: Path, object_path: Path, compile_audit: Path
+) -> dict[str, Any]:
+    """Return the retained source/header identity for every timer executable link."""
+
+    root, manifest, driver, compile_audit_hash = _validate_compile_audit(
+        product, "application", source, object_path, compile_audit
+    )
+    source = _physical(source, "timer application source")
+    object_path = _physical(object_path, "timer application object")
+    record = _json(_physical(compile_audit, "timer application compile audit"), "timer application compile audit")
+    headers = _exact_object(record["headers"], {"trace", "compiler_builtin", "resolved"}, "timer application compile headers")
+    trace = _exact_object(headers["trace"], {"path", "sha256"}, "timer application compile header trace")
+    return {
+        "schema": TIMER_APPLICATION_AUDIT_SCHEMA,
+        "product": str(root),
+        "product_manifest_sha256": _sha256(manifest),
+        "source_sha256": _sha256(source),
+        "object_sha256": _sha256(object_path),
+        "driver_sha256": _sha256(driver),
+        "compile_audit_sha256": compile_audit_hash,
+        "header_trace_sha256": trace["sha256"],
+        "headers": headers["resolved"],
+    }
+
+
 def validate_timer_tls_dso(
     product: Path, source: Path, object_path: Path, compile_audit: Path, output: Path, receipt: Path
 ) -> dict[str, Any]:
@@ -384,9 +470,13 @@ def main(arguments: Sequence[str]) -> int:
     compile_parser.add_argument("object", type=Path)
     compile_parser.add_argument("driver", type=Path)
     compile_parser.add_argument("header_trace", type=Path)
-    compile_parser.add_argument("compiler_builtin", type=Path)
     compile_parser.add_argument("audit", type=Path)
     compile_parser.add_argument("command", nargs=argparse.REMAINDER)
+    application_parser = commands.add_parser("validate-application-compile")
+    application_parser.add_argument("product", type=Path)
+    application_parser.add_argument("source", type=Path)
+    application_parser.add_argument("object", type=Path)
+    application_parser.add_argument("compile_audit", type=Path)
     dso_parser = commands.add_parser("validate-tls-dso")
     dso_parser.add_argument("product", type=Path)
     dso_parser.add_argument("source", type=Path)
@@ -402,9 +492,17 @@ def main(arguments: Sequence[str]) -> int:
                 parsed.audit,
                 record_compile_audit(
                     parsed.product, parsed.role, parsed.source, parsed.object, parsed.driver,
-                    parsed.header_trace, parsed.compiler_builtin, command,
+                    parsed.header_trace, command,
                 ),
             )
+        elif parsed.action == "validate-application-compile":
+            json.dump(
+                validate_timer_application_compile(
+                    parsed.product, parsed.source, parsed.object, parsed.compile_audit,
+                ),
+                sys.stdout, sort_keys=True, separators=(",", ":"),
+            )
+            sys.stdout.write("\n")
         else:
             json.dump(
                 validate_timer_tls_dso(

@@ -29,13 +29,25 @@ failure observations, printing `evidence: PATH` on exit.
 
 The four executable links retain the shared
 `owned_posix_product_evidence.validate_link` identities: static, static PIE,
-dynamic PIE and dynamic non-PIE. The callback-loaded DSO has a separate
-shared-mode receipt audit in `owned_posix_timers_evidence.py`. It binds the TLS
-source and object hashes, installed driver and manifest, installed-header trace,
-DSO output and receipt hashes, exact shared-mode command and real link trace,
-SONAME `libtimer-tls.so`, and `DT_NEEDED` exactly `libc.so`. Its receipt and the
-four executable receipts keep `application_dsos` empty; passing the TLS DSO as
+dynamic PIE and dynamic non-PIE. Before publication,
+`owned_posix_timers_evidence.py::validate_timer_application_compile` rechecks
+the application source, object, installed driver, manifest, compiler-derived
+builtin-header root, complete installed-header trace, and every resolved header.
+The retained application identity must name the same object hash as all four
+executable identities and the same dynamic product as both dynamic links. The
+callback-loaded DSO has a separate shared-mode receipt audit in
+`owned_posix_timers_evidence.py`. It binds the TLS source and object hashes,
+installed driver and manifest, installed-header trace, DSO output and receipt
+hashes, exact shared-mode command and real link trace, SONAME
+`libtimer-tls.so`, and `DT_NEEDED` exactly `libc.so`. Its receipt and the four
+executable receipts keep `application_dsos` empty; passing the TLS DSO as
 `--application-dso` would incorrectly create an initial dependency.
+
+`owned_posix_timers_tls.c` intentionally uses only C language TLS primitives,
+so its recorded `-H` closure is empty. The application audit requires a
+nonempty installed-header closure. Both roles reject relative, unrecognized,
+or out-of-root trace entries, and derive the only compiler-builtin root by
+querying the fixed `/usr/local/bin/crabc-x86_64-musl-gcc` oracle directly.
 
 The shared workload also isolates pending creator cancellation in disposable
 children, containing musl's resulting orphan timer. It requires cancellation
