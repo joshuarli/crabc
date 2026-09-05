@@ -1815,6 +1815,52 @@ impl Mapping {
         result
     }
 
+    /// Commits one published reserved range through its original process pair.
+    ///
+    /// This is the post-publication counterpart of [`Self::commit_for_process`].
+    /// Pinned `_mi_os_commit_ex` records `commit_calls` before liberal page
+    /// normalization, and increases `committed` by the caller's requested
+    /// span—not the possibly wider primitive range—only after the normalized
+    /// commit succeeds. Keeping that sequence at this raw boundary lets a
+    /// page owner commit a newly published prefix without reconstructing a
+    /// second `Mapping` capability.
+    ///
+    /// # Safety
+    ///
+    /// `address..address + length` must be a live subrange of one reserved
+    /// mapping originally accounted by `process`. The caller must exclusively
+    /// own the source new-prefix transition and prove that its covering
+    /// page-aligned range remains in that same mapping. No Rust reference or
+    /// aliased mapping capability may observe the bytes during this raw
+    /// protection change. The original published release token remains the
+    /// sole release authority; this method creates neither a release token nor
+    /// a second mapping owner.
+    pub(crate) unsafe fn commit_published_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        address: *mut u8,
+        length: usize,
+    ) -> Result<Option<CommitOutcome>> {
+        // `_mi_os_commit_ex` increments the named counter before it asks
+        // `mi_os_page_align_areax` whether the source span has any pages.
+        let statistics = process.subprocess.vm_statistics();
+        statistics.commit_call();
+        let Some((address, normalized_length)) =
+            covering_unowned_page_range(config.page_size(), address, length)?
+        else {
+            return Ok(None);
+        };
+        fault_before(FaultPoint::Commit)?;
+        // SAFETY: the caller's unsafe contract proves that this source-style
+        // covering range stays in its live reserved mapping and is uniquely
+        // transitioning from reserved to accessible bytes.
+        unsafe {
+            crabc_core::mm::mprotect_raw(address, normalized_length, PROT_READ | PROT_WRITE)
+        }?;
+        statistics.committed_increase(length);
+        Ok(Some(CommitOutcome::NotKnownZero))
+    }
+
     /// Returns whether the original anonymous mapping was zero initialized.
     #[inline]
     pub(crate) const fn initially_zero(&self) -> bool {
@@ -3577,6 +3623,38 @@ enum PageAlignment {
     Contained,
 }
 
+/// Selects every base page touched by one non-owning external span.
+///
+/// Unlike [`Mapping::page_range`], this cannot prove the input is within a
+/// particular `Mapping` value because publication moved that capability to an
+/// external owner. The unsafe caller of
+/// [`Mapping::commit_published_for_process`] supplies the containment and
+/// unique-transition proof; this helper only preserves `_mi_os_commit_ex`'s
+/// liberal source page normalization.
+fn covering_unowned_page_range(
+    page_size: PageSize,
+    address: *mut u8,
+    length: usize,
+) -> Result<Option<(*mut u8, usize)>> {
+    if address.is_null() {
+        return Err(Errno::INVAL);
+    }
+    if length == 0 {
+        return Ok(None);
+    }
+    let start_address = address.addr();
+    let end_address = start_address.checked_add(length).ok_or(Errno::INVAL)?;
+    let page_size = page_size.bytes();
+    let start = invariants::align_down(start_address, page_size).ok_or(Errno::INVAL)?;
+    let end = invariants::align_up(end_address, page_size).ok_or(Errno::INVAL)?;
+    if end <= start {
+        return Ok(None);
+    }
+    let prefix = start_address.checked_sub(start).ok_or(Errno::INVAL)?;
+    let range_length = end.checked_sub(start).ok_or(Errno::INVAL)?;
+    Ok(Some((address.wrapping_sub(prefix), range_length)))
+}
+
 /// Selects the complete base pages contained by one non-owning external span.
 ///
 /// Unlike [`Mapping::page_range`], this cannot prove the input is within a
@@ -4841,6 +4919,101 @@ mod tests {
         let after_raw_retry = subprocess.vm_statistics().snapshot();
         assert_eq!(after_raw_retry.reserved_current, 0);
         assert_eq!(after_raw_retry.committed_current, 0);
+    }
+
+    #[test]
+    fn published_mapping_process_commit_counts_before_normalization_and_only_after_success() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+
+        let mapping = Mapping::map_for_process(
+            process,
+            config,
+            2 * page,
+            1,
+            MapAccess::Reserved,
+            false,
+            None,
+        )
+        .expect("the paired process reserves two source pages");
+        let base = mapping.into_published().expect("the mapping transfers its publication token");
+        let before = subprocess.vm_statistics().snapshot();
+        // SAFETY: this published token names a live two-page reservation; the
+        // one-page interior request has a unique new-prefix transition and
+        // its covering page range remains within that reservation.
+        assert_eq!(
+            unsafe {
+                Mapping::commit_published_for_process(
+                    process,
+                    config,
+                    base.wrapping_add(page / 2),
+                    page,
+                )
+            },
+            Ok(Some(CommitOutcome::NotKnownZero)),
+        );
+        let after_commit = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_commit.commit_calls, before.commit_calls + 1);
+        assert_eq!(after_commit.committed_current, before.committed_current + page as i64);
+        assert_eq!(after_commit.committed_total, before.committed_total + page as i64);
+        // SAFETY: the original token retains the full two-page release right;
+        // the source caller records only its one-page committed prefix.
+        unsafe { Mapping::reclaim_published_for_process(process, base, 2 * page, page, false) }
+            .expect("the published reservation releases with its exact source statistics");
+
+        let empty = Mapping::map_for_process(
+            process,
+            config,
+            page,
+            1,
+            MapAccess::Reserved,
+            false,
+            None,
+        )
+        .expect("the paired process reserves one empty-range fixture page");
+        let empty_base = empty.into_published().unwrap();
+        let before_empty = subprocess.vm_statistics().snapshot();
+        // SAFETY: the live token remains exclusively owned; zero length is the
+        // source's normalized empty commit branch.
+        assert_eq!(
+            unsafe { Mapping::commit_published_for_process(process, config, empty_base, 0) },
+            Ok(None),
+        );
+        let after_empty = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_empty.commit_calls, before_empty.commit_calls + 1);
+        assert_eq!(after_empty.committed_current, before_empty.committed_current);
+        unsafe { Mapping::reclaim_published_for_process(process, empty_base, page, 0, false) }
+            .expect("the empty-range fixture retains its release right");
+
+        let failed = Mapping::map_for_process(
+            process,
+            config,
+            page,
+            1,
+            MapAccess::Reserved,
+            false,
+            None,
+        )
+        .expect("the paired process reserves one failure fixture page");
+        let failed_base = failed.into_published().unwrap();
+        let before_failure = subprocess.vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        // SAFETY: this token names a still-reserved page and no alias can
+        // observe the failed source transition.
+        assert_eq!(
+            unsafe { Mapping::commit_published_for_process(process, config, failed_base, page) },
+            Err(Errno::NOMEM),
+        );
+        let after_failure = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_failure.commit_calls, before_failure.commit_calls + 1);
+        assert_eq!(after_failure.committed_current, before_failure.committed_current);
+        fault.set(fault::Plan::disabled());
+        unsafe { Mapping::reclaim_published_for_process(process, failed_base, page, 0, false) }
+            .expect("the failed commit retains its published release token");
     }
 
     fn synthetic_huge_mapping(config: MemoryConfig, address: usize) -> Mapping {
