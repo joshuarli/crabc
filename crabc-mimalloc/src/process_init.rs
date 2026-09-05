@@ -446,7 +446,7 @@ impl ProcessMainInitializationStorage {
             VmPolicyStartup::RetainOnly(policy) => (Some(policy), false),
             VmPolicyStartup::ApplyProcessMemoryPolicy(policy) => (Some(policy), true),
         };
-        if let Some(policy) = policy {
+        let vm_process = if let Some(policy) = policy {
             // The source process-load edge clears `os_preloading` before its
             // option/OS/main-heap work. Retain this policy first, then expose
             // only its post-preloading read state to every later source
@@ -471,7 +471,10 @@ impl ProcessMainInitializationStorage {
                 #[cfg(miri)]
                 let _ = (&policy, &mut config);
             }
-        }
+            Some(VmProcess::new(policy, subprocess))
+        } else {
+            None
+        };
 
         let mut selection = match subprocess.reserve_static_bootstrap() {
             Ok(selection) => selection,
@@ -512,6 +515,19 @@ impl ProcessMainInitializationStorage {
                 return Err(ProcessMainInitError::PageMap(error));
             }
         };
+        if let Some(process) = vm_process {
+            // The policy-aware path has now published every predecessor that
+            // metadata needs: its detached Theap identity is bound and the
+            // selected global PageMap has one stable root. Bind the exact
+            // process pair before any metadata demand or READY publication;
+            // a legacy explicit-config startup intentionally cannot invent
+            // this policy-bound backing route.
+            if let Err(error) = metadata.bind_process_backing(process, page_map) {
+                selection.retain();
+                self.publish_terminal_state_and_release(completion, RETAINED);
+                return Err(ProcessMainInitError::Metadata(error));
+            }
+        }
 
         // SAFETY: preflight established current-thread/root ownership; the
         // source-shaped once claim and selected linear token exclude another
@@ -1179,6 +1195,16 @@ mod tests {
                 ready.arena_backing().expect("the VM-ready lease exposes its subprocess arena group"),
                 subprocess.arena_backing(),
             ));
+            let mut allocation = metadata
+                .zalloc_for_main_subprocess(config, subprocess, 64)
+                .expect("the policy-aware startup selects the shared process metadata backing");
+            assert!(
+                metadata.test_private_page_map_address().is_none(),
+                "the first metadata demand must use the already-bound process PageMap, not create the legacy private map",
+            );
+            metadata
+                .free(&mut allocation)
+                .expect("the process-backed metadata allocation releases through its selected owner");
 
             owner.teardown().expect("the selected ticket-zero owner tears down");
             assert!(matches!(
