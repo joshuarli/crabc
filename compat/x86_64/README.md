@@ -91,6 +91,12 @@ runtime twice and tests installed and extracted PIE/DSO consumers. See
 initial-graph boundary and remaining loader work. The older
 `owned-dynamic-sysroot` command is a plan-only seed, not this executing gate.
 
+`./scripts/dev-x86_64.sh owned-loader-short-stack` is the focused 100 KiB
+libc-test startup regression for the selected general-initial-TLS loader path.
+Its [component record](owned-loader-short-stack.md) identifies the pinned
+launcher behavior, raw transaction-storage boundary, and contained
+musl-versus-owned observation.
+
 ## Boundary and caveats
 
 The campaign covers Linux 5.10-or-newer, native x86-64 little-endian execution,

@@ -27,6 +27,7 @@ use super::x86_64_initial_tls_registry::{
     InitialTlsGeneration, InitialTlsRegistry, RegistryPhase, RuntimeTlsGrowthError, TlsModuleId,
 };
 use core::mem::MaybeUninit;
+use core::ops::{Deref, DerefMut};
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -103,6 +104,122 @@ pub(crate) struct GeneralInitialTlsState {
     phase: GeneralInitialTlsPhase,
     loader: GeneralInitialLoaderState,
     registry: GeneralInitialTlsRegistry,
+}
+
+/// Raw-map owner for one initial TLS transaction.
+///
+/// Linux sizes the initial stack from the post-exec `RLIMIT_STACK`. Upstream
+/// libc-test deliberately lowers that limit to 100 KiB before `execv`; the
+/// complete bounded graph owner is larger than that budget when materialized
+/// as a Rust local. Keep only the transaction storage off the kernel stack.
+/// All graph, relocation, publication, and rollback rules still belong to
+/// `GeneralInitialTlsState`, and the mapping is released after either
+/// rollback or the successful move into the process-lifetime owner.
+pub(crate) struct GeneralInitialTlsTransaction {
+    state: *mut GeneralInitialTlsState,
+    byte_len: usize,
+}
+
+impl GeneralInitialTlsTransaction {
+    /// Allocates and initializes the mutable part of one initial TLS load.
+    ///
+    /// This runs before TLS installation and uses only the raw Linux mmap
+    /// boundary already owned by the loader.
+    pub(crate) fn allocate(main_identity: ObjectIdentity, main: Object) -> Option<Self> {
+        let byte_len = core::mem::size_of::<GeneralInitialTlsState>();
+        if byte_len == 0
+            || byte_len > isize::MAX as usize
+            || core::mem::align_of::<GeneralInitialTlsState>() > PAGE as usize
+        {
+            return None;
+        }
+        let mapping = unsafe {
+            syscall6(
+                SYS_MMAP,
+                0,
+                byte_len as i64,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS,
+                -1,
+                0,
+            )
+        };
+        if is_linux_error(mapping) {
+            return None;
+        }
+        let transaction = Self {
+            state: mapping as *mut GeneralInitialTlsState,
+            byte_len,
+        };
+        // SAFETY: mmap returned writable, page-aligned storage large enough
+        // for one state. `transaction` owns it exclusively until commit/drop.
+        unsafe {
+            GeneralInitialTlsState::initialize_at(transaction.state, main_identity, main)
+        };
+        Some(transaction)
+    }
+
+    fn release(&mut self) {
+        if !self.state.is_null() {
+            unsafe {
+                syscall2(SYS_MUNMAP, self.state as i64, self.byte_len as i64);
+            }
+            self.state = core::ptr::null_mut();
+            self.byte_len = 0;
+        }
+    }
+
+    /// Moves the transaction into the durable initial-TLS owner, then drops
+    /// only its temporary raw mapping.
+    ///
+    /// # Safety
+    ///
+    /// The wrapped state must have completed the matching pre-FS reservation
+    /// and TLS installation. No reference obtained through this transaction
+    /// may be retained after the call.
+    #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
+    pub(crate) unsafe fn commit(mut self, installed: InstalledInitialTls) {
+        unsafe { core::ptr::read(self.state).commit(installed) };
+        self.release();
+    }
+
+    /// Moves the RuntimeV1 transaction into its paired durable owners, then
+    /// drops only its temporary raw mapping.
+    ///
+    /// # Safety
+    ///
+    /// The wrapped state must have completed both reservations and installed
+    /// its initial TLS allocation. No reference obtained through this
+    /// transaction may be retained after the call.
+    #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
+    pub(crate) unsafe fn commit_runtime_v1(mut self, installed: InstalledInitialTls) {
+        unsafe { core::ptr::read(self.state).commit_runtime_v1(installed) };
+        self.release();
+    }
+}
+
+impl Deref for GeneralInitialTlsTransaction {
+    type Target = GeneralInitialTlsState;
+
+    fn deref(&self) -> &Self::Target {
+        // `state` becomes null only while consuming commit, after which the
+        // private wrapper cannot be dereferenced again.
+        unsafe { &*self.state }
+    }
+}
+
+impl DerefMut for GeneralInitialTlsTransaction {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // See `Deref`: this private owner uniquely holds the mmap until
+        // commit/drop, so it can expose the transaction state mutably.
+        unsafe { &mut *self.state }
+    }
+}
+
+impl Drop for GeneralInitialTlsTransaction {
+    fn drop(&mut self) {
+        self.release();
+    }
 }
 
 /// TLS-specific retained coordinates attached to the canonical loader state.
@@ -338,10 +455,41 @@ unsafe fn publish_reserved_loader_tls_runtime_v1(installed: InstalledInitialTls)
 impl GeneralInitialTlsState {
     /// Begins a TLS planner against the canonical general loader transaction.
     pub(crate) fn new(main_identity: ObjectIdentity, main: Object) -> Self {
-        Self {
-            phase: GeneralInitialTlsPhase::Discovery,
-            loader: GeneralInitialLoaderState::new(main_identity, main),
-            registry: GeneralInitialTlsRegistry::new(),
+        let mut state = MaybeUninit::<Self>::uninit();
+        // SAFETY: the local storage is aligned and writable; the initializer
+        // writes every field before the completed value is returned.
+        unsafe {
+            Self::initialize_at(state.as_mut_ptr(), main_identity, main);
+            state.assume_init()
+        }
+    }
+
+    /// Initializes one TLS transaction in caller-owned storage.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must identify writable, aligned storage for one
+    /// uninitialized `GeneralInitialTlsState`. The caller owns its lifetime
+    /// and must not read it before this function returns.
+    pub(crate) unsafe fn initialize_at(
+        destination: *mut Self,
+        main_identity: ObjectIdentity,
+        main: Object,
+    ) {
+        unsafe {
+            core::ptr::write(
+                core::ptr::addr_of_mut!((*destination).phase),
+                GeneralInitialTlsPhase::Discovery,
+            );
+            GeneralInitialLoaderState::initialize_at(
+                core::ptr::addr_of_mut!((*destination).loader),
+                main_identity,
+                main,
+            );
+            core::ptr::write(
+                core::ptr::addr_of_mut!((*destination).registry),
+                GeneralInitialTlsRegistry::new(),
+            );
         }
     }
 

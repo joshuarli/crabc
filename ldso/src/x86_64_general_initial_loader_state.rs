@@ -1,12 +1,14 @@
 //! Durable owner for one x86-64 general initial loader graph.
 //!
-//! Both private general-initial roots start with a stack-local transaction,
-//! because mapping, relocation, protection, RELRO sealing, and TLS planning
-//! can still fail there. This module is the one place that can reserve and
-//! publish the successful transaction. It retains the graph identity/edges,
-//! complete [`Object`] records, and each transaction map's exact reserved
-//! span for process life. The kernel-mapped main image is retained as graph
-//! root metadata but is never rollback or `munmap` eligible.
+//! Both private general-initial roots begin a mutable transaction because
+//! mapping, relocation, protection, RELRO sealing, and TLS planning can still
+//! fail there. The non-TLS root keeps it stack-local; the initial-TLS root
+//! supplies raw mmap-backed storage for the same state before its 100 KiB
+//! libc-test stack limit can matter. This module is the one place that can
+//! reserve and publish the successful transaction. It retains the graph
+//! identity/edges, complete [`Object`] records, and each transaction map's
+//! exact reserved span for process life. The kernel-mapped main image is
+//! retained as graph root metadata but is never rollback or `munmap` eligible.
 //!
 //! The lifecycle is deliberately small and one-way:
 //!
@@ -129,22 +131,63 @@ impl Drop for GeneralInitialLoaderTestPublicationGuard {
 }
 
 impl GeneralInitialLoaderState {
-    /// Starts the stack-local part of one initial transaction.
-    pub(crate) fn new(main_identity: ObjectIdentity, mut main: Object) -> Self {
+    /// Starts one initial transaction in ordinary caller-owned storage.
+    pub(crate) fn new(main_identity: ObjectIdentity, main: Object) -> Self {
+        let mut state = MaybeUninit::<Self>::uninit();
+        // SAFETY: `state` provides writable, properly aligned storage. The
+        // initializer writes every field before `assume_init` below.
+        unsafe {
+            Self::initialize_at(state.as_mut_ptr(), main_identity, main);
+            state.assume_init()
+        }
+    }
+
+    /// Initializes one transaction directly in caller-owned storage.
+    ///
+    /// The dynamic interpreter uses an anonymous loader mapping for this
+    /// object: Linux may enter it with the libc-test 100 KiB stack limit, and
+    /// this bounded graph owner is too large to materialize there. The
+    /// ordinary constructor remains for source-root tests and private callers
+    /// that deliberately own normal stack storage.
+    ///
+    /// # Safety
+    ///
+    /// `destination` must point to writable, aligned storage for exactly one
+    /// uninitialized `GeneralInitialLoaderState`. It becomes initialized on
+    /// return and must not be read through another alias while the caller
+    /// mutates the transaction.
+    pub(crate) unsafe fn initialize_at(
+        destination: *mut Self,
+        main_identity: ObjectIdentity,
+        mut main: Object,
+    ) {
         if main.map_provenance != ObjectMapProvenance::Transaction {
             main.map_provenance = ObjectMapProvenance::KernelMain;
             main.map_span_start = 0;
             main.map_span_byte_len = 0;
         }
-        let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
-        objects[0] = main;
-        Self {
-            phase: GeneralInitialLoaderPhase::Discovering,
-            graph: InitialGraphState::new(main_identity),
-            objects,
-            initial_tls_attached: false,
+        // Do not form a reference to the uninitialized enclosing struct. Raw
+        // field writes keep this path valid for the mmap-backed transaction.
+        unsafe {
+            core::ptr::write(
+                core::ptr::addr_of_mut!((*destination).phase),
+                GeneralInitialLoaderPhase::Discovering,
+            );
+            core::ptr::write(
+                core::ptr::addr_of_mut!((*destination).graph),
+                InitialGraphState::new(main_identity),
+            );
+            let objects = core::ptr::addr_of_mut!((*destination).objects).cast::<Object>();
+            for index in 0..MAX_OBJECTS {
+                core::ptr::write(objects.add(index), EMPTY_OBJECT);
+            }
+            core::ptr::write(objects, main);
+            core::ptr::write(
+                core::ptr::addr_of_mut!((*destination).initial_tls_attached),
+                false,
+            );
             #[cfg(crabc_general_initial_lifecycle)]
-            lifecycle: None,
+            core::ptr::write(core::ptr::addr_of_mut!((*destination).lifecycle), None);
         }
     }
 

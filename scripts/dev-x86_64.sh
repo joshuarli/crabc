@@ -597,6 +597,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
   lua-dynamic-source-build  qualify pinned Lua through installed/extracted x86 dynamic sysroots
   libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
+  owned-loader-short-stack  compare owned dynamic startup with musl at libc-test's 100 KiB stack limit
   owned-dynamic-sysroot  qualify both clean dynamic builds and extracted runtime
   owned-dynamic-pthread-exit  test installed dynamic main and last pthread exit
   owned-dynamic-fork  test installed loader, TLS and pthread fork transactions
@@ -5202,6 +5203,10 @@ run_owned_dynamic_sysroot_probe() {
     run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_dynamic_sysroot.sh
 }
 
+run_owned_loader_short_stack_probe() {
+    run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_loader_short_stack.sh
+}
+
 run_crt_object_bundle_probe() {
     run_in_container bash /workspace/compat/x86_64/run_crt_object_bundle.sh
 }
@@ -5844,7 +5849,7 @@ case "$command" in
     lua-static-source-build) ;;
     lua-dynamic-source-build) ;;
     libc-owned-wordexp) ;;
-    owned-dynamic-sysroot) ;;
+    owned-loader-short-stack|owned-dynamic-sysroot) ;;
     owned-dynamic-pthread-exit) ;;
     owned-dynamic-fork) ;;
     materialized-dynamic-sysroot) ;;
@@ -8083,6 +8088,11 @@ PY
         [ "$#" -eq 0 ] || fail "libc-owned-wordexp takes no arguments"
         ensure_image
         run_libc_owned_wordexp_probe
+        ;;
+    owned-loader-short-stack)
+        [ "$#" -eq 0 ] || fail "owned-loader-short-stack takes no arguments"
+        ensure_image
+        run_owned_loader_short_stack_probe
         ;;
     owned-dynamic-sysroot)
         [ "$#" -eq 0 ] || fail "owned-dynamic-sysroot takes no arguments"

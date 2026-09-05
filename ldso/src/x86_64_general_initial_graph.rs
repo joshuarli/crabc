@@ -22,7 +22,9 @@ use super::x86_64_general_initial_loader_state::{
 };
 use super::x86_64_initial_graph_state::{InitialGraphState, ObjectAdmission, ObjectIdentity};
 #[cfg(crabc_general_initial_tls_materialization_v1)]
-use super::x86_64_general_initial_tls_state::GeneralInitialTlsState;
+use super::x86_64_general_initial_tls_state::{
+    GeneralInitialTlsState, GeneralInitialTlsTransaction,
+};
 
 /// Starts the topology-independent initial dependency transaction.
 ///
@@ -190,13 +192,16 @@ unsafe fn run_with_initial_tls(
     sp: usize,
     ldso_base: usize,
 ) -> Result<(), &'static [u8]> {
-    let mut state = GeneralInitialTlsState::new(
+    let mut state = match GeneralInitialTlsTransaction::allocate(
         ObjectIdentity {
             device: u64::MAX,
             inode: u64::MAX,
         },
         main,
-    );
+    ) {
+        Some(state) => state,
+        None => return Err(b"tlsstorage\n"),
+    };
     let discovered = {
         let (graph, objects) = match state.graph_and_objects_mut() {
             Ok(parts) => parts,
