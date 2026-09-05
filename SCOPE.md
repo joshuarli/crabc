@@ -860,10 +860,13 @@ acquisition and the domain-specific state/lifecycle around a primitive, but
 the cryptographic primitive itself must come from a reviewed focused crate.
 If no suitable dependency exists, the feature remains explicitly limited.
 
-Dependencies meeting the criteria above have standing project approval; they
-do not require a case-by-case permission round trip. That authority does not
-remove the audit record below. Ask before importing a framework-scale,
-native-code, unusually broad, or otherwise difficult-to-audit dependency.
+Dependency selection is delegated to implementation judgment and does not
+require a separate user approval round trip. Prefer dependencies meeting the
+criteria above. Framework-scale, native-code, unusually broad, or otherwise
+difficult-to-audit choices require greater scrutiny and a recorded justification
+for their cost and risk. This authority does not expand project scope, admit
+otherwise forbidden target inputs, or waive the audit and qualification record
+below.
 
 ---
 

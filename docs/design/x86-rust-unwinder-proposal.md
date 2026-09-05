@@ -1,7 +1,8 @@
 # Proposed native x86 Rust unwinder
 
-Status: dependency proposal, awaiting user decision. No dependency or runtime
-provider has been added. AArch64 remains paused.
+Status: configuration approved on 2026-09-05; integration and qualification
+remain pending. No completion or support claim follows from approval.
+AArch64 remains paused.
 
 ## Required behavior
 
@@ -51,13 +52,12 @@ which must be tested with this repository's exact pinned nightly.
 
 ## Decision and qualification boundary
 
-This is a focused candidate, but DWARF parsing and machine-context restoration
-replace a critical runtime component. The broad transitive bindings and the
-absence of an identified upstream fuzz corpus prevent assuming the dependency
-meets every standing-approval criterion in `SCOPE.md` §21. That section says:
-“Ask before importing a framework-scale, native-code, unusually broad, or
-otherwise difficult-to-audit dependency.” Approval would authorize integration
-and qualification of this configuration, not a completion or support claim.
+The user approved this pinned configuration on 2026-09-05 and delegated future
+dependency selection to implementation judgment under `SCOPE.md` §21. DWARF
+parsing and machine-context restoration replace a critical runtime component;
+the broad transitive bindings and absence of an identified upstream fuzz corpus
+remain audit and qualification concerns. Approval covers integration and
+qualification of the selected configuration.
 
 Required qualification includes:
 

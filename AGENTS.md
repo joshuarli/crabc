@@ -128,12 +128,12 @@ does not replace the pinned native evidence environment.
   security-policy frameworks, or portability layers.
 - DNS is the bounded `/etc/hosts` + `/etc/resolv.conf`, A/AAAA/CNAME, search,
   UDP/TCP fallback, retry/failover profile. Exclude DNSSEC, DoH, DoT, and mDNS.
-- Small, mature, focused production dependencies that satisfy `SCOPE.md`'s
-  dependency policy have standing approval and do not need case-by-case user
-  consultation. Document the primitive, exact normal transitive graph,
-  build/native code, allocation/global state, `no_std`, and LTO consequences.
-  Consult the user before adding a framework-scale, native-code, unusually
-  broad, or otherwise difficult-to-audit dependency.
+- Dependency selection is delegated to implementation judgment; no separate
+  user approval is required. Apply `SCOPE.md`'s preference for small, mature,
+  focused dependencies and scrutinize broad or difficult-to-audit choices.
+  Document the primitive, exact normal transitive graph, build/native code,
+  allocation/global state, `no_std`, and LTO consequences. This authority does
+  not expand project scope or waive provenance and qualification requirements.
 - Scalar behavior is canonical. Remove structural and algorithmic cost first;
   use SIMD only as a separately proven, measured final optimization (except
   for a fully proved established math kernel). Crypto stays in approved
