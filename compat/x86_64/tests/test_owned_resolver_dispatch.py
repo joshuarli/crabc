@@ -61,6 +61,8 @@ class OwnedResolverDispatchTests(unittest.TestCase):
             self.assertIn("/workspace/compat/resolver-network/run_x86_64.py", execute)
             self.assertEqual(execute[execute.index("--static-sysroot") + 1], products + "/static-sysroot")
             self.assertEqual(execute[execute.index("--dynamic-sysroot") + 1], products + "/dynamic-sysroot")
+            self.assertEqual(execute[execute.index("--extracted-static-sysroot") + 1], products + "/static-extraction/crabc-x86_64-owned-static-sysroot")
+            self.assertEqual(execute[execute.index("--extracted-dynamic-sysroot") + 1], products + "/dynamic-extraction")
             self.assertEqual(execute[execute.index("--work-root") + 1], str(Path(products).parent / "execution"))
             for invocation in (prepare, execute):
                 self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", invocation)

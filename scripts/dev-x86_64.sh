@@ -4928,6 +4928,8 @@ run_owned_resolver_network_probe() {
     run_in_resolver_network_container python3 -B /workspace/compat/resolver-network/run_x86_64.py \
         --static-sysroot "$container_state/products/static-sysroot" \
         --dynamic-sysroot "$container_state/products/dynamic-sysroot" \
+        --extracted-static-sysroot "$container_state/products/static-extraction/crabc-x86_64-owned-static-sysroot" \
+        --extracted-dynamic-sysroot "$container_state/products/dynamic-extraction" \
         --work-root "$container_state/execution"
 }
 
