@@ -136,16 +136,10 @@ def qualification_machine_gate_command(gate: Mapping[str, Any]) -> list[str]:
     )
     tokens = shlex.split(campaign_report.QUALIFICATION_RUNNER_COMMAND)
     require(
-        tokens == ["python3", "compat/x86_64/run_qualification_manifest.py"],
+        tokens == ["./scripts/dev-x86_64.sh", "qualification-manifest"],
         "qualification runner command contract drifted",
     )
-    runner = Path(tokens[1])
-    require(
-        not runner.is_absolute() and ".." not in runner.parts,
-        "qualification runner command escapes repository",
-    )
-    require_repository_file(runner, "qualification runner")
-    return tokens
+    return verified_command_tokens(campaign_report.QUALIFICATION_RUNNER_COMMAND)
 
 
 def product_machine_gate_command(gate_name: str, gate: Mapping[str, Any]) -> list[str]:

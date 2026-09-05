@@ -168,6 +168,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   campaign-static  run the owned-static product gate when its prerequisites close
   campaign-dynamic  run the owned-dynamic product gate when its prerequisites close
   campaign-qualification  run the ordered qualification gate when it is ready
+  qualification-manifest  execute declared qualification cases in the pinned native container
   campaign-promotion-check  run the final promotion gate when it is ready
   campaign-all  run the complete native x86 campaign gate sequence
   routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
@@ -5534,6 +5535,7 @@ case "$command" in
     owned-io-cancellation) ;;
     owned-pthread-getattr) ;;
     owned-pthread-lifecycle) ;;
+    qualification-manifest) ;;
     owned-static-sysroot) ;;
     lua-static-source-build) ;;
     lua-dynamic-source-build) ;;
@@ -7541,6 +7543,11 @@ case "$command" in
     owned-pthread-lifecycle)
         [ "$#" -eq 0 ] || fail "owned-pthread-lifecycle takes no arguments"
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_lifecycle.sh
+        ;;
+    qualification-manifest)
+        [ "$#" -eq 0 ] || fail "qualification-manifest takes no arguments"
+        ensure_image
+        run_in_container python3 /workspace/compat/x86_64/run_qualification_manifest.py
         ;;
     owned-static-sysroot)
         [ "$#" -eq 0 ] || fail "owned-static-sysroot takes no arguments"

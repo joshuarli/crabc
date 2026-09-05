@@ -56,7 +56,7 @@ class CampaignRunnerTests(unittest.TestCase):
             campaign_runner.qualification_machine_gate_command(
                 {"machine_gate_command": campaign_report.QUALIFICATION_RUNNER_COMMAND}
             ),
-            ["python3", "compat/x86_64/run_qualification_manifest.py"],
+            ["./scripts/dev-x86_64.sh", "qualification-manifest"],
         )
         with self.assertRaisesRegex(
             campaign_runner.CampaignRunnerError, "pinned qualification runner"

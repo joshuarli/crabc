@@ -12,6 +12,12 @@
     "promotion_ready": false,
     "native_execution_only": true
   },
+  "execution": {
+    "dispatcher_command": ["./scripts/dev-x86_64.sh", "qualification-manifest"],
+    "work_directory": "/workspace/.work/x86_64",
+    "temporary_directory": "/workspace/.work/x86_64/tmp",
+    "oracle_compiler": "/usr/local/bin/crabc-x86_64-musl-gcc"
+  },
   "private_admission": [
     {
       "id": "posix-abi-admission",

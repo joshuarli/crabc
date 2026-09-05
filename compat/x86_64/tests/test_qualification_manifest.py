@@ -11,7 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -38,6 +38,7 @@ class QualificationManifestTests(unittest.TestCase):
 
     def test_checked_in_contract_has_the_exact_planned_chain_and_private_admission(self) -> None:
         report = qualification.load_contract()
+        self.assertEqual(report["execution"], qualification.EXECUTION_CONTRACT)
         self.assertEqual(
             tuple(row["id"] for row in report["promotion_chain"]),
             qualification.CHAIN,
@@ -53,6 +54,87 @@ class QualificationManifestTests(unittest.TestCase):
                 "non_promoting": True,
             }
         ])
+
+    def test_runner_requires_pinned_container_inputs_and_passes_contained_tmpdir(self) -> None:
+        with patch.dict(
+            runner.os.environ,
+            {
+                "CRABC_WORK_DIR": qualification.EXECUTION_CONTRACT["work_directory"],
+                "TMPDIR": qualification.EXECUTION_CONTRACT["temporary_directory"],
+            },
+            clear=True,
+        ), patch.object(runner.Path, "is_dir", return_value=True), patch.object(
+            runner.Path, "is_file", return_value=True
+        ):
+            runner.require_pinned_native_execution()
+
+        environment = runner.controlled_environment()
+        self.assertEqual(
+            environment["CRABC_WORK_DIR"],
+            qualification.EXECUTION_CONTRACT["work_directory"],
+        )
+        self.assertEqual(
+            environment["TMPDIR"],
+            qualification.EXECUTION_CONTRACT["temporary_directory"],
+        )
+
+        with patch.dict(runner.os.environ, {}, clear=True):
+            with self.assertRaisesRegex(
+                runner.QualificationRunError, "pinned work directory"
+            ):
+                runner.require_pinned_native_execution()
+
+    def test_runner_rejects_a_symlinked_temporary_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            work = Path(directory)
+            external = work / "other"
+            external.mkdir()
+            temporary = work / "tmp"
+            temporary.symlink_to(external, target_is_directory=True)
+            with patch.dict(qualification.EXECUTION_CONTRACT, {
+                "work_directory": str(work),
+                "temporary_directory": str(temporary),
+            }), patch.dict(runner.os.environ, {
+                "CRABC_WORK_DIR": str(work), "TMPDIR": str(temporary),
+            }, clear=True), patch.object(runner.Path, "is_file", return_value=True):
+                with self.assertRaisesRegex(runner.QualificationRunError, "physical"):
+                    runner.require_pinned_native_execution()
+
+    def test_real_repository_case_receives_the_dispatcher_temporary_directory(self) -> None:
+        runner_path = ROOT / "compat/x86_64/run_libc_resolver_runtime.sh"
+        case = {
+            "id": "static-resolver-runtime",
+            "command": ["bash", "compat/x86_64/run_libc_resolver_runtime.sh"],
+            "runner_sha256": hashlib.sha256(runner_path.read_bytes()).hexdigest(),
+            "expected_stdout_line": "x86 static crabc-libc resolver runtime: PASS",
+            "timeout_seconds": 1,
+        }
+        process = Mock()
+        process.communicate.return_value = (
+            b"x86 static crabc-libc resolver runtime: PASS\n",
+            b"",
+        )
+        process.returncode = 0
+        with patch.object(runner.subprocess, "Popen", return_value=process) as popen:
+            runner.run_case({"id": "compat.resolver-network"}, case)
+        self.assertEqual(
+            popen.call_args.kwargs["env"]["TMPDIR"],
+            qualification.EXECUTION_CONTRACT["temporary_directory"],
+        )
+        self.assertEqual(
+            popen.call_args.args[0],
+            ["bash", "compat/x86_64/run_libc_resolver_runtime.sh"],
+        )
+
+    def test_execution_boundary_drift_is_rejected(self) -> None:
+        document = self.document()
+        execution = document["execution"]
+        assert isinstance(execution, dict)
+        execution["temporary_directory"] = "/tmp"
+        with self.assertRaisesRegex(
+            qualification.QualificationManifestError, "execution boundary drifted"
+        ):
+            qualification.validate_contract(document)
 
     def test_private_admission_never_becomes_promotion_evidence(self) -> None:
         document = self.document()

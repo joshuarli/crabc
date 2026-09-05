@@ -64,7 +64,7 @@ MATRIX_CHECK_COMMAND = (
 QUALIFICATION_MANIFEST_CHECK_COMMAND = (
     "python3 compat/x86_64/generate_qualification_manifest.py --check"
 )
-QUALIFICATION_RUNNER_COMMAND = "python3 compat/x86_64/run_qualification_manifest.py"
+QUALIFICATION_RUNNER_COMMAND = "./scripts/dev-x86_64.sh qualification-manifest"
 STATIC_PRODUCT_RUNNER_COMMAND = "./scripts/dev-x86_64.sh owned-static-sysroot"
 DYNAMIC_PRODUCT_RUNNER_COMMAND = "./scripts/dev-x86_64.sh owned-dynamic-sysroot"
 TLS_RUNTIME_V1_CHECK_COMMAND = (
@@ -263,6 +263,15 @@ def validate_qualification_manifest() -> dict[str, Any]:
     require(
         isinstance(value.get("promotion_ready"), bool),
         "qualification manifest promotion readiness is invalid",
+    )
+    execution = value.get("execution")
+    require(
+        execution == qualification_manifest.EXECUTION_CONTRACT,
+        "qualification manifest execution boundary is invalid",
+    )
+    require(
+        execution["dispatcher_command"] == QUALIFICATION_RUNNER_COMMAND.split(),
+        "qualification manifest dispatcher command is invalid",
     )
     return value
 

@@ -1,6 +1,15 @@
 {
   "completed_gate_count": 0,
-  "contract_sha256": "6f4709742278064ea813a63fa4b82c4122d273db0dd3db60960f68917d45e94a",
+  "contract_sha256": "9ce1f0c3b6ec27fbbf022c3d771042b0c5124b6d6353638966bb270272bc4e59",
+  "execution": {
+    "dispatcher_command": [
+      "./scripts/dev-x86_64.sh",
+      "qualification-manifest"
+    ],
+    "oracle_compiler": "/usr/local/bin/crabc-x86_64-musl-gcc",
+    "temporary_directory": "/workspace/.work/x86_64/tmp",
+    "work_directory": "/workspace/.work/x86_64"
+  },
   "incomplete_gates": [
     "compat.abi-differential",
     "compat.posix-process",

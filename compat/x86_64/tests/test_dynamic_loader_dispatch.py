@@ -36,6 +36,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("materialized-dynamic-sysroot", True),
                 ("libc-owned-wordexp", False),
                 ("crt-object-bundle", False),
+                ("qualification-manifest", False),
             ):
                 with self.subTest(command=command):
                     capture = work / f"{command}.jsonl"
@@ -59,6 +60,12 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertNotIn("--pid=host", arguments)
                         self.assertNotIn("--userns=host", arguments)
                         self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", arguments)
+                    if command == "qualification-manifest":
+                        self.assertEqual(len(invocations), 1)
+                        self.assertEqual(invocations[0][-2:], [
+                            "python3", "/workspace/compat/x86_64/run_qualification_manifest.py",
+                        ])
+                        self.assertIn("CRABC_WORK_DIR=/workspace/.work/x86_64", invocations[0])
                     if needs_mount:
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])

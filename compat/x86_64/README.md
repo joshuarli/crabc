@@ -43,6 +43,12 @@ The campaign status/family commands validate the frozen baseline, ledger, and
 generated C-ABI evidence matrix. Product and promotion commands report blockers
 until their real gates pass; a private fixture or focused leaf never promotes.
 
+The receipt-pinned qualification runner executes only through the pinned
+`qualification-manifest` dispatcher surface. Inside that native image it
+requires the checkout-local `.work/x86_64` work and temporary directories and
+the pinned musl oracle compiler before starting a registered case. It never
+executes a completed qualification case directly on the host.
+
 Use `./scripts/dev-x86_64.sh --help` and the owning ledger's evidence commands
 for focused gates. The dispatcher owns the command roster; this guide does not
 duplicate it or define alternate host paths.

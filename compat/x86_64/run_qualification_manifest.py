@@ -41,6 +41,8 @@ def controlled_environment() -> dict[str, str]:
     """
     return {
         "PATH": TRUSTED_PATH,
+        "CRABC_WORK_DIR": manifest.EXECUTION_CONTRACT["work_directory"],
+        "TMPDIR": manifest.EXECUTION_CONTRACT["temporary_directory"],
         "LC_ALL": "C",
         "LANG": "C",
         "TZ": "UTC",
@@ -54,6 +56,26 @@ def require_native_linux_x86_64() -> None:
         raise QualificationRunError("qualification requires native Linux")
     if platform.machine().lower() not in {"x86_64", "amd64"}:
         raise QualificationRunError(f"qualification refuses emulation on {platform.machine()}")
+
+
+def require_pinned_native_execution() -> None:
+    """Refuse to execute receipts outside the pinned dispatcher environment."""
+    require_native_linux_x86_64()
+    expected_work = manifest.EXECUTION_CONTRACT["work_directory"]
+    expected_temporary = manifest.EXECUTION_CONTRACT["temporary_directory"]
+    if os.environ.get("CRABC_WORK_DIR") != expected_work:
+        raise QualificationRunError("qualification has no pinned work directory")
+    if os.environ.get("TMPDIR") != expected_temporary:
+        raise QualificationRunError("qualification has no pinned temporary directory")
+    if not Path(expected_work).is_dir():
+        raise QualificationRunError("qualification pinned work directory is unavailable")
+    if not Path(expected_temporary).is_dir():
+        raise QualificationRunError("qualification pinned temporary directory is unavailable")
+    for path in (Path(expected_work), Path(expected_temporary)):
+        if path.resolve() != path:
+            raise QualificationRunError("qualification work and temporary directories must be physical paths")
+    if not Path(manifest.EXECUTION_CONTRACT["oracle_compiler"]).is_file():
+        raise QualificationRunError("qualification pinned musl oracle compiler is unavailable")
 
 
 def load_case_manifest(gate: Mapping[str, object]) -> dict[str, Any]:
@@ -153,7 +175,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if report["incomplete_gates"]:
         print(incomplete_payload(report), file=sys.stderr)
         return 1
-    require_native_linux_x86_64()
+    require_pinned_native_execution()
     for gate in report["promotion_chain"]:
         case_manifest = load_case_manifest(gate)
         for case in case_manifest["cases"]:

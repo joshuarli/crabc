@@ -2101,6 +2101,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "owned-io-cancellation",
                 "owned-pthread-getattr",
                 "owned-pthread-lifecycle",
+                "qualification-manifest",
             )
             + expected_groups[static_sysroot_index:]
         )

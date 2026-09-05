@@ -30,6 +30,15 @@ TARGET = {
     "machine": "x86_64",
     "endianness": "little",
 }
+EXECUTION_CONTRACT = {
+    # Qualification case runners require the pinned native image.  The host
+    # campaign runner may select only this dispatcher boundary; inside it,
+    # cases receive the physical checkout-local work and temporary paths.
+    "dispatcher_command": ["./scripts/dev-x86_64.sh", "qualification-manifest"],
+    "work_directory": "/workspace/.work/x86_64",
+    "temporary_directory": "/workspace/.work/x86_64/tmp",
+    "oracle_compiler": "/usr/local/bin/crabc-x86_64-musl-gcc",
+}
 CHAIN = (
     "compat.abi-differential",
     "compat.posix-process",
@@ -268,7 +277,7 @@ def validate_completed_evidence(gate: Mapping[str, object], location: str) -> di
 
 
 def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
-    exact_keys(document, {"schema", "id", "target", "policy", "private_admission", "promotion_chain"}, "qualification contract")
+    exact_keys(document, {"schema", "id", "target", "policy", "execution", "private_admission", "promotion_chain"}, "qualification contract")
     require(document.get("schema") == SCHEMA, "qualification contract schema drifted")
     require(document.get("id") == "x86_64-native-qualification", "qualification contract id drifted")
     require(document.get("target") == TARGET, "qualification contract target drifted")
@@ -276,6 +285,10 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
     require(isinstance(policy, Mapping), "qualification policy must be an object")
     exact_keys(policy, {"public_support", "promotion_ready", "native_execution_only"}, "qualification policy")
     require(policy == {"public_support": False, "promotion_ready": False, "native_execution_only": True}, "qualification policy may not assert promotion or public support")
+    require(
+        document.get("execution") == EXECUTION_CONTRACT,
+        "qualification execution boundary drifted",
+    )
     admission = validate_private_admission(document.get("private_admission"))
     gates = document.get("promotion_chain")
     require(isinstance(gates, list) and len(gates) == len(CHAIN), "qualification promotion chain roster drifted")
@@ -306,7 +319,7 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
             completed += 1
         normalized.append(row)
     require(not set(item["id"] for item in admission) & set(CHAIN), "private admission cannot be a promotion gate")
-    return {"schema": SCHEMA, "contract_sha256": sha256_file(CONTRACT_PATH), "target": TARGET, "policy": dict(policy), "private_admission": admission, "promotion_chain": normalized, "completed_gate_count": completed, "incomplete_gates": incomplete, "promotion_ready": not incomplete}
+    return {"schema": SCHEMA, "contract_sha256": sha256_file(CONTRACT_PATH), "target": TARGET, "policy": dict(policy), "execution": dict(EXECUTION_CONTRACT), "private_admission": admission, "promotion_chain": normalized, "completed_gate_count": completed, "incomplete_gates": incomplete, "promotion_ready": not incomplete}
 
 
 def load_contract(path: Path = CONTRACT_PATH) -> dict[str, object]:
