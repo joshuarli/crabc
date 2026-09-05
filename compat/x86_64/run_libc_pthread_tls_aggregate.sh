@@ -40,6 +40,78 @@ assert_selected_c_abi_surface() {
     fi
 }
 
+extract_candidate_disassembly() {
+    local symbol_pattern="$1"
+    local destination="$2"
+
+    awk -v symbol_pattern="$symbol_pattern" '
+        $0 ~ "<.*" symbol_pattern ".*>:" { found = 1 }
+        found { print }
+        found && /^$/ { exit }
+        END { exit !found }
+    ' "$candidate_disassembly" >"$destination" ||
+        fail "candidate lacks disassembly for ${symbol_pattern}"
+}
+
+assert_raw_syscall4_abi() {
+    # The generic raw boundary may be out-of-line when this composition grows.
+    # Check its exact Linux x86-64 ABI once rather than making each public
+    # pthread entry's syscall proof depend on optimizer inlining.
+    if [ -f "$raw_syscall4_disassembly" ]; then
+        return
+    fi
+    extract_candidate_disassembly 'raw_syscall.*syscall4' "$raw_syscall4_disassembly"
+    grep -Eq '\bsyscall\b' "$raw_syscall4_disassembly" ||
+        fail "raw four-argument syscall boundary lacks syscall instruction"
+    grep -Eq 'mov.*%rdi,%rax' "$raw_syscall4_disassembly" ||
+        fail "raw four-argument syscall boundary does not route number to rax"
+    grep -Eq 'mov.*%r8,%r10' "$raw_syscall4_disassembly" ||
+        fail "raw four-argument syscall boundary does not route argument four to r10"
+}
+
+assert_futex_in_boundary() {
+    local label="$1"
+    local disassembly="$2"
+
+    if grep -Eq '\bsyscall\b' "$disassembly"; then
+        grep -Eq '\$0xca,%(eax|rax)' "$disassembly" ||
+            fail "${label} direct futex boundary lacks futex=202"
+        grep -Eq '%r10(d)?' "$disassembly" ||
+            fail "${label} direct futex boundary lacks fourth-argument r10 evidence"
+        return
+    fi
+    grep -Eq 'call.*raw_syscall.*syscall4' "$disassembly" ||
+        fail "${label} does not reach a direct or generic futex syscall boundary"
+    grep -Eq '\$0xca,%edi' "$disassembly" ||
+        fail "${label} generic futex call lacks futex=202 in syscall-number argument"
+    grep -Eq '%r8(d)?' "$disassembly" ||
+        fail "${label} generic futex call lacks fourth-argument source evidence"
+    assert_raw_syscall4_abi
+}
+
+assert_selected_futex_boundary() {
+    local symbol="$1"
+    local private_pattern="$2"
+    local public_disassembly="$work_dir/${symbol}-disassembly"
+    local private_disassembly="$work_dir/${symbol}-private-futex-disassembly"
+
+    objdump -d --disassemble="$symbol" "$candidate" >"$public_disassembly"
+    if grep -Eq '\bsyscall\b|call.*raw_syscall.*syscall4' "$public_disassembly"; then
+        assert_futex_in_boundary "$symbol" "$public_disassembly"
+        return
+    fi
+
+    # A selected public entry may retain only its C-object admission and call
+    # an explicit private state-machine body. Follow that named edge, then
+    # prove the body reaches the futex boundary with the same number/register
+    # checks. This keeps the machine-code contract stable across legal
+    # cross-item inlining decisions without accepting an arbitrary call graph.
+    grep -Eq "call.*${private_pattern}" "$public_disassembly" ||
+        fail "${symbol} no longer reaches its selected private futex state machine"
+    extract_candidate_disassembly "$private_pattern" "$private_disassembly"
+    assert_futex_in_boundary "${symbol} selected private state machine" "$private_disassembly"
+}
+
 require_native_linux_x86_64
 for tool in ar cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -64,6 +136,7 @@ candidate_program_headers="$work_dir/candidate-program-headers"
 candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
+raw_syscall4_disassembly="$work_dir/raw-syscall4-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -125,12 +198,10 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
     "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate selects dynamic TLS or unowned runtime dependency"
 fi
-for pair in 'pthread_mutex_lock:0xca' 'pthread_cond_wait:0xca' 'pthread_join:0xca'; do
-    symbol="${pair%%:*}"; number="${pair##*:}"
-    objdump -d --disassemble="$symbol" "$candidate" >"$work_dir/${symbol}-disassembly"
-    grep -Eq '\bsyscall\b' "$work_dir/${symbol}-disassembly" || fail "${symbol} lacks raw futex syscall"
-    grep -Eq "\\\$${number},%eax|\\\$${number},%rax|\\\$0x00000000000000ca,%rax" "$work_dir/${symbol}-disassembly" || fail "${symbol} lacks futex=202"
-done
+assert_selected_futex_boundary \
+    pthread_mutex_lock 'pthread_mutex.*lock_selected_normal_mutex_record'
+assert_selected_futex_boundary pthread_cond_wait 'pthread_cond.*wait_selected_private_cond'
+assert_selected_futex_boundary pthread_join 'pthread_create_join.*join_selected_worker'
 objdump -d --disassemble=__errno_location "$candidate" >"$work_dir/errno-disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$work_dir/errno-disassembly" || fail "candidate errno lacks direct fs initial TLS"
 grep -Eq 'call.*__crabc_x86_static_tls_bootstrap' compat/x86_64/libc_pthread_tls_aggregate_start.S || fail "start does not delegate TLS bootstrap to libc"
