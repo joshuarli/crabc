@@ -2362,6 +2362,8 @@ impl Mapping {
         // Keep the test fault in the same position as a failed primitive:
         // `_mi_os_prim_free` accounts after its primitive returns, whether
         // that primitive succeeded or failed.
+        #[cfg(any(test, feature = "native-runtime-test-fault"))]
+        fault::record_unmap_range(self.address, self.length);
         let result = match fault_before(FaultPoint::Unmap) {
             Ok(()) => unsafe { crabc_core::mm::munmap_raw(self.address, self.length) },
             Err(error) => Err(error),
@@ -4225,6 +4227,20 @@ pub(crate) mod fault {
     // consume the cleanup `unmap` injection intended to follow that commit.
     static SECOND_ENABLED: AtomicBool = AtomicBool::new(false);
     static FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
+    // The M2 native release-failure differential captures only the two
+    // selected `_mi_os_free_ex` primitive arguments. This is separate from
+    // `OBSERVED`: a count alone cannot prove that an interior client pointer
+    // did not leak into `munmap` instead of the retained full MemoryId.
+    static UNMAP_RANGE_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static UNMAP_RANGE_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static UNMAP_RANGE_CAPTURE_ADDRESSES: [AtomicUsize; 2] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
+    static UNMAP_RANGE_CAPTURE_LENGTHS: [AtomicUsize; 2] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
 
     /// An allocation-free deterministic failure plan for one serial test.
     #[derive(Clone, Copy)]
@@ -4295,6 +4311,15 @@ pub(crate) mod fault {
     /// allocates nor involves the allocator engine under test.
     pub(crate) struct Guard;
 
+    /// Test-only capture token for two selected `munmap` argument pairs.
+    ///
+    /// It is constructed only from the serial global fault guard, so the
+    /// fixed M2 trace cannot confuse an unrelated test's map release with
+    /// the selected normal-offset failure/retry pair.
+    pub(crate) struct UnmapRangeCapture<'guard> {
+        _guard: core::marker::PhantomData<&'guard Guard>,
+    }
+
     pub(crate) fn install(plan: Plan) -> Guard {
         while LOCKED
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -4318,10 +4343,55 @@ pub(crate) mod fault {
         pub(crate) fn secondary_observed(&self) -> usize {
             SECOND_OBSERVED.load(Ordering::Acquire)
         }
+
+        /// Starts a fresh capture of exactly two subsequent process-owned
+        /// unmap ranges. More or fewer calls are visible as `None` instead of
+        /// becoming a partial address/length assertion.
+        pub(crate) fn capture_unmap_ranges(&self) -> UnmapRangeCapture<'_> {
+            UNMAP_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            UNMAP_RANGE_CAPTURE_COUNT.store(0, Ordering::Release);
+            for address in &UNMAP_RANGE_CAPTURE_ADDRESSES {
+                address.store(0, Ordering::Release);
+            }
+            for length in &UNMAP_RANGE_CAPTURE_LENGTHS {
+                length.store(0, Ordering::Release);
+            }
+            UNMAP_RANGE_CAPTURE_ACTIVE.store(true, Ordering::Release);
+            UnmapRangeCapture {
+                _guard: core::marker::PhantomData,
+            }
+        }
+    }
+
+    impl UnmapRangeCapture<'_> {
+        /// Returns both exact syscall argument pairs only when the selected
+        /// trace observed exactly two process-owned unmap operations.
+        pub(crate) fn ranges(&self) -> Option<[(usize, usize); 2]> {
+            if UNMAP_RANGE_CAPTURE_COUNT.load(Ordering::Acquire) != 2 {
+                return None;
+            }
+            Some([
+                (
+                    UNMAP_RANGE_CAPTURE_ADDRESSES[0].load(Ordering::Acquire),
+                    UNMAP_RANGE_CAPTURE_LENGTHS[0].load(Ordering::Acquire),
+                ),
+                (
+                    UNMAP_RANGE_CAPTURE_ADDRESSES[1].load(Ordering::Acquire),
+                    UNMAP_RANGE_CAPTURE_LENGTHS[1].load(Ordering::Acquire),
+                ),
+            ])
+        }
+    }
+
+    impl Drop for UnmapRangeCapture<'_> {
+        fn drop(&mut self) {
+            UNMAP_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+        }
     }
 
     impl Drop for Guard {
         fn drop(&mut self) {
+            UNMAP_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             set(Plan::disabled());
             LOCKED.store(false, Ordering::Release);
         }
@@ -4371,6 +4441,21 @@ pub(crate) mod fault {
             }
         }
         Ok(())
+    }
+
+    /// Records the exact arguments that would reach the source Unix free
+    /// primitive. This runs before injected failure, matching the C link-wrap
+    /// boundary where `__wrap_munmap` sees both the failing call and retry.
+    #[inline]
+    pub(crate) fn record_unmap_range(address: *mut u8, length: usize) {
+        if !UNMAP_RANGE_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+            return;
+        }
+        let index = UNMAP_RANGE_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
+        if index < 2 {
+            UNMAP_RANGE_CAPTURE_ADDRESSES[index].store(address.addr(), Ordering::Release);
+            UNMAP_RANGE_CAPTURE_LENGTHS[index].store(length, Ordering::Release);
+        }
     }
 }
 
@@ -6610,6 +6695,7 @@ mod tests {
 
         let statistics_before_failure = subprocess.vm_statistics().snapshot();
         fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let failed_release_unmap_ranges = fault.capture_unmap_ranges();
         let retained = match failed_release.release_for_process(process, true) {
             Ok(()) => panic!("the selected source release must retain its owner on error"),
             Err(failure) => failure,
@@ -6656,6 +6742,22 @@ mod tests {
                     == statistics_after_failure.committed_current
                         - failed_release_commit_size as i64;
         assert!(failed_release_retry_source_counters_reapply);
+        let [(failure_address, failure_length), (retry_address, retry_length)] =
+            failed_release_unmap_ranges
+                .ranges()
+                .expect("the selected failure and retry each reach one full-map unmap boundary");
+        let failed_release_failure_uses_full_memid =
+            failure_address == failed_release_base.addr() && failure_length == failed_release_size;
+        let failed_release_retry_uses_full_memid =
+            retry_address == failed_release_base.addr() && retry_length == failed_release_size;
+        assert!(
+            failed_release_failure_uses_full_memid,
+            "the injected normal-offset failure must call munmap with the retained MemoryId base and full size"
+        );
+        assert!(
+            failed_release_retry_uses_full_memid,
+            "the explicit retry must reuse the retained MemoryId base and full size"
+        );
 
         let numa_count = os_numa_node_count();
         let numa_current = os_numa_node();
@@ -6714,6 +6816,10 @@ mod tests {
             u8::from(failed_release_one_primitive_attempt)
         );
         emit!(
+            "m2.vm.release.failure.full_memid_base_and_size",
+            u8::from(failed_release_failure_uses_full_memid)
+        );
+        emit!(
             "m2.vm.release.failure.mapping_live",
             u8::from(failed_release_mapping_live)
         );
@@ -6724,6 +6830,10 @@ mod tests {
         emit!(
             "m2.vm.release.retry.one_additional_primitive_attempt",
             u8::from(failed_release_retry_one_additional_primitive_attempt)
+        );
+        emit!(
+            "m2.vm.release.retry.full_memid_base_and_size",
+            u8::from(failed_release_retry_uses_full_memid)
         );
         emit!(
             "m2.vm.release.retry.source_counters_reapply",

@@ -234,7 +234,7 @@
       {
         "id": "os-free-and-statistics-events",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded C/Rust trace injects one normal-offset _mi_os_free_ex primitive failure and explicit retry.",
+        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded C/Rust trace injects one normal-offset _mi_os_free_ex primitive failure and explicit retry, recording the full MemoryId base and size at both Unix free boundaries.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -248,7 +248,7 @@
           "normal-os-offset-full-provenance-and-release-retry"
         ],
         "missing_conditions": [
-          "The selected normal-offset _mi_os_free_ex failure/retry compares full-MemoryId ownership and counter timing, but allocation transitions, source warning/error reporting, huge MemoryId dispatch, and every other counter/caller route remain unqualified."
+          "The selected normal-offset _mi_os_free_ex failure/retry compares the full-MemoryId base/size at both Unix free boundaries and counter timing, but allocation transitions, source warning/error reporting, huge MemoryId dispatch, and every other counter/caller route remain unqualified."
         ]
       },
       {

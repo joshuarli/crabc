@@ -30,9 +30,30 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     seen.add(key)
                     anchors.append({"bytes": 1, **anchor})
         pin = RUNNER.load_pin()
+        c_command = [
+            "musl-gcc",
+            "-std=c11",
+            "-fPIC",
+            "-ftls-model=initial-exec",
+            "-DMI_SHARED_LIB",
+            "-DMI_SHARED_LIB_EXPORT",
+            "-DMI_LIBC_MUSL=1",
+            "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+            *RUNNER.CONFIGURATION_PROFILES["release"],
+            "-I",
+            "/pinned/include",
+            "-I",
+            "/pinned/src",
+            str(RUNNER.ALLOCATOR_ROOT / "m2_vm_x86_64.c"),
+            *(f"/pinned/{path}" for path in RUNNER.M1_RAW_PRIMITIVE_ORACLE_SOURCES),
+            "-Wl,--wrap=munmap",
+            "-pthread",
+            "-o",
+            "/work/m2-vm-primitives-oracle",
+        ]
         return {
             "architecture": "x86_64",
-            "c_command": ["musl-gcc", "m2_vm_x86_64.c", "-Wl,--wrap=munmap"],
+            "c_command": c_command,
             "c_source_files": [
                 {"path": path, "sha256": "a" * 64, "bytes": 1}
                 for path in sorted(("include/mimalloc/prim.h", "src/os.c", "src/prim/prim.c", "src/prim/unix/prim.c"))
@@ -61,6 +82,14 @@ class NativeVmAssemblyTests(unittest.TestCase):
 
     def test_release_fault_trace_schema_requires_the_retained_owner_and_retry(self):
         producer = RUNNER._m2_x86_64_vm_producer()
+        self.assertIn(
+            "m2.vm.release.failure.full_memid_base_and_size",
+            producer.TRACE_KEYS,
+        )
+        self.assertIn(
+            "m2.vm.release.retry.full_memid_base_and_size",
+            producer.TRACE_KEYS,
+        )
         values = {key: 1 for key in producer.TRACE_KEYS}
         values.update(
             {
@@ -134,6 +163,19 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 evidence[field] = replacement
                 with self.assertRaises(RUNNER.HarnessError):
                     RUNNER._m2_x86_64_vm_check_records(summary, evidence)
+
+    def test_vm_producer_receipt_requires_the_wrapped_direct_source_closure(self):
+        summary = self.summary()
+
+        omitted_wrapper = self.vm_evidence(summary)
+        omitted_wrapper["c_command"].remove("-Wl,--wrap=munmap")
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, omitted_wrapper)
+
+        wrong_source = self.vm_evidence(summary)
+        wrong_source["c_command"].append("/pinned/src/os.c")
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, wrong_source)
 
 
 if __name__ == "__main__":

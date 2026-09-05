@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "6e6873a9ff2e33c1edfca13c78e1386a465d4c7f9990db4e04433243ab8d7b35"
+M2_X86_64_VM_FRAGMENT_DIGEST = "7b9e95743f00d96e61124d876dd552dfff6c70c2566b1eb8eae2d8237dd029e7"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -12283,6 +12283,96 @@ def _run_m2_x86_64_vm_evidence(*, offline: bool, test_program: Mapping[str, Any]
     )
 
 
+def _m2_x86_64_vm_command_path_matches(argument: str, expected: str) -> bool:
+    """Match one report path without binding a Docker temporary directory."""
+
+    normalized = argument.replace("\\", "/").rstrip("/")
+    expected = expected.replace("\\", "/").rstrip("/")
+    return normalized == expected or normalized.endswith("/" + expected)
+
+
+def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
+    """Require the direct-source C oracle's wrapper, flags, and input closure.
+
+    The M2 fixture directly includes pinned `src/os.c`, so its ordinary source
+    input list must omit that file while retaining the complete raw primitive
+    closure.  A trace from a lookalike command would otherwise make the one
+    wrapped `munmap` failure record unverifiable.
+    """
+
+    if (
+        not isinstance(command, list)
+        or not command
+        or not all(isinstance(argument, str) and argument for argument in command)
+        or Path(command[0]).name != "musl-gcc"
+    ):
+        return False
+
+    required_flags = (
+        "-std=c11",
+        "-fPIC",
+        "-ftls-model=initial-exec",
+        "-DMI_SHARED_LIB",
+        "-DMI_SHARED_LIB_EXPORT",
+        "-DMI_LIBC_MUSL=1",
+        # `prim.c` must not run its constructor before this fixture performs
+        # the explicit source startup sequence in main.
+        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+        *CONFIGURATION_PROFILES["release"],
+        "-Wl,--wrap=munmap",
+        "-pthread",
+    )
+    if any(command.count(flag) != 1 for flag in required_flags):
+        return False
+
+    output_positions = [index for index, argument in enumerate(command) if argument == "-o"]
+    if len(output_positions) != 1 or output_positions[0] + 1 >= len(command):
+        return False
+
+    include_positions = [index for index, argument in enumerate(command) if argument == "-I"]
+    if len(include_positions) != 2 or any(index + 1 >= len(command) for index in include_positions):
+        return False
+
+    fixture = relative(producer.FIXTURE)
+    expected_sources = tuple(M1_RAW_PRIMITIVE_ORACLE_SOURCES)
+    c_inputs = [argument for argument in command if argument.endswith(".c")]
+    if len(c_inputs) != len(expected_sources) + 1:
+        return False
+    fixture_inputs = [
+        argument
+        for argument in c_inputs
+        if _m2_x86_64_vm_command_path_matches(argument, fixture)
+    ]
+    if len(fixture_inputs) != 1:
+        return False
+
+    source_root: str | None = None
+    for expected in expected_sources:
+        matches = [
+            argument
+            for argument in c_inputs
+            if _m2_x86_64_vm_command_path_matches(argument, expected)
+        ]
+        if len(matches) != 1:
+            return False
+        normalized = matches[0].replace("\\", "/")
+        if normalized == expected:
+            return False
+        root = normalized[: -len(expected)].rstrip("/")
+        if not root:
+            return False
+        if source_root is None:
+            source_root = root
+        elif source_root != root:
+            return False
+    if source_root is None:
+        return False
+
+    expected_includes = (f"{source_root}/include", f"{source_root}/src")
+    actual_includes = tuple(command[index + 1].replace("\\", "/").rstrip("/") for index in include_positions)
+    return actual_includes == expected_includes
+
+
 def _m2_x86_64_vm_check_records(
     summary: Mapping[str, Any], evidence: object
 ) -> list[dict[str, Any]]:
@@ -12349,9 +12439,7 @@ def _m2_x86_64_vm_check_records(
         not isinstance(build_command, list)
         or not build_command
         or not all(isinstance(arg, str) and arg for arg in build_command)
-        or not isinstance(c_command, list)
-        or not c_command
-        or not all(isinstance(arg, str) and arg for arg in c_command)
+        or not _m2_x86_64_vm_c_command_is_bound(c_command, producer)
     ):
         raise HarnessError("native x86 M2 VM producer command provenance is invalid")
     fixture = evidence.get("fixture")

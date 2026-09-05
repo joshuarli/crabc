@@ -32,11 +32,25 @@
 static bool fail_next_munmap = false;
 static size_t wrapped_munmap_calls = 0;
 static int last_real_munmap_result = -1;
+/* The ordinary lifecycle above also frees mappings through this wrapper.
+ * Capture only the selected failed full-MemoryId release and its retry, so
+ * the address-free trace can prove both source calls used the retained base
+ * and full length rather than merely observing two `munmap` attempts. */
+static bool capture_release_munmap = false;
+static size_t captured_release_munmap_calls = 0;
+static void* captured_release_munmap_addresses[2];
+static size_t captured_release_munmap_lengths[2];
 
 int __real_munmap(void* address, size_t length);
 
 int __wrap_munmap(void* address, size_t length) {
   wrapped_munmap_calls++;
+  if (capture_release_munmap && captured_release_munmap_calls < 2) {
+    const size_t index = captured_release_munmap_calls;
+    captured_release_munmap_addresses[index] = address;
+    captured_release_munmap_lengths[index] = length;
+    captured_release_munmap_calls++;
+  }
   if (fail_next_munmap) {
     fail_next_munmap = false;
     errno = ENOMEM;
@@ -140,12 +154,16 @@ int main(void) {
   const int64_t reserved_before_failure = current_reserved(subproc);
   const int64_t committed_before_failure = current_committed(subproc);
   const size_t munmap_before_failure = wrapped_munmap_calls;
+  capture_release_munmap = true;
   fail_next_munmap = true;
   _mi_os_free(subproc, failed_release_client, offset_request, failed_release_id);
   const int64_t reserved_after_failure = current_reserved(subproc);
   const int64_t committed_after_failure = current_committed(subproc);
   const size_t munmap_after_failure = wrapped_munmap_calls;
   if (munmap_after_failure != munmap_before_failure + 1
+      || captured_release_munmap_calls != 1
+      || captured_release_munmap_addresses[0] != failed_release_id.mem.os.base
+      || captured_release_munmap_lengths[0] != failed_release_id.mem.os.size
       || reserved_after_failure != reserved_before_failure - (int64_t)failed_release_id.mem.os.size
       || committed_after_failure != committed_before_failure - (int64_t)failed_release_commit_size) {
     return 23;
@@ -159,10 +177,14 @@ int main(void) {
   const int64_t committed_after_retry = current_committed(subproc);
   const size_t munmap_after_retry = wrapped_munmap_calls;
   if (munmap_after_retry != munmap_after_failure + 1 || last_real_munmap_result != 0
+      || captured_release_munmap_calls != 2
+      || captured_release_munmap_addresses[1] != failed_release_id.mem.os.base
+      || captured_release_munmap_lengths[1] != failed_release_id.mem.os.size
       || reserved_after_retry != reserved_after_failure - (int64_t)failed_release_id.mem.os.size
       || committed_after_retry != committed_after_failure - (int64_t)failed_release_commit_size) {
     return 25;
   }
+  capture_release_munmap = false;
 
   const int numa_count = _mi_os_numa_node_count();
   const int numa_current = _mi_os_numa_node();
@@ -204,10 +226,16 @@ int main(void) {
   U("m2.vm.offset.release_full_mapping_success", 1);
   U("m2.vm.release.offset_owner_interior", failed_release_id.mem.os.base != failed_release_client);
   U("m2.vm.release.failure.one_primitive_attempt", munmap_after_failure == munmap_before_failure + 1);
+  U("m2.vm.release.failure.full_memid_base_and_size",
+      captured_release_munmap_addresses[0] == failed_release_id.mem.os.base
+      && captured_release_munmap_lengths[0] == failed_release_id.mem.os.size);
   U("m2.vm.release.failure.mapping_live", 1);
   U("m2.vm.release.failure.source_counters_apply", reserved_after_failure == reserved_before_failure - (int64_t)failed_release_id.mem.os.size
       && committed_after_failure == committed_before_failure - (int64_t)failed_release_commit_size);
   U("m2.vm.release.retry.one_additional_primitive_attempt", munmap_after_retry == munmap_after_failure + 1);
+  U("m2.vm.release.retry.full_memid_base_and_size",
+      captured_release_munmap_addresses[1] == failed_release_id.mem.os.base
+      && captured_release_munmap_lengths[1] == failed_release_id.mem.os.size);
   U("m2.vm.release.retry.source_counters_reapply", reserved_after_retry == reserved_after_failure - (int64_t)failed_release_id.mem.os.size
       && committed_after_retry == committed_after_failure - (int64_t)failed_release_commit_size);
   U("m2.vm.release.retry.real_munmap_success", last_real_munmap_result == 0);
