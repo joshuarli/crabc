@@ -51,7 +51,7 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "planned-provider"
 provider_target = "future selected C ABI providers in libc.text-math-locale-stdio"
 source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["__fpending", "__fpurge", "__freadahead", "__freadptr", "__freadptrinc", "__fwriting", "_flushlbf", "adjtime", "adjtimex", "clearerr_unlocked", "fflush_unlocked", "fgetln", "fgets_unlocked", "fgetwc", "fgetwc_unlocked", "fgetws", "fgetws_unlocked", "fma", "fmaf", "fnmatch", "fputs_unlocked", "fputwc", "fputwc_unlocked", "fputws", "fputws_unlocked", "fwide", "fwprintf", "fwscanf", "getdate", "gets", "getw", "getwc", "getwc_unlocked", "getwchar", "getwchar_unlocked", "glob", "globfree", "hypot", "hypotf", "log1p", "log1pf", "mbsnrtowcs", "open_wmemstream", "putw", "putwc", "putwc_unlocked", "putwchar", "putwchar_unlocked", "setbuf", "setbuffer", "setlinebuf", "settimeofday", "stime", "strfmon", "strfmon_l", "strptime", "swprintf", "swscanf", "ungetwc", "vfwprintf", "vfwscanf", "vswprintf", "vswscanf", "vwprintf", "vwscanf", "wcsdup", "wcsftime", "wcsftime_l", "wcsnrtombs", "wordexp", "wordfree", "wprintf", "wscanf"]
+members = ["adjtime", "adjtimex", "fma", "fmaf", "fnmatch", "getdate", "glob", "globfree", "hypot", "hypotf", "log1p", "log1pf", "mbsnrtowcs", "settimeofday", "stime", "strfmon", "strfmon_l", "strptime", "wcsdup", "wcsftime", "wcsftime_l", "wcsnrtombs", "wordexp", "wordfree"]
 
 [[deferred_owner_group]]
 id = "x86-cabi-pthread-tls-completion-v1"

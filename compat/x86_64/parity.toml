@@ -20275,9 +20275,30 @@ runner = "compat/x86_64/run_owned_static_sysroot.sh"
 feature_selection_source = "scripts/build_x86_64_owned_sysroot.py"
 baseline_features = ["x86-allocator-observability", "x86-allocator-runtime", "x86-allocator-string-duplication", "x86-environment-runtime", "x86-filesystem-traversal", "x86-h-errno", "x86-process-exec", "x86-resolver-runtime", "x86-scandir", "x86-stdio-permanent-format-scan"]
 enabled_features = ["x86-owned-static-runtime"]
-additive_callables = ["abort", "acos", "acosf", "asctime", "asctime_r", "asin", "asinf", "asprintf", "atan", "atan2", "atan2f", "atanf", "ctime", "ctime_r", "dprintf", "fdopen", "fgetc_unlocked", "flockfile", "fmemopen", "fopencookie", "fputc_unlocked", "fread_unlocked", "freopen", "ftrylockfile", "funlockfile", "fwrite_unlocked", "getc_unlocked", "getchar_unlocked", "getdelim", "getline", "gmtime", "localtime", "localtime_r", "mkdtemp", "mkostemp", "mkostemps", "mkstemp", "mkstemps", "mktime", "open_memstream", "pclose", "popen", "posix_spawn", "posix_spawnp", "prctl", "putc_unlocked", "putchar_unlocked", "realpath", "strftime", "strftime_l", "syscall", "system", "tzset", "vasprintf", "vdprintf"]
-replacement_callables = ["clearerr", "fclose", "feof", "ferror", "fflush", "fgetc", "fgetpos", "fgets", "fileno", "fopen", "fputc", "fputs", "fread", "fseek", "fseeko", "fsetpos", "ftell", "ftello", "fwrite", "getc", "getchar", "putc", "putchar", "puts", "rewind", "setvbuf", "snprintf", "sprintf", "sscanf", "tmpfile", "ungetc", "vsnprintf", "vsprintf", "vsscanf"]
-aliases = []
+additive_callables = ["__fpending", "__fpurge", "__freadahead", "__freadptr", "__freadptrinc", "__fwriting", "_flushlbf", "abort", "acos", "acosf", "asctime", "asctime_r", "asin", "asinf", "asprintf", "atan", "atan2", "atan2f", "atanf", "clearerr_unlocked", "ctime", "ctime_r", "dprintf", "fdopen", "fflush_unlocked", "fgetc_unlocked", "fgetln", "fgets_unlocked", "fgetwc", "fgetwc_unlocked", "fgetws", "fgetws_unlocked", "flockfile", "fmemopen", "fopencookie", "fputc_unlocked", "fputs_unlocked", "fputwc", "fputwc_unlocked", "fputws", "fputws_unlocked", "fread_unlocked", "freopen", "ftrylockfile", "funlockfile", "fwide", "fwprintf", "fwrite_unlocked", "fwscanf", "getc_unlocked", "getchar_unlocked", "getdelim", "getline", "gets", "getw", "getwc", "getwc_unlocked", "getwchar", "getwchar_unlocked", "gmtime", "localtime", "localtime_r", "mkdtemp", "mkostemp", "mkostemps", "mkstemp", "mkstemps", "mktime", "open_memstream", "open_wmemstream", "pclose", "popen", "posix_spawn", "posix_spawnp", "prctl", "putc_unlocked", "putchar_unlocked", "putw", "putwc", "putwc_unlocked", "putwchar", "putwchar_unlocked", "realpath", "setbuf", "setbuffer", "setlinebuf", "strftime", "strftime_l", "swprintf", "swscanf", "syscall", "system", "tzset", "ungetwc", "vasprintf", "vdprintf", "vfwprintf", "vfwscanf", "vswprintf", "vswscanf", "vwprintf", "vwscanf", "wprintf", "wscanf"]
+replacement_callables = ["__fbufsize", "__flbf", "__freadable", "__freading", "__fseterr", "__fsetlocking", "__fwritable", "clearerr", "fclose", "feof", "feof_unlocked", "ferror", "ferror_unlocked", "fflush", "fgetc", "fgetpos", "fgets", "fileno", "fileno_unlocked", "fopen", "fputc", "fputs", "fread", "fseek", "fseeko", "fsetpos", "ftell", "ftello", "fwrite", "getc", "getchar", "putc", "putchar", "puts", "rewind", "setvbuf", "snprintf", "sprintf", "sscanf", "tmpfile", "ungetc", "vsnprintf", "vsprintf", "vsscanf"]
+aliases = [
+  { name = "_IO_feof_unlocked", target = "feof", binding = "weak-same-address" },
+  { name = "_IO_ferror_unlocked", target = "ferror", binding = "weak-same-address" },
+  { name = "_IO_getc", target = "getc", binding = "weak-same-address" },
+  { name = "_IO_getc_unlocked", target = "getc_unlocked", binding = "weak-same-address" },
+  { name = "_IO_putc", target = "putc", binding = "weak-same-address" },
+  { name = "_IO_putc_unlocked", target = "putc_unlocked", binding = "weak-same-address" },
+  { name = "__isoc99_fwscanf", target = "fwscanf", binding = "weak-same-address" },
+  { name = "__isoc99_swscanf", target = "swscanf", binding = "weak-same-address" },
+  { name = "__isoc99_vfwscanf", target = "vfwscanf", binding = "weak-same-address" },
+  { name = "__isoc99_vswscanf", target = "vswscanf", binding = "weak-same-address" },
+  { name = "__isoc99_vwscanf", target = "vwscanf", binding = "weak-same-address" },
+  { name = "__isoc99_wscanf", target = "wscanf", binding = "weak-same-address" },
+  { name = "clearerr_unlocked", target = "clearerr", binding = "weak-same-address" },
+  { name = "feof_unlocked", target = "feof", binding = "weak-same-address" },
+  { name = "ferror_unlocked", target = "ferror", binding = "weak-same-address" },
+  { name = "fflush_unlocked", target = "fflush", binding = "weak-same-address" },
+  { name = "fgets_unlocked", target = "fgets", binding = "weak-same-address" },
+  { name = "fileno_unlocked", target = "fileno", binding = "weak-same-address" },
+  { name = "fpurge", target = "__fpurge", binding = "weak-same-address" },
+  { name = "fputs_unlocked", target = "fputs", binding = "weak-same-address" },
+]
 
 [[feature_archive]]
 id = "x86-owned-dynamic-runtime"
