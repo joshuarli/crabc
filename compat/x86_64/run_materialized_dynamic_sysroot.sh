@@ -109,6 +109,8 @@ bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_signal.sh" "$work/installe
 bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_signal.sh" "$work/extracted"
 bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_exit.sh" "$work/installed"
 bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_exit.sh" "$work/extracted"
+bash "$ROOT/compat/x86_64/run_general_dynamic_fork.sh" "$work/installed"
+bash "$ROOT/compat/x86_64/run_general_dynamic_fork.sh" "$work/extracted"
 bash "$ROOT/compat/x86_64/run_owned_pthread_getattr.sh" "$work/installed"
 bash "$ROOT/compat/x86_64/run_owned_pthread_getattr.sh" "$work/extracted"
 CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/installed"

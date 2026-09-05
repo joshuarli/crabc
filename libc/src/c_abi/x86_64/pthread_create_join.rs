@@ -800,6 +800,26 @@ pub(super) fn has_live_selected_workers() -> bool {
     live
 }
 
+/// Musl needs loader callback exclusion only while another task can own it.
+/// Read logical task state under the registry lock, then release this snapshot
+/// before acquiring the outer loader transaction. With no other live task,
+/// no sibling can race a new creation after this observation.
+#[cfg(feature = "x86-owned-dynamic-runtime")]
+pub(super) fn fork_has_other_runtime_tasks() -> bool {
+    let current = pthread_identity::current_thread_pointer() as usize;
+    lock_selected_worker_registry();
+    let mut other = current != INITIAL_SIGNAL_TARGET_TP.load(Ordering::Acquire)
+        && SELECTED_INITIAL_THREAD_TASK_STATE.load(Ordering::Acquire) == SelectedRuntimeTaskState::ACTIVE;
+    let mut node = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) as *mut ThreadControl;
+    while !other && !node.is_null() {
+        other = unsafe { (*node).tls_block.thread_pointer() } as usize != current
+            && unsafe { (*node).task_state.load(Ordering::Acquire) } == SelectedRuntimeTaskState::ACTIVE;
+        node = unsafe { (*node).registry_next };
+    }
+    unlock_selected_worker_registry();
+    other
+}
+
 /// Lock the selected worker list for one raw-fork transaction.
 ///
 /// The caller must pair this with exactly one parent or child completion. The
@@ -815,6 +835,18 @@ pub(super) unsafe fn pthread_fork_parent() {
     unlock_selected_worker_registry();
 }
 
+/// Install the child's clear-child-TID address inside the all-signal-blocked
+/// process-lock transaction, matching musl _Fork::__post_Fork before it unlocks
+/// __abort_lock. The copied word has process lifetime in the sole child.
+pub(super) unsafe fn register_fork_child_kernel_tid() -> c_int {
+    static FORK_CHILD_TID: AtomicI32 = AtomicI32::new(0);
+    let tid = unsafe { raw_syscall::syscall1(
+        raw_syscall::SYS_SET_TID_ADDRESS, core::ptr::addr_of!(FORK_CHILD_TID) as i64,
+    ) } as c_int;
+    FORK_CHILD_TID.store(tid, Ordering::Release);
+    tid
+}
+
 /// Re-root selected worker state in the post-fork child.
 ///
 /// The child retains only its calling task. Every inherited selected worker
@@ -823,7 +855,7 @@ pub(super) unsafe fn pthread_fork_parent() {
 /// all old handles unreachable without unmapping any inherited live stack/TLS
 /// range; the static TLS/TSD owners separately adopt the caller's identity
 /// and values before this reset. Future child workers start a fresh list.
-pub(super) unsafe fn pthread_fork_child() {
+pub(super) unsafe fn pthread_fork_child(child_tid: c_int) {
     let thread_pointer = pthread_identity::current_thread_pointer();
     let inherited_worker = selected_worker_by_thread_pointer_locked(thread_pointer as usize);
     if let Some(control) = inherited_worker {
@@ -857,9 +889,8 @@ pub(super) unsafe fn pthread_fork_child() {
         pthread_identity::current_selected_cancellation_state() as usize,
         Ordering::Relaxed,
     );
-    INITIAL_SIGNAL_TARGET_TID.store(current_linux_thread_id().unwrap_or(0), Ordering::Release);
+    INITIAL_SIGNAL_TARGET_TID.store(child_tid, Ordering::Release);
     SELECTED_WORKER_REGISTRY_HEAD.store(0, Ordering::Release);
-    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
     SELECTED_INITIAL_THREAD_TASK_STATE.store(SelectedRuntimeTaskState::ACTIVE, Ordering::Release);
     SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
 }

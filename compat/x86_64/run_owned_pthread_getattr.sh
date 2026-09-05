@@ -42,8 +42,7 @@ cp -a "$provided_dynamic_sysroot" "$work/execution-root"
 for mode in pie non-pie; do
     "$provided_dynamic_sysroot/bin/crabc-cc-dynamic" "--dynamic-$mode" -std=c11 -DCRABC_OWNED_WITNESS "$probe" -o "$work/dynamic-$mode"
     cp "$work/dynamic-$mode" "$work/execution-root/consumer-$mode"
-    # Dynamic fork remains explicitly EAGAIN pending the loader transaction.
-    for scenario in ordinary filtered; do
+    for scenario in ordinary filtered fork; do
         timeout 20 chroot "$work/execution-root" "/consumer-$mode" "$scenario" >"$work/dynamic-$mode-$scenario.stdout"
         cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$scenario.stdout"
         timeout 20 chroot "$work/execution-root" /lib/ld-crabc-x86_64.so.1 \

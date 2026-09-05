@@ -153,7 +153,6 @@ fn unlock_selected_tsd() {
 /// TSD -> worker-registry order used by key deletion. It prevents a raw fork
 /// from copying half of `pthread_key_create` or `pthread_key_delete` metadata
 /// while the child is about to adopt the calling task's TSD table.
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 pub(super) fn pthread_fork_prepare() {
     lock_selected_tsd();
 }
@@ -165,7 +164,6 @@ pub(super) fn pthread_fork_prepare() {
 ///
 /// The caller must hold the matching [`pthread_fork_prepare`] lock and must
 /// not have completed this transaction already.
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 pub(super) unsafe fn pthread_fork_parent() {
     unlock_selected_tsd();
 }
@@ -445,13 +443,12 @@ pub(super) unsafe fn run_selected_main_tsd_destructors() {
 
 /// Preserve the calling selected thread's TSD values in a post-fork child.
 ///
-/// Before the static TLS owner adopts the child caller as its new main task,
+/// Before the selected TLS adapter adopts the caller as its new main task,
 /// the inherited pointer either names the existing main table or one linked
 /// worker control. Copy the latter into the child main table, then clear the
 /// copied metadata lock: every non-caller thread vanished at fork, so no
 /// parent lock owner can exist in the child. Key allocation metadata remains
 /// process-copied exactly as it was at the fork boundary.
-#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 pub(super) unsafe fn adopt_current_values_after_fork() -> bool {
     let thread_pointer = pthread_identity::current_thread_pointer();
     if static_tls::is_inherited_initial_thread_pointer(thread_pointer) {

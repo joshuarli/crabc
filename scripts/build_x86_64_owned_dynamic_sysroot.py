@@ -119,6 +119,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     undefined = run([nm, "--undefined-only", str(library / "libc.so")]).decode().splitlines()
     allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
                "__crabc_x86_64_resolve_initial_tls",
+               "__crabc_x86_64_runtime_fork_prepare", "__crabc_x86_64_runtime_fork_complete",
                "__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol",
                "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address",
                "__crabc_x86_64_runtime_information", "__crabc_x86_64_runtime_iterate"}

@@ -21,7 +21,7 @@ use super::x86_64_general_initial_loader_state::GeneralInitialLoaderState;
 use super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle;
 use super::x86_64_initial_graph_state::InitialGraphState;
 use super::x86_64_runtime_memory::LoaderBuffer;
-use super::x86_64_runtime_lock::{RuntimeGuard, wait_initialization, wake_initialization};
+use super::x86_64_runtime_lock::{RuntimeGuard, CallbackGuard, wait_initialization, wake_initialization};
 use super::x86_64_general_relocation::deferred::{self, PendingRelocations, PreparedRetry};
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicI32, Ordering};
@@ -34,6 +34,9 @@ const CALLBACKS: usize = MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES + 1;
 const INITIALIZED: i32 = -1;
 const FINALIZING: i32 = -2;
 const FINALIZED: i32 = -3;
+// Musl queue_ctors rejects a visitor whose pthread TID was invalidated by
+// multithreaded fork. Keep this separate from completed initialization.
+const CONSTRUCTOR_ABANDONED: i32 = -4;
 
 // Public LP64 C layouts, passed only through private address-resolved calls.
 // Borrowed strings, program headers and link maps have process lifetime;
@@ -348,6 +351,10 @@ unsafe fn breadth_first_scope(snapshot: &ObjectSnapshot, registry: &RuntimeRegis
 unsafe fn constructor_order(snapshot: &ObjectSnapshot, root: *mut RuntimeObject) -> Option<ObjectOrder> {
     let count = snapshot.nodes.as_slice().len();
     let mut order = ObjectOrder { indices: LoaderBuffer::new(count, 0)?, count: 0 };
+    // Musl dlopen calls queue_ctors only for an unconstructed root. In a
+    // recursive cycle this member may be complete even though another visitor
+    // was invalidated by fork; reopening the completed member remains valid.
+    if unsafe { (*root).callback_state.load(Ordering::Acquire) } == INITIALIZED { return Some(order); }
     let mut marked = LoaderBuffer::new(count, false)?;
     let mut stack = LoaderBuffer::new(count, (0usize, 0usize))?;
     let root_index = unsafe { (*root).index };
@@ -379,10 +386,12 @@ unsafe fn initialize_object(node: *mut RuntimeObject) {
     let tid = unsafe { syscall1(186, 0) } as i32;
     loop {
         let guard = RuntimeGuard::acquire();
+        let callbacks = CallbackGuard::acquire();
         let registry = unsafe { &mut *REGISTRY.0.get() };
         let state = unsafe { (*node).callback_state.load(Ordering::Acquire) };
         if state < 0 || state == tid { return; }
         if state > 0 || registry.shutting_down {
+            drop(callbacks);
             drop(guard);
             unsafe { wait_initialization(&(*node).callback_state, state); }
             continue;
@@ -392,14 +401,18 @@ unsafe fn initialize_object(node: *mut RuntimeObject) {
             unsafe { (*node).fini_next = registry.fini_head; }
             registry.fini_head = node;
         }
+        drop(callbacks);
         drop(guard);
         for &address in unsafe { &(&(*node).initializers)[..(*node).initializer_count] } {
             let callback: unsafe extern "C" fn() = unsafe { core::mem::transmute(address) };
             unsafe { callback(); }
         }
-        let _guard = RuntimeGuard::acquire();
+        let _callbacks = CallbackGuard::acquire();
+        // A constructor may fork recursively. The child translated its visitor
+        // identity while this callback stack was suspended at the raw syscall.
+        let current_tid = unsafe { syscall1(186, 0) } as i32;
         unsafe {
-            let _ = (*node).callback_state.compare_exchange(tid, INITIALIZED, Ordering::AcqRel, Ordering::Acquire);
+            let _ = (*node).callback_state.compare_exchange(current_tid, INITIALIZED, Ordering::AcqRel, Ordering::Acquire);
             wake_initialization(&(*node).callback_state);
         }
         return;
@@ -419,30 +432,29 @@ pub(super) unsafe fn initialize_initial() {
 }
 
 pub(super) unsafe fn finalize_process() {
-    let mut node = {
-        let _guard = RuntimeGuard::acquire();
-        let registry = unsafe { &mut *REGISTRY.0.get() };
-        if registry.finalizing { return; }
-        registry.shutting_down = true;
-        registry.finalizing = true;
-        registry.fini_head
-    };
+    let guard = RuntimeGuard::acquire();
+    let registry = unsafe { &mut *REGISTRY.0.get() };
+    if registry.finalizing { return; }
+    let mut callbacks = CallbackGuard::acquire();
+    registry.shutting_down = true;
+    registry.finalizing = true;
+    let mut node = registry.fini_head;
+    drop(guard);
     let tid = unsafe { syscall1(186, 0) } as i32;
     while !node.is_null() {
-        let guard = RuntimeGuard::acquire();
         let state = unsafe { (*node).callback_state.load(Ordering::Acquire) };
-        if state > 0 && state != tid {
-            drop(guard);
+        if (state > 0 && state != tid) || state == CONSTRUCTOR_ABANDONED {
+            drop(callbacks);
             unsafe { wait_initialization(&(*node).callback_state, state); }
+            callbacks = CallbackGuard::acquire();
             continue;
         }
         let next = unsafe { (*node).fini_next };
-        // The fini-list is registered before the constructor, but musl's
-        // `constructed` flag is set only after all its callbacks return.
-        // exit from this same constructor skips the incomplete object.
+        // Musl holds init_fini_lock throughout finalizer callbacks, but releases
+        // it while waiting for a constructor. Same-thread constructor exit
+        // skips the incomplete object; a vanished constructor cannot finish.
         if state == INITIALIZED {
             unsafe { (*node).callback_state.store(FINALIZING, Ordering::Release); }
-            drop(guard);
             for &address in unsafe { &(&(*node).finalizers)[..(*node).finalizer_count] } {
                 let callback: unsafe extern "C" fn() = unsafe { core::mem::transmute(address) };
                 unsafe { callback(); }
@@ -451,6 +463,51 @@ pub(super) unsafe fn finalize_process() {
         }
         node = next;
     }
+    // Musl __libc_exit_fini retains init_fini_lock until the process exits.
+    // A concurrent fork must not slip through after the last callback returns.
+    core::mem::forget(callbacks);
+}
+
+/// Acquire musl's graph -> init/fini lock order before libc's internal fork
+/// owners. No callback runs under the graph lock. A successful positive TID
+/// is the private transaction token; exactly one completion must follow.
+unsafe extern "C" fn runtime_fork_prepare(callback_lock: i32) -> i32 {
+    let guard = RuntimeGuard::acquire();
+    let thread_pointer = unsafe { read_thread_pointer() } as *mut u8;
+    if !unsafe { x86_64_initial_worker_tls::contains_thread(&guard, thread_pointer) } { return -1; }
+    let callbacks = (callback_lock != 0).then(CallbackGuard::acquire);
+    let tid = unsafe { syscall1(186, 0) } as i32;
+    if tid <= 0 { return -1; }
+    core::mem::forget(callbacks);
+    core::mem::forget(guard);
+    tid
+}
+
+/// Complete the exact lock pair retained by runtime_fork_prepare. Child repair
+/// changes only copied process ownership: immutable graph/TLS provenance and
+/// every surviving FS-relative field remain untouched.
+unsafe extern "C" fn runtime_fork_complete(parent_tid: i32, child: i32, callback_lock: i32) {
+    if child != 0 {
+        let tid = unsafe { syscall1(186, 0) } as i32;
+        let thread_pointer = unsafe { read_thread_pointer() } as *mut u8;
+        let registry = unsafe { &mut *REGISTRY.0.get() };
+        let mut node = registry.head;
+        while !node.is_null() {
+            let visitor = unsafe { (*node).callback_state.load(Ordering::Acquire) };
+            if visitor > 0 {
+                unsafe { (*node).callback_state.store(
+                    if visitor == parent_tid { tid } else { CONSTRUCTOR_ABANDONED },
+                    Ordering::Release,
+                ); }
+            }
+            node = unsafe { (*node).next };
+        }
+        unsafe { x86_64_initial_worker_tls::adopt_after_fork(thread_pointer); }
+    }
+    unsafe {
+        if callback_lock != 0 { CallbackGuard::complete_fork(); }
+        RuntimeGuard::complete_fork();
+    }
 }
 
 const ERROR_BAD_ELF: i32 = 10001;
@@ -458,6 +515,7 @@ const ERROR_RELOCATION: i32 = 10002;
 const ERROR_TLS: i32 = 10003;
 const ERROR_NOLOAD: i32 = 10004;
 const ERROR_SHUTDOWN: i32 = 10005;
+const ERROR_FORK_CONSTRUCTOR: i32 = 10008;
 const ERROR_HANDLE: i32 = 10006;
 const ERROR_SYMBOL: i32 = 10007;
 
@@ -605,6 +663,9 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
     let scope = unsafe { breadth_first_scope(&snapshot, registry, root, true) }.ok_or(12)?;
     let dependencies = unsafe { breadth_first_scope(&snapshot, registry, root, false) }.ok_or(12)?;
     let constructors = unsafe { constructor_order(&snapshot, root) }.ok_or(12)?;
+    if constructors.as_slice().iter().any(|&index| unsafe {
+        (*snapshot.nodes.as_slice()[index]).callback_state.load(Ordering::Acquire) == CONSTRUCTOR_ABANDONED
+    }) { return Err(ERROR_FORK_CONSTRUCTOR); }
     let deferred = unsafe { deferred::relocate_new(snapshot.objects.as_slice(), scope.as_slice(), registry.count,
         registry.initial_tls_count, binding == 1) }.ok_or(ERROR_RELOCATION)?;
     for index in registry.count..snapshot.objects.as_slice().len() {
@@ -667,6 +728,8 @@ pub(super) fn runtime_function(name: &[u8]) -> Option<u64> {
         b"__crabc_x86_64_runtime_symbol" => Some(runtime_symbol as *const () as usize as u64),
         b"__crabc_x86_64_runtime_close" => Some(runtime_close as *const () as usize as u64),
         b"__crabc_x86_64_runtime_address" => Some(runtime_address_info as *const () as usize as u64),
+        b"__crabc_x86_64_runtime_fork_prepare" => Some(runtime_fork_prepare as *const () as usize as u64),
+        b"__crabc_x86_64_runtime_fork_complete" => Some(runtime_fork_complete as *const () as usize as u64),
         b"__crabc_x86_64_runtime_information" => Some(runtime_information as *const () as usize as u64),
         b"__crabc_x86_64_runtime_iterate" => Some(runtime_iterate as *const () as usize as u64),
         _ => None,

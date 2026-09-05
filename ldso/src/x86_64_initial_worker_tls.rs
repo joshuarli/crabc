@@ -33,6 +33,35 @@ struct AllocationRegistry(UnsafeCell<*mut AllocationNode>);
 unsafe impl Sync for AllocationRegistry {}
 static REGISTRY: AllocationRegistry = AllocationRegistry(UnsafeCell::new(core::ptr::null_mut()));
 static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
+// RuntimeV1 is immutable initial-image provenance. A fork-adopted worker is
+// instead the active process-lifetime TLS root for future all-thread growth.
+static ADOPTED_MAIN: AtomicUsize = AtomicUsize::new(0);
+
+fn active_main_thread_pointer() -> Option<*mut u8> {
+    let adopted = ADOPTED_MAIN.load(Ordering::Acquire);
+    if adopted != 0 { Some(adopted as *mut u8) }
+    else { x86_64_general_initial_tls_state::retained_initial_thread_pointer() }
+}
+
+/// Called under the copied loader fork locks after Linux leaves one task.
+/// Withdraw all inherited tokens without unmapping stack-reachable TLS/control
+/// storage. The surviving TP and its complete runtime-view chain remain live;
+/// future workers receive new tokens and fresh relocated ELF templates.
+pub(super) unsafe fn adopt_after_fork(thread_pointer: *mut u8) {
+    ADOPTED_MAIN.store(thread_pointer as usize, Ordering::Release);
+    unsafe { *REGISTRY.0.get() = core::ptr::null_mut(); }
+}
+
+/// The mutation guard excludes withdrawal while fork validates its caller.
+pub(super) unsafe fn contains_thread(_guard: &Guard, thread_pointer: *mut u8) -> bool {
+    if active_main_thread_pointer() == Some(thread_pointer) { return true; }
+    let mut node = unsafe { *REGISTRY.0.get() };
+    while !node.is_null() {
+        if unsafe { (*node).token.thread_pointer } == thread_pointer { return true; }
+        node = unsafe { (*node).next };
+    }
+    false
+}
 
 /// # Safety
 /// The shared mutation guard excludes allocation/release and runtime growth.
@@ -41,7 +70,7 @@ static NEXT_ID: AtomicUsize = AtomicUsize::new(1);
 pub(super) unsafe fn visit_registered_threads(
     _guard: &Guard, mut visit: impl FnMut(*mut u8) -> Option<()>,
 ) -> Option<()> {
-    let main = x86_64_general_initial_tls_state::retained_initial_thread_pointer()?;
+    let main = active_main_thread_pointer()?;
     visit(main)?;
     let mut node = unsafe { *REGISTRY.0.get() };
     while !node.is_null() {

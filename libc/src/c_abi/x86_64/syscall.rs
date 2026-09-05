@@ -494,6 +494,7 @@ pub(crate) const SYS_GETGID: i64 = 104;
 pub(crate) const SYS_GETEUID: i64 = 107;
 pub(crate) const SYS_GETEGID: i64 = 108;
 pub(crate) const SYS_GETTID: i64 = 186;
+pub(crate) const SYS_SET_TID_ADDRESS: i64 = 218;
 pub(crate) const SYS_SETXATTR: i64 = 188;
 pub(crate) const SYS_LSETXATTR: i64 = 189;
 pub(crate) const SYS_FSETXATTR: i64 = 190;

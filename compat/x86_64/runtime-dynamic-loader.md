@@ -212,13 +212,54 @@ LOCAL versus GLOBAL promotion, preexisting-worker GD TLS, retained close, and
 read-only GOT protection after completion. PLT output is a musl differential;
 the GOT/RELRO fault versus success is the isolated safety correction above.
 The prior retained loader rejects the same lazy consumer with status 2 before
-callbacks. The complete dynamic campaign, dynamic fork and
-main/last-thread process-exit qualification remain open.
+callbacks. The complete dynamic campaign and broader introspection/order
+qualification remain open. Main/last-thread process exit is qualified by the
+separate installed `run_general_dynamic_pthread_exit.sh` consumer.
 
-Dynamic fork repair and
-main/last-thread pthread_exit remain explicitly unqualified and cfg-excluded
-from the separate static lifecycle work. No new RuntimeV1 fields, public
-support promotion or AArch64 qualification follows from these prerequisites.
+Dynamic fork freezes one coherent loader/libc state. Its source oracle is
+musl 1.2.6 `src/process/fork.c`, `_Fork.c::__post_Fork`, and
+`ldso/dynlink.c::{__ldso_atfork,queue_ctors,do_init_fini,__libc_exit_fini}`
+under the same pinned MIT provenance above. User prepare callbacks precede
+internal locks; parent/error and child callbacks follow their completion.
+`pthread_atfork::fork` takes loader graph/callback ownership before key,
+stdio, timezone, thread-list and process locks. `dynamic_tls::PreparedLoaderFork`
+consumes exactly one parent/error or child completion through the two sealed
+private imports `__crabc_x86_64_runtime_fork_prepare` and
+`__crabc_x86_64_runtime_fork_complete`; they do not extend RuntimeV1.
+
+`x86_64_runtime_lock::CallbackGuard` represents musl's separate init/fini
+lock. Constructor bodies release it; finalizers retain it through process
+exit. Fork takes it only when another logical runtime task can own callbacks,
+so same-task constructor recursion and sole-task finalizer fork retain source
+behavior. `runtime_fork_complete` translates a surviving constructor visitor's
+Linux TID and marks other copied visitors `CONSTRUCTOR_ABANDONED`.
+`open_transaction` rejects any constructor queue containing that state,
+matching musl's `ctor_visitor->tid < 0` check. A completed root is not
+requeued, including a completed member of a recursive cycle with another
+abandoned visitor. It never restarts a partial constructor. Normal finalization cannot complete an abandoned constructor;
+the isolated rejection fixture therefore finishes with `_Exit`.
+
+`x86_64_initial_worker_tls::adopt_after_fork` changes the active TLS population
+to the surviving TP and withdraws inherited allocation tokens. It unmaps no
+copied storage, retains monotonic allocation identities, and leaves the
+immutable initial RuntimeV1 record unchanged. FS+24 keeps the complete runtime
+view chain, FS+32 keeps cancellation/cleanup state, and FS+40 keeps the process
+canary. New child workers still copy relocated ELF templates rather than the
+survivor's live values; later growth enumerates the adopted root and only new
+workers. Libc transfers TSD and stack metadata before withdrawing old handles,
+adopts robust-list metadata, refreshes its main TP/TID identity, and registers
+a process-lifetime clear-child-TID word before user child callbacks.
+
+`run_general_dynamic_fork.sh` proves this transaction with ordinary ELF DSOs
+and pinned-musl differential process cases through installed/extracted PIE
+and non-PIE. It covers main/worker callers with a live sibling, atfork order and
+loader reentry, copied TLS/TSD/cleanup/canary state, fresh worker/module growth,
+ordinary/kernel robust owner death, raw-fork failure unwind, recursive and
+vanished constructors, held finalizers, and a worker surviving the adopted
+main's kernel retirement. The focused dispatcher is `owned-dynamic-fork`.
+Allocator-wide fork repair, arbitrary application locks, and full dynamic
+campaign completion remain separate requirements. No public support promotion
+or AArch64 qualification follows from this component.
 
 ## Installed library search and preload admission
 

@@ -226,6 +226,12 @@ live-attribute implementation is `pthread_attr::pthread_getattr_np`; lifecycle
 snapshots belong to `pthread_create_join::selected_thread_attributes`. This
 qualifies the stack-observation boundary, not the complete Rust std runtime.
 
+The fork child also registers process-lifetime clear-child-TID storage before
+user callbacks, following musl `_Fork::__post_Fork`. Dynamic linkage reuses
+these libc adoption steps inside its separate loader graph/TLS transaction;
+its installed evidence is `run_general_dynamic_fork.sh`, described in
+[materialized-dynamic-sysroot.md](materialized-dynamic-sysroot.md).
+
 `pthread_create_join::with_selected_pthread_signal_target` is the private
 signal-delivery lifetime boundary: registry lookup acquires a mapping lease,
 then releases the registry before taking the per-target kill lock. The

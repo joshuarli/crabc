@@ -127,6 +127,32 @@ fn shared_callback_owner_claims_once_across_recursive_and_concurrent_calls() {
         assert_eq!((*node).callback_state.load(Ordering::SeqCst), FINALIZED);
         let _guard = RuntimeGuard::acquire();
         *REGISTRY.0.get() = saved;
+        CallbackGuard::reset_finalized_fixture();
         CALLBACK_NODE.store(core::ptr::null_mut(), Ordering::SeqCst);
+    }
+}
+
+#[test]
+fn completed_cycle_root_skips_an_inherited_abandoned_constructor_queue() {
+    unsafe {
+        let mut nodes = UnpublishedObjects::new();
+        let root = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(501), 0, b"cycle-root", true).unwrap();
+        let dependency = RuntimeObject::allocate(ObjectStorage::Runtime(EMPTY_OBJECT), identity(502), 1, b"cycle-dependency", true).unwrap();
+        nodes.append(root).unwrap();
+        nodes.append(dependency).unwrap();
+        (*root).needed[0] = dependency;
+        (*root).needed_count = 1;
+        (*dependency).needed[0] = root;
+        (*dependency).needed_count = 1;
+        // Recursive loading can complete one cycle member while its caller's
+        // constructor is still active. Fork invalidates the vanished caller;
+        // musl dlopen still bypasses queue_ctors for the constructed member.
+        (*root).callback_state.store(INITIALIZED, Ordering::Release);
+        (*dependency).callback_state.store(CONSTRUCTOR_ABANDONED, Ordering::Release);
+        let snapshot = ObjectSnapshot::collect(&RuntimeRegistry::empty(), &nodes).unwrap();
+        assert!(constructor_order(&snapshot, root).unwrap().as_slice().is_empty());
+        let pending = constructor_order(&snapshot, dependency).unwrap();
+        assert!(pending.as_slice().iter().any(|&index|
+            (*snapshot.nodes.as_slice()[index]).callback_state.load(Ordering::Acquire) == CONSTRUCTOR_ABANDONED));
     }
 }

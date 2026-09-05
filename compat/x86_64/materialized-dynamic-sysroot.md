@@ -141,8 +141,35 @@ extracted sysroots. Both startup paths publish the auxiliary vector used by
 `pthread_attr::pthread_getattr_np`; workers retain their actual application
 stack metadata independently of loader TLS storage. The initial executable's
 pure-TBSS TLS fixture ensures caller-stack checks do not depend on a guessed
-musl TLS/control size. Static fork adoption remains in the static arm because
-dynamic fork still returns `EAGAIN`.
+musl TLS/control size. Both dynamic entries now include fork adoption through
+the complete loader/libc transaction below.
+
+`./scripts/dev-x86_64.sh owned-dynamic-fork` qualifies the loader/libc fork
+transaction through ordinary initial/runtime DSOs. The aggregate repeats
+`run_general_dynamic_fork.sh` for installed and extracted PIE/non-PIE products.
+Its pinned-musl cases cover initial and worker callers with a live sibling,
+reverse-prepare/forward-parent-or-child hooks that call loader APIs, inherited
+TLS/TSD/cleanup, postfork module growth and fresh workers, ordinary and kernel
+robust owner death, raw `EAGAIN` unwind, nested constructor fork, and rejected
+closures containing a constructor held by a vanished task. An external parent
+observes the adopted main task's actual kernel retirement before releasing a
+surviving child worker to grow TLS and create another worker. This avoids a
+`/proc` dependency inside the installed product's private chroot.
+
+Constructor callbacks release loader callback ownership, so recursive
+constructor fork can copy and translate the surviving visitor. Finalizers
+retain that ownership through process exit: the held-finalizer fixture proves
+another task's fork cannot pass it. A sole task can fork from its own finalizer
+without acquiring its already-held callback lock, matching musl's `need_locks`
+condition. An abandoned constructor remains incomplete: reopening its closure
+fails with an inconsistent-state diagnostic, and the dedicated fixture uses
+`_Exit` because normal finalization cannot wait for a vanished constructor to
+return. No copied constructor is rerun or marked completed as a fallback.
+
+The transaction and source mapping are documented in
+[runtime-dynamic-loader.md](runtime-dynamic-loader.md). Allocator-wide fork
+repair and arbitrary application locks remain separate obligations; these
+probes qualify the selected loader and libc owners, not the whole campaign.
 
 The shared initial/runtime search matrix proves 37 musl decisions through
 installed/extracted PIE and non-PIE consumers, including conventional system
@@ -154,7 +181,7 @@ Its 40-case-per-arm installed/extracted differential is described in
 [direct-interpreter.md](direct-interpreter.md); the shared search policy and
 limits remain in [runtime-dynamic-loader.md](runtime-dynamic-loader.md).
 Remaining product work includes broader introspection/order
-qualification and dynamic fork repair (still explicitly `EAGAIN`), followed
+qualification, followed
 by the complete installed dynamic campaign. Musl's
 retained dlclose mappings, not physical unloading, are the parity target.
 
