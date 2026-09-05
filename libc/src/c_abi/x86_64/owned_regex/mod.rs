@@ -10,19 +10,22 @@
 //! (`56b0a765e084a5cd3ed7113a893b50d259265ba76b6bea98889c45d7aec302a0`):
 //! its AST/parser, tag insertion, bounded-repetition expansion, nullable /
 //! first-position / last-position pass, TNFA materialization, `regcomp`, and
-//! `regfree` form one compiler-only checkpoint. Both source matching
-//! algorithms from pinned `src/regex/regexec.c`
+//! `regfree` form the compiled graph consumed by the executor. Pinned
+//! `src/regex/regexec.c:169-1028`
 //! (`072e8a1092c98830b48e784fb74ce486f7c39e27207f79f1dd161e2c5d86ba77`)
-//! remain absent until they can consume this literal TNFA input.
+//! retains its separate parallel leftmost-longest and backreference
+//! backtracking routes. The C-locale error-table route is pinned
+//! `src/regex/regerror.c:7-37`
+//! (`72b3ab9c63c88c43aa37c4a4d4a89d07f892f42cbbf8801806b7b40135466bb9`).
 //!
 //! `tre.h` and `tre-mem.c` originated in TRE and carry Ville Laurikari's
 //! two-clause BSD license, reproduced in
 //! [`LICENSE-TRE-2-CLAUSE-BSD.txt`](LICENSE-TRE-2-CLAUSE-BSD.txt); musl records
 //! that they were substantially modified by Rich Felker.  The later
-//! `regcomp.c` and `regexec.c` ports must retain this same source and license
-//! provenance. `regcomp` and `regfree` are internal compiler-checkpoint
-//! exports only; this module lacks `regexec` and `regerror`, and is not
-//! selected from `static_c_abi.rs` yet.
+//! `regcomp.c` and `regexec.c` retain this same source and license provenance.
+//! `regerror.c` is musl MIT; its fixed C-locale table is in `error.rs`. This
+//! private module is not selected from `static_c_abi.rs` yet; routing and
+//! public support qualification remain outside this checkpoint.
 
 use core::ffi::c_void;
 
@@ -108,3 +111,5 @@ pub(crate) unsafe fn cabi_free(pointer: *mut c_void) {
 mod memory;
 mod types;
 mod compile;
+mod execute;
+mod error;
