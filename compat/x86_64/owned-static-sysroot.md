@@ -551,6 +551,13 @@ separate source mapping and ordinary application differential gate in
 [`owned-process-trio.md`](owned-process-trio.md). It includes static and
 static-PIE entry, child thread identity/lifecycle, and process-error rollback.
 
+The residual installed POSIX process-control providers have separate
+same-object evidence in [`owned-process-control.md`](owned-process-control.md):
+exec aliases, `nice`, group/session mutation, wait spellings, and spawn
+attributes run across musl and every owned linkage mode. Its 32-name workload
+is only one part of the 44-name process-control accounting; existing trio,
+fork, spawn, and file-action workloads remain separate evidence.
+
 The installed signal aliases, System V helpers, and FILE-owned signal reporting
 are qualified by `owned-signal-helpers`; source mappings, inherited boundaries,
 and the same-object musl differential are recorded in

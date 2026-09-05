@@ -105,6 +105,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "syslog",
                 "pthread-spin",
                 "process-trio",
+                "process-control",
                 "filesystem-mechanisms",
                 "error-reporting",
                 "pty",

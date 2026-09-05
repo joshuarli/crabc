@@ -227,6 +227,17 @@ products. The [component contract](owned-unix-mechanisms.md) records the
 source mapping, Linux/cancellation boundary, contained privileged-error probe,
 and remaining scope.
 
+## Installed residual POSIX process control
+
+`./scripts/dev-x86_64.sh owned-process-control [DYNAMIC_SYSROOT]` runs one
+installed-header object for the residual exec, priority, group/session, wait,
+and spawn-attribute providers through pinned musl, static/static-PIE, and
+dynamic PIE/non-PIE kernel and direct-interpreter products. The
+[component contract](owned-process-control.md) identifies its 32-name scope,
+the separate 44-name composite accounting, lifecycle invariants,
+cancellation-point boundary, and explicit `fexecve` direct `execveat(2)`
+`ENOSYS` difference.
+
 ## Owned C11 quick termination
 
 `./scripts/dev-x86_64.sh owned-quick-exit` compares one installed-header C11

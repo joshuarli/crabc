@@ -195,6 +195,12 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             ("run_owned_unix_mechanisms.sh", None),
         )
 
+    def test_process_control_case_stays_bound_to_its_residual_same_object_runner(self):
+        self.assertEqual(
+            qualification.CASES["process-control"],
+            ("run_owned_process_control.sh", None),
+        )
+
     def test_materialization_binds_payload_source_and_contracts_without_publication(self):
         product = self.work / "installed"
         payloads = {"payload": qualification.digest(product / "payload")}

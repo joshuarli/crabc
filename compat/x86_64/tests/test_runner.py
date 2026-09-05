@@ -2099,7 +2099,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             expected_groups[:static_sysroot_index]
             + (
                 "owned-system-cancellation",
-                "owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|"
+                "owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|"
                 "owned-signal-helpers|owned-pty|owned-passwd|owned-unix-mechanisms|owned-posix-composition",
                 "owned-assert|owned-legacy-time|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms|owned-group|owned-pattern",
                 "owned-pthread-spin",

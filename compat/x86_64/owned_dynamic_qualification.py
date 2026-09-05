@@ -64,6 +64,7 @@ CASES = {
     "syslog": ("run_owned_syslog.sh", None),
     "pthread-spin": ("run_owned_pthread_spin.sh", None),
     "process-trio": ("run_owned_process_trio.sh", None),
+    "process-control": ("run_owned_process_control.sh", None),
     "filesystem-mechanisms": ("run_owned_filesystem_mechanisms.sh", None),
     "error-reporting": ("run_owned_error_reporting.sh", None),
     "pty": ("run_owned_pty.sh", None),

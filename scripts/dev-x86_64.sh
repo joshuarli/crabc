@@ -560,6 +560,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-syslog  qualify owned C syslog delivery and state against musl
   owned-pattern  qualify owned C fnmatch/glob/globfree behavior against musl
   owned-process-trio   qualify installed clone/vfork/daemon semantics against musl
+  owned-process-control [DYNAMIC_SYSROOT] qualify installed residual POSIX process control
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
@@ -5659,7 +5660,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
-    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers|owned-pty|owned-passwd|owned-unix-mechanisms|owned-posix-composition) ;;
+    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-pty|owned-passwd|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -7700,6 +7701,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-process-trio takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_process_trio.sh
+        ;;
+    owned-process-control)
+        [ "$#" -le 1 ] || fail "owned-process-control takes at most one dynamic sysroot"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_process_control.sh "$@"
         ;;
     owned-pty)
         [ "$#" -le 1 ] || fail "owned-pty takes at most one dynamic sysroot"
