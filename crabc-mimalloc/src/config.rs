@@ -129,14 +129,17 @@ pub(crate) enum VmOption {
     AllowThp = 6,
     ArenaEagerCommit = 7,
     ArenaReserve = 8,
-    ArenaMaxObjectSize = 9,
-    DisallowArenaAlloc = 10,
-    DisallowOsAlloc = 11,
-    PageCommitOnDemand = 12,
+    ArenaPurgeMult = 9,
+    ArenaMaxObjectSize = 10,
+    DisallowArenaAlloc = 11,
+    DisallowOsAlloc = 12,
+    PageCommitOnDemand = 13,
+    ArenaIsNumaLocal = 14,
+    MinimalPurgeSize = 15,
 }
 
 impl VmOption {
-    pub(crate) const ALL: [Self; 13] = [
+    pub(crate) const ALL: [Self; 16] = [
         Self::PurgeDecommits,
         Self::AllowLargeOsPages,
         Self::ReserveHugeOsPages,
@@ -146,10 +149,13 @@ impl VmOption {
         Self::AllowThp,
         Self::ArenaEagerCommit,
         Self::ArenaReserve,
+        Self::ArenaPurgeMult,
         Self::ArenaMaxObjectSize,
         Self::DisallowArenaAlloc,
         Self::DisallowOsAlloc,
         Self::PageCommitOnDemand,
+        Self::ArenaIsNumaLocal,
+        Self::MinimalPurgeSize,
     ];
 
     #[inline]
@@ -172,17 +178,29 @@ impl VmOption {
             Self::ArenaEagerCommit => 2,
             // `MI_DEFAULT_ARENA_RESERVE` is expressed in KiB.
             Self::ArenaReserve => 1024 * 1024,
+            // `src/options.c:149` applies this source multiplier to the
+            // configured arena purge delay.
+            Self::ArenaPurgeMult => 4,
             // `MI_SIZE_BITS * MI_ARENA_MAX_CHUNK_OBJ_SIZE / MI_KiB`:
             // `(64 * 32 MiB) / KiB == 2 GiB`, stored in KiB.
             Self::ArenaMaxObjectSize => 2 * 1024 * 1024,
-            // `src/options.c:143,151,168`.
-            Self::DisallowArenaAlloc | Self::DisallowOsAlloc | Self::PageCommitOnDemand => 0,
+            // `src/options.c:143,151,168,177`.
+            Self::DisallowArenaAlloc
+            | Self::DisallowOsAlloc
+            | Self::PageCommitOnDemand
+            | Self::ArenaIsNumaLocal => 0,
+            // `src/options.c:174`, expressed in KiB like the two arena-size
+            // descriptors.
+            Self::MinimalPurgeSize => 0,
         }
     }
 
     #[inline]
     const fn has_size_in_kib(self) -> bool {
-        matches!(self, Self::ArenaReserve | Self::ArenaMaxObjectSize)
+        matches!(
+            self,
+            Self::ArenaReserve | Self::ArenaMaxObjectSize | Self::MinimalPurgeSize
+        )
     }
 }
 
@@ -235,7 +253,7 @@ impl VmOptionSlot {
 /// copy from silently changing process policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct VmOptions {
-    slots: [VmOptionSlot; 13],
+    slots: [VmOptionSlot; 16],
 }
 
 impl VmOptions {
@@ -253,10 +271,13 @@ impl VmOptions {
                 VmOptionSlot::new(VmOption::AllowThp.default_value()),
                 VmOptionSlot::new(VmOption::ArenaEagerCommit.default_value()),
                 VmOptionSlot::new(VmOption::ArenaReserve.default_value()),
+                VmOptionSlot::new(VmOption::ArenaPurgeMult.default_value()),
                 VmOptionSlot::new(VmOption::ArenaMaxObjectSize.default_value()),
                 VmOptionSlot::new(VmOption::DisallowArenaAlloc.default_value()),
                 VmOptionSlot::new(VmOption::DisallowOsAlloc.default_value()),
                 VmOptionSlot::new(VmOption::PageCommitOnDemand.default_value()),
+                VmOptionSlot::new(VmOption::ArenaIsNumaLocal.default_value()),
+                VmOptionSlot::new(VmOption::MinimalPurgeSize.default_value()),
             ],
         }
     }
@@ -583,11 +604,27 @@ mod tests {
         assert_eq!(options.state(VmOption::UseNumaNodes), VmOptionState::Uninitialized);
         assert_eq!(options.value(VmOption::ReserveHugeOsPages), Some(0));
         assert_eq!(options.state(VmOption::ReserveHugeOsPages), VmOptionState::Defaulted);
+        assert_eq!(options.value(VmOption::ArenaPurgeMult), None);
+        assert_eq!(options.value(VmOption::ArenaIsNumaLocal), None);
 
         // The C descriptor ignores a later environment lookup after either
         // a valid value or an absent/invalid result finalized it.
         options.initialize_one(VmOption::AllowThp, VmOptionEnvironment::Value(b"1"));
         assert_eq!(options.value(VmOption::AllowThp), Some(0));
+    }
+
+    #[test]
+    fn vm_options_retain_the_arena_purge_and_numa_local_descriptors() {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+
+        assert_eq!(options.value(VmOption::ArenaPurgeMult), Some(4));
+        assert_eq!(options.value(VmOption::ArenaIsNumaLocal), Some(0));
+
+        options.set(VmOption::ArenaPurgeMult, -3);
+        options.set(VmOption::ArenaIsNumaLocal, 1);
+        assert_eq!(options.value(VmOption::ArenaPurgeMult), Some(-3));
+        assert_eq!(options.value(VmOption::ArenaIsNumaLocal), Some(1));
     }
 
     #[test]

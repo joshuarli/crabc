@@ -375,6 +375,11 @@ pub(crate) enum ThpPolicyOutcome {
 /// being introduced.
 pub(crate) struct VmPolicy {
     options: VmOptions,
+    // Pinned `src/init.c` keeps this true until the process-load owner has
+    // left the C-runtime-unsafe preloading interval.  Only that one owner may
+    // clear it; VM and arena callers receive a read-only view through their
+    // borrowed `VmProcess` pair.
+    preloading: AtomicBool,
     aligned_hint_base: AtomicUsize,
     huge_hint_start: AtomicUsize,
     large_page_try_ok: AtomicUsize,
@@ -410,6 +415,20 @@ impl<'a> VmProcess<'a> {
     pub(crate) const fn subprocess(self) -> &'a crate::subproc::MainSubprocess {
         self.subprocess
     }
+
+    /// Returns the source-selected current NUMA node for this exact policy
+    /// and subprocess lifetime.  The option-aware count cache belongs to the
+    /// policy, rather than the legacy fixed-default global cache.
+    #[inline]
+    pub(crate) fn current_numa_node(self) -> usize {
+        self.policy.current_numa_node()
+    }
+
+    /// Reports whether this exact process pair is still in the source's
+    /// C-runtime-unsafe preloading interval.  It grants no transition
+    /// authority: only the process initialization owner may end that state.
+    #[inline]
+    pub(crate) fn is_preloading(self) -> bool { self.policy.is_preloading() }
 }
 
 impl VmPolicy {
@@ -422,6 +441,7 @@ impl VmPolicy {
         }
         Ok(Self {
             options,
+            preloading: AtomicBool::new(true),
             aligned_hint_base: AtomicUsize::new(0),
             huge_hint_start: AtomicUsize::new(0),
             large_page_try_ok: AtomicUsize::new(0),
@@ -441,13 +461,35 @@ impl VmPolicy {
         let mut options = VmOptions::uninitialized();
         options.initialize_all(|_| VmOptionEnvironment::Absent);
         match Self::new(options) {
-            Ok(policy) => policy,
+            Ok(policy) => {
+                // Direct VM fixtures run after their source process-start
+                // boundary, not in the C-runtime-unsafe preloading interval.
+                policy.finish_preloading();
+                policy
+            }
             Err(_) => unreachable!("absent source options resolve every VM descriptor"),
         }
     }
 
     #[inline]
     pub(crate) const fn options(&self) -> &VmOptions { &self.options }
+
+    /// Ends the one-way source preloading interval.
+    ///
+    /// This is intentionally crate-private and is called only by the
+    /// process-start owner after it completed the C-runtime-unsafe phase.
+    /// Repeating the store is harmless, matching source initialization's
+    /// one-way `true -> false` state rather than reopening a preload path.
+    #[inline]
+    pub(crate) fn finish_preloading(&self) {
+        self.preloading.store(false, Ordering::Release);
+    }
+
+    /// Reads the source preloading state without granting mutation authority.
+    #[inline]
+    pub(crate) fn is_preloading(&self) -> bool {
+        self.preloading.load(Ordering::Acquire)
+    }
 
     /// Mirrors a source `mi_option_set` performed by the unique process
     /// options owner. Rust's exclusive borrow makes a concurrent mutation
@@ -595,11 +637,20 @@ impl VmPolicy {
     #[inline]
     fn allow_thp(&self) -> bool { self.option_enabled(VmOption::AllowThp) }
 
+    /// Returns the resolved source `purge_decommits` choice for this process.
     #[inline]
-    fn purge_decommits(&self) -> bool { self.option_enabled(VmOption::PurgeDecommits) }
+    pub(crate) fn purge_decommits(&self) -> bool {
+        self.option_enabled(VmOption::PurgeDecommits)
+    }
 
+    /// Returns the resolved source `purge_delay` in milliseconds.
+    ///
+    /// Negative values intentionally remain visible: pinned `src/os.c`
+    /// suppresses a purge when this option is below zero.
     #[inline]
-    fn purge_delay_milliseconds(&self) -> i64 { self.option_value(VmOption::PurgeDelay) }
+    pub(crate) fn purge_delay_milliseconds(&self) -> i64 {
+        self.option_value(VmOption::PurgeDelay)
+    }
 
     #[inline]
     fn reserve_huge_os_pages(&self) -> i64 { self.option_value(VmOption::ReserveHugeOsPages) }
@@ -632,6 +683,14 @@ impl VmPolicy {
         self.option_size_bytes(VmOption::ArenaReserve)
     }
 
+    /// Returns the resolved source arena-purge delay multiplier unchanged.
+    /// The arena owner applies the source multiplication at its purge
+    /// scheduling edge, where it can retain the matching arena lifetime.
+    #[inline]
+    pub(crate) fn arena_purge_multiplier(&self) -> i64 {
+        self.option_value(VmOption::ArenaPurgeMult)
+    }
+
     #[inline]
     pub(crate) fn arena_max_object_size_bytes(&self) -> usize {
         self.option_size_bytes(VmOption::ArenaMaxObjectSize)
@@ -650,6 +709,101 @@ impl VmPolicy {
     #[inline]
     pub(crate) fn page_commit_on_demand(&self) -> i64 {
         self.option_value(VmOption::PageCommitOnDemand)
+    }
+
+    /// Returns whether the source asks an initial arena allocation to use the
+    /// current NUMA node. This is distinct from configuring the number of
+    /// allocator regions.
+    #[inline]
+    pub(crate) fn arena_is_numa_local(&self) -> bool {
+        self.option_enabled(VmOption::ArenaIsNumaLocal)
+    }
+
+    /// Returns `_mi_os_minimal_purge_size` for this policy/configuration.
+    ///
+    /// The option is a source KiB value. A nonzero value is aligned using the
+    /// fixed source unsigned power-of-two expression, including its wrapping
+    /// edge; otherwise transparent-huge-page mode two selects the configured
+    /// large page size and every other case selects the base page size.
+    #[inline]
+    pub(crate) fn minimal_purge_size(&self, config: MemoryConfig) -> usize {
+        let configured = self.option_size_bytes(VmOption::MinimalPurgeSize);
+        if configured != 0 {
+            let page_size = config.page_size().bytes();
+            debug_assert!(page_size.is_power_of_two());
+            return configured.wrapping_add(page_size - 1) & !(page_size - 1);
+        }
+        if config.has_transparent_huge_pages() && self.option_value(VmOption::AllowThp) == 2 {
+            config.large_page_size()
+        } else {
+            config.page_size().bytes()
+        }
+    }
+
+    /// Resolves the source option-aware NUMA-region count into this policy's
+    /// private cache.  It deliberately preserves `src/os.c`'s simple
+    /// load/fill/store shape rather than introducing a stronger once or CAS
+    /// protocol for the first topology observation.
+    #[inline]
+    fn numa_node_count_with_raw(&self, mut raw_count: impl FnMut() -> usize) -> usize {
+        let count = self.numa_node_count.load(Ordering::Acquire);
+        let count = if count == 0 {
+            let configured = self.configured_numa_nodes();
+            let resolved = if configured > 0 && configured < i64::from(i32::MAX) {
+                configured as usize
+            } else {
+                let observed = raw_count();
+                if observed == 0 || observed > NUMA_NODE_INT_MAX {
+                    1
+                } else {
+                    observed
+                }
+            };
+            self.numa_node_count.store(resolved, Ordering::Release);
+            resolved
+        } else {
+            count
+        };
+        debug_assert!((1..=NUMA_NODE_INT_MAX).contains(&count));
+        count
+    }
+
+    /// Returns the selected policy's allocator-facing NUMA-region count.
+    #[inline]
+    pub(crate) fn numa_node_count(&self) -> usize {
+        self.numa_node_count_with_raw(numa_node_count)
+    }
+
+    /// Returns the selected current NUMA node with the source strict
+    /// `INT_MAX` boundary and modulo normalization.
+    #[inline]
+    fn current_numa_node_with_raw(
+        &self,
+        raw_count: impl FnMut() -> usize,
+        mut raw_current: impl FnMut() -> usize,
+    ) -> usize {
+        if self.numa_node_count.load(Ordering::Relaxed) == 1 {
+            return 0;
+        }
+        let count = self.numa_node_count_with_raw(raw_count);
+        if count <= 1 {
+            return 0;
+        }
+        let mut current = raw_current();
+        if current >= NUMA_NODE_INT_MAX {
+            current = 0;
+        }
+        if current >= count {
+            current %= count;
+        }
+        current
+    }
+
+    /// Returns the current NUMA node through this policy's option-aware
+    /// count cache, rather than the legacy fixed-default global cache.
+    #[inline]
+    pub(crate) fn current_numa_node(&self) -> usize {
+        self.current_numa_node_with_raw(numa_node_count, numa_node)
     }
 }
 
@@ -3370,6 +3524,74 @@ mod tests {
             ),
             0,
             "the current-node condition maps values above INT_MAX to zero",
+        );
+    }
+
+    #[test]
+    fn vm_policy_keeps_arena_options_and_numa_cache_with_the_process_pair() {
+        let mut unresolved_lifecycle = VmOptions::uninitialized();
+        unresolved_lifecycle.initialize_all(|_| VmOptionEnvironment::Absent);
+        let lifecycle = VmPolicy::new(unresolved_lifecycle)
+            .expect("the source-absent image resolves every VM descriptor");
+        assert!(lifecycle.is_preloading());
+        lifecycle.finish_preloading();
+        assert!(!lifecycle.is_preloading());
+
+        let mut policy = VmPolicy::defaults_for_test();
+        assert_eq!(policy.arena_purge_multiplier(), 4);
+        assert!(!policy.arena_is_numa_local());
+        assert_eq!(policy.purge_delay_milliseconds(), 1_000);
+        assert!(policy.purge_decommits());
+
+        policy.set_option(VmOption::ArenaPurgeMult, -2);
+        policy.set_option(VmOption::ArenaIsNumaLocal, 1);
+        policy.set_option(VmOption::PurgeDelay, -1);
+        policy.set_option(VmOption::PurgeDecommits, 0);
+        assert_eq!(policy.arena_purge_multiplier(), -2);
+        assert!(policy.arena_is_numa_local());
+        assert_eq!(policy.purge_delay_milliseconds(), -1);
+        assert!(!policy.purge_decommits());
+
+        let thp_config = MemoryConfig::from_observations(
+            PageSize::new(4 * 1024).expect("four KiB is one selected Linux page size"),
+            0,
+            true,
+            true,
+        );
+        policy.set_option(VmOption::AllowThp, 2);
+        assert_eq!(
+            policy.minimal_purge_size(thp_config),
+            thp_config.large_page_size(),
+            "source allow_thp=2 uses the selected transparent huge-page size"
+        );
+        policy.set_option(VmOption::MinimalPurgeSize, 5);
+        assert_eq!(
+            policy.minimal_purge_size(thp_config),
+            8 * 1024,
+            "an explicit five-KiB source value rounds up to a base-page multiple"
+        );
+
+        let mut configured = VmPolicy::defaults_for_test();
+        configured.set_option(VmOption::UseNumaNodes, 3);
+        assert_eq!(
+            configured.current_numa_node_with_raw(
+                || panic!("a positive configured NUMA count must skip raw topology"),
+                || 8,
+            ),
+            2,
+            "the source normalizes the current node against the configured count"
+        );
+        assert_eq!(
+            configured.numa_node_count_with_raw(|| panic!("the resolved cache must be reused")),
+            3
+        );
+
+        let mut int_max = VmPolicy::defaults_for_test();
+        int_max.set_option(VmOption::UseNumaNodes, i64::from(i32::MAX));
+        assert_eq!(
+            int_max.numa_node_count_with_raw(|| 5),
+            5,
+            "the source rejects INT_MAX itself as an explicit option and probes the primitive"
         );
     }
 
