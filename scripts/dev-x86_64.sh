@@ -578,6 +578,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-posix-composition [DYNAMIC_SYSROOT] test shared POSIX process state and cancellation
   owned-posix-filesystem [DYNAMIC_SYSROOT] test installed POSIX filesystem provider composition
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
+  owned-posix-signals [DYNAMIC_SYSROOT]  test residual installed signal state and boundaries
   owned-signal-helpers [DYNAMIC_SYSROOT]  test installed signal aliases, bookkeeping and reporting
   owned-pthread-join-cancel  test installed ordinary/try/timed join ownership and cancellation
   owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
@@ -5691,7 +5692,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
-    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition) ;;
+    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -7762,6 +7763,11 @@ case "$command" in
         [ "$#" -le 1 ] || fail "owned-posix-filesystem takes at most one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_posix_filesystem.sh "$@"
+        ;;
+    owned-posix-signals)
+        [ "$#" -le 1 ] || fail "owned-posix-signals takes at most one dynamic sysroot"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_owned_posix_signals.sh "$@"
         ;;
     owned-signal-helpers)
         [ "$#" -le 1 ] || fail "owned-signal-helpers takes at most one dynamic sysroot"

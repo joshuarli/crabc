@@ -44,6 +44,7 @@ CASES = {
     "posix-timers": ("run_owned_posix_timers.sh", None),
     "pthread-scheduling": ("run_owned_pthread_scheduling.sh", None),
     "signal-helpers": ("run_owned_signal_helpers.sh", None),
+    "signal-full": ("run_owned_posix_signals.sh", None),
     "fcntl": ("run_owned_fcntl.sh", None),
     "named-ipc": ("run_owned_named_ipc.sh", None),
     "message-queues": ("run_owned_message_queues.sh", None),

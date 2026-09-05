@@ -387,7 +387,8 @@ mod owned_signal_helpers;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_passwd.rs"]
 mod owned_passwd;
-#[path = "siginterrupt.rs"]
+#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_siginterrupt.rs")]
+#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "siginterrupt.rs")]
 mod siginterrupt;
 #[path = "signal_realtime_max.rs"]
 mod signal_realtime_max;
@@ -420,7 +421,8 @@ mod signal_set_isempty;
 mod signal_set_binary;
 #[path = "signal_execution.rs"]
 mod signal_execution;
-#[path = "signal_pause.rs"]
+#[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_signal_pause.rs")]
+#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "signal_pause.rs")]
 mod signal_pause;
 #[path = "signal_altstack.rs"]
 mod signal_altstack;

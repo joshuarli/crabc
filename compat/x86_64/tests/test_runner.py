@@ -2100,7 +2100,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             + (
                 "owned-system-cancellation",
                 "owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|"
-                "owned-signal-helpers|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition",
+                "owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition",
                 "owned-assert|owned-legacy-time|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern",
                 "owned-pthread-spin",
                 "owned-syslog",
@@ -5927,14 +5927,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "offset_of!(PublicSignalStack, size) == 16",
             "raw_syscall::SYS_SIGALTSTACK",
             "MINSIGSTKSZ: usize = 2_048",
-            "requested.size < MINSIGSTKSZ",
+            "requested.size < minimum",
             "requested.flags & SS_ONSTACK",
             "_SC_MINSIGSTKSZ",
             "AT_MINSIGSTKSZ",
         ):
             self.assertIn(required, signal_altstack)
         self.assertLess(
-            signal_altstack.index("requested.size < MINSIGSTKSZ"),
+            signal_altstack.index("requested.size < minimum"),
             signal_altstack.index("requested.flags & SS_ONSTACK"),
         )
         self.assertNotIn("padding: c_int", signal_altstack)
@@ -6294,7 +6294,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         dispatcher = RUNNER.read_text(encoding="utf-8")
 
-        self.assertIn('#[path = "signal_pause.rs"]', static_root)
+        self.assertIn('#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "signal_pause.rs")]', static_root)
         for required in (
             "Selected static Linux/x86-64 sigpause C boundary",
             "src/signal/sigpause.c",

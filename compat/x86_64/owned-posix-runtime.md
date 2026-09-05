@@ -52,7 +52,7 @@ binding and gap summary.
 | `process.control` | 44 | `process-trio` covers `clone`, `vfork`, `daemon`; `spawn` covers spawn/spawnp, file actions, selected attributes, rollback, and worker spawning; the static POSIX consumer covers a narrow fork/exec/spawn flow. | The exact exec aliases, `nice`, session/group setters, wait family, and all spawn-attribute getter/setter cases lack a complete installed matrix. |
 | `process.credentials` | 9 | None. | `credentials.rs` has a private static proof of the selected profile: `seteuid`, `setegid`, `setreuid`, and `setregid` return `-1`/`EOPNOTSUPP` without changing IDs; `setresuid`/`setresgid` and the other direct setters retain caller-coordinated Linux semantics. No installed product proves that selected boundary. |
 | `process.environment-mutation` | 3 | The static POSIX consumer covers selected mutation and fork/exec behavior on installed and extracted static products. | No complete dynamic or shared-state lifecycle matrix. `environment_runtime.rs` explicitly leaves synchronization, signal, fork, exec/spawn, direct-`environ`, and borrowed-pointer obligations outside its leaf. |
-| `process.signal` | 34 | Dedicated dynamic cases cover helper actions/reporting, cancellation-aware `sigtimedwait`/`sigwaitinfo`/`sigwait`, pthread delivery, timer signal delivery, and spawn mask/default handling; the static POSIX consumer covers mask ordering. The exact audit below names their positive and supporting calls. | Existing cases do not supply a per-spelling receipt across the complete static/extracted/dynamic product matrix. There is no complete installed/extracted 34-name signal workload or state-composition proof. |
+| `process.signal` | 34 | `signal-full` adds installed same-object evidence for the 23 residual primary spellings through static/static-PIE and four dynamic entries. `owned-posix-signals.toml` explicitly reuses helper/reporting, wait-cancellation, pthread, and timer cases; the audit below retains their positive/supporting distinctions. | The per-spelling family receipt must still combine second/extracted static and all three dynamic products with the reused cases. Global state-composition evidence remains separate. |
 | `system.kernel-admin` | 42 | `linux-control` covers 18 names, `syslog` covers five, `system-cancellation` covers `system`, and `kernel-residual` has a separate installed-driver object for the remaining 18 spellings. The first, second, and residual runners are three-product dynamic cases. `gethostid.rs` retains its private constant-zero artifact matching musl. | These separate per-workload receipts are not a combined 42-spelling family closure. The coordinator still lacks its full six-cell extracted-static family receipt and cross-family FILE/logger/signal/fork composition. The private `static-c-gethostid` artifact is under `libc.c-abi-compat` and deliberately owns no capability; it is evidence, not a conflicting provider. |
 
 The current dynamic cases are useful and must be reused. `process-trio`,
@@ -70,8 +70,13 @@ result because it omits the symbols and product modes named above.
 
 ### Registered dynamic signal audit
 
+The later `signal-full` case closes the residual spelling workload described in
+[`owned-posix-signals.md`](owned-posix-signals.md). Its explicit reuse map keeps
+the following original audit as the evidence boundary for existing cases.
+
 All registered `CASES` runners were inspected before recording the signal gap.
-Twelve runners compile consumers that directly call frozen signal spellings:
+The original audit found twelve runners compiling consumers that directly call
+frozen signal spellings:
 `pthread-signal`, `posix-timers`, `pthread-scheduling`, `signal-helpers`,
 `fcntl`, `io-cancellation`, `system-cancellation`, `spawn`, `linux-control`,
 `legacy-time`, `process-trio`, and `pty`. A call used only to prepare another

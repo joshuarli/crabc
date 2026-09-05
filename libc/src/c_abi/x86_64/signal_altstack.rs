@@ -22,7 +22,10 @@
 //! `_SC_MINSIGSTKSZ` value from startup-owned auxv (`AT_MINSIGSTKSZ`). That
 //! auxv/sysconf selector is not selected by this archive, so this leaf does
 //! not claim that larger
-//! dynamic-minimum behavior. All remaining validation, query, disable, and
+//! dynamic-minimum behavior in its private selection. The owned runtime uses
+//! its shared source-backed `system_configuration::minimum_signal_stack_size`
+//! helper, preserving musl's size-before-flags validation with startup auxv.
+//! All remaining validation, query, disable, and
 //! in-handler `EPERM` behavior are the direct Linux 5.10 contract.
 //!
 //! This is neither a generic signal-disposition framework nor pthread signal
@@ -90,7 +93,11 @@ pub unsafe extern "C" fn sigaltstack(stack: *const c_void, old_stack: *mut c_voi
         // SAFETY: a non-null `stack` is readable for one complete public
         // record under this C entry point's documented caller obligation.
         let requested = unsafe { &*stack.cast::<PublicSignalStack>() };
-        if requested.flags & SS_DISABLE == 0 && requested.size < MINSIGSTKSZ {
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        let minimum = MINSIGSTKSZ;
+        #[cfg(feature = "x86-owned-static-runtime")]
+        let minimum = super::system_configuration::minimum_signal_stack_size();
+        if requested.flags & SS_DISABLE == 0 && requested.size < minimum {
             return insufficient_memory();
         }
         if requested.flags & SS_ONSTACK != 0 {

@@ -85,6 +85,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "posix-timers",
                 "pthread-scheduling",
                 "signal-helpers",
+                "signal-full",
                 "fcntl",
                 "named-ipc",
                 "message-queues",

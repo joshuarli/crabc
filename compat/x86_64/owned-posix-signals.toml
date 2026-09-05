@@ -1,0 +1,16 @@
+# Exact primary spelling owners. The signal-full dynamic case runs residual
+# scenarios; the family coordinator also consumes the named existing cases.
+schema = "crabc.x86_64-owned-posix-signals/v1"
+capability = "process.signal"
+scenarios = ["sets", "actions-masks", "queue-delivery", "suspend-delivery", "sigpause-cancellation", "sigsuspend-cancellation", "interrupt-bookkeeping", "alternate-stack", "alternate-minimum", "signalfd"]
+reused_cases = ["signal-helpers", "io-cancellation", "pthread-signal", "posix-timers"]
+
+[primary_spelling_owner]
+sets = ["__libc_current_sigrtmax", "__libc_current_sigrtmin", "sigaddset", "sigandset", "sigdelset", "sigemptyset", "sigfillset", "sigisemptyset", "sigismember", "sigorset"]
+actions-masks = ["raise", "sigaction", "siginterrupt", "sigpending", "sigprocmask", "signal"]
+queue-delivery = ["kill", "killpg", "sigqueue"]
+suspend-delivery = ["sigpause", "sigsuspend"]
+alternate-stack = ["sigaltstack"]
+signalfd = ["signalfd"]
+signal-helpers = ["__sysv_signal", "bsd_signal", "psiginfo", "psignal", "sighold", "sigignore", "sigrelse", "sigset"]
+io-cancellation = ["sigtimedwait", "sigwait", "sigwaitinfo"]
