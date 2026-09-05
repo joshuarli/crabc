@@ -669,6 +669,21 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "mixed-runtime POSIX"):
             ledger.require_posix_spawn_file_actions_artifact(changed_family)
 
+    def test_spawn_actions_cannot_escape_into_the_default_static_profile(self) -> None:
+        family = self.family(self.data(), "libc.posix-runtime")
+        source_path = ROOT / "libc/src/c_abi/x86_64/static_c_abi.rs"
+        source = source_path.read_text(encoding="utf-8")
+        guard = '#[cfg(any(feature = "x86-posix-spawn-file-actions", feature = "x86-owned-static-runtime"))]'
+        changed = self.replace_required(source, guard, "", "spawn action composition")
+        read_text = Path.read_text
+
+        def mutated(path: Path, *args: object, **kwargs: object) -> str:
+            return changed if path == source_path else read_text(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "read_text", mutated):
+            with self.assertRaisesRegex(ledger.LedgerError, "explicit or owned runtime profile"):
+                ledger.require_posix_spawn_file_actions_artifact(family)
+
     def test_process_exec_artifact_stays_opt_in_and_non_promoting(self) -> None:
         family = self.family(self.data(), "libc.posix-runtime")
         artifacts = family["verified_artifact"]

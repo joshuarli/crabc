@@ -24091,10 +24091,10 @@ def require_posix_spawn_file_actions_artifact(family: Mapping[str, Any]) -> None
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
     require(
-        '#[cfg(feature = "x86-posix-spawn-file-actions")]'
+        '#[cfg(any(feature = "x86-posix-spawn-file-actions", feature = "x86-owned-static-runtime"))]'
         '\n#[path = "posix_spawn_file_actions.rs"]'
         "\nmod posix_spawn_file_actions;" in static_root,
-        "x86 static C ABI must make spawn-action lifecycle composition opt-in",
+        "x86 spawn-action lifecycle must remain confined to its explicit or owned runtime profile",
     )
     source = (
         ROOT
