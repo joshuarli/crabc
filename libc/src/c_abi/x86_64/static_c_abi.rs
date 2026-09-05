@@ -951,6 +951,12 @@ mod owned_wordexp;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_inverse_trig.rs"]
 mod owned_inverse_trig;
+// The six scalar entries are a separate source-closed component of the
+// installed owned-static product. Keep them feature-gated so default fixture
+// archives retain their exact frozen export contract.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "math_scalar_completion.rs"]
+mod math_scalar_completion;
 
 // This is a separate dependency-backed password-hash compatibility leaf. Its
 // temporary MCF allocation bridges only to the final link's C allocation
