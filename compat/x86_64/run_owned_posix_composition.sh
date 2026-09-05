@@ -7,32 +7,63 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_posix_composition_probe.c"
 
-[ "$#" -le 1 ] || {
-    printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
+usage() {
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
 
-provided_dynamic="${1:-}"
+provided_static=''
+provided_dynamic=''
+dynamic_was_supplied=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-sysroot)
+            [ "$#" -ge 2 ] || usage
+            [ -n "$2" ] || usage
+            case "$2" in
+                --*) usage ;;
+            esac
+            [ -z "$provided_static" ] || usage
+            provided_static="$2"
+            shift 2
+            ;;
+        --*)
+            usage
+            ;;
+        *)
+            [ -n "$1" ] || usage
+            [ -z "$provided_dynamic" ] || usage
+            provided_dynamic="$1"
+            dynamic_was_supplied=1
+            shift
+            ;;
+    esac
+done
+if [ -n "$provided_static" ]; then
+    provided_static="$(realpath -e -- "$provided_static")"
+fi
 if [ -n "$provided_dynamic" ]; then
-    provided_dynamic="$(realpath "$provided_dynamic")"
+    provided_dynamic="$(realpath -e -- "$provided_dynamic")"
 fi
 
 # Check supplied products before creating any mutable output. This lets the
 # dynamic qualification receipt safely distinguish its installed/extracted
 # product input from this runner's contained evidence directory.
-python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
+python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_static" "$provided_dynamic" <<'PY'
 from pathlib import Path
 import sys
 
 root = Path(sys.argv[1])
 temporary = Path(sys.argv[2])
-product_argument = sys.argv[3]
+static_product = Path(sys.argv[3]) if sys.argv[3] else None
+dynamic_product = Path(sys.argv[4]) if sys.argv[4] else None
 if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / ".work"):
     raise SystemExit("owned POSIX composition TMPDIR must be a physical checkout .work directory")
-if product_argument:
-    product = Path(product_argument)
-    if not product.is_dir() or not product.is_relative_to(root / ".work"):
-        raise SystemExit("owned POSIX composition product must be a checkout .work directory")
+for product, name in ((static_product, "static"), (dynamic_product, "dynamic")):
+    if product and (not product.is_dir() or not product.is_relative_to(root / ".work")):
+        raise SystemExit(
+            f"owned POSIX composition {name} product must be a checkout .work directory"
+        )
 PY
 
 readonly work="$(mktemp -d "$TMPDIR/owned-posix-composition.XXXXXX")"
@@ -128,16 +159,22 @@ PY
 cp "$work/oracle" "$execution_root/oracle"
 run_in_root "$execution_root" "$work/oracle.stdout" /oracle
 
-if [ "${1:-}" = "" ]; then
+static_product=''
+if [ -n "$provided_static" ]; then
+    static_product="$provided_static"
+elif [ "$dynamic_was_supplied" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
         --output "$work/static-sysroot" >"$work/static-build.json"
+    static_product="$work/static-sysroot"
+fi
+if [ -n "$static_product" ]; then
     for mode in static static-pie; do
         (
             cd "$work"
-            "$work/static-sysroot/bin/crabc-cc" "-$mode" --link-receipt "$mode.receipt.json" \
+            "$static_product/bin/crabc-cc" "-$mode" --link-receipt "$mode.receipt.json" \
                 "$work/workload.o" -o "$work/$mode"
         )
-        audit_link "$work/static-sysroot" "$work/$mode" "$work/$mode.receipt.json" "$mode"
+        audit_link "$static_product" "$work/$mode" "$work/$mode.receipt.json" "$mode"
         cp "$work/$mode" "$execution_root/consumer-$mode"
         run_in_root "$execution_root" "$work/$mode.stdout" "/consumer-$mode"
         compare_run "$mode"

@@ -576,7 +576,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-atfork-registry  test installed resource-sized atfork callback ordering
   owned-pty [DYNAMIC_SYSROOT]  test installed PTY naming, lifecycle and session handoff
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
-  owned-posix-composition [DYNAMIC_SYSROOT] test shared POSIX process state and cancellation
+  owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT] test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
   owned-posix-filesystem [DYNAMIC_SYSROOT] test installed POSIX filesystem provider composition
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
@@ -7752,7 +7752,6 @@ case "$command" in
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_passwd.sh "$@"
         ;;
     owned-posix-composition)
-        [ "$#" -le 1 ] || fail "owned-posix-composition takes at most one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_posix_composition.sh "$@"
         ;;
