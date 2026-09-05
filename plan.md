@@ -5,9 +5,21 @@
 The dynamic catalog now contains 50 cases. The installed POSIX components
 cover the residual filesystem, process-control, credential-profile,
 environment-lifecycle, signal, and kernel-administration workloads, plus a
-shared-state composition workload. Their focused static/static-PIE and dynamic
-matrices are integrated; a fresh 50-case, three-product dynamic qualification
-is still required. The exact family roster and remaining evidence are in
+shared-state composition workload. The complete 50-case, three-product dynamic
+gate passed at `ce661094`: 150 case receipts, identical product manifests and
+byte-identical packages. Host validation and explicit local publication passed
+for `.work/x86_64/tmp/materialized-dynamic.QXpUta/qualification.json`; log
+`.work/x86_64/owned-dynamic-posix-50-integrated.log`. The seven new POSIX
+workload objects were byte-identical across all three products.
+
+That same revision passed the new static-product preparation command: two
+independent builds, identical packages, matching extracted tree, and independent
+host validation. Its preparation-only receipt is
+`.work/x86_64/posix-static-products-integrated/preparation.json`; it contains no
+runtime or family qualification claim. Subsequent replay/retention changes
+invalidate the prior source selection. They add supplied-static execution for
+the focused workloads, but the complete family coordinator remains open.
+The exact family roster and remaining evidence are in
 `compat/x86_64/owned-posix-runtime.md` and its catalog. The family coordinator
 must still bind all 149 frozen spellings to the six static and twelve dynamic
 product cells and the required native aggregate. Neither these component passes
