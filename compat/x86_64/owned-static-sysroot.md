@@ -144,8 +144,11 @@ ordinary exit. `owned_stdio_process_probe.c` separately exercises `popen`,
 `pclose`, and `system`: read/write streams, prior-process descriptor closure,
 CLOEXEC and same-descriptor dup2, worker-thread spawn, signal status/restoration,
 interrupted wait, and exec/pipe failure cleanup without leaked descriptors or
-zombies. Its child shell and scratch are private to each run. Wide streams,
-syscall cancellation, and allocator-wide fork recovery remain unqualified.
+zombies. Its child shell and scratch are private to each run.
+`owned_wide_stdio_probe.c` adds stream orientation and captured locale,
+multibyte decoding and pushback, callback locale restoration, worker isolation,
+and growing wide-memory streams with overflow/ownership checks. Syscall
+cancellation and allocator-wide fork recovery remain unqualified.
 
 `owned_static_printf_probe.c` additionally covers positional integer/string/
 count/pointer/errno/hex-float formatting and FILE, descriptor, allocated, and
@@ -161,8 +164,13 @@ Each formatting job also runs a separately receipted
 scansets, widths, suppression, positional arguments, integer and binary32/64/80
 conversion, errno, fenv, and stream lookahead/EOF/error state. Allocation checks
 exercise `%m` growth, cleanup, partial failure, and ENOMEM; each process owns
-its scratch and restores its resource limit. Wide formatting/scanning remains
-explicitly unsupported. The 24 bounded jobs now cover 64 installed binaries.
+its scratch and restores its resource limit. `owned_wide_format_probe.c`
+compares byte/wide conversions and wide printf/scanf grammar, including
+standard streams, forwarded va_lists, long strings, and allocated results.
+The digest-checked wide parser source and owned FILE callbacks are mapped in
+`owned_wide_format.rs`; there is no foreign FILE representation. Both wide
+probes run unchanged against pinned musl and all four installed product arms.
+The 24 bounded jobs now cover 72 installed binaries.
 
 Each TLS job also runs `owned_pthread_lifecycle_consumer.c` through a separate
 installed link: initialized attributes, private guarded and caller-owned

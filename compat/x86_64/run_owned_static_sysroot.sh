@@ -33,8 +33,10 @@ readonly -a CONSUMER_EVIDENCE_PATHS=(
     posix-et-exec/calendar posix-pie/calendar posix-et-exec/tzif posix-pie/tzif
     stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends
     stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie
+    stdio-et-exec/wide stdio-pie/wide
     printf-et-exec printf-pie printf-et-exec/float printf-pie/float
     printf-et-exec/scan printf-pie/scan
+    printf-et-exec/wide printf-pie/wide
 )
 readonly ELF64_PROGRAM_HEADER_SIZE=56
 readonly ELF64_PROGRAM_HEADER_COUNT_OFFSET=56
@@ -852,6 +854,16 @@ run_static_mode() {
             minimum_tls_alignment=1
             candidate_arguments=("$mode_root/process-stream")
             ;;
+        wide-stdio|wide-format)
+            if [ "$consumer_kind" = wide-stdio ]; then
+                probe=owned_wide_stdio_probe.c
+            else
+                probe=owned_wide_format_probe.c
+            fi
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/wide-stream")
+            [ -f "$printf_matrix_reference" ] || fail "${label} wide reference is missing"
+            ;;
         resolver)
             probe=libc_resolver_runtime_probe.c
             expected_output=''
@@ -949,6 +961,12 @@ run_static_mode() {
         printf 'backend-exit\n' >"$mode_root/expected-backend-exit"
         cmp "$mode_root/expected-backend-exit" "$mode_root/backend-exit" ||
             fail "${label} did not flush its cookie stream at ordinary exit"
+    elif [ "$consumer_kind" = wide-stdio ] || [ "$consumer_kind" = wide-format ]; then
+        env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/wide-records" ||
+            fail "${label} wide candidate failed"
+        cmp "$printf_matrix_reference" "$mode_root/wide-records" ||
+            fail "${label} wide records differ from pinned musl"
+        [ ! -e "$mode_root/wide-stream" ] || fail "${label} retained its wide stream"
     elif [ "$consumer_kind" = scanf ]; then
         env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/scan-records" ||
             fail "${label} scanf candidate failed"
@@ -982,6 +1000,8 @@ run_static_mode() {
             "$label FILE backends" stdio-backends "$printf_matrix_reference.backends"
         run_static_mode "$installed_root" "$mode" "$mode_root/process" \
             "$label process streams" stdio-process
+        run_static_mode "$installed_root" "$mode" "$mode_root/wide" \
+            "$label wide streams" wide-stdio "$printf_matrix_reference.wide-stdio"
     fi
     if [ "$consumer_kind" = resolver ]; then
         assert_resolver_fixture_result "$resolver_fixture" "$label"
@@ -1001,6 +1021,8 @@ run_static_mode() {
             "$label numerics" printf-float "$printf_matrix_reference.float"
         run_static_mode "$installed_root" "$mode" "$mode_root/scan" \
             "$label scanning" scanf "$printf_matrix_reference.scan"
+        run_static_mode "$installed_root" "$mode" "$mode_root/wide" \
+            "$label wide formatting" wide-format "$printf_matrix_reference.wide-format"
     fi
     if [ "$consumer_kind" = tls ]; then
         # Exercise the composed worker/once/TSD/synchronization body through
@@ -1463,6 +1485,25 @@ env -i "$header_consumer/scanf-reference" "$header_consumer/scan-stream" \
     >"$printf_matrix_reference.scan" || fail "pinned-musl scanf reference failed"
 assert_scanf_matrix_records "$printf_matrix_reference.scan" "pinned-musl scanf reference"
 [ ! -e "$header_consumer/scan-stream" ] || fail "scanf reference retained its temporary stream"
+
+# Wide parsing and stream ownership share the existing stdio/format jobs.
+# Each arm still receives a distinct pathname, link receipt, and ELF proof.
+# Use the pinned wrapper's dynamic musl reference: its extra-static wide
+# stream executable faults independently of optimization/header selection.
+# Candidate static modes remain unchanged; this is a semantic oracle only.
+for wide_kind in stdio format; do
+    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
+        -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_wide_${wide_kind}_probe.c" \
+        -o "$header_consumer/wide-${wide_kind}-reference"
+    env -i "$header_consumer/wide-${wide_kind}-reference" \
+        "$header_consumer/wide-${wide_kind}-stream" \
+        >"$printf_matrix_reference.wide-${wide_kind}" ||
+        fail "pinned-musl wide ${wide_kind} reference failed"
+    [ -s "$printf_matrix_reference.wide-${wide_kind}" ] ||
+        fail "pinned-musl wide ${wide_kind} reference is empty"
+    [ ! -e "$header_consumer/wide-${wide_kind}-stream" ] ||
+        fail "pinned-musl wide ${wide_kind} retained its temporary stream"
+done
 
 "$ORACLE_CC" -std=c11 -pthread -fno-builtin \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/libc_pthread_tls_aggregate_probe.c" \
