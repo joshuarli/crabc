@@ -526,7 +526,9 @@ impl ProcessMainInitializationStorage {
             // process pair before any metadata demand or READY publication;
             // a legacy explicit-config startup intentionally cannot invent
             // this policy-bound backing route.
-            if let Err(error) = metadata.bind_process_backing(process, page_map) {
+            if let Err(error) = metadata.bind_process_backing(ProcessMainBackingBinding::new(
+                self, process, page_map,
+            )) {
                 selection.retain();
                 self.publish_terminal_state_and_release(completion, RETAINED);
                 return Err(ProcessMainInitError::Metadata(error));
