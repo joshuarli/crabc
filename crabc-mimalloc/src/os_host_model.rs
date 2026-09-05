@@ -15,6 +15,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crabc_core::{Errno, Result};
 
+use crate::config::{VmOption, VmOptionState, VmOptions};
 use crate::invariants;
 
 /// One selected Linux-profile base-page size supplied by the process-start owner.
@@ -180,6 +181,81 @@ impl MemoryConfig {
         } else {
             invariants::align_up(size, alignment).unwrap_or(size)
         }
+    }
+}
+
+/// The host-model counterpart of a rejected incomplete source option image.
+///
+/// This type exists solely so process-lifetime ownership can be exercised
+/// under Miri. It is not evidence for Linux option, environment, NUMA, THP,
+/// hint, or large-page behavior; those remain native x86 checks.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum VmPolicyConfigurationError {
+    UnresolvedOption(VmOption),
+}
+
+/// A Miri-only retained resolved option image and one-way preloading state.
+///
+/// The model deliberately carries no host VM policy machinery. It preserves
+/// only the ownership invariant that a ready process lease borrows the same
+/// resolved image and subprocess for its entire modeled lifetime.
+pub(crate) struct VmPolicy {
+    options: VmOptions,
+    preloading: AtomicBool,
+}
+
+/// One borrowed host-model policy/subprocess pair.
+#[derive(Clone, Copy)]
+pub(crate) struct VmProcess<'a> {
+    policy: &'a VmPolicy,
+    subprocess: &'a crate::subproc::MainSubprocess,
+}
+
+impl<'a> VmProcess<'a> {
+    #[inline]
+    pub(crate) const fn new(
+        policy: &'a VmPolicy,
+        subprocess: &'a crate::subproc::MainSubprocess,
+    ) -> Self {
+        Self { policy, subprocess }
+    }
+
+    #[inline]
+    pub(crate) const fn policy(self) -> &'a VmPolicy { self.policy }
+
+    #[inline]
+    pub(crate) const fn subprocess(self) -> &'a crate::subproc::MainSubprocess {
+        self.subprocess
+    }
+
+    #[inline]
+    pub(crate) fn is_preloading(self) -> bool { self.policy.is_preloading() }
+}
+
+impl VmPolicy {
+    pub(crate) fn new(options: VmOptions) -> core::result::Result<Self, VmPolicyConfigurationError> {
+        for option in VmOption::ALL {
+            if options.state(option) == VmOptionState::Uninitialized {
+                return Err(VmPolicyConfigurationError::UnresolvedOption(option));
+            }
+        }
+        Ok(Self {
+            options,
+            preloading: AtomicBool::new(true),
+        })
+    }
+
+    #[inline]
+    pub(crate) const fn options(&self) -> &VmOptions { &self.options }
+
+    #[inline]
+    pub(crate) fn finish_preloading(&self) {
+        self.preloading.store(false, Ordering::Release);
+    }
+
+    #[inline]
+    pub(crate) fn is_preloading(&self) -> bool {
+        self.preloading.load(Ordering::Acquire)
     }
 }
 
@@ -422,6 +498,43 @@ impl Mapping {
     pub(crate) unsafe fn reclaim_published(address: *mut u8, length: usize) -> Result<()> {
         fault_before(FaultPoint::Unmap)?;
         release_host_slot(address, length)
+    }
+
+    /// Applies the native published-release accounting shape to one quiescent
+    /// host-model slot. This preserves process-pair ownership under Miri; it
+    /// is not a host-kernel or native VM-policy proof.
+    ///
+    /// # Safety
+    /// `address` and `length` identify one exact mapping transferred by
+    /// [`Self::into_published`]. The caller owns its unique release token,
+    /// has quiesced all accesses, and retains that token if this call fails.
+    pub(crate) unsafe fn reclaim_published_for_process(
+        process: VmProcess<'_>,
+        address: *mut u8,
+        length: usize,
+        commit_size: usize,
+        adjust: bool,
+    ) -> Result<()> {
+        if address.is_null() || length == 0 || commit_size > length {
+            return Err(Errno::INVAL);
+        }
+        let result = match fault_before(FaultPoint::Unmap) {
+            Ok(()) => release_host_slot(address, length),
+            Err(error) => Err(error),
+        };
+        let statistics = process.subprocess().vm_statistics();
+        if adjust {
+            if commit_size != 0 {
+                statistics.committed_adjust_decrease(commit_size);
+            }
+            statistics.reserved_adjust_decrease(length);
+        } else {
+            if commit_size != 0 {
+                statistics.committed_decrease(commit_size);
+            }
+            statistics.reserve_decrease(length);
+        }
+        result
     }
 
     /// Returns whether the original anonymous mapping was zero initialized.

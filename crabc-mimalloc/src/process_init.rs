@@ -20,8 +20,12 @@
 //! it does not choose options, reserve or manage the process-shared arena,
 //! initialize pthread keys, route allocations/frees, run process shutdown,
 //! or expose the metadata allocator's private map/arena as process-global
-//! state. Its one page-bearing factory only creates a private first-fresh-page
-//! owner; that owner remains arena-free until a valid allocation miss.
+//! state. The explicit `initialize_with_vm_options` route additionally
+//! retains one resolved source VM-policy image beside the source subprocess;
+//! the older explicit-config route remains policy-unbound rather than
+//! manufacturing ambient defaults. Its one page-bearing factory only creates
+//! a private first-fresh-page owner; that owner remains arena-free until a
+//! valid allocation miss.
 
 #[cfg(test)]
 extern crate std;
@@ -44,7 +48,8 @@ use crate::main_static_page::{
 };
 use crate::meta::{MetaAllocator, MetaError};
 use crate::once::{AllocatorOnce, AllocatorOnceCompletion, OnceThreadId};
-use crate::os::MemoryConfig;
+use crate::config::VmOptions;
+use crate::os::{MemoryConfig, VmPolicy, VmPolicyConfigurationError, VmProcess};
 use crate::page_map::PageMapHeader;
 use crate::process_arena::{
     ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaError,
@@ -78,14 +83,20 @@ pub(crate) struct ProcessMainInitializationStorage {
     process_once: AllocatorOnce,
     state: AtomicU8,
     config: UnsafeCell<MaybeUninit<MemoryConfig>>,
+    // A resolved source option image belongs to this exact process lifetime,
+    // not to a caller-local VM helper. The pointer is null for the preserved
+    // legacy explicit-config path; otherwise READY Release-publishes this
+    // permanent inline owner before any ready lease can borrow a VmProcess.
+    vm_policy: UnsafeCell<MaybeUninit<VmPolicy>>,
+    vm_policy_ptr: AtomicPtr<VmPolicy>,
     subprocess: AtomicPtr<MainSubprocess>,
     page_map_storage: AtomicPtr<ProcessPageMapStorage>,
 }
 
 // SAFETY: `process_once` makes COLD -> INITIALIZING exclusive and retains its
 // private lock until the final state is Release-published. The final
-// configuration, subprocess, and PageMap-storage pointer are written before
-// READY's Release publication and never replaced. A live
+// configuration, optional VM policy, subprocess, and PageMap-storage pointer
+// are written before READY's Release publication and never replaced. A live
 // `ProcessMainThread` remains current-thread-only through its contained main
 // attachment; READY leases are immutable process-root witnesses only.
 unsafe impl Sync for ProcessMainInitializationStorage {}
@@ -96,6 +107,8 @@ impl ProcessMainInitializationStorage {
             process_once: AllocatorOnce::new(),
             state: AtomicU8::new(COLD),
             config: UnsafeCell::new(MaybeUninit::uninit()),
+            vm_policy: UnsafeCell::new(MaybeUninit::uninit()),
+            vm_policy_ptr: AtomicPtr::new(core::ptr::null_mut()),
             subprocess: AtomicPtr::new(core::ptr::null_mut()),
             page_map_storage: AtomicPtr::new(core::ptr::null_mut()),
         }
@@ -134,6 +147,42 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
+                None,
+                MainStaticAttachmentStorage::global(),
+                MainSubprocess::global(),
+                MetaAllocator::global(),
+                ProcessPageMapStorage::global(),
+                || {},
+                || {},
+            )
+        }
+    }
+
+    /// Runs process startup with the one resolved source VM option image.
+    ///
+    /// Unlike [`Self::initialize`], this path retains the exact policy beside
+    /// the process configuration and subprocess before any source main-heap,
+    /// metadata, PageMap, or arena client may borrow it. The caller owns the
+    /// bounded environment-observation phase that resolved `options`; this
+    /// allocation-free crate never reads ambient `environ` itself.
+    ///
+    /// # Safety
+    ///
+    /// The safety requirements are the same as [`Self::initialize`]. In
+    /// addition, `options` must be the one source image selected for this
+    /// process lifetime and must not be reused to initialize another owner.
+    pub(crate) unsafe fn initialize_with_vm_options(
+        &'static self,
+        config: MemoryConfig,
+        options: VmOptions,
+    ) -> Result<ProcessMainThread, ProcessMainInitError> {
+        let policy = VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?;
+        // SAFETY: the caller upholds the same process-static lifecycle
+        // requirements as `initialize`; `policy` is moved into this storage.
+        unsafe {
+            self.initialize_with_components_after_claim(
+                config,
+                Some(policy),
                 MainStaticAttachmentStorage::global(),
                 MainSubprocess::global(),
                 MetaAllocator::global(),
@@ -164,6 +213,39 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
+                None,
+                main_static,
+                subprocess,
+                metadata,
+                page_map_storage,
+                || {},
+                || {},
+            )
+        }
+    }
+
+    /// Runs the isolated source-order transition with one resolved VM policy
+    /// retained in this test process lifetime.
+    ///
+    /// # Safety
+    /// Test callers retain every supplied final static owner and the selected
+    /// options image belongs solely to this isolated process coordinator.
+    #[cfg(test)]
+    pub(crate) unsafe fn initialize_with_test_components_and_vm_options(
+        &'static self,
+        config: MemoryConfig,
+        options: VmOptions,
+        main_static: &'static MainStaticAttachmentStorage,
+        subprocess: &'static MainSubprocess,
+        metadata: core::pin::Pin<&'static MetaAllocator>,
+        page_map_storage: &'static ProcessPageMapStorage,
+    ) -> Result<ProcessMainThread, ProcessMainInitError> {
+        let policy = VmPolicy::new(options).map_err(ProcessMainInitError::VmPolicy)?;
+        // SAFETY: forwarded to the shared one-time source transition.
+        unsafe {
+            self.initialize_with_components_after_claim(
+                config,
+                Some(policy),
                 main_static,
                 subprocess,
                 metadata,
@@ -194,6 +276,7 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
+                None,
                 main_static,
                 subprocess,
                 metadata,
@@ -222,6 +305,7 @@ impl ProcessMainInitializationStorage {
         unsafe {
             self.initialize_with_components_after_claim(
                 config,
+                None,
                 main_static,
                 subprocess,
                 metadata,
@@ -235,6 +319,7 @@ impl ProcessMainInitializationStorage {
     unsafe fn initialize_with_components_after_claim<F, G>(
         &'static self,
         config: MemoryConfig,
+        vm_policy: Option<VmPolicy>,
         main_static: &'static MainStaticAttachmentStorage,
         subprocess: &'static MainSubprocess,
         metadata: core::pin::Pin<&'static MetaAllocator>,
@@ -301,6 +386,22 @@ impl ProcessMainInitializationStorage {
 
         self.state.store(INITIALIZING, Ordering::Release);
         after_claim();
+
+        if let Some(policy) = vm_policy {
+            // The source process-load edge clears `os_preloading` before its
+            // option/OS/main-heap work. Retain this policy first, then expose
+            // only its post-preloading read state to every later source
+            // owner. A later startup failure is terminal and deliberately
+            // leaves this exact policy image retained with its process.
+            let policy = match unsafe { self.bind_vm_policy(policy) } {
+                Ok(policy) => policy,
+                Err(error) => {
+                    self.publish_terminal_state_and_release(completion, RETAINED);
+                    return Err(error);
+                }
+            };
+            policy.finish_preloading();
+        }
 
         let mut selection = match subprocess.reserve_static_bootstrap() {
             Ok(selection) => selection,
@@ -420,6 +521,28 @@ impl ProcessMainInitializationStorage {
         unsafe { *(*self.config.get()).assume_init_ref() }
     }
 
+    /// Moves one resolved policy into its permanent process slot and returns
+    /// the address-stable owner.  The source once claim is held by the caller;
+    /// this method refuses an unexpected second slot instead of overwriting a
+    /// policy that a retained process may still have exposed.
+    unsafe fn bind_vm_policy(
+        &'static self,
+        policy: VmPolicy,
+    ) -> Result<&'static VmPolicy, ProcessMainInitError> {
+        if !self.vm_policy_ptr.load(Ordering::Acquire).is_null() {
+            return Err(ProcessMainInitError::VmPolicyAlreadyBound);
+        }
+        // SAFETY: the source once claimant is the sole writer before READY;
+        // this inline slot has process lifetime and is never replaced.
+        unsafe { (*self.vm_policy.get()).write(policy) };
+        let pointer = self.vm_policy.get().cast::<VmPolicy>();
+        // SAFETY: the previous write initialized this exact inline slot, and
+        // it remains alive until process termination.
+        let policy = unsafe { &*pointer };
+        self.vm_policy_ptr.store(pointer, Ordering::Release);
+        Ok(policy)
+    }
+
     #[inline]
     fn mark_retained(&self) {
         self.state.store(RETAINED, Ordering::Release);
@@ -505,6 +628,13 @@ pub(crate) enum ProcessMainInitError {
     Retained,
     ConfigurationMismatch,
     SubprocessMismatch,
+    /// The supplied source option image still had a lazy unresolved slot.
+    VmPolicy(VmPolicyConfigurationError),
+    /// A terminal process image already retains a different policy slot.
+    VmPolicyAlreadyBound,
+    /// The preserved legacy explicit-config startup path reached READY
+    /// without a resolved VM policy owner.
+    VmPolicyUnavailable,
     BootstrapSelection(MainStaticBootstrapSelectionError),
     HeapFoundation(MainStaticHeapFoundationError),
     Metadata(MetaError),
@@ -555,6 +685,24 @@ impl ProcessMainReadyLease {
     pub(crate) fn subprocess(self) -> Result<&'static MainSubprocess, ProcessMainInitError> {
         self.ensure_ready()?;
         Ok(self.subprocess)
+    }
+
+    /// Borrows the exact policy/subprocess pair retained by explicit VM-aware
+    /// process startup.
+    ///
+    /// A successful legacy explicit-config startup intentionally returns
+    /// [`ProcessMainInitError::VmPolicyUnavailable`] here: it does not invent
+    /// a default policy or let a later caller attach a different option image.
+    #[inline]
+    pub(crate) fn vm_process(self) -> Result<VmProcess<'static>, ProcessMainInitError> {
+        self.ensure_ready()?;
+        let policy = NonNull::new(self.storage.vm_policy_ptr.load(Ordering::Acquire))
+            .ok_or(ProcessMainInitError::VmPolicyUnavailable)?;
+        // SAFETY: READY Acquire follows the inline policy write and pointer
+        // Release store; the one source process lifetime never replaces or
+        // destroys this slot.
+        let policy = unsafe { policy.as_ref() };
+        Ok(VmProcess::new(policy, self.subprocess))
     }
 
     #[inline]
@@ -827,6 +975,12 @@ mod tests {
         )
     }
 
+    fn resolved_vm_options() -> VmOptions {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| crate::config::VmOptionEnvironment::Absent);
+        options
+    }
+
     fn wait_for_process_once_contender(storage: &ProcessMainInitializationStorage) {
         let deadline = Instant::now() + Duration::from_secs(2);
         while !storage.process_once.test_is_contended() {
@@ -871,6 +1025,11 @@ mod tests {
             .expect("the selected process-main source sequence initializes");
             let ready = owner.ready().expect("only the completed startup publishes ready");
 
+            assert!(matches!(
+                ready.vm_process(),
+                Err(ProcessMainInitError::VmPolicyUnavailable)
+            ));
+
             assert_eq!(subprocess.total_thread_count(), 1);
             assert_eq!(subprocess.live_thread_count(), 1);
             assert_eq!(ready.memory_config().unwrap(), config);
@@ -900,6 +1059,41 @@ mod tests {
         })
         .join()
         .expect("process-main initialization test thread completes");
+    }
+
+    #[test]
+    fn process_main_vm_options_publish_one_post_preloading_pair() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let (storage, main_static, subprocess, metadata, page_map_storage) = fixture();
+            let mut owner = unsafe {
+                storage.initialize_with_test_components_and_vm_options(
+                    config,
+                    resolved_vm_options(),
+                    main_static,
+                    subprocess,
+                    metadata,
+                    page_map_storage,
+                )
+            }
+            .expect("the resolved source option image initializes one process owner");
+            let ready = owner.ready().expect("the VM-aware source startup publishes ready");
+            let process = ready
+                .vm_process()
+                .expect("the ready lease borrows the retained exact VM pair");
+            assert_eq!(process.subprocess().as_ptr(), subprocess.as_ptr());
+            assert!(!process.is_preloading());
+            assert_eq!(process.policy().arena_purge_multiplier(), 4);
+            assert_eq!(process.policy().minimal_purge_size(config), config.page_size().bytes());
+
+            owner.teardown().expect("the selected ticket-zero owner tears down");
+            assert!(matches!(
+                ready.vm_process(),
+                Err(ProcessMainInitError::Retained)
+            ));
+        })
+        .join()
+        .expect("VM-aware process-main test thread completes");
     }
 
     #[test]

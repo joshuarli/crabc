@@ -1731,6 +1731,55 @@ impl Mapping {
         unsafe { crabc_core::mm::munmap_raw(address, length) }
     }
 
+    /// Reclaims a published mapping through the same process pair that
+    /// originally accounted for it.
+    ///
+    /// This is the paired published-page counterpart of
+    /// [`Self::unmap_for_process`]. The source syscall runs before its named
+    /// statistics transition, including when it fails. An error therefore
+    /// leaves the published range live but already accounted; its exact owner
+    /// must use [`Self::reclaim_published`] for an explicit raw retry instead
+    /// of applying the process accounting edge twice.
+    ///
+    /// # Safety
+    ///
+    /// `address` and `length` must name the exact current extent transferred
+    /// by [`Self::into_published`]. The caller must hold that token's unique
+    /// release right, have quiesced every raw access and derived capability,
+    /// and retain the token after an error. `commit_size` is the source
+    /// caller's exact still-committed extent and cannot exceed `length`.
+    pub(crate) unsafe fn reclaim_published_for_process(
+        process: VmProcess<'_>,
+        address: *mut u8,
+        length: usize,
+        commit_size: usize,
+        adjust: bool,
+    ) -> Result<()> {
+        if address.is_null() || length == 0 || commit_size > length {
+            return Err(Errno::INVAL);
+        }
+        // SAFETY: the caller supplies the exact published mapping and proves
+        // it has the unique quiescent release capability. Retain the raw
+        // syscall boundary rather than recreating a second Mapping owner.
+        let result = match fault_before(FaultPoint::Unmap) {
+            Ok(()) => unsafe { crabc_core::mm::munmap_raw(address, length) },
+            Err(error) => Err(error),
+        };
+        let stats = process.subprocess.vm_statistics();
+        if adjust {
+            if commit_size != 0 {
+                stats.committed_adjust_decrease(commit_size);
+            }
+            stats.reserved_adjust_decrease(length);
+        } else {
+            if commit_size != 0 {
+                stats.committed_decrease(commit_size);
+            }
+            stats.reserve_decrease(length);
+        }
+        result
+    }
+
     /// Returns whether the original anonymous mapping was zero initialized.
     #[inline]
     pub(crate) const fn initially_zero(&self) -> bool {
@@ -4031,6 +4080,50 @@ mod tests {
         let after_retry = subprocess.vm_statistics().snapshot();
         assert_eq!(after_retry.reserved_current, -(full_size as i64));
         assert_eq!(after_retry.committed_current, -(full_size as i64));
+    }
+
+    #[test]
+    fn published_mapping_process_release_accounts_once_before_a_raw_retry() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mapping = Mapping::map_for_process(
+            process,
+            config,
+            page,
+            1,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("the paired process maps one published-page range");
+        let address = mapping
+            .into_published()
+            .expect("the mapping transfers one exact raw publication token");
+
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        assert_eq!(
+            unsafe {
+                Mapping::reclaim_published_for_process(process, address, page, page, false)
+            },
+            Err(Errno::NOMEM),
+        );
+        let after_failed_release = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_failed_release.reserved_current, 0);
+        assert_eq!(after_failed_release.committed_current, 0);
+
+        // A second process-aware release would duplicate the pinned source
+        // statistics transition. The retained published token deliberately
+        // uses the raw exact release edge for a later explicit retry.
+        fault.set(fault::Plan::disabled());
+        unsafe { Mapping::reclaim_published(address, page) }
+            .expect("the failed published mapping remains live for one raw retry");
+        let after_raw_retry = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_raw_retry.reserved_current, 0);
+        assert_eq!(after_raw_retry.committed_current, 0);
     }
 
     #[test]
