@@ -2105,6 +2105,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "owned-pthread-spin",
                 "owned-syslog",
                 "owned-error-reporting",
+                "owned-pty",
                 "owned-io-cancellation",
                 "owned-resolver-network",
                 "owned-dynamic-io-cancellation",

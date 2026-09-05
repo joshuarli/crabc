@@ -150,8 +150,8 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(process_streams <= providers["x86-owned-static-runtime"])
         self.assertFalse(process_streams & deferred)
 
-    def test_error_reporting_names_are_planned_owned_static_not_deferred(self) -> None:
-        """Keep perror and the err(3) family beneath the selected aggregate."""
+    def test_pty_and_error_reporting_names_are_planned_owned_static_not_deferred(self) -> None:
+        """Keep PTY and error reporting beneath the selected aggregate."""
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         providers = {
             row["id"]: set(row["members"])
@@ -164,6 +164,7 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         }
         error_reporting = {
             "err", "errx", "perror", "verr", "verrx", "vwarn", "vwarnx", "warn", "warnx",
+            "posix_openpt", "ptsname_r", "ptsname", "openpty", "login_tty", "forkpty", "ttyname", "tcgetsid",
         }
 
         self.assertTrue(error_reporting <= providers["x86-owned-static-runtime"])

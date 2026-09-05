@@ -106,7 +106,9 @@ if ! "$ORACLE_CC" -std=c11 -fno-builtin -I "$ROOT_DIR/include" -H \
     sed -n '1,160p' "$header_trace" >&2
     fail "project-header ttyname_r fixture contract drifted"
 fi
-for header in errno.h fcntl.h stdint.h unistd.h features.h sys/types.h \
+# Musl-form unistd.h requests its types from bits/alltypes.h; it does not
+# require a transitive sys/types.h include. Judge the headers actually used.
+for header in errno.h fcntl.h stdint.h unistd.h features.h bits/alltypes.h \
     sys/syscall.h bits/syscall.h; do
     grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
         fail "fixture did not use the project $header header"
@@ -143,16 +145,40 @@ ttyname_r_disassembly="$work_dir/ttyname-r-disassembly"
 isatty_disassembly="$work_dir/isatty-disassembly"
 objdump -d --disassemble=ttyname_r "$candidate" >"$ttyname_r_disassembly"
 objdump -d --disassemble=isatty "$candidate" >"$isatty_disassembly"
-grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$ttyname_r_disassembly" ||
-    fail "ttyname_r lacks direct readlink/stat syscalls"
-for syscall_word in '\$0x59,%eax' '\$0x5,%eax' '\$0x106,%eax'; do
-    grep -Eq "$syscall_word" "$ttyname_r_disassembly" ||
-        fail "ttyname_r lacks one fixed Linux readlink/fstat/newfstatat syscall"
-done
-grep -Eq '[[:space:]]syscall([[:space:]]|$)' \
-    "$ttyname_r_disassembly" "$isatty_disassembly" ||
-    fail "ttyname_r closure lacks the selected isatty ioctl syscall"
-grep -Eq '\$0x5413,%esi|\$0x5413,%rsi' \
+# LLVM may outline the existing private syscall leaf. Keep the named request
+# in its caller and follow only its exact arity-specific direct target; no
+# unrelated public wrapper or ambient provider satisfies this judge.
+assert_terminal_syscall() {
+    local symbol="$1" number="$2" arity="$3"
+    local disassembly="$work_dir/$symbol-syscall-$number"
+    local trampoline
+    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
+    if grep -Eq '\$0x'"$number"',%eax' "$disassembly" &&
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly"; then
+        return
+    fi
+    if ! grep -Eq '\$0x'"$number"',%edi' "$disassembly"; then
+        cat "$disassembly" >&2
+        fail "$symbol lacks fixed Linux syscall 0x$number"
+    fi
+    trampoline="$(sed -nE 's/.*call[[:space:]]+[[:xdigit:]]+ <([^>]*11raw_syscall8syscall'"$arity"'[^>]*)>.*/\1/p' "$disassembly" | sort -u)"
+    [ -n "$trampoline" ] && [[ "$trampoline" != *$'\n'* ]] ||
+        fail "$symbol lacks one direct private syscall$arity target"
+    objdump -d --disassemble="$trampoline" "$candidate" >"$disassembly.trampoline"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly.trampoline" ||
+        fail "$symbol private syscall$arity target lacks its syscall instruction"
+}
+assert_terminal_syscall ttyname_r 59 3
+assert_terminal_syscall ttyname_r 5 2
+assert_terminal_syscall ttyname_r 106 4
+# isatty may itself be inlined into ttyname_r and garbage-collected as a
+# separate function in this closed candidate. Its ioctl must still be present.
+if grep -Fq '<isatty>:' "$isatty_disassembly"; then
+    assert_terminal_syscall isatty 10 3
+else
+    assert_terminal_syscall ttyname_r 10 3
+fi
+grep -Eq '\$0x5413,%(esi|rsi|edx|rdx)' \
     "$ttyname_r_disassembly" "$isatty_disassembly" ||
     fail "ttyname_r closure lacks isatty's fixed TIOCGWINSZ request"
 strings "$candidate" | grep -Fx '/proc/self/fd/' >/dev/null ||

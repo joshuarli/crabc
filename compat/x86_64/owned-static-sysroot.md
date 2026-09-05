@@ -523,3 +523,9 @@ and the same-object musl differential are recorded in
 `process.signal` reporting limitations describe its older artifact, while
 the installed reporting pair owns the real stderr lock and restores its
 orientation and encoding state.
+
+The installed PTY allocation/naming and controlling-terminal handoff component
+is qualified by `owned-pty`, including same-object musl evidence through static
+and dynamic entries. [`owned-pty.md`](owned-pty.md) records source mappings,
+static-name buffer ownership, cancellation/mask and error-pipe order, and the
+fixture's isolated devpts/session boundary.

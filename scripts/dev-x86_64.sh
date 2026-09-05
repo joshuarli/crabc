@@ -560,6 +560,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-fcntl  test installed descriptor-control commands and variadic ABI
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-atfork-registry  test installed resource-sized atfork callback ordering
+  owned-pty [DYNAMIC_SYSROOT]  test installed PTY naming, lifecycle and session handoff
   owned-signal-helpers [DYNAMIC_SYSROOT]  test installed signal aliases, bookkeeping and reporting
   owned-pthread-join-cancel  test installed join cancellation and target reclamation
   owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
@@ -2759,11 +2760,10 @@ run_in_resolver_network_container() {
         "$IMAGE" "$@"
 }
 
-# The installed loader's executable-ORIGIN/AT_SECURE evidence and the owned
-# filesystem-mechanism source fallbacks mount a read-only proc filesystem
-# inside disposable child roots, with trap-owned unmount cleanup. Only these
-# gates admit mount authority and disable the container AppArmor profile; each
-# container mount namespace contains those changes.
+# Installed dynamic-product and filesystem-mechanism evidence mounts read-only procfs; the PTY gate
+# also creates a private devpts instance. These gates use disposable child
+# roots with trap-owned unmount cleanup. Their mount authority and disabled
+# AppArmor profile remain confined to the Docker mount/PID namespaces.
 run_in_dynamic_loader_mount_container() {
     prepare_work_dir
     docker run --rm --init \
@@ -5620,7 +5620,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
-    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers) ;;
+    owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers|owned-pty) ;;
     owned-assert|owned-linux-control|owned-filesystem-mechanisms) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -7651,6 +7651,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-process-trio takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_process_trio.sh
+        ;;
+    owned-pty)
+        [ "$#" -le 1 ] || fail "owned-pty takes at most one dynamic sysroot"
+        ensure_image
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_pty.sh "$@"
         ;;
     owned-signal-helpers)
         [ "$#" -le 1 ] || fail "owned-signal-helpers takes at most one dynamic sysroot"

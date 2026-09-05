@@ -505,6 +505,9 @@ mod gettid;
 mod isatty;
 #[path = "ttyname_r.rs"]
 mod ttyname_r;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_pty.rs"]
+mod owned_pty;
 #[path = "tcgetpgrp.rs"]
 mod tcgetpgrp;
 #[path = "tcsetpgrp.rs"]

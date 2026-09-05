@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class DynamicLoaderDispatchTests(unittest.TestCase):
-    def test_proc_mount_authority_is_confined_to_the_dynamic_product_gate(self):
+    def test_mount_authority_is_confined_to_dynamic_product_and_pty_gates(self):
         scratch = ROOT / ".work/x86_64/tmp"
         scratch.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch) as temporary:
@@ -35,6 +35,8 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
             for command, needs_mount in (
                 ("materialized-dynamic-sysroot", True),
                 ("owned-dynamic-sysroot", True),
+                ("owned-pty", True),
+                ("owned-pty-product", True),
                 ("libc-owned-wordexp", False),
                 ("crt-object-bundle", False),
                 ("qualification-manifest", False),
@@ -63,8 +65,8 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                     )
                     selected_command = (["qualification-manifest", "--through", "compat.abi-differential"]
                         if command == "qualification-manifest-prefix" else
-                        ["owned-signal-helpers", "/workspace/.work/x86_64/supplied-product"]
-                        if command == "owned-signal-helpers-product" else [command])
+                        [command.removesuffix("-product"), "/workspace/.work/x86_64/supplied-product"]
+                        if command in ("owned-signal-helpers-product", "owned-pty-product") else [command])
                     result = subprocess.run(
                         ["bash", str(ROOT / "scripts/dev-x86_64.sh"), *selected_command],
                         cwd=ROOT, env=environment, capture_output=True, text=True,
@@ -85,11 +87,11 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertEqual(invocations[0][-2:], [
                             "bash", "/workspace/compat/x86_64/run_" + command.replace("-", "_") + ".sh",
                         ])
-                    if command == "owned-signal-helpers-product":
+                    if command in ("owned-signal-helpers-product", "owned-pty-product"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-3:], [
-                            "bash", "/workspace/compat/x86_64/run_owned_signal_helpers.sh",
+                            "bash", "/workspace/compat/x86_64/run_" + command.removesuffix("-product").replace("-", "_") + ".sh",
                             "/workspace/.work/x86_64/supplied-product",
                         ])
                     if command == "qualification-manifest":
@@ -104,7 +106,13 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                             "python3", "/workspace/compat/x86_64/run_qualification_manifest.py",
                             "--through", "compat.abi-differential",
                         ])
-                    if needs_mount:
+                    if command == "owned-pty":
+                        self.assertEqual(len(invocations), 1)
+                        self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
+                        self.assertEqual(invocations[0][-2:], [
+                            "bash", "/workspace/compat/x86_64/run_owned_pty.sh",
+                        ])
+                    if needs_mount and command not in ("owned-pty", "owned-pty-product"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         expected_runner = {
