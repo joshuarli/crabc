@@ -119,10 +119,97 @@ assert_dynamic_symbols() {
     done
 }
 
+audit_owned_link() {
+    local product="$1" object="$2" candidate="$3" receipt="$4" linkage="$5" identity="$6"
+
+    python3 -B - "$ROOT" "$product" "$object" "$candidate" "$receipt" "$linkage" "$identity" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+root, product, workload, executable, receipt = map(Path, sys.argv[1:6])
+linkage = sys.argv[6]
+output = Path(sys.argv[7])
+sys.path.insert(0, str(root / "compat/x86_64"))
+from owned_posix_product_evidence import ProductEvidenceError, validate_link
+
+try:
+    record = validate_link(product, workload, executable, receipt, linkage)
+except ProductEvidenceError as error:
+    raise SystemExit(f"owned kernel residual link evidence: {error}") from error
+if output.exists() or output.is_symlink() or not output.parent.is_dir() or output.parent.is_symlink():
+    raise SystemExit("owned kernel residual link evidence output is unsafe")
+with output.open("x", encoding="utf-8", newline="\n") as stream:
+    json.dump(record, stream, indent=2, sort_keys=True)
+    stream.write("\n")
+PY
+}
+
+bind_dynamic_inputs() {
+    local object="$1" initial_source_sha256="$2" identity="$3" binding="$4"
+
+    python3 -B - "$PROBE" "$object" "$initial_source_sha256" "$identity" "$binding" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+source, workload, initial_source_sha256, identity_path, binding_path = sys.argv[1:]
+source_path = Path(source).resolve(strict=True)
+workload_path = Path(workload).resolve(strict=True)
+identity = json.loads(Path(identity_path).read_text(encoding="utf-8"))
+expected_identity = {
+    "linkage", "product", "product_format", "product_manifest_sha256",
+    "workload_sha256", "executable_sha256", "receipt_sha256",
+}
+if not isinstance(identity, dict) or set(identity) != expected_identity:
+    raise SystemExit("owned kernel residual dynamic identity drifted")
+
+def digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            value.update(block)
+    return value.hexdigest()
+
+if digest(source_path) != initial_source_sha256:
+    raise SystemExit("owned kernel residual workload source changed before dynamic binding")
+if digest(workload_path) != identity["workload_sha256"]:
+    raise SystemExit("owned kernel residual dynamic identity names another workload object")
+record = {
+    "schema": 1,
+    "format": "crabc-x86-64-owned-kernel-residual-dynamic-binding-v1",
+    "source": {"path": str(source_path), "sha256": initial_source_sha256},
+    "workload": {"path": str(workload_path), "sha256": identity["workload_sha256"]},
+    "product": {
+        "root": identity["product"],
+        "format": identity["product_format"],
+        "manifest_sha256": identity["product_manifest_sha256"],
+    },
+}
+path = Path(binding_path)
+if path.exists() or path.is_symlink():
+    if path.is_symlink() or not path.is_file() or json.loads(path.read_text(encoding="utf-8")) != record:
+        raise SystemExit("owned kernel residual dynamic source, product, or object binding drifted")
+elif not path.parent.is_dir() or path.parent.is_symlink():
+    raise SystemExit("owned kernel residual dynamic binding output is unsafe")
+else:
+    with path.open("x", encoding="utf-8", newline="\n") as stream:
+        json.dump(record, stream, indent=2, sort_keys=True)
+        stream.write("\n")
+if digest(source_path) != initial_source_sha256:
+    raise SystemExit("owned kernel residual dynamic source, product, or object binding drifted")
+PY
+}
+
 run_static_mode() {
-    local product="$1" mode="$2" candidate root selector failures=0
+    local product="$1" mode="$2" candidate receipt root selector failures=0
     candidate="$work/consumer-static-$mode"
-    "$product/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$candidate"
+    receipt="$candidate.receipt.json"
+    (cd "$work" && "$product/bin/crabc-cc" "-$mode" \
+        --link-receipt "$(basename "$receipt")" "$work/workload.o" -o "$candidate")
+    audit_owned_link "$product" "$work/workload.o" "$candidate" "$receipt" "$mode" \
+        "$work/static-$mode-link-evidence.json"
     root="$work/static-$mode-root"
     mkdir "$root"
     cp "$candidate" "$root/consumer"
@@ -141,14 +228,19 @@ run_static_mode() {
 }
 
 run_dynamic_mode() {
-    local product="$1" mode="$2" entry="$3" candidate root selector output failures=0
+    local product="$1" mode="$2" entry="$3" candidate receipt identity root selector output failures=0
     candidate="$work/consumer-dynamic-$mode"
+    receipt="$candidate.crabc-link.json"
     if [ ! -f "$candidate" ]; then
         "$product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$candidate"
         readelf -hW "$candidate" >"$work/consumer-dynamic-$mode.header"
         readelf -lW "$candidate" >"$work/consumer-dynamic-$mode.segments"
         readelf -dW "$candidate" >"$work/consumer-dynamic-$mode.dynamic"
     fi
+    identity="$work/dynamic-$mode-$entry-link-evidence.json"
+    audit_owned_link "$product" "$work/workload.o" "$candidate" "$receipt" "$mode" "$identity"
+    bind_dynamic_inputs "$work/workload.o" "$source_sha256_before_compile" \
+        "$identity" "$work/dynamic-input-binding.json"
     root="$work/dynamic-$mode-$entry-root"
     cp -a "$product" "$root"
     cp "$candidate" "$root/consumer"
@@ -198,8 +290,13 @@ readonly installed="$provided_dynamic"
 
 # This is the sole behavior workload object. The static pinned-musl reference
 # is linked from it before every candidate uses identical bytes.
+source_sha256_before_compile="$(sha256sum "$PROBE" | awk '{ print $1 }')"
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$PROBE" -o "$work/workload.o"
+if [ "$source_sha256_before_compile" != "$(sha256sum "$PROBE" | awk '{ print $1 }')" ]; then
+    printf 'owned kernel residual: workload source changed while compiling its bound object\n' >&2
+    exit 1
+fi
 "$ORACLE_CC" -static -fno-pie -no-pie "$work/workload.o" -o "$work/oracle"
 mkdir "$work/oracle-root"
 cp "$work/oracle" "$work/oracle-root/consumer"

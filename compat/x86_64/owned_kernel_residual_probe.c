@@ -24,8 +24,8 @@
 #include <unistd.h>
 
 /* The installed project headers intentionally do not project Linux's seccomp
- * UAPI. This fixture uses only the exact Linux 5.10 classic-BPF record and
- * constants it passes through the existing variadic `prctl` ABI; it neither
+ * UAPI. This fixture copies only the exact Linux 5.10 classic-BPF records and
+ * constants passed through the existing variadic `prctl` ABI; it neither
  * installs nor expands a public header. `seccomp_data.nr` begins at byte 0. */
 struct sock_filter {
     unsigned short code;
@@ -49,9 +49,18 @@ struct sock_fprog {
 #define BPF_STMT(code, constant) { (unsigned short)(code), 0, 0, (constant) }
 #define BPF_JUMP(code, constant, true_offset, false_offset) \
     { (unsigned short)(code), (true_offset), (false_offset), (constant) }
-#define SECCOMP_MODE_FILTER 1U
+#define SECCOMP_MODE_STRICT 1U
+#define SECCOMP_MODE_FILTER 2U
 #define SECCOMP_RET_ERRNO 0x00050000U
 #define SECCOMP_RET_ALLOW 0x7fff0000U
+
+_Static_assert(PR_SET_SECCOMP == 22, "Linux 5.10 PR_SET_SECCOMP");
+_Static_assert(PR_SET_NO_NEW_PRIVS == 38, "Linux 5.10 PR_SET_NO_NEW_PRIVS");
+_Static_assert(SECCOMP_MODE_STRICT == 1U, "Linux 5.10 seccomp strict mode");
+_Static_assert(SECCOMP_MODE_FILTER == 2U, "Linux 5.10 seccomp filter mode");
+_Static_assert(sizeof(struct sock_filter) == 8, "Linux 5.10 sock_filter");
+_Static_assert(sizeof(struct sock_fprog) == 16, "Linux 5.10 x86-64 sock_fprog");
+_Static_assert(offsetof(struct sock_fprog, filter) == 8, "Linux 5.10 x86-64 sock_fprog filter");
 
 #define CHECK(condition) \
     do { \
@@ -78,14 +87,29 @@ static long raw6(long number, long a, long b, long c, long d, long e, long f)
     return result;
 }
 
-#define ERROR_MATCH(call, number, a, b, c, d, e, f) \
+static void transcript_raw_negative(
+    const char *operation, long raw_result, long c_result, int c_error)
+{
+    int saved_errno = errno;
+
+    printf("owned-kernel-residual-raw-negative operation=%s raw_result=%ld raw_errno=%ld c_result=%ld c_errno=%d\n",
+        operation, raw_result, -raw_result, c_result, c_error);
+    errno = saved_errno;
+}
+
+#define ERROR_MATCH(operation, call, number, a, b, c, d, e, f) \
     do { \
         long raw_result; \
+        long c_result; \
+        int c_error; \
         errno = E2BIG; \
         raw_result = raw6((number), (long)(a), (long)(b), (long)(c), (long)(d), (long)(e), (long)(f)); \
         CHECK(raw_result < 0 && raw_result >= -4095 && errno == E2BIG); \
         errno = ERANGE; \
-        CHECK((call) == -1 && errno == -raw_result); \
+        c_result = (long)(call); \
+        c_error = errno; \
+        CHECK(c_result == -1 && c_error == -raw_result); \
+        transcript_raw_negative((operation), raw_result, c_result, c_error); \
     } while (0)
 
 static int cpucount_case(void)
@@ -169,23 +193,29 @@ static int hostid_and_membarrier_case(void)
     errno = E2BIG;
     query = membarrier(MEMBARRIER_CMD_QUERY, 0);
     CHECK(query >= 0 && errno == E2BIG);
-    ERROR_MATCH(membarrier(-1, 0), SYS_membarrier, -1, 0, 0, 0, 0, 0);
+    ERROR_MATCH("membarrier-invalid", membarrier(-1, 0), SYS_membarrier,
+        -1, 0, 0, 0, 0, 0);
     return 0;
 }
 
 static int personality_case(void)
 {
     long raw_result;
+    long c_result;
+    int c_error;
 
     errno = E2BIG;
     raw_result = raw6(SYS_personality, -1L, 0, 0, 0, 0, 0);
     CHECK(errno == E2BIG);
     errno = ERANGE;
+    c_result = personality(~0UL);
+    c_error = errno;
     if (raw_result < 0) {
         CHECK(raw_result >= -4095);
-        CHECK(personality(~0UL) == -1 && errno == -raw_result);
+        CHECK(c_result == -1 && c_error == -raw_result);
+        transcript_raw_negative("personality-query", raw_result, c_result, c_error);
     } else {
-        CHECK(personality(~0UL) == raw_result && errno == ERANGE);
+        CHECK(c_result == raw_result && c_error == ERANGE);
     }
     return 0;
 }
@@ -199,9 +229,8 @@ static int prctl_case(void)
     CHECK(raw_result >= 0 && errno == E2BIG);
     errno = ERANGE;
     CHECK(prctl(PR_GET_DUMPABLE, 0UL, 0UL, 0UL, 0UL) == raw_result && errno == ERANGE);
-    ERROR_MATCH(
-        prctl(-1, 0UL, 0UL, 0UL, 0UL), SYS_prctl, -1, 0, 0, 0, 0, 0
-    );
+    ERROR_MATCH("prctl-invalid", prctl(-1, 0UL, 0UL, 0UL, 0UL),
+        SYS_prctl, -1, 0, 0, 0, 0, 0);
     return 0;
 }
 
@@ -239,9 +268,8 @@ static int syscall_case(void)
     errno = E2BIG;
     CHECK(syscall(SYS_getpid, 0UL, 0UL, 0UL, 0UL, 0UL, 0UL) == getpid()
         && errno == E2BIG);
-    ERROR_MATCH(
-        syscall(-1L, 0UL, 0UL, 0UL, 0UL, 0UL, 0UL), -1L, 0, 0, 0, 0, 0, 0
-    );
+    ERROR_MATCH("syscall-invalid", syscall(-1L, 0UL, 0UL, 0UL, 0UL, 0UL, 0UL),
+        -1L, 0, 0, 0, 0, 0, 0);
     return 0;
 }
 
@@ -266,9 +294,17 @@ static int child_result(int (*body)(void))
     pid_t child;
     int status;
 
+    /* Do not let a child flush an inherited transcript when its contained
+     * body publishes its own raw kernel observation before `_exit`. */
+    CHECK(fflush(stdout) == 0);
     child = fork();
     CHECK(child >= 0);
-    if (child == 0) _exit(body() ? 1 : 0);
+    if (child == 0) {
+        int result = body();
+
+        if (fflush(stdout)) _exit(2);
+        _exit(result ? 1 : 0);
+    }
     CHECK(waitpid(child, &status, 0) == child);
     CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
     return 0;
@@ -285,20 +321,47 @@ static int uts_namespace_child(void)
     char domainname[] = "crabc-residual";
     char observed_hostname[256];
     char observed_domainname[256];
+    long raw_result;
+    int result;
+    int c_error;
 
-    if (unshare(CLONE_NEWUTS)) {
-        CHECK(errno == EPERM || errno == EINVAL);
-        puts("owned-kernel-residual-private-uts-unavailable");
+    errno = E2BIG;
+    result = unshare(CLONE_NEWUTS);
+    c_error = errno;
+    if (result) {
+        CHECK(c_error == EPERM || c_error == EINVAL);
+        errno = ERANGE;
+        raw_result = raw6(SYS_unshare, CLONE_NEWUTS, 0, 0, 0, 0, 0);
+        CHECK(raw_result == -c_error && errno == ERANGE);
+        transcript_raw_negative("unshare-new-uts", raw_result, result, c_error);
         return 0;
     }
     errno = E2BIG;
-    if (sethostname(hostname, sizeof hostname - 1)
-        || setdomainname(domainname, sizeof domainname - 1)) {
-        CHECK(errno == EPERM || errno == EACCES);
-        puts("owned-kernel-residual-private-uts-unavailable");
+    result = sethostname(hostname, sizeof hostname - 1);
+    c_error = errno;
+    if (result) {
+        CHECK(c_error == EPERM || c_error == EACCES);
+        errno = ERANGE;
+        raw_result = raw6(SYS_sethostname, (long)hostname, sizeof hostname - 1,
+            0, 0, 0, 0);
+        CHECK(raw_result == -c_error && errno == ERANGE);
+        transcript_raw_negative("sethostname-private-uts", raw_result, result, c_error);
         return 0;
     }
-    CHECK(errno == E2BIG);
+    CHECK(c_error == E2BIG);
+    errno = E2BIG;
+    result = setdomainname(domainname, sizeof domainname - 1);
+    c_error = errno;
+    if (result) {
+        CHECK(c_error == EPERM || c_error == EACCES);
+        errno = ERANGE;
+        raw_result = raw6(SYS_setdomainname, (long)domainname, sizeof domainname - 1,
+            0, 0, 0, 0);
+        CHECK(raw_result == -c_error && errno == ERANGE);
+        transcript_raw_negative("setdomainname-private-uts", raw_result, result, c_error);
+        return 0;
+    }
+    CHECK(c_error == E2BIG);
     CHECK(gethostname(observed_hostname, sizeof observed_hostname) == 0);
     CHECK(getdomainname(observed_domainname, sizeof observed_domainname) == 0);
     CHECK(!strcmp(observed_hostname, hostname));
@@ -329,31 +392,31 @@ static int uts_seccomp_child(void)
         .filter = instructions,
     };
     long raw_result;
-    int filter_installed = 0;
+    long c_result;
+    int c_error;
 
     CHECK(prctl(PR_SET_NO_NEW_PRIVS, 1UL, 0UL, 0UL, 0UL) == 0);
-    if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, (unsigned long)&program, 0UL, 0UL)) {
-        /* The pinned container may disable filter installation. The valid
-         * pointer calls below still prove the contained capability-negative
-         * wrapper/raw-error boundary without claiming seccomp availability. */
-        CHECK(errno == EINVAL || errno == EPERM);
-        puts("owned-kernel-residual-seccomp-unavailable");
-    } else {
-        filter_installed = 1;
-    }
+    /* If this fails, stop before either setter. The valid-pointer negative
+     * checks below are contained only by this installed classic-BPF filter. */
+    CHECK(prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, (unsigned long)&program, 0UL, 0UL) == 0);
+    puts("owned-kernel-residual-seccomp-filter-installed");
 
     errno = E2BIG;
     raw_result = raw6(SYS_sethostname, (long)hostname, sizeof hostname - 1, 0, 0, 0, 0);
-    CHECK(raw_result < 0 && raw_result >= -4095 && errno == E2BIG);
-    if (filter_installed) CHECK(raw_result == -EPERM);
+    CHECK(raw_result == -EPERM && errno == E2BIG);
     errno = ERANGE;
-    CHECK(sethostname(hostname, sizeof hostname - 1) == -1 && errno == -raw_result);
+    c_result = sethostname(hostname, sizeof hostname - 1);
+    c_error = errno;
+    CHECK(c_result == -1 && c_error == EPERM);
+    transcript_raw_negative("sethostname-seccomp", raw_result, c_result, c_error);
     errno = E2BIG;
     raw_result = raw6(SYS_setdomainname, (long)domainname, sizeof domainname - 1, 0, 0, 0, 0);
-    CHECK(raw_result < 0 && raw_result >= -4095 && errno == E2BIG);
-    if (filter_installed) CHECK(raw_result == -EPERM);
+    CHECK(raw_result == -EPERM && errno == E2BIG);
     errno = ERANGE;
-    CHECK(setdomainname(domainname, sizeof domainname - 1) == -1 && errno == -raw_result);
+    c_result = setdomainname(domainname, sizeof domainname - 1);
+    c_error = errno;
+    CHECK(c_result == -1 && c_error == EPERM);
+    transcript_raw_negative("setdomainname-seccomp", raw_result, c_result, c_error);
     return 0;
 }
 

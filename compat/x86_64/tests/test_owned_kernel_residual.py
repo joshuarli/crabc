@@ -17,6 +17,7 @@ FROZEN_CONFIGURATION = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "system_conf
 OWNED_CONFIGURATION = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "owned_system_configuration.rs"
 PROBE = ROOT / "compat" / "x86_64" / "owned_kernel_residual_probe.c"
 RUNNER = ROOT / "compat" / "x86_64" / "run_owned_kernel_residual.sh"
+PRODUCT_EVIDENCE = ROOT / "compat" / "x86_64" / "owned_posix_product_evidence.py"
 QUALIFICATION = ROOT / "compat" / "x86_64" / "owned_dynamic_qualification.py"
 CATALOG = ROOT / "compat" / "x86_64" / "owned-posix-runtime-catalog.toml"
 
@@ -72,6 +73,26 @@ class OwnedKernelResidualTests(unittest.TestCase):
         ):
             self.assertIn(required, owned)
 
+    def test_seccomp_filter_uses_the_linux_uapi_mode_and_never_runs_uncontained(self) -> None:
+        probe = PROBE.read_text(encoding="utf-8")
+        self.assertIn("#define SECCOMP_MODE_STRICT 1U", probe)
+        self.assertIn("#define SECCOMP_MODE_FILTER 2U", probe)
+        self.assertIn(
+            "_Static_assert(SECCOMP_MODE_FILTER == 2U, \"Linux 5.10 seccomp filter mode\");",
+            probe,
+        )
+        self.assertIn("_Static_assert(sizeof(struct sock_filter) == 8, \"Linux 5.10 sock_filter\");", probe)
+        self.assertIn("_Static_assert(sizeof(struct sock_fprog) == 16, \"Linux 5.10 x86-64 sock_fprog\");", probe)
+        self.assertIn(
+            "CHECK(prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, (unsigned long)&program, 0UL, 0UL) == 0);",
+            probe,
+        )
+        self.assertNotIn("seccomp-unavailable", probe)
+        self.assertNotIn("filter_installed", probe)
+        self.assertIn("CHECK(fflush(stdout) == 0);", probe)
+        self.assertIn('transcript_raw_negative("unshare-new-uts", raw_result, result, c_error);', probe)
+        self.assertNotIn("transcript_wrapper_negative", probe)
+
     def test_runner_replays_one_object_and_retains_contained_negative_paths(self) -> None:
         runner = RUNNER.read_text(encoding="utf-8")
         probe = PROBE.read_text(encoding="utf-8")
@@ -82,6 +103,8 @@ class OwnedKernelResidualTests(unittest.TestCase):
             "run_static_mode \"$work/static-product\" static-pie", "kernel/direct",
             "provided_dynamic", "provided dynamic PIE/non-PIE kernel/direct",
             "assert_static_symbols", "assert_dynamic_symbols",
+            "--link-receipt", "audit_owned_link", "validate_link",
+            "bind_dynamic_inputs", "dynamic-input-binding.json", "source_sha256_before_compile",
         ):
             self.assertIn(required, runner)
         for selector in (
@@ -93,6 +116,13 @@ class OwnedKernelResidualTests(unittest.TestCase):
             "sethostname", "setdomainname", "raw6",
         ):
             self.assertIn(required, probe)
+
+    def test_runner_uses_shared_sealed_product_evidence(self) -> None:
+        runner = RUNNER.read_text(encoding="utf-8")
+        evidence = PRODUCT_EVIDENCE.read_text(encoding="utf-8")
+        self.assertIn("owned_posix_product_evidence", runner)
+        self.assertIn("validate_link", runner)
+        self.assertIn("validate_link(", evidence)
 
     def test_dynamic_qualification_reuses_the_same_runner(self) -> None:
         qualification = QUALIFICATION.read_text(encoding="utf-8")

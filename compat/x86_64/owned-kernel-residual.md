@@ -52,13 +52,26 @@ the installed, second, and extracted products. This is a residual
 18-spelling receipt. It does not combine the four separate workload objects
 into a 42-spelling `system.kernel-admin` family receipt.
 
+The static links request `--link-receipt` and
+`owned_posix_product_evidence.validate_link` verifies their selected CRT,
+archives, application object, output, map, trace, linker identity, complete
+product manifest, and static ELF boundary. The first successful dynamic audit
+records the workload source hash, object hash, product manifest hash, and
+physical product root; each later PIE/non-PIE kernel/direct receipt must match
+that binding. The shared audit verifies the complete installed product and each
+dynamic receipt's resolved inputs, command, trace, output, interpreter, and
+`libc.so` dependency.
+
 The UTS fixture first tries a child private UTS namespace. If the pinned
-container denies namespace creation or mutation, it records the source-matched
-permission outcome instead of claiming a successful host change. Its separate
-seccomp child passes valid hostname/domainname pointers through the public C
-wrappers and compares the raw Linux error; a container that forbids filter
-installation is explicitly classified as unavailable. No host namespace,
-privileged container mode, or invalid-pointer probe is used.
+container denies namespace creation or mutation, it emits an explicit raw
+negative syscall and public-wrapper errno transcript instead of claiming a
+successful host change. Its separate seccomp child requires the Linux UAPI
+`SECCOMP_MODE_FILTER == 2` filter to install after `PR_SET_NO_NEW_PRIVS`; an
+installation failure fails the selector before either setter runs. Once that
+filter is installed, valid hostname/domainname pointers pass through the
+public C wrappers and the fixture records their exact raw `-EPERM` and wrapper
+`errno` transcripts. No host namespace, privileged container mode, or
+invalid-pointer probe is used.
 
 This installed slice is not the POSIX-family coordinator's extracted-static
 six-cell receipt and does not establish global FILE/logger/signal/fork
