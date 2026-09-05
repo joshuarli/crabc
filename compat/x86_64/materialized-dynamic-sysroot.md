@@ -47,7 +47,10 @@ The driver admits `--dynamic-pie`, `--dynamic-non-pie` and shared-object
 output; the executable modes select their actual owned dynamic entry. The
 non-PIE mode emits ET_EXEC with the same canonical interpreter, initial TLS
 and lifecycle handoff, without a static-TLS bootstrap. Applications name each DSO explicitly; SONAME, transitive NEEDED,
-imports and `/usr/lib` search ownership are checked before linkage.
+imports and search ownership are checked before linkage. `/usr/lib` is the
+default; `--application-runpath PATHS` declares and receipts an application
+path without adding ambient link inputs. Nondefault DSO paths require a
+matching output receipt.
 
 The final libc link consumes only classified Rust C ABI objects, the byte-
 matched pinned allocator object and owned compiler helpers. Cargo's stock
@@ -131,7 +134,10 @@ mapping stays process-lifetime storage when the initial task exits early.
 The focused host command is `./scripts/dev-x86_64.sh owned-dynamic-pthread-exit`;
 the aggregate runs the consumer against installed and extracted products.
 
-Remaining product work includes complete runtime search policy and broader
-introspection/order qualification and dynamic fork repair (still explicitly
-`EAGAIN`), followed by the complete installed dynamic campaign. Musl's
+The shared initial/runtime search matrix proves eleven musl decisions through
+installed/extracted PIE and non-PIE consumers; its limits are recorded in
+[runtime-dynamic-loader.md](runtime-dynamic-loader.md). Remaining product
+work includes full system-path/preload policy, broader introspection/order
+qualification and dynamic fork repair (still explicitly `EAGAIN`), followed
+by the complete installed dynamic campaign. Musl's
 retained dlclose mappings, not physical unloading, are the parity target.

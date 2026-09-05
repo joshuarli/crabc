@@ -87,6 +87,9 @@ mod x86_64_runtime_lock;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_runtime_registry.rs"]
 mod x86_64_runtime_registry;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_library_search.rs"]
+mod x86_64_library_search;
 #[cfg(crabc_general_initial_graph)]
 use x86_64_initial_graph_state::ObjectIdentity;
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
@@ -829,6 +832,12 @@ struct Object {
     relro_byte_len: u64,
     runpath: *const u8,
     runpath_len: usize,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    search_name: [u8; MAX_PATH],
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    search_short_name: bool,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    needed_by: Option<usize>,
     needed: [usize; MAX_NEEDED],
     needed_count: usize,
     mapped: bool,
@@ -879,6 +888,12 @@ const EMPTY_OBJECT: Object = Object {
     relro_byte_len: 0,
     runpath: core::ptr::null(),
     runpath_len: 0,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    search_name: [0; MAX_PATH],
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    search_short_name: false,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    needed_by: None,
     needed: [0; MAX_NEEDED],
     needed_count: 0,
     mapped: false,
@@ -1364,6 +1379,8 @@ unsafe fn parse_mapped(
     }
     let mut needed_offsets = [0usize; MAX_NEEDED];
     let mut runpath_offset = None;
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let mut rpath_offset = None;
     let mut init_array_virtual_address = None;
     let mut init_array_byte_len = None;
     #[cfg(crabc_bounded_runtime_dlopen)]
@@ -1529,6 +1546,8 @@ unsafe fn parse_mapped(
                 if general_initial_graph => return None,
             DT_INIT_ARRAY => { if init_array_virtual_address.replace(value).is_some() { return None; } }
             DT_INIT_ARRAYSZ => { if init_array_byte_len.replace(value).is_some() { return None; } }
+            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+            DT_RPATH if general_initial_graph => { if rpath_offset.replace(usize::try_from(value).ok()?).is_some() { return None; } }
             DT_RUNPATH => { if runpath_offset.replace(usize::try_from(value).ok()?).is_some() { return None; } }
             // DF_STATIC_TLS denotes a consumer's initial-exec requirement,
             // not a promise that only this object may supply its definition.
@@ -1742,11 +1761,14 @@ unsafe fn parse_mapped(
             let _ = runtime_address(base, address)?;
         }
     }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let runpath_offset = runpath_offset.or(rpath_offset);
     if let Some(offset) = runpath_offset {
         if offset >= object.strsz { return None; }
         object.runpath = object.strtab.add(offset);
         object.runpath_len = bounded_nul(object.runpath, object.strsz - offset)?;
         if general_initial_graph {
+            #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
             if !is_selected_absolute_runpath(object.runpath, object.runpath_len) {
                 return None;
             }

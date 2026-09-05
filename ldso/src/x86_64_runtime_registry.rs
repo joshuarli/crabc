@@ -13,7 +13,7 @@
 //! dladdr and dl_iterate_phdr behavior; src/ldso/dlclose.c retains maps and
 //! src/ldso/dlinfo.c admits LINKMAP only. Stable raw nodes, typed rollback and
 //! coherent retained TLS views and deferred relocation journals are crabc
-//! ownership machinery. Full search policy remains an unqualified mode;
+//! ownership machinery. Shared library search is source-mapped separately;
 //! see compat/x86_64/runtime-dynamic-loader.md for source mapping and evidence.
 
 use super::*;
@@ -77,6 +77,7 @@ struct RuntimeObject {
     previous: *mut RuntimeObject,
     symbol_next: *mut RuntimeObject,
     fini_next: *mut RuntimeObject,
+    needed_by: *mut RuntimeObject,
     global: bool,
     short_name: bool,
     needed: [*mut RuntimeObject; MAX_NEEDED],
@@ -99,7 +100,7 @@ impl RuntimeObject {
         if is_linux_error(address) { return None; }
         let node = address as *mut Self;
         unsafe { core::ptr::write(node, Self { link_map: LinkMap { address: 0, name: core::ptr::null(), dynamic: core::ptr::null(), next: core::ptr::null_mut(), previous: core::ptr::null_mut() }, storage, identity, index,
-            next: core::ptr::null_mut(), previous: core::ptr::null_mut(), symbol_next: core::ptr::null_mut(), fini_next: core::ptr::null_mut(), global: false, short_name,
+            next: core::ptr::null_mut(), previous: core::ptr::null_mut(), symbol_next: core::ptr::null_mut(), fini_next: core::ptr::null_mut(), needed_by: core::ptr::null_mut(), global: false, short_name,
             needed: [core::ptr::null_mut(); MAX_NEEDED], needed_count: 0, name: [0; MAX_PATH],
             initializers: [0; CALLBACKS], initializer_count: 0, finalizers: [0; CALLBACKS], finalizer_count: 0,
             callback_state: AtomicI32::new(0) });
@@ -203,7 +204,7 @@ impl PreparedInitialRegistry {
         let mut nodes = UnpublishedObjects::new();
         let mut by_index = LoaderBuffer::new(graph.object_count(), core::ptr::null_mut::<RuntimeObject>())?;
         for index in 0..graph.object_count() {
-            let node = unsafe { RuntimeObject::allocate(ObjectStorage::Initial(index), graph.identity(index)?, index, b"", index != 0) }?;
+            let node = unsafe { RuntimeObject::allocate(ObjectStorage::Initial(index), graph.identity(index)?, index, b"", objects[index].search_short_name) }?;
             unsafe { nodes.append(node) }?;
             by_index.as_mut_slice()[index] = node;
             unsafe {
@@ -218,6 +219,11 @@ impl PreparedInitialRegistry {
         }
         for index in 0..graph.object_count() {
             let node = by_index.as_slice()[index];
+            if let Some(parent) = objects[index].needed_by {
+                unsafe { (*node).needed_by = by_index.as_slice()[parent]; }
+            }
+            let length = unsafe { bounded_nul(objects[index].search_name.as_ptr(), MAX_PATH) }?;
+            unsafe { (&mut (*node).name)[..length].copy_from_slice(&objects[index].search_name[..length]); }
             let edges = graph.edges(index)?;
             for (slot, child) in edges.iter().enumerate() {
                 unsafe { (*node).needed[slot] = by_index.as_slice()[*child]; }
@@ -496,38 +502,19 @@ unsafe fn find_short_name(registry: &RuntimeRegistry, new: &UnpublishedObjects, 
     core::ptr::null_mut()
 }
 
-unsafe fn open_runtime_file(parent: &Object, name: &[u8]) -> Result<(i64, [u8; MAX_PATH], usize), i32> {
-    if name.is_empty() || name.len() >= MAX_PATH { return Err(36); }
-    if name.contains(&b'/') {
-        let mut path = [0u8; MAX_PATH];
-        path[..name.len()].copy_from_slice(name);
-        let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0x80000, 0) };
-        return if fd < 0 { Err((-fd) as i32) } else { Ok((fd, path, name.len())) };
-    }
-    let mut error = 2;
-    let runpath = if parent.runpath.is_null() { &[][..] }
-        else { unsafe { core::slice::from_raw_parts(parent.runpath, parent.runpath_len) } };
-    // The installed profile owns absolute RUNPATH and /usr/lib. It has no
-    // ambient LD_LIBRARY_PATH, cache or host-libc fallback decision.
-    for paths in [runpath, b"/usr/lib".as_slice()] {
-        for directory in paths.split(|byte| *byte == b':') {
-            if directory.is_empty() { continue; }
-            let length = directory.len().checked_add(1).and_then(|length| length.checked_add(name.len())).ok_or(36)?;
-            if length >= MAX_PATH { return Err(36); }
-            let mut path = [0u8; MAX_PATH];
-            path[..directory.len()].copy_from_slice(directory);
-            path[directory.len()] = b'/';
-            path[directory.len() + 1..length].copy_from_slice(name);
-            let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0x80000, 0) };
-            if fd >= 0 { return Ok((fd, path, length)); }
-            error = (-fd) as i32;
-        }
-    }
-    Err(error)
+unsafe fn open_runtime_file(parent: *mut RuntimeObject, name: &[u8]) -> Result<x86_64_library_search::Opened, i32> {
+    let mut node = parent;
+    let chain = core::iter::from_fn(|| {
+        if node.is_null() { return None; }
+        let object = unsafe { (*node).object() };
+        node = unsafe { (*node).needed_by };
+        object
+    });
+    unsafe { x86_64_library_search::open(name, chain) }
 }
 
 unsafe fn load_one(
-    registry: &RuntimeRegistry, new: &mut UnpublishedObjects, parent: &Object,
+    registry: &RuntimeRegistry, new: &mut UnpublishedObjects, parent: *mut RuntimeObject,
     name: &[u8], no_load: bool, tls_count: &mut usize,
 ) -> Result<*mut RuntimeObject, i32> {
     let short_name = !name.contains(&b'/');
@@ -548,6 +535,8 @@ unsafe fn load_one(
     let mapped = unsafe { map_elf(fd, false, true) };
     unsafe { syscall1(SYS_CLOSE, fd); }
     let mut object = mapped.ok_or(ERROR_BAD_ELF)?;
+    object.search_name = path;
+    object.search_short_name = short_name;
     let index = match registry.count.checked_add(new.count).and_then(|index| index.checked_add(1)).map(|next| next - 1) {
         Some(index) => index,
         None => { unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); } return Err(12); }
@@ -566,6 +555,7 @@ unsafe fn load_one(
         unsafe { syscall2(SYS_MUNMAP, object.map_span_start as i64, object.map_span_byte_len as i64); }
         return Err(12);
     };
+    unsafe { (*node).needed_by = parent; }
     if unsafe { new.append(node) }.is_none() {
         drop(UnpublishedObjects { head: node, tail: node, count: 1 });
         return Err(12);
@@ -604,8 +594,7 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
     if !matches!(binding, 1 | 2) || flags & !(3 | 4 | 256 | 4096) != 0 { return Err(22); }
     let mut new = UnpublishedObjects::new();
     let mut tls_count = registry.tls_count;
-    let main = *unsafe { (*registry.head).object() }.ok_or(ERROR_HANDLE)?;
-    let root = unsafe { load_one(registry, &mut new, &main, filename, flags & 4 != 0, &mut tls_count) }?;
+    let root = unsafe { load_one(registry, &mut new, registry.head, filename, flags & 4 != 0, &mut tls_count) }?;
     let mut node = new.head;
     while !node.is_null() {
         let object = *unsafe { (*node).object() }.ok_or(ERROR_BAD_ELF)?;
@@ -614,8 +603,8 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
             let name = unsafe { object.strtab.add(offset) };
             let length = unsafe { bounded_nul(name, object.strsz.checked_sub(offset).ok_or(ERROR_BAD_ELF)?) }.ok_or(ERROR_BAD_ELF)?;
             let name = unsafe { core::slice::from_raw_parts(name, length) };
-            if name.is_empty() || name.contains(&b'/') { return Err(ERROR_BAD_ELF); }
-            let child = unsafe { load_one(registry, &mut new, &object, name, false, &mut tls_count) }?;
+            if name.is_empty() { return Err(ERROR_BAD_ELF); }
+            let child = unsafe { load_one(registry, &mut new, node, name, false, &mut tls_count) }?;
             unsafe { (*node).needed[index] = child; }
         }
         unsafe { (*node).needed_count = object.needed_count; }

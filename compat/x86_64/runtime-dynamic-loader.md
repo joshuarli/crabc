@@ -139,12 +139,13 @@ fork support; the full source suite remains parallel.
 
 Runtime counts and scratch allocation are resource-sized. Existing initial
 ELF/path/per-object admission bounds remain; this is not a claim to remove
-every initial parser limit. Search currently uses
-the admitted absolute RUNPATH and `/usr/lib`, or a direct pathname. Complete
-caller/ancestor/environment search semantics remain unqualified. Initial
-physical enumeration still follows canonical discovery order, while symbol
-scope is breadth-first; broader initial-graph introspection/order parity needs
-its own differential before qualification.
+every initial parser limit. Library search is shared by initial and runtime
+loads as described below. Installed initial discovery and symbol scope are
+breadth-first. This keeps a
+main direct dependency ahead of a same-named grandchild when committing
+first-load identity and ancestry; legacy private roots retain their prior
+discovery algorithm. Broader introspection/order parity still needs its own
+qualification.
 
 `dladdr` derives the first mapped page from the admitted PT_LOAD records,
 matching musl's `kernel_mapped_dso` and `dladdr`. This differs from the ELF
@@ -198,10 +199,61 @@ LOCAL versus GLOBAL promotion, preexisting-worker GD TLS, retained close, and
 read-only GOT protection after completion. PLT output is a musl differential;
 the GOT/RELRO fault versus success is the isolated safety correction above.
 The prior retained loader rejects the same lazy consumer with status 2 before
-callbacks. The complete dynamic campaign, search policy, dynamic fork and
+callbacks. The complete dynamic campaign, dynamic fork and
 main/last-thread process-exit qualification remain open.
 
 Dynamic fork repair and
 main/last-thread pthread_exit remain explicitly unqualified and cfg-excluded
 from the separate static lifecycle work. No new RuntimeV1 fields, public
 support promotion or AArch64 qualification follows from these prerequisites.
+
+## Installed library search
+
+`ldso/src/x86_64_library_search.rs` maps musl 1.2.6 `ldso/dynlink.c`
+`path_open`, `fixup_rpath`, `load_library`, and initial environment admission
+(revision `9fa28ece75d8a2191de7c5bb53bed224c5947417`, MIT). Names containing
+slashes open directly. Short names first reuse retained first-load names and
+file identities, then search the startup `LD_LIBRARY_PATH`, the requesting
+object's path and its first-load ancestors, and the installed `/usr/lib`.
+`DT_RUNPATH` overrides `DT_RPATH`; musl follows ancestry for either tag.
+Empty colon/newline components are skipped. ENOENT, ENOTDIR, EACCES and
+ENAMETOOLONG permit another component; other open failures stop selection.
+
+Musl `dlopen` calls `load_library(file, head)`: it starts from the executable,
+including when a DSO invokes it. It does not use the return-address caller's
+RUNPATH. The private libc/loader open ABI therefore remains unchanged.
+`x86_64_general_initial_graph.rs` retains first-load pathname/ancestry;
+`x86_64_runtime_registry.rs` preserves that ancestry across retained dlclose,
+reopen and duplicate identities. Failed loads retain no new ancestor nodes.
+
+`$ORIGIN` and `${ORIGIN}` expand from the admitted DSO pathname. The main
+executable obtains its name from `/proc/self/exe`; an unavailable proc path
+suppresses that expansion as in musl. Unknown variables suppress the entire
+object path. Initial UID/EUID/GID/EGID and AT_SECURE disable environment
+search for privileged images; secure mode also disables main ORIGIN and
+nonabsolute DSO origins. Environment selection is fixed at startup rather
+than refreshed after `setenv`. These secure decisions have isolated synthetic
+initial-stack tests; they are not full privileged-execution qualification.
+
+The installed driver accepts `--application-runpath PATHS` and records that
+explicit application policy in both its link plan and hashed output receipt.
+A declared DSO with a nondefault RUNPATH must carry a matching receipt bound
+to its bytes and path. This does not add target libraries to the link command.
+The owned default system directory remains `/usr/lib`; musl system-path
+configuration, host directories, preloading and loader command-line execution
+are not introduced. Existing 512-byte admitted pathname storage and a
+4096-byte expanded search-list bound remain explicit selected limits.
+
+`run_general_dynamic_search.sh` runs eleven identical candidate/pinned-musl
+process decisions: runtime ancestor fallback, environment precedence,
+DSO ORIGIN, main-root search from a caller DSO, initial loading, initial
+environment precedence, relative direct paths, colon/newline separators,
+missing paths, an ELOOP error that must stop search, and initial breadth-first
+identity selection against a conflicting grandchild. The materialized aggregate runs these through installed and extracted drivers in PIE and
+non-PIE modes. The isolated regression failed with status 2 before ancestor
+search, then returned `search=7` with the same installed dependency placement.
+The breadth-first regression separately returned `search=8` before the
+discovery correction; the pinned oracle and corrected candidate return 7.
+Legacy RPATH parsing follows the source; dedicated legacy-tag differential,
+main ORIGIN with mounted proc, and privileged process execution remain
+qualification limits rather than inferred evidence.

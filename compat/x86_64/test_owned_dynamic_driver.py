@@ -57,6 +57,45 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self.assertNotIn("-pie", plan["linker"])
         self.assertIn("--dynamic-linker", plan["linker"])
 
+    def test_search_path_plan_records_explicit_application_policy(self):
+        output = io.StringIO()
+        with patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch("sys.stdout", output):
+            driver.execute(self.root, ["--dynamic-pie", "--application-runpath", "/app/lib:$ORIGIN/plugins", "--print-link-plan"])
+        plan = json.loads(output.getvalue())
+        self.assertEqual(plan["application_runpath"], "/app/lib:$ORIGIN/plugins")
+        self.assertIn("/app/lib:$ORIGIN/plugins", plan["linker"])
+
+    def test_search_path_rejects_invalid_or_ambiguous_options_before_tools(self):
+        for options in (["--application-runpath"], ["--application-runpath", ""],
+                        ["--application-runpath", "/a", "--application-runpath", "/b"],
+                        ["--application-runpath", "x" * 4096],
+                        ["--application-runpath", "/a", "-c", "input.c"]):
+            with self.subTest(options=options), patch.object(driver, "run") as run:
+                with self.assertRaises(driver.shared.DriverError):
+                    driver.execute(self.root, ["--dynamic-pie", *options])
+                run.assert_not_called()
+
+    def test_application_search_receipt_binds_the_actual_elf_and_runpath(self):
+        path = Path(self.temporary.name) / "plugin.so"
+        elf = bytearray(64)
+        elf[:7] = b"\x7fELF\x02\x01\x01"
+        elf[16:18] = (3).to_bytes(2, "little")
+        elf[18:20] = (62).to_bytes(2, "little")
+        path.write_bytes(elf)
+        receipt = Path(str(path) + ".crabc-link.json")
+        valid = {"format": driver.FORMAT, "output_sha256": driver.shared.sha256_file(path),
+                 "application_runpath": "/app/lib"}
+        dynamic = "(SONAME) [plugin.so]\n(RUNPATH) [/app/lib]\n"
+        for record in ([], {**valid, "application_runpath": "/wrong"},
+                       {**valid, "output_sha256": "0" * 64}, valid):
+            receipt.write_text(json.dumps(record))
+            with self.subTest(record=record), patch.object(driver, "run", side_effect=["", dynamic]):
+                if record == valid:
+                    self.assertEqual(driver.dso_metadata(path, Path(self.temporary.name)), ("plugin.so", []))
+                else:
+                    with self.assertRaises(driver.shared.DriverError):
+                        driver.dso_metadata(path, Path(self.temporary.name))
+
     def test_deferred_binding_plan_requires_exact_shared_runtime_imports(self):
         output = io.StringIO()
         with patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch("sys.stdout", output):

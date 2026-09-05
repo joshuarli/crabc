@@ -125,7 +125,15 @@ def dso_metadata(path: Path, temporary: Path) -> tuple[str, list[str]]:
         raise shared.DriverError("application DSO contains pathname DT_NEEDED")
     runpaths = re.findall(r"\(RUNPATH\).*\[([^\]]*)\]", dynamic)
     if runpaths not in ([], ["/usr/lib"]):
-        raise shared.DriverError("application DSO has an undeclared runtime search path")
+        receipt = Path(str(path) + ".crabc-link.json")
+        shared.require_regular(receipt, "application search path receipt")
+        try:
+            record = json.loads(receipt.read_text())
+        except (ValueError, OSError) as error:
+            raise shared.DriverError(f"invalid application search path receipt: {error}") from error
+        if (not isinstance(record, dict) or record.get("format") != FORMAT or record.get("output_sha256") != shared.sha256_file(path)
+                or runpaths != [record.get("application_runpath")]):
+            raise shared.DriverError("application DSO has an undeclared runtime search path")
     return path.name, needed
 
 
@@ -149,6 +157,7 @@ def execute(root: Path, arguments: list[str]) -> None:
     validate(root)
     mode = None
     binding = None
+    application_runpath = None
     runtime_imports = set()
     dsos = []
     common = []
@@ -171,6 +180,13 @@ def execute(root: Path, arguments: list[str]) -> None:
                 if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", value) or value in runtime_imports:
                     raise shared.DriverError("invalid or duplicate runtime import")
                 runtime_imports.add(value)
+        elif argument == "--application-runpath":
+            index += 1
+            if index == len(arguments) or application_runpath is not None:
+                raise shared.DriverError("select one application RUNPATH")
+            application_runpath = arguments[index]
+            if not application_runpath or len(application_runpath.encode()) >= 4096 or "\0" in application_runpath:
+                raise shared.DriverError("invalid application RUNPATH")
         elif argument == "--application-dso":
             index += 1
             if index == len(arguments): raise shared.DriverError("missing application DSO")
@@ -184,10 +200,13 @@ def execute(root: Path, arguments: list[str]) -> None:
             common.append(argument)
         index += 1
     if mode is None: raise shared.DriverError("select --dynamic-pie, --dynamic-non-pie or --dynamic-shared-object")
+    application_runpath = application_runpath if application_runpath is not None else "/usr/lib"
     binding = binding or "now"
     if runtime_imports and (mode != "shared" or binding != "lazy"):
         raise shared.DriverError("runtime imports require a lazy shared object")
     invocation = shared.parse_invocation(common)
+    if invocation.compile_only and application_runpath != "/usr/lib":
+        raise shared.DriverError("compile-only accepts no application RUNPATH")
     if invocation.compile_only and (runtime_imports or binding != "now"):
         raise shared.DriverError("compile-only accepts no binding/import contract")
     if invocation.compile_only and dsos: raise shared.DriverError("compile-only accepts no DSO")
@@ -196,7 +215,7 @@ def execute(root: Path, arguments: list[str]) -> None:
     library = root / "usr/lib"
     link = [shared.linker(), *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=sysv",
             "-z", "relro", "-z", binding, "-z", "noexecstack", "-z", "text", *([] if runtime_imports else ["--no-undefined"]),
-            "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib"]
+            "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", application_runpath]
     entry_object = "Scrt1.o" if mode == "pie" else "crt1.o"
     if mode != "shared":
         link += ["--dynamic-linker", INTERPRETER, str(library / entry_object),
@@ -204,7 +223,7 @@ def execute(root: Path, arguments: list[str]) -> None:
     if invocation.print_link_plan:
         if dsos: raise shared.DriverError("link plan accepts no application inputs")
         print(json.dumps({"format": FORMAT, "mode": mode, "binding": binding,
-                          "runtime_imports": sorted(runtime_imports), "linker": link,
+                          "runtime_imports": sorted(runtime_imports), "application_runpath": application_runpath, "linker": link,
                           "campaign_complete": False}, sort_keys=True))
         return
     output = (invocation.output or Path("a.out")).absolute()
@@ -283,7 +302,7 @@ def execute(root: Path, arguments: list[str]) -> None:
             if output_required - provided != runtime_imports:
                 raise shared.DriverError("linked runtime imports differ from declared contract")
         record = {"schema": 1, "format": FORMAT, "mode": mode, "binding": binding,
-                  "runtime_imports": sorted(runtime_imports),
+                  "runtime_imports": sorted(runtime_imports), "application_runpath": application_runpath,
                   "output_sha256": shared.sha256_file(output),
                   "manifest_sha256": shared.sha256_file(root / "share/crabc/manifest.json"),
                   "application_dsos": {name: shared.sha256_file(path) for name, (path, _) in declared.items()},

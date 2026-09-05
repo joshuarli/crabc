@@ -104,3 +104,5 @@ timeout 20 chroot "$work/execution-root" /scope >"$work/scope.stdout"
 LD_LIBRARY_PATH="$work/oracle" timeout 20 "$work/oracle/scope" >"$work/oracle-scope.stdout"
 cmp "$work/scope.stdout" "$work/oracle-scope.stdout"
 printf 'general runtime scope: PASS (musl differential, caller RTLD_NEXT and promotion); evidence: %s\n' "$work"
+
+bash "$ROOT/compat/x86_64/run_general_dynamic_search.sh" "$installed"

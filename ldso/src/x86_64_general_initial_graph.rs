@@ -36,6 +36,8 @@ pub(super) unsafe fn run(sp: usize, ldso_base: usize) -> ! {
     // interpreter base. Every object pointer below comes from a checked
     // program-header/dynamic-table parse or a successfully mapped ET_DYN.
     unsafe {
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        x86_64_library_search::initialize(sp);
         let (main_phdr, main_phnum, main_entry) = auxv_main(sp).unwrap_or_else(|| fail(b"auxv\n"));
         let main_base = main_load_bias(main_phdr, main_phnum).unwrap_or_else(|| fail(b"mainbase\n"));
         let main = parse_mapped(main_base, main_phdr, main_phnum, false, false, true)
@@ -485,13 +487,37 @@ unsafe fn rollback_initial_tls_state(
 /// that identity already appears in the transaction, this records an edge and
 /// deliberately does not recurse; that one rule handles both diamonds and
 /// cycles without a topology-specific condition. New objects are mapped,
-/// parsed, admitted, then recursed before being marked ready.
+/// parsed and admitted before its dependencies. The installed runtime walks
+/// admitted objects breadth-first, as musl load_deps does: a main dependency
+/// must win first-load identity before any grandchild with the same name.
 unsafe fn discover_needed(
     graph: &mut InitialGraphState,
     objects: &mut [Object; MAX_OBJECTS],
     parent_index: usize,
 ) -> Option<()> {
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    {
+        if parent_index != 0 { return None; }
+        let mut index = 0;
+        while index < graph.object_count() {
+            discover_object_needed(graph, objects, index)?;
+            // Main's completion is owned by finish_discovery on the state.
+            if index != 0 { graph.finish_discovery(index).ok()?; }
+            index += 1;
+        }
+        Some(())
+    }
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+    unsafe { discover_object_needed(graph, objects, parent_index) }
+}
+
+unsafe fn discover_object_needed(
+    graph: &mut InitialGraphState,
+    objects: &mut [Object; MAX_OBJECTS],
+    parent_index: usize,
+) -> Option<()> {
     let parent = *objects.get(parent_index)?;
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     if parent.runpath.is_null() && parent.needed_count != 0 {
         return None;
     }
@@ -502,10 +528,38 @@ unsafe fn discover_needed(
         }
         let name = parent.strtab.add(name_offset);
         let name_len = bounded_nul(name, parent.strsz - name_offset)?;
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         if !selected_needed_name(name, name_len) {
             return None;
         }
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        {
+            let requested = core::slice::from_raw_parts(name, name_len);
+            if !requested.contains(&b'/') {
+                if let Some(index) = objects[..graph.object_count()].iter().position(|object| {
+                    if !object.search_short_name { return false; }
+                    let length = bounded_nul(object.search_name.as_ptr(), MAX_PATH).unwrap_or(0);
+                    let stored = &object.search_name[..length];
+                    let start = stored.iter().rposition(|byte| *byte == b'/').map_or(0, |n| n + 1);
+                    &stored[start..] == requested
+                }) {
+                    graph.attach_needed(parent_index, index).ok()?;
+                    continue;
+                }
+            }
+        }
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         let fd = open_from_runpath(parent.runpath, parent.runpath_len, name, name_len)?;
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let (fd, search_name, _) = {
+            let mut ancestor = Some(parent_index);
+            let chain = core::iter::from_fn(|| {
+                let object = objects.get(ancestor?)?;
+                ancestor = object.needed_by;
+                Some(object)
+            });
+            x86_64_library_search::open(core::slice::from_raw_parts(name, name_len), chain).ok()?
+        };
         let identity = match file_identity_from_fd(fd) {
             Some(identity) => identity,
             None => {
@@ -515,6 +569,8 @@ unsafe fn discover_needed(
         };
         if let Some(existing) = graph.find(identity) {
             let _ = syscall1(SYS_CLOSE, fd);
+            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+            { objects[existing].search_short_name |= !core::slice::from_raw_parts(name, name_len).contains(&b'/'); }
             graph.attach_needed(parent_index, existing).ok()?;
             continue;
         }
@@ -533,9 +589,18 @@ unsafe fn discover_needed(
             }
         };
         objects[child_index] = child;
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        {
+            objects[child_index].search_name = search_name;
+            objects[child_index].search_short_name = !core::slice::from_raw_parts(name, name_len).contains(&b'/');
+            objects[child_index].needed_by = Some(parent_index);
+        }
         graph.attach_needed(parent_index, child_index).ok()?;
-        discover_needed(graph, objects, child_index)?;
-        graph.finish_discovery(child_index).ok()?;
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+        {
+            discover_needed(graph, objects, child_index)?;
+            graph.finish_discovery(child_index).ok()?;
+        }
     }
     Some(())
 }
