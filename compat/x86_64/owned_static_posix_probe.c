@@ -26,9 +26,14 @@
 #endif
 
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/wait.h>
@@ -118,6 +123,81 @@ static int child_environment_check(void)
         return 1;
     if (borrowed == NULL || !strings_equal(borrowed, "on2"))
         return 2;
+    return 0;
+}
+
+static void *worker_signal_mask(void *unused)
+{
+    (void)unused;
+    sigset_t mask, current;
+    if (sigemptyset(&mask) || sigaddset(&mask, SIGUSR1)) return (void *)1;
+    errno = ERANGE;
+    if (pthread_sigmask(SIG_UNBLOCK, &mask, &current) || errno != ERANGE
+        || !sigismember(&current, SIGUSR1)) return (void *)2;
+    if (pthread_sigmask(SIG_SETMASK, NULL, &current)
+        || sigismember(&current, SIGUSR1)) return (void *)3;
+    return NULL;
+}
+
+static int thread_signal_masks(void)
+{
+    sigset_t saved, mask, current;
+    if (sigemptyset(&mask) || sigaddset(&mask, SIGUSR1)) return 1;
+    memset(&saved, 0xa5, sizeof saved);
+    errno = ERANGE;
+    if (pthread_sigmask(SIG_BLOCK, &mask, &saved) || errno != ERANGE) return 2;
+    /* Musl changes only the first kernel-visible word of the public record. */
+    for (size_t index = sizeof(unsigned long); index < sizeof saved; ++index)
+        if (((unsigned char *)&saved)[index] != 0xa5) return 3;
+    if (pthread_sigmask(99, &mask, NULL) != EINVAL || errno != ERANGE) return 4;
+    if (pthread_sigmask(99, (const sigset_t *)1, NULL) != EINVAL
+        || errno != ERANGE) return 4;
+    if (sigprocmask(99, (const sigset_t *)1, NULL) != -1 || errno != EINVAL)
+        return 4;
+    errno = ERANGE;
+    if (pthread_sigmask(99, NULL, &current) || errno != ERANGE) return 5;
+    if (pthread_sigmask(SIG_SETMASK, NULL, (sigset_t *)1) != EFAULT
+        || errno != ERANGE) return 6;
+    pthread_t thread;
+    void *result;
+    if (pthread_create(&thread, NULL, worker_signal_mask, NULL)
+        || pthread_join(thread, &result) || result) return 7;
+    if (pthread_sigmask(SIG_SETMASK, NULL, &current)
+        || !sigismember(&current, SIGUSR1)) return 8;
+    if (pthread_sigmask(SIG_SETMASK, &saved, NULL)) return 9;
+    return 0;
+}
+
+/* Change only a disposable child's root to the existing consumer directory.
+   The caller's CWD and open directory descriptors retain their Linux meaning. */
+static int child_root_change(const char *self)
+{
+    char directory[4096];
+    const char *name = strrchr(self, '/');
+    if (self[0] != '/' || !name || (size_t)(name - self) >= sizeof directory)
+        return 1;
+    memcpy(directory, self, (size_t)(name - self));
+    directory[name - self] = 0;
+    pid_t child = fork();
+    if (child < 0) return 2;
+    if (child == 0) {
+        struct stat before, after;
+        errno = 0;
+        if (chroot("") != -1 || errno != ENOENT) _exit(1);
+        if (chdir("/") || stat(".", &before)) _exit(2);
+        errno = ERANGE;
+        if (chroot(directory) || errno != ERANGE) _exit(3);
+        if (stat(".", &after) || before.st_dev != after.st_dev
+            || before.st_ino != after.st_ino) _exit(4);
+        int descriptor = open(name, O_RDONLY | O_CLOEXEC);
+        if (descriptor < 0 || close(descriptor)) _exit(5);
+        _exit(0);
+    }
+    int status;
+    if (waitpid(child, &status, 0) != child || !WIFEXITED(status)
+        || WEXITSTATUS(status)) return 3;
+    int descriptor = open(self, O_RDONLY | O_CLOEXEC);
+    if (descriptor < 0 || close(descriptor)) return 4;
     return 0;
 }
 
@@ -255,6 +335,10 @@ int main(int argc, char **argv)
         return child_environment_check();
     if (argc != 1)
         return 90;
+    result = thread_signal_masks();
+    if (result != 0) return 80 + result;
+    result = child_root_change(argv[0]);
+    if (result != 0) return 90 + result;
     result = environment_exec_roundtrip(argv[0]);
     if (result != 0)
         return 10 + result;

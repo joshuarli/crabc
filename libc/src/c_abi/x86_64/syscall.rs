@@ -412,6 +412,7 @@ pub(crate) const SYS_MLOCKALL: i64 = 151;
 pub(crate) const SYS_MUNLOCKALL: i64 = 152;
 pub(crate) const SYS_PRCTL: i64 = 157;
 pub(crate) const SYS_SETRLIMIT: i64 = 160;
+pub(crate) const SYS_CHROOT: i64 = 161;
 pub(crate) const SYS_ARCH_PRCTL: i64 = 158;
 pub(crate) const SYS_SETHOSTNAME: i64 = 170;
 pub(crate) const SYS_SETDOMAINNAME: i64 = 171;

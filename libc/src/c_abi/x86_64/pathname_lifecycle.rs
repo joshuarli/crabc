@@ -3,6 +3,7 @@
 //! This leaf owns one coherent, bounded C pathname-lifecycle block:
 //! `chdir`, `getcwd`, `mkdir`, `unlink`, `rmdir`, `remove`, `rename`,
 //! `link`, `symlink`, `readlink`, `chmod`, `fchmod`, and `truncate`.
+//! The owned runtime additionally exposes `chroot` over the same raw boundary.
 //! It composes only the raw Linux/x86-64 syscall-register boundary and the
 //! selected initial-TLS C `errno` writer. It is not general pathname parsing,
 //! canonicalization, directory streams, CWD virtualization, recursive
@@ -14,6 +15,8 @@
 //!
 //! - `src/unistd/chdir.c`, `unlink.c`, `rmdir.c`, `truncate.c`, `link.c`,
 //!   `symlink.c`, and `readlink.c` map to the correspondingly named entries.
+//! - `src/linux/chroot.c` supplies the owned runtime's direct process-root
+//!   change, preserving Linux's independent CWD and open-descriptor state.
 //! - `src/stat/chmod.c`, `fchmod.c`, and `mkdir.c` map to the mode-changing
 //!   and directory-creation entries.
 //! - `src/stdio/remove.c` and `rename.c` map to the selected lifecycle
@@ -105,6 +108,18 @@ pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
         raw_syscall::syscall1(raw_syscall::SYS_CHDIR, path as usize as i64)
     };
     c_status(result)
+}
+
+/// Change the process root directory using Linux `chroot` without changing CWD.
+///
+/// # Safety
+/// `path` must designate a readable NUL-terminated pathname during the syscall.
+/// The caller owns process-wide pathname coordination and the consequences for
+/// existing CWD and open descriptors; this operation is not a confinement API.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn chroot(path: *const c_char) -> c_int {
+    c_status(unsafe { raw_syscall::syscall1(raw_syscall::SYS_CHROOT, path as usize as i64) })
 }
 
 /// Obtain the absolute current-directory spelling in caller-owned storage.

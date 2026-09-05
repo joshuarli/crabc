@@ -1,18 +1,20 @@
 //! Selected static Linux/x86-64 C signal-control boundary.
 //!
-//! This is a narrow, deliberately non-pthread adaptation of pinned musl 1.2.6
+//! This is a narrow signal-control adaptation of pinned musl 1.2.6
 //! revision `9fa28ece75d8a2191de7c5bb53bed224c5947417` under musl's MIT
 //! license. Its source mapping is `src/signal/sigaction.c` (validation,
 //! action conversion, and partial old-action writes), `signal.c`,
 //! `sigemptyset.c`, and `sigismember.c`;
 //! `sigprocmask.c` supplies its public errno convention while
 //! `src/thread/pthread_sigmask.c` supplies the one-word syscall and returned
-//! reserved-bit filtering. It reuses the x86 `SA_RESTORER`/`rt_sigreturn`
+//! reserved-bit filtering. The owned runtime exposes that shared operation as
+//! `pthread_sigmask` with direct error returns and no errno mutation. It reuses
+//! the x86 `SA_RESTORER`/`rt_sigreturn`
 //! machinery from `signal_foundation.rs`.
 //!
 //! The selected artifact owns only application signal-set helpers, simple
 //! disposition installation/query, and a calling-thread mask boundary.
-//! It deliberately excludes generic process or thread delivery, waits and
+//! The default private artifact excludes generic process or thread delivery, waits and
 //! cancellation points, queues, alternate stacks, pthread signal policy,
 //! legacy helpers, and a general signal-management framework. Musl's pthread
 //! bookkeeping for those excluded paths is not recreated here. Kernel-to-public
@@ -223,14 +225,40 @@ pub unsafe extern "C" fn sigismember(set: *const c_void, signal: c_int) -> c_int
 /// `set` and `old_set` must be null or point to complete readable and writable
 /// x86 public `sigset_t` records, respectively. Like musl, this wrapper
 /// forwards the caller's kernel-visible input word, but clears 32–34 from a
-/// returned old mask. It intentionally excludes pthread cancellation and
-/// reserved-signal lifecycle.
+/// returned old mask. Reserved-signal delivery remains owned by the separate
+/// cancellation and timer protocols.
 #[no_mangle]
 pub unsafe extern "C" fn sigprocmask(
     how: c_int,
     set: *const c_void,
     old_set: *mut c_void,
 ) -> c_int {
+    c_status(unsafe { signal_mask_result(how, set, old_set) })
+}
+
+/// Change or query the calling thread's mask with musl's pthread convention.
+/// Returns an error number directly and leaves the caller's errno unchanged.
+///
+/// # Safety
+/// `set` and `old_set` must be null or designate readable and writable public
+/// `sigset_t` records respectively for this call. The caller owns the effect
+/// of changing its signal mask; only the kernel-visible output word changes.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn pthread_sigmask(
+    how: c_int,
+    set: *const c_void,
+    old_set: *mut c_void,
+) -> c_int {
+    -unsafe { signal_mask_result(how, set, old_set) } as c_int
+}
+
+// Shared raw result preserves the two public error conventions without a
+// temporary errno mutation or an interposable call between public wrappers.
+unsafe fn signal_mask_result(how: c_int, set: *const c_void, old_set: *mut c_void) -> i64 {
+    // Musl validates a requested operation before the kernel can inspect an
+    // invalid set pointer. A null set is a query and ignores `how` entirely.
+    if !set.is_null() && how as u32 > 2 { return -i64::from(EINVAL); }
     // Musl forwards a caller's raw first word to the kernel. Its pthread
     // wrapper filters the reserved bits only when publishing `old_set`.
     // SAFETY: Linux consumes or writes exactly one kernel signal-set word at
@@ -246,7 +274,7 @@ pub unsafe extern "C" fn sigprocmask(
         )
     };
     if result < 0 {
-        return c_status(result);
+        return result;
     }
     if !old_set.is_null() {
         // SAFETY: Linux filled the first public word on this successful call.

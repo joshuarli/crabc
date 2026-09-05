@@ -35,8 +35,8 @@ Both installed-product component gates pass together at `3369c153`:
 - `./scripts/dev-x86_64.sh owned-static-sysroot`: 56 harness tests, all 24
   isolated consumer jobs with four workers, installed/extracted ET_EXEC and
   static-PIE modes, and two-build reproducibility. Log:
-  `.work/x86_64/resume-cancellation-static-integrated.log`; evidence:
-  `.work/x86_64/tmp/crabc-x86-64-owned-static-sysroot.th91gC`.
+  `.work/x86_64/resume-cancellation-static-integrated.log`. Successful static
+  scratch products are cleaned by the runner; the log is retained.
 - `./scripts/dev-x86_64.sh materialized-dynamic-sysroot`: 46 loader tests,
   18 driver/package tests, two CRT-mode tests, installed/extracted PIE and
   non-PIE consumers, deferred binding, 41-module worker TLS, constructor exit,

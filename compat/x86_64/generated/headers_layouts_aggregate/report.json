@@ -439,7 +439,7 @@
   ],
   "downstream_provider_archive_obligations": {
     "archive_extraction_is_header_completion_requirement": false,
-    "deferred_callable_count": 218,
+    "deferred_callable_count": 213,
     "deferred_owner_group_count": 8,
     "final_provider_archive_closure_available": true,
     "final_provider_archive_closure_complete": false,
@@ -628,7 +628,7 @@
       "id": "callable-visibility",
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1",
-      "sha256": "cbd32ca7767d57f4caf6751f2f9bc7b26c210e9d6cd4d548b479d2c33f0a6fe7",
+      "sha256": "2c27da4c3028a260ce8d22fa87be8b0bf7d9b630cca4df3b8f32ff83c4a3e271",
       "summary": {
         "candidate_only_callable_count": 0,
         "candidate_public_header_count": 191,
@@ -740,16 +740,16 @@
       "id": "callable-disposition",
       "path": "compat/x86_64/header_callable_disposition.json",
       "schema": "crabc.x86_64-header-callable-disposition-report/v1",
-      "sha256": "4b270887177670f03788b9214dbb0b0b6e94a011576bad3fc919ac78ba0dccad",
+      "sha256": "90e23e43c7c0db742c21be2dc50e631bc5be7551ddf5a34c10c90ce368ef418e",
       "summary": {
         "candidate_external_callable_count": 1525,
-        "declared_unverified_feature_callable_count": 110,
-        "default_static_callable_count": 1119,
+        "declared_unverified_feature_callable_count": 112,
+        "default_static_callable_count": 1122,
         "deferred_resolution_counts": {
           "compiler-builtin": 1,
           "consumer-supplied": 1,
           "oracle-declared-no-provider": 7,
-          "planned-provider": 209
+          "planned-provider": 204
         },
         "final_provider_archive_closure_complete": false,
         "header_declaration_parity_complete": false,
@@ -760,7 +760,7 @@
         "primary_disposition_exact_coverage": true,
         "undispositioned_candidate_callable_count": 0,
         "undispositioned_missing_reference_name_count": 0,
-        "unprovided_callable_count": 218,
+        "unprovided_callable_count": 213,
         "verified_feature_callable_count": 78
       },
       "table": "callable_disposition"
@@ -830,7 +830,7 @@
     },
     {
       "path": "compat/x86_64/parity.toml",
-      "sha256": "d2ac92dcef28f97d7186e33232fcdd818cdba1e52a2c624db54c85eab77c45dc"
+      "sha256": "335e95fd46a0350b55b5ca3e18708df26c3e3e56cca25cf817a61b2b479b972d"
     },
     {
       "path": "compat/x86_64/public_headers.txt",
@@ -838,15 +838,15 @@
     },
     {
       "path": "compat/x86_64/static_c_abi_exports.txt",
-      "sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
+      "sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
     },
     {
       "path": "compat/x86_64/header_callable_inventory.json",
-      "sha256": "d4d08921e5bc0b9d59dc508bb8f9c2d7b9f0b6d6660ce336d51ae67acdaf00a2"
+      "sha256": "e14ef79aadbb48aebc928fb2b2ffef02d87ab5ae4c01128663f46dab4f8ed7ed"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.toml",
-      "sha256": "7a4c5f95565768c94660b65ad8eca3dde6e2a1f79f8cefdd9282f7ae8b634580"
+      "sha256": "e1a4ba152bbadc29c2f1a0de09468ace2316815f78edd30fb3ac79f97958a170"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.py",
@@ -882,7 +882,7 @@
     },
     {
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
-      "sha256": "cbd32ca7767d57f4caf6751f2f9bc7b26c210e9d6cd4d548b479d2c33f0a6fe7"
+      "sha256": "2c27da4c3028a260ce8d22fa87be8b0bf7d9b630cca4df3b8f32ff83c4a3e271"
     },
     {
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
@@ -894,7 +894,7 @@
     },
     {
       "path": "compat/x86_64/header_callable_disposition.json",
-      "sha256": "4b270887177670f03788b9214dbb0b0b6e94a011576bad3fc919ac78ba0dccad"
+      "sha256": "90e23e43c7c0db742c21be2dc50e631bc5be7551ddf5a34c10c90ce368ef418e"
     },
     {
       "path": "compat/x86_64/headers_layouts_aggregate.py",
