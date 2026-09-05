@@ -21,10 +21,44 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_credentials_profile_probe.c"
 
-[ "$#" -le 1 ] || {
-    printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
+usage() {
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
+
+provided_static=''
+provided_dynamic=''
+static_was_supplied=0
+dynamic_was_supplied=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-sysroot)
+            [ "$#" -ge 2 ] || usage
+            [ "$static_was_supplied" -eq 0 ] || usage
+            [ -n "$2" ] || usage
+            case "$2" in --*) usage ;; esac
+            provided_static="$2"
+            static_was_supplied=1
+            shift 2
+            ;;
+        --*)
+            usage
+            ;;
+        *)
+            [ "$dynamic_was_supplied" -eq 0 ] || usage
+            [ -n "$1" ] || usage
+            provided_dynamic="$1"
+            dynamic_was_supplied=1
+            shift
+            ;;
+    esac
+done
+if [ "$static_was_supplied" -eq 1 ]; then
+    provided_static="$(realpath -e "$provided_static")"
+fi
+if [ "$dynamic_was_supplied" -eq 1 ]; then
+    provided_dynamic="$(realpath -e "$provided_dynamic")"
+fi
 
 require_native_linux_x86_64() {
     [ "$(uname -s)" = Linux ] || {
@@ -45,28 +79,26 @@ require_native_linux_x86_64
 command -v chroot >/dev/null
 command -v unshare >/dev/null
 
-provided_dynamic="${1:-}"
-if [ -n "$provided_dynamic" ]; then
-    provided_dynamic="$(realpath -e "$provided_dynamic")"
-fi
-python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
+python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_static" "$provided_dynamic" <<'PY'
 from pathlib import Path
 import sys
 
 root, temporary = map(Path, sys.argv[1:3])
 if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / ".work"):
     raise SystemExit("credentials profile TMPDIR must be a physical checkout .work directory")
-if sys.argv[3]:
-    product = Path(sys.argv[3]).resolve(strict=True)
+for product_text, name in ((sys.argv[3], "static"), (sys.argv[4], "dynamic")):
+    if not product_text:
+        continue
+    product = Path(product_text).resolve(strict=True)
     if not product.is_dir() or not product.is_relative_to(root / ".work"):
-        raise SystemExit("credentials profile product must be a checkout .work directory")
+        raise SystemExit(f"credentials profile {name} product must be a checkout .work directory")
 PY
 
 readonly work="$(mktemp -d "$TMPDIR/owned-credentials-profile.XXXXXX")"
 chmod a+rx "$work"
 printf 'owned credentials profile evidence: %s\n' "$work"
 
-if [ -z "$provided_dynamic" ]; then
+if [ "$dynamic_was_supplied" -eq 0 ]; then
     provided_dynamic="$work/dynamic-product"
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
         --output "$provided_dynamic" >"$work/dynamic-build.json"
@@ -253,16 +285,22 @@ run_candidate() {
 
 run_oracle
 
-if [ "$#" -eq 0 ]; then
+static_product=''
+if [ "$static_was_supplied" -eq 1 ]; then
+    static_product="$provided_static"
+elif [ "$dynamic_was_supplied" -eq 0 ]; then
+    static_product="$work/static-product"
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
-        --output "$work/static-product" >"$work/static-build.json"
-    assert_static_symbols "$work/static-product/usr/lib/libc.a"
+        --output "$static_product" >"$work/static-build.json"
+fi
+if [ -n "$static_product" ]; then
+    assert_static_symbols "$static_product/usr/lib/libc.a"
     for mode in static static-pie; do
         receipt="$work/consumer-$mode.receipt.json"
-        (cd "$work" && "$work/static-product/bin/crabc-cc" "-$mode" \
+        (cd "$work" && "$static_product/bin/crabc-cc" "-$mode" \
             --link-receipt "$(basename "$receipt")" "$work/workload.o" \
             -o "$work/consumer-$mode")
-        audit_product_link "$work/static-product" "$work/workload.o" \
+        audit_product_link "$static_product" "$work/workload.o" \
             "$work/consumer-$mode" "$receipt" "$mode"
         mkdir "$work/$mode-root"
         run_candidate "$mode" "$work/$mode-root" "$work/consumer-$mode" kernel
@@ -290,8 +328,12 @@ selected crabc profile aliases: setreuid, seteuid, setregid, and setegid return 
 no all-thread credential rendezvous is claimed or tested
 EOF
 
-if [ "$#" -eq 0 ]; then
+if [ "$static_was_supplied" -eq 0 ] && [ "$dynamic_was_supplied" -eq 0 ]; then
     printf 'owned credentials profile: PASS (same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+elif [ "$static_was_supplied" -eq 1 ] && [ "$dynamic_was_supplied" -eq 1 ]; then
+    printf 'owned credentials profile: PASS (supplied static and installed products, same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+elif [ "$static_was_supplied" -eq 1 ]; then
+    printf 'owned credentials profile: PASS (supplied static product and default installed product, same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
 else
     printf 'owned credentials profile: PASS (supplied installed product, same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
 fi

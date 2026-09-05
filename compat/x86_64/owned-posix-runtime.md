@@ -158,6 +158,18 @@ its four deliberate `EOPNOTSUPP` no-mutation aliases and its caller-coordinated
 direct Linux setter behavior. It must not turn that profile into an all-thread
 credential-rendezvous contract.
 
+`run_owned_credentials_profile.sh` accepts `[--static-sysroot STATIC_SYSROOT]
+[DYNAMIC_SYSROOT]`. Without arguments it builds both disposable products; a
+dynamic positional product preserves the dynamic-only replay and does not run a
+static pair. Supplying a static product runs its static/static-PIE pair, and if
+it is the only argument the runner builds the disposable dynamic product that
+compiles the single installed-driver object and runs the dynamic entries.
+Supplying both physical checkout `.work` products reuses both and invokes
+neither producer. The paths must be nonempty, the static path cannot parse as
+an option, and each is canonicalized before the shared product/link validator
+checks its manifest and receipt. This focused replay does not create a static
+reproduction/extraction or a family-completion claim.
+
 ## Frozen aggregate shape
 
 When the coordinator's focused receipt is complete, run the native successors
