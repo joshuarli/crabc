@@ -74884,7 +74884,8 @@ def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
         "valid_stack_size",
         "valid_guard_size",
         "Musl leaves both outputs untouched on this error path",
-        "null attribute pointer",
+        "SelectedWorkerAttributes",
+        "scheduler_requested: self.inherit_sched() != 0",
     ):
         require(
             phrase in implementation,
