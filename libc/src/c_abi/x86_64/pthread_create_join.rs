@@ -1925,6 +1925,21 @@ unsafe fn create_selected_worker_with_attributes(
     }
     publish_selected_worker(control);
     let child_tid = unsafe { core::ptr::addr_of_mut!((*control).child_tid).cast::<c_int>() };
+    // The child must inherit SIGCANCEL blocked: an externally delivered
+    // cancellation signal must not run between clone installing FS and the
+    // trampoline publishing FS+32. Preserve every other inherited mask bit;
+    // the parent restores its exact mask immediately after clone returns.
+    let cancellation_signal = 1_u64 << 32;
+    let mut creator_signal_mask = 0_u64;
+    let _ = unsafe {
+        raw_syscall::syscall4(
+            raw_syscall::SYS_RT_SIGPROCMASK,
+            0, // SIG_BLOCK
+            core::ptr::addr_of!(cancellation_signal) as usize as i64,
+            core::ptr::addr_of_mut!(creator_signal_mask) as usize as i64,
+            8,
+        )
+    };
     // SAFETY: the private clone seam uses musl's exact x86 argument shuffle.
     // The selected stack is either caller-owned or the writable upper portion
     // of a private guarded map; the separate control and v1 blocks retain the
@@ -1940,6 +1955,8 @@ unsafe fn create_selected_worker_with_attributes(
             child_tid,
         )
     };
+    // SAFETY: paired restoration is required on success and clone failure.
+    unsafe { super::signal_execution::restore_application_signals(&creator_signal_mask) };
     if is_linux_error(clone_result) {
         if !release_selected_worker(control) {
             // The private list can still expose `control` to the selected

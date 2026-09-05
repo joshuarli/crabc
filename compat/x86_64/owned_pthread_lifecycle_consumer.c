@@ -1225,17 +1225,19 @@ static int run_worker_cancellation_signal_mask(void)
     if (raw_kernel_signal_mask(0, &cancel, &old) != 0)
         return 1;
     const int created = pthread_create(&worker, 0, worker_cancellation_signal_mask, 0);
+    uint64_t after_create = 0;
+    const int observed = raw_kernel_signal_mask(0, 0, &after_create);
     const int restored = raw_kernel_signal_mask(2, &old, 0);
-    if (created || restored || pthread_join(worker, &result))
+    if (created || observed || restored || pthread_join(worker, &result))
         return 2;
-    return result != 0;
+    return result != 0 || !(after_create & cancel);
 }
 
 int main(void)
 {
+    const int capacity = run_concurrent_lifecycle_capacity();
     if (run_worker_cancellation_signal_mask() != 0)
         return 99;
-    const int capacity = run_concurrent_lifecycle_capacity();
     const int detached_handoff = run_parallel_detached_creator_handoff();
     const int attrs = run_attr_and_cancellation();
     const int detached = run_detached_attr_and_c11_reaper();
