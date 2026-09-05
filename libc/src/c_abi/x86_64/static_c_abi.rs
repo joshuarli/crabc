@@ -453,8 +453,9 @@ mod pthread_vmlock;
 mod pthread_spin_destroy;
 // The spin acquisition/release operations compose the existing four-byte
 // pthread_spin_init/destroy records with the private x86 atomic helper. They
-// remain opt-in until their isolated pinned-musl/static closure is evidenced.
-#[cfg(feature = "x86-pthread-spin-operations")]
+// are included in owned products; the frozen private archive retains its
+// explicit feature selection and exact default export boundary.
+#[cfg(any(feature = "x86-pthread-spin-operations", feature = "x86-owned-static-runtime"))]
 #[path = "pthread_spin_operations.rs"]
 mod pthread_spin_operations;
 #[path = "pthread_cond.rs"]

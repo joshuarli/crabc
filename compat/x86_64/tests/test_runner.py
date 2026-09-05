@@ -2101,6 +2101,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "owned-system-cancellation",
                 "owned-dynamic-spawn|owned-atfork-registry",
                 "owned-assert|owned-linux-control",
+                "owned-pthread-spin",
                 "owned-syslog",
                 "owned-io-cancellation",
                 "owned-resolver-network",

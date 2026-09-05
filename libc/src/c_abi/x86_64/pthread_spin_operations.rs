@@ -1,6 +1,6 @@
 //! Selected Linux/x86-64 `pthread_spin_lock` operations.
 //!
-//! This private opt-in block is a source-specific semantic port of pinned
+//! This owned-runtime and private opt-in block is a source-specific semantic port of pinned
 //! musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`,
 //! under musl's MIT license recorded in `COPYRIGHT`:
 //!
@@ -13,9 +13,12 @@
 //!
 //! The operations compose the existing four-byte `pthread_spinlock_t`
 //! initialization/destruction records and the private x86 i32 atomic helper.
-//! They do not select mutexes, condition variables, process sharing, thread
-//! lifecycle, TLS, cancellation, allocation, errno, or a general pthread
-//! runtime.
+//! Owned products use the same operations for private and process-shared
+//! storage: the lock word contains no task pointer or process-local state.
+//! `owned_pthread_spin_probe.c` proves publication across both owned workers
+//! and fork children. The private feature retains its narrower isolated
+//! evidence. This module introduces no mutex/condition algorithm, lifecycle,
+//! TLS, cancellation, allocation, or errno state.
 
 #![allow(clippy::missing_safety_doc)]
 
