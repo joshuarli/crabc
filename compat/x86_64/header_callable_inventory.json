@@ -43,6 +43,14 @@
         ],
         "runner": "compat/x86_64/run_owned_static_sysroot.sh",
         "state": "planned"
+      },
+      {
+        "aliases": [],
+        "evidence_record": null,
+        "id": "x86-owned-dynamic-runtime",
+        "members": [],
+        "runner": "compat/x86_64/run_materialized_dynamic_sysroot.sh",
+        "state": "planned"
       }
     ],
     "default_static": {
@@ -417287,7 +417295,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "265a925092733f1f92cab5c3134b2283d284b55ff6451cf8ce3081d91d28b5ab",
+    "parity_ledger_sha256": "cbe08f660646cd9e677746d088990722a12b8f1a3bff8ce788a4cb0431f58137",
     "static_c_abi_exports_sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },
   "oracle": "Pinned musl 1.2.6",

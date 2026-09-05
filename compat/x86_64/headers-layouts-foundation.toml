@@ -238,15 +238,13 @@ candidate_external_callable_count = 1525
 default_static_callable_count = 1119
 verified_feature_callable_count = 78
 verified_feature_profile_count = 28
-declared_unverified_feature_callable_count = 34
-unprovided_callable_count = 294
 topology_only_profile_count = 1
 ordinary_archive_extraction = true
 uses_whole_archive = false
 full_callable_closure = false
 family_promotion = false
 public_support = false
-description = "The native selected-provider audit uses ordinary archive extraction for the default archive and 28 verified feature profiles, including replacement and weak-alias checks. The planned owned-static runtime adds 34 declared but unverified callable providers; its full archive audit remains open. The finite 294-name unprovided complement and that planned profile prevent full callable closure. Dedicated environment, resolver, and rejected crypt/allocator baseline evidence remain separate. This is not runtime qualification, header-family promotion, or public x86 support."
+description = "The native selected-provider audit uses ordinary archive extraction for the default archive and verified feature profiles, including replacement and weak-alias checks. The planned owned-static runtime's exact roster-derived direct additions remain declared but unverified, and its full archive audit remains open. The derived unprovided complement and that planned profile prevent full callable closure. Dedicated environment, resolver, and rejected crypt/allocator baseline evidence remain separate. This is not runtime qualification, header-family promotion, or public x86 support."
 
 [callable_disposition]
 id = "header-callable-disposition"
@@ -258,8 +256,6 @@ report = "compat/x86_64/header_callable_disposition.json"
 candidate_external_callable_count = 1525
 default_static_callable_count = 1119
 verified_feature_callable_count = 78
-declared_unverified_feature_callable_count = 34
-unprovided_callable_count = 294
 missing_reference_declaration_name_count = 0
 missing_reference_declaration_record_count = 0
 missing_reference_declaration_routing_complete = true
@@ -268,7 +264,7 @@ header_declaration_parity_complete = false
 final_provider_archive_closure_complete = false
 family_promotion = false
 public_support = false
-description = "The checked compiler-derived disposition routes all 1,525 selected external callable names through default, verified-feature, planned owned-static, deferred semantic-owner, compiler-builtin, consumer-supplied, or oracle-declared-no-provider records. The owned-static profile declares 34 unverified providers; 285 deferred planned-provider names remain. Zero missing pinned-musl declaration names does not establish declaration parity. This routing excludes archive extraction, runtime semantics, final C ABI provider/archive closure, header-family promotion, and public x86 support."
+description = "The checked compiler-derived disposition routes all selected external callable names through default, verified-feature, planned owned-static, deferred semantic-owner, compiler-builtin, consumer-supplied, or oracle-declared-no-provider records. The owned-static profile's exact roster-derived direct additions remain unverified, and the derived deferred planned-provider complement remains red work. Zero missing pinned-musl declaration names does not establish declaration parity. This routing excludes archive extraction, runtime semantics, final C ABI provider/archive closure, header-family promotion, and public x86 support."
 
 [selected_header_install_projection]
 id = "x86-selected-header-install-projection"

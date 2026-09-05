@@ -212,14 +212,21 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             "candidate-external-callable-feature-archive-provider-partition",
         )
         provider_counts = report["summary"]["callable_provider_counts"]
+        derived_provider_counts = {
+            "declared_unverified_feature_archives": sum(
+                len(provider["members"])
+                for provider in partition["declared_unverified_feature_archives"]
+            ),
+            "default_static": len(partition["default_static"]["members"]),
+            "unprovided": len(partition["unprovided"]["members"]),
+            "verified_feature_archives": sum(
+                len(provider["members"])
+                for provider in partition["verified_feature_archives"]
+            ),
+        }
         self.assertEqual(
             provider_counts,
-            {
-                "declared_unverified_feature_archives": 34,
-                "default_static": 1119,
-                "unprovided": 294,
-                "verified_feature_archives": 78,
-            },
+            derived_provider_counts,
         )
         self.assertEqual(
             sum(provider_counts.values()),
@@ -248,7 +255,10 @@ class HeaderCallableInventoryTests(unittest.TestCase):
 
         self.assertIn("mkdirat", default_static)
         self.assertNotIn("mkdirat", unprovided)
-        self.assertEqual(set(planned), {"x86-owned-static-runtime"})
+        self.assertEqual(
+            set(planned),
+            {"x86-owned-static-runtime", "x86-owned-dynamic-runtime"},
+        )
         self.assertEqual(
             planned["x86-owned-static-runtime"],
             {
@@ -287,6 +297,12 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "vasprintf",
                 "vdprintf",
             },
+        )
+        self.assertEqual(
+            planned["x86-owned-dynamic-runtime"],
+            set(),
+            "the dynamic product profile inherits its owned-static callable provider; "
+            "it must not promote an additional header-callable surface",
         )
         self.assertEqual(
             verified["x86-filesystem-traversal"],

@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "0834ffc0e107e394a4c51fcfaf7eb5a1ce83e44bc2e8036218fae2e9fa4bc467",
+    "callable_inventory_sha256": "5a36a410a3e83c0ff26f906562037d54c01c5f4fc667e737e33337fd2d661ffd",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "265a925092733f1f92cab5c3134b2283d284b55ff6451cf8ce3081d91d28b5ab",
+    "parity_ledger_sha256": "cbe08f660646cd9e677746d088990722a12b8f1a3bff8ce788a4cb0431f58137",
     "static_c_abi_exports_sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },
   "missing_reference_declaration_groups": [],
@@ -49,6 +49,10 @@
           "vasprintf",
           "vdprintf"
         ]
+      },
+      {
+        "id": "x86-owned-dynamic-runtime",
+        "members": []
       }
     ],
     "default_static": {
@@ -1827,7 +1831,7 @@
       "exact missing-reference declaration roster",
       "native x86 inventory regeneration plus checked report"
     ],
-    "expected_transition": "Completed as a non-promoting checked disposition: all 1,525 current candidate external callable names receive exact accounting records, including statx as a planned libc.posix-runtime provider, six project-only addressable atomic names with selected default-static providers, seven verified opt-in interval-timer, file-handle, spawn-file-actions, process-exec, temporary-name, pthread-spin, and permanent-stream-formatted-I/O feature archives owning thirty-one names, and the planned owned-static runtime profile owning thirty-four direct aggregate additions. The 285 planned-provider names remain provider/archive work. Declaration parity remains red despite the zero missing reference declaration names until the independent declaration/macro matrix and remaining header obligations close.",
+    "expected_transition": "Completed as a non-promoting checked disposition: every current candidate external callable name receives an exact accounting record, including statx as a planned libc.posix-runtime provider, project-only addressable atomic names with selected default-static providers, verified opt-in feature archives, and the planned owned-static runtime profile owning its exact roster-derived direct additions. The derived planned-provider complement remains provider/archive work. Declaration parity remains red despite the zero missing reference declaration names until the independent declaration/macro matrix and remaining header obligations close.",
     "family_aggregate_command": "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts",
     "focused_evidence_command": "./scripts/dev-x86_64.sh header-callable-disposition",
     "negative_scope": "This accounting slice neither supplies a callable implementation nor performs archive extraction. It does not infer runtime semantics from ownership, promote libc.headers-layouts, complete libc.c-abi-compat, or claim public x86 support.",

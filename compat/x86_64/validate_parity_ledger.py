@@ -3494,8 +3494,6 @@ def validate_header_layout_foundation_manifest(
             "default_static_callable_count",
             "verified_feature_callable_count",
             "verified_feature_profile_count",
-            "declared_unverified_feature_callable_count",
-            "unprovided_callable_count",
             "topology_only_profile_count",
             "ordinary_archive_extraction",
             "uses_whole_archive",
@@ -3517,8 +3515,6 @@ def validate_header_layout_foundation_manifest(
             "default_static_callable_count": 1119,
             "verified_feature_callable_count": 78,
             "verified_feature_profile_count": 28,
-            "declared_unverified_feature_callable_count": 34,
-            "unprovided_callable_count": 294,
             "topology_only_profile_count": 1,
             "ordinary_archive_extraction": True,
             "uses_whole_archive": False,
@@ -3533,9 +3529,9 @@ def validate_header_layout_foundation_manifest(
     require(
         isinstance(description, str)
         and "ordinary" in description
-        and "28 verified feature profiles" in description
-        and "34 declared but unverified callable providers" in description
-        and "294-name unprovided complement" in description
+        and "verified feature profiles" in description
+        and "exact roster-derived direct additions" in description
+        and "derived unprovided complement" in description
         and "full callable closure" in description
         and "public x86 support" in description,
         "header-foundation selected provider audit description drifted",
@@ -3558,8 +3554,6 @@ def validate_header_layout_foundation_manifest(
             "candidate_external_callable_count",
             "default_static_callable_count",
             "verified_feature_callable_count",
-            "declared_unverified_feature_callable_count",
-            "unprovided_callable_count",
             "missing_reference_declaration_name_count",
             "missing_reference_declaration_record_count",
             "missing_reference_declaration_routing_complete",
@@ -3584,8 +3578,6 @@ def validate_header_layout_foundation_manifest(
             "candidate_external_callable_count": 1525,
             "default_static_callable_count": 1119,
             "verified_feature_callable_count": 78,
-            "declared_unverified_feature_callable_count": 34,
-            "unprovided_callable_count": 294,
             "missing_reference_declaration_name_count": 0,
             "missing_reference_declaration_record_count": 0,
             "missing_reference_declaration_routing_complete": True,
@@ -3601,9 +3593,9 @@ def validate_header_layout_foundation_manifest(
     description = callable_disposition["description"]
     require(
         isinstance(description, str)
-        and "all 1,525 selected external callable names" in description
-        and "34 unverified providers" in description
-        and "285 deferred planned-provider names" in description
+        and "selected external callable names" in description
+        and "exact roster-derived direct additions" in description
+        and "derived deferred planned-provider complement" in description
         and "Zero missing pinned-musl declaration names" in description
         and "archive extraction" in description
         and "final C ABI provider/archive closure" in description
@@ -6850,11 +6842,11 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     assert isinstance(description, str)
     for phrase in (
         "still-planned `libc.headers-layouts`",
-        "all 1,525 current names",
-        "1,119 default-static",
-        "78 verified feature-provider",
-        "34 planned owned-static provider names",
-        "294 exact deferred-owner records",
+        "current names",
+        "default-static",
+        "verified feature-provider",
+        "planned owned-static provider",
+        "deferred-owner",
         "zero current pinned-musl missing declaration records",
         "not declaration parity",
         "does not perform archive extraction",
@@ -6895,7 +6887,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     scope = evidence[0]["scope"]
     require(
         isinstance(scope, str)
-        and "294 deferred providers" in scope
+        and "deferred provider complement" in scope
         and "zero missing reference declaration names" in scope
         and "not archive extraction, runtime semantics, final C ABI closure, promotion, or public-support evidence" in scope,
         "header callable disposition evidence scope drifted",
@@ -6914,31 +6906,79 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
         raise LedgerError(f"header callable disposition report is invalid: {error}") from error
     summary = report.get("summary")
     require(isinstance(summary, Mapping), "header callable disposition report summary is invalid")
+    # The checked report is rebuilt from the inventory's roster-bound provider
+    # partition. Keep these progress facts relational: owned-static roster
+    # additions should update derived reports, not validator numeric prose.
     require(
-        dict(summary)
+        set(summary)
         == {
-            "candidate_external_callable_count": 1525,
-            "declared_unverified_feature_callable_count": 34,
-            "default_static_callable_count": 1119,
-            "deferred_resolution_counts": {
-                "compiler-builtin": 1,
-                "consumer-supplied": 1,
-                "oracle-declared-no-provider": 7,
-                "planned-provider": 285,
-            },
-            "final_provider_archive_closure_complete": False,
-            "header_declaration_parity_complete": False,
-            "header_ownership_routing_complete": True,
-            "missing_reference_declaration_name_count": 0,
-            "missing_reference_declaration_record_count": 0,
-            "missing_reference_declaration_routing_complete": True,
-            "primary_disposition_exact_coverage": True,
-            "undispositioned_candidate_callable_count": 0,
-            "undispositioned_missing_reference_name_count": 0,
-            "unprovided_callable_count": 294,
-            "verified_feature_callable_count": 78,
+            "candidate_external_callable_count",
+            "declared_unverified_feature_callable_count",
+            "default_static_callable_count",
+            "deferred_resolution_counts",
+            "final_provider_archive_closure_complete",
+            "header_declaration_parity_complete",
+            "header_ownership_routing_complete",
+            "missing_reference_declaration_name_count",
+            "missing_reference_declaration_record_count",
+            "missing_reference_declaration_routing_complete",
+            "primary_disposition_exact_coverage",
+            "undispositioned_candidate_callable_count",
+            "undispositioned_missing_reference_name_count",
+            "unprovided_callable_count",
+            "verified_feature_callable_count",
         },
-        "header callable disposition summary drifted",
+        "header callable disposition summary keys drifted",
+    )
+    provider_count_keys = (
+        "candidate_external_callable_count",
+        "declared_unverified_feature_callable_count",
+        "default_static_callable_count",
+        "unprovided_callable_count",
+        "verified_feature_callable_count",
+    )
+    provider_counts = {key: summary[key] for key in provider_count_keys}
+    require(
+        all(type(value) is int and value >= 0 for value in provider_counts.values()),
+        "header callable disposition provider counts are invalid",
+    )
+    deferred_resolution_counts = summary["deferred_resolution_counts"]
+    require(
+        isinstance(deferred_resolution_counts, Mapping)
+        and deferred_resolution_counts
+        and all(
+            isinstance(resolution, str)
+            and resolution
+            and type(count) is int
+            and count >= 0
+            for resolution, count in deferred_resolution_counts.items()
+        ),
+        "header callable disposition deferred provider counts are invalid",
+    )
+    require(
+        provider_counts["candidate_external_callable_count"]
+        == provider_counts["default_static_callable_count"]
+        + provider_counts["verified_feature_callable_count"]
+        + provider_counts["declared_unverified_feature_callable_count"]
+        + provider_counts["unprovided_callable_count"],
+        "header callable disposition provider partition is not exhaustive",
+    )
+    require(
+        sum(deferred_resolution_counts.values())
+        == provider_counts["unprovided_callable_count"],
+        "header callable disposition deferred provider partition is not exhaustive",
+    )
+    require(
+        summary["final_provider_archive_closure_complete"] is False
+        and summary["header_declaration_parity_complete"] is False
+        and summary["header_ownership_routing_complete"] is True
+        and summary["missing_reference_declaration_name_count"] == 0
+        and summary["missing_reference_declaration_record_count"] == 0
+        and summary["missing_reference_declaration_routing_complete"] is True
+        and summary["primary_disposition_exact_coverage"] is True
+        and summary["undispositioned_candidate_callable_count"] == 0
+        and summary["undispositioned_missing_reference_name_count"] == 0,
+        "header callable disposition completeness boundary drifted",
     )
     scope_report = report.get("scope")
     require(
@@ -6997,12 +7037,12 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
         "no-feature default static archive",
         "isolated exact Cargo requests",
         "ordinary archive extraction",
-        "1,119 current default-static",
-        "78 verified feature-provider",
+        "current default-static",
+        "verified feature-provider",
         "weak same-address aliases",
         "`x86-crypt-allocator-composition`",
         "topology-only",
-        "294-name unprovided complement",
+        "unprovided complement",
         "not full callable closure",
         "public x86 support",
     ):

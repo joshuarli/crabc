@@ -57,7 +57,6 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         rows = ROSTER.load_feature_archive_roster()
 
         self.assertEqual([item.identifier for item in rows], list(cargo_features))
-        self.assertEqual(len(rows), 29)
         owned_static = next(item for item in rows if item.identifier == "x86-owned-static-runtime")
         self.assertEqual(owned_static.state, "planned")
         self.assertIsNone(owned_static.evidence_record)
@@ -158,6 +157,21 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "vsscanf",
             ),
         )
+        owned_dynamic = next(item for item in rows if item.identifier == "x86-owned-dynamic-runtime")
+        self.assertEqual(owned_dynamic.state, "planned")
+        self.assertIsNone(owned_dynamic.evidence_record)
+        self.assertIsNone(owned_dynamic.dispatch_command)
+        self.assertEqual(
+            owned_dynamic.runner,
+            "compat/x86_64/run_materialized_dynamic_sysroot.sh",
+        )
+        self.assertEqual(
+            owned_dynamic.feature_selection_source,
+            "scripts/build_x86_64_owned_dynamic_sysroot.py",
+        )
+        self.assertEqual(owned_dynamic.baseline_features, ("x86-owned-static-runtime",))
+        self.assertEqual(owned_dynamic.additive_callables, ())
+        self.assertEqual(owned_dynamic.replacement_callables, ())
         resolver = next(item for item in rows if item.identifier == "x86-resolver-runtime")
         self.assertEqual(resolver.state, "verified")
         self.assertEqual(resolver.evidence_record, "static-c-resolver-runtime")
@@ -274,15 +288,15 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(composition.additive_callables, ())
         self.assertEqual(composition.replacement_callables, ())
 
-    def test_planned_owned_static_runner_routes_to_the_cargo_selection_source(self) -> None:
+    def test_planned_owned_product_runners_route_to_cargo_selection_sources(self) -> None:
         """Keep planned product evidence distinct from direct feature selection."""
-        owned_static = next(
+        planned_products = tuple(
             item
             for item in ROSTER.load_feature_archive_roster()
-            if item.identifier == "x86-owned-static-runtime"
+            if item.identifier in {"x86-owned-static-runtime", "x86-owned-dynamic-runtime"}
         )
         report = ROSTER.validate_ledger_bindings(
-            (owned_static,),
+            planned_products,
             static_exports=(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
             .read_text(encoding="utf-8")
             .split(),
@@ -292,8 +306,8 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(
             report,
             {
-                "feature_archive_count": 1,
-                "planned_feature_archive_count": 1,
+                "feature_archive_count": len(planned_products),
+                "planned_feature_archive_count": len(planned_products),
                 "verified_feature_archive_count": 0,
             },
         )

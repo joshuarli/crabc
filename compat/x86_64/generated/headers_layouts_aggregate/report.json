@@ -740,7 +740,7 @@
       "id": "callable-disposition",
       "path": "compat/x86_64/header_callable_disposition.json",
       "schema": "crabc.x86_64-header-callable-disposition-report/v1",
-      "sha256": "46a3ed026af21307f2035a65fd568e042820aca04f63d6d04af327818d793f98",
+      "sha256": "911d4401634d9e6924c111ca1ceb6b087c578ea1d9a395e10813e32d7bf411c5",
       "summary": {
         "candidate_external_callable_count": 1525,
         "declared_unverified_feature_callable_count": 34,
@@ -822,7 +822,7 @@
   "inputs": [
     {
       "path": "compat/x86_64/headers-layouts-foundation.toml",
-      "sha256": "298775c9fb63a7142e557c5a074294ac4e5a82bbb66ccefaead7e99c89218134"
+      "sha256": "3c0666ac67ed7436977bc8aa8d5b01c3522994018725088595799779f0b008a7"
     },
     {
       "path": "compat/x86_64/headers-layouts.toml",
@@ -830,7 +830,7 @@
     },
     {
       "path": "compat/x86_64/parity.toml",
-      "sha256": "265a925092733f1f92cab5c3134b2283d284b55ff6451cf8ce3081d91d28b5ab"
+      "sha256": "cbe08f660646cd9e677746d088990722a12b8f1a3bff8ce788a4cb0431f58137"
     },
     {
       "path": "compat/x86_64/public_headers.txt",
@@ -842,11 +842,11 @@
     },
     {
       "path": "compat/x86_64/header_callable_inventory.json",
-      "sha256": "0834ffc0e107e394a4c51fcfaf7eb5a1ce83e44bc2e8036218fae2e9fa4bc467"
+      "sha256": "5a36a410a3e83c0ff26f906562037d54c01c5f4fc667e737e33337fd2d661ffd"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.toml",
-      "sha256": "eefa75f4ae2a05cbd8e9b25cae4241a83970cb8fef4a65c674ab207a9ed870ca"
+      "sha256": "9a7f30fef9c3a201071020b198cdd4bcf8a6680858236c11cbecbe1eeca78973"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.py",
@@ -894,7 +894,7 @@
     },
     {
       "path": "compat/x86_64/header_callable_disposition.json",
-      "sha256": "46a3ed026af21307f2035a65fd568e042820aca04f63d6d04af327818d793f98"
+      "sha256": "911d4401634d9e6924c111ca1ceb6b087c578ea1d9a395e10813e32d7bf411c5"
     },
     {
       "path": "compat/x86_64/headers_layouts_aggregate.py",

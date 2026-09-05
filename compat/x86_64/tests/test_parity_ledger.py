@@ -122,9 +122,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 51)
         self.assertEqual(report["verified_artifact_count"], 378)
-        self.assertEqual(report["feature_archive_count"], 29)
-        self.assertEqual(report["verified_feature_archive_count"], 28)
-        self.assertEqual(report["planned_feature_archive_count"], 1)
+        self.assertEqual(
+            report["feature_archive_count"],
+            report["verified_feature_archive_count"] + report["planned_feature_archive_count"],
+        )
         self.assertEqual(report["header_layout_probe_count"], 55)
         self.assertEqual(report["public_header_inventory_count"], 183)
         self.assertEqual(report["header_foundation_header_count"], 191)
@@ -429,14 +430,22 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_feature_archive_roster(
             data, self.verified_records(data)
         )
-        self.assertEqual(report, {
-            "feature_archive_count": 29,
-            "planned_feature_archive_count": 1,
-            "verified_feature_archive_count": 28,
-        })
-
         feature_archives = data["feature_archive"]
         assert isinstance(feature_archives, list)
+        self.assertEqual(report["feature_archive_count"], len(feature_archives))
+        self.assertEqual(
+            report["planned_feature_archive_count"],
+            sum(entry["state"] == "planned" for entry in feature_archives),
+        )
+        self.assertEqual(
+            report["verified_feature_archive_count"],
+            sum(entry["state"] == "verified" for entry in feature_archives),
+        )
+        self.assertEqual(
+            report["feature_archive_count"],
+            report["planned_feature_archive_count"]
+            + report["verified_feature_archive_count"],
+        )
         string_duplication = next(
             entry for entry in feature_archives
             if entry["id"] == "x86-allocator-string-duplication"
@@ -4295,11 +4304,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             disposition["command"],
             "./scripts/dev-x86_64.sh header-callable-disposition",
         )
-        self.assertEqual(disposition["candidate_external_callable_count"], 1525)
-        self.assertEqual(disposition["default_static_callable_count"], 1119)
-        self.assertEqual(disposition["verified_feature_callable_count"], 78)
-        self.assertEqual(disposition["declared_unverified_feature_callable_count"], 34)
-        self.assertEqual(disposition["unprovided_callable_count"], 294)
+        for field in (
+            "declared_unverified_feature_callable_count",
+            "unprovided_callable_count",
+        ):
+            self.assertNotIn(field, disposition)
         self.assertEqual(disposition["missing_reference_declaration_name_count"], 0)
         self.assertEqual(disposition["missing_reference_declaration_record_count"], 0)
         self.assertTrue(disposition["missing_reference_declaration_routing_complete"])
@@ -4314,12 +4323,11 @@ class X86ParityLedgerTests(unittest.TestCase):
             provider_audit["command"],
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
-        self.assertEqual(provider_audit["candidate_external_callable_count"], 1525)
-        self.assertEqual(provider_audit["default_static_callable_count"], 1119)
-        self.assertEqual(provider_audit["verified_feature_callable_count"], 78)
-        self.assertEqual(provider_audit["verified_feature_profile_count"], 28)
-        self.assertEqual(provider_audit["declared_unverified_feature_callable_count"], 34)
-        self.assertEqual(provider_audit["unprovided_callable_count"], 294)
+        for field in (
+            "declared_unverified_feature_callable_count",
+            "unprovided_callable_count",
+        ):
+            self.assertNotIn(field, provider_audit)
         self.assertEqual(provider_audit["topology_only_profile_count"], 1)
         self.assertTrue(provider_audit["ordinary_archive_extraction"])
         self.assertFalse(provider_audit["uses_whole_archive"])

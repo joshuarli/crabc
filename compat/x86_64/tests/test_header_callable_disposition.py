@@ -7,6 +7,7 @@ import importlib.util
 import json
 import sys
 import unittest
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -37,19 +38,39 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         DISPOSITION.validate_checked_report(report, contract)
 
         summary = report["summary"]
-        self.assertEqual(summary["candidate_external_callable_count"], 1525)
-        self.assertEqual(summary["default_static_callable_count"], 1119)
-        self.assertEqual(summary["verified_feature_callable_count"], 78)
-        self.assertEqual(summary["declared_unverified_feature_callable_count"], 34)
-        self.assertEqual(summary["unprovided_callable_count"], 294)
+        primary = report["primary_disposition"]
+        verified = primary["verified_feature_archives"]
+        planned = primary["declared_unverified_feature_archives"]
+        deferred = primary["deferred_owner_groups"]
+        provider_counts = {
+            "candidate_external_callable_count": sum(
+                (
+                    len(primary["default_static"]["members"]),
+                    sum(len(row["members"]) for row in verified),
+                    sum(len(row["members"]) for row in planned),
+                    sum(len(row["members"]) for row in deferred),
+                )
+            ),
+            "default_static_callable_count": len(primary["default_static"]["members"]),
+            "verified_feature_callable_count": sum(len(row["members"]) for row in verified),
+            "declared_unverified_feature_callable_count": sum(
+                len(row["members"]) for row in planned
+            ),
+            "unprovided_callable_count": sum(len(row["members"]) for row in deferred),
+        }
+        for field, expected in provider_counts.items():
+            self.assertEqual(summary[field], expected)
         self.assertEqual(
             summary["deferred_resolution_counts"],
-            {
-                "compiler-builtin": 1,
-                "consumer-supplied": 1,
-                "oracle-declared-no-provider": 7,
-                "planned-provider": 285,
-            },
+            dict(
+                sorted(
+                    Counter(
+                        row["resolution"]
+                        for row in deferred
+                        for _member in row["members"]
+                    ).items()
+                )
+            ),
         )
         self.assertEqual(
             sum(summary["deferred_resolution_counts"].values()),
