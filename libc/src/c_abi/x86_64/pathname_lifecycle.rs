@@ -42,7 +42,11 @@ const ENOENT: c_int = 2;
 const F_GETFD: i64 = 1;
 
 const PROC_FD_PREFIX: &[u8] = b"/proc/self/fd/";
-const PROC_FD_NAME_SIZE: usize = 15 + 3 * size_of::<c_int>();
+// `src/internal/procfdname.c` is shared by the selected fchmod fallback and
+// the owned filesystem-mechanism source translations. Keep the fixed stack
+// capacity with its source owner rather than letting each sibling invent a
+// pathname buffer contract.
+pub(super) const PROC_FD_NAME_SIZE: usize = 15 + 3 * size_of::<c_int>();
 
 const _: () = {
     assert!(size_of::<c_int>() == 4);
@@ -67,7 +71,7 @@ fn null_with_errno(error: c_int) -> *mut c_char {
 /// `src/internal/procfdname.c`. `fd` is converted as an unsigned C `int`, as
 /// musl does; its caller has already rejected a negative descriptor through
 /// `F_GETFD` before this helper can observe it.
-fn procfdname(path: &mut [u8; PROC_FD_NAME_SIZE], fd: c_int) {
+pub(super) fn procfdname(path: &mut [u8; PROC_FD_NAME_SIZE], fd: c_int) {
     path[..PROC_FD_PREFIX.len()].copy_from_slice(PROC_FD_PREFIX);
     let mut cursor = PROC_FD_PREFIX.len();
     let mut value = fd as u32;

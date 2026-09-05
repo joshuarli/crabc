@@ -53,8 +53,8 @@
 //! environment-backed login-name observation, child-reaping, selected
 //! descriptor-entry, selected filesystem-access, historical `mktemp`
 //! pathname selection and opt-in legacy `tmpnam`/`tempnam` name-generation
-//! leaves, fixed Linux `lchmod`
-//! unsupported compatibility, bounded fcntl status-control
+//! leaves, default-profile fixed Linux `lchmod` unsupported compatibility
+//! with a source-faithful owned-product replacement, bounded fcntl status-control
 //! and nonblocking record-lock boundaries, advisory whole-file flock, bounded
 //! regular-file sendfile transfer, mode-zero POSIX range allocation, one
 //! flag-ignored POSIX close compatibility spelling,
@@ -693,6 +693,7 @@ mod temporary_objects;
 #[cfg(feature = "x86-temporary-names")]
 #[path = "temporary_names.rs"]
 mod temporary_names;
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[path = "lchmod_unsupported.rs"]
 mod lchmod_unsupported;
 #[path = "mkfifo.rs"]
@@ -987,6 +988,11 @@ mod owned_spawn;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_linux_control.rs"]
 mod owned_linux_control;
+// This product-only block completes one source-mapped set of filesystem C
+// mechanisms without widening the frozen selected-static archive.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_filesystem_mechanisms.rs"]
+mod owned_filesystem_mechanisms;
 // Word expansion is a target-local adapter over the selected environment,
 // owned spawn transaction, allocation-backed streams, and C allocator. Keep
 // it inside the aggregate so the frozen default archive remains export-free.

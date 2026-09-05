@@ -17,6 +17,9 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Private x86-64 owned static sysroot evidence](../compat/x86_64/owned-static-sysroot.md)
   — reproducible installed static artifact and real pthread/TLS consumer;
   neither sysroot-family completion nor public support.
+- [Owned filesystem mechanism evidence](../compat/x86_64/owned-filesystem-mechanisms.md)
+  — source-mapped installed filesystem C ABI slice across owned products;
+  neither POSIX-family completion nor public support.
 - [Runtime ownership architecture](design/architecture.md) — layer ownership,
   dependency direction, and the private runtime wire boundary.
 - [Agent/project handoff](../AGENTS.md) — code map, source precedence, and

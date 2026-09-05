@@ -287,6 +287,10 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "ctime",
                 "ctime_r",
                 "dprintf",
+                "fallocate",
+                "fchmodat",
+                "fchown",
+                "fchownat",
                 "fdopen",
                 "fflush_unlocked",
                 "fgetc_unlocked",
@@ -330,9 +334,12 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "hypotf",
                 "localtime",
                 "localtime_r",
+                "lockf",
                 "log1p",
                 "log1pf",
                 "mkdtemp",
+                "mknod",
+                "mknodat",
                 "mkostemp",
                 "mkostemps",
                 "mkstemp",
@@ -346,6 +353,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "posix_spawn",
                 "posix_spawnp",
                 "prctl",
+                "preadv2",
                 "pthread_cond_timedwait",
                 "pthread_getattr_np",
                 "pthread_kill",
@@ -358,15 +366,19 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "putwc_unlocked",
                 "putwchar",
                 "putwchar_unlocked",
+                "pwritev2",
                 "realpath",
+                "renameat",
                 "sem_timedwait",
                 "setbuf",
                 "setbuffer",
                 "setlinebuf",
+                "statx",
                 "strftime",
                 "strftime_l",
                 "swprintf",
                 "swscanf",
+                "symlinkat",
                 "syscall",
                 "system",
                 "tzset",
@@ -1603,8 +1615,8 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                     )
                     self.assertEqual(candidate_type, reference_type)
 
-    def test_statx_matches_the_gnu_and_effective_cxx_header_profiles_without_a_provider(self) -> None:
-        """The GNU declaration/layout slice must not imply an archive owner."""
+    def test_statx_matches_the_gnu_and_effective_cxx_header_profiles_with_the_owned_filesystem_provider(self) -> None:
+        """Header declaration fidelity stays separate from the product provider roster."""
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
             report = json.load(stream)
 
@@ -1656,9 +1668,35 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             "int (int, const char *restrict, int, unsigned int, struct statx *restrict)",
         )
 
+        filesystem_mechanisms = {
+            "fallocate",
+            "fchmodat",
+            "fchown",
+            "fchownat",
+            "lockf",
+            "mknod",
+            "mknodat",
+            "preadv2",
+            "pwritev2",
+            "renameat",
+            "statx",
+            "symlinkat",
+        }
         partition = report["callable_provider_partition"]
-        self.assertIn("statx", partition["unprovided"]["members"])
-        self.assertNotIn("statx", partition["default_static"]["members"])
+        planned = {
+            row["id"]: set(row["members"])
+            for row in partition["declared_unverified_feature_archives"]
+        }
+        self.assertTrue(filesystem_mechanisms <= planned["x86-owned-static-runtime"])
+        self.assertFalse(filesystem_mechanisms & set(partition["unprovided"]["members"]))
+        self.assertFalse(filesystem_mechanisms & set(partition["default_static"]["members"]))
+
+        replacements = {
+            row["id"]: set(row["members"])
+            for row in partition["replacement_variants"]
+        }
+        self.assertIn("lchmod", replacements["x86-owned-static-runtime"])
+        self.assertIn("lchmod", partition["default_static"]["members"])
 
     @unittest.skipUnless(all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm")), "requires native binutils and C compiler")
     def test_audit_uses_ordinary_archive_extraction_and_reports_finite_complement(self) -> None:

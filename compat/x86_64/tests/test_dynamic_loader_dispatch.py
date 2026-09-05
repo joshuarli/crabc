@@ -50,6 +50,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("owned-syslog", False),
                 ("owned-pthread-spin", False),
                 ("owned-process-trio", False),
+                ("owned-filesystem-mechanisms", True),
             ):
                 with self.subTest(command=command):
                     capture = work / f"{command}.jsonl"
@@ -77,7 +78,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertNotIn("--pid=host", arguments)
                         self.assertNotIn("--userns=host", arguments)
                         self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", arguments)
-                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio", "owned-signal-helpers"):
+                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio", "owned-signal-helpers", "owned-filesystem-mechanisms"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-2:], [
@@ -105,11 +106,12 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                     if needs_mount:
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
-                        self.assertEqual(invocations[0][-2:], [
-                            "bash", ("/workspace/compat/x86_64/run_owned_dynamic_sysroot.sh"
-                                     if command == "owned-dynamic-sysroot" else
-                                     "/workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh"),
-                        ])
+                        expected_runner = {
+                            "materialized-dynamic-sysroot": "/workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh",
+                            "owned-dynamic-sysroot": "/workspace/compat/x86_64/run_owned_dynamic_sysroot.sh",
+                            "owned-filesystem-mechanisms": "/workspace/compat/x86_64/run_owned_filesystem_mechanisms.sh",
+                        }[command]
+                        self.assertEqual(invocations[0][-2:], ["bash", expected_runner])
 
 
 if __name__ == "__main__":

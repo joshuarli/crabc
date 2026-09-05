@@ -553,6 +553,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-spin  qualify installed private/shared pthread spin locking
   owned-syslog  qualify owned C syslog delivery and state against musl
   owned-process-trio   qualify installed clone/vfork/daemon semantics against musl
+  owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-scheduling test installed pthread scheduling/default attributes
   owned-fcntl  test installed descriptor-control commands and variadic ABI
@@ -2757,10 +2758,11 @@ run_in_resolver_network_container() {
         "$IMAGE" "$@"
 }
 
-# The installed loader's executable-ORIGIN and AT_SECURE evidence mounts a
-# read-only proc filesystem inside disposable child roots, with trap-owned
-# unmount cleanup. Only this gate admits mount authority and disables the
-# container AppArmor profile; its mount namespace contains those changes.
+# The installed loader's executable-ORIGIN/AT_SECURE evidence and the owned
+# filesystem-mechanism source fallbacks mount a read-only proc filesystem
+# inside disposable child roots, with trap-owned unmount cleanup. Only these
+# gates admit mount authority and disable the container AppArmor profile; each
+# container mount namespace contains those changes.
 run_in_dynamic_loader_mount_container() {
     prepare_work_dir
     docker run --rm --init \
@@ -5618,7 +5620,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
     owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers) ;;
-    owned-assert|owned-linux-control) ;;
+    owned-assert|owned-linux-control|owned-filesystem-mechanisms) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-io-cancellation) ;;
@@ -7677,6 +7679,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-syslog takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_syslog.sh
+        ;;
+    owned-filesystem-mechanisms)
+        [ "$#" -eq 0 ] || fail "owned-filesystem-mechanisms takes no arguments"
+        ensure_image
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_filesystem_mechanisms.sh
         ;;
     owned-io-cancellation)
         ensure_image

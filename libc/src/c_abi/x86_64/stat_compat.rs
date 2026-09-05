@@ -166,6 +166,40 @@ unsafe fn raw_newfstatat(
     result
 }
 
+/// Read the `st_mode` fact consumed by the owned source-faithful `fchmodat`
+/// fallback without publishing an intermediate errno.
+///
+/// The caller owns the final C result boundary because musl's `fchmodat` must
+/// close a temporary descriptor after its later lookup. The C ABI record stays
+/// private to this module; no sibling receives a broader metadata projection.
+///
+/// # Safety
+///
+/// `path` must satisfy Linux `newfstatat(2)`'s pathname, lifetime, and
+/// accessibility rules for the whole raw request. `directory_fd` and `flags`
+/// are forwarded unchanged.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[inline(always)]
+pub(super) unsafe fn fstatat_mode(
+    directory_fd: c_int,
+    path: *const c_char,
+    flags: c_int,
+) -> Result<u32, c_int> {
+    // SAFETY: zero is a valid initial representation for the kernel-filled
+    // private x86 record.
+    let mut record: Stat = unsafe { core::mem::zeroed() };
+    // SAFETY: the caller supplies the raw pathname contract and `record` is
+    // one complete private writable Linux x86 `struct stat` output record.
+    let result = unsafe {
+        raw_newfstatat(directory_fd, path, &mut record as *mut Stat, flags)
+    };
+    if result < 0 && result >= -4_095 {
+        return Err(result.wrapping_neg() as c_int);
+    }
+
+    Ok(record.mode)
+}
+
 /// Issue `newfstatat` and publish its raw result through the C ABI errno
 /// boundary.
 ///

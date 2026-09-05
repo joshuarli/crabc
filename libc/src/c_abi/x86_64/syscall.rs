@@ -11,7 +11,9 @@
 //! lifecycle, and pipe syscalls; the selected vector-I/O leaf uses readv,
 //! writev, and positioned split-offset vector transfer syscalls;
 //! the selected one-entry FIFO leaf uses `mknodat` with fixed current-directory
-//! and zero-device arguments;
+//! and zero-device arguments; and the owned filesystem-mechanism block uses
+//! its source-selected metadata, ownership, special-node, namespace,
+//! allocation, lock, and vectored-I/O requests;
 //! the selected filesystem-access leaf uses direct `access`, legacy
 //! `faccessat`, and flags-bearing `faccessat2` requests; and the selected
 //! extended-attribute leaf uses the complete path, no-follow-path, and
@@ -377,6 +379,7 @@ pub(crate) const SYS_READLINK: i64 = 89;
 pub(crate) const SYS_CHMOD: i64 = 90;
 pub(crate) const SYS_FCHMOD: i64 = 91;
 pub(crate) const SYS_CHOWN: i64 = 92;
+pub(crate) const SYS_FCHOWN: i64 = 93;
 pub(crate) const SYS_LCHOWN: i64 = 94;
 pub(crate) const SYS_UMASK: i64 = 95;
 pub(crate) const SYS_GETTIMEOFDAY: i64 = 96;
@@ -401,6 +404,7 @@ pub(crate) const SYS_RT_SIGTIMEDWAIT: i64 = 128;
 pub(crate) const SYS_RT_SIGQUEUEINFO: i64 = 129;
 pub(crate) const SYS_RT_SIGSUSPEND: i64 = 130;
 pub(crate) const SYS_SIGALTSTACK: i64 = 131;
+pub(crate) const SYS_MKNOD: i64 = 133;
 pub(crate) const SYS_PERSONALITY: i64 = 135;
 pub(crate) const SYS_GETPRIORITY: i64 = 140;
 pub(crate) const SYS_SETPRIORITY: i64 = 141;
@@ -440,6 +444,7 @@ pub(crate) const SYS_INOTIFY_ADD_WATCH: i64 = 254;
 pub(crate) const SYS_INOTIFY_RM_WATCH: i64 = 255;
 pub(crate) const SYS_MKDIRAT: i64 = 258;
 pub(crate) const SYS_MKNODAT: i64 = 259;
+pub(crate) const SYS_FCHOWNAT: i64 = 260;
 pub(crate) const SYS_NEWFSTATAT: i64 = 262;
 pub(crate) const SYS_UNLINKAT: i64 = 263;
 pub(crate) const SYS_RENAMEAT: i64 = 264;
@@ -480,6 +485,7 @@ pub(crate) const SYS_GETRANDOM: i64 = 318;
 pub(crate) const SYS_MEMFD_CREATE: i64 = 319;
 pub(crate) const SYS_MEMBARRIER: i64 = 324;
 pub(crate) const SYS_MLOCK2: i64 = 325;
+pub(crate) const SYS_PREADV2: i64 = 327;
 pub(crate) const SYS_STATFS: i64 = 137;
 pub(crate) const SYS_FSTATFS: i64 = 138;
 pub(crate) const SYS_FDATASYNC: i64 = 75;
@@ -513,8 +519,10 @@ pub(crate) const SYS_CLONE: i64 = 56;
 pub(crate) const SYS_PREAD64: i64 = 17;
 pub(crate) const SYS_PWRITE64: i64 = 18;
 pub(crate) const SYS_PWRITEV2: i64 = 328;
+pub(crate) const SYS_STATX: i64 = 332;
 pub(crate) const SYS_READV: i64 = 19;
 pub(crate) const SYS_WRITEV: i64 = 20;
 pub(crate) const SYS_PREADV: i64 = 295;
 pub(crate) const SYS_PWRITEV: i64 = 296;
 pub(crate) const SYS_FACCESSAT2: i64 = 439;
+pub(crate) const SYS_FCHMODAT2: i64 = 452;

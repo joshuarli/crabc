@@ -51,7 +51,8 @@ fork repair, stack attributes, join cancellation, condition-wait cancellation,
 recursive/error-checking/timed mutex state with robust recovery and C11
 mapping, the shared full I/O cancellation roster, and the separate `system()`
 cancellation protocol, the contained C `syslog` state/delivery matrix, and
-private/shared pthread spin-lock publication.
+private/shared pthread spin-lock publication, and owned Linux-control and
+filesystem mechanisms.
 The runtime-loading leaf also
 runs search policy, all-thread GD TLS growth, initial IE, new-runtime-IE
 rejection, retained scope/lifecycle and rollback differentials. Both clean

@@ -231,20 +231,42 @@ class HeaderCallableDispositionTests(unittest.TestCase):
             <= set(report["primary_disposition"]["default_static"]["members"])
         )
 
-    def test_statx_is_a_planned_provider_after_its_header_declaration_closes(self) -> None:
+    def test_owned_filesystem_mechanisms_are_planned_owned_static_providers(self) -> None:
         contract = DISPOSITION.load_contract()
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
 
         self.assertEqual(contract.missing_reference_declaration_groups, ())
         self.assertEqual(report["missing_reference_declaration_groups"], [])
-        deferred = {
-            row["id"]: row
-            for row in report["primary_disposition"]["deferred_owner_groups"]
+        filesystem_mechanisms = {
+            "fallocate",
+            "fchmodat",
+            "fchown",
+            "fchownat",
+            "lockf",
+            "mknod",
+            "mknodat",
+            "preadv2",
+            "pwritev2",
+            "renameat",
+            "statx",
+            "symlinkat",
         }
-        posix_runtime = deferred["x86-cabi-posix-runtime-missing-v1"]
-        self.assertEqual(posix_runtime["resolution"], "planned-provider")
-        self.assertIn("statx", posix_runtime["members"])
-        self.assertNotIn("statx", report["primary_disposition"]["default_static"]["members"])
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        self.assertTrue(filesystem_mechanisms <= providers["x86-owned-static-runtime"])
+        self.assertFalse(filesystem_mechanisms & deferred)
+        self.assertFalse(
+            filesystem_mechanisms
+            & set(report["primary_disposition"]["default_static"]["members"])
+        )
+        self.assertIn("lchmod", report["primary_disposition"]["default_static"]["members"])
 
     def test_file_handles_are_verified_opt_in_providers_not_deferred_defaults(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
