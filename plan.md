@@ -2,87 +2,96 @@
 
 ## Active integration — 2026-09-05
 
-The combined goal is **not complete**. AArch64 remains paused; C mimalloc
-remains the production backend; x86 public promotion remains false. Resume
-from the integrated runtime and allocator work below rather than restarting
-implementation or the earlier leaf queue.
+The combined goal is **not complete**. AArch64 remains paused, C mimalloc
+remains the production backend, and x86 public promotion remains false.
+Continue from the integrated runtime and allocator components below.
 
-### Integrated baseline and evidence
+### Integrated runtime and allocator
 
-Runtime revision `3369c153` includes the previous installed stdio, filesystem,
-IPC, spawn/wordexp, robust-mutex and runtime-loader work, plus:
+- `05e491dd` and `04bc4f3e`: deferred GOT/PLT transactions, all-thread TLS
+  publication, rollback/RELRO restoration, and correct kernel-main `dladdr`
+  mapped-page identity. The musl GOT/RELRO fault is a documented safety
+  correction, not a parity claim.
+- `7461c67b`, `3369c153`, `d0088750`, `6fd2ac10`, and `408dc7e5`: target
+  mapping leases/kill locks, dynamic initial/last-thread exit, public
+  `pthread_kill` for pthread/C11 handles, and live `pthread_getattr_np` stack,
+  guard and detach snapshots. Main stack probing uses the retained auxiliary
+  stack anchor; static worker-fork adoption retains real stack bounds.
+- `00ffdba3`: owned `pthread_sigmask` and child-contained `chroot`, with
+  musl's invalid-mask-operation error ordering. It also repairs the default
+  roster's three missing, already implemented robust-mutex exports.
+- `1ee958ae`, `31438d28`, and `6ea4b2ee`: syscall-PC-window cancellation
+  across descriptor, socket, sleep, child-wait, open, blocking record-lock and
+  memory-sync operations. Ordinary FILE backends, `wait3/wait4`, empty
+  `sendmmsg`, and nonblocking fcntl commands retain their source non-CP
+  behavior. SIGCANCEL is **33**, timer signal is 32. Clone blocks SIG33 until
+  FS+32 publication; requester signal transactions release leases/locks before
+  restoring the complete mask.
+- `6b5af4ec`, `4cb7f815`, and `ebf8b30f`: canonical-path-bound application
+  receipts, shared initial/runtime musl search, system path caching, preloads,
+  ORIGIN/real setuid AT_SECURE, and pure-TBSS templates whose zero fill extends
+  beyond file mappings. Executable role and mapping ownership must stay
+  separate in the pending direct-interpreter implementation.
+- `f57b0aae` and `781dbd67`: scalar `fma/fmaf`, `hypot/hypotf`, `log1p/log1pf`
+  and existing binary80 `fmal/hypotl/log1pl` installed differential evidence.
+- `5a48b06f`: typed process-registry huge backing, durable failed-page cleanup,
+  exact retry/statistics ownership, reserve-at/interleaved callers and
+  huge-before-regular startup. This integrates `d6905b56` with the reviewed
+  harness fix to use `run.temporary_directory` for contained scratch state.
+  Native M2 remains partial.
+- `6b754fab`: central runner contracts now follow the integrated positive
+  worker-fork behavior and owned/standalone feature boundaries. Do not restore
+  stale negative robust-export or whole-archive cancellation assertions.
 
-- `05e491dd`: deferred GOT/PLT transactions, all-thread TLS publication before
-  atomic pointer stores, permission rollback and RELRO restoration before
-  callbacks. The pinned musl GOT/RELRO fault is a documented safety correction,
-  not a parity claim.
-- `04bc4f3e`: `dladdr` reports the first mapped page for kernel-owned PIE and
-  non-PIE executables without making their mappings rollback eligible.
-- `7461c67b` and `3369c153`: mapping leases and per-target kill locks,
-  SIGCANCEL syscall-PC-window delivery for public `read/readv/write/writev`,
-  cleanup/TSD composition, fork state preservation, and explicit FILE-lock
-  retirement before FS+32 clearing. Ordinary FILE descriptor I/O remains
-  non-canceling. SIGCANCEL is **33**; signal 32 is musl's timer signal. The
-  creator blocks SIG33 across clone and the worker publishes FS+32 before
-  unmasking it.
-- `6d52a714`: incremental arena and OS metadata commitment. The OS-only
-  on-demand correction commits backing before publishing capacity and keeps
-  failed-page ownership and exact committed-prefix release accounting.
-  M2 remains partial.
+### Current component evidence
 
-Both installed-product component gates pass together at `3369c153`:
+- Root `owned-static-sysroot` passes 56 harness tests and all 24 scheduled
+  installed/extracted ET_EXEC/static-PIE jobs, including nested pthread,
+  signal, descriptor/socket/open/lock/wait cancellation consumers and two-build
+  reproducibility. Latest log: `.work/x86_64/open-sequence-static-integrated.log`
+  at `5a48b06f`. Successful static scratch products are cleaned by the runner.
+- The integrated dynamic gate passes 48 loader tests, 21 driver tests, two CRT
+  tests, 37 search decisions per installed/extracted PIE/non-PIE arm, 41-module
+  worker TLS, pure TBSS, live attributes, signal transactions, scope/rollback,
+  finalization and reproducibility. Log:
+  `.work/x86_64/pthread-signals-getattr-search-integrated.log`; retained product:
+  `.work/x86_64/tmp/materialized-dynamic.irVBKA`. This predates the latest
+  open/lock/msync batch; requalify the combined product after integration.
+- `allocator-huge-reservation` passes 69 C differential values and ten focused
+  tests at clean root `5a48b06f`; log:
+  `.work/x86_64/allocator-huge-reservation-integrated.log`. The worker also
+  qualified 956 allocator unit tests, quick evidence and performance smoke.
+  Simulated primitives do not replace hardware huge-page success. The current
+  host has zero configured/free 1-GiB hugetlb pages and one visible NUMA node.
 
-- `./scripts/dev-x86_64.sh owned-static-sysroot`: 56 harness tests, all 24
-  isolated consumer jobs with four workers, installed/extracted ET_EXEC and
-  static-PIE modes, and two-build reproducibility. Log:
-  `.work/x86_64/resume-cancellation-static-integrated.log`. Successful static
-  scratch products are cleaned by the runner; the log is retained.
-- `./scripts/dev-x86_64.sh materialized-dynamic-sysroot`: 46 loader tests,
-  18 driver/package tests, two CRT-mode tests, installed/extracted PIE and
-  non-PIE consumers, deferred binding, 41-module worker TLS, constructor exit,
-  scope/rollback and reproducibility. Log:
-  `.work/x86_64/resume-cancellation-dynamic-integrated.log`; evidence:
-  `.work/x86_64/tmp/materialized-dynamic.Gcawm6`.
+These are component measurements, not final same-revision qualification.
 
-The allocator metadata candidate `358a369e` passed 943 unit tests,
-`allocator --quick`, and the 23-value on-demand differential in
-`.work/worktrees/allocator_m2_metadata/.work/`. Root integration `6d52a714`
-adds source-header provenance corrections with no further implementation
-change. Its target reports live under that worktree's
-`.work/allocator-x86_64/reports/allocator/x86_64/`. This is component evidence,
-not native M2 closure or final same-revision qualification.
+### Remaining independent work
 
-### Current independent work
+All worktrees are beneath `.work/worktrees/`; inspect their branches and dirty
+state before integration. No uncommitted checkpoint is a completed feature.
 
-All worktrees below are beneath `.work/worktrees/`. Inspect branch and dirty
-state before integrating; ongoing work is not a completed feature merely
-because an earlier checkpoint is committed.
-
-| Worktree / branch | Current task |
+| Worktree | Current task |
 | --- | --- |
-| `allocator_m2_metadata` / `allocator/m2-native-metadata` | Distinct huge allocation backing in the same `ProcessArenaBacking` registry, preserving source ownership and partial-failure cleanup. The incremental metadata candidate is already integrated; do not reapply its duplicate prerequisite. |
-| `owned_dynamic_sysroot` / `x86/owned-dynamic-sysroot` | Complete source search policy: environment, first-load dependency ancestry, RPATH/RUNPATH and ORIGIN, with authenticated installed-driver options and ordinary consumers. Pinned musl `dlopen` roots lookup at the main object; do not invent return-address caller semantics. |
-| `owned_pthread_lifecycle` / `x86/owned-pthread-lifecycle` | Dynamic initial/last-thread exit using the existing shared logical task accounting and the dynamic ordinary-exit owner; qualify cancellation, surviving-worker TLS and DSO finalization. |
-| `owned_stdio_engine` / `owned-stdio-closure` | Extend the proven syscall cancellation protocol to the next source-defined descriptor cancellation points. The first public-I/O and FILE-retirement batch is already integrated. |
-| `provider_roster_accounting` / `x86/provider-roster-accounting` | Complete the retained scalar `fma/fmaf`, `hypot/hypotf`, `log1p/log1pf` raw-bit/fenv component using pinned-musl generation/PIC and installed-driver machinery. Binary80 is separate. |
-| `header_declaration_parity` / `x86/header-declaration-parity` | Reconcile declaration identity, source forms and named/prototype declarations against the compiler-derived header matrices, then qualify the first family. Deferred callable providers remain a separate C-ABI obligation. |
+| `owned_dynamic_sysroot` | Direct interpreter CLI, safe AT_BASE=0 entry, explicit executable role versus mapping provenance, admitted-main mapping and argv/auxv handoff. Ordinary PT_INTERP behavior must remain qualified. |
+| `owned_pthread_lifecycle` | Dynamic fork transaction across loader graph and callback ownership, surviving-thread TLS adoption, libc/TSD/robust repair, recursive constructor fork and vanished-constructor rejection. |
+| `owned_stdio_engine` | Unnamed POSIX semaphore source wait/timed-wait cancellation, exact cleanup/token conservation, private/shared behavior and sticky signal-interruption policy. |
+| `header_declaration_parity` | Generic matrices are green; finish the complete native aggregate and promote the header family only when its executable predicates pass. Public support remains separate. |
+| `rust_std_unwinder` | Approved pinned pure-Rust unwind provider, bounded metadata behavior, and ordinary stock-std/build-std/LTO integration under the owned product contract. |
+| `native_source_build` | Pinned Lua source build through owned installed inputs, ordinary workload, purity and extracted/reproducibility evidence. |
+| `allocator_m2_metadata` | Quiescent arena-destruction ownership design is paused by automatic tool review. Partial uncommitted snapshot/destruction files are unqualified; preserve them and resolve that tool restriction before resuming the subtask. |
 
-Dynamic fork still needs an explicit loader transaction covering both graph
-mutation and constructor/finalizer ownership, followed by surviving-thread TLS
-registry adoption and libc lifecycle repair. A copied callback-owner TID or
-vanished worker token must not remain live in the child. Preserve recursive
-constructor/fork behavior, FS+24/32/40 state and source unlock/callback ordering.
-Do not treat enabling the static fork branch as dynamic fork qualification.
+The user approved the unwind configuration and delegated dependency selection
+on 2026-09-05. `AGENTS.md` and `SCOPE.md` retain scope/audit/qualification rules
+without dependency approval round trips. The concrete unwind record is
+`docs/design/x86-rust-unwinder-proposal.md`; do not substitute libgcc, dummy
+unwind symbols or reduced Rust-std fixtures.
 
-Allocator follow-ons must retain a distinct huge owner, not an ordinary
-`Mapping` impersonation or an invented capacity limit. Full metadata lifecycle,
-cross-thread publication and publication/cleanup failure matrices remain open,
-as do the other unqualified M2 components. Keep source cleanup/startup order.
-
+Dynamic fork must preserve FS+24/32/40, source callback/lock ordering and
+logical task identity. Arena destruction must not free its own retry metadata;
+its preflight snapshot design and source-order evidence are still unfinished.
 Preserve unrelated historical dirty worktrees. Use the normal sharded Python
-runner for broad accounting checks; the retained 95/96 unsharded timeout is
-not a pass. Continue independent runtime and allocator work under the current
-`orchestrate` skill, with integration and final qualification owned by root.
+runner for broad accounting checks, with all scratch beneath checkout `.work`.
 
 ## Goal prompt
 
