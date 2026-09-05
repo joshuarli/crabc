@@ -2080,6 +2080,42 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             + ("libc-fopen64-alias",)
             + expected_groups[lchmod_index:]
         )
+        dynamic_main_index = (
+            expected_groups.index("dynamic-main-thread-runtime-v1-target-root") + 1
+        )
+        expected_groups = (
+            expected_groups[:dynamic_main_index]
+            + ("general-dynamic-lifecycle", "general-relocations")
+            + expected_groups[dynamic_main_index:]
+        )
+        fenv_rounding_index = expected_groups.index("libc-fenv-rounding") + 1
+        expected_groups = (
+            expected_groups[:fenv_rounding_index]
+            + ("libc-owned-scalar-math", "libc-owned-binary80-math")
+            + expected_groups[fenv_rounding_index:]
+        )
+        static_sysroot_index = expected_groups.index("owned-static-sysroot")
+        expected_groups = (
+            expected_groups[:static_sysroot_index]
+            + (
+                "owned-io-cancellation",
+                "owned-pthread-getattr",
+                "owned-pthread-lifecycle",
+            )
+            + expected_groups[static_sysroot_index:]
+        )
+        static_sysroot_index = expected_groups.index("owned-static-sysroot") + 1
+        expected_groups = (
+            expected_groups[:static_sysroot_index]
+            + ("lua-static-source-build", "libc-owned-wordexp")
+            + expected_groups[static_sysroot_index:]
+        )
+        dynamic_sysroot_index = expected_groups.index("owned-dynamic-sysroot") + 1
+        expected_groups = (
+            expected_groups[:dynamic_sysroot_index]
+            + ("owned-dynamic-pthread-exit", "materialized-dynamic-sysroot")
+            + expected_groups[dynamic_sysroot_index:]
+        )
         self.assertEqual(actual_groups, expected_groups)
 
         expected_commands = {
@@ -5109,7 +5145,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fn sigwaitinfo(",
             "fn sigwait(",
             "fn sigaltstack(",
-            "fn pthread_sigmask(",
         ):
             self.assertNotIn(forbidden, signal_control)
         self.assertNotIn("#[no_mangle]", signal_foundation)
@@ -5741,7 +5776,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "APPLICATION_SIGNAL_MASK",
             "0xffff_fffc_7fff_ffff",
             "block_application_signals",
-            "restore_signals",
+            "restore_application_signals",
             "SYS_TKILL",
             "SYS_RT_SIGQUEUEINFO",
             "SYS_RT_SIGTIMEDWAIT",
@@ -7306,10 +7341,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "start_ready",
             "tls_released",
             "tls_block.thread_pointer()",
-            "SELECTED_WORKER_REGISTRY_SIZE",
+            "SELECTED_WORKER_REGISTRY_HEAD",
             "SELECTED_WORKER_REGISTRY",
             "SELECTED_WORKER_REGISTRY_LOCK",
-            "reserve_selected_worker",
+            "publish_selected_worker",
             "claim_selected_worker_by_thread_pointer",
             "publish_selected_worker_result",
             "release_selected_worker",
@@ -7355,7 +7390,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )[0]
         self.assertLess(
             public_create_body.index("if thread.is_null() || start.is_none()"),
-            public_create_body.index("if !attributes.is_null()"),
+            public_create_body.index("let attributes = if attributes.is_null()"),
         )
         for required in (
             "#include <errno.h>",
@@ -7551,7 +7586,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "src/thread/pthread_cancel.c::{pthread_cancel,__testcancel,__cancel}",
             "src/thread/pthread_setcancelstate.c::__pthread_setcancelstate",
             "src/thread/pthread_setcanceltype.c::pthread_setcanceltype",
-            "SelectedCancellationSlot",
+            "SelectedWorkerCancellation",
             "PTHREAD_CANCEL_ENABLE",
             "PTHREAD_CANCEL_DISABLE",
             "PTHREAD_CANCEL_MASKED",
@@ -7564,15 +7599,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pub unsafe extern \"C\" fn pthread_testcancel",
             "pub unsafe extern \"C\" fn _pthread_cleanup_push",
             "pub unsafe extern \"C\" fn _pthread_cleanup_pop",
-            "request_selected_pthread_cancellation",
+            "mark_selected_worker_pending",
             "run_current_selected_pthread_cleanup_handlers",
             "2 => PTHREAD_CANCEL_MASKED",
             "ENOTSUP",
-            "no signal handler",
-            "interrupt blocking syscalls",
-            "no implicit cancellation points",
-            "C11 workers, foreign threads, stale handles",
-            "public x86 pthread-runtime claim",
+            "source SIGCANCEL",
+            "Public read/readv/write/writev are cancellation points",
+            "other syscall cancellation points remain separate routing",
+            "C11 cancellation, foreign tasks and stale handles",
+            "No full pthread-family claim follows.",
         ):
             self.assertIn(required, cancellation)
         for forbidden in (
@@ -7587,8 +7622,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         for required in (
             "request_selected_pthread_cancellation",
             "pthread_cancel::mark_selected_worker_pending",
-            "pthread_cancel::initialize_selected_worker_slot",
-            "pthread_cancel::release_selected_worker_slot",
+            "pthread_cancel::SelectedWorkerCancellation::new(",
+            "pthread_identity::publish_current_selected_cancellation_state(",
+            "pthread_identity::clear_current_selected_cancellation_state()",
             "pthread_cancel::run_current_selected_pthread_cleanup_handlers",
         ):
             self.assertIn(required, pthread_create_join)
@@ -7769,21 +7805,26 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "src/aio/aio.c",
             "ENOMEM",
             "EAGAIN",
-            "callbacks must not create, join, or detach",
-            "Concurrent selected-worker lifecycle calls",
+            "No user callback may recurse",
+            "callbacks must return normally.",
+            "Foreign threads, dynamic/loader TLS repair, AIO, allocator state, and",
         ):
             self.assertIn(required, atfork)
         fork_body = atfork.split('pub unsafe extern "C" fn fork()', 1)[1]
         self.assertLess(
-            fork_body.index("has_live_selected_workers"),
             fork_body.index("__fork_handler(-1)"),
+            fork_body.index("pthread_tsd::pthread_fork_prepare()"),
         )
         self.assertLess(
-            fork_body.index("__fork_handler(-1)"),
-            fork_body.index("syscall0(LINUX_X86_64_SYS_FORK)"),
+            fork_body.index("pthread_tsd::pthread_fork_prepare()"),
+            fork_body.index("pthread_create_join::pthread_fork_prepare()"),
         )
         self.assertLess(
-            fork_body.index("syscall0(LINUX_X86_64_SYS_FORK)"),
+            fork_body.index("pthread_create_join::pthread_fork_prepare()"),
+            fork_body.index("raw_selected_fork()"),
+        )
+        self.assertLess(
+            fork_body.index("raw_selected_fork()"),
             fork_body.index("__fork_handler(if result == 0"),
         )
         self.assertLess(
@@ -7791,10 +7832,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             fork_body.index("c_status(result)"),
         )
         self.assertNotIn("__aio_atfork", fork_body)
+        self.assertIn("LINUX_X86_64_SYS_FORK", atfork)
+        self.assertIn('core::arch::asm!(\n            "syscall",', atfork)
         for required in (
-            "SELECTED_WORKER_REGISTRY_RESERVING",
-            "has_live_selected_workers",
-            "slot.control.load(Ordering::Acquire) != 0",
+            "SELECTED_WORKER_REGISTRY_HEAD",
+            "SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) != 0",
+            "is_current_selected_worker",
+            "pthread_fork_prepare",
+            "pthread_fork_parent",
+            "pthread_fork_child",
         ):
             self.assertIn(required, pthread_create_join)
         self.assertIn('#[path = "process_exit.rs"]', static_startup)
@@ -7808,7 +7854,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         for required in (
             "check_parent_child_and_exit_order",
-            "check_live_selected_worker_rejection",
+            "check_live_selected_worker_fork",
             "check_fixed_capacity_rejection",
             "check_raw_fork_error_parent_order",
             "install_fork_error_filter",
@@ -7825,7 +7871,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, probe)
         self.assertLess(
-            probe.index("result = check_live_selected_worker_rejection();"),
+            probe.index("result = check_live_selected_worker_fork();"),
             probe.index("result = check_raw_fork_error_parent_order();"),
         )
         for required in (
@@ -8025,7 +8071,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertNotIn("#[no_mangle]", pthread_identity)
         for forbidden in (
             "pthread_detach",
-            "pthread_cancel",
+            'pub unsafe extern "C" fn pthread_cancel',
             "pthread_key_create",
             "pthread_mutex",
             "thrd_create",
@@ -8282,9 +8328,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
             "thrd_create thrd_exit thrd_join",
-            "thrd_exit lacks an x86 thread-exit syscall instruction",
-            "thrd_join lacks futex syscall number 202",
-            "thrd_join lacks munmap syscall number 11",
+            "selected C11 exit publisher lacks an x86 thread-exit syscall instruction",
+            "selected worker join lacks futex syscall number 202",
+            "selected worker join lacks munmap syscall number 11",
             "C11 callback is cast to the pthread callback type",
             "SelectedWorkerResultKind::Invalid",
             "__tls_get_addr",
@@ -9518,8 +9564,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             runner,
         )
 
-    def test_libc_static_c_abi_pthread_attr_stays_metadata_only(self) -> None:
-        """Keep the standard pthread attribute record contract closed and pure."""
+    def test_libc_static_c_abi_pthread_attr_keeps_metadata_and_live_getter_scopes(
+        self,
+    ) -> None:
+        """Keep static record metadata separate from the owned live-stack getter."""
 
         static_root = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
@@ -9531,6 +9579,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         start_path = ROOT / "compat" / "x86_64" / "libc_pthread_attr_start.S"
         artifact_runner_path = (
             ROOT / "compat" / "x86_64" / "run_libc_pthread_attr.sh"
+        )
+        owned_getattr_probe_path = (
+            ROOT / "compat" / "x86_64" / "owned_pthread_getattr_probe.c"
+        )
+        owned_getattr_runner_path = (
+            ROOT / "compat" / "x86_64" / "run_owned_pthread_getattr.sh"
         )
         c_header_probe = (
             ROOT / "compat" / "x86_64" / "pthread_c11_header_abi_probe.c"
@@ -9570,12 +9624,25 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_attr_getschedparam",
         )
 
-        for path in (implementation_path, probe_path, start_path, artifact_runner_path):
+        for path in (
+            implementation_path,
+            probe_path,
+            start_path,
+            artifact_runner_path,
+            owned_getattr_probe_path,
+            owned_getattr_runner_path,
+        ):
             self.assertTrue(path.is_file(), f"missing pthread attribute input: {path}")
         implementation = implementation_path.read_text(encoding="utf-8")
+        metadata_implementation = implementation.split(
+            "/// Observe the owned thread's usable stack, guard and current detach state.",
+            1,
+        )[0]
         probe = probe_path.read_text(encoding="utf-8")
         start = start_path.read_text(encoding="utf-8")
         artifact_runner = artifact_runner_path.read_text(encoding="utf-8")
+        owned_getattr_probe = owned_getattr_probe_path.read_text(encoding="utf-8")
+        owned_getattr_runner = owned_getattr_runner_path.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "pthread_attr.rs"]', static_root)
         for required in (
@@ -9586,7 +9653,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "src/thread/pthread_attr_setschedparam.c",
             "56-byte, align-8 union",
             "PTHREAD_STACK_MIN: usize = 2_048",
-            "null attribute pointer",
+            "Null or otherwise invalid pointers are outside the C API contract.",
         ):
             self.assertIn(required, implementation)
         for forbidden in (
@@ -9596,9 +9663,22 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_create_join::",
             "Atomic",
         ):
-            self.assertNotIn(forbidden, implementation)
+            self.assertNotIn(forbidden, metadata_implementation)
         for symbol in symbols:
             self.assertIn(f'fn {symbol}(', implementation)
+
+        for required in (
+            "src/thread/pthread_getattr_np.c",
+            '#[cfg(feature = "x86-owned-static-runtime")]',
+            'pub unsafe extern "C" fn pthread_getattr_np',
+            "super::pthread_create_join::selected_thread_attributes(thread)",
+            "super::auxv_observation::initial_stack_anchor()",
+            "super::raw_syscall::SYS_MREMAP",
+            "super::errno::set_errno",
+            "return ESRCH",
+            "return EINVAL",
+        ):
+            self.assertIn(required, implementation)
 
         for required in (
             "#include <errno.h>",
@@ -9651,6 +9731,21 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertIn("/workspace/compat/x86_64/run_libc_pthread_attr.sh", runner)
         self.assertIn(
             '    libc-pthread-attributes)\n        [ "$#" -eq 0 ] || fail "libc-pthread-attributes takes no arguments"',
+            runner,
+        )
+        for required in (
+            "pthread_getattr_np",
+            "ordinary filtered fork",
+            "CRABC_OWNED_WITNESS",
+            "crabc-cc-dynamic",
+            "dynamic-sysroot",
+        ):
+            self.assertIn(required, owned_getattr_probe + owned_getattr_runner)
+        self.assertIn(
+            "/workspace/compat/x86_64/run_owned_pthread_getattr.sh", runner
+        )
+        self.assertIn(
+            '    owned-pthread-getattr)\n        [ "$#" -eq 0 ] || fail "owned-pthread-getattr takes no arguments"',
             runner,
         )
 
@@ -9715,7 +9810,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "PublicPthreadBarrierStorage",
             "BARRIER_INSTANCE_POINTER_INDEX",
             "shared_barrier_wait",
-            "vmlock_wait",
+            "pthread_vmlock::wait()",
             "FUTEX_PRIVATE_FLAG",
             "process-private",
             "process-shared",
@@ -10030,12 +10125,13 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         for required in (
             "1.2.6 release commit",
             "src/thread/pthread_mutex_init.c",
-            "src/thread/pthread_mutex_trylock.c::__pthread_mutex_trylock",
+            "src/thread/pthread_mutex_trylock.c::{__pthread_mutex_trylock,",
             "src/thread/pthread_mutex_lock.c::__pthread_mutex_lock",
             "src/thread/pthread_mutex_timedlock.c::__pthread_mutex_timedlock",
             "src/thread/pthread_mutex_unlock.c::__pthread_mutex_unlock",
             "src/thread/pthread_mutex_destroy.c",
-            "process-private `PTHREAD_MUTEX_NORMAL`",
+            "The normal route admits a zero-initialized or null-attribute",
+            "Process-shared robust transitions",
             "struct PublicPthreadMutex",
             "#[repr(C, align(8))]",
             "MUTEX_TYPE_WORD: usize = 0",
@@ -10045,8 +10141,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "MUTEX_WAITER_BIT: c_int = c_int::MIN",
             "size_of::<PublicPthreadMutex>() == 40",
             "align_of::<PublicPthreadMutex>() == 8",
-            "FUTEX_WAIT_PRIVATE",
-            "FUTEX_WAKE_PRIVATE",
+            "FUTEX_PRIVATE_FLAG",
+            "futex_wait(lock, marked, true)",
+            "futex_wake(lock, true)",
             "raw_syscall::SYS_FUTEX",
             "raw_syscall::syscall4(",
             "x86_64_compare_exchange_acqrel_i32",
@@ -10060,7 +10157,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pub unsafe extern \"C\" fn pthread_mutex_unlock",
             "return ENOTSUP;",
             "public pthread boundary never writes C `errno`",
-            "public x86 support",
+            "x86 support. The",
         ):
             self.assertIn(required, pthread_mutex)
         mutex_exports = set(
@@ -10072,6 +10169,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         self.assertSetEqual(
             mutex_exports,
             {
+                "pthread_mutexattr_setrobust",
+                "pthread_mutexattr_setpshared",
+                "pthread_mutex_consistent",
                 "pthread_mutex_init",
                 "pthread_mutex_destroy",
                 "pthread_mutex_trylock",
@@ -10080,7 +10180,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             },
         )
         for forbidden in (
-            "pub unsafe extern \"C\" fn pthread_mutexattr_",
             "pub unsafe extern \"C\" fn pthread_mutex_timedlock",
             "pub unsafe extern \"C\" fn pthread_cond_",
             "pub unsafe extern \"C\" fn pthread_rwlock_",
@@ -10503,7 +10602,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "struct Waiter",
             "barrier: c_int",
             "notify: *mut c_int",
-            "let mut node = Waiter {",
+            "let mut stack_waiter = Waiter::empty();",
             "WAITER_LEAVING: c_int = 2",
             "private_cond_signal",
             "private_unlock_requeue",
@@ -10523,7 +10622,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_mutex::unlock_selected_normal_mutex",
             "pthread_mutex::lock_selected_normal_mutex",
             "never writes C errno",
-            "public x86 support",
+            "support. A selected pthread worker additionally admits deferred",
         ):
             self.assertIn(required, pthread_cond)
         condition_exports = set(
@@ -11550,7 +11649,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         runner = RUNNER.read_text(encoding="utf-8")
 
-        self.assertIn('#[path = "static_tls.rs"]', static_root)
+        self.assertIn(
+            '#[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), path = "static_tls.rs")]',
+            static_root,
+        )
+        self.assertIn(
+            '#[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "dynamic_tls.rs")]',
+            static_root,
+        )
         for required in (
             "StaticInitialTlsPlan",
             "StaticInitialTlsBlock",
@@ -13356,7 +13462,10 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         runner = RUNNER.read_text(encoding="utf-8")
 
-        self.assertIn('#[cfg(feature = "x86-posix-spawn-file-actions")]', static_root)
+        self.assertIn(
+            '#[cfg(any(feature = "x86-posix-spawn-file-actions", feature = "x86-owned-static-runtime"))]',
+            static_root,
+        )
         self.assertIn('#[path = "posix_spawn_file_actions.rs"]', static_root)
         self.assertIn("posix_spawn_file_actions_init", static_exports)
         expected = {
@@ -16192,6 +16301,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "raw_syscall::SYS_GETPEERNAME",
             "c_status(result)",
             "c_ssize_status(result)",
+            "super::pthread_cancel::syscall_cp",
+            '#[cfg(feature = "x86-owned-static-runtime")]',
+            '#[cfg(not(feature = "x86-owned-static-runtime"))]',
         ):
             self.assertIn(required, socket_transport)
         for forbidden in (
@@ -16205,7 +16317,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fn recvmmsg(",
             "fn poll(",
             "fn pthread_",
-            "pthread_cancel",
+            'pub unsafe extern "C" fn pthread_',
         ):
             self.assertNotIn(forbidden, socket_transport)
         for required in (
@@ -27395,9 +27507,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "LINUX_ERRNO_MAX",
             "wrapping_neg",
             "positive errno",
-            "__syscall_cp",
+            "super::pthread_cancel::syscall_cp",
+            '#[cfg(feature = "x86-owned-static-runtime")]',
+            '#[cfg(not(feature = "x86-owned-static-runtime"))]',
             "special-cases a relative realtime request",
-            "independent of the",
+            "without changing errno and do not establish public x86 support.",
         ):
             self.assertIn(required, clock_nanosleep)
         for forbidden in (
@@ -27407,7 +27521,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "errno::set_errno",
             "fn nanosleep(",
             "__tls_get_addr",
-            "pthread_",
+            'pub unsafe extern "C" fn pthread_',
         ):
             self.assertNotIn(forbidden, clock_nanosleep)
         for required in (
@@ -27621,7 +27735,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "fn sleep(",
             "fn usleep(",
             "__tls_get_addr",
-            "pthread_",
+            'pub unsafe extern "C" fn pthread_',
         ):
             self.assertNotIn(forbidden, nanosleep)
         for required in (
@@ -28017,6 +28131,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "FD_CLOEXEC",
             "c_status(result)",
             "__syscall_cp",
+            "super::pthread_cancel::syscall_cp",
+            '#[cfg(feature = "x86-owned-static-runtime")]',
+            '#[cfg(not(feature = "x86-owned-static-runtime"))]',
             "rdi/rsi/rdx/r10",
         ):
             self.assertIn(required, descriptor_entry)
@@ -28026,7 +28143,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pub unsafe extern \"C\" fn fcntl",
             "fn fcntl(",
             "__tls_get_addr",
-            "pthread_",
+            'pub unsafe extern "C" fn pthread_',
         ):
             self.assertNotIn(forbidden, descriptor_entry)
         for required in (
@@ -28252,6 +28369,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "F_SETLKW",
             "raw_syscall::SYS_FCNTL",
             "raw_syscall::syscall3(",
+            "super::pthread_cancel::syscall_cp(",
+            '#[cfg(feature = "x86-owned-static-runtime")]',
             "c_status(result)",
             "rdi/rsi/rdx",
             "fcntl_record_lock",
@@ -31016,6 +31135,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "Selected static Linux/x86-64 pathname-mutation C boundary",
             "musl 1.2.6 release commit",
             "src/unistd/chdir.c",
+            "src/linux/chroot.c",
             "src/stat/chmod.c",
             "src/stdio/remove.c",
             "src/internal/procfdname.c",
@@ -31029,6 +31149,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "no C allocator boundary",
             "Linux 5.10",
             "raw_syscall::SYS_CHDIR",
+            "raw_syscall::SYS_CHROOT",
+            '#[cfg(feature = "x86-owned-static-runtime")]',
             "raw_syscall::SYS_GETCWD",
             "raw_syscall::SYS_MKDIR",
             "raw_syscall::SYS_UNLINK",
@@ -31045,6 +31167,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(required, implementation)
         for symbol in (
             "chdir",
+            "chroot",
             "getcwd",
             "mkdir",
             "unlink",
@@ -31061,7 +31184,6 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             self.assertIn(f"fn {symbol}(", implementation)
         for forbidden in (
             "fn fchdir(",
-            "fn chroot(",
             "fn realpath(",
             "fn renameat(",
             "fn renameat2(",

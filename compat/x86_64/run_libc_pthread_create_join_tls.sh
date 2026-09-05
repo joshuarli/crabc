@@ -154,7 +154,7 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_sym
  # every still-unselected pthread synchronization surface instead of treating
  # selected sibling exports as accidental.
 for unselected in clone __clone \
-    pthread_mutex_timedlock pthread_mutex_consistent \
+    pthread_mutex_timedlock \
     pthread_cond_timedwait \
     pthread_sigmask \
     malloc free calloc realloc __tls_get_addr; do

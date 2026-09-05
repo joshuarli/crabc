@@ -74918,6 +74918,10 @@ def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
     implementation = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_attr.rs"
     ).read_text(encoding="utf-8")
+    metadata_implementation, owned_getattr_implementation = implementation.split(
+        "/// Observe the owned thread's usable stack, guard and current detach state.",
+        1,
+    )
     for phrase in (
         "PublicPthreadAttr",
         "size_of::<PublicPthreadAttr>() == 56",
@@ -74939,8 +74943,20 @@ def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
         "Atomic",
     ):
         require(
-            forbidden not in implementation,
+            forbidden not in metadata_implementation,
             f"pthread attribute implementation unexpectedly selects {forbidden}",
+        )
+    for phrase in (
+        "src/thread/pthread_getattr_np.c",
+        '#[cfg(feature = "x86-owned-static-runtime")]',
+        'pub unsafe extern "C" fn pthread_getattr_np',
+        "super::pthread_create_join::selected_thread_attributes(thread)",
+        "super::auxv_observation::initial_stack_anchor()",
+        "super::raw_syscall::SYS_MREMAP",
+    ):
+        require(
+            phrase in owned_getattr_implementation,
+            f"owned pthread_getattr implementation omits {phrase}",
         )
     for symbol in symbols:
         require(

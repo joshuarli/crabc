@@ -154,7 +154,7 @@ done
  # The shared archive's separately evidenced normal private pthread-mutex,
  # private condition, and TSD lifecycle blocks are deliberately outside this
  # direct sleep adapter.
-for unselected in pthread_mutex_timedlock pthread_mutex_consistent \
+for unselected in pthread_mutex_timedlock \
     pthread_cond_timedwait \
     timer_create \
     setitimer ualarm malloc free calloc realloc; do

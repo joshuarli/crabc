@@ -6,7 +6,8 @@
  * order, parent/child callbacks in forward order, a child-only ordinary-exit
  * callback after its atfork callbacks, successful child reaping, a forced raw
  * fork error through the parent callback route, and candidate-only fixed-
- * capacity/live-selected-worker rejection plus post-join admission recovery.
+ * capacity rejection plus a live-selected-worker transaction, child reaping,
+ * and post-join admission recovery.
  * It does not select recursive callbacks, callback-driven worker creation,
  * foreign or concurrent threads, concurrent selected-worker lifecycle,
  * signal safety, allocator/TSD, cancellation, synchronization, dynamic TLS, a
@@ -418,13 +419,16 @@ static int wait_for_selected_worker(void)
     return 0;
 }
 
-static int check_live_selected_worker_rejection(void)
+static int check_live_selected_worker_fork(void)
 {
+    static const char expected_child_events[] = { '4', '5', '6' };
     pthread_t worker;
     void *result = 0;
-    pid_t unexpected_child;
+    int report[2] = { -1, -1 };
+    pid_t child;
     int status = -1;
     int failure = 0;
+    unsigned int index;
 
     atomic_store_explicit(&selected_worker_ready, 0, memory_order_relaxed);
     atomic_store_explicit(&selected_worker_release, 0, memory_order_relaxed);
@@ -433,32 +437,66 @@ static int check_live_selected_worker_rejection(void)
         return 1;
     if (!wait_for_selected_worker())
         failure = 2;
-
-    callback_phase = 0;
-    callback_failure = 0;
-    errno = E2BIG;
-    unexpected_child = fork();
-    if (unexpected_child == 0)
-        raw_exit(124);
-    if (unexpected_child > 0) {
-        do {
-            status = -1;
-        } while (waitpid(unexpected_child, &status, 0) < 0 && errno == EINTR);
+    if (raw_pipe(report) != 0)
         failure = failure == 0 ? 3 : failure;
-    } else if (errno != EAGAIN) {
-        failure = failure == 0 ? 4 : failure;
+
+    if (failure == 0) {
+        child_report_write = report[1];
+        callback_phase = 0;
+        callback_failure = 0;
+        errno = E2BIG;
+        child = fork();
+        if (child == 0) {
+            if (callback_failure != 0 || callback_phase != 6 || errno != E2BIG)
+                raw_exit(124);
+            if (raw_close(report[0]) != 0)
+                raw_exit(125);
+            raw_exit(0);
+        }
+        if (child < 0) {
+            failure = 4;
+            (void)raw_close(report[0]);
+            (void)raw_close(report[1]);
+        } else {
+            if (raw_close(report[1]) != 0)
+                failure = 5;
+            child_report_write = -1;
+            if (callback_failure != 0 || callback_phase != 6 || errno != E2BIG)
+                failure = failure == 0 ? 6 : failure;
+            do {
+                status = -1;
+            } while (waitpid(child, &status, 0) < 0 && errno == EINTR);
+            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+                failure = failure == 0 ? 7 : failure;
+            for (index = 0; index < sizeof(expected_child_events); ++index) {
+                char event = 0;
+
+                if (!raw_read_event(report[0], &event) ||
+                    event != expected_child_events[index])
+                    failure = failure == 0 ? 8 + (int)index : failure;
+            }
+            {
+                char unexpected = 0;
+
+                if (raw_read_event(report[0], &unexpected))
+                    failure = failure == 0 ? 11 : failure;
+            }
+            if (raw_close(report[0]) != 0)
+                failure = failure == 0 ? 12 : failure;
+        }
+    } else {
+        (void)raw_close(report[0]);
+        (void)raw_close(report[1]);
     }
-    if (callback_phase != 0 || callback_failure != 0)
-        failure = failure == 0 ? 5 : failure;
 
     atomic_store_explicit(&selected_worker_release, 1, memory_order_release);
     if (pthread_join(worker, &result) != 0 || result != (void *)(uintptr_t)0x5a)
-        failure = failure == 0 ? 6 : failure;
+        failure = failure == 0 ? 13 : failure;
     if (failure == 0) {
         int recovery = check_parent_child_and_exit_order();
 
         if (recovery != 0)
-            failure = 10 + recovery;
+            failure = 20 + recovery;
     }
     return failure;
 }
@@ -503,7 +541,7 @@ static int run_probe(void)
     result = check_fixed_capacity_rejection();
     if (result != 0)
         return 30 + result;
-    result = check_live_selected_worker_rejection();
+    result = check_live_selected_worker_fork();
     if (result != 0)
         return 40 + result;
 #endif
