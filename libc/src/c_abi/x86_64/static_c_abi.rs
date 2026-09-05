@@ -775,7 +775,14 @@ mod vector_io;
 mod process_resources;
 #[path = "ulimit.rs"]
 mod ulimit;
+// The frozen selected-static configuration module admits only its original
+// fixed selectors. Installed products select the source-backed auxv signal
+// stack extension without widening that private archive boundary.
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[path = "system_configuration.rs"]
+mod system_configuration;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_system_configuration.rs"]
 mod system_configuration;
 #[path = "memory_mapping.rs"]
 mod memory_mapping;

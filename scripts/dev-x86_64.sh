@@ -5691,7 +5691,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
     owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition) ;;
-    owned-assert|owned-legacy-time|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
+    owned-assert|owned-legacy-time|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-error-reporting) ;;
@@ -7791,6 +7791,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-linux-control takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_linux_control.sh
+        ;;
+    owned-kernel-residual)
+        [ "$#" -eq 0 ] || fail "owned-kernel-residual takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_kernel_residual.sh
         ;;
     owned-vm-mechanisms)
         [ "$#" -eq 0 ] || fail "owned-vm-mechanisms takes no arguments"
