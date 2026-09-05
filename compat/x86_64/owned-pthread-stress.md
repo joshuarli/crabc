@@ -12,9 +12,9 @@ owner must additionally bind the same-product I/O-cancellation evidence below.
 POSIX §2.9.5.2 permits, but does not require, a cancellation point in `fgetc`.
 Section 2.9.5.4 requires asynchronous cancellation safety only for
 `pthread_cancel`, `pthread_setcancelstate`, and `pthread_setcanceltype`.
-Cancellation during a function that is not async-cancel-safe has undefined
-behavior. Neither section requires the frozen fixture's successful deferred or
-asynchronous cancellation inside `fgetc`.
+Asynchronous cancellation during a function that is not async-cancel-safe has
+undefined behavior. Neither section requires the frozen fixture's successful
+deferred or asynchronous cancellation inside `fgetc`.
 [POSIX thread cancellation](https://pubs.opengroup.org/onlinepubs/9799919799/functions/V2_chap02.html).
 
 Pinned musl 1.2.6 follows `src/stdio/fgetc.c` through `getc.h`, `__uflow.c`, and
@@ -57,9 +57,10 @@ The report's `replacement_io_cancellation_required` is exactly `READ_FILE` and
   a computation loop with no function calls after publishing its thread ID.
 
 The existing I/O-cancellation family receipt must identify the same source and
-installed product as the composite aggregate's dynamic stress run, including
-PIE/non-PIE through kernel/direct entry. This component merely declares the
-requirement: `replacement_io_cancellation_receipt` is null and
+selected installed products as the composite aggregate's stress run. Required
+coverage includes dynamic PIE/non-PIE through kernel/direct entry and, when a
+static product is supplied, static and static-PIE using that same static product.
+This component merely declares the requirement: `replacement_io_cancellation_receipt` is null and
 `native_aggregate_complete` remains false even when
 `remaining_stress_workload_passed` is true. A composite owner must validate and
 bind the actual I/O evidence; a fixture hash alone does not satisfy it.
