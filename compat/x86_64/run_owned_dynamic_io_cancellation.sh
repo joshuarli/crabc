@@ -1,15 +1,40 @@
 #!/usr/bin/env bash
-# Actual installed dynamic cancellation composition, separate from static proof.
+# Whole installed cancellation roster, with optional supplied-static replay.
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly witness="$ROOT/compat/x86_64/run_pthread_wait_witness.py"
 readonly interpreter=/lib/ld-crabc-x86_64.so.1
+readonly evidence="$ROOT/compat/x86_64/owned_io_cancellation_evidence.py"
 source "$ROOT/compat/x86_64/owned_io_cancellation_fixtures.sh"
-[ "$#" -le 1 ] || { printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2; exit 2; }
+usage() {
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
+    exit 2
+}
+provided_static=''
+provided_dynamic=''
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-sysroot)
+            [ "$#" -ge 2 ] || usage
+            [ -z "$provided_static" ] || usage
+            [ -n "$2" ] && [[ "$2" != -* ]] || usage
+            provided_static="$2"
+            shift 2
+            ;;
+        -*)
+            usage
+            ;;
+        *)
+            [ -z "$provided_dynamic" ] && [ -n "$1" ] || usage
+            provided_dynamic="$1"
+            shift
+            ;;
+    esac
+done
 [ "$(uname -sm)" = 'Linux x86_64' ]
-python3 -B - "$ROOT" "${TMPDIR:-}" "${1:-}" <<'PY'
+python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" "$provided_static" <<'PY'
 from pathlib import Path
 import sys
 root, temporary = map(Path, sys.argv[1:3])
@@ -19,19 +44,31 @@ if sys.argv[3]:
     product = Path(sys.argv[3]).resolve(strict=True)
     if not product.is_dir() or not product.is_relative_to(root / '.work'):
         raise SystemExit('dynamic cancellation product must be a checkout .work directory')
+if sys.argv[4]:
+    product = Path(sys.argv[4]).resolve(strict=True)
+    if not product.is_dir() or not product.is_relative_to(root / '.work'):
+        raise SystemExit('static cancellation product must be a checkout .work directory')
+    sys.path.insert(0, str(root / 'compat/x86_64'))
+    from owned_static_sysroot_package import source_entries, validate_installed_tree
+    validate_installed_tree(product, source_entries(product))
 PY
+if [ -n "$provided_static" ]; then
+    provided_static="$(realpath "$provided_static")"
+fi
 readonly work="$(mktemp -d "$TMPDIR/owned-dynamic-io-cancellation.XXXXXX")"
+chmod a+rx "$work"
 printf 'owned dynamic I/O cancellation evidence: %s\n' "$work"
-installed="${1:-}"
+installed="$provided_dynamic"
 if [ -z "$installed" ]; then
     installed="$work/installed"
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$installed" >"$work/build.json"
 fi
-installed="$(realpath -e "$installed")"
+installed="$(realpath "$installed")"
 readonly installed
 readonly driver="$installed/bin/crabc-cc-dynamic"
 readonly execution_root="$work/execution-root"
 cp -a "$installed" "$execution_root"
+if [ -n "$provided_static" ]; then mkdir "$work/static-execution-root"; fi
 # A descriptor opened read-only before chroot supplies /proc observations.
 # This private root contains only the owned product, consumers, and scratch;
 # no host loader, libc, shell, or executable search directory is mounted.
@@ -43,6 +80,31 @@ for runtime in lib/ld-crabc-x86_64.so.1 usr/lib/libc.so; do
         exit 1
     fi
 done
+
+run_fixture() {
+    local root="$1" output="$2" status=0
+    shift 2
+    local -a command=(timeout 30 env -i "PATH=$PATH" python3 -B "$witness" "$root" "$@")
+    python3 -B - "${output%.stdout}.command.json" "${command[@]}" <<'PY_COMMAND'
+import json
+import os
+from pathlib import Path
+import sys
+with Path(sys.argv[1]).open('x') as output:
+    json.dump({'cwd': os.getcwd(), 'command': sys.argv[2:]}, output, sort_keys=True, separators=(',', ':'))
+    output.write('\n')
+PY_COMMAND
+    "${command[@]}" >"$output" 2>"${output%.stdout}.stderr" || status=$?
+    printf '%s\n' "$status" >"${output%.stdout}.status"
+    return "$status"
+}
+
+compare_oracle() {
+    local candidate="$1" suffix
+    for suffix in stdout stderr status; do
+        cmp "$work/$probe-oracle.$suffix" "$candidate.$suffix"
+    done
+}
 
 audit_dynamic_consumer() {
     local mode="$1" candidate="$2"
@@ -87,33 +149,55 @@ PY
 
 for probe in "${OWNED_IO_CANCELLATION_PROBES[@]}"; do
     source_file="$ROOT/compat/x86_64/${probe}_probe.c"
-    "$oracle_cc" -std=c11 -I"$ROOT/include" -E -H "$source_file" \
-        >/dev/null 2>"$work/$probe.headers"
+    object="$work/$probe.o"
+    # One PIE object supports every ordinary static and dynamic linkage.
+    # The installed driver owns headers/code generation; the separate audit
+    # repeats dependency-only preprocessing and permits exactly one local
+    # witness header, never the checkout's public include tree.
+    "$driver" --dynamic-pie -std=c11 -fno-builtin -fno-stack-protector \
+        -c "$source_file" -o "$object"
     mapfile -t headers < <(owned_io_cancellation_headers "$probe")
-    for header in "${headers[@]}"; do grep -Fq "$ROOT/include/$header" "$work/$probe.headers"; done
-    "$oracle_cc" -std=c11 -pthread -fno-builtin -fno-stack-protector \
-        -I"$ROOT/include" "$source_file" -o "$work/$probe-oracle"
+    python3 -B "$evidence" record-compile "$installed" "$source_file" "$object" \
+        "$work/$probe.compile.json" "${headers[@]}"
+    "$oracle_cc" -pthread "$object" -o "$work/$probe-oracle"
     mapfile -t oracle_arguments < <(owned_io_cancellation_arguments "$probe" "$work/$probe-oracle-files")
-    timeout 30 env -i PATH="$PATH" python3 -B "$witness" '' "$work/$probe-oracle" \
-        "${oracle_arguments[@]}" >"$work/$probe-oracle.stdout"
+    run_fixture '' "$work/$probe-oracle.stdout" "$work/$probe-oracle" "${oracle_arguments[@]}"
     grep -qx "${probe//_/-}-ok" "$work/$probe-oracle.stdout"
+    if [ -n "$provided_static" ]; then
+        for mode in static static-pie; do
+            candidate="$work/$probe-$mode"
+            receipt="$candidate.receipt.json"
+            (
+                cd "$work"
+                "$provided_static/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$receipt")" \
+                    "$object" -o "$candidate"
+            )
+            python3 -B "$evidence" record-link "$provided_static" "$object" "$candidate" "$receipt" \
+                "$mode" "$candidate.link-identity.json"
+            cp "$candidate" "$work/static-execution-root/consumer"
+            mapfile -t candidate_arguments < <(owned_io_cancellation_arguments "$probe" "/$probe-$mode-files")
+            run_fixture "$work/static-execution-root" "$candidate.stdout" /consumer "${candidate_arguments[@]}"
+            compare_oracle "$candidate"
+        done
+    fi
     for mode in pie non-pie; do
         candidate="$work/$probe-$mode"
-        "$driver" "--dynamic-$mode" -std=c11 -fno-builtin -fno-stack-protector \
-            -c "$source_file" -o "$candidate.o"
-        "$driver" "--dynamic-$mode" "$candidate.o" -o "$candidate"
+        "$driver" "--dynamic-$mode" "$object" -o "$candidate"
+        python3 -B "$evidence" record-link "$installed" "$object" "$candidate" "$candidate.crabc-link.json" \
+            "$mode" "$candidate.link-identity.json"
         audit_dynamic_consumer "$mode" "$candidate"
         cp "$candidate" "$execution_root/consumer"
         for entry in kernel interpreter; do
             entry_arguments=(/consumer)
             if [ "$entry" = interpreter ]; then entry_arguments=("$interpreter" /consumer); fi
             mapfile -t candidate_arguments < <(owned_io_cancellation_arguments "$probe" "/$probe-$mode-$entry-files")
-            timeout 30 env -i PATH="$PATH" python3 -B "$witness" "$execution_root" \
-                "${entry_arguments[@]}" "${candidate_arguments[@]}" >"$candidate-$entry.stdout"
+            run_fixture "$execution_root" "$candidate-$entry.stdout" "${entry_arguments[@]}" "${candidate_arguments[@]}"
             grep -qx "${probe//_/-}-ok" "$candidate-$entry.stdout"
-            cmp "$work/$probe-oracle.stdout" "$candidate-$entry.stdout"
+            compare_oracle "$candidate-$entry"
         done
     done
-    printf 'dynamic cancellation %s: PASS (PIE/non-PIE, kernel/direct interpreter)\n' "$probe"
+    python3 -B "$evidence" verify-compile "$installed" "$source_file" "$object" \
+        "$work/$probe.compile.json" "${headers[@]}"
+    printf 'dynamic cancellation %s: PASS (one installed-header object; optional supplied static/static-PIE; PIE/non-PIE, kernel/direct interpreter)\n' "$probe"
 done
-printf 'owned dynamic I/O cancellation: PASS (pinned musl + sealed PIE/non-PIE, kernel/direct interpreter, blocked syscall witnesses, main/worker cancellation and fork); evidence: %s\n' "$work"
+printf 'owned dynamic I/O cancellation: PASS (whole ten-fixture roster; same objects for pinned musl, optional supplied static/static-PIE, sealed PIE/non-PIE kernel/direct interpreter; raw status/stdout/stderr, blocked syscall witnesses, main/worker cancellation and fork); evidence: %s\n' "$work"

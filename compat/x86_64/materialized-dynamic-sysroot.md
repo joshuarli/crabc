@@ -266,17 +266,23 @@ The same fixture runs unchanged against pinned musl 1.2.6.
 `run_owned_dynamic_io_cancellation.sh INSTALLED_SYSROOT` runs the shared
 `owned_io_cancellation_fixtures.sh` roster through the actual installed
 `libc.so`, loader-owned initial TCB, and dynamic worker TLS/clone lifecycle.
-Each ordinary fixture is linked by the sealed dynamic driver as PIE and
-non-PIE and run through both kernel PT_INTERP startup and direct interpreter
-entry. The exact stdout must equal pinned musl. This covers scalar, vector,
+Each ordinary fixture is compiled once by the installed dynamic driver in PIE
+mode. That exact object is linked to pinned musl and by the sealed dynamic
+driver as PIE and non-PIE, then run through both kernel PT_INTERP startup and
+direct interpreter entry. Raw stdout, stderr, and timeout/child exit status
+must equal pinned musl. This covers scalar, vector,
 and positioned I/O, readiness and signal waits, sockets, sleep and child waits,
 open and blocking record locks, memory sync, unnamed semaphores, entropy,
 System V messages, FILE lock cleanup, main/worker cancellation, and fork
-inheritance. The common roster shares test selection, header requirements,
-and scratch arguments; static and dynamic evidence remain separate runs.
+inheritance. The closed ten-source roster shares test selection, header
+requirements, and scratch arguments with the unchanged legacy static runner.
+Reusing the signal-wait contribution means executing this whole case; it does
+not authorize narrowing the roster to just the signal fixture.
 
 The runner verifies each persistent application object and link input against
-its receipt, the product manifest and output hashes, ELF mode, canonical
+its receipt through `owned_posix_product_evidence.validate_link`, retaining the
+exact returned link identity. It checks the product manifest and output
+hashes, ELF mode, canonical
 interpreter, and sole `DT_NEEDED` dependency on owned `libc.so`. Both runtime
 artifacts remain free of external runtime dependencies and text relocations.
 Only copied owned artifacts and test scratch inhabit its private execution
@@ -286,6 +292,36 @@ uses it for the existing exact blocked-syscall observations. No proc mount,
 new mount authority, host shell, or ambient loader is needed. Without a
 supplied descriptor, ordinary static runs retain their existing proc path.
 The optional no-argument runner invocation first builds a fresh dynamic product.
+
+The leaf also accepts
+`run_owned_dynamic_io_cancellation.sh [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`
+inside the pinned native environment. The default stays dynamic-only. A
+supplied static product adds ordinary static and static-PIE links of each same
+fixture object, sealed static receipts, and the legacy cancellation gate's
+additional static ELF/TLS/relocation judges. Those consumers run in a private
+static chroot through the same proc-descriptor witness; the fixture's invalid
+descriptor behavior still has no fallback. Supplying both products invokes no
+producer. Static-only invocation builds the default dynamic compilation owner.
+Empty, option-valued, and duplicate product arguments are rejected before
+evidence creation. The dispatcher and legacy static runner remain unchanged.
+
+Each fixture's `.compile.json` records the installed driver and compiler,
+manifest, source, object, exact driver command, and a separate dependency-only
+preprocessing audit using the installed compiler policy and PIE flag ordering.
+The dependency audit permits installed headers and only the exact quoted
+`owned_cancellation_proc_witness.h` local dependency, used by eight fixtures;
+it admits no arbitrary checkout include directory. The other two fixtures
+(`owned_semaphore_wait_cancellation` and `owned_entropy_cancellation`) need no
+local witness header. Source, object, driver, header, and raw dependency-trace
+identities are rechecked after every fixture's links and executions. This
+preprocessing does not produce a second application object.
+
+Every execution retains `.command.json`, `.stdout`, `.stderr`, and `.status`
+files, including failure or timeout status before the runner exits. Supplied
+static plus dynamic products yield ten objects, forty checked link identities,
+and seventy raw execution cells, including the ten musl references. Dynamic-only
+replay yields the same ten objects, twenty link identities, and fifty cells.
+These are workload results, not a POSIX-family completion receipt.
 
 `run_owned_system_cancellation.sh INSTALLED_SYSROOT` separately qualifies
 `system` and `pclose` child-wait cancellation in PIE/non-PIE and direct
