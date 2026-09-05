@@ -18668,6 +18668,40 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(changed)
 
+    def test_pthread_attribute_default_atomic_stays_owned_and_cfg_gated(self) -> None:
+        """The frozen record leaf cannot acquire the owned default-attribute state."""
+
+        implementation = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_attr.rs"
+        ).read_text(encoding="utf-8")
+        ledger.require_pthread_attr_frozen_owned_boundary(implementation)
+
+        unguarded_default = self.replace_required(
+            implementation,
+            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            "static DEFAULT_ATTRIBUTES: core::sync::atomic::AtomicU64 =",
+            "static DEFAULT_ATTRIBUTES: core::sync::atomic::AtomicU64 =",
+            "pthread attribute owned default state",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "owned default state must be one cfg-gated AtomicU64",
+        ):
+            ledger.require_pthread_attr_frozen_owned_boundary(unguarded_default)
+
+        frozen_atomic = self.replace_required(
+            implementation,
+            "const EINVAL: c_int = 22;",
+            "static FROZEN_ATTRIBUTE_STATE: core::sync::atomic::AtomicU64 = "
+            "core::sync::atomic::AtomicU64::new(0);\nconst EINVAL: c_int = 22;",
+            "pthread attribute frozen record scope",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "frozen record scope unexpectedly selects Atomic",
+        ):
+            ledger.require_pthread_attr_frozen_owned_boundary(frozen_atomic)
+
     def test_musl_oracle_is_a_native_precondition_not_public_support(self) -> None:
         data = self.data()
         family = self.family(data, "oracle.musl-toolchain")

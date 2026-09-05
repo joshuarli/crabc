@@ -74754,6 +74754,95 @@ def require_static_pthread_spin_destroy_artifact(
         )
 
 
+def require_pthread_attr_frozen_owned_boundary(implementation: str) -> tuple[str, str]:
+    """Separate the frozen record leaf from its cfg-owned attribute state."""
+
+    owned_defaults_marker = (
+        "// Musl pthread_setattr_default_np.c serializes a pair of monotonic maxima\n"
+    )
+    public_record_marker = "/// Exact public `pthread_attr_t` storage on Linux/x86-64 LP64.\n"
+    live_getattr_marker = (
+        "/// Observe the owned thread's usable stack, guard and current detach state.\n"
+    )
+    require(
+        implementation.count(owned_defaults_marker) == 1,
+        "pthread attribute implementation must retain one owned-default boundary",
+    )
+    frozen_prefix, _, owned_and_metadata = implementation.partition(owned_defaults_marker)
+    require(
+        owned_and_metadata,
+        "pthread attribute implementation cannot split its owned-default boundary",
+    )
+    require(
+        owned_and_metadata.count(public_record_marker) == 1,
+        "pthread attribute implementation must retain one public-record boundary",
+    )
+    owned_defaults, _, standard_metadata = owned_and_metadata.partition(
+        public_record_marker
+    )
+    require(
+        standard_metadata.count(live_getattr_marker) == 1,
+        "pthread attribute implementation must retain one owned-getattr boundary",
+    )
+    standard_metadata, _, owned_getattr = standard_metadata.partition(
+        live_getattr_marker
+    )
+    frozen_metadata = (
+        frozen_prefix + public_record_marker + standard_metadata
+    )
+
+    for forbidden in (
+        "use super",
+        "raw_syscall::",
+        "static_tls::",
+        "pthread_create_join::",
+        "Atomic",
+    ):
+        require(
+            forbidden not in frozen_metadata,
+            f"pthread attribute frozen record scope unexpectedly selects {forbidden}",
+        )
+    require(
+        "Atomic" not in owned_getattr,
+        "pthread attribute live-getattr scope unexpectedly selects Atomic",
+    )
+
+    owned_atomic_declaration = (
+        '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        "static DEFAULT_ATTRIBUTES: core::sync::atomic::AtomicU64 ="
+    )
+    require(
+        owned_atomic_declaration in owned_defaults
+        and len(
+            re.findall(r"(?m)^static\s+\w+.*\bAtomic\w*\b", owned_defaults)
+        )
+        == 1,
+        "pthread attribute owned default state must be one cfg-gated AtomicU64",
+    )
+    require(
+        "DEFAULT_ATTRIBUTES.load(core::sync::atomic::Ordering::Acquire)"
+        in owned_defaults
+        and "DEFAULT_ATTRIBUTES.fetch_update(" in owned_defaults,
+        "pthread attribute owned default state must retain its atomic snapshot and update",
+    )
+    require(
+        '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+        "    PublicPthreadAttr::musl_default()" in owned_defaults,
+        "pthread attribute frozen default path must remain independent of owned state",
+    )
+    for symbol in (
+        "pthread_getattr_default_np",
+        "pthread_setattr_default_np",
+    ):
+        require(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\n'
+            f'pub unsafe extern "C" fn {symbol}' in owned_defaults,
+            f"pthread attribute owned default entry point {symbol} must remain cfg-gated",
+        )
+
+    return frozen_metadata, owned_getattr
+
+
 def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet pthread attribute record metadata without worker-policy promotion."""
 
@@ -74946,9 +75035,8 @@ def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
     implementation = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_attr.rs"
     ).read_text(encoding="utf-8")
-    metadata_implementation, owned_getattr_implementation = implementation.split(
-        "/// Observe the owned thread's usable stack, guard and current detach state.",
-        1,
+    metadata_implementation, owned_getattr_implementation = (
+        require_pthread_attr_frozen_owned_boundary(implementation)
     )
     for phrase in (
         "PublicPthreadAttr",
@@ -74968,7 +75056,6 @@ def require_static_pthread_attr_artifact(family: Mapping[str, Any]) -> None:
         "raw_syscall::",
         "static_tls::",
         "pthread_create_join::",
-        "Atomic",
     ):
         require(
             forbidden not in metadata_implementation,
