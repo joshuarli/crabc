@@ -46,6 +46,17 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         with self.assertRaisesRegex(driver.shared.DriverError, "roster"):
             driver.validate(self.root)
 
+    def test_dynamic_non_pie_plan_selects_owned_crt1_and_et_exec_linkage(self):
+        output = io.StringIO()
+        with patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch("sys.stdout", output):
+            driver.execute(self.root, ["--dynamic-non-pie", "--print-link-plan"])
+        plan = json.loads(output.getvalue())
+        self.assertEqual(plan["mode"], "exec")
+        self.assertIn(str(self.root / "usr/lib/crt1.o"), plan["linker"])
+        self.assertNotIn(str(self.root / "usr/lib/Scrt1.o"), plan["linker"])
+        self.assertNotIn("-pie", plan["linker"])
+        self.assertIn("--dynamic-linker", plan["linker"])
+
     def test_installed_driver_import_does_not_mutate_payload_without_python_environment(self):
         for relative, source in (("bin/crabc-cc-dynamic", Path(driver.__file__)),
                                  ("share/crabc/crabc_cc_static.py", Path(driver.shared.__file__))):

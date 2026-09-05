@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Produce the native initial-graph shared runtime, without ambient target inputs.
+"""Produce the native shared runtime, without ambient target inputs.
 
 Tool attestation, header provenance and Cargo archive membership classification
 are shared with the static producer. Final shared linkage is separate: every
@@ -126,12 +126,11 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     if unexpected:
         raise common.BuildError(f"shared libc has unexpected unresolved symbols: {unexpected}")
     crt = stage / "crt"
-    run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--general-dynamic-lifecycle",
+    run([sys.executable, str(ROOT / "crt/build_x86_64.py"), "--owned-dynamic-sysroot",
          "--out-dir", str(crt), "--llvm-objdump", objdump])
-    # crt1.o from the current CRT producer is static-only. Do not install it
-    # under a misleading dynamic non-PIE contract; that mode remains explicit
-    # remaining work until it has an owned dynamic entry and ELF admission.
-    for name in ("Scrt1.o", "crti.o", "crtn.o"):
+    # This explicit CRT mode builds both dynamic entries from the same
+    # authenticated handoff owner; default/static CRT production is unchanged.
+    for name in ("crt1.o", "Scrt1.o", "crti.o", "crtn.o"):
         common.copy_artifact(crt / name, library / name)
     # Main-resident attachment preserves the established main-only weak wire.
     run([rustup, "run", common.PINNED_TOOLCHAIN, "rustc", "--edition=2021",
@@ -175,9 +174,9 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     common.write_json(metadata / "dynamic-product-state.json", {
         "schema": 1, "status": "materialized-runtime-loader-component",
         "campaign_complete": False, "public_support": False,
-        "modes": ["dynamic-pie", "dynamic-shared-object"],
+        "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
         "dlfcn": "general retained runtime graphs, eager relocation, all-thread DTV growth",
-        "remaining": ["dynamic-non-pie", "deferred-lazy-relocation", "complete-runtime-search-policy",
+        "remaining": ["deferred-lazy-relocation", "complete-runtime-search-policy",
                       "dynamic-fork-repair", "dynamic-main-last-pthread-exit", "complete-dynamic-campaign"]})
     files = {path.relative_to(output).as_posix(): common.sha256_file(path)
              for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sealed materialized initial-graph dynamic driver (not campaign completion).
+"""Sealed materialized dynamic driver (not campaign completion).
 
 The static driver's input/ELF/tool checks are reused verbatim from the installed
 package. This owner adds only dynamic linkage and explicit application DSOs.
@@ -27,7 +27,7 @@ import crabc_cc_static as shared
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 ALIASES = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
-REQUIRED = {"usr/lib/libc.so", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
+REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
             "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1"}
 
 
@@ -153,9 +153,10 @@ def execute(root: Path, arguments: list[str]) -> None:
     index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument in ("--dynamic-pie", "-pie", "--dynamic-shared-object", "-shared"):
+        if argument in ("--dynamic-pie", "-pie", "--dynamic-non-pie", "-no-pie", "--dynamic-shared-object", "-shared"):
             if mode is not None: raise shared.DriverError("select exactly one dynamic mode")
-            mode = "shared" if argument in ("-shared", "--dynamic-shared-object") else "pie"
+            mode = ("shared" if argument in ("-shared", "--dynamic-shared-object") else
+                    "exec" if argument in ("--dynamic-non-pie", "-no-pie") else "pie")
         elif argument == "--application-dso":
             index += 1
             if index == len(arguments): raise shared.DriverError("missing application DSO")
@@ -168,17 +169,18 @@ def execute(root: Path, arguments: list[str]) -> None:
         else:
             common.append(argument)
         index += 1
-    if mode is None: raise shared.DriverError("select --dynamic-pie or --dynamic-shared-object")
+    if mode is None: raise shared.DriverError("select --dynamic-pie, --dynamic-non-pie or --dynamic-shared-object")
     invocation = shared.parse_invocation(common)
     if invocation.compile_only and dsos: raise shared.DriverError("compile-only accepts no DSO")
     if invocation.link_receipt is not None:
         raise shared.DriverError("dynamic link receipt path is derived from -o")
     library = root / "usr/lib"
-    link = [shared.linker(), "-shared" if mode == "shared" else "-pie", "--hash-style=sysv",
+    link = [shared.linker(), *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=sysv",
             "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
             "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib"]
-    if mode == "pie":
-        link += ["--dynamic-linker", INTERPRETER, str(library / "Scrt1.o"),
+    entry_object = "Scrt1.o" if mode == "pie" else "crt1.o"
+    if mode != "shared":
+        link += ["--dynamic-linker", INTERPRETER, str(library / entry_object),
                  str(library / "crabc-dynamic-attach.o")]
     if invocation.print_link_plan:
         if dsos: raise shared.DriverError("link plan accepts no application inputs")
@@ -200,7 +202,7 @@ def execute(root: Path, arguments: list[str]) -> None:
             obj = output if invocation.compile_only else temporary / f"source-{index}.o"
             run([shared.compiler(), "-nostdinc", "-isystem", str(root / "usr/include"),
                  "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
-                 *invocation.compiler_flags, "-fPIC" if mode == "shared" else "-fPIE",
+                 *invocation.compiler_flags, "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",
                  "-c", str(source), "-o", str(obj)], temporary)
             objects.append(obj)
         if invocation.compile_only:
@@ -228,7 +230,7 @@ def execute(root: Path, arguments: list[str]) -> None:
                  str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(output)]
         trace = run([*link[:-2], "--trace", *link[-2:]], temporary).splitlines()
         runtime = [library / name for name in ("crti.o", "libc.so", "crtn.o")]
-        if mode == "pie": runtime += [library / "Scrt1.o", library / "crabc-dynamic-attach.o"]
+        if mode != "shared": runtime += [library / entry_object, library / "crabc-dynamic-attach.o"]
         direct = [*runtime, *objects, *(path for path, _ in declared.values())]
         archive = library / "libcrabc-builtins.a"
         # LLD may not extract an archive member. Every other input must appear,

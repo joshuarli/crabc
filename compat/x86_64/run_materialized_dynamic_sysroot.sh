@@ -31,7 +31,21 @@ check_spawn_interposition() {
     timeout 20 chroot "$execution_root" /spawn-interposition >"$work/$name.stdout"
     [ ! -s "$work/$name.stdout" ]
 }
+
+check_non_pie() {
+    local installed_root="$1" execution_root="$2" dependency="$3" name="$4"
+    "$installed_root/bin/crabc-cc-dynamic" --dynamic-non-pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
+        --application-dso "$dependency" -o "$work/$name"
+    readelf -hW "$work/$name" >"$work/$name.header"
+    grep -Eq 'Type: +EXEC' "$work/$name.header"
+    readelf -lW "$work/$name" >"$work/$name.segments"
+    grep -Fq '/lib/ld-crabc-x86_64.so.1' "$work/$name.segments"
+    cp "$work/$name" "$execution_root/non-pie"
+    timeout 20 chroot "$execution_root" /non-pie >"$work/$name.stdout"
+    cmp "$work/expected.stdout" "$work/$name.stdout"
+}
 python3 -B -m unittest discover -s "$ROOT/compat/x86_64" -p test_owned_dynamic_driver.py
+python3 -B -m unittest discover -s "$ROOT/crt/tests" -p test_x86_64_dynamic_modes.py
 rustc --edition=2021 --test --cfg crabc_general_initial_graph \
     --cfg crabc_general_initial_tls_materialization_v1 --cfg crabc_general_loader_libc_tls_runtime_v1 \
     --cfg crabc_general_initial_lifecycle --cfg crabc_dynamic_main_thread_runtime_v1 \
@@ -66,6 +80,7 @@ printf 'installed dynamic: allocation errno stdio threads\nordinary exit\n' >"$w
 cmp "$work/expected.stdout" "$work/consumer.stdout"
 cmp "$work/oracle.stdout" "$work/consumer.stdout"
 check_spawn_interposition "$work/installed" "$work/execution-root" spawn-installed
+check_non_pie "$work/installed" "$work/execution-root" "$work/libapplication.so" non-pie-installed
 python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/installed" "$work/runtime.tar"
 python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" extract "$work/runtime.tar" "$work/extracted"
 extracted_driver="$work/extracted/bin/crabc-cc-dynamic"
@@ -79,6 +94,7 @@ cp "$work/libextracted.so" "$work/extracted-execution-root/usr/lib/libextracted.
 timeout 20 chroot "$work/extracted-execution-root" /consumer >"$work/extracted-consumer.stdout"
 cmp "$work/expected.stdout" "$work/extracted-consumer.stdout"
 check_spawn_interposition "$work/extracted" "$work/extracted-execution-root" spawn-extracted
+check_non_pie "$work/extracted" "$work/extracted-execution-root" "$work/libextracted.so" non-pie-extracted
 python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/second"
 cmp "$work/installed/share/crabc/manifest.json" "$work/second/share/crabc/manifest.json"
 python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/second" "$work/second-runtime.tar"
@@ -87,4 +103,6 @@ bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/installed"
 bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/extracted"
 bash "$ROOT/compat/x86_64/run_general_dynamic_constructor_exit.sh" "$work/installed"
 bash "$ROOT/compat/x86_64/run_general_dynamic_constructor_exit.sh" "$work/extracted"
+CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/installed"
+CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/extracted"
 printf 'materialized dynamic sysroot: PASS (initial and retained runtime graphs); evidence: %s\n' "$work"

@@ -7,6 +7,8 @@ ulimit -c 0
 [ "$#" -eq 1 ] || { printf 'usage: %s INSTALLED_DYNAMIC_SYSROOT\n' "$0" >&2; exit 2; }
 readonly installed="$1"
 readonly driver="$installed/bin/crabc-cc-dynamic"
+readonly entry_mode="${CRABC_GENERAL_DYNAMIC_ENTRY_MODE:---dynamic-pie}"
+case "$entry_mode" in --dynamic-pie|--dynamic-non-pie) ;; *) exit 2 ;; esac
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
 from pathlib import Path
 import sys
@@ -21,7 +23,7 @@ readonly work
 "$driver" --dynamic-shared-object "$ROOT/compat/ldso/fixtures/nested_leaf.c" -o "$work/libnested_leaf.so"
 "$driver" --dynamic-shared-object "$ROOT/compat/ldso/fixtures/nested_mid.c" \
     --application-dso "$work/libnested_leaf.so" -o "$work/libnested_mid.so"
-"$driver" --dynamic-pie "$ROOT/compat/ldso/fixtures/nested_dlopen.c" -o "$work/consumer"
+"$driver" "$entry_mode" "$ROOT/compat/ldso/fixtures/nested_dlopen.c" -o "$work/consumer"
 cp -a "$installed" "$work/execution-root"
 cp "$work/consumer" "$work/execution-root/consumer"
 cp "$work/libnested_leaf.so" "$work/libnested_mid.so" "$work/execution-root/usr/lib/"
@@ -35,6 +37,8 @@ fi
 printf 'general runtime dlopen: PASS (runtime-new dependency closure); evidence: %s\n' "$work"
 bash "$ROOT/compat/x86_64/run_musl_oracle.sh"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+oracle_entry_flags=(-fPIE -pie)
+[ "$entry_mode" = --dynamic-pie ] || oracle_entry_flags=(-fno-pie -no-pie)
 mkdir "$work/oracle"
 for generation in $(seq 0 40); do
     "$driver" --dynamic-shared-object -DGENERATION="$generation" \
@@ -44,8 +48,8 @@ for generation in $(seq 0 40); do
         -Wl,-z,now,-soname,"libgrowth$generation.so" -o "$work/oracle/libgrowth$generation.so"
     cp "$work/libgrowth$generation.so" "$work/execution-root/usr/lib/"
 done
-"$driver" --dynamic-pie "$ROOT/compat/x86_64/general_dynamic_tls_consumer.c" -o "$work/growth"
-"$oracle_cc" -fPIE -pie "$ROOT/compat/x86_64/general_dynamic_tls_consumer.c" \
+"$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_tls_consumer.c" -o "$work/growth"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$ROOT/compat/x86_64/general_dynamic_tls_consumer.c" \
     -Wl,-rpath,"$work/oracle" -o "$work/oracle/growth"
 cp "$work/growth" "$work/execution-root/growth"
 LD_LIBRARY_PATH="$work/oracle" timeout 40 "$work/oracle/growth" >"$work/oracle.stdout"
@@ -59,12 +63,12 @@ cmp "$work/oracle.stdout" "$work/growth.stdout"
 printf 'general runtime TLS: PASS (musl differential, 41 runtime modules and existing/new workers); evidence: %s\n' "$work"
 "$driver" --dynamic-shared-object "$ROOT/compat/x86_64/general_dynamic_failure_plugin.c" -o "$work/libfailure.so"
 "$driver" --dynamic-shared-object -DINITIAL_EXEC "$ROOT/compat/x86_64/general_dynamic_failure_plugin.c" -o "$work/libfailure-ie.so"
-"$driver" --dynamic-pie "$ROOT/compat/x86_64/general_dynamic_failure_consumer.c" -o "$work/failure"
+"$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_failure_consumer.c" -o "$work/failure"
 "$oracle_cc" -fPIC -shared "$ROOT/compat/x86_64/general_dynamic_failure_plugin.c" \
     -Wl,-z,now,-soname,libfailure.so -o "$work/oracle/libfailure.so"
 "$oracle_cc" -fPIC -shared -DINITIAL_EXEC "$ROOT/compat/x86_64/general_dynamic_failure_plugin.c" \
     -Wl,-z,now,-soname,libfailure-ie.so -o "$work/oracle/libfailure-ie.so"
-"$oracle_cc" -fPIE -pie "$ROOT/compat/x86_64/general_dynamic_failure_consumer.c" \
+"$oracle_cc" "${oracle_entry_flags[@]}" "$ROOT/compat/x86_64/general_dynamic_failure_consumer.c" \
     -Wl,-rpath,"$work/oracle" -o "$work/oracle/failure"
 cp "$work/failure" "$work/execution-root/failure"
 cp "$work/libfailure-ie.so" "$work/execution-root/usr/lib/"
@@ -92,8 +96,8 @@ for provider in first second; do
         -Wl,-z,now,-soname,"libscope-$provider.so" -o "$work/oracle/libscope-$provider.so"
     cp "$work/libscope-$provider.so" "$work/execution-root/usr/lib/"
 done
-"$driver" --dynamic-pie "$ROOT/compat/x86_64/general_dynamic_scope_consumer.c" -o "$work/scope"
-"$oracle_cc" -fPIE -pie "$ROOT/compat/x86_64/general_dynamic_scope_consumer.c" \
+"$driver" "$entry_mode" "$ROOT/compat/x86_64/general_dynamic_scope_consumer.c" -o "$work/scope"
+"$oracle_cc" "${oracle_entry_flags[@]}" "$ROOT/compat/x86_64/general_dynamic_scope_consumer.c" \
     -Wl,-rpath,"$work/oracle" -o "$work/oracle/scope"
 cp "$work/scope" "$work/execution-root/scope"
 timeout 20 chroot "$work/execution-root" /scope >"$work/scope.stdout"
