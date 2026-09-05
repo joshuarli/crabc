@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "cf4bef55fc4ff3bb5e59f222568e739538b1dbb0051801bfbe4e31262962c9fc"
+M2_X86_64_VM_FRAGMENT_DIGEST = "6e6873a9ff2e33c1edfca13c78e1386a465d4c7f9990db4e04433243ab8d7b35"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -12319,7 +12319,7 @@ def _m2_x86_64_vm_check_records(
         or evidence.get("format") != 1
         or evidence.get("status") != "passed"
         or evidence.get("architecture") != "x86_64"
-        or evidence.get("profile") != "release-no-default-features-fixed-regular-vm-thp-disabled"
+        or evidence.get("profile") != "release-no-default-features-fixed-regular-vm-thp-disabled-offset-release-fault"
         or evidence.get("upstream") != {
             "revision": pin["revision"], "archive_sha256": pin["sha256"]
         }

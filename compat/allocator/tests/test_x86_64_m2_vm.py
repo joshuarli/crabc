@@ -13,6 +13,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
     @staticmethod
     def vm_evidence(summary):
         vm = next(component for component in summary["components"] if component["id"] == "vm-primitives")
+        producer = RUNNER._m2_x86_64_vm_producer()
         fragment = RUNNER.read_json(RUNNER.M2_X86_64_VM_FRAGMENT)
         anchors = []
         seen = set()
@@ -31,16 +32,16 @@ class NativeVmAssemblyTests(unittest.TestCase):
         pin = RUNNER.load_pin()
         return {
             "architecture": "x86_64",
-            "c_command": ["musl-gcc", "m2_vm_x86_64.c"],
+            "c_command": ["musl-gcc", "m2_vm_x86_64.c", "-Wl,--wrap=munmap"],
             "c_source_files": [
                 {"path": path, "sha256": "a" * 64, "bytes": 1}
                 for path in sorted(("include/mimalloc/prim.h", "src/os.c", "src/prim/prim.c", "src/prim/unix/prim.c"))
             ],
-            "compared_value_count": 35,
-            "comparison": {"compared_value_count": 35, "status": "matched"},
+            "compared_value_count": len(producer.TRACE_KEYS),
+            "comparison": {"compared_value_count": len(producer.TRACE_KEYS), "status": "matched"},
             "fixture": {"path": "compat/allocator/m2_vm_x86_64.c", "sha256": "b" * 64, "bytes": 1},
             "format": 1,
-            "profile": "release-no-default-features-fixed-regular-vm-thp-disabled",
+            "profile": "release-no-default-features-fixed-regular-vm-thp-disabled-offset-release-fault",
             "rust_build_command": ["cargo", "test", "--no-run"],
             "rust_command": [
                 ".work/prepared-test",
@@ -57,6 +58,33 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "upstream": {"revision": pin["revision"], "archive_sha256": pin["sha256"]},
             "nonclaims": list(vm["remaining_conditions"]),
         }
+
+    def test_release_fault_trace_schema_requires_the_retained_owner_and_retry(self):
+        producer = RUNNER._m2_x86_64_vm_producer()
+        values = {key: 1 for key in producer.TRACE_KEYS}
+        values.update(
+            {
+                "m2.vm.config.page_size": 4096,
+                "m2.vm.config.large_page_size": 2 * 1024 * 1024,
+                "m2.vm.config.alloc_granularity": 4096,
+                "m2.vm.config.has_transparent_huge_pages": 0,
+                "m2.vm.reserved.initially_committed": 0,
+                "m2.vm.normal.good_size": 4096,
+                "m2.vm.aligned.alignment": 64 * 1024,
+                "m2.vm.aligned.good_size": 4096,
+                "m2.vm.offset.good_size": 17 * 4096,
+            }
+        )
+        trace = "\n".join(
+            [producer.TRACE_BEGIN, *(f"{key}={value}" for key, value in values.items()), producer.TRACE_END]
+        )
+        self.assertEqual(producer.parse_trace(trace, source="test"), values)
+
+        missing_retry = trace.replace(
+            "m2.vm.release.retry.real_munmap_success=1\n", "", 1
+        )
+        with self.assertRaises(ValueError):
+            producer.parse_trace(missing_retry, source="test")
 
     def summary(self):
         return RUNNER.validate_x86_64_m2_memory_substrate_contract(

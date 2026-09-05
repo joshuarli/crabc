@@ -6428,8 +6428,12 @@ mod tests {
     /// aligned, and offset-aligned normal OS ownership, and the normalized
     /// NUMA observation.  The companion pinned-C fixture calls the matching
     /// `src/os.c` private helpers in one process and compares only stable
-    /// ownership and transition facts, never virtual addresses or allocator
-    /// statistics.
+    /// ownership and transition facts, never virtual addresses. It also
+    /// records one direct offset-release error/retry: the pinned-C side
+    /// intercepts only that `munmap` import, while this side uses the
+    /// test-only syscall seam before the same typed release owner. Both
+    /// records require the full base/length owner to remain live and source
+    /// statistics to apply again when the caller retries.
     ///
     /// It also compares the selected `allow_thp=0` source configuration and
     /// process-policy observation. The Rust side executes that `prctl`
@@ -6443,7 +6447,7 @@ mod tests {
     #[cfg(not(miri))]
     #[test]
     fn emit_m2_vm_primitives_c_rust_trace() {
-        let _fault = fault::install(fault::Plan::disabled());
+        let fault = fault::install(fault::Plan::disabled());
         let mut config = MemoryConfig::detect(current_startup());
         let (thp_configuration_disabled, thp_process_disabled) =
             disabled_thp_policy_child_observation();
@@ -6560,6 +6564,99 @@ mod tests {
             .release()
             .expect("offset owner releases its full mapping rather than its client pointer");
 
+        // The C companion forces the next source `_mi_prim_free` import to
+        // return ENOMEM while `_mi_os_free_ex` releases this same interior
+        // offset shape. Its source statistics still move before the caller
+        // gets another chance to free the full MemoryId. Keep the typed Rust
+        // owner and the identical counter timing visible in this finite
+        // differential without making a test seam part of the production VM
+        // interface.
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process_policy = VmPolicy::defaults_for_test();
+        let process = VmProcess::new(&process_policy, subprocess);
+        let failed_release = NormalOsAllocation::allocate_aligned_at_offset_for_process(
+            process,
+            config,
+            page.checked_mul(2).expect("the fixed failure request fits"),
+            alignment,
+            offset,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("the fixed failure record acquires one offset owner");
+        let failed_release_base = failed_release
+            .base()
+            .expect("the failure record retains its full base");
+        let failed_release_pointer = failed_release
+            .pointer()
+            .expect("the failure record retains its interior client pointer");
+        let failed_release_size = failed_release
+            .full_size()
+            .expect("the failure record retains its full mapping size");
+        let failed_release_memory = failed_release
+            .memory_id()
+            .expect("the failure record retains full source provenance");
+        let failed_release_prefix = failed_release_pointer.as_ptr().addr() - failed_release_base.addr();
+        let failed_release_commit_size = failed_release_size
+            .checked_sub(failed_release_prefix)
+            .expect("the interior client prefix is within the exact map");
+        assert!(failed_release_prefix != 0, "the selected client pointer is interior");
+        assert_eq!(
+            failed_release_memory.os_base().map(|base| base.value()),
+            Some(failed_release_base.addr())
+        );
+        assert_eq!(failed_release_memory.size(), Some(failed_release_size));
+
+        let statistics_before_failure = subprocess.vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let retained = match failed_release.release_for_process(process, true) {
+            Ok(()) => panic!("the selected source release must retain its owner on error"),
+            Err(failure) => failure,
+        };
+        assert_eq!(retained.error(), Errno::NOMEM);
+        let failed_release_one_primitive_attempt = fault.observed() == 1;
+        let statistics_after_failure = subprocess.vm_statistics().snapshot();
+        let failed_release_source_counters_apply =
+            statistics_after_failure.reserved_current
+                == statistics_before_failure.reserved_current - failed_release_size as i64
+                && statistics_after_failure.committed_current
+                    == statistics_before_failure.committed_current
+                        - failed_release_commit_size as i64;
+        assert!(failed_release_source_counters_apply);
+
+        let retained = retained.into_allocation();
+        assert_eq!(retained.base(), Ok(failed_release_base));
+        assert_eq!(retained.full_size(), Ok(failed_release_size));
+        assert_eq!(retained.pointer(), Ok(failed_release_pointer));
+        assert_eq!(
+            retained.memory_id().unwrap().os_base().map(|base| base.value()),
+            Some(failed_release_base.addr())
+        );
+        // SAFETY: the injected fault occurs before `munmap`, and the retained
+        // owner still proves that its client pointer names writable memory.
+        unsafe {
+            core::ptr::write_volatile(failed_release_pointer.as_ptr(), 0x7c);
+            assert_eq!(core::ptr::read_volatile(failed_release_pointer.as_ptr()), 0x7c);
+        }
+        let failed_release_mapping_live = true;
+
+        // Keep the one-shot plan installed. The first selected Unmap failed;
+        // its second observation reaches the actual syscall and therefore
+        // mirrors the C wrapper's exact one additional primitive invocation.
+        retained
+            .release_for_process(process, true)
+            .expect("the retained offset owner releases on its explicit retry");
+        let failed_release_retry_one_additional_primitive_attempt = fault.observed() == 2;
+        let statistics_after_retry = subprocess.vm_statistics().snapshot();
+        let failed_release_retry_source_counters_reapply =
+            statistics_after_retry.reserved_current
+                == statistics_after_failure.reserved_current - failed_release_size as i64
+                && statistics_after_retry.committed_current
+                    == statistics_after_failure.committed_current
+                        - failed_release_commit_size as i64;
+        assert!(failed_release_retry_source_counters_reapply);
+
         let numa_count = os_numa_node_count();
         let numa_current = os_numa_node();
         assert!(numa_count >= 1, "the allocator-facing NUMA cache normalizes to one");
@@ -6611,6 +6708,28 @@ mod tests {
         emit!("m2.vm.offset.good_size", offset_size);
         emit!("m2.vm.offset.memid_base_and_size", 1);
         emit!("m2.vm.offset.release_full_mapping_success", 1);
+        emit!("m2.vm.release.offset_owner_interior", 1);
+        emit!(
+            "m2.vm.release.failure.one_primitive_attempt",
+            u8::from(failed_release_one_primitive_attempt)
+        );
+        emit!(
+            "m2.vm.release.failure.mapping_live",
+            u8::from(failed_release_mapping_live)
+        );
+        emit!(
+            "m2.vm.release.failure.source_counters_apply",
+            u8::from(failed_release_source_counters_apply)
+        );
+        emit!(
+            "m2.vm.release.retry.one_additional_primitive_attempt",
+            u8::from(failed_release_retry_one_additional_primitive_attempt)
+        );
+        emit!(
+            "m2.vm.release.retry.source_counters_reapply",
+            u8::from(failed_release_retry_source_counters_reapply)
+        );
+        emit!("m2.vm.release.retry.real_munmap_success", 1);
         emit!("m2.vm.numa.count_at_least_one", u8::from(numa_count >= 1));
         emit!("m2.vm.numa.current_lt_count", u8::from(numa_current < numa_count));
         std::println!("CRABC_MI_M2_VM_TRACE_END");

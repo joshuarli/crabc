@@ -234,7 +234,7 @@
       {
         "id": "os-free-and-statistics-events",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events.",
+        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded C/Rust trace injects one normal-offset _mi_os_free_ex primitive failure and explicit retry.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -248,7 +248,7 @@
           "normal-os-offset-full-provenance-and-release-retry"
         ],
         "missing_conditions": [
-          "A typed subprocess statistics-event owner and differential counter transitions for allocation/free, including source warning/error routes and huge MemoryId dispatch."
+          "The selected normal-offset _mi_os_free_ex failure/retry compares full-MemoryId ownership and counter timing, but allocation transitions, source warning/error reporting, huge MemoryId dispatch, and every other counter/caller route remain unqualified."
         ]
       },
       {
@@ -320,7 +320,7 @@
           "native-protection-owner-and-retry"
         ],
         "missing_conditions": [
-          "Custom arena commit callback ownership; purge_decommits and other option branches; all partial-range callers; and pinned-C failure/retry differential coverage for commit, decommit, purge, protect, unprotect, and release."
+          "Custom arena commit callback ownership; purge_decommits and other option branches; all partial-range callers; and pinned-C failure/retry differential coverage for commit, decommit, purge, protect, unprotect, and every release caller beyond the selected normal-offset full-MemoryId retry."
         ]
       },
       {
@@ -571,11 +571,11 @@
       }
     ],
     "remaining_conditions": [
-      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle and child-isolated THP-disable transaction, including pinned-C failure ownership and retry evidence for every source branch.",
+      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle, normal-offset full-MemoryId release failure/retry, and child-isolated THP-disable transaction, including pinned-C failure ownership and retry evidence for every source branch.",
       "Complete the aligned-overmap substrate beyond the selected direct/prefix/suffix retained-map owners: source large-page arguments, every receiving allocator caller, callback/counter/error paths, and native cleanup failure/retry differentials remain required.",
       "Complete random aligned-hint policy, virtual-address eligibility, default-Theap random state, ambient source options and diagnostics, Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE retry behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
-      "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes; the selected fixed normal/offset MemoryId owner, contained Linux reuse no-op, reset-advice snapshot, and one-page protection retry do not establish those broader source contracts."
+      "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes; the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, and one-page protection retry do not establish those broader source contracts."
     ]
   }
 }

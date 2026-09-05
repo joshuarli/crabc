@@ -4,7 +4,7 @@
       "id": "vm-primitives",
       "evidence_fragment": {
         "path": "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json",
-        "inventory_sha256": "cf4bef55fc4ff3bb5e59f222568e739538b1dbb0051801bfbe4e31262962c9fc"
+        "inventory_sha256": "6e6873a9ff2e33c1edfca13c78e1386a465d4c7f9990db4e04433243ab8d7b35"
       }
     },
     {

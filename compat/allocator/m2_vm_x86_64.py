@@ -4,11 +4,13 @@
 This module owns neither milestone aggregation nor source-map promotion.  It
 checks the target-local fragment's complete source-policy matrix, compiles a
 fresh direct-include C oracle from the pinned archive, and compares its fixed
-regular-VM lifecycle record with one already-built Rust exact test. The
-selected `allow_thp=0` source transaction runs only in child evidence
-processes. The fragment deliberately remains partial: passing this producer is
-not a claim for huge pages, hints, ambient option discovery, diagnostics, or
-allocator lifecycle integration.
+regular-VM lifecycle plus one offset-release failure/retry record with one
+already-built Rust exact test. The C release fault wraps only the unchanged
+pinned `munmap` import for the selected `_mi_prim_free` call. The selected
+`allow_thp=0` source transaction runs only in child evidence processes. The
+fragment deliberately remains partial: passing this producer is not a claim
+for huge pages, hints, ambient option discovery, diagnostics, or allocator
+lifecycle integration.
 """
 
 from __future__ import annotations
@@ -151,6 +153,13 @@ TRACE_KEYS = (
     "m2.vm.offset.good_size",
     "m2.vm.offset.memid_base_and_size",
     "m2.vm.offset.release_full_mapping_success",
+    "m2.vm.release.offset_owner_interior",
+    "m2.vm.release.failure.one_primitive_attempt",
+    "m2.vm.release.failure.mapping_live",
+    "m2.vm.release.failure.source_counters_apply",
+    "m2.vm.release.retry.one_additional_primitive_attempt",
+    "m2.vm.release.retry.source_counters_reapply",
+    "m2.vm.release.retry.real_munmap_success",
     "m2.vm.numa.count_at_least_one",
     "m2.vm.numa.current_lt_count",
 )
@@ -578,6 +587,7 @@ def run_evidence(
             *harness.CONFIGURATION_PROFILES["release"],
             str(FIXTURE),
             *(str(source / item) for item in harness.M1_RAW_PRIMITIVE_ORACLE_SOURCES),
+            "-Wl,--wrap=munmap",
             "-pthread",
             "-o",
             str(binary),
@@ -608,7 +618,7 @@ def run_evidence(
         "comparison": comparison,
         "fixture": harness.artifact_record(FIXTURE),
         "format": 1,
-        "profile": "release-no-default-features-fixed-regular-vm-thp-disabled",
+        "profile": "release-no-default-features-fixed-regular-vm-thp-disabled-offset-release-fault",
         "rust_build_command": list(test_program.get("build_command", [])),
         "rust_command": rust_command,
         "rust_passed_test_count": rust_count,

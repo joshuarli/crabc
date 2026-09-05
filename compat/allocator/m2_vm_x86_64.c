@@ -8,10 +8,12 @@
  * owners; and normalized NUMA observation.  It does not exercise options,
  * hints, THP process policy, huge pages, placement, or diagnostics.
  */
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <sys/mman.h>
 #include <sys/prctl.h>
 
 #include <mimalloc.h>
@@ -22,7 +24,37 @@
  * singular by omitting `src/os.c` from the ordinary C source list. */
 #include "os.c"
 
+/* The producer links with `--wrap=munmap`.  This controlled one-shot seam
+ * reaches the unchanged pinned `_mi_prim_free` call inside `src/prim/unix/prim.c`;
+ * it does not replace a source function or make the fault path a host model.
+ * Keep it disabled through startup and every success record, then enable it
+ * only around the source `_mi_os_free` call selected below. */
+static bool fail_next_munmap = false;
+static size_t wrapped_munmap_calls = 0;
+static int last_real_munmap_result = -1;
+
+int __real_munmap(void* address, size_t length);
+
+int __wrap_munmap(void* address, size_t length) {
+  wrapped_munmap_calls++;
+  if (fail_next_munmap) {
+    fail_next_munmap = false;
+    errno = ENOMEM;
+    return -1;
+  }
+  last_real_munmap_result = __real_munmap(address, length);
+  return last_real_munmap_result;
+}
+
 #define U(name, value) printf(name "=%zu\n", (size_t)(value))
+
+static int64_t current_reserved(const mi_subproc_t* subproc) {
+  return mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)(&subproc->stats.reserved.current));
+}
+
+static int64_t current_committed(const mi_subproc_t* subproc) {
+  return mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)(&subproc->stats.committed.current));
+}
 
 int main(void) {
   /* Keep the source's real startup ordering but suppress prim.c's automatic
@@ -90,9 +122,51 @@ int main(void) {
       || offset_id.mem.os.size != offset_size) return 20;
   _mi_os_free(subproc, offset_client, offset_request, offset_id);
 
+  /* `_mi_os_free_ex` must use the complete MemoryId base/size even though its
+   * client pointer is interior.  The source primitive reports `munmap`
+   * failure but still applies its named subprocess statistics transition.
+   * The Rust owner keeps that full mapping live for an explicit retry, so
+   * make the pinned-C result observable before releasing the same ID again. */
+  mi_memid_t failed_release_id = _mi_memid_none();
+  void* const failed_release_client = _mi_os_alloc_aligned_at_offset(
+      subproc, offset_request, alignment, offset, true /* commit */, false /* allow_large */,
+      &failed_release_id);
+  if (failed_release_client == NULL || failed_release_id.mem.os.base == failed_release_client
+      || failed_release_id.mem.os.size == 0) return 21;
+  const size_t failed_release_prefix =
+      (size_t)((uint8_t*)failed_release_client - (uint8_t*)failed_release_id.mem.os.base);
+  if (failed_release_prefix >= failed_release_id.mem.os.size) return 22;
+  const size_t failed_release_commit_size = failed_release_id.mem.os.size - failed_release_prefix;
+  const int64_t reserved_before_failure = current_reserved(subproc);
+  const int64_t committed_before_failure = current_committed(subproc);
+  const size_t munmap_before_failure = wrapped_munmap_calls;
+  fail_next_munmap = true;
+  _mi_os_free(subproc, failed_release_client, offset_request, failed_release_id);
+  const int64_t reserved_after_failure = current_reserved(subproc);
+  const int64_t committed_after_failure = current_committed(subproc);
+  const size_t munmap_after_failure = wrapped_munmap_calls;
+  if (munmap_after_failure != munmap_before_failure + 1
+      || reserved_after_failure != reserved_before_failure - (int64_t)failed_release_id.mem.os.size
+      || committed_after_failure != committed_before_failure - (int64_t)failed_release_commit_size) {
+    return 23;
+  }
+  /* A successful range-wide protection change proves the full base/length
+   * mapping remains live after the injected primitive error. */
+  if (mprotect(failed_release_id.mem.os.base, failed_release_id.mem.os.size,
+               PROT_READ | PROT_WRITE) != 0) return 24;
+  _mi_os_free(subproc, failed_release_client, offset_request, failed_release_id);
+  const int64_t reserved_after_retry = current_reserved(subproc);
+  const int64_t committed_after_retry = current_committed(subproc);
+  const size_t munmap_after_retry = wrapped_munmap_calls;
+  if (munmap_after_retry != munmap_after_failure + 1 || last_real_munmap_result != 0
+      || reserved_after_retry != reserved_after_failure - (int64_t)failed_release_id.mem.os.size
+      || committed_after_retry != committed_after_failure - (int64_t)failed_release_commit_size) {
+    return 25;
+  }
+
   const int numa_count = _mi_os_numa_node_count();
   const int numa_current = _mi_os_numa_node();
-  if (numa_count < 1 || numa_current < 0 || numa_current >= numa_count) return 21;
+  if (numa_count < 1 || numa_current < 0 || numa_current >= numa_count) return 26;
 
   puts("CRABC_MI_M2_VM_TRACE_BEGIN");
   U("m2.vm.config.page_size", page);
@@ -128,6 +202,15 @@ int main(void) {
   U("m2.vm.offset.good_size", offset_size);
   U("m2.vm.offset.memid_base_and_size", offset_id.mem.os.size == offset_size);
   U("m2.vm.offset.release_full_mapping_success", 1);
+  U("m2.vm.release.offset_owner_interior", failed_release_id.mem.os.base != failed_release_client);
+  U("m2.vm.release.failure.one_primitive_attempt", munmap_after_failure == munmap_before_failure + 1);
+  U("m2.vm.release.failure.mapping_live", 1);
+  U("m2.vm.release.failure.source_counters_apply", reserved_after_failure == reserved_before_failure - (int64_t)failed_release_id.mem.os.size
+      && committed_after_failure == committed_before_failure - (int64_t)failed_release_commit_size);
+  U("m2.vm.release.retry.one_additional_primitive_attempt", munmap_after_retry == munmap_after_failure + 1);
+  U("m2.vm.release.retry.source_counters_reapply", reserved_after_retry == reserved_after_failure - (int64_t)failed_release_id.mem.os.size
+      && committed_after_retry == committed_after_failure - (int64_t)failed_release_commit_size);
+  U("m2.vm.release.retry.real_munmap_success", last_real_munmap_result == 0);
   U("m2.vm.numa.count_at_least_one", numa_count >= 1);
   U("m2.vm.numa.current_lt_count", numa_current < numa_count);
   puts("CRABC_MI_M2_VM_TRACE_END");
