@@ -231,6 +231,52 @@ class ShardedTests(unittest.TestCase):
             ]
             self.assertGreaterEqual(len(progress), 1 + 2 * len(row["selected_case_ids"]))
 
+    def test_selected_shard_that_stops_early_fails_closed(self) -> None:
+        module = self.write_module(
+            "test_stopped_selection.py",
+            """\\
+import unittest
+
+class StoppedSelectionTests(unittest.TestCase):
+    def test_a_stops_the_result(self):
+        self._outcome.result.stop()
+
+    def test_b_must_not_be_silently_skipped(self):
+        self.fail("the result stop should prevent this test from running")
+""",
+        )
+        case_ids = [
+            "test_stopped_selection.StoppedSelectionTests.test_a_stops_the_result",
+            "test_stopped_selection.StoppedSelectionTests.test_b_must_not_be_silently_skipped",
+        ]
+
+        result = self.invoke(
+            "--module",
+            self.relative(module),
+            *(argument for case_id in case_ids for argument in ("--case", case_id)),
+            "--jobs",
+            "1",
+        )
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("INCOMPLETE-SELECTION", result.stdout)
+        summary = json.loads((self.only_run_root() / "summary.json").read_text())
+        self.assertEqual(summary["tests_run"], 1)
+        self.assertEqual(summary["tests_completed"], 1)
+        row = summary["modules"][0]
+        self.assertEqual(row["selected_case_ids"], case_ids)
+        self.assertEqual(row["status"], "incomplete-selection")
+        records = [
+            line
+            for line in (self.only_run_root() / "modules/001-test-stopped-selection/stdout.log")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.startswith(RUNNER_MODULE.RESULT_PREFIX)
+        ]
+        self.assertEqual(len(records), 1)
+        payload = json.loads(records[0][len(RUNNER_MODULE.RESULT_PREFIX):])
+        self.assertEqual(payload["completed_case_ids"], case_ids[:1])
+
     def test_parity_ledger_shards_its_discovered_ids_without_running_them(self) -> None:
         arguments = RUNNER_MODULE.parse_args(
             [
@@ -254,6 +300,96 @@ class ShardedTests(unittest.TestCase):
         self.assertTrue(
             all(0 < len(job.case_ids) <= RUNNER_MODULE.DEFAULT_CASE_SHARD_SIZE for job in jobs)
         )
+
+    def test_parity_ledger_auto_shards_among_multiple_selected_modules(self) -> None:
+        arguments = RUNNER_MODULE.parse_args(
+            [
+                "--module",
+                RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE,
+                "--module",
+                "scripts/tests/test_test_python.py",
+                "--jobs",
+                "4",
+            ]
+        )
+        discovered = RUNNER_MODULE.parity_ledger_case_ids(
+            ROOT / RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE
+        )
+        jobs = RUNNER_MODULE.select_jobs(arguments)
+
+        parity_jobs = [job for job in jobs if job.module == ROOT / RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE]
+        ordinary_jobs = [job for job in jobs if job.module != ROOT / RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE]
+        self.assertEqual(tuple(case_id for job in parity_jobs for case_id in job.case_ids), discovered)
+        self.assertTrue(
+            all(0 < len(job.case_ids) <= RUNNER_MODULE.DEFAULT_CASE_SHARD_SIZE for job in parity_jobs)
+        )
+        self.assertEqual(ordinary_jobs, [RUNNER_MODULE.TestJob(ROOT / "scripts/tests/test_test_python.py")])
+
+    def test_parity_ledger_auto_shards_from_directory_selection(self) -> None:
+        arguments = RUNNER_MODULE.parse_args(
+            [
+                "--directory",
+                "compat/x86_64/tests",
+                "--pattern",
+                "test_parity_ledger.py",
+                "--jobs",
+                "4",
+            ]
+        )
+        discovered = RUNNER_MODULE.parity_ledger_case_ids(
+            ROOT / RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE
+        )
+
+        jobs = RUNNER_MODULE.select_jobs(arguments)
+
+        self.assertEqual(tuple(case_id for job in jobs for case_id in job.case_ids), discovered)
+        self.assertTrue(
+            all(0 < len(job.case_ids) <= RUNNER_MODULE.DEFAULT_CASE_SHARD_SIZE for job in jobs)
+        )
+
+    def test_no_case_sharding_keeps_the_audited_module_monolithic(self) -> None:
+        arguments = RUNNER_MODULE.parse_args(
+            [
+                "--module",
+                RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE,
+                "--no-case-sharding",
+                "--jobs",
+                "1",
+            ]
+        )
+
+        self.assertEqual(
+            RUNNER_MODULE.select_jobs(arguments),
+            [RUNNER_MODULE.TestJob(ROOT / RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE)],
+        )
+
+    def test_worker_progress_uses_the_last_complete_checkpoint(self) -> None:
+        log = self.fixture_root / "worker-progress.log"
+        checkpoint = {
+            "tests_started": 3,
+            "tests_completed": 2,
+            "current_test_id": "synthetic.Cases.test_c",
+            "current_started_at": 1.5,
+            "last_test_id": "synthetic.Cases.test_b",
+            "last_elapsed_seconds": 0.25,
+        }
+        log.write_text(
+            RUNNER_MODULE.PROGRESS_PREFIX
+            + json.dumps(checkpoint, sort_keys=True)
+            + "\n"
+            + RUNNER_MODULE.PROGRESS_PREFIX
+            + '{"tests_started": 4',
+            encoding="utf-8",
+        )
+
+        progress = RUNNER_MODULE.worker_progress(log)
+
+        self.assertIsNotNone(progress)
+        assert progress is not None
+        self.assertEqual(progress.tests_started, 3)
+        self.assertEqual(progress.tests_completed, 2)
+        self.assertEqual(progress.current_test_id, "synthetic.Cases.test_c")
+        self.assertEqual(progress.last_test_id, "synthetic.Cases.test_b")
 
     def test_core_dumps_are_disabled_before_module_import_and_in_descendants(self) -> None:
         module = self.write_module(
@@ -364,7 +500,11 @@ class ImmediateTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         payload = json.loads(records[0][len(RUNNER_MODULE.RESULT_PREFIX):])
         self.assertEqual(payload, {
-            "tests_run": 4, "failures": 2, "errors": 1, "discovery_errors": 0
+            "tests_run": 4,
+            "failures": 2,
+            "errors": 1,
+            "discovery_errors": 0,
+            "completed_case_ids": [],
         })
         diagnostic = (worker / "stderr.log").read_text()
         self.assertEqual(diagnostic.count("AssertionError: immediate failure detail"), 1)

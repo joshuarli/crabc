@@ -2,9 +2,10 @@
 """Run selected unittest modules in isolated, bounded worker processes.
 
 The runner deliberately has a small surface: select either a directory of
-``test_*.py`` files or one or more files, then each file gets one Python
-process.  This keeps module globals, patches, and ``tempfile`` state from
-leaking between tests without making the suite depend on a test framework.
+``test_*.py`` files or one or more files, then each ordinary file gets one
+Python process. The audited parity-ledger module is bounded into selected-case
+workers by default. This keeps module globals, patches, and ``tempfile`` state
+from leaking between tests without making the suite depend on a test framework.
 """
 
 from __future__ import annotations
@@ -88,6 +89,17 @@ class WorkerProgress:
     current_started_at: float | None
     last_test_id: str | None
     last_elapsed_seconds: float | None
+
+
+@dataclass(frozen=True)
+class WorkerPayload:
+    """The typed final worker record, including selected-case completion proof."""
+
+    tests_run: int
+    failures: int
+    errors: int
+    discovery_errors: int
+    completed_case_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -254,8 +266,22 @@ def parity_ledger_case_ids(module: Path) -> tuple[str, ...]:
     return case_ids
 
 
+def sharded_parity_jobs(module: Path, shard_size: int) -> list[TestJob]:
+    """Form bounded jobs from the one audited module that is process-safe to shard."""
+
+    case_ids = parity_ledger_case_ids(module)
+    if not case_ids:
+        # Preserve the ordinary zero-test outcome instead of silently passing
+        # an empty selected-case shard.
+        return [TestJob(module)]
+    return [
+        TestJob(module, case_ids[index : index + shard_size])
+        for index in range(0, len(case_ids), shard_size)
+    ]
+
+
 def select_jobs(args: argparse.Namespace) -> list[TestJob]:
-    """Keep ordinary module selection cold; split only explicit case jobs."""
+    """Shard only audited parity cases; leave every other selected module whole."""
 
     modules = select_modules(args)
     if args.case_ids:
@@ -264,23 +290,34 @@ def select_jobs(args: argparse.Namespace) -> list[TestJob]:
         if len(set(args.case_ids)) != len(args.case_ids):
             raise TestPythonError("selected cases must not contain duplicate test IDs")
         case_ids = tuple(args.case_ids)
-    elif args.case_shard_size is None:
-        return [TestJob(module) for module in modules]
-    elif args.directory is not None or len(modules) != 1:
-        raise TestPythonError("case sharding requires exactly one --module selection")
-    else:
-        case_ids = parity_ledger_case_ids(modules[0])
+        if args.case_shard_size is None:
+            return [TestJob(modules[0], case_ids)]
+        return [
+            TestJob(modules[0], case_ids[index : index + args.case_shard_size])
+            for index in range(0, len(case_ids), args.case_shard_size)
+        ]
 
-    if args.case_shard_size is None:
-        return [TestJob(modules[0], case_ids)]
-    if not case_ids:
-        # Preserve the ordinary zero-test outcome instead of silently passing
-        # an empty sharded selection.
-        return [TestJob(modules[0])]
-    return [
-        TestJob(modules[0], case_ids[index : index + args.case_shard_size])
-        for index in range(0, len(case_ids), args.case_shard_size)
+    if args.no_case_sharding:
+        return [TestJob(module) for module in modules]
+
+    parity_modules = [
+        module
+        for module in modules
+        if relative_to_repository(module) == PARITY_LEDGER_TEST_MODULE
     ]
+    if args.case_shard_size is not None and not parity_modules:
+        raise TestPythonError(
+            "case sharding without --case is currently limited to "
+            + PARITY_LEDGER_TEST_MODULE
+        )
+    shard_size = args.case_shard_size or DEFAULT_CASE_SHARD_SIZE
+    jobs: list[TestJob] = []
+    for module in modules:
+        if module in parity_modules:
+            jobs.extend(sharded_parity_jobs(module, shard_size))
+        else:
+            jobs.append(TestJob(module))
+    return jobs
 
 
 def worker_paths(run_root: Path, index: int, module: Path) -> WorkerPaths:
@@ -360,7 +397,7 @@ def read_log_tail(path: Path) -> str:
         return stream.read().decode("utf-8", errors="replace")
 
 
-def worker_payload(path: Path) -> dict[str, int] | None:
+def worker_payload(path: Path) -> WorkerPayload | None:
     """Return the final typed worker record, never arbitrary test output."""
 
     for line in reversed(read_log_tail(path).splitlines()):
@@ -372,12 +409,24 @@ def worker_payload(path: Path) -> dict[str, int] | None:
             return None
         if not isinstance(decoded, dict):
             return None
-        expected = {"tests_run", "failures", "errors", "discovery_errors"}
-        if set(decoded) != expected or any(
-            type(value) is not int or value < 0 for value in decoded.values()
+        expected = {
+            "tests_run",
+            "failures",
+            "errors",
+            "discovery_errors",
+            "completed_case_ids",
+        }
+        if set(decoded) != expected:
+            return None
+        counts = (decoded["tests_run"], decoded["failures"], decoded["errors"], decoded["discovery_errors"])
+        completed_case_ids = decoded["completed_case_ids"]
+        if (
+            any(type(value) is not int or value < 0 for value in counts)
+            or not isinstance(completed_case_ids, list)
+            or any(not isinstance(case_id, str) for case_id in completed_case_ids)
         ):
             return None
-        return decoded
+        return WorkerPayload(*counts, tuple(completed_case_ids))
     return None
 
 
@@ -390,7 +439,7 @@ def worker_progress(path: Path) -> WorkerProgress | None:
         try:
             decoded = json.loads(line.removeprefix(PROGRESS_PREFIX))
         except json.JSONDecodeError:
-            return None
+            continue
         if not isinstance(decoded, dict) or set(decoded) != {
             "tests_started",
             "tests_completed",
@@ -399,7 +448,7 @@ def worker_progress(path: Path) -> WorkerProgress | None:
             "last_test_id",
             "last_elapsed_seconds",
         }:
-            return None
+            continue
         started = decoded["tests_started"]
         completed = decoded["tests_completed"]
         if (
@@ -408,26 +457,26 @@ def worker_progress(path: Path) -> WorkerProgress | None:
             or started < completed
             or completed < 0
         ):
-            return None
+            continue
         current = decoded["current_test_id"]
         current_started_at = decoded["current_started_at"]
         last = decoded["last_test_id"]
         last_elapsed = decoded["last_elapsed_seconds"]
         if current is not None and not isinstance(current, str):
-            return None
+            continue
         if last is not None and not isinstance(last, str):
-            return None
+            continue
         if current_started_at is not None and (
             type(current_started_at) not in (int, float)
             or not math.isfinite(current_started_at)
         ):
-            return None
+            continue
         if last_elapsed is not None and (
             type(last_elapsed) not in (int, float)
             or not math.isfinite(last_elapsed)
             or last_elapsed < 0
         ):
-            return None
+            continue
         return WorkerProgress(
             started,
             completed,
@@ -508,7 +557,7 @@ def completed_result(worker: ActiveWorker, status: str | None = None) -> ModuleR
     exit_code = worker.process.returncode
     payload = worker_payload(worker.paths.stdout)
     progress = worker_progress(worker.paths.stdout)
-    tests_run = 0 if payload is None else payload["tests_run"]
+    tests_run = 0 if payload is None else payload.tests_run
     tests_completed = tests_run
     current_test_id = None
     current_test_elapsed_seconds = None
@@ -549,11 +598,20 @@ def completed_result(worker: ActiveWorker, status: str | None = None) -> ModuleR
             current_test_id,
             current_test_elapsed_seconds,
         )
-    if payload["discovery_errors"]:
+    selected_cases_complete = (
+        not worker.case_ids
+        or (
+            payload.tests_run == len(worker.case_ids)
+            and payload.completed_case_ids == worker.case_ids
+        )
+    )
+    if payload.discovery_errors:
         state = "discovery-error"
-    elif exit_code != 0 or payload["failures"] or payload["errors"]:
+    elif not selected_cases_complete:
+        state = "incomplete-selection"
+    elif exit_code != 0 or payload.failures or payload.errors:
         state = "failed"
-    elif payload["tests_run"] == 0:
+    elif payload.tests_run == 0:
         state = "zero-tests"
     else:
         state = "passed"
@@ -756,7 +814,14 @@ class ImmediateDiagnosticResult(unittest.TextTestResult):
         self._current_started_at: float | None = None
         self._last_test_id: str | None = None
         self._last_elapsed_seconds: float | None = None
+        self._completed_case_ids: list[str] = []
         self.emit_progress()
+
+    @property
+    def completed_case_ids(self) -> tuple[str, ...]:
+        """Return the exact cases whose ``stopTest`` boundary was reached."""
+
+        return tuple(self._completed_case_ids)
 
     def emit_progress(self) -> None:
         """Flush a compact checkpoint so a killed worker retains its position."""
@@ -787,6 +852,7 @@ class ImmediateDiagnosticResult(unittest.TextTestResult):
         started_at = self._current_started_at
         super().stopTest(test)
         self._tests_completed += 1
+        self._completed_case_ids.append(test.id())
         self._last_test_id = test.id()
         self._last_elapsed_seconds = 0.0 if started_at is None else max(
             0.0, time.monotonic() - started_at
@@ -851,15 +917,32 @@ def worker_main(raw_module: str, case_ids: Sequence[str]) -> int:
             "failures": len(result.failures),
             "errors": len(result.errors),
             "discovery_errors": discovery_errors,
+            "completed_case_ids": list(result.completed_case_ids) if case_ids else [],
         }
         print(RESULT_PREFIX + json.dumps(payload, sort_keys=True), flush=True)
-        return 0 if result.wasSuccessful() else 1
+        selection_complete = not case_ids or (
+            result.testsRun == len(case_ids)
+            and result.completed_case_ids == tuple(case_ids)
+        )
+        if not selection_complete:
+            print(
+                "test-python worker: selected cases stopped before completion "
+                f"({len(result.completed_case_ids)}/{len(case_ids)})",
+                file=sys.stderr,
+            )
+        return 0 if result.wasSuccessful() and selection_complete else 1
     except TestPythonError as error:
         print(f"test-python worker: {error}", file=sys.stderr)
         print(
             RESULT_PREFIX
             + json.dumps(
-                {"tests_run": 0, "failures": 0, "errors": 1, "discovery_errors": 1},
+                {
+                    "tests_run": 0,
+                    "failures": 0,
+                    "errors": 1,
+                    "discovery_errors": 1,
+                    "completed_case_ids": [],
+                },
                 sort_keys=True,
             ),
             flush=True,
@@ -895,13 +978,19 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_TIMEOUT_SECONDS,
         help=f"per-worker seconds before group termination (default: {DEFAULT_TIMEOUT_SECONDS:g})",
     )
-    parser.add_argument(
+    sharding = parser.add_mutually_exclusive_group()
+    sharding.add_argument(
         "--case-shard-size",
         type=int,
         help=(
             "split the audited parity-ledger module into selected-case workers "
             f"of this size (use {DEFAULT_CASE_SHARD_SIZE} for the normal bounded shard)"
         ),
+    )
+    sharding.add_argument(
+        "--no-case-sharding",
+        action="store_true",
+        help="keep the audited parity-ledger module as one monolithic worker",
     )
     parser.add_argument("--worker", help=argparse.SUPPRESS)
     parser.add_argument("--worker-case", action="append", default=[], help=argparse.SUPPRESS)
