@@ -37,7 +37,9 @@ case "$temporary" in
 esac
 
 work="$(mktemp -d "$TMPDIR/owned-pthread-mutex.XXXXXX")"
-trap 'status=$?; if [ "$status" -ne 0 ]; then printf "x86 owned pthread mutex: retained failure evidence at %s\n" "$work" >&2; else rm -rf -- "$work"; fi; exit "$status"' EXIT
+# Qualification seals the executables, driver receipts, and observed streams
+# after this process exits. Successful component evidence must survive too.
+trap 'status=$?; printf "pthread-mutex evidence: %s\n" "$work"; exit "$status"' EXIT
 
 run_case() {
     local root="$1" executable="$2" scenario="$3" output="$4"
