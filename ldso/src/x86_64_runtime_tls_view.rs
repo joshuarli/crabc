@@ -202,33 +202,36 @@ mod tests {
 
     #[test]
     fn abandoning_partial_all_thread_preparation_preserves_every_live_view() {
+        unsafe fn probe(guard: &RuntimeGuard) -> bool { (|| -> Option<bool> {
         let image = [31u8];
         let mut initial = [EMPTY_OBJECT; MAX_OBJECTS];
         initial[0] = Object { tls_image: image.as_ptr(), tls_filesz: 1, tls_memsz: 16,
             tls_align: 16, tls_module_id: 1, tls_offset_below_tp: 16, ..EMPTY_OBJECT };
-        let first = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
-        let second = unsafe { materialize_initial_tls(&initial, 0) }.unwrap();
+        let first = unsafe { materialize_initial_tls(&initial, 0) }?;
+        let second = unsafe { materialize_initial_tls(&initial, 0) }?;
         let modules = [initial[0], Object { tls_image: image.as_ptr(), tls_filesz: 1,
             tls_memsz: 33, tls_align: 64, tls_module_id: 2, ..EMPTY_OBJECT }];
-        let guard = RuntimeGuard::acquire();
-        let view = unsafe { PreparedTlsView::prepare(first.thread_pointer, &modules) }.unwrap();
+        let view = unsafe { PreparedTlsView::prepare(first.thread_pointer, &modules) }?;
         let address = view.view;
-        let mut prepared = PreparedAllThreads { _guard: &guard, threads: LoaderBuffer::new(2,
-            ThreadView { tp: core::ptr::null_mut(), view: core::ptr::null_mut() }).unwrap() };
+        let mut prepared = PreparedAllThreads { _guard: guard, threads: LoaderBuffer::new(2,
+            ThreadView { tp: core::ptr::null_mut(), view: core::ptr::null_mut() })? };
         prepared.threads.as_mut_slice()[0] = ThreadView { tp: first.thread_pointer, view: view.view };
         core::mem::forget(view);
         // The second registered thread rejects a truncated population. Drop
         // must reclaim the first prepared view without publishing either TP.
-        assert!(unsafe { PreparedTlsView::prepare(second.thread_pointer, &[]) }.is_none());
+        if unsafe { PreparedTlsView::prepare(second.thread_pointer, &[]) }.is_some() { return None; }
         drop(prepared);
         let mut residency = 0u8;
-        assert_eq!(unsafe { syscall3(27, address as i64, 1, core::ptr::addr_of_mut!(residency) as i64) }, -12);
+        if unsafe { syscall3(27, address as i64, 1, core::ptr::addr_of_mut!(residency) as i64) } != -12 { return None; }
         for block in [first, second] {
-            assert!(unsafe { current(block.thread_pointer) }.is_null());
-            assert_eq!(unsafe { *block.dtv }, 1);
-            assert_eq!(unsafe { *(*block.dtv.add(1) as *const u8) }, 31);
-            assert_eq!(unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) }, 0);
+            if !unsafe { current(block.thread_pointer) }.is_null()
+                || unsafe { *block.dtv } != 1 || unsafe { *(*block.dtv.add(1) as *const u8) } != 31
+                || unsafe { syscall2(SYS_MUNMAP, block.mapping as i64, block.mapping_byte_len as i64) } != 0
+            { return None; }
         }
+        Some(true)
+        })().unwrap_or(false) }
+        unsafe { x86_64_runtime_lock::isolated_mapping_probe(probe); }
     }
 
     #[test]

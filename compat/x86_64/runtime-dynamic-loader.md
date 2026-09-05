@@ -86,8 +86,10 @@ objects are neither relocated again nor made rollback eligible.
 The mutation boundary is a raw private futex lock, independent of libc malloc
 and the pthread list. Constructor claims identify the executing kernel TID;
 same-thread recursion skips its own claim, other threads wait outside the lock.
-Finalizer ownership is registered before constructor invocation, matching
-musl's partial-constructor recursive-exit behavior. Process shutdown closes
+Finalizer ownership is registered before constructor invocation, but eligibility
+requires completed initialization. An exiting constructor never dispatches
+its own partially initialized object's destructor; completed dependencies
+still finalize, matching musl's separate `ctor_visitor`/`constructed` states. Process shutdown closes
 new admissions; process finalization is once-only and distinct from retained
 `dlclose`, which validates identity without unloading or calling destructors.
 
@@ -114,6 +116,15 @@ scope and TLS and permit a later successful load; new initial-exec TLS and
 undefined-symbol failures are musl differentials, while malformed ELF cases
 are owned fail-closed tests. The materialized product gate repeats these
 consumers through both freshly installed and extracted sealed drivers.
+
+`run_general_dynamic_constructor_exit.sh` separately compares the same exiting
+constructor as a runtime-new DSO and an initial dependency. Both retain the
+completed earlier dependency's destructor but skip the incomplete object's
+destructor. The source-root tests keep the harness libc's own ELF TLS resolver;
+the owned resolver is exported only in production. Raw mincore-after-unmap
+probes run in isolated no-libc child mappings so unrelated parallel test mmap
+reuse cannot manufacture a failure. This harness isolation is not dynamic
+fork support; the full source suite remains parallel.
 
 Runtime counts and scratch allocation are resource-sized. Existing initial
 ELF/path/per-object admission bounds remain; this is not a claim to remove

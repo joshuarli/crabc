@@ -2343,7 +2343,11 @@ pub struct TlsIndex {
 /// that module's recorded `PT_TLS.p_memsz`; it cannot establish that a
 /// non-null result is safe for a caller's eventual typed dereference. This
 /// private exported ELF symbol is not an installed or public x86 API.
-#[no_mangle]
+// Source-root tests run on the pinned harness libc's TCB. Its unwinder calls
+// its own resolver through dl_iterate_phdr; exporting this loader-only symbol
+// there would interpret the foreign FS+24 as a RuntimeTlsView during panic.
+// Production ELF keeps the exact ABI symbol; tests call this Rust item directly.
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
     if index.is_null() {
         return core::ptr::null_mut();

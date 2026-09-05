@@ -2,11 +2,21 @@ extern crate std;
 use super::*;
 use core::sync::atomic::{AtomicPtr, AtomicUsize};
 
-unsafe fn page() -> *mut u8 {
+#[test]
+fn source_test_harness_keeps_its_own_tls_resolver() {
+    extern "C" {
+        #[link_name = "__tls_get_addr"]
+        fn harness_tls_resolver(index: *const TlsIndex) -> *mut c_void;
+    }
+    assert_ne!(harness_tls_resolver as *const () as usize,
+        super::super::__tls_get_addr as *const () as usize,
+        "the owned resolver must not interpret the host test harness TCB");
+}
+
+unsafe fn page() -> Option<*mut u8> {
     let result = unsafe { syscall6(SYS_MMAP, 0, PAGE as i64, PROT_READ | PROT_WRITE,
         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
-    assert!(!is_linux_error(result));
-    result as *mut u8
+    (!is_linux_error(result)).then_some(result as *mut u8)
 }
 
 unsafe fn mapped(address: *mut u8) -> bool {
@@ -18,22 +28,22 @@ fn identity(number: u64) -> ObjectIdentity { ObjectIdentity { device: 1, inode: 
 
 #[test]
 fn abandoned_registry_nodes_unmap_only_transaction_owned_images() {
-    unsafe {
-        let borrowed_image = page();
-        let new_image = page();
+    unsafe fn probe(_: &RuntimeGuard) -> bool { unsafe { (|| -> Option<bool> {
+        let borrowed_image = page()?;
+        let new_image = page()?;
         let mut nodes = UnpublishedObjects::new();
-        let initial = RuntimeObject::allocate(ObjectStorage::Initial(0), identity(1), 0, b"main", false).unwrap();
-        nodes.append(initial).unwrap();
+        let initial = RuntimeObject::allocate(ObjectStorage::Initial(0), identity(1), 0, b"main", false)?;
+        nodes.append(initial)?;
         let runtime = RuntimeObject::allocate(ObjectStorage::Runtime(Object {
             map_span_start: new_image as u64, map_span_byte_len: PAGE, ..EMPTY_OBJECT
-        }), identity(2), 1, b"runtime", true).unwrap();
-        nodes.append(runtime).unwrap();
-        assert!(mapped(new_image) && mapped(borrowed_image));
+        }), identity(2), 1, b"runtime", true)?;
+        nodes.append(runtime)?;
+        if !mapped(new_image) || !mapped(borrowed_image) { return None; }
         drop(nodes);
-        assert!(!mapped(new_image));
-        assert!(mapped(borrowed_image));
-        assert_eq!(syscall2(SYS_MUNMAP, borrowed_image as i64, PAGE as i64), 0);
-    }
+        let result = !mapped(new_image) && mapped(borrowed_image);
+        Some(syscall2(SYS_MUNMAP, borrowed_image as i64, PAGE as i64) == 0 && result)
+    })().unwrap_or(false) } }
+    unsafe { super::super::x86_64_runtime_lock::isolated_mapping_probe(probe); }
 }
 
 #[test]

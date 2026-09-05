@@ -438,7 +438,10 @@ pub(super) unsafe fn finalize_process() {
             continue;
         }
         let next = unsafe { (*node).fini_next };
-        if state == INITIALIZED || state == tid {
+        // The fini-list is registered before the constructor, but musl's
+        // `constructed` flag is set only after all its callbacks return.
+        // exit from this same constructor skips the incomplete object.
+        if state == INITIALIZED {
             unsafe { (*node).callback_state.store(FINALIZING, Ordering::Release); }
             drop(guard);
             for &address in unsafe { &(&(*node).finalizers)[..(*node).finalizer_count] } {
