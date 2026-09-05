@@ -6,7 +6,7 @@
 //! remains live until one `tre_mem_destroy`; no fixed capacity or individual
 //! free operation is introduced.
 
-use core::ffi::c_void;
+use core::ffi::{c_int, c_void};
 use core::mem::{align_of, size_of};
 use core::ptr;
 
@@ -19,6 +19,95 @@ unsafe extern "C" {
     fn cabi_free(pointer: *mut c_void);
     #[link_name = "malloc"]
     fn cabi_malloc(size: usize) -> *mut c_void;
+}
+
+#[cfg(test)]
+mod allocation_test_hook {
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    pub(super) static ALLOCATION_CALLS: AtomicUsize = AtomicUsize::new(0);
+    pub(super) static FREE_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static FAIL_AFTER_SUCCESSES: AtomicUsize = AtomicUsize::new(usize::MAX);
+    static TEST_LOCK: AtomicBool = AtomicBool::new(false);
+
+    pub(super) struct TestAllocationGuard;
+
+    pub(super) fn lock() -> TestAllocationGuard {
+        while TEST_LOCK
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        TestAllocationGuard
+    }
+
+    impl Drop for TestAllocationGuard {
+        fn drop(&mut self) {
+            TEST_LOCK.store(false, Ordering::Release);
+        }
+    }
+
+    pub(super) fn reset() {
+        ALLOCATION_CALLS.store(0, Ordering::Relaxed);
+        FREE_CALLS.store(0, Ordering::Relaxed);
+        FAIL_AFTER_SUCCESSES.store(usize::MAX, Ordering::Relaxed);
+    }
+
+    pub(super) fn fail_after(successes: usize) {
+        FAIL_AFTER_SUCCESSES.store(successes, Ordering::Relaxed);
+    }
+
+    pub(super) fn permit_allocation() -> bool {
+        ALLOCATION_CALLS.fetch_add(1, Ordering::Relaxed);
+        let mut remaining = FAIL_AFTER_SUCCESSES.load(Ordering::Relaxed);
+        loop {
+            if remaining == usize::MAX {
+                return true;
+            }
+            if remaining == 0 {
+                return false;
+            }
+            match FAIL_AFTER_SUCCESSES.compare_exchange_weak(
+                remaining,
+                remaining - 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return true,
+                Err(observed) => remaining = observed,
+            }
+        }
+    }
+
+    pub(super) fn note_free() {
+        FREE_CALLS.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+unsafe fn owned_calloc(count: usize, size: usize) -> *mut c_void {
+    #[cfg(test)]
+    if !allocation_test_hook::permit_allocation() {
+        return ptr::null_mut();
+    }
+    // SAFETY: caller preserves the selected C allocation ABI contract.
+    unsafe { cabi_calloc(count, size) }
+}
+
+unsafe fn owned_malloc(size: usize) -> *mut c_void {
+    #[cfg(test)]
+    if !allocation_test_hook::permit_allocation() {
+        return ptr::null_mut();
+    }
+    // SAFETY: caller preserves the selected C allocation ABI contract.
+    unsafe { cabi_malloc(size) }
+}
+
+unsafe fn owned_free(pointer: *mut c_void) {
+    #[cfg(test)]
+    allocation_test_hook::note_free();
+    // SAFETY: caller transfers one allocation from the selected C allocator.
+    unsafe { cabi_free(pointer) };
 }
 
 /// `tre_mem_new()` through `tre_mem_new_impl(0, NULL)` in `tre.h`.
@@ -43,7 +132,7 @@ unsafe fn tre_mem_new_impl(provided: bool, provided_block: *mut TreMem) -> *mut 
         provided_block
     } else {
         // SAFETY: `calloc(1, sizeof(*mem))` is the source allocation.
-        unsafe { cabi_calloc(1, size_of::<TreMem>()) }.cast::<TreMem>()
+        unsafe { owned_calloc(1, size_of::<TreMem>()) }.cast::<TreMem>()
     };
     memory
 }
@@ -60,13 +149,13 @@ pub(crate) unsafe fn tre_mem_destroy(memory: *mut TreMem) {
         // SAFETY: retain next before consuming the current list record.
         let next = unsafe { (*list).next };
         // SAFETY: every list data allocation was created by cabi_malloc.
-        unsafe { cabi_free((*list).data) };
+        unsafe { owned_free((*list).data) };
         // SAFETY: each list record is likewise owned exactly once here.
-        unsafe { cabi_free(list.cast()) };
+        unsafe { owned_free(list.cast()) };
         list = next;
     }
     // SAFETY: the active `tre_mem_new` path allocated this record with calloc.
-    unsafe { cabi_free(memory.cast()) };
+    unsafe { owned_free(memory.cast()) };
 }
 
 /// `tre_mem_alloc(mem, size)` from `tre.h`.
@@ -84,9 +173,11 @@ pub(crate) unsafe fn tre_mem_calloc(memory: *mut TreMem, size: usize) -> *mut c_
 /// Active `tre_mem_alloc_impl` algorithm from `tre-mem.c:89-151`.
 ///
 /// The checked arithmetic preserves the source's allocation-failure boundary
-/// before pointer arithmetic could overflow in Rust.  It does not impose a
-/// pattern or state capacity: the arena grows by `max(size * 8, 1024)` until
-/// the selected C allocator actually fails.
+/// before pointer arithmetic could overflow in Rust. It does not impose a
+/// pattern or state capacity. The source stores the block byte count in a C
+/// `int`; an unrepresentable `size * 8` is a documented memory-safety
+/// divergence: this port marks the arena failed and returns null before that
+/// source conversion could create a too-small allocation.
 unsafe fn tre_mem_alloc_impl(
     memory: *mut TreMem,
     provided: bool,
@@ -95,6 +186,13 @@ unsafe fn tre_mem_alloc_impl(
     mut size: usize,
 ) -> *mut c_void {
     if memory.is_null() || unsafe { (*memory).failed } != 0 {
+        return ptr::null_mut();
+    }
+    // Every active `regcomp.c`/`regexec.c` call site supplies a positive
+    // record or positive-count array size. Reject a zero-sized foreign call
+    // explicitly before the source expression `mem->ptr + size` could touch
+    // a null initial cursor or Rust's zero-length write could receive null.
+    if size == 0 {
         return ptr::null_mut();
     }
 
@@ -113,17 +211,22 @@ unsafe fn tre_mem_alloc_impl(
                 unsafe { (*memory).failed = 1 };
                 return ptr::null_mut();
             };
-            let block_size = core::cmp::max(eightfold, TRE_MEM_BLOCK_SIZE);
+            if eightfold > c_int::MAX as usize {
+                unsafe { (*memory).failed = 1 };
+                return ptr::null_mut();
+            }
+            // `tre-mem.c` declares this local as `int`, rather than size_t.
+            let block_size: c_int = core::cmp::max(eightfold, TRE_MEM_BLOCK_SIZE) as c_int;
             // SAFETY: these mirror `xmalloc(sizeof(*l))` and
             // `xmalloc(block_size)` in source order.
-            let list = unsafe { cabi_malloc(size_of::<TreList>()) }.cast::<TreList>();
+            let list = unsafe { owned_malloc(size_of::<TreList>()) }.cast::<TreList>();
             if list.is_null() {
                 unsafe { (*memory).failed = 1 };
                 return ptr::null_mut();
             }
-            let data = unsafe { cabi_malloc(block_size) };
+            let data = unsafe { owned_malloc(block_size as usize) };
             if data.is_null() {
-                unsafe { cabi_free(list.cast()) };
+                unsafe { owned_free(list.cast()) };
                 unsafe { (*memory).failed = 1 };
                 return ptr::null_mut();
             }
@@ -138,7 +241,7 @@ unsafe fn tre_mem_alloc_impl(
                 }
                 (*memory).current = list;
                 (*memory).ptr = data.cast();
-                (*memory).n = block_size;
+                (*memory).n = block_size as usize;
             }
         }
     }
@@ -185,6 +288,8 @@ mod tests {
 
     #[test]
     fn tre_mem_active_arena_grows_aligns_zeros_and_releases_all_blocks() {
+        let _allocation_guard = allocation_test_hook::lock();
+        allocation_test_hook::reset();
         // SAFETY: every pointer below comes from this test's source arena and
         // is consumed exactly once by tre_mem_destroy.
         unsafe {
@@ -206,6 +311,100 @@ mod tests {
             assert!(!(*memory).blocks.is_null());
             assert!(!(*(*memory).blocks).next.is_null());
             assert_eq!(first.read(), 0xa5);
+            tre_mem_destroy(memory);
+        }
+    }
+
+    #[test]
+    fn tre_mem_rejects_zero_before_a_null_cursor_and_keeps_the_arena_usable() {
+        let _allocation_guard = allocation_test_hook::lock();
+        allocation_test_hook::reset();
+        // SAFETY: the test owns this arena for the duration of the call.
+        unsafe {
+            let memory = tre_mem_new();
+            assert!(!memory.is_null());
+            assert!(tre_mem_calloc(memory, 0).is_null());
+            assert!((*memory).blocks.is_null());
+            assert_eq!((*memory).n, 0);
+            assert!(!tre_mem_alloc(memory, 1).is_null());
+            tre_mem_destroy(memory);
+        }
+    }
+
+    #[test]
+    fn tre_mem_list_allocation_failure_is_sticky_and_releases_prior_blocks() {
+        let _allocation_guard = allocation_test_hook::lock();
+        // SAFETY: all calls use one test-owned source arena.
+        unsafe {
+            allocation_test_hook::reset();
+            let memory = tre_mem_new();
+            assert!(!tre_mem_alloc(memory, 1).is_null());
+            allocation_test_hook::fail_after(0);
+            assert!(tre_mem_alloc(memory, TRE_MEM_BLOCK_SIZE).is_null());
+            assert_eq!((*memory).failed, 1);
+            let calls_after_failure = allocation_test_hook::ALLOCATION_CALLS.load(
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            assert!(tre_mem_alloc(memory, 1).is_null());
+            assert_eq!(
+                allocation_test_hook::ALLOCATION_CALLS.load(core::sync::atomic::Ordering::Relaxed),
+                calls_after_failure,
+            );
+            let frees_before_destroy = allocation_test_hook::FREE_CALLS.load(
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            tre_mem_destroy(memory);
+            assert_eq!(
+                allocation_test_hook::FREE_CALLS.load(core::sync::atomic::Ordering::Relaxed),
+                frees_before_destroy + 3,
+            );
+        }
+    }
+
+    #[test]
+    fn tre_mem_data_allocation_failure_frees_the_list_then_releases_prior_blocks() {
+        let _allocation_guard = allocation_test_hook::lock();
+        // SAFETY: all calls use one test-owned source arena.
+        unsafe {
+            allocation_test_hook::reset();
+            let memory = tre_mem_new();
+            assert!(!tre_mem_alloc(memory, 1).is_null());
+            allocation_test_hook::fail_after(1);
+            assert!(tre_mem_alloc(memory, TRE_MEM_BLOCK_SIZE).is_null());
+            assert_eq!((*memory).failed, 1);
+            let frees_before_destroy = allocation_test_hook::FREE_CALLS.load(
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            // The failed data allocation consumes no data block, but its
+            // freshly allocated list record is released immediately.
+            assert_eq!(frees_before_destroy, 1);
+            tre_mem_destroy(memory);
+            assert_eq!(
+                allocation_test_hook::FREE_CALLS.load(core::sync::atomic::Ordering::Relaxed),
+                frees_before_destroy + 3,
+            );
+        }
+    }
+
+    #[test]
+    fn tre_mem_marks_an_unrepresentable_c_int_block_size_sticky() {
+        let _allocation_guard = allocation_test_hook::lock();
+        // SAFETY: the request is rejected before it can allocate or dereference
+        // a block; the test then consumes its sole arena allocation.
+        unsafe {
+            allocation_test_hook::reset();
+            let memory = tre_mem_new();
+            let unrepresentable_size = c_int::MAX as usize / 8 + 1;
+            assert!(tre_mem_alloc(memory, unrepresentable_size).is_null());
+            assert_eq!((*memory).failed, 1);
+            let calls_after_failure = allocation_test_hook::ALLOCATION_CALLS.load(
+                core::sync::atomic::Ordering::Relaxed,
+            );
+            assert!(tre_mem_alloc(memory, 1).is_null());
+            assert_eq!(
+                allocation_test_hook::ALLOCATION_CALLS.load(core::sync::atomic::Ordering::Relaxed),
+                calls_after_failure,
+            );
             tre_mem_destroy(memory);
         }
     }

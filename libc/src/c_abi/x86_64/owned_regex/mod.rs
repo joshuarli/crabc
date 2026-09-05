@@ -9,10 +9,12 @@
 //! until they can consume these records directly.
 //!
 //! `tre.h` and `tre-mem.c` originated in TRE and carry Ville Laurikari's
-//! two-clause BSD license; musl records that they were substantially modified
-//! by Rich Felker.  The later `regcomp.c` and `regexec.c` ports must retain
-//! this same source and license provenance.  This module exports no `regex.h`
-//! entry point by itself and is not selected from `static_c_abi.rs` yet.
+//! two-clause BSD license, reproduced in
+//! [`LICENSE-TRE-2-CLAUSE-BSD.txt`](LICENSE-TRE-2-CLAUSE-BSD.txt); musl records
+//! that they were substantially modified by Rich Felker.  The later
+//! `regcomp.c` and `regexec.c` ports must retain this same source and license
+//! provenance.  This module exports no `regex.h` entry point by itself and is
+//! not selected from `static_c_abi.rs` yet.
 
 mod memory;
 mod types;
