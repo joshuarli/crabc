@@ -134,7 +134,7 @@ mapping stays process-lifetime storage when the initial task exits early.
 The focused host command is `./scripts/dev-x86_64.sh owned-dynamic-pthread-exit`;
 the aggregate runs the consumer against installed and extracted products.
 
-The shared initial/runtime search matrix proves eleven musl decisions through
+The shared initial/runtime search matrix proves thirteen musl decisions through
 installed/extracted PIE and non-PIE consumers; its limits are recorded in
 [runtime-dynamic-loader.md](runtime-dynamic-loader.md). Remaining product
 work includes full system-path/preload policy, broader introspection/order

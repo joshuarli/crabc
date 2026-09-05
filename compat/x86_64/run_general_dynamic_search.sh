@@ -49,6 +49,41 @@ for arm in candidate oracle; do
         "${cc[@]}" -fPIE "$oracle_mode" -DSEARCH_INITIAL "$source" -L"$build" -lbreadth -lsearch_leaf -Wl,-rpath,/search:/usr/lib -o "$build/breadth"
     fi
     cp "$build/consumer" "$build/initial" "$build/breadth" "$root/"
+    # Source-tag admission variants of the same installed executable. Keep
+    # all bytes unchanged except one dynamic entry: legacy RPATH replaces
+    # RUNPATH; the precedence arm adds RPATH=/usr/lib in the inert DEBUG slot
+    # while retaining RUNPATH=/search:/usr/lib. Both arms must still return 7.
+    python3 -B - "$build/consumer" "$root" <<'PYTHON'
+from pathlib import Path
+import struct
+import sys
+source, root = map(Path, sys.argv[1:])
+original = source.read_bytes()
+phoff = struct.unpack_from('<Q', original, 32)[0]
+phentsize, phnum = struct.unpack_from('<HH', original, 54)
+dynamic = []
+for index in range(phnum):
+    offset = phoff + index * phentsize
+    if struct.unpack_from('<I', original, offset)[0] == 2:
+        start = struct.unpack_from('<Q', original, offset + 8)[0]
+        size = struct.unpack_from('<Q', original, offset + 32)[0]
+        for entry in range(start, start + size, 16):
+            tag, value = struct.unpack_from('<qQ', original, entry)
+            if not tag:
+                break
+            dynamic.append((entry, tag, value))
+runpaths = [(entry, value) for entry, tag, value in dynamic if tag == 29]
+debug = [entry for entry, tag, value in dynamic if tag == 21]
+assert len(runpaths) == len(debug) == 1
+entry, value = runpaths[0]
+legacy = bytearray(original)
+struct.pack_into('<q', legacy, entry, 15)
+precedence = bytearray(original)
+struct.pack_into('<qQ', precedence, debug[0], 15, value + len('/search:'))
+for name, data in [('legacy', legacy), ('precedence', precedence)]:
+    (root / name).write_bytes(data)
+    (root / name).chmod(0o755)
+PYTHON
     cp "$build/libsearch_leaf.so" "$build/libsearch_mid.so" "$build/libbreadth.so" "$root/search/"
     cp "$build/libsearch_mid.so" "$build/liborigin.so" "$root/plugins/"
     cp "$build/libsearch_leaf.so" "$root/plugins/sub/"
@@ -57,7 +92,7 @@ for arm in candidate oracle; do
     # A caller-local same-name object is deliberately not chosen by dlopen.
     cp "$build/environment.so" "$root/caller/libsearch_mid.so"
     ln -s libsearch_leaf.so "$root/loop/libsearch_leaf.so"
-    for test in ancestor environment origin caller initial initial-environment relative delimiters missing stop-error breadth; do
+    for test in ancestor environment origin caller initial initial-environment relative delimiters missing stop-error breadth legacy precedence; do
         command=(/consumer /plugins/libsearch_mid.so 7)
         environment=()
         case "$test" in
@@ -67,6 +102,8 @@ for arm in candidate oracle; do
             initial) command=(/initial unused 7);;
             initial-environment) environment=(LD_LIBRARY_PATH=/environment); command=(/initial unused 8);;
             relative) command[1]=plugins/libsearch_mid.so;;
+            legacy) command[0]=/legacy;;
+            precedence) command[0]=/precedence;;
             breadth) command=(/breadth unused 7);;
             missing) command[1]=/missing/libsearch_mid.so; command[2]=0;;
             stop-error) environment=(LD_LIBRARY_PATH=/loop); command[2]=0;;
@@ -75,7 +112,7 @@ for arm in candidate oracle; do
         timeout 20 env -u LD_LIBRARY_PATH "${environment[@]}" chroot "$root" "${command[@]}" >"$work/$arm-$test.stdout"
     done
 done
-for test in ancestor environment origin caller initial initial-environment relative delimiters missing stop-error breadth; do
+for test in ancestor environment origin caller initial initial-environment relative delimiters missing stop-error breadth legacy precedence; do
     cmp "$work/candidate-$test.stdout" "$work/oracle-$test.stdout"
 done
-printf 'general dynamic search: PASS (11 installed/musl decisions, %s); evidence: %s\n' "$mode" "$work"
+printf 'general dynamic search: PASS (13 installed/musl decisions, %s); evidence: %s\n' "$mode" "$work"

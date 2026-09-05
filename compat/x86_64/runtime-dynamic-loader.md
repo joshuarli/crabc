@@ -244,16 +244,24 @@ configuration, host directories, preloading and loader command-line execution
 are not introduced. Existing 512-byte admitted pathname storage and a
 4096-byte expanded search-list bound remain explicit selected limits.
 
-`run_general_dynamic_search.sh` runs eleven identical candidate/pinned-musl
+`run_general_dynamic_search.sh` runs thirteen identical candidate/pinned-musl
 process decisions: runtime ancestor fallback, environment precedence,
 DSO ORIGIN, main-root search from a caller DSO, initial loading, initial
 environment precedence, relative direct paths, colon/newline separators,
 missing paths, an ELOOP error that must stop search, and initial breadth-first
-identity selection against a conflicting grandchild. The materialized aggregate runs these through installed and extracted drivers in PIE and
+identity selection against a conflicting grandchild, legacy RPATH, and
+RUNPATH precedence over RPATH. The last two variants make exact dynamic-tag
+substitutions in the installed executable, retaining the same required output
+in the separately built musl executable; they do not weaken the driver’s
+normal RUNPATH emission contract. The materialized aggregate runs these through installed and extracted drivers in PIE and
 non-PIE modes. The isolated regression failed with status 2 before ancestor
 search, then returned `search=7` with the same installed dependency placement.
 The breadth-first regression separately returned `search=8` before the
 discovery correction; the pinned oracle and corrected candidate return 7.
-Legacy RPATH parsing follows the source; dedicated legacy-tag differential,
-main ORIGIN with mounted proc, and privileged process execution remain
-qualification limits rather than inferred evidence.
+Main ORIGIN with mounted proc and privileged process execution remain
+qualification limits rather than inferred evidence. The inherited installed
+`/usr/lib` policy does not establish full musl system search parity: musl's
+`/etc/ld-musl-x86_64.path` and default `/lib:/usr/local/lib:/usr/lib` are not
+implemented here. Preload admission and interpreter command-line execution
+also remain broader loader obligations; this slice does not redefine those
+obligations as deliberately unsupported.
