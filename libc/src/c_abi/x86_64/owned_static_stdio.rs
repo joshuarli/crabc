@@ -158,6 +158,35 @@ impl Drop for ListGuard {
     }
 }
 
+/// Acquire musl fork.c's __stdio_ofl_lockptr position in the process owner's
+/// ordered fork transaction. No individual FILE lock is taken.
+/// # Safety
+/// The process owner has run user prepare callbacks and blocked application
+/// signals; it holds earlier internal locks in musl order. Exactly one matching
+/// parent or child hook must run before signals/user callbacks resume.
+pub(super) unsafe fn pthread_fork_prepare() {
+    // The transaction crosses a raw fork, so each process explicitly completes
+    // its own lock transition instead of inheriting a Rust destructor lifetime.
+    core::mem::forget(unsafe { ListGuard::acquire() });
+}
+
+/// Release the prepared registry lock in the original process.
+/// # Safety
+/// This is the original process's matching completion of pthread_fork_prepare,
+/// including the failed-fork path; no other completion has run.
+pub(super) unsafe fn pthread_fork_parent() {
+    drop(ListGuard);
+}
+
+/// Reset only the inherited registry lock, preserving every stream and buffer.
+/// # Safety
+/// This runs once in the sole surviving child thread after a prepared fork,
+/// before signals or user child callbacks resume. It must not run in a
+/// CLONE_VM popen child or in the original process.
+pub(super) unsafe fn pthread_fork_child() {
+    LIST_LOCK.store(0, Ordering::Relaxed);
+}
+
 pub(crate) struct StreamGuard(*mut StandardStream);
 impl StreamGuard {
     /// Caller supplies a live FILE; the guard serializes all state access.
