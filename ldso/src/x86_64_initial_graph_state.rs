@@ -214,8 +214,10 @@ impl InitialGraphState {
     /// narrow rule needed for initial dependency `DT_INIT_ARRAY` dispatch:
     /// children precede parents, repeated identities appear once, and the
     /// executable remains outside the plan.  Discovery is allowed to retain
-    /// a cycle so mapping/rollback stays identity-correct; lifecycle dispatch
-    /// is stricter and rejects that cycle before any callback can run.
+    /// a cycle so mapping/rollback stays identity-correct. The owned runtime
+    /// follows musl queue_ctors: mark before descending and skip back edges,
+    /// emitting each DSO once in depth-first completion order. Legacy private
+    /// proof roots retain their original cycle-rejection boundary.
     pub(crate) fn dependency_first_plan(
         &self,
     ) -> Result<DependencyFirstPlan, GraphStateError> {
@@ -241,6 +243,9 @@ impl InitialGraphState {
     ) -> Result<(), GraphStateError> {
         let mark = *marks.get(index).ok_or(GraphStateError::InvalidObject)?;
         match mark {
+            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+            1 => return Ok(()),
+            #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
             1 => return Err(GraphStateError::DependencyCycle),
             2 => return Ok(()),
             0 => {}
@@ -423,7 +428,7 @@ mod tests {
     }
 
     #[test]
-    fn dependency_first_plan_rejects_a_ready_cycle_before_dispatch() {
+    fn dependency_first_plan_ready_cycle_obeys_selected_runtime_contract() {
         let mut graph = InitialGraphState::new(MAIN);
         let left = match graph.admit_mapped(LEFT).unwrap() {
             ObjectAdmission::New { index } => index,
@@ -440,9 +445,9 @@ mod tests {
         graph.finish_discovery(left).unwrap();
         graph.finish_discovery(0).unwrap();
 
-        assert_eq!(
-            graph.dependency_first_plan(),
-            Err(GraphStateError::DependencyCycle)
-        );
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+        assert_eq!(graph.dependency_first_plan(), Err(GraphStateError::DependencyCycle));
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(graph.dependency_first_plan().unwrap().indices(), &[right, left]);
     }
 }

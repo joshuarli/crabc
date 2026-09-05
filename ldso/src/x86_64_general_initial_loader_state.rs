@@ -494,7 +494,7 @@ mod tests {
     }
 
     #[test]
-    fn cycle_is_retained_for_identity_but_rejected_by_initializer_preflight() {
+    fn cycle_retains_identity_and_transaction_rollback_under_selected_contract() {
         let mut state = GeneralInitialLoaderState::new(MAIN, EMPTY_OBJECT);
         let (left, right) = {
             let (graph, objects) = state.discovery_mut().unwrap();
@@ -516,12 +516,18 @@ mod tests {
             (left, right)
         };
         state.finish_discovery().unwrap();
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         assert_eq!(
             state
                 .graph_during_transaction()
                 .unwrap()
                 .dependency_first_plan(),
             Err(GraphStateError::DependencyCycle)
+        );
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        assert_eq!(
+            state.graph_during_transaction().unwrap().dependency_first_plan().unwrap().indices(),
+            &[right, left]
         );
         let mut unmapped = [usize::MAX; 2];
         let mut count = 0;

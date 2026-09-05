@@ -211,3 +211,14 @@ Installed and extracted products also run `run_owned_pthread_join_cancel.sh`:
 pending entry and blocked joins cancel with user cleanup while preserving the
 target for a later join; disabled and masked callers complete their join and
 retain their original cancellation state. The oracle is pinned musl 1.2.6.
+
+Initial dependency cycles use musl 1.2.6 `ldso/dynlink.c:queue_ctors`
+(mark before descending, skip visited edges, append on completion), matching
+the frozen AArch64 constructor traversal. `InitialGraphState` retains inode
+identity and existing capacities; its owned-runtime constructor plan visits
+each DSO exactly once. Legacy private proof roots retain cycle rejection.
+`run_general_dynamic_cycle.sh` builds a real A/B `DT_NEEDED` cycle with the
+installed driver and compares both dependency orders, PIE/non-PIE, and kernel
+/direct interpreter entry against pinned musl. It verifies constructor and
+reverse finalizer ordering, initial and worker TLS, and repeated `dlopen`
+without reinitialization. Both installed and extracted products run this gate.

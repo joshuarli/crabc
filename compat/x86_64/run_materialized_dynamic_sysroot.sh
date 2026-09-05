@@ -99,6 +99,8 @@ python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work
 cmp "$work/installed/share/crabc/manifest.json" "$work/second/share/crabc/manifest.json"
 python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/second" "$work/second-runtime.tar"
 cmp "$work/runtime.tar" "$work/second-runtime.tar"
+bash "$ROOT/compat/x86_64/run_general_dynamic_cycle.sh" "$work/installed"
+bash "$ROOT/compat/x86_64/run_general_dynamic_cycle.sh" "$work/extracted"
 bash "$ROOT/compat/x86_64/run_general_dynamic_cli.sh" "$work/installed"
 bash "$ROOT/compat/x86_64/run_general_dynamic_cli.sh" "$work/extracted"
 bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/installed"
