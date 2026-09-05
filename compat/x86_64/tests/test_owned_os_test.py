@@ -105,6 +105,101 @@ class TargetAdapterPlanTests(unittest.TestCase):
 
 
 class EvidenceContractTests(unittest.TestCase):
+    def test_basic_proc_reservation_and_mount_are_separate_from_the_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            private = RUNNER.reserve_private_proc_mountpoint(root, "basic")
+            self.assertIsNotNone(private)
+            assert private is not None
+            self.assertEqual(private["mountpoint"], str(root / "proc"))
+            self.assertEqual(private["reservation"], {"empty": True, "mode": 0o755})
+            self.assertEqual(list((root / "proc").iterdir()), [])
+            with self.assertRaisesRegex(RUNNER.RunnerError, "collides"):
+                RUNNER.reserve_private_proc_mountpoint(root, "basic")
+            self.assertIsNone(RUNNER.reserve_private_proc_mountpoint(root, "pty"))
+
+            with mock.patch.object(RUNNER, "container_pid_namespace", return_value="pid:[42]"), \
+                 mock.patch.object(RUNNER, "run_capture", side_effect=[
+                     (0, b"", b""),
+                     (0, b"pid:[42]\n", b""),
+                 ]) as capture:
+                RUNNER.mount_private_proc(root, private)
+
+            self.assertEqual(
+                capture.call_args_list[0].args[0],
+                ["/bin/mount", "-t", "proc", "-o", "nosuid,nodev,noexec", "proc", str(root / "proc")],
+            )
+            self.assertEqual(private["mount"]["status"], 0)
+            self.assertEqual(private["namespace"]["outside"], "pid:[42]")
+            self.assertEqual(private["namespace"]["inside"]["stdout"], {"byte_length": 9,
+                                                                              "sha256": hashlib.sha256(b"pid:[42]\n").hexdigest(),
+                                                                              "text": "pid:[42]\n"})
+            self.assertTrue(private["namespace"]["matched"])
+            with mock.patch.object(RUNNER, "run_capture", return_value=(0, b"", b"")) as capture:
+                unmount = RUNNER.unmount_private_proc(private)
+            self.assertEqual(capture.call_args.args[0], ["/bin/umount", str(root / "proc")])
+            self.assertEqual(unmount["status"], 0)
+
+    def test_proc_mount_or_namespace_failure_never_reaches_candidate_execution(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            private = RUNNER.reserve_private_proc_mountpoint(root, "basic")
+            assert private is not None
+            with mock.patch.object(RUNNER, "run_capture", return_value=(32, b"", b"denied\n")) as capture:
+                with self.assertRaisesRegex(RUNNER.FixtureError, "private procfs fixture setup failed"):
+                    RUNNER.mount_private_proc(root, private)
+            self.assertEqual(capture.call_count, 1)
+            self.assertNotIn("namespace", private)
+
+            (root / "second").mkdir()
+            private = RUNNER.reserve_private_proc_mountpoint(root / "second", "basic")
+            assert private is not None
+            with mock.patch.object(RUNNER, "container_pid_namespace", return_value="pid:[42]"), \
+                 mock.patch.object(RUNNER, "run_capture", side_effect=[
+                     (0, b"", b""),
+                     (0, b"pid:[43]\n", b""),
+                 ]) as capture:
+                with self.assertRaisesRegex(RUNNER.FixtureError, "PID namespace witness"):
+                    RUNNER.mount_private_proc(root / "second", private)
+            self.assertEqual(capture.call_count, 2)
+
+    def test_proc_teardown_failure_skips_the_post_run_tree_walk(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            (root / "usr/lib").mkdir(parents=True)
+            (root / "usr/lib/libc.so").write_bytes(b"candidate")
+            baseline = RUNNER.tree_roster(root)
+            (root / "proc").mkdir()
+            setup = RUNNER.tree_roster(root)
+            control = {"root": str(root), "product_payload_before": baseline, "execution_root_after_setup": setup}
+            with mock.patch.object(RUNNER, "tree_roster", side_effect=AssertionError("must not inspect mounted proc")):
+                control, intact = RUNNER.retain_execution_integrity(root, "basic", control, inspect_payload=False)
+            self.assertFalse(intact)
+            self.assertFalse(control["product_payload"]["passed"])
+            self.assertIsNone(control["product_payload"]["after"])
+            private = {"mountpoint": str(root / "proc")}
+            with mock.patch.object(RUNNER, "run_capture", side_effect=PermissionError("umount denied")):
+                private["unmount"] = RUNNER.unmount_private_proc(private)
+            self.assertEqual(private["unmount"]["status"], "EXEC_ERROR")
+            self.assertFalse(RUNNER.private_proc_postwalk_safe({"mount": {"status": 0}, **private}))
+
+    def test_host_readability_does_not_descend_into_a_live_proc_mountpoint(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            proc = root / "proc"
+            (proc / "live").mkdir(parents=True)
+            (root / "records").mkdir()
+            (root / "records" / "report.json").write_text("{}\n")
+            original_lstat = Path.lstat
+
+            def guarded_lstat(path: Path):
+                if path == proc or path.is_relative_to(proc):
+                    raise AssertionError("host-readability walk entered the live procfs fixture")
+                return original_lstat(path)
+
+            with mock.patch.object(Path, "lstat", guarded_lstat):
+                RUNNER.make_evidence_host_readable(root, skip_roots={proc})
+
     def test_private_devpts_setup_uses_a_new_instance_and_root_local_ptmx(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
             root = Path(temporary)

@@ -94,6 +94,28 @@ root-local `/dev/ptmx` to that mount, and record both mount and unmount streams
 in the evidence. This private fixture prevents host terminal acquisition while
 keeping the full source fixture and product runtime beneath the disposable root.
 
+Basic alone also reserves a collision-checked, empty `/proc` directory before
+the ordinary execution-root snapshot. After that snapshot, it mounts procfs
+only at that root with `/bin/mount -t proc -o nosuid,nodev,noexec proc`, then
+uses the pinned control loader and BusyBox inside the chroot to prove the
+mounted view reports the container's same `pid:[…]` namespace identity. The
+runner records the mount, witness, and `/bin/umount` streams. It unmounts procfs
+before any post-run payload roster; an unmount failure makes the suite
+incomplete and prevents a walk of the live mount. Every non-basic suite records
+no procfs fixture.
+
+`run_owned_os_test_ttyname_proc.sh DYNAMIC_SYSROOT` is the focused native
+regression for this execution-root boundary. It uses the exact same supplied
+dynamic product as its candidate compiler and runtime, compiles the unchanged
+pinned `basic/unistd/ttyname.c` and `basic/unistd/ttyname_r.c` once each through
+that product and pinned static musl, then runs both binaries in two otherwise
+identical basic roots. The empty unmounted root must give both sides the source
+reports `ttyname: ENOENT` and `ttyname_r: ENOENT`; the bounded procfs root must
+give both sides status zero with empty streams. It retains every raw status,
+stdout, and stderr artifact, source/product/oracle identities, candidate link
+receipts, fixture lifecycle, and post-unmount product proof. This is a focused
+fixture regression, not a substitute for a fresh ten-suite campaign.
+
 `namespace` is the bounded exception to target translation: os-test asks for
 preprocessor output and a host-side analyzer, neither of which is a target
 runtime program. The adapter uses the same installed compiler contract as a

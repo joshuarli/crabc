@@ -1399,6 +1399,70 @@ def _os_basic_fixtures(reader, control, product, runtime, contract):
         same(control[field]['sha256'], digest(runtime / path), 'os-test actual external shell control bytes')
 
 
+def _os_private_proc(reader, suite, private, runtime, controls, contract):
+    """Require basic's bounded procfs lifecycle before reading its runtime tree.
+
+    A failed teardown can leave a live kernel filesystem below the retained
+    execution root.  Validate the receipt first and refuse it before any
+    roster or payload walk; after the successful unmount, the ordinary empty
+    mountpoint is the only filesystem node that may be inspected.
+    """
+    if suite != 'basic':
+        same(private, None, 'os-test unexpected private procfs fixture')
+        return
+    require(isinstance(private, dict), 'os-test basic suite lacks its private procfs fixture')
+    keys(private, ('schema', 'mountpoint', 'reservation', 'mount', 'namespace', 'unmount'),
+         'os-test private procfs receipt')
+    target = runtime / 'proc'
+    target_recorded = reader.recorded(target)
+    same([private['schema'], private['mountpoint']], [contract.PRIVATE_PROC_SCHEMA, target_recorded],
+         'os-test private procfs root binding')
+    same(private['reservation'], {'empty': True, 'mode': 0o755}, 'os-test private procfs pre-snapshot reservation')
+
+    mount = private['mount']
+    keys(mount, ('command', 'status', 'stdout', 'stderr', 'target'), 'os-test private procfs mount')
+    same([mount['command'], mount['target'], mount['status']],
+         [[contract.PRIVATE_PROC_MOUNT, '-t', 'proc', '-o', contract.PRIVATE_PROC_MOUNT_OPTIONS,
+           'proc', target_recorded], target_recorded, 0], 'os-test private procfs mount command')
+    _os_snapshot(mount['stdout'], b'')
+    _os_snapshot(mount['stderr'], b'')
+
+    namespace = private['namespace']
+    keys(namespace, ('outside', 'inside', 'matched'), 'os-test private procfs namespace witness')
+    outside = namespace['outside']
+    require(type(outside) is str and re.fullmatch(r'pid:\[[0-9]+\]', outside) is not None,
+            'os-test private procfs outside PID namespace is malformed')
+    inside = namespace['inside']
+    keys(inside, ('command', 'status', 'stdout', 'stderr'), 'os-test private procfs inside PID namespace witness')
+    same([inside['command'], inside['status'], namespace['matched']],
+         [[contract.PRIVATE_PROC_WITNESS_CHROOT, reader.recorded(runtime),
+           '/control/ld-musl-x86_64.so.1', '/control/busybox', 'readlink', '/proc/self/ns/pid'], 0, True],
+         'os-test private procfs same-container PID namespace witness')
+    _os_snapshot(inside['stdout'], (outside + '\n').encode())
+    _os_snapshot(inside['stderr'], b'')
+
+    unmount = private['unmount']
+    keys(unmount, ('command', 'status', 'stdout', 'stderr'), 'os-test private procfs unmount')
+    same([unmount['command'], unmount['status']], [[contract.PRIVATE_PROC_UNMOUNT, target_recorded], 0],
+         'os-test private procfs unmount command')
+    _os_snapshot(unmount['stdout'], b'')
+    _os_snapshot(unmount['stderr'], b'')
+
+    additions = read_json(controls)
+    keys(additions, ('schema', 'entries'), 'os-test execution control additions')
+    same(additions['schema'], 'crabc.x86_64-owned-os-test-execution-controls/v1',
+         'os-test execution control additions schema')
+    require(isinstance(additions['entries'], list), 'os-test execution control additions are malformed')
+    proc_entries = [entry for entry in additions['entries'] if isinstance(entry, dict) and entry.get('path') == 'proc']
+    same(proc_entries, [{'path': 'proc', 'type': 'directory', 'mode': 0o755}],
+         'os-test private procfs pre-mount control roster')
+    require(not any(isinstance(entry, dict) and isinstance(entry.get('path'), str) and entry['path'].startswith('proc/')
+                    for entry in additions['entries']), 'os-test private procfs control roster includes mounted content')
+    mounted = physical(target, directory=True)
+    same(mounted.stat().st_mode & 0o7777, 0o755, 'os-test private procfs mountpoint mode after unmount')
+    exact_files(mounted, (), 'os-test private procfs mountpoint after unmount')
+
+
 def _os_product_copy(reader, suite, control, baseline, contract):
     empty = {'missing': [], 'unexpected': [], 'changed': []}
     compile_product = reader.leaf / 'products' / suite
@@ -1415,6 +1479,9 @@ def _os_product_copy(reader, suite, control, baseline, contract):
     same(control['product_copy_difference'], empty, 'os-test runtime product copy equality')
     same(control['product_manifest_sha256'], digest(reader.manifest), 'os-test runtime product manifest')
     same(control['candidate_loader_sha256'], digest(reader.product / 'lib/ld-crabc-x86_64.so.1'), 'os-test runtime loader binding')
+    controls = reader.leaf / 'records' / (suite + '.execution-control-additions.json')
+    reader.relative_artifact(control['control_additions'], controls)
+    _os_private_proc(reader, suite, control['private_proc'], runtime, controls, contract)
     require('setup_error' not in control and control.get('setup_status') != 'ERROR', 'os-test execution fixture failed')
     integrity = control['product_payload']
     same([integrity['passed'], integrity['difference']], [True, empty], 'os-test product integrity result')
@@ -1438,8 +1505,6 @@ def _os_product_copy(reader, suite, control, baseline, contract):
     if suite == 'basic':
         projected = [entry for entry in projected if entry['path'] != 'bin/sh']
     same(sorted(projected, key=lambda entry: entry['path']), baseline, 'os-test actual runtime product payload')
-    controls = reader.leaf / 'records' / (suite + '.execution-control-additions.json')
-    reader.relative_artifact(control['control_additions'], controls)
     private = control['private_devpts']
     if suite in ('basic', 'pty'):
         require(isinstance(private, dict), 'os-test suite lacks its private devpts fixture')

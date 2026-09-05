@@ -440,6 +440,30 @@ class NativeObservationsTests(unittest.TestCase):
             product, runtime = self.leaf / 'products' / suite, self.leaf / 'runtime' / suite
             shutil.copytree(self.product, product, symlinks=True)
             shutil.copytree(self.product, runtime, symlinks=True)
+            private_proc = None
+            if suite == 'basic':
+                proc = runtime / 'proc'
+                proc.mkdir(mode=0o755)
+                proc.chmod(0o755)
+                outside = 'pid:[4026533183]'
+                private_proc = {
+                    'schema': contract.PRIVATE_PROC_SCHEMA,
+                    'mountpoint': self.recorded(proc),
+                    'reservation': {'empty': True, 'mode': 0o755},
+                    'mount': {'command': [contract.PRIVATE_PROC_MOUNT, '-t', 'proc', '-o',
+                                          contract.PRIVATE_PROC_MOUNT_OPTIONS, 'proc', self.recorded(proc)],
+                              'status': 0, 'stdout': contract.stream_snapshot(b''),
+                              'stderr': contract.stream_snapshot(b''), 'target': self.recorded(proc)},
+                    'namespace': {'outside': outside,
+                                  'inside': {'command': [contract.PRIVATE_PROC_WITNESS_CHROOT, self.recorded(runtime),
+                                                         '/control/ld-musl-x86_64.so.1', '/control/busybox',
+                                                         'readlink', '/proc/self/ns/pid'], 'status': 0,
+                                             'stdout': contract.stream_snapshot((outside + '\n').encode()),
+                                             'stderr': contract.stream_snapshot(b'')},
+                                  'matched': True},
+                    'unmount': {'command': [contract.PRIVATE_PROC_UNMOUNT, self.recorded(proc)], 'status': 0,
+                                'stdout': contract.stream_snapshot(b''), 'stderr': contract.stream_snapshot(b'')},
+                }
             musl, dynamic = self.leaf / 'musl' / suite, self.leaf / 'suites' / suite
             copied(musl)
             copied(dynamic)
@@ -507,8 +531,10 @@ class NativeObservationsTests(unittest.TestCase):
                        'product_copy_difference': {'missing': [], 'unexpected': [], 'changed': []},
                        'product_manifest_sha256': self.binding(manifest)['sha256'], 'candidate_loader_sha256': self.binding(self.product / 'lib/ld-crabc-x86_64.so.1')['sha256'],
                        'product_payload': integrity, 'control_additions': artifact(self.leaf / 'records' / (suite + '.execution-control-additions.json'),
-                            {'schema': 'crabc.x86_64-owned-os-test-execution-controls/v1', 'entries': []}),
-                       'private_devpts': {'status': 0, 'unmount': {'status': 0}} if suite == 'pty' else None}
+                            {'schema': 'crabc.x86_64-owned-os-test-execution-controls/v1',
+                             'entries': [contract.roster_entry(runtime, Path('proc'))] if private_proc is not None else []}),
+                       'private_devpts': {'status': 0, 'unmount': {'status': 0}} if suite == 'pty' else None,
+                       'private_proc': private_proc}
             control.update(basic_runtime_fixtures=None, shell_launcher=None)
             if suite == 'basic':
                 control['private_devpts'] = {'status': 0, 'unmount': {'status': 0}}
@@ -585,6 +611,11 @@ class NativeObservationsTests(unittest.TestCase):
             'failed oracle stability': lambda r: r['musl_oracle'].update(unchanged=False),
             'unbound oracle compiler identity': lambda r: r['musl_oracle']['before']['wrapper'].update(path='/foreign/cc'),
             'missing basic private devpts': lambda r: r['suites'][2]['dynamic']['execution_control'].update(private_devpts=None),
+            'missing basic private procfs': lambda r: r['suites'][2]['dynamic']['execution_control'].update(private_proc=None),
+            'foreign private procfs mount command': lambda r: r['suites'][2]['dynamic']['execution_control']['private_proc']['mount']['command'].__setitem__(0, '/usr/bin/mount'),
+            'different private procfs namespace': lambda r: r['suites'][2]['dynamic']['execution_control']['private_proc']['namespace'].update(outside='pid:[4026533184]'),
+            'failed private procfs teardown': lambda r: r['suites'][2]['dynamic']['execution_control']['private_proc']['unmount'].update(status=1),
+            'private procfs in a nonbasic suite': lambda r: r['suites'][0]['dynamic']['execution_control'].update(private_proc={'unexpected': True}),
             'foreign basic shell compiler': lambda r: r['suites'][2]['dynamic']['execution_control']['shell_launcher']['compile']['command'].__setitem__(0, '/foreign/compiler'),
             'foreign basic shell source': lambda r: r['suites'][2]['dynamic']['execution_control']['shell_launcher']['source'].update(sha256='0' * 64),
             'replaced basic shell installation': lambda r: r['suites'][2]['dynamic']['execution_control']['shell_launcher']['launcher'].update(candidate_path='/bin/other'),
@@ -624,6 +655,10 @@ class NativeObservationsTests(unittest.TestCase):
         with self.assertRaises(native.NativeObservationError, msg='the shell exception cannot admit other product-directory additions'):
             self.collect('os-test')
         extra.unlink()
+        proc_extra = self.put(self.leaf / 'runtime/basic/proc/undeclared-node', b'not an unmounted empty procfs root')
+        with self.assertRaises(native.NativeObservationError, msg='the procfs mountpoint must be empty after teardown'):
+            self.collect('os-test')
+        proc_extra.unlink()
         launcher = self.leaf / 'runtime/basic/bin/sh'
         launcher.chmod(0o644)
         with self.assertRaises(native.NativeObservationError, msg='the installed shell must retain its executable mode'):

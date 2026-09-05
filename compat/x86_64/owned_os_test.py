@@ -40,6 +40,11 @@ SCHEMA = "crabc.x86_64-owned-os-test/v1"
 ADAPTER_SCHEMA = "crabc.x86_64-owned-os-test-adapter/v1"
 PRODUCT_INCLUDE = "usr/include"
 CONTROL_CHARACTER_DEVICES = (("null", 1, 3), ("zero", 1, 5), ("random", 1, 8), ("urandom", 1, 9), ("tty", 5, 0))
+PRIVATE_PROC_SCHEMA = "crabc.x86_64-owned-os-test-private-proc/v1"
+PRIVATE_PROC_MOUNT_OPTIONS = "nosuid,nodev,noexec"
+PRIVATE_PROC_MOUNT = "/bin/mount"
+PRIVATE_PROC_UNMOUNT = "/bin/umount"
+PRIVATE_PROC_WITNESS_CHROOT = "/usr/sbin/chroot"
 BASIC_SYSTEM_FILES = {
     "passwd": b"root:x:0:0:root:/root:/bin/sh\n",
     "group": b"root:x:0:\n",
@@ -797,22 +802,27 @@ def make_record(work: Path, suite: str, side: str, command: list[str], timeout: 
             "stdout": stdout_artifact, "stderr": stderr_artifact, "status_record": status_artifact}
 
 
-def make_evidence_host_readable(work: Path) -> None:
+def make_evidence_host_readable(work: Path, *, skip_roots: set[Path] | None = None) -> None:
     """Return the complete retained evidence leaf to the invoking workspace user."""
-    for directory, names, files in os.walk(work, topdown=False, followlinks=False):
+    skipped = {path.absolute() for path in skip_roots or set()}
+    paths: list[Path] = []
+    for directory, names, files in os.walk(work, topdown=True, followlinks=False):
         current = Path(directory)
-        for name in [*names, *files]:
-            path = current / name
-            mode = path.lstat().st_mode
-            if stat.S_ISLNK(mode):
-                continue
-            if stat.S_ISDIR(mode):
-                os.chmod(path, stat.S_IMODE(mode) | 0o555)
-            elif stat.S_ISREG(mode):
-                os.chmod(path, stat.S_IMODE(mode) | 0o444)
-        mode = current.lstat().st_mode
-        if not stat.S_ISLNK(mode):
-            os.chmod(current, stat.S_IMODE(mode) | 0o555)
+        names[:] = [name for name in names if (current / name).absolute() not in skipped]
+        paths.extend(current / name for name in [*names, *files])
+    for path in reversed(paths):
+        if path.absolute() in skipped:
+            continue
+        mode = path.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            continue
+        if stat.S_ISDIR(mode):
+            os.chmod(path, stat.S_IMODE(mode) | 0o555)
+        elif stat.S_ISREG(mode):
+            os.chmod(path, stat.S_IMODE(mode) | 0o444)
+    mode = work.lstat().st_mode
+    if not stat.S_ISLNK(mode):
+        os.chmod(work, stat.S_IMODE(mode) | 0o555)
 
 
 def evidence_events(evidence: Path) -> list[dict[str, Any]]:
@@ -861,6 +871,117 @@ def mount_private_devpts(destination: Path) -> dict[str, Any]:
 def suite_needs_private_devpts(suite: str) -> bool:
     """Both basic and PTY sources open a fresh pseudo-terminal controller."""
     return suite in {"basic", "pty"}
+
+
+def reserve_private_proc_mountpoint(destination: Path, suite: str) -> dict[str, Any] | None:
+    """Reserve basic's empty procfs mountpoint before the control snapshot.
+
+    The product collision check happens before this helper.  Keeping the empty
+    directory in the ordinary control roster lets the later procfs mount remain
+    a separately attested kernel fixture rather than an unbounded filesystem
+    input to either product snapshot.
+    """
+    if suite != "basic":
+        return None
+    target = destination / "proc"
+    if target.exists() or target.is_symlink():
+        raise RunnerError(f"control-plane path collides with supplied product: {target}")
+    target.mkdir(mode=0o755)
+    # ``mkdir`` is subject to the invoking process's umask.  The reservation
+    # is part of the sealed ordinary control tree, so give it one explicit
+    # mode before recording the setup roster.
+    os.chmod(target, 0o755)
+    if any(target.iterdir()):
+        raise RunnerError("private procfs mountpoint is not empty before setup snapshot")
+    return {
+        "schema": PRIVATE_PROC_SCHEMA,
+        "mountpoint": str(target),
+        "reservation": {"empty": True, "mode": 0o755},
+    }
+
+
+def container_pid_namespace() -> str:
+    """Read the pinned container's current PID namespace identity."""
+    try:
+        identity = os.readlink("/proc/self/ns/pid")
+    except OSError as error:
+        raise RunnerError("pinned container cannot read its PID namespace identity") from error
+    if not identity.startswith("pid:[") or not identity.endswith("]") or not identity[5:-1].isdigit():
+        raise RunnerError(f"unexpected PID namespace identity: {identity!r}")
+    return identity
+
+
+def mount_private_proc(destination: Path, private: dict[str, Any]) -> None:
+    """Mount and attest basic's procfs only after its root snapshot is sealed."""
+    target = destination / "proc"
+    if private.get("schema") != PRIVATE_PROC_SCHEMA or private.get("mountpoint") != str(target):
+        raise FixtureError("private procfs reservation does not bind this execution root", {"private_proc": private})
+    if not target.is_dir() or target.is_symlink() or any(target.iterdir()):
+        raise FixtureError("private procfs mountpoint changed after setup snapshot", {"private_proc": private})
+    mount = Path(PRIVATE_PROC_MOUNT)
+    if not mount.is_file():
+        raise FixtureError("pinned image lacks mount for the private procfs fixture", {"private_proc": private})
+    command = [str(mount), "-t", "proc", "-o", PRIVATE_PROC_MOUNT_OPTIONS, "proc", str(target)]
+    status, stdout, stderr = run_capture(command, {"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+    private["mount"] = {"command": command, "status": status, "stdout": stream_snapshot(stdout),
+                        "stderr": stream_snapshot(stderr), "target": str(target)}
+    if status != 0:
+        raise FixtureError(f"private procfs fixture setup failed: {stderr.decode('utf-8', errors='replace').strip()}",
+                           {"private_proc": private})
+
+    outside = container_pid_namespace()
+    witness_command = [PRIVATE_PROC_WITNESS_CHROOT, str(destination), "/control/ld-musl-x86_64.so.1",
+                       "/control/busybox", "readlink", "/proc/self/ns/pid"]
+    witness_status, witness_stdout, witness_stderr = run_capture(
+        witness_command, {"PATH": "/usr/bin:/bin", "LC_ALL": "C"},
+    )
+    inside = witness_stdout.decode("utf-8", errors="replace").strip()
+    private["namespace"] = {
+        "outside": outside,
+        "inside": {"command": witness_command, "status": witness_status,
+                   "stdout": stream_snapshot(witness_stdout), "stderr": stream_snapshot(witness_stderr)},
+        "matched": witness_status == 0 and witness_stderr == b"" and inside == outside,
+    }
+    if not private["namespace"]["matched"]:
+        raise FixtureError("private procfs PID namespace witness failed", {"private_proc": private})
+
+
+def unmount_private_proc(private: dict[str, Any]) -> dict[str, Any]:
+    """Tear down procfs before any post-run filesystem inspection."""
+    unmount = Path(PRIVATE_PROC_UNMOUNT)
+    command = [str(unmount), str(private["mountpoint"])]
+    if not unmount.is_file():
+        return {"command": command, "status": "UNAVAILABLE", "stdout": stream_snapshot(b""),
+                "stderr": stream_snapshot(b"pinned image lacks umount\n")}
+    try:
+        status, stdout, stderr = run_capture(command, {"PATH": "/usr/bin:/bin", "LC_ALL": "C"})
+    except OSError as error:
+        return {"command": command, "status": "EXEC_ERROR", "stdout": stream_snapshot(b""),
+                "stderr": stream_snapshot((str(error) + "\n").encode())}
+    return {"command": command, "status": status, "stdout": stream_snapshot(stdout), "stderr": stream_snapshot(stderr)}
+
+
+def private_proc_postwalk_safe(private: dict[str, Any] | None) -> bool:
+    """A failed procfs teardown forbids all subsequent walks of its root."""
+    if private is None:
+        return True
+    mount = private.get("mount")
+    if not isinstance(mount, dict) or mount.get("status") != 0:
+        return True
+    unmount = private.get("unmount")
+    return isinstance(unmount, dict) and unmount.get("status") == 0
+
+
+def private_proc_fixture_passed(private: dict[str, Any] | None) -> bool:
+    """Require the complete basic-only mount, witness, and teardown lifecycle."""
+    if private is None:
+        return True
+    mount = private.get("mount")
+    namespace = private.get("namespace")
+    unmount = private.get("unmount")
+    return (isinstance(mount, dict) and mount.get("status") == 0 and
+            isinstance(namespace, dict) and namespace.get("matched") is True and
+            isinstance(unmount, dict) and unmount.get("status") == 0)
 
 
 def install_basic_runtime_fixtures(destination: Path, suite: str) -> dict[str, Any] | None:
@@ -1015,7 +1136,7 @@ def prepare_execution_root(product: Path, source: Path, destination: Path, suite
                  destination / "etc/resolv.conf", destination / "dev/pts", destination / "dev/ptmx",
                  destination / "tmp", destination / "work"]
     if suite == "basic":
-        control_paths.extend(destination / path for path in ("dev/shm", "etc/passwd", "etc/group", "etc/services", "bin/sh"))
+        control_paths.extend(destination / path for path in ("dev/shm", "etc/passwd", "etc/group", "etc/services", "bin/sh", "proc"))
     for path in control_paths:
         if path.exists() or path.is_symlink():
             raise RunnerError(f"control-plane path collides with supplied product: {path}")
@@ -1033,7 +1154,9 @@ def prepare_execution_root(product: Path, source: Path, destination: Path, suite
     (etc / "resolv.conf").write_text("nameserver 127.0.0.1\n")
     basic_fixtures = install_basic_runtime_fixtures(destination, suite)
     devpts = None
+    private_proc = None
     try:
+        private_proc = reserve_private_proc_mountpoint(destination, suite)
         devpts = mount_private_devpts(destination) if private_devpts else None
         setup_roster = tree_roster(destination)
         control_delta = roster_difference(product_roster, setup_roster)
@@ -1047,18 +1170,22 @@ def prepare_execution_root(product: Path, source: Path, destination: Path, suite
                 "shell_launcher": shell_launcher,
                 "busybox": {"path": str(busybox), "sha256": sha256(busybox)},
                 "musl_control_loader": {"path": str(loader), "sha256": sha256(loader)},
-                "candidate_loader_sha256": sha256(destination / "lib/ld-crabc-x86_64.so.1"), "private_devpts": devpts}
+                "candidate_loader_sha256": sha256(destination / "lib/ld-crabc-x86_64.so.1"), "private_devpts": devpts,
+                "private_proc": private_proc}
     except BaseException as error:
         if devpts is not None:
             devpts["unmount"] = unmount_private_devpts(devpts)
         if isinstance(error, FixtureError):
             raise
         if isinstance(error, (RunnerError, OSError)):
-            raise FixtureError(str(error), {"private_devpts": devpts} if devpts is not None else {}) from error
+            control = {"private_proc": private_proc}
+            if devpts is not None:
+                control["private_devpts"] = devpts
+            raise FixtureError(str(error), control) from error
         raise
 
 
-def retain_execution_integrity(work: Path, suite: str, control: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+def retain_execution_integrity(work: Path, suite: str, control: dict[str, Any], *, inspect_payload: bool = True) -> tuple[dict[str, Any], bool]:
     """Store product pre/post payloads separately from disposable controls."""
     before = control.pop("product_payload_before")
     setup = control.pop("execution_root_after_setup")
@@ -1070,18 +1197,24 @@ def retain_execution_integrity(work: Path, suite: str, control: dict[str, Any]) 
     controls_artifact = retain_json(work, work / "records" / f"{suite}.execution-control-additions.json", {
         "schema": "crabc.x86_64-owned-os-test-execution-controls/v1", "entries": control_entries,
     })
-    try:
-        after, difference = product_payload_after_execution(Path(control["root"]), before, setup)
-        after_artifact = retain_json(work, work / "records" / f"{suite}.dynamic-product-payload-after.json", {
-            "schema": "crabc.x86_64-owned-os-test-product-payload/v1", "phase": "after-execution", "entries": after,
-        })
-        intact = not difference["missing"] and not difference["unexpected"] and not difference["changed"]
-        integrity: dict[str, Any] = {"before": before_artifact, "after": after_artifact,
-                                     "difference": difference, "passed": intact}
-    except (OSError, RunnerError) as error:
-        integrity = {"before": before_artifact, "after": None,
-                     "difference": {"error": str(error)}, "passed": False}
+    if not inspect_payload:
+        integrity: dict[str, Any] = {"before": before_artifact, "after": None,
+                                     "difference": {"error": "private procfs teardown failed before post-run payload inspection"},
+                                     "passed": False}
         intact = False
+    else:
+        try:
+            after, difference = product_payload_after_execution(Path(control["root"]), before, setup)
+            after_artifact = retain_json(work, work / "records" / f"{suite}.dynamic-product-payload-after.json", {
+                "schema": "crabc.x86_64-owned-os-test-product-payload/v1", "phase": "after-execution", "entries": after,
+            })
+            intact = not difference["missing"] and not difference["unexpected"] and not difference["changed"]
+            integrity: dict[str, Any] = {"before": before_artifact, "after": after_artifact,
+                                         "difference": difference, "passed": intact}
+        except (OSError, RunnerError) as error:
+            integrity = {"before": before_artifact, "after": None,
+                         "difference": {"error": str(error)}, "passed": False}
+            intact = False
     control["control_additions"] = controls_artifact
     control["product_payload"] = integrity
     return control, intact
@@ -1144,6 +1277,9 @@ def run_profile(values: argparse.Namespace) -> int:
                 control = prepare_execution_root(compile_product, suite_root, runtime, suite, suite_needs_private_devpts(suite), product_roster)
                 control["compiler_product"] = {"root": compile_control["root"], "identity": compile_control["identity"],
                                                 "copy_difference": compile_control["copy_difference"], "payload": compiler_payload}
+                private_proc = control.get("private_proc")
+                if private_proc is not None:
+                    mount_private_proc(runtime, private_proc)
                 command = make_command(suite, suite_root, Path(__file__).resolve(), compile_product, evidence, runtime, values.header_jobs)
                 status, stdout, stderr = run_make(command, values.timeout)
                 dynamic_record = make_record(work, suite, "dynamic", command, values.timeout, status, stdout, stderr)
@@ -1155,6 +1291,10 @@ def run_profile(values: argparse.Namespace) -> int:
                     "control": control,
                 })
             finally:
+                private_proc = control.get("private_proc")
+                if (private_proc is not None and isinstance(private_proc.get("mount"), dict) and
+                        private_proc["mount"].get("status") == 0 and "unmount" not in private_proc):
+                    private_proc["unmount"] = unmount_private_proc(private_proc)
                 private_devpts = control.get("private_devpts")
                 if private_devpts is not None and private_devpts.get("status") == 0 and "unmount" not in private_devpts:
                     private_devpts["unmount"] = unmount_private_devpts(private_devpts)
@@ -1162,10 +1302,13 @@ def run_profile(values: argparse.Namespace) -> int:
             outcomes = collect_outcomes(suite_root, suite)
             differences = compare_outcomes(musl_outcomes, outcomes)
             fixture_passed = (control.get("setup_status") != "ERROR" and
-                              (control.get("private_devpts") is None or control["private_devpts"].get("unmount", {}).get("status") == 0))
+                              (control.get("private_devpts") is None or control["private_devpts"].get("unmount", {}).get("status") == 0) and
+                              private_proc_fixture_passed(control.get("private_proc")))
             product_intact = False
             if "product_payload_before" in control and "execution_root_after_setup" in control:
-                control, product_intact = retain_execution_integrity(work, suite, control)
+                control, product_intact = retain_execution_integrity(
+                    work, suite, control, inspect_payload=private_proc_postwalk_safe(control.get("private_proc")),
+                )
             candidate_passed = suite_passed(status, outcomes, expected, events) and fixture_passed and product_intact
             report["suites"].append({"suite": suite,
                                       "expected_outcomes": expected_artifact,
@@ -1185,7 +1328,13 @@ def run_profile(values: argparse.Namespace) -> int:
     finally:
         report_path = work / "os-test.json"
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-        make_evidence_host_readable(work)
+        live_proc_mounts = {
+            Path(private["mountpoint"])
+            for suite in report["suites"]
+            if isinstance((private := suite.get("dynamic", {}).get("execution_control", {}).get("private_proc")), dict)
+            and not private_proc_postwalk_safe(private)
+        }
+        make_evidence_host_readable(work, skip_roots=live_proc_mounts)
         print(f"owned os-test evidence: {work}")
     return 0 if report["passed"] else 1
 
