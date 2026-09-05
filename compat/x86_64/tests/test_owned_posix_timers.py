@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import json
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -30,9 +31,6 @@ class OwnedPosixTimersTests(unittest.TestCase):
         headers.mkdir(parents=True)
         header = headers / "timer.h"
         header.write_text("/* installed timer header */\n", encoding="utf-8")
-        builtin = temporary / "compiler-builtin"
-        builtin.mkdir()
-        (builtin / "stdarg.h").write_text("/* compiler builtin */\n", encoding="utf-8")
         source = temporary / "timer.c"
         source.write_text("#include <timer.h>\n", encoding="utf-8")
         object_path = temporary / "timer.o"
@@ -44,26 +42,45 @@ class OwnedPosixTimersTests(unittest.TestCase):
         manifest = product / "share/crabc/manifest.json"
         manifest.parent.mkdir(parents=True)
         manifest.write_text("{}\n", encoding="utf-8")
+        (manifest.parent / "crabc_cc_static.py").write_text("# installed compiler policy\n", encoding="utf-8")
         trace = temporary / "timer.headers"
         trace.write_text(f". {header}\n", encoding="utf-8")
         audit = temporary / "timer.compile-audit.json"
         command = [str(driver), "--dynamic-pie", "-std=c11", "-c", str(source), "-o", str(object_path)]
-        return product, manifest, driver, builtin, header, source, object_path, trace, audit, command
+        return product, manifest, driver, header, source, object_path, trace, audit, command
+
+    def record_compile_audit(self, fixture, *, role="application"):
+        product, manifest, driver, header, source, object_path, _trace, audit, _command = fixture
+        if role == "timer-tls-dso":
+            source.write_text("static _Thread_local int value;\n", encoding="utf-8")
+            header_paths = []
+            trace_paths = []
+        else:
+            header_paths = [header]
+            trace_paths = [header]
+        policy = SimpleNamespace(compiler=lambda: "/usr/bin/gcc", clean_environment=lambda: {"PATH": "/usr/bin:/bin"})
+        seen = []
+        def dependency(command, *, stdin, stdout, stderr, env, check):
+            seen.append((command, env))
+            stdout.write(("timer.o: " + " ".join(str(path) for path in [source, *header_paths]) + "\n").encode())
+            stderr.write("".join(f". {path}\n" for path in trace_paths).encode())
+            return SimpleNamespace(returncode=0)
+        with patch.object(timer_evidence, "_dynamic_product", return_value=(product, manifest, driver)), \
+             patch.object(timer_evidence, "_installed_compiler", return_value=policy), \
+             patch.object(timer_evidence.subprocess, "run", side_effect=dependency):
+            record = timer_evidence.record_compile_audit(product, role, source, object_path, driver, audit)
+        _write_record(audit, record)
+        return record, seen, policy
 
     def test_compile_audit_revalidates_source_installed_header_and_driver_before_retention(self):
         scratch_root = ROOT / ".work/x86_64/tmp"
         scratch_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
             fixture = self.compile_audit_fixture(Path(temporary))
-            product, manifest, driver, builtin, header, source, object_path, trace, audit, command = fixture
+            product, manifest, driver, header, source, object_path, _trace, audit, _command = fixture
+            _record, _seen, policy = self.record_compile_audit(fixture)
             with patch.object(timer_evidence, "_dynamic_product", return_value=(product, manifest, driver)), \
-                 patch.object(timer_evidence, "_pinned_compiler_builtin_root", return_value=builtin):
-                _write_record(
-                    audit,
-                    timer_evidence.record_compile_audit(
-                        product, "application", source, object_path, driver, trace, command,
-                    ),
-                )
+                 patch.object(timer_evidence, "_installed_compiler", return_value=policy):
                 identity = timer_evidence.validate_timer_application_compile(
                     product, source, object_path, audit,
                 )
@@ -83,38 +100,36 @@ class OwnedPosixTimersTests(unittest.TestCase):
         scratch_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
             fixture = self.compile_audit_fixture(Path(temporary))
-            product, _manifest, _driver, builtin, header, source, _object_path, trace, _audit, _command = fixture
-            with patch.object(timer_evidence, "_pinned_compiler_builtin_root", return_value=builtin):
-                trace.write_text(
-                    f". {header}\nMultiple include guards may be useful for:\n{header}\n",
-                    encoding="utf-8",
-                )
-                self.assertEqual(len(timer_evidence._headers(trace, product)), 2)
-                for text in ("", ". relative.h\n", "not a header trace\n", f". {source}\n"):
-                    trace.write_text(text, encoding="utf-8")
-                    with self.subTest(text=text), self.assertRaises(timer_evidence.TimerEvidenceError):
-                        timer_evidence._headers(trace, product)
+            product, _manifest, _driver, header, source, _object_path, trace, _audit, _command = fixture
+            trace.write_text(
+                f". {header}\nMultiple include guards may be useful for:\n{header}\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(len(timer_evidence._headers(trace, product, require_installed=True)), 2)
+            for text in ("", ". relative.h\n", "not a header trace\n", f". {source}\n"):
+                trace.write_text(text, encoding="utf-8")
+                with self.subTest(text=text), self.assertRaises(timer_evidence.TimerEvidenceError):
+                    timer_evidence._headers(trace, product, require_installed=True)
 
-    def test_compile_audit_rejects_a_recorded_builtin_root_not_reported_by_the_pinned_compiler(self):
+    def test_compile_audit_uses_the_installed_driver_compiler_and_exact_mode_flags(self):
         scratch_root = ROOT / ".work/x86_64/tmp"
         scratch_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
             fixture = self.compile_audit_fixture(Path(temporary))
-            product, manifest, driver, builtin, _header, source, object_path, trace, audit, command = fixture
-            alternate = Path(temporary) / "alternate-builtin"
-            alternate.mkdir()
-            with patch.object(timer_evidence, "_dynamic_product", return_value=(product, manifest, driver)), \
-                 patch.object(timer_evidence, "_pinned_compiler_builtin_root", return_value=builtin):
-                _write_record(
-                    audit,
-                    timer_evidence.record_compile_audit(
-                        product, "application", source, object_path, driver, trace, command,
-                    ),
-                )
-            with patch.object(timer_evidence, "_dynamic_product", return_value=(product, manifest, driver)), \
-                 patch.object(timer_evidence, "_pinned_compiler_builtin_root", return_value=alternate), \
-                 self.assertRaises(timer_evidence.TimerEvidenceError):
-                timer_evidence.validate_timer_application_compile(product, source, object_path, audit)
+            product, _manifest, _driver, _header, source, _object_path, _trace, _audit, _command = fixture
+            record, seen, _policy = self.record_compile_audit(fixture)
+            self.assertEqual(len(seen), 1)
+            command, environment = seen[0]
+            self.assertEqual(command, record["dependency_command"])
+            self.assertEqual(environment, {"PATH": "/usr/bin:/bin"})
+            self.assertEqual(
+                command,
+                ["/usr/bin/gcc", "-nostdinc", "-isystem", str(product / "usr/include"),
+                 "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-std=c11",
+                 "-fPIE", "-M", "-H", str(source)],
+            )
+            self.assertEqual(record["compiler"]["path"], str(Path("/usr/bin/gcc").resolve()))
+            self.assertEqual(record["compiler_helper"]["path"], str(product / "share/crabc/crabc_cc_static.py"))
 
     def test_shared_receipt_metadata_rejects_python_equal_wrong_json_types(self):
         record = {
@@ -205,7 +220,7 @@ class OwnedPosixTimersTests(unittest.TestCase):
         )
         self.assertEqual(
             TIMER_WORKLOAD_COMPILE_AUDIT_SCHEMA,
-            "crabc.x86_64-owned-posix-timers-compile/v1",
+            "crabc.x86_64-owned-posix-timers-compile/v2",
         )
         self.assertEqual(
             TIMER_APPLICATION_AUDIT_SCHEMA,

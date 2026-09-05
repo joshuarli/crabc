@@ -31,8 +31,9 @@ The four executable links retain the shared
 `owned_posix_product_evidence.validate_link` identities: static, static PIE,
 dynamic PIE and dynamic non-PIE. Before publication,
 `owned_posix_timers_evidence.py::validate_timer_application_compile` rechecks
-the application source, object, installed driver, manifest, compiler-derived
-builtin-header root, complete installed-header trace, and every resolved header.
+the application source, object, installed driver, manifest, installed compiler
+helper and compiler identity, exact dependency-only compiler command, complete
+installed-header trace, and every resolved header.
 The retained application identity must name the same object hash as all four
 executable identities and the same dynamic product as both dynamic links. The
 callback-loaded DSO has a separate shared-mode receipt audit in
@@ -46,8 +47,11 @@ executable receipts keep `application_dsos` empty; passing the TLS DSO as
 `owned_posix_timers_tls.c` intentionally uses only C language TLS primitives,
 so its recorded `-H` closure is empty. The application audit requires a
 nonempty installed-header closure. Both roles reject relative, unrecognized,
-or out-of-root trace entries, and derive the only compiler-builtin root by
-querying the fixed `/usr/local/bin/crabc-x86_64-musl-gcc` oracle directly.
+or out-of-root trace entries. The dependency-only preprocessing repeats the
+installed dynamic driver's selected compiler, clean environment,
+`-nostdinc`/installed `-isystem` root, freestanding and stack-protector flags,
+and the role's PIE or PIC mode; it admits no compiler-builtin or ambient header
+root.
 
 The shared workload also isolates pending creator cancellation in disposable
 children, containing musl's resulting orphan timer. It requires cancellation

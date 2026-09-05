@@ -189,10 +189,9 @@ PY
 }
 
 record_compile_audit() {
-    local role="$1" source="$2" object="$3" headers="$4" audit="$5" driver="$6"
-    shift 6
+    local role="$1" source="$2" object="$3" audit="$4" driver="$5"
     python3 -B "$timer_evidence" record-compile "$installed" "$role" "$source" "$object" \
-        "$driver" "$headers" "$audit" -- "$@"
+        "$driver" "$audit"
 }
 
 validate_timer_application_compile() {
@@ -213,30 +212,19 @@ if [ "$dynamic_was_supplied" -eq 0 ]; then
     provided_dynamic="$work/dynamic-sysroot"
 fi
 readonly installed="$(python3 -B -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).resolve(strict=True))' "$provided_dynamic")"
-run_capture "$work/oracle-builtin.stdout" "$oracle_cc" -print-file-name=include
-readonly oracle_builtin="$(cat "$work/oracle-builtin.stdout")"
-[ -d "$oracle_builtin" ] || fail "pinned musl compiler has no builtin include root"
-
 # Compile and header-audit both different roles through the selected dynamic
-# product.  The preprocessor is only an include-closure observation. Its only
-# roots are the materialized installed headers and this pinned compiler's
-# builtin headers, and its trace is bound to the source, object, manifest, and
-# actual installed driver.
+# product. The evidence helper invokes the installed driver's own source
+# compiler and clean environment with its exact flags in dependency-only mode;
+# it admits no compiler builtin or ambient header root.
 run_capture "$work/probe-compile.stdout" \
     "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -c "$probe" -o "$work/probe.o"
-run_capture "$work/probe-headers.i" \
-    "$oracle_cc" -std=c11 -nostdinc -I "$installed/usr/include" -isystem "$oracle_builtin" -E -H "$probe"
-record_compile_audit application "$probe" "$work/probe.o" "$work/probe-headers.i.stderr" \
-    "$work/probe.compile-audit.json" "$installed/bin/crabc-cc-dynamic" \
-    "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -c "$probe" -o "$work/probe.o"
+record_compile_audit application "$probe" "$work/probe.o" \
+    "$work/probe.compile-audit.json" "$installed/bin/crabc-cc-dynamic"
 
 run_capture "$work/tls-compile.stdout" \
     "$installed/bin/crabc-cc-dynamic" -shared -std=c11 -c "$tls_source" -o "$work/tls.o"
-run_capture "$work/tls-headers.i" \
-    "$oracle_cc" -std=c11 -nostdinc -I "$installed/usr/include" -isystem "$oracle_builtin" -E -H "$tls_source"
-record_compile_audit timer-tls-dso "$tls_source" "$work/tls.o" "$work/tls-headers.i.stderr" \
-    "$work/tls.compile-audit.json" "$installed/bin/crabc-cc-dynamic" \
-    "$installed/bin/crabc-cc-dynamic" -shared -std=c11 -c "$tls_source" -o "$work/tls.o"
+record_compile_audit timer-tls-dso "$tls_source" "$work/tls.o" \
+    "$work/tls.compile-audit.json" "$installed/bin/crabc-cc-dynamic"
 
 run_capture "$work/oracle-link.stdout" "$oracle_cc" -pthread "$work/probe.o" -o "$work/oracle"
 run_capture "$work/oracle-tls-link.stdout" "$oracle_cc" -shared "$work/tls.o" -o "$work/oracle-tls.so"

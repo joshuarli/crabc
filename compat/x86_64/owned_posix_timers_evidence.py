@@ -12,10 +12,12 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import re
+import shlex
 import stat
 import subprocess
 import sys
@@ -27,11 +29,10 @@ from owned_posix_product_evidence import (
     _validate_dynamic_product,
 )
 
-TIMER_WORKLOAD_COMPILE_AUDIT_SCHEMA = "crabc.x86_64-owned-posix-timers-compile/v1"
+TIMER_WORKLOAD_COMPILE_AUDIT_SCHEMA = "crabc.x86_64-owned-posix-timers-compile/v2"
 TIMER_APPLICATION_AUDIT_SCHEMA = "crabc.x86_64-owned-posix-timers-application/v1"
 TIMER_TLS_AUDIT_SCHEMA = "crabc.x86_64-owned-posix-timers-tls-dso/v1"
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-PINNED_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 
 
 class TimerEvidenceError(RuntimeError):
@@ -125,34 +126,10 @@ def _dynamic_product(product: Path) -> tuple[Path, Path, Path]:
     return root, manifest, driver
 
 
-def _pinned_compiler_builtin_root() -> Path:
-    """Derive the only admitted compiler include root from the pinned compiler."""
-
-    compiler = _physical(PINNED_COMPILER, "pinned compiler")
-    if not compiler.lstat().st_mode & 0o111:
-        _fail("pinned compiler is not executable")
-    try:
-        result = subprocess.run(
-            [str(compiler), "-print-file-name=include"], stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False,
-        )
-    except OSError as error:
-        raise TimerEvidenceError("pinned compiler cannot report its builtin header root") from error
-    if result.returncode or result.stderr or not result.stdout.endswith("\n"):
-        _fail("pinned compiler did not report one builtin header root")
-    reported = result.stdout[:-1]
-    if not reported or "\n" in reported:
-        _fail("pinned compiler reported an invalid builtin header root")
-    return _physical(Path(reported), "pinned compiler builtin header root", directory=True)
-
-
-def _header_records(
-    trace: Path, product: Path, compiler_builtin: Path, *, require_installed: bool
-) -> list[dict[str, str]]:
+def _headers(trace: Path, product: Path, *, require_installed: bool) -> list[dict[str, str]]:
     """Parse one GCC ``-H`` closure; only the headerless TLS source may be empty."""
     trace = _physical(trace, "installed-header trace")
     include_root = _physical(product / "usr/include", "installed header root", directory=True)
-    compiler_builtin = _physical(compiler_builtin, "pinned compiler builtin header root", directory=True)
     headers: list[dict[str, str]] = []
     try:
         lines = trace.read_text(encoding="utf-8").splitlines()
@@ -173,27 +150,26 @@ def _header_records(
             _fail(f"installed-header trace has an unrecognized entry: {line!r}")
         candidate = match.group(1)
         header = _physical(Path(candidate), "installed header")
-        for root, kind in ((include_root, "installed"), (compiler_builtin, "compiler-builtin")):
-            try:
-                header.relative_to(root)
-                headers.append({"path": str(header), "sha256": _sha256(header), "root": kind})
-                break
-            except ValueError:
-                continue
-        else:
-            _fail(f"header trace escaped the installed and compiler-builtin roots: {header}")
+        try:
+            header.relative_to(include_root)
+        except ValueError:
+            _fail(f"header trace escaped the installed header root: {header}")
+        headers.append({"path": str(header), "sha256": _sha256(header), "root": "installed"})
     if require_installed:
         if not headers:
             _fail("installed-header trace has no admitted headers")
-        if not any(header["root"] == "installed" for header in headers):
-            _fail("installed-header trace has no installed product header")
     return headers
 
 
-def _headers(trace: Path, product: Path) -> list[dict[str, str]]:
-    return _header_records(
-        trace, product, _pinned_compiler_builtin_root(), require_installed=True
-    )
+def _installed_compiler(product: Path):
+    helper = _physical(product / "share/crabc/crabc_cc_static.py", "installed compiler helper")
+    spec = importlib.util.spec_from_file_location("owned_posix_timers_installed_compiler", helper)
+    if spec is None or spec.loader is None:
+        _fail("installed compiler helper is unreadable")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _compile_command(role: str, driver: Path, source: Path, output: Path) -> list[str]:
@@ -206,14 +182,49 @@ def _compile_command(role: str, driver: Path, source: Path, output: Path) -> lis
     return [str(driver), mode, "-std=c11", "-c", str(source), "-o", str(output)]
 
 
+def _dependency_command(role: str, compiler: str, product: Path, source: Path) -> list[str]:
+    mode_flag = "-fPIE" if role == "application" else "-fPIC" if role == "timer-tls-dso" else None
+    if mode_flag is None:
+        _fail("compile role must be application or timer-tls-dso")
+    return [compiler, "-nostdinc", "-isystem", str(product / "usr/include"),
+            "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-std=c11",
+            mode_flag, "-M", "-H", str(source)]
+
+
+def _dependency_headers(
+    dependencies: Path, product: Path, source: Path, role: str
+) -> list[dict[str, str]]:
+    text = _physical(dependencies, "installed-header dependencies").read_text(encoding="utf-8")
+    if ":" not in text:
+        _fail("installed-header dependencies lack a target")
+    paths = set()
+    for token in shlex.split(text.replace("\\\n", " ").split(":", 1)[1]):
+        path = _physical(Path(token), "installed-header dependency")
+        if path == source:
+            paths.add(path)
+            continue
+        try:
+            path.relative_to(product / "usr/include")
+        except ValueError:
+            _fail(f"dependency escaped the installed header root: {path}")
+        paths.add(path)
+    if source not in paths:
+        _fail("installed-header dependencies omit the source")
+    headers = sorted(paths - {source})
+    if role == "application" and not headers:
+        _fail("application dependencies omit installed headers")
+    if role == "timer-tls-dso" and headers:
+        _fail("headerless TLS source gained an installed header dependency")
+    return [{"path": str(path), "sha256": _sha256(path), "root": "installed"} for path in headers]
+
+
 def record_compile_audit(
     product: Path,
     role: str,
     source: Path,
     output: Path,
     driver: Path,
-    header_trace: Path,
-    command: Sequence[str],
+    audit: Path,
 ) -> dict[str, Any]:
     """Return one source/object/driver/header identity for a compile step."""
 
@@ -223,11 +234,34 @@ def record_compile_audit(
     driver = _physical(driver, f"{role} compile driver")
     if driver != expected_driver:
         _fail(f"{role} compile driver is not this product's sealed driver")
-    expected_command = _compile_command(role, driver, source, output)
-    if list(command) != expected_command:
-        _fail(f"{role} compile command differs from the sealed timer invocation")
-    trace = _physical(header_trace, f"{role} installed-header trace")
-    compiler_builtin = _pinned_compiler_builtin_root()
+    audit = Path(audit)
+    policy = _installed_compiler(root)
+    helper = _physical(root / "share/crabc/crabc_cc_static.py", "installed compiler helper")
+    compiler_command = policy.compiler()
+    compiler = _physical(Path(compiler_command).resolve(strict=True), "installed compiler")
+    dependency_command = _dependency_command(role, compiler_command, root, source)
+    dependencies = audit.with_suffix(".dependencies")
+    trace = audit.with_suffix(".headers")
+    status = audit.with_suffix(".exit-status")
+    source_before, object_before = _sha256(source), _sha256(output)
+    try:
+        with dependencies.open("xb") as standard, trace.open("xb") as errors:
+            result = subprocess.run(
+                dependency_command, stdout=standard, stderr=errors,
+                stdin=subprocess.DEVNULL, env=policy.clean_environment(), check=False,
+            )
+        with status.open("x", encoding="utf-8") as output_status:
+            output_status.write(f"{result.returncode}\n")
+    except OSError as error:
+        raise TimerEvidenceError(f"{role} installed-header preprocessing failed") from error
+    if result.returncode != 0:
+        _fail(f"{role} installed-header preprocessing failed")
+    if _sha256(source) != source_before or _sha256(output) != object_before:
+        _fail(f"{role} source or object changed during header preprocessing")
+    dependency_headers = _dependency_headers(dependencies, root, source, role)
+    trace_headers = _headers(trace, root, require_installed=role == "application")
+    if {item["path"] for item in trace_headers} != {item["path"] for item in dependency_headers}:
+        _fail(f"{role} dependency and header trace closures differ")
     return {
         "schema": TIMER_WORKLOAD_COMPILE_AUDIT_SCHEMA,
         "role": role,
@@ -238,14 +272,14 @@ def record_compile_audit(
         "source": {"path": str(source), "sha256": _sha256(source)},
         "object": {"path": str(output), "sha256": _sha256(output)},
         "driver": {"path": str(driver), "sha256": _sha256(driver)},
-        "command": expected_command,
-        "headers": {
-            "trace": {"path": str(trace), "sha256": _sha256(trace)},
-            "compiler_builtin": str(compiler_builtin),
-            "resolved": _header_records(
-                trace, root, compiler_builtin, require_installed=role == "application"
-            ),
-        },
+        "compiler": {"path": str(compiler), "sha256": _sha256(compiler)},
+        "compiler_helper": {"path": str(helper), "sha256": _sha256(helper)},
+        "command": _compile_command(role, driver, source, output),
+        "dependency_command": dependency_command,
+        "dependency_exit_status": 0,
+        "dependencies": {"path": str(dependencies), "sha256": _sha256(dependencies)},
+        "header_trace": {"path": str(trace), "sha256": _sha256(trace)},
+        "headers": dependency_headers,
     }
 
 
@@ -257,7 +291,10 @@ def _validate_compile_audit(
     output = _physical(output, f"{role} object")
     audit = _physical(audit, f"{role} compile audit")
     record = _json(audit, f"{role} compile audit")
-    expected_fields = {"schema", "role", "product", "source", "object", "driver", "command", "headers"}
+    expected_fields = {
+        "schema", "role", "product", "source", "object", "driver", "compiler", "compiler_helper",
+        "command", "dependency_command", "dependency_exit_status", "dependencies", "header_trace", "headers",
+    }
     if set(record) != expected_fields or record["schema"] != TIMER_WORKLOAD_COMPILE_AUDIT_SCHEMA:
         _fail(f"{role} compile audit fields drifted")
     if record["role"] != role:
@@ -271,21 +308,30 @@ def _validate_compile_audit(
     _recorded_file(record["driver"], driver, f"{role} compile driver")
     if record["command"] != _compile_command(role, driver, source, output):
         _fail(f"{role} compile command differs from the sealed timer invocation")
-    headers = _exact_object(record["headers"], {"trace", "compiler_builtin", "resolved"}, f"{role} compile headers")
-    trace_record = headers["trace"]
+    policy = _installed_compiler(root)
+    helper = _physical(root / "share/crabc/crabc_cc_static.py", "installed compiler helper")
+    compiler_command = policy.compiler()
+    compiler = _physical(Path(compiler_command).resolve(strict=True), "installed compiler")
+    _recorded_file(record["compiler"], compiler, f"{role} compiler")
+    _recorded_file(record["compiler_helper"], helper, f"{role} compiler helper")
+    if record["dependency_command"] != _dependency_command(role, compiler_command, root, source):
+        _fail(f"{role} dependency command differs from the installed driver")
+    if type(record["dependency_exit_status"]) is not int or record["dependency_exit_status"] != 0:
+        _fail(f"{role} dependency preprocessing did not succeed")
+    dependencies_record = record["dependencies"]
+    if not isinstance(dependencies_record, dict) or not isinstance(dependencies_record.get("path"), str):
+        _fail(f"{role} dependency list is malformed")
+    dependencies = _physical(Path(dependencies_record["path"]), f"{role} installed-header dependencies")
+    _recorded_file(dependencies_record, dependencies, f"{role} installed-header dependencies")
+    trace_record = record["header_trace"]
     if not isinstance(trace_record, dict) or not isinstance(trace_record.get("path"), str):
         _fail(f"{role} compile header trace is malformed")
     trace = _physical(Path(trace_record["path"]), f"{role} installed-header trace")
     _recorded_file(trace_record, trace, f"{role} compile header trace")
-    if not isinstance(headers["compiler_builtin"], str):
-        _fail(f"{role} compile compiler builtin root is malformed")
-    compiler_builtin = _pinned_compiler_builtin_root()
-    if headers["compiler_builtin"] != str(compiler_builtin):
-        _fail(f"{role} compile compiler builtin root differs from the pinned compiler")
-    if headers["resolved"] != _header_records(
-        trace, root, compiler_builtin, require_installed=role == "application"
-    ):
-        _fail(f"{role} compile headers differ from the installed trace")
+    dependency_headers = _dependency_headers(dependencies, root, source, role)
+    trace_headers = _headers(trace, root, require_installed=role == "application")
+    if record["headers"] != dependency_headers or {item["path"] for item in trace_headers} != {item["path"] for item in dependency_headers}:
+        _fail(f"{role} compile headers differ from the installed closure")
     return root, manifest, driver, _sha256(audit)
 
 
@@ -414,8 +460,7 @@ def validate_timer_application_compile(
     source = _physical(source, "timer application source")
     object_path = _physical(object_path, "timer application object")
     record = _json(_physical(compile_audit, "timer application compile audit"), "timer application compile audit")
-    headers = _exact_object(record["headers"], {"trace", "compiler_builtin", "resolved"}, "timer application compile headers")
-    trace = _exact_object(headers["trace"], {"path", "sha256"}, "timer application compile header trace")
+    trace = _exact_object(record["header_trace"], {"path", "sha256"}, "timer application compile header trace")
     return {
         "schema": TIMER_APPLICATION_AUDIT_SCHEMA,
         "product": str(root),
@@ -425,7 +470,7 @@ def validate_timer_application_compile(
         "driver_sha256": _sha256(driver),
         "compile_audit_sha256": compile_audit_hash,
         "header_trace_sha256": trace["sha256"],
-        "headers": headers["resolved"],
+        "headers": record["headers"],
     }
 
 
@@ -469,9 +514,7 @@ def main(arguments: Sequence[str]) -> int:
     compile_parser.add_argument("source", type=Path)
     compile_parser.add_argument("object", type=Path)
     compile_parser.add_argument("driver", type=Path)
-    compile_parser.add_argument("header_trace", type=Path)
     compile_parser.add_argument("audit", type=Path)
-    compile_parser.add_argument("command", nargs=argparse.REMAINDER)
     application_parser = commands.add_parser("validate-application-compile")
     application_parser.add_argument("product", type=Path)
     application_parser.add_argument("source", type=Path)
@@ -487,12 +530,11 @@ def main(arguments: Sequence[str]) -> int:
     parsed = parser.parse_args(arguments)
     try:
         if parsed.action == "record-compile":
-            command = parsed.command[1:] if parsed.command[:1] == ["--"] else parsed.command
             _write_record(
                 parsed.audit,
                 record_compile_audit(
                     parsed.product, parsed.role, parsed.source, parsed.object, parsed.driver,
-                    parsed.header_trace, command,
+                    parsed.audit,
                 ),
             )
         elif parsed.action == "validate-application-compile":
