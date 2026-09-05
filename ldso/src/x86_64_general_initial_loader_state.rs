@@ -73,6 +73,7 @@ pub(crate) enum GeneralInitialPreparationStage {
     Relro,
     SelfRelro,
     InitializerPreflight,
+    RuntimeRegistry,
     TlsPlanning,
     TlsRegistry,
     PublicationReservation,
@@ -534,6 +535,7 @@ mod tests {
             GeneralInitialPreparationStage::Protection,
             GeneralInitialPreparationStage::Relro,
             GeneralInitialPreparationStage::InitializerPreflight,
+            GeneralInitialPreparationStage::RuntimeRegistry,
         ];
         for stage in stages {
             let (mut state, _, _, _) = diamond_state();

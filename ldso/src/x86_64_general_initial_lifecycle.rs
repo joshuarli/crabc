@@ -11,8 +11,12 @@
 //! Finalization before all initializers return is not admitted and leaves
 //! the eventual finalization claim available. Runtime loading, exit from a
 //! constructor, and concurrent startup are not provided by this boundary.
+//! The installed owned feature uses this immutable preflight plan but hands
+//! execution to x86_64_runtime_registry before any application callback; that
+//! owner composes initial and runtime-loaded callback lifecycle.
 
 use super::*;
+#[cfg(any(test, not(feature = "x86_64-owned-dynamic-runtime")))]
 use super::x86_64_general_initial_loader_state::GeneralInitialLoaderState;
 use super::x86_64_initial_graph_state::InitialGraphState;
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -44,6 +48,9 @@ pub(super) fn owned_crt_handoff_address() -> u64 {
 /// Called by the owned CRT only after libc state and executable preinit.
 #[cfg(crabc_dynamic_main_thread_runtime_v1)]
 unsafe extern "C" fn owned_dependency_constructors() {
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    unsafe { super::x86_64_runtime_registry::initialize_initial(); }
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     unsafe { GeneralInitialLoaderState::retained().unwrap().lifecycle().unwrap().initialize() };
 }
 
@@ -82,6 +89,16 @@ pub(super) struct GeneralInitialLifecycle {
 }
 
 impl GeneralInitialLifecycle {
+    // The installed runtime copies this already checked immutable plan into
+    // its stable initial-object nodes before FS publication. Those nodes own
+    // all actual callback claims thereafter, including later dlopen reentry.
+    // This plan's original execution state remains for legacy private roots;
+    // the two cfg-disjoint dispatchers never execute the same callback twice.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    pub(super) fn callback_plan(&self, index: usize) -> Option<(&[usize], &[usize])> {
+        let object = self.objects[..self.count].iter().find(|object| object.object_index == index)?;
+        Some((&object.initializers[..object.initializer_count], &object.finalizers[..object.finalizer_count]))
+    }
     /// # Safety
     /// Every object must remain mapped and fully relocated with protections
     /// and RELRO sealed. Its array storage must have been parser-validated.
@@ -201,6 +218,9 @@ unsafe fn invoke(address: usize) {
 /// using the C ABI only after initializers return. Foreign callbacks must
 /// not unload the retained objects. Repeated and recursive calls are allowed.
 pub(super) unsafe extern "C" fn process_finalizer() {
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    unsafe { super::x86_64_runtime_registry::finalize_process(); }
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     if let Some(lifecycle) = GeneralInitialLoaderState::retained().and_then(|state| state.lifecycle()) {
         lifecycle.finalize_with(|address| unsafe { invoke(address) });
     }

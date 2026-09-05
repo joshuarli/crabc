@@ -28,8 +28,9 @@
 //! resolved [`VmPolicy`], supply the real [`TheapRandomImage`] to the source
 //! callers that consume it, and bind arena/metadata backing before those
 //! callers can claim full process VM integration. One-GiB huge-page progress,
-//! timeout, and release ownership remain unqualified until that owner exists;
-//! this module never represents those missing paths as a successful fallback.
+//! timeout, and release ownership have a staged retaining primitive, but no
+//! live arena/request dispatch selects it yet; that process path remains
+//! unqualified, and this module never represents it as a successful fallback.
 //!
 //! `StartupInput` is supplied by a future runtime owner. In particular, this
 //! module deliberately does not read `/proc/self/environ` or autonomously
@@ -39,15 +40,18 @@
 //! only to construct a real kernel-compatible input for their local mapping
 //! fixture.
 
+use core::cell::UnsafeCell;
 use core::ffi::CStr;
 use core::fmt;
 use core::num::NonZeroUsize;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 use crabc_core::{Errno, Result};
 
-use crate::config::{ARENA_SLICE_SIZE, VmOption, VmOptionState, VmOptions};
+use crate::config::{
+    ARENA_SLICE_SIZE, VmOption, VmOptionEnvironmentReader, VmOptionState, VmOptions,
+};
 #[cfg(test)]
 use crate::config::VmOptionEnvironment;
 use crate::invariants;
@@ -74,6 +78,9 @@ const PR_SET_THP_DISABLE: i32 = 41;
 const PR_GET_THP_DISABLE: i32 = 42;
 const MPOL_PREFERRED: i32 = 1;
 const CLOCK_MONOTONIC: i32 = 1;
+const CLOCK_PROCESS_CPUTIME_ID: i32 = 2;
+// The pinned native musl oracle's `clock()` reports microsecond ticks.
+const SOURCE_CLOCKS_PER_SECOND: i64 = 1_000_000;
 const GRND_NONBLOCK: u32 = 0x1;
 const RUSAGE_SELF: i32 = 0;
 const R_OK: u32 = 4;
@@ -111,6 +118,21 @@ static OS_NUMA_NODE_COUNT: AtomicUsize = AtomicUsize::new(0);
 // The frozen normal-release profile has no secure/debug mprotect transition
 // after decommit, so this static is the only raw Unix reset policy retained.
 static RESET_ADVICE: AtomicUsize = AtomicUsize::new(MADV_FREE as usize);
+
+// Pinned `src/stats.c` calibrates this process-wide subtraction once through
+// `_mi_clock_start` and applies it to every `_mi_clock_end`. Huge-page
+// reservation is the first active caller of that source timer in this port;
+// retain the same shared calibration rather than giving each reservation an
+// independently invented timeout clock.
+static SOURCE_CLOCK_DIFF_MILLISECONDS: AtomicI64 = AtomicI64::new(0);
+
+// Linux's fixed two-signed-word 64-bit timespec ABI.  Both source clock
+// paths use this exact raw record and never require a libc clock wrapper.
+#[repr(C)]
+struct KernelTimespec {
+    seconds: i64,
+    nanoseconds: i64,
+}
 
 /// Drives one Unix reset advisory sequence without introducing an OS fallback.
 ///
@@ -342,8 +364,13 @@ impl MemoryConfig {
     }
 }
 
-/// A fully resolved VM option image cannot be manufactured from a partial
+/// An explicit, reader-free VM policy cannot be manufactured from a partial
 /// process-start observation.
+///
+/// The dedicated Unix process path retains its raw-environment reader and can
+/// instead mirror `mi_option_get`'s default-value-and-later-retry behavior.
+/// This error keeps the ordinary fixture and explicit-owner constructors from
+/// silently inventing that ambient source capability.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum VmPolicyConfigurationError {
     UnresolvedOption(VmOption),
@@ -366,15 +393,35 @@ pub(crate) enum ThpPolicyOutcome {
 /// Process-owned state for the source VM option, hint, large-page retry, and
 /// NUMA-count policy.
 ///
-/// This deliberately receives a completed [`VmOptions`] image instead of
-/// reading `environ`, creating random state, or allocating an owner itself.
-/// The eventual process initializer must retain one `VmPolicy` beside the
-/// source `MainSubprocess`; callers pass the already initialized
-/// [`TheapRandomImage`] when a source path requires randomization. The old
-/// fixed-default mapping APIs remain intact while that lifecycle wiring is
-/// being introduced.
+/// An explicit fixture policy receives a completed [`VmOptions`] image. The
+/// Unix process initializer may instead retain an incomplete image plus the
+/// raw source environment reader that initialized it: each unresolved
+/// descriptor returns its pinned current default for that call and retries on
+/// a later source option read. The policy itself creates neither an ambient
+/// environment reader nor random state; the process initializer retains that
+/// capability beside the source `MainSubprocess`. Callers pass the already
+/// initialized [`TheapRandomImage`] when a source path requires
+/// randomization. The old fixed-default mapping APIs remain intact while that
+/// lifecycle wiring is being introduced.
 pub(crate) struct VmPolicy {
-    options: VmOptions,
+    /// The fixed descriptor image is immutable after ordinary source startup.
+    /// A rare `_mi_getenv` failure leaves individual slots lazy-uninitialized,
+    /// in which case the retained process reader mutates only that slot under
+    /// `options_access` before returning its source default for the current
+    /// query.
+    options: UnsafeCell<VmOptions>,
+    /// Release-published only after every selected descriptor is terminal.
+    /// The normal source startup path reaches this state before any allocator
+    /// caller, keeping option reads a lock-free immutable snapshot.
+    options_resolved: AtomicBool,
+    /// Serializes the exceptional per-descriptor retry path. This is not an
+    /// allocator lock: it protects only the small copied option image while a
+    /// raw `environ` observation resolves one source descriptor.
+    options_access: AtomicBool,
+    /// Present only for the actual Unix process source path. Reader-free
+    /// fixture construction rejects unresolved slots instead of creating a
+    /// hidden ambient environment dependency.
+    option_environment: Option<VmOptionEnvironmentReader>,
     // Pinned `src/init.c` keeps this true until the process-load owner has
     // left the C-runtime-unsafe preloading interval.  Only that one owner may
     // clear it; VM and arena callers receive a read-only view through their
@@ -387,7 +434,59 @@ pub(crate) struct VmPolicy {
     numa_node_count: AtomicUsize,
 }
 
-/// One borrowed source subprocess and its resolved VM policy.
+// SAFETY: normal source startup resolves every descriptor before publication,
+// after which `options` is read immutably. If an environment primitive leaves
+// a descriptor unresolved, `options_access` serializes every mutation and its
+// corresponding current-value read; the constructor's raw-reader safety
+// contract supplies the external `environ` lifetime/mutation precondition.
+unsafe impl Sync for VmPolicy {}
+
+/// One serialized read or retry of [`VmPolicy`]'s copied source descriptor
+/// image. Dropping it always reopens the exceptional path, including if a
+/// test assertion panics while inspecting an option.
+struct VmPolicyOptionAccess<'policy> {
+    policy: &'policy VmPolicy,
+}
+
+impl<'policy> VmPolicyOptionAccess<'policy> {
+    /// Copies an image which became complete while this stale slow-path reader
+    /// waited for the retry gate.
+    ///
+    /// The caller must have observed `options_resolved` with Acquire while it
+    /// holds this gate. The final writer ends its exclusive projection before
+    /// that Release publication; subsequent fast-path readers have only
+    /// shared snapshots, so this raw copied read never creates a competing
+    /// mutable borrow.
+    #[inline]
+    fn resolved_snapshot(&self) -> VmOptions {
+        // SAFETY: the documented Acquire/Release transition proves the final
+        // mutation completed. The gate excludes an unresolved retry writer,
+        // while post-publication readers are shared copied snapshots.
+        unsafe { *self.policy.options.get() }
+    }
+
+    /// Projects the copied descriptor image only while it remains unresolved.
+    ///
+    /// Callers must recheck `options_resolved` after acquiring the gate and
+    /// before calling this method. A stale reader can otherwise wait while
+    /// the final writer publishes completion, then form an exclusive borrow
+    /// concurrently with the now-valid shared fast path.
+    #[inline]
+    fn unresolved_options(&mut self) -> &mut VmOptions {
+        // SAFETY: `VmPolicy::acquire_option_access` holds the one atomic
+        // mutation gate, and the required post-acquisition resolution check
+        // proves no resolved fast-path reader can exist yet.
+        unsafe { &mut *self.policy.options.get() }
+    }
+}
+
+impl Drop for VmPolicyOptionAccess<'_> {
+    fn drop(&mut self) {
+        self.policy.options_access.store(false, Ordering::Release);
+    }
+}
+
+/// One borrowed source subprocess and its source VM policy.
 ///
 /// This pair is deliberately non-owning: process initialization retains both
 /// address-stable owners, while map/commit/free callers must present the same
@@ -433,21 +532,60 @@ impl<'a> VmProcess<'a> {
 
 impl VmPolicy {
     /// Admits only source options whose lazy environment phase has completed.
+    ///
+    /// This reader-free constructor remains the only route for fixtures and
+    /// explicit callers. Use [`Self::new_with_source_environment`] only from
+    /// the process owner that has the pinned raw Unix environment capability.
     pub(crate) fn new(options: VmOptions) -> core::result::Result<Self, VmPolicyConfigurationError> {
         for option in VmOption::ALL {
             if options.state(option) == VmOptionState::Uninitialized {
                 return Err(VmPolicyConfigurationError::UnresolvedOption(option));
             }
         }
-        Ok(Self {
-            options,
+        Ok(Self::from_options(options, None))
+    }
+
+    /// Retains the source environment reader needed to retry lazy descriptors
+    /// after process initialization.
+    ///
+    /// Pinned `_mi_options_init` can leave one or more descriptors in
+    /// `MI_OPTION_UNINIT` when `_mi_getenv` is temporarily unavailable. A
+    /// later `mi_option_get` retries just that descriptor and returns its
+    /// current default even if the retry still cannot observe `environ`.
+    /// Keeping that behavior in the real process policy avoids turning an
+    /// unavailable canonical value into a terminal shadow-runtime failure.
+    ///
+    /// # Safety
+    ///
+    /// `environment_reader` must uphold [`VmOptionEnvironmentReader`]'s
+    /// validity and direct-environment mutation obligations for every later
+    /// policy option read. The caller must retain this policy for the same
+    /// process lifetime that owns the reader.
+    pub(crate) unsafe fn new_with_source_environment(
+        options: VmOptions,
+        environment_reader: VmOptionEnvironmentReader,
+    ) -> core::result::Result<Self, VmPolicyConfigurationError> {
+        Ok(Self::from_options(options, Some(environment_reader)))
+    }
+
+    #[inline]
+    fn from_options(
+        options: VmOptions,
+        option_environment: Option<VmOptionEnvironmentReader>,
+    ) -> Self {
+        let options_resolved = options.all_resolved();
+        Self {
+            options: UnsafeCell::new(options),
+            options_resolved: AtomicBool::new(options_resolved),
+            options_access: AtomicBool::new(false),
+            option_environment,
             preloading: AtomicBool::new(true),
             aligned_hint_base: AtomicUsize::new(0),
             huge_hint_start: AtomicUsize::new(0),
             large_page_try_ok: AtomicUsize::new(0),
             huge_one_gib_unavailable: AtomicBool::new(false),
             numa_node_count: AtomicUsize::new(0),
-        })
+        }
     }
 
     /// Starts a source-shaped resolved default policy for a caller which has
@@ -471,8 +609,33 @@ impl VmPolicy {
         }
     }
 
+    /// Returns a copied descriptor image for source-policy diagnostics.
+    ///
+    /// A partially initialized process image is observed under its retry gate;
+    /// once every descriptor is terminal this is an immutable lock-free copy.
     #[inline]
-    pub(crate) const fn options(&self) -> &VmOptions { &self.options }
+    pub(crate) fn options(&self) -> VmOptions {
+        if self.options_resolved.load(Ordering::Acquire) {
+            return self.resolved_options_snapshot();
+        }
+        self.options_after_unresolved_observation()
+    }
+
+    /// Completes a diagnostic snapshot after the caller initially observed an
+    /// unresolved image.
+    ///
+    /// A slow reader can wait behind the final retry writer. Recheck the
+    /// one-way completion flag after taking the gate, before making any
+    /// exclusive `UnsafeCell` projection, so that stale observation is only a
+    /// shared snapshot once the writer has published completion.
+    #[inline]
+    fn options_after_unresolved_observation(&self) -> VmOptions {
+        let mut access = self.acquire_option_access();
+        if self.options_resolved.load(Ordering::Acquire) {
+            return access.resolved_snapshot();
+        }
+        *access.unresolved_options()
+    }
 
     /// Ends the one-way source preloading interval.
     ///
@@ -497,22 +660,77 @@ impl VmPolicy {
     /// option API is generally thread-safe.
     #[inline]
     pub(crate) fn set_option(&mut self, option: VmOption, value: i64) {
-        self.options.set(option, value);
+        let options = self.options.get_mut();
+        options.set(option, value);
+        if options.all_resolved() {
+            self.options_resolved.store(true, Ordering::Release);
+        }
     }
 
     #[inline]
     fn option_enabled(&self, option: VmOption) -> bool {
-        self.options
-            .value(option)
-            .expect("VmPolicy accepts only resolved source options")
-            != 0
+        self.option_value(option) != 0
     }
 
     #[inline]
     fn option_value(&self, option: VmOption) -> i64 {
-        self.options
-            .value(option)
-            .expect("VmPolicy accepts only resolved source options")
+        if self.options_resolved.load(Ordering::Acquire) {
+            return self.resolved_options_snapshot().current_value(option);
+        }
+        self.option_value_after_unresolved_observation(option)
+    }
+
+    /// Completes a source option read after its initial incomplete-image
+    /// observation. See [`Self::options_after_unresolved_observation`] for
+    /// why the gate must recheck completion before it projects mutably.
+    #[inline]
+    fn option_value_after_unresolved_observation(&self, option: VmOption) -> i64 {
+        let mut access = self.acquire_option_access();
+        if self.options_resolved.load(Ordering::Acquire) {
+            return access.resolved_snapshot().current_value(option);
+        }
+        let (value, resolved) = {
+            let options = access.unresolved_options();
+            if options.state(option) == VmOptionState::Uninitialized {
+                if let Some(environment_reader) = self.option_environment {
+                    // SAFETY: `new_with_source_environment` retains the source
+                    // reader's raw-vector lifetime and mutation contract for the
+                    // whole policy lifetime. The retry gate serializes this exact
+                    // descriptor observation with every other policy query.
+                    unsafe {
+                        options.initialize_one_from_source_environment(option, environment_reader());
+                    }
+                }
+            }
+            (options.current_value(option), options.all_resolved())
+        };
+        // The exclusive projection ends with the inner scope before this
+        // Release publication makes lock-free shared snapshots permissible.
+        if resolved {
+            self.options_resolved.store(true, Ordering::Release);
+        }
+        value
+    }
+
+    /// Copies a terminal source descriptor image for the lock-free fast path.
+    #[inline]
+    fn resolved_options_snapshot(&self) -> VmOptions {
+        // SAFETY: every final mutation ends before the Release publication of
+        // `options_resolved`; this method is reached only through an Acquire
+        // observation of that one-way state. No shared-policy method mutates
+        // a completed image.
+        unsafe { *self.options.get() }
+    }
+
+    fn acquire_option_access(&self) -> VmPolicyOptionAccess<'_> {
+        while self
+            .options_access
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        VmPolicyOptionAccess { policy: self }
     }
 
     /// Mirrors the `mi_option_allow_thp` branch in `_mi_prim_mem_init`.
@@ -1426,6 +1644,23 @@ impl Mapping {
         )
     }
 
+    /// Transfers one exact primitive huge-page mapping to the distinct
+    /// [`HugeOsAllocation`] owner.
+    ///
+    /// A one-GiB reservation is assembled from independently mapped ranges.
+    /// It must therefore not retain a `Mapping` and later pass the aggregate
+    /// range to ordinary `munmap` ownership. This consumes only the normal
+    /// mapping capability after its base, length, and huge-page result match
+    /// the pinned `_mi_prim_alloc_huge_os_pages` success branch.
+    fn into_huge_page_at(mut self, expected: *mut u8) -> Result<()> {
+        self.active()?;
+        if self.address != expected || self.length != HUGE_PAGE_SIZE || !self.is_large {
+            return Err(Errno::INVAL);
+        }
+        self.is_mapped = false;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn map_unix_policy(
         policy: &VmPolicy,
@@ -1778,6 +2013,52 @@ impl Mapping {
             stats.reserve_decrease(length);
         }
         result
+    }
+
+    /// Commits one published reserved range through its original process pair.
+    ///
+    /// This is the post-publication counterpart of [`Self::commit_for_process`].
+    /// Pinned `_mi_os_commit_ex` records `commit_calls` before liberal page
+    /// normalization, and increases `committed` by the caller's requested
+    /// span—not the possibly wider primitive range—only after the normalized
+    /// commit succeeds. Keeping that sequence at this raw boundary lets a
+    /// page owner commit a newly published prefix without reconstructing a
+    /// second `Mapping` capability.
+    ///
+    /// # Safety
+    ///
+    /// `address..address + length` must be a live subrange of one reserved
+    /// mapping originally accounted by `process`. The caller must exclusively
+    /// own the source new-prefix transition and prove that its covering
+    /// page-aligned range remains in that same mapping. No Rust reference or
+    /// aliased mapping capability may observe the bytes during this raw
+    /// protection change. The original published release token remains the
+    /// sole release authority; this method creates neither a release token nor
+    /// a second mapping owner.
+    pub(crate) unsafe fn commit_published_for_process(
+        process: VmProcess<'_>,
+        config: MemoryConfig,
+        address: *mut u8,
+        length: usize,
+    ) -> Result<Option<CommitOutcome>> {
+        // `_mi_os_commit_ex` increments the named counter before it asks
+        // `mi_os_page_align_areax` whether the source span has any pages.
+        let statistics = process.subprocess.vm_statistics();
+        statistics.commit_call();
+        let Some((address, normalized_length)) =
+            covering_unowned_page_range(config.page_size(), address, length)?
+        else {
+            return Ok(None);
+        };
+        fault_before(FaultPoint::Commit)?;
+        // SAFETY: the caller's unsafe contract proves that this source-style
+        // covering range stays in its live reserved mapping and is uniquely
+        // transitioning from reserved to accessible bytes.
+        unsafe {
+            crabc_core::mm::mprotect_raw(address, normalized_length, PROT_READ | PROT_WRITE)
+        }?;
+        statistics.committed_increase(length);
+        Ok(Some(CommitOutcome::NotKnownZero))
     }
 
     /// Returns whether the original anonymous mapping was zero initialized.
@@ -2265,6 +2546,599 @@ impl Mapping {
             length: end - start,
         }))
     }
+}
+
+/// One source `MI_MEM_OS_HUGE` allocation assembled from 1-GiB primitive maps.
+///
+/// Pinned `_mi_os_alloc_huge_os_pages` maps each range independently at a
+/// claimed high-address hint, records one aggregate `MI_MEM_OS_HUGE` memory
+/// ID only for the contiguous successful prefix, and later frees each 1-GiB
+/// primitive map independently. This owner consequently cannot be represented
+/// by a normal [`Mapping`], whose terminal release is one contiguous range.
+/// It retains the exact process pair that selected options and received every
+/// source statistic transition.
+#[must_use = "a huge OS allocation must be installed in a multi-range owner or explicitly released"]
+pub(crate) struct HugeOsAllocation<'a> {
+    process: VmProcess<'a>,
+    base: NonNull<u8>,
+    page_count: usize,
+    memory: MemoryId,
+    stop: HugeOsAllocationStop,
+}
+
+/// Why the pinned huge-page loop returned its contiguous prefix.
+///
+/// This is a typed diagnostic of an already-completed source branch, not a
+/// second allocation policy: `_mi_os_alloc_huge_os_pages` can return a valid
+/// partial prefix after a timeout, primitive error, or rejected noncontiguous
+/// result. Retaining that reason keeps those source warnings observable to
+/// the later process/arena owner without making a partial result disappear.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HugeOsAllocationStop {
+    Complete,
+    NoPagesRequested,
+    ClaimOverflow,
+    PrimitiveMapFailed(Errno),
+    NoncontiguousPrimitive,
+    TimedOut,
+}
+
+/// The source-visible result of one huge-page reservation attempt.
+///
+/// Primitive map failure and zero requested pages both remain source-style
+/// `Unavailable`; no regular mapping is substituted. A noncontiguous
+/// primitive result is rejected after its source adjustment-accounted cleanup.
+/// If that cleanup itself fails, its normal raw mapping is kept in a dedicated
+/// terminal cleanup owner while any already-contiguous huge prefix remains a
+/// valid distinct `MI_MEM_OS_HUGE` result.
+#[must_use = "a retained rejected huge primitive map needs an explicit raw retry or parking owner"]
+pub(crate) enum HugeOsAllocationOutcome<'a> {
+    Unavailable(HugeOsAllocationStop),
+    Allocated(HugeOsAllocation<'a>),
+    AllocatedWithRejectedPrimitive {
+        allocation: HugeOsAllocation<'a>,
+        rejected: HugeOsRejectedPrimitive,
+    },
+    RejectedPrimitive(HugeOsRejectedPrimitive),
+}
+
+/// A noncontiguous huge primitive map whose source adjustment free failed.
+///
+/// This is deliberately not a `HugeOsAllocation` and cannot become a normal
+/// allocation: it has no source `MI_MEM_OS_HUGE` provenance. Its adjustment
+/// statistics already moved at the failed source free edge, so a later retry
+/// is raw-only.
+#[must_use = "a failed rejected-primitive cleanup retains one raw mapping"]
+pub(crate) struct HugeOsRejectedPrimitive {
+    error: Errno,
+    mapping: Mapping,
+}
+
+impl HugeOsRejectedPrimitive {
+    #[inline]
+    pub(crate) const fn error(&self) -> Errno { self.error }
+
+    /// Retries only the raw kernel release after the source adjustment edge
+    /// has already run. It intentionally cannot re-enter normal mapping or
+    /// process-accounting APIs.
+    pub(crate) fn retry_raw_release(mut self) -> core::result::Result<(), Self> {
+        match self.mapping.unmap() {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.error = error;
+                Err(self)
+            }
+        }
+    }
+}
+
+impl fmt::Debug for HugeOsRejectedPrimitive {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HugeOsRejectedPrimitive")
+            .field("error", &self.error)
+            .field("retains_mapping", &true)
+            .finish()
+    }
+}
+
+/// A source huge-page release that could not start because the caller did not
+/// provide enough compact failure-state words. No primitive release has run
+/// in this case, so the exact allocation remains available to retry with a
+/// sufficiently sized buffer.
+#[must_use = "a huge allocation remains live when its release tracker is too small"]
+pub(crate) struct HugeOsReleaseTrackingFailure<'a> {
+    allocation: HugeOsAllocation<'a>,
+    required_words: usize,
+}
+
+impl<'a> HugeOsReleaseTrackingFailure<'a> {
+    #[inline]
+    pub(crate) const fn required_words(&self) -> usize { self.required_words }
+
+    #[inline]
+    pub(crate) fn into_allocation(self) -> HugeOsAllocation<'a> { self.allocation }
+}
+
+/// The exact failed primitive-page set after a full source huge-page free
+/// pass. Every page was attempted and received its normal source statistics
+/// transition; only set bits still name live mappings and may be retried.
+#[must_use = "failed huge-page releases retain raw-only retry state"]
+pub(crate) struct HugeOsRawReleaseRetry<'a, 'bits> {
+    process: VmProcess<'a>,
+    base: NonNull<u8>,
+    page_count: usize,
+    memory: MemoryId,
+    source_error: Errno,
+    failed_pages: &'bits mut [usize],
+    failed_words: usize,
+}
+
+/// Error from a raw-only retry of a previously source-accounted huge page.
+#[must_use = "a raw retry failure retains its exact failed-page set"]
+pub(crate) struct HugeOsRawReleaseFailure<'a, 'bits> {
+    error: Errno,
+    retry: HugeOsRawReleaseRetry<'a, 'bits>,
+}
+
+impl<'a, 'bits> HugeOsRawReleaseFailure<'a, 'bits> {
+    #[inline]
+    pub(crate) const fn error(&self) -> Errno { self.error }
+
+    #[inline]
+    pub(crate) fn into_retry(self) -> HugeOsRawReleaseRetry<'a, 'bits> { self.retry }
+}
+
+impl<'a, 'bits> HugeOsRawReleaseRetry<'a, 'bits> {
+    /// Returns the original aggregate huge-memory provenance. Individual
+    /// failed pages remain the only live ranges represented by this retry
+    /// token, but their source owner and original memory kind stay explicit.
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId { self.memory }
+
+    /// Retries all and only the failed primitive unmaps. It keeps walking the
+    /// complete failed set after an error just as the source free loop keeps
+    /// walking later pages. No source statistic is repeated: the original
+    /// process-accounted pass already performed it for every marked bit.
+    pub(crate) fn retry_raw(self) -> core::result::Result<(), HugeOsRawReleaseFailure<'a, 'bits>> {
+        let mut first_error = None;
+        for page in 0..self.page_count {
+            if !huge_release_bit_is_set(self.failed_pages, page) {
+                continue;
+            }
+            let address = match huge_page_address(self.base, page) {
+                Some(address) => address,
+                None => {
+                    first_error.get_or_insert(Errno::INVAL);
+                    continue;
+                }
+            };
+            let result = match fault_before(FaultPoint::Unmap) {
+                Ok(()) => {
+                    // SAFETY: only a set bit can reach this branch; it names
+                    // a still-live exact one-GiB primitive map retained by
+                    // the preceding source-accounted release pass.
+                    unsafe { crabc_core::mm::munmap_raw(address.as_ptr(), HUGE_PAGE_SIZE) }
+                }
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(()) => huge_release_bit_clear(self.failed_pages, page),
+                Err(error) => {
+                    first_error.get_or_insert(error);
+                }
+            }
+        }
+        match first_error {
+            Some(error) => Err(HugeOsRawReleaseFailure { error, retry: self }),
+            None => Ok(()),
+        }
+    }
+
+    #[cfg(test)]
+    fn failed_page(&self, page: usize) -> bool {
+        page < self.page_count && huge_release_bit_is_set(self.failed_pages, page)
+    }
+}
+
+impl<'a, 'bits> fmt::Debug for HugeOsRawReleaseRetry<'a, 'bits> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("HugeOsRawReleaseRetry")
+            .field("base", &self.base)
+            .field("page_count", &self.page_count)
+            .field("failed_words", &self.failed_words)
+            .finish()
+    }
+}
+
+impl<'a> HugeOsAllocation<'a> {
+    /// Allocates the source `_mi_os_alloc_huge_os_pages` primitive through
+    /// one resolved process pair. It never falls back to a regular mapping.
+    pub(crate) fn allocate_for_process(
+        process: VmProcess<'a>,
+        config: MemoryConfig,
+        pages: usize,
+        numa_node: i32,
+        max_milliseconds: i64,
+        default_random: Option<&mut TheapRandomImage>,
+    ) -> HugeOsAllocationOutcome<'a> {
+        allocate_huge_pages_with(
+            process,
+            pages,
+            max_milliseconds,
+            default_random,
+            |hint| map_huge_page_for_process(process, config, hint, numa_node),
+            source_clock_start,
+            source_clock_end,
+        )
+    }
+
+    #[inline]
+    pub(crate) const fn page_count(&self) -> usize { self.page_count }
+
+    #[inline]
+    pub(crate) const fn size(&self) -> usize {
+        self.page_count * HUGE_PAGE_SIZE
+    }
+
+    #[inline]
+    pub(crate) const fn memory_id(&self) -> MemoryId { self.memory }
+
+    /// Returns the source branch that ended the successful contiguous prefix.
+    #[inline]
+    pub(crate) const fn stop(&self) -> HugeOsAllocationStop { self.stop }
+
+    #[inline]
+    pub(crate) const fn base(&self) -> NonNull<u8> { self.base }
+
+    /// Returns the caller storage needed to retain an exact failed-page set
+    /// for one complete source free pass.
+    #[inline]
+    pub(crate) const fn release_tracking_words(&self) -> usize {
+        huge_release_word_count(self.page_count)
+    }
+
+    /// Executes every pinned `mi_os_free_huge_os_pages` primitive free once.
+    ///
+    /// The source ignores individual primitive errors and continues. Rust
+    /// keeps that sequence but records every failed page in the supplied
+    /// compact bitset so later raw retries can neither unmap successful pages
+    /// nor duplicate the source statistics edge. A tracker too small to make
+    /// that guarantee fails before any syscall.
+    pub(crate) fn release_for_process<'bits>(
+        self,
+        failed_pages: &'bits mut [usize],
+    ) -> core::result::Result<(), HugeOsReleaseFailure<'a, 'bits>> {
+        let required_words = self.release_tracking_words();
+        if failed_pages.len() < required_words {
+            return Err(HugeOsReleaseFailure::Tracking(
+                HugeOsReleaseTrackingFailure {
+                    allocation: self,
+                    required_words,
+                },
+            ));
+        }
+        for word in &mut failed_pages[..required_words] {
+            *word = 0;
+        }
+        let first_error = release_huge_pages_with(
+            self.base,
+            self.page_count,
+            failed_pages,
+            |address| free_huge_page_for_process(self.process, address),
+        );
+        match first_error {
+            None => Ok(()),
+            Some(error) => Err(HugeOsReleaseFailure::FailedPages(HugeOsRawReleaseRetry {
+                process: self.process,
+                base: self.base,
+                page_count: self.page_count,
+                memory: self.memory,
+                source_error: error,
+                failed_pages,
+                failed_words: required_words,
+            })),
+        }
+    }
+}
+
+/// A failed source huge-page release either still owns the full allocation
+/// before any syscall (insufficient tracking) or owns precisely the compact
+/// set of source-accounted raw retries.
+#[must_use = "a failed huge release retains an explicit owner"]
+pub(crate) enum HugeOsReleaseFailure<'a, 'bits> {
+    Tracking(HugeOsReleaseTrackingFailure<'a>),
+    FailedPages(HugeOsRawReleaseRetry<'a, 'bits>),
+}
+
+impl<'a, 'bits> HugeOsReleaseFailure<'a, 'bits> {
+    #[inline]
+    pub(crate) fn error(&self) -> Option<Errno> {
+        match self {
+            Self::Tracking(_) => None,
+            Self::FailedPages(retry) => Some(retry.source_error),
+        }
+    }
+}
+
+fn allocate_huge_pages_with<'a>(
+    process: VmProcess<'a>,
+    pages: usize,
+    max_milliseconds: i64,
+    default_random: Option<&mut TheapRandomImage>,
+    mut map_page: impl FnMut(usize) -> Result<Mapping>,
+    mut clock_start: impl FnMut() -> i64,
+    mut clock_end: impl FnMut(i64) -> i64,
+) -> HugeOsAllocationOutcome<'a> {
+    let Some((start, claimed_size)) = process.policy.claim_huge_pages(pages, default_random) else {
+        return HugeOsAllocationOutcome::Unavailable(HugeOsAllocationStop::ClaimOverflow);
+    };
+    let start_time = clock_start();
+    let mut page = 0usize;
+    let mut all_zero = true;
+    let mut rejected = None;
+    let mut stop = if pages == 0 {
+        HugeOsAllocationStop::NoPagesRequested
+    } else {
+        HugeOsAllocationStop::Complete
+    };
+
+    while page < pages {
+        let Some(address) = page
+            .checked_mul(HUGE_PAGE_SIZE)
+            .and_then(|offset| start.checked_add(offset))
+        else {
+            stop = HugeOsAllocationStop::ClaimOverflow;
+            break;
+        };
+        let expected = address as *mut u8;
+        let mut mapping = match map_page(address) {
+            Ok(mapping) => mapping,
+            Err(error) => {
+                stop = HugeOsAllocationStop::PrimitiveMapFailed(error);
+                break;
+            }
+        };
+        all_zero &= mapping.initially_zero();
+        if mapping.base().ok() != Some(expected) {
+            stop = HugeOsAllocationStop::NoncontiguousPrimitive;
+            if let Err(error) = mapping.unmap_for_process(process, HUGE_PAGE_SIZE, true) {
+                rejected = Some(HugeOsRejectedPrimitive { error, mapping });
+            }
+            break;
+        }
+        if mapping.length() != Ok(HUGE_PAGE_SIZE) || !mapping.is_large() {
+            stop = HugeOsAllocationStop::NoncontiguousPrimitive;
+            // The base was exact, so this can only reject a malformed
+            // primitive result. Preserve it as a source-adjusted cleanup
+            // owner rather than treating it as a huge allocation.
+            if let Err(error) = mapping.unmap_for_process(process, HUGE_PAGE_SIZE, true) {
+                rejected = Some(HugeOsRejectedPrimitive { error, mapping });
+            }
+            break;
+        }
+        // The preceding base/length/large checks establish this exact source
+        // primitive result; moving it into the aggregate owner cannot fail.
+        if mapping.into_huge_page_at(expected).is_err() {
+            unreachable!("validated huge primitive mapping transfer must succeed");
+        }
+        page += 1;
+        let statistics = process.subprocess.vm_statistics();
+        statistics.committed_increase(HUGE_PAGE_SIZE);
+        statistics.reserve_increase(HUGE_PAGE_SIZE);
+
+        if max_milliseconds > 0 {
+            let mut elapsed = clock_end(start_time);
+            let estimate = (elapsed / page as i64).saturating_mul(pages as i64);
+            if estimate > max_milliseconds.saturating_mul(2) {
+                elapsed = max_milliseconds.saturating_add(1);
+            }
+            if elapsed > max_milliseconds {
+                stop = HugeOsAllocationStop::TimedOut;
+                break;
+            }
+        }
+    }
+
+    debug_assert!(page.saturating_mul(HUGE_PAGE_SIZE) <= claimed_size);
+    let allocation = NonNull::new(start as *mut u8).and_then(|base| {
+        let size = page.checked_mul(HUGE_PAGE_SIZE)?;
+        (page != 0).then_some(HugeOsAllocation {
+            process,
+            base,
+            page_count: page,
+            memory: MemoryId::os_huge(base.as_ptr(), size, true, all_zero),
+            stop,
+        })
+    });
+    match (allocation, rejected) {
+        (Some(allocation), Some(rejected)) => {
+            HugeOsAllocationOutcome::AllocatedWithRejectedPrimitive { allocation, rejected }
+        }
+        (Some(allocation), None) => HugeOsAllocationOutcome::Allocated(allocation),
+        (None, Some(rejected)) => HugeOsAllocationOutcome::RejectedPrimitive(rejected),
+        (None, None) => HugeOsAllocationOutcome::Unavailable(stop),
+    }
+}
+
+fn map_huge_page_for_process(
+    process: VmProcess<'_>,
+    config: MemoryConfig,
+    hint: usize,
+    numa_node: i32,
+) -> Result<Mapping> {
+    let mapping = Mapping::map_huge_page_at(process.policy, config, hint)?;
+    if numa_node >= 0 && numa_node < usize::BITS as i32 - 1 {
+        let mask = 1usize << numa_node as u32;
+        let address = mapping.base()?;
+        // SAFETY: `mapping` owns this whole live primitive mapping; the
+        // source accepts `mbind` failure as a best-effort NUMA preference and
+        // supplies exactly one native unsigned-long mask word.
+        let _ = unsafe {
+            crabc_core::mm::mbind_raw(
+                address,
+                HUGE_PAGE_SIZE,
+                MPOL_PREFERRED,
+                &mask,
+                usize::BITS as usize,
+                0,
+            )
+        };
+    }
+    Ok(mapping)
+}
+
+fn free_huge_page_for_process(process: VmProcess<'_>, address: NonNull<u8>) -> Result<()> {
+    let result = match fault_before(FaultPoint::Unmap) {
+        Ok(()) => {
+            // SAFETY: the caller supplies one exact still-live primitive huge
+            // mapping. The outer huge owner never reuses an address after a
+            // successful source free and retains failed addresses separately.
+            unsafe { crabc_core::mm::munmap_raw(address.as_ptr(), HUGE_PAGE_SIZE) }
+        }
+        Err(error) => Err(error),
+    };
+    let statistics = process.subprocess.vm_statistics();
+    statistics.committed_decrease(HUGE_PAGE_SIZE);
+    statistics.reserve_decrease(HUGE_PAGE_SIZE);
+    result
+}
+
+/// Walks every primitive page in the source free order while retaining a
+/// compact exact record of only the failed raw ranges. The caller validates
+/// and clears the supplied bitset before entering this helper.
+fn release_huge_pages_with(
+    base: NonNull<u8>,
+    page_count: usize,
+    failed_pages: &mut [usize],
+    mut release: impl FnMut(NonNull<u8>) -> Result<()>,
+) -> Option<Errno> {
+    let mut first_error = None;
+    for page in 0..page_count {
+        let Some(address) = huge_page_address(base, page) else {
+            huge_release_bit_set(failed_pages, page);
+            first_error.get_or_insert(Errno::INVAL);
+            continue;
+        };
+        if let Err(error) = release(address) {
+            huge_release_bit_set(failed_pages, page);
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error
+}
+
+#[inline]
+const fn huge_release_word_count(page_count: usize) -> usize {
+    let bits = usize::BITS as usize;
+    page_count.saturating_add(bits - 1) / bits
+}
+
+#[inline]
+fn huge_release_bit_is_set(bits: &[usize], page: usize) -> bool {
+    let word = page / usize::BITS as usize;
+    let bit = page % usize::BITS as usize;
+    bits.get(word).is_some_and(|value| value & (1usize << bit) != 0)
+}
+
+#[inline]
+fn huge_release_bit_set(bits: &mut [usize], page: usize) {
+    let word = page / usize::BITS as usize;
+    let bit = page % usize::BITS as usize;
+    bits[word] |= 1usize << bit;
+}
+
+#[inline]
+fn huge_release_bit_clear(bits: &mut [usize], page: usize) {
+    let word = page / usize::BITS as usize;
+    let bit = page % usize::BITS as usize;
+    bits[word] &= !(1usize << bit);
+}
+
+#[inline]
+fn huge_page_address(base: NonNull<u8>, page: usize) -> Option<NonNull<u8>> {
+    let offset = page.checked_mul(HUGE_PAGE_SIZE)?;
+    NonNull::new(base.as_ptr().wrapping_add(offset))
+}
+
+#[inline]
+fn source_clock_now() -> i64 {
+    source_clock_now_with(monotonic_milliseconds, source_clock_now_lowres)
+}
+
+/// Preserves `_mi_prim_clock_now`'s preferred-clock/fallback transition.
+///
+/// Pinned `src/prim/unix/prim.c:742-775` falls through to `clock()` after a
+/// failed `clock_gettime(CLOCK_MONOTONIC)`.  This selector remains explicit
+/// so a faulted preferred query cannot turn a bounded huge-page reservation
+/// into a zero-time, potentially unbounded loop.
+#[inline]
+fn source_clock_now_with(
+    preferred: impl FnOnce() -> Result<i64>,
+    low_resolution: impl FnOnce() -> i64,
+) -> i64 {
+    preferred().unwrap_or_else(|_| low_resolution())
+}
+
+/// Reads the pinned `clock()` fallback without a libc dependency.
+///
+/// Native musl defines `CLOCKS_PER_SEC` as one million and implements
+/// `clock()` from `CLOCK_PROCESS_CPUTIME_ID`; the source fallback then
+/// converts those ticks to milliseconds. A raw CPU-clock error produces the
+/// source `clock()` failure value of `-1`, whose C signed integer division by
+/// 1000 truncates to zero.
+#[inline]
+fn source_clock_now_lowres() -> i64 {
+    let mut time = core::mem::MaybeUninit::<KernelTimespec>::uninit();
+    // Do not consult `fault_before(FaultPoint::Clock)` here: this is the
+    // source fallback reached precisely after that preferred observation was
+    // rejected, and it must still issue its own primitive query.
+    let result = unsafe {
+        crabc_core::time::clock_gettime_raw(
+            CLOCK_PROCESS_CPUTIME_ID,
+            time.as_mut_ptr().cast(),
+        )
+    };
+    if result.is_err() {
+        return source_clock_lowres_milliseconds_from_ticks(-1);
+    }
+    // SAFETY: a successful kernel/vDSO query initialized the fixed record.
+    let time = unsafe { time.assume_init() };
+    if time.seconds < 0 || !(0..1_000_000_000).contains(&time.nanoseconds) {
+        return source_clock_lowres_milliseconds_from_ticks(-1);
+    }
+    let Some(ticks) = time
+        .seconds
+        .checked_mul(SOURCE_CLOCKS_PER_SECOND)
+        .and_then(|seconds| seconds.checked_add(time.nanoseconds / 1_000))
+    else {
+        return source_clock_lowres_milliseconds_from_ticks(-1);
+    };
+    source_clock_lowres_milliseconds_from_ticks(ticks)
+}
+
+/// Applies the selected musl `clock()` tick-to-millisecond conversion.
+#[inline]
+fn source_clock_lowres_milliseconds_from_ticks(ticks: i64) -> i64 {
+    // `SOURCE_CLOCKS_PER_SECOND > 1000` selects the final source branch.
+    ticks / (SOURCE_CLOCKS_PER_SECOND / 1_000)
+}
+
+fn source_clock_start() -> i64 {
+    if SOURCE_CLOCK_DIFF_MILLISECONDS.load(Ordering::Relaxed) == 0 {
+        let before = source_clock_now();
+        let after = source_clock_now();
+        SOURCE_CLOCK_DIFF_MILLISECONDS.store(after.wrapping_sub(before), Ordering::Relaxed);
+    }
+    source_clock_now()
+}
+
+#[inline]
+fn source_clock_end(start: i64) -> i64 {
+    source_clock_now()
+        .wrapping_sub(start)
+        .wrapping_sub(SOURCE_CLOCK_DIFF_MILLISECONDS.load(Ordering::Relaxed))
 }
 
 /// One regular Linux OS allocation together with its exact release mapping.
@@ -2949,6 +3823,38 @@ enum PageAlignment {
     Contained,
 }
 
+/// Selects every base page touched by one non-owning external span.
+///
+/// Unlike [`Mapping::page_range`], this cannot prove the input is within a
+/// particular `Mapping` value because publication moved that capability to an
+/// external owner. The unsafe caller of
+/// [`Mapping::commit_published_for_process`] supplies the containment and
+/// unique-transition proof; this helper only preserves `_mi_os_commit_ex`'s
+/// liberal source page normalization.
+fn covering_unowned_page_range(
+    page_size: PageSize,
+    address: *mut u8,
+    length: usize,
+) -> Result<Option<(*mut u8, usize)>> {
+    if address.is_null() {
+        return Err(Errno::INVAL);
+    }
+    if length == 0 {
+        return Ok(None);
+    }
+    let start_address = address.addr();
+    let end_address = start_address.checked_add(length).ok_or(Errno::INVAL)?;
+    let page_size = page_size.bytes();
+    let start = invariants::align_down(start_address, page_size).ok_or(Errno::INVAL)?;
+    let end = invariants::align_up(end_address, page_size).ok_or(Errno::INVAL)?;
+    if end <= start {
+        return Ok(None);
+    }
+    let prefix = start_address.checked_sub(start).ok_or(Errno::INVAL)?;
+    let range_length = end.checked_sub(start).ok_or(Errno::INVAL)?;
+    Ok(Some((address.wrapping_sub(prefix), range_length)))
+}
+
 /// Selects the complete base pages contained by one non-owning external span.
 ///
 /// Unlike [`Mapping::page_range`], this cannot prove the input is within a
@@ -2991,17 +3897,11 @@ fn validate_mapping_length(page_size: PageSize, length: usize) -> Result<()> {
 
 /// Reads monotonic time with the Unix primitive's millisecond truncation.
 ///
-/// Linux 5.10 supplies `CLOCK_MONOTONIC`, so this keeps the upstream preferred
-/// clock and intentionally omits the `clock()` low-resolution fallback. The
-/// `i64` output is the pinned `mi_msecs_t` representation.
+/// This is only `_mi_prim_clock_now`'s preferred raw observation. Its caller
+/// owns the source `clock()` low-resolution fallback. The `i64` output is the
+/// pinned `mi_msecs_t` representation.
 #[inline]
 pub(crate) fn monotonic_milliseconds() -> Result<i64> {
-    #[repr(C)]
-    struct KernelTimespec {
-        seconds: i64,
-        nanoseconds: i64,
-    }
-
     let mut time = core::mem::MaybeUninit::<KernelTimespec>::uninit();
     fault_before(FaultPoint::Clock)?;
     // SAFETY: `KernelTimespec` is the two-signed-word Linux 64-bit timespec
@@ -3428,6 +4328,28 @@ mod tests {
     use super::*;
     use crabc_core::Errno;
 
+    static VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK: std::sync::Mutex<()> =
+        std::sync::Mutex::new(());
+    static VM_POLICY_SOURCE_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    unsafe fn vm_policy_source_environment_for_test() -> *const *const core::ffi::c_char {
+        // The test lock holds the selected vector stable for every option
+        // observation. This is the same borrowed-vector shape as the native
+        // reader, without changing this test process's real environment.
+        VM_POLICY_SOURCE_ENVIRONMENT
+            .load(Ordering::Acquire)
+            .cast_const()
+    }
+
+    struct VmPolicySourceEnvironmentReset;
+
+    impl Drop for VmPolicySourceEnvironmentReset {
+        fn drop(&mut self) {
+            VM_POLICY_SOURCE_ENVIRONMENT.store(core::ptr::null_mut(), Ordering::Release);
+        }
+    }
+
     fn current_startup() -> StartupInput {
         let raw_page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
             .expect("the Linux test process must expose AT_PAGESZ");
@@ -3736,6 +4658,173 @@ mod tests {
             int_max.numa_node_count_with_raw(|| 5),
             5,
             "the source rejects INT_MAX itself as an explicit option and probes the primitive"
+        );
+    }
+
+    #[test]
+    fn process_vm_policy_retries_only_unavailable_source_environment_descriptors() {
+        let _serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("the isolated raw-environment reader test lock is not poisoned");
+        let _reset = VmPolicySourceEnvironmentReset;
+
+        const NAME: &[u8] = b"mimalloc_allow_large_os_pages=";
+        let mut overlong = [0u8; NAME.len() + 66];
+        overlong[..NAME.len()].copy_from_slice(NAME);
+        overlong[NAME.len()..NAME.len() + 65].fill(b'1');
+        let initial_environment: [*const core::ffi::c_char; 2] = [
+            overlong.as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(
+            initial_environment.as_ptr().cast_mut(),
+            Ordering::Release,
+        );
+
+        let mut options = VmOptions::uninitialized();
+        // SAFETY: the locked test owns a null-terminated stable vector and
+        // all selected C strings through this initial source observation.
+        unsafe { options.initialize_from_source_environment(initial_environment.as_ptr()) };
+        assert_eq!(
+            options.state(VmOption::AllowLargeOsPages),
+            VmOptionState::Uninitialized,
+            "a 65-byte canonical value is the source unavailable result"
+        );
+        assert_eq!(
+            options.state(VmOption::PurgeDelay),
+            VmOptionState::Defaulted,
+            "the initially absent descriptor must stay terminal across retry"
+        );
+
+        // SAFETY: the serialized test reader returns the selected stable
+        // environment vector for every policy option read below.
+        let policy = unsafe {
+            VmPolicy::new_with_source_environment(options, vm_policy_source_environment_for_test)
+        }
+        .expect("the real source policy retains unresolved raw-environment descriptors");
+        assert!(
+            !policy.allow_large_os_pages(),
+            "an unavailable source read returns its pinned default for this call"
+        );
+        assert_eq!(
+            policy.options().state(VmOption::AllowLargeOsPages),
+            VmOptionState::Uninitialized,
+            "a repeated unavailable canonical value remains lazy"
+        );
+
+        let retry_environment: [*const core::ffi::c_char; 3] = [
+            b"mimalloc_allow_large_os_pages=1\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=7\0".as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(
+            retry_environment.as_ptr().cast_mut(),
+            Ordering::Release,
+        );
+
+        assert_eq!(
+            policy.purge_delay_milliseconds(),
+            1_000,
+            "a descriptor defaulted by the first source read must not observe a later environment mutation"
+        );
+        assert!(
+            policy.allow_large_os_pages(),
+            "only the unavailable canonical descriptor retries through the retained source reader"
+        );
+        let final_options = policy.options();
+        assert!(final_options.all_resolved());
+        assert_eq!(
+            final_options.value(VmOption::AllowLargeOsPages),
+            Some(1),
+        );
+        assert_eq!(final_options.value(VmOption::PurgeDelay), Some(1_000));
+    }
+
+    #[test]
+    fn process_vm_policy_serializes_concurrent_source_descriptor_retry() {
+        let _serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("the isolated raw-environment reader test lock is not poisoned");
+        let _reset = VmPolicySourceEnvironmentReset;
+
+        const NAME: &[u8] = b"mimalloc_allow_large_os_pages=";
+        let mut overlong = [0u8; NAME.len() + 66];
+        overlong[..NAME.len()].copy_from_slice(NAME);
+        overlong[NAME.len()..NAME.len() + 65].fill(b'1');
+        let unavailable_environment: [*const core::ffi::c_char; 2] = [
+            overlong.as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(
+            unavailable_environment.as_ptr().cast_mut(),
+            Ordering::Release,
+        );
+
+        let mut options = VmOptions::uninitialized();
+        // SAFETY: the test lock retains this null-terminated source vector.
+        unsafe { options.initialize_from_source_environment(unavailable_environment.as_ptr()) };
+        assert_eq!(
+            options.state(VmOption::AllowLargeOsPages),
+            VmOptionState::Uninitialized
+        );
+        // SAFETY: every concurrent policy read below observes the selected
+        // stable vector while the test lock remains held.
+        let policy = unsafe {
+            VmPolicy::new_with_source_environment(options, vm_policy_source_environment_for_test)
+        }
+        .expect("the source policy retains its lazy descriptor");
+
+        let retry_environment: [*const core::ffi::c_char; 2] = [
+            b"mimalloc_allow_large_os_pages=1\0".as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(
+            retry_environment.as_ptr().cast_mut(),
+            Ordering::Release,
+        );
+        std::thread::scope(|scope| {
+            let readers = [
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+            ];
+            for reader in readers {
+                assert!(
+                    reader.join().expect("the source-policy reader does not panic"),
+                    "each reader observes the one terminal source retry"
+                );
+            }
+        });
+        assert!(
+            policy.options().all_resolved(),
+            "the serialized retry publishes a complete immutable option image"
+        );
+    }
+
+    #[test]
+    fn stale_source_option_read_rechecks_completion_before_exclusive_projection() {
+        let policy = VmPolicy::defaults_for_test();
+        // SAFETY: this exact policy has Release-published its complete image,
+        // so an ordinary fast-path reader may retain this shared snapshot.
+        // Keep it live while manually driving the slow branch which a caller
+        // reached after an earlier false completion observation. Under Miri,
+        // the former stale path's `&mut` projection would overlap this reader.
+        let established_reader = unsafe { &*policy.options.get() };
+        assert!(established_reader.all_resolved());
+
+        let stale_snapshot = policy.options_after_unresolved_observation();
+        let stale_value =
+            policy.option_value_after_unresolved_observation(VmOption::AllowLargeOsPages);
+        assert_eq!(stale_snapshot, *established_reader);
+        assert_eq!(
+            stale_value,
+            established_reader.current_value(VmOption::AllowLargeOsPages),
+            "a stale source-option reader must remain a shared terminal snapshot"
         );
     }
 
@@ -4219,6 +5308,357 @@ mod tests {
         let after_raw_retry = subprocess.vm_statistics().snapshot();
         assert_eq!(after_raw_retry.reserved_current, 0);
         assert_eq!(after_raw_retry.committed_current, 0);
+    }
+
+    #[test]
+    fn published_mapping_process_commit_counts_before_normalization_and_only_after_success() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+
+        let mapping = Mapping::map_for_process(
+            process,
+            config,
+            2 * page,
+            1,
+            MapAccess::Reserved,
+            false,
+            None,
+        )
+        .expect("the paired process reserves two source pages");
+        let base = mapping.into_published().expect("the mapping transfers its publication token");
+        let before = subprocess.vm_statistics().snapshot();
+        // SAFETY: this published token names a live two-page reservation; the
+        // one-page interior request has a unique new-prefix transition and
+        // its covering page range remains within that reservation.
+        assert_eq!(
+            unsafe {
+                Mapping::commit_published_for_process(
+                    process,
+                    config,
+                    base.wrapping_add(page / 2),
+                    page,
+                )
+            },
+            Ok(Some(CommitOutcome::NotKnownZero)),
+        );
+        let after_commit = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_commit.commit_calls, before.commit_calls + 1);
+        assert_eq!(after_commit.committed_current, before.committed_current + page as i64);
+        assert_eq!(after_commit.committed_total, before.committed_total + page as i64);
+        // SAFETY: the original token retains the full two-page release right;
+        // the source caller records only its one-page committed prefix.
+        unsafe { Mapping::reclaim_published_for_process(process, base, 2 * page, page, false) }
+            .expect("the published reservation releases with its exact source statistics");
+
+        let empty = Mapping::map_for_process(
+            process,
+            config,
+            page,
+            1,
+            MapAccess::Reserved,
+            false,
+            None,
+        )
+        .expect("the paired process reserves one empty-range fixture page");
+        let empty_base = empty.into_published().unwrap();
+        let before_empty = subprocess.vm_statistics().snapshot();
+        // SAFETY: the live token remains exclusively owned; zero length is the
+        // source's normalized empty commit branch.
+        assert_eq!(
+            unsafe { Mapping::commit_published_for_process(process, config, empty_base, 0) },
+            Ok(None),
+        );
+        let after_empty = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_empty.commit_calls, before_empty.commit_calls + 1);
+        assert_eq!(after_empty.committed_current, before_empty.committed_current);
+        unsafe { Mapping::reclaim_published_for_process(process, empty_base, page, 0, false) }
+            .expect("the empty-range fixture retains its release right");
+
+        let failed = Mapping::map_for_process(
+            process,
+            config,
+            page,
+            1,
+            MapAccess::Reserved,
+            false,
+            None,
+        )
+        .expect("the paired process reserves one failure fixture page");
+        let failed_base = failed.into_published().unwrap();
+        let before_failure = subprocess.vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        // SAFETY: this token names a still-reserved page and no alias can
+        // observe the failed source transition.
+        assert_eq!(
+            unsafe { Mapping::commit_published_for_process(process, config, failed_base, page) },
+            Err(Errno::NOMEM),
+        );
+        let after_failure = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_failure.commit_calls, before_failure.commit_calls + 1);
+        assert_eq!(after_failure.committed_current, before_failure.committed_current);
+        fault.set(fault::Plan::disabled());
+        unsafe { Mapping::reclaim_published_for_process(process, failed_base, page, 0, false) }
+            .expect("the failed commit retains its published release token");
+    }
+
+    fn synthetic_huge_mapping(config: MemoryConfig, address: usize) -> Mapping {
+        Mapping {
+            address: address as *mut u8,
+            length: HUGE_PAGE_SIZE,
+            page_size: config.page_size(),
+            initially_committed: true,
+            initially_zero: true,
+            is_large: true,
+            is_mapped: true,
+        }
+    }
+
+    #[test]
+    fn source_huge_clock_uses_the_low_resolution_clock_after_monotonic_failure() {
+        // `src/prim/unix/prim.c:_mi_prim_clock_now` does not substitute zero
+        // when its preferred CLOCK_MONOTONIC query fails: it calls `clock()`.
+        // Keep this selector independent from host timing and fault-plan
+        // serialization so a timed huge reservation cannot silently fail open.
+        assert_eq!(source_clock_lowres_milliseconds_from_ticks(1_234_567), 1_234);
+        assert_eq!(source_clock_lowres_milliseconds_from_ticks(-1), 0);
+
+        // This is the production fault edge: fault the real preferred raw
+        // query, then require its transition to a nonzero fallback value.
+        // This avoids coupling the regression to how much CPU time an
+        // unusually fast test process happened to consume.
+        let fault = fault::install(fault::Plan::at(fault::Point::Clock, 1, Errno::NOMEM));
+        let after_forced_monotonic_failure = source_clock_now_with(
+            monotonic_milliseconds,
+            || 47,
+        );
+        assert_eq!(fault.observed(), 1);
+        assert_eq!(after_forced_monotonic_failure, 47);
+        drop(fault);
+        assert!(source_clock_now_lowres() >= 0);
+    }
+
+    #[test]
+    fn huge_os_allocation_records_the_contiguous_prefix_and_os_huge_provenance() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapped = 0;
+
+        let allocation = match allocate_huge_pages_with(
+            process,
+            2,
+            0,
+            None,
+            |hint| {
+                mapped += 1;
+                Ok(synthetic_huge_mapping(config, hint))
+            },
+            || 0,
+            |_| 0,
+        ) {
+            HugeOsAllocationOutcome::Allocated(allocation) => allocation,
+            _ => panic!("two exact primitive maps must produce one huge owner"),
+        };
+
+        assert_eq!(mapped, 2);
+        assert_eq!(allocation.page_count(), 2);
+        assert_eq!(allocation.size(), 2 * HUGE_PAGE_SIZE);
+        assert_eq!(allocation.stop(), HugeOsAllocationStop::Complete);
+        let memory = allocation.memory_id();
+        assert_eq!(memory.kind(), MemoryKind::OsHuge);
+        assert_eq!(
+            memory.os_base().map(|address| address.value()),
+            Some(allocation.base().as_ptr().addr()),
+        );
+        assert_eq!(memory.size(), Some(2 * HUGE_PAGE_SIZE));
+        assert!(memory.is_pinned());
+        assert!(memory.initially_committed());
+        assert!(memory.initially_zero());
+        let statistics = subprocess.vm_statistics().snapshot();
+        assert_eq!(statistics.mmap_calls, 0, "the huge primitive does not use mi_os_prim_alloc");
+        assert_eq!(statistics.reserved_current, (2 * HUGE_PAGE_SIZE) as i64);
+        assert_eq!(statistics.committed_current, (2 * HUGE_PAGE_SIZE) as i64);
+    }
+
+    #[test]
+    fn huge_os_allocation_times_out_after_recording_the_completed_prefix() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapped = 0;
+
+        let allocation = match allocate_huge_pages_with(
+            process,
+            3,
+            10,
+            None,
+            |hint| {
+                mapped += 1;
+                Ok(synthetic_huge_mapping(config, hint))
+            },
+            || 0,
+            |_| 11,
+        ) {
+            HugeOsAllocationOutcome::Allocated(allocation) => allocation,
+            _ => panic!("the first source huge primitive completes before timeout evaluation"),
+        };
+
+        assert_eq!(mapped, 1, "the source estimate forces the timeout after one page");
+        assert_eq!(allocation.page_count(), 1);
+        assert_eq!(allocation.stop(), HugeOsAllocationStop::TimedOut);
+        assert_eq!(subprocess.vm_statistics().snapshot().reserved_current, HUGE_PAGE_SIZE as i64);
+    }
+
+    #[test]
+    fn huge_os_allocation_never_substitutes_a_regular_map_after_primitive_failure() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Map, 1, Errno::NOMEM));
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+
+        assert!(matches!(
+            HugeOsAllocation::allocate_for_process(process, config, 1, -1, 0, None),
+            HugeOsAllocationOutcome::Unavailable(HugeOsAllocationStop::PrimitiveMapFailed(
+                Errno::NOMEM
+            ))
+        ));
+        assert_eq!(fault.observed(), 1, "one failed huge primitive ends the source loop");
+        assert_ne!(policy.huge_hint_start.load(Ordering::Acquire), 0);
+        let statistics = subprocess.vm_statistics().snapshot();
+        assert_eq!(statistics.mmap_calls, 0);
+        assert_eq!(statistics.reserved_current, 0);
+        assert_eq!(statistics.committed_current, 0);
+    }
+
+    #[test]
+    fn huge_os_noncontiguous_primitive_retains_only_its_adjusted_cleanup_owner() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+
+        let rejected = match allocate_huge_pages_with(
+            process,
+            1,
+            0,
+            None,
+            |hint| Ok(synthetic_huge_mapping(config, hint + HUGE_PAGE_SIZE)),
+            || 0,
+            |_| 0,
+        ) {
+            HugeOsAllocationOutcome::RejectedPrimitive(rejected) => rejected,
+            _ => panic!("a noncontiguous source primitive cannot become MI_MEM_OS_HUGE"),
+        };
+
+        assert_eq!(rejected.error(), Errno::NOMEM);
+        let statistics = subprocess.vm_statistics().snapshot();
+        assert_eq!(statistics.reserved_current, -(HUGE_PAGE_SIZE as i64));
+        assert_eq!(statistics.committed_current, -(HUGE_PAGE_SIZE as i64));
+        assert_eq!(fault.observed(), 1, "the adjustment cleanup was attempted once");
+    }
+
+    #[test]
+    fn huge_os_release_walks_after_failures_and_records_exact_page_bits() {
+        let base = NonNull::new(HUGE_HINT_BASE as *mut u8).unwrap();
+        let mut failed = [0usize; 1];
+        let mut observed = [usize::MAX; 3];
+        let mut count = 0;
+        let first = release_huge_pages_with(base, 3, &mut failed, |address| {
+            let page = (address.as_ptr().addr() - base.as_ptr().addr()) / HUGE_PAGE_SIZE;
+            observed[count] = page;
+            count += 1;
+            if page == 0 || page == 2 {
+                Err(Errno::NOMEM)
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(first, Some(Errno::NOMEM));
+        assert_eq!(count, 3, "source free continues after the first primitive error");
+        assert_eq!(observed, [0, 1, 2]);
+        assert_eq!(failed[0], 0b101, "only still-live primitive mappings are retained");
+    }
+
+    #[test]
+    fn huge_os_raw_retry_never_repeats_source_statistics() {
+        let fault = fault::install(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let base = NonNull::dangling();
+
+        assert_eq!(free_huge_page_for_process(process, base), Err(Errno::NOMEM));
+        let after_source_free = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_source_free.reserved_current, -(HUGE_PAGE_SIZE as i64));
+        assert_eq!(after_source_free.committed_current, -(HUGE_PAGE_SIZE as i64));
+
+        let mut failed = [1usize];
+        let retry = HugeOsRawReleaseRetry {
+            process,
+            base,
+            page_count: 1,
+            memory: MemoryId::os_huge(base.as_ptr(), HUGE_PAGE_SIZE, true, true),
+            source_error: Errno::NOMEM,
+            failed_pages: &mut failed,
+            failed_words: 1,
+        };
+        fault.set(fault::Plan::at(fault::Point::Unmap, 1, Errno::NOMEM));
+        let failure = match retry.retry_raw() {
+            Ok(()) => panic!("the injected raw retry must retain its one failed page"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error(), Errno::NOMEM);
+        let retry = failure.into_retry();
+        assert!(retry.failed_page(0));
+        assert_eq!(
+            subprocess.vm_statistics().snapshot(),
+            after_source_free,
+            "raw retries must not repeat a source-accounted free event",
+        );
+    }
+
+    #[test]
+    fn huge_os_release_requires_complete_failure_tracking_before_any_free() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let allocation = match allocate_huge_pages_with(
+            process,
+            1,
+            0,
+            None,
+            |hint| Ok(synthetic_huge_mapping(config, hint)),
+            || 0,
+            |_| 0,
+        ) {
+            HugeOsAllocationOutcome::Allocated(allocation) => allocation,
+            _ => panic!("the synthetic source primitive produces one huge owner"),
+        };
+
+        let mut no_tracking = [];
+        let failure = match allocation.release_for_process(&mut no_tracking) {
+            Ok(()) => panic!("release must not start without exact failed-page storage"),
+            Err(HugeOsReleaseFailure::Tracking(failure)) => failure,
+            Err(HugeOsReleaseFailure::FailedPages(_)) => {
+                panic!("no primitive free may run before tracker validation")
+            }
+        };
+        assert_eq!(failure.required_words(), 1);
+        let _allocation = failure.into_allocation();
+        assert_eq!(subprocess.vm_statistics().snapshot().reserved_current, HUGE_PAGE_SIZE as i64);
     }
 
     #[test]

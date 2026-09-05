@@ -262,9 +262,18 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             planned["x86-owned-static-runtime"],
             {
+                "__fpending",
+                "__fpurge",
+                "__freadahead",
+                "__freadptr",
+                "__freadptrinc",
+                "__fwriting",
+                "_flushlbf",
                 "abort",
                 "acos",
                 "acosf",
+                "asctime",
+                "asctime_r",
                 "asin",
                 "asinf",
                 "asprintf",
@@ -272,30 +281,91 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "atan2",
                 "atan2f",
                 "atanf",
+                "clearerr_unlocked",
+                "ctime",
+                "ctime_r",
                 "dprintf",
                 "fdopen",
+                "fflush_unlocked",
                 "fgetc_unlocked",
+                "fgetln",
+                "fgets_unlocked",
+                "fgetwc",
+                "fgetwc_unlocked",
+                "fgetws",
+                "fgetws_unlocked",
                 "flockfile",
                 "fmemopen",
                 "fopencookie",
                 "fputc_unlocked",
+                "fputs_unlocked",
+                "fputwc",
+                "fputwc_unlocked",
+                "fputws",
+                "fputws_unlocked",
                 "fread_unlocked",
                 "freopen",
                 "ftrylockfile",
                 "funlockfile",
+                "fwide",
+                "fwprintf",
                 "fwrite_unlocked",
+                "fwscanf",
                 "getc_unlocked",
                 "getchar_unlocked",
                 "getdelim",
                 "getline",
+                "gets",
+                "getw",
+                "getwc",
+                "getwc_unlocked",
+                "getwchar",
+                "getwchar_unlocked",
+                "gmtime",
+                "localtime",
+                "localtime_r",
+                "mkdtemp",
+                "mkostemp",
+                "mkostemps",
+                "mkstemp",
+                "mkstemps",
+                "mktime",
                 "open_memstream",
+                "open_wmemstream",
+                "pclose",
+                "popen",
+                "posix_spawn",
+                "posix_spawnp",
                 "prctl",
                 "putc_unlocked",
                 "putchar_unlocked",
+                "putw",
+                "putwc",
+                "putwc_unlocked",
+                "putwchar",
+                "putwchar_unlocked",
                 "realpath",
+                "setbuf",
+                "setbuffer",
+                "setlinebuf",
+                "strftime",
+                "strftime_l",
+                "swprintf",
+                "swscanf",
                 "syscall",
+                "system",
+                "tzset",
+                "ungetwc",
                 "vasprintf",
                 "vdprintf",
+                "vfwprintf",
+                "vfwscanf",
+                "vswprintf",
+                "vswscanf",
+                "vwprintf",
+                "vwscanf",
+                "wprintf",
+                "wscanf",
             },
         )
         self.assertEqual(
@@ -357,7 +427,19 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         )
         self.assertEqual(verified["x86-crypt-allocator-composition"], set())
         self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt", "getitimer", "setitimer", "name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock", "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"} & unprovided)
-        self.assertIn("fputws", unprovided)
+        self.assertNotIn(
+            "open_wmemstream",
+            unprovided,
+            "the composed FILE backend is already in the owned-static roster",
+        )
+        self.assertNotIn("fputws", unprovided)
+        self.assertIn(
+            "feof_unlocked",
+            default_static,
+            "the existing weak default-static alias is not counted as additive",
+        )
+        self.assertIn("ferror_unlocked", default_static)
+        self.assertIn("fileno_unlocked", default_static)
 
     def test_provider_accounting_refresh_rebinds_only_the_roster_dependent_fields(self) -> None:
         """A roster refresh preserves compiler facts without recollecting them."""
@@ -368,7 +450,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         replacement_rows = tuple(
             replace(
                 row,
-                additive_callables=tuple(sorted((*row.additive_callables, "fputws"))),
+                additive_callables=tuple(sorted((*row.additive_callables, "adjtimex"))),
             )
             if row.identifier == "x86-owned-static-runtime"
             else row
@@ -392,7 +474,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             refreshed["callable_provider_partition"]
             ["declared_unverified_feature_archives"][0]["members"],
-            sorted([*source_members, "fputws"]),
+            sorted([*source_members, "adjtimex"]),
         )
         source_counts = source["summary"]["callable_provider_counts"]
         self.assertEqual(
@@ -407,6 +489,46 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             {key: value for key, value in refreshed["summary"].items() if key != "callable_provider_counts"},
             {key: value for key, value in source["summary"].items() if key != "callable_provider_counts"},
+        )
+
+    def test_owned_spawn_consumes_existing_attribute_and_action_providers(self) -> None:
+        """The aggregate adds spawn execution without reassigning its support ABI."""
+        report = json.loads(CHECKED_INVENTORY.read_text(encoding="utf-8"))
+        partition = report["callable_provider_partition"]
+        default_static = set(partition["default_static"]["members"])
+        verified = {
+            provider["id"]: set(provider["members"])
+            for provider in partition["verified_feature_archives"]
+        }
+
+        spawn_attributes = {
+            "posix_spawnattr_destroy",
+            "posix_spawnattr_getflags",
+            "posix_spawnattr_getpgroup",
+            "posix_spawnattr_getschedparam",
+            "posix_spawnattr_getschedpolicy",
+            "posix_spawnattr_getsigdefault",
+            "posix_spawnattr_getsigmask",
+            "posix_spawnattr_init",
+            "posix_spawnattr_setflags",
+            "posix_spawnattr_setpgroup",
+            "posix_spawnattr_setschedparam",
+            "posix_spawnattr_setschedpolicy",
+            "posix_spawnattr_setsigdefault",
+            "posix_spawnattr_setsigmask",
+            "posix_spawn_file_actions_init",
+        }
+        self.assertTrue(spawn_attributes <= default_static)
+        self.assertEqual(
+            verified["x86-posix-spawn-file-actions"],
+            {
+                "posix_spawn_file_actions_addchdir_np",
+                "posix_spawn_file_actions_addclose",
+                "posix_spawn_file_actions_adddup2",
+                "posix_spawn_file_actions_addfchdir_np",
+                "posix_spawn_file_actions_addopen",
+                "posix_spawn_file_actions_destroy",
+            },
         )
 
     def test_provider_accounting_refresh_rejects_changed_compiler_facts(self) -> None:

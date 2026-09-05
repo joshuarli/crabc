@@ -262,6 +262,14 @@ static mut __crabc_x86_64_loader_tls_runtime_v1: GeneralLoaderLibcTlsRuntimeV1 =
         generation: GENERAL_LOADER_TLS_RUNTIME_V1_GENERATION_INITIAL,
     };
 
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+pub(super) fn retained_initial_thread_pointer() -> Option<*mut u8> {
+    let record = core::ptr::addr_of!(__crabc_x86_64_loader_tls_runtime_v1);
+    if unsafe { (*record).state.load(Ordering::Acquire) } != GENERAL_LOADER_TLS_RUNTIME_V1_STATE_READY { return None; }
+    let pointer = unsafe { (*record).thread_pointer } as *mut u8;
+    (!pointer.is_null()).then_some(pointer)
+}
+
 /// Returns the private static record only for the exact weak main-image
 /// relocation exception in `resolve_symbol`.
 #[cfg(crabc_general_loader_libc_tls_runtime_v1)]

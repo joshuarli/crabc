@@ -21,54 +21,47 @@ owners:
 | Which commands and reports prove it? | [`compat/x86_64/README.md`](compat/x86_64/README.md), [`compat/allocator/README.md`](compat/allocator/README.md), exact-revision native reports |
 | Where are the design and recorded AArch64 results? | [`docs/README.md`](docs/README.md) |
 
-## Starting state and next work
+## Current integration frontier
 
-The `main-wip` allocator work is integrated in `be7e74ce`. The native x86 runtime
-dispatcher contains build/cache/temp state under `.work/` as of `d2bb49ac`.
-`50fcb75d` establishes the combined plan. These commits are integration and
-planning checkpoints, not runtime or allocator completion.
-
-1. Runtime: verify the frozen 223-capability/26-family baseline, reconcile
-   generated evidence, and choose dependency-ready family/product blockers
-   from the campaign contracts. Do not restart the one-export-at-a-time queue.
+1. Runtime: complete dependency-ready components through ordinary installed
+   applications, then qualify their families. The frozen 223-capability/
+   26-family baseline validates; current accounting does not imply full parity.
+   Wide stdio and stream extensions compose in installed products; remaining
+   pthread lifecycle/cancellation, scalar math, and dynamic-loader completion
+   are active component work. Do not restart an export-by-export queue.
 2. Allocator: use the contained `compat/allocator/run-x86_64.sh` launcher,
    then complete native x86 M2 qualification. Imported
    AArch64 milestone passes do not count as x86 passes.
-   Native unit tests pass with target-qualified PageMap address-bit controls.
-   The native quick gate passes after correcting legacy fixture allocations
-   that crossed allocator ownership. Native M1 passes all six bounded
-   components and source contracts at clean revision `0daef148`; the exact
+   Native M1 passes all six bounded components and source contracts at clean
+   revision `0daef148`; the exact
    report and next M2 work are recorded in `native-mimalloc.md` §26.
    Native M2 qualifies PageMap and scalar bitmaps at `62d6435c`; the other six
    memory-substrate components remain partial.
 3. Integration: agree on bootstrap, errno, TLS/TCB, pthread exit, fork, and
    loader ownership. Continue independent runtime work with the accepted C
    backend; requalify installed x86 products after native allocator promotion.
-   Installed static/static-PIE allocator, TLS, POSIX, and stdio consumers pass, including
-   extracted-package and two-clean-build checks. Complete runtime composition
-   and allocator lifecycle remain open; this is not static-product completion.
-   The shared runtime now executes installed/extracted PIE and initial TLS DSO
-   consumers with reproducible builds. General runtime module loading, worker
-   DTV growth, and dynamic process lifecycle remain open; see
+   Installed static/static-PIE consumers cover allocator, TLS, POSIX, wide and
+   byte stdio, filesystem traversal, IPC, spawn, selected fork/exit, and normal
+   robust mutexes, including extracted-package and two-clean-build checks.
+   Complete runtime composition and allocator lifecycle remain open; this is
+   not static-product completion.
+   Installed/extracted dynamic PIE and non-PIE consumers cover runtime-new
+   dependency graphs, existing/new-worker DTV growth, retained close, scope,
+   rollback, and constructor exit with reproducible builds. Deferred binding,
+   complete search policy, and dynamic process lifecycle remain open; see
    [`materialized-dynamic-sysroot.md`](compat/x86_64/materialized-dynamic-sysroot.md).
 4. Recovery: inspect existing worktrees before duplicating work. The legacy
    `x86/reboot-feature-20260904` branch still has unfinished uncommitted work
    outside the checkout; preserve and reconcile it. Create no new external
    scratch or worktrees.
 
-## Evidence caveats at settlement
+## Evidence boundaries
 
-The merge qualification recorded 720 passing allocator Python tests, focused
-native x86 header gates, backend-selection compile probes, and a passing
-frozen-baseline validator. It did not run AArch64 qualification or establish
-full x86 parity.
-
-Runner source-contract repairs and per-validation artifact reuse are committed.
-The owned aggregate feature's planned provider accounting is reconciled;
-the full current campaign baseline is not yet green. Installed-consumer jobs
-now use bounded parallel workers with private evidence and process cleanup;
-serial benchmarking is opt-in. Rerun affected checks against committed source;
-historical passes are not current qualification.
+The full campaign is not yet green. Installed-consumer jobs use bounded
+parallel workers with private evidence and process cleanup; the Python runner
+also shards the large parity-ledger test module with per-case progress and
+fail-closed completion accounting. Serial benchmarking is opt-in. Rerun affected
+checks against committed source; historical passes are not current qualification.
 
 The recorded AArch64 owned CRT/sysroot and Lua deliverables are complete at
 their documented evidence boundary. Full target-runtime Rust purity remains

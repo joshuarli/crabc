@@ -73,6 +73,35 @@ struct Definition {
     section: u16,
 }
 
+pub(super) enum RuntimeSymbol { Address(u64), Tls { module: usize, offset: usize } }
+
+/// Read-only dlsym lookup over an explicitly owned scope. The same symbol
+/// eligibility and full-definition extent checks as relocation remain active.
+/// # Safety
+/// Every record/table is retained and readable under the loader mutation lock;
+/// indices belong to this snapshot. Returned addresses borrow retained maps.
+pub(super) unsafe fn find_runtime_symbol(objects: &[Object], indices: &[usize], name: &[u8]) -> Option<RuntimeSymbol> {
+    for &owner in indices {
+        let object = objects.get(owner)?;
+        for index in 1..object.symcount {
+            let symbol = unsafe { definition(objects, owner, index) }?;
+            if symbol.section == 0 || !matches!(symbol.binding, 1 | 2)
+                || !matches!(symbol.visibility, 0 | 3) || !matches!(symbol.kind, 0 | 1 | 2 | 6)
+            { continue; }
+            if unsafe { symbol_name(object, index) }? != name { continue; }
+            if symbol.kind == 6 {
+                if object.tls_module_id == 0 || symbol.section >= 0xff00
+                    || symbol.value.checked_add(symbol.size)? > object.tls_memsz as u64
+                { return None; }
+                return Some(RuntimeSymbol::Tls { module: object.tls_module_id,
+                    offset: usize::try_from(symbol.value).ok()? });
+            }
+            return Some(RuntimeSymbol::Address(unsafe { ordinary_address(objects, symbol) }?));
+        }
+    }
+    None
+}
+
 unsafe fn definition(objects: &[Object], owner: usize, index: usize) -> Option<Definition> {
     let object = objects.get(owner)?;
     if index == 0 || index >= object.symcount { return None; }

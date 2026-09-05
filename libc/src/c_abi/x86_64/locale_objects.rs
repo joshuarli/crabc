@@ -148,6 +148,30 @@ pub(super) fn current_ctype_override() -> Option<bool> {
     }
 }
 
+// musl wide stdio temporarily installs FILE's captured built-in locale, so
+// conversion and application cookie callbacks observe the same locale. This
+// guard owns no reference into FILE/TLS across callbacks and restores even if
+// a callback changed its thread locale, matching the source save/restore.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) struct StreamLocaleGuard { saved: u8, thread: core::marker::PhantomData<*mut ()> }
+#[cfg(feature = "x86-owned-static-runtime")]
+impl StreamLocaleGuard {
+    /// # Safety
+    /// Calling thread has initialized runtime TLS. Keep this guard on that
+    /// thread through the synchronous FILE operation and all its callbacks.
+    pub(super) unsafe fn enter(utf8: bool) -> Self {
+        unsafe {
+            let saved = CURRENT_LOCALE_MODE;
+            CURRENT_LOCALE_MODE = if utf8 { THREAD_UTF8 } else { THREAD_C };
+            Self { saved, thread: core::marker::PhantomData }
+        }
+    }
+}
+#[cfg(feature = "x86-owned-static-runtime")]
+impl Drop for StreamLocaleGuard {
+    fn drop(&mut self) { unsafe { CURRENT_LOCALE_MODE = self.saved; } }
+}
+
 #[inline]
 unsafe fn string_equal(value: *const c_char, expected: &[u8]) -> bool {
     if value.is_null() {

@@ -106,8 +106,8 @@ CRT in both modes and the extracted package. Two workers compose errno isolation
 mutex/condition handoff, rwlock exclusion, once publication, and clear-before-call
 TSD destructors before join. This reuses the existing differential body without
 its private startup object. The separate lifecycle consumer below covers
-attributes, C11 adapters, explicit deferred cancellation, and the selected
-private `pthread_cond_wait` cancellation point; full fork repair and dynamic
+attributes, C11 adapters, explicit and private-condition deferred cancellation,
+and selected-runtime fork repair. Allocator-wide fork recovery and dynamic
 TLS remain separate qualification boundaries.
 
 The existing `libc_allocator_basic_runtime_v1_probe.c` also runs through both
@@ -144,8 +144,15 @@ ordinary exit. `owned_stdio_process_probe.c` separately exercises `popen`,
 `pclose`, and `system`: read/write streams, prior-process descriptor closure,
 CLOEXEC and same-descriptor dup2, worker-thread spawn, signal status/restoration,
 interrupted wait, and exec/pipe failure cleanup without leaked descriptors or
-zombies. Its child shell and scratch are private to each run. Public spawn,
-wide streams, syscall cancellation, and fork-lock recovery remain unqualified.
+zombies. Its child shell and scratch are private to each run.
+`owned_wide_stdio_probe.c` adds stream orientation and captured locale,
+multibyte decoding and pushback, callback locale restoration, worker isolation,
+and growing wide-memory streams with overflow/ownership checks.
+`owned_stdio_extensions_probe.c` checks active buffer direction, borrowed
+read/line views, FILE-owned line allocation, flush/purge/error transitions,
+setbuf-family configuration, and unlocked compatibility entries against musl.
+All reuse the same FILE owner and receive separate installed link evidence. Syscall
+cancellation and allocator-wide fork recovery remain unqualified.
 
 `owned_static_printf_probe.c` additionally covers positional integer/string/
 count/pointer/errno/hex-float formatting and FILE, descriptor, allocated, and
@@ -161,23 +168,39 @@ Each formatting job also runs a separately receipted
 scansets, widths, suppression, positional arguments, integer and binary32/64/80
 conversion, errno, fenv, and stream lookahead/EOF/error state. Allocation checks
 exercise `%m` growth, cleanup, partial failure, and ENOMEM; each process owns
-its scratch and restores its resource limit. Wide formatting/scanning remains
-explicitly unsupported. The 24 bounded jobs now cover 60 installed binaries.
+its scratch and restores its resource limit. `owned_wide_format_probe.c`
+compares byte/wide conversions and wide printf/scanf grammar, including
+standard streams, forwarded va_lists, long strings, and allocated results.
+The digest-checked wide parser source and owned FILE callbacks are mapped in
+`owned_wide_format.rs`; there is no foreign FILE representation. Both wide
+probes run unchanged against pinned musl and all four installed product arms.
+The 24 bounded jobs now cover 84 installed binaries.
 
 Each TLS job also runs `owned_pthread_lifecycle_consumer.c` through a separate
 installed link: initialized attributes, private guarded and caller-owned
 stacks, 96 simultaneously live workers, concurrent detached creator/reaper
-handoffs, typed C11 results, cleanup/TSD teardown at both explicit and blocked
-private-condition deferred cancellation points, and atfork order after worker
-teardown. The condition regression proves the cancellation path repairs its
-waiter and relocks the mutex before cleanup unlocks it. Controls remain owned
-until both creator handoff and kernel clear-child-TID complete. The same
-consumer proves normal robust-mutex owner death, `EOWNERDEAD` recovery with
-`pthread_mutex_consistent`, `ENOTRECOVERABLE` after an unrecovered unlock, and
-process-shared owner death across `fork`. This does not qualify explicit
-scheduling, asynchronous or arbitrary-syscall cancellation, recursive/error-
-checking/PI robust mutexes, general fork recovery, or dynamic TLS lifetime;
-those remain lifecycle-owner work.
+handoffs, typed C11 results, cleanup/TSD teardown at explicit and blocked
+private-condition deferred cancellation points, and atfork order. Condition
+cancellation repairs the waiter and relocks its mutex before user cleanup;
+registry-serialized withdrawal drains outstanding wake leases before waiter reuse.
+Fork repairs the selected pthread/TSD, stdio, timezone, and shared process-lock
+state; a worker becomes the child's adopted main thread. Logical task exit is
+serialized separately from kernel clear-child-TID: the final live task owns
+ordinary exit, including when the adopted main returns while a child worker
+remains alive. Controls remain owned until creator handoff and kernel
+clear-child-TID both complete. The same consumer proves normal robust-mutex
+owner death, `EOWNERDEAD` recovery with `pthread_mutex_consistent`,
+`ENOTRECOVERABLE` after an unrecovered unlock, and process-shared owner death
+across `fork`. Explicit scheduling, asynchronous and arbitrary syscall
+cancellation, recursive/error-checking/PI robust mutexes, allocator-wide fork
+recovery, and dynamic TLS lifetime remain open.
+
+Each POSIX job separately links `owned_spawn_probe.c`: spawn/spawnp file-action
+ordering, working-directory and PATH search, signal/process attributes, worker
+calls, and failure cleanup compare against pinned musl. The installed and
+extracted binaries own their scratch paths and receive the same sealed-link
+and ELF checks. This qualifies the selected spawn boundary, not dynamic fork
+or implicit cancellation.
 
 Each POSIX job includes `owned_temp_objects_probe.c`, separately linked through
 the installed driver. The five `mkstemp`/`mkostemp`/`mkstemps`/`mkostemps`/
@@ -186,6 +209,16 @@ file access, retain requested CLOEXEC/append flags, and restore templates on
 failure. The musl reference and both installed modes check permissions, invalid
 lengths, missing parents, and descriptor ownership after unlink. Every pathname
 is beneath that consumer's private directory; this is not a racy name-only API.
+
+`owned_static_filesystem_consumer.c` composes `scandir`, `ftw`, and `nftw`
+through installed allocation/directory/thread owners. Its private directory
+tree checks sorting, traversal, and musl's cancellation-disabled walk followed
+by restored-state delivery. It does not invent a cancellation guard for `scandir`.
+
+`owned_static_ipc_readiness_consumer.c` composes worker-owned Unix socketpairs
+and ephemeral loopback TCP endpoints with poll/epoll, scatter/gather I/O,
+half-close, and error cleanup. It uses no external service or fixed port and
+does not establish syscall cancellation behavior.
 
 Each POSIX job also links the calendar and TZif probes described in
 [`owned_calendar.md`](owned_calendar.md). Local conversion, normalization,

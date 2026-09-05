@@ -15,7 +15,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crabc_core::{Errno, Result};
 
-use crate::config::{VmOption, VmOptionState, VmOptions};
+use crate::config::{VmOption, VmOptionEnvironmentReader, VmOptionState, VmOptions};
 use crate::invariants;
 
 /// One selected Linux-profile base-page size supplied by the process-start owner.
@@ -243,6 +243,21 @@ impl VmPolicy {
             options,
             preloading: AtomicBool::new(true),
         })
+    }
+
+    /// Miri has no raw Unix `environ` model. Preserve its existing
+    /// fail-closed completed-image rule instead of treating a host callback
+    /// as evidence for the native lazy-retry contract.
+    ///
+    /// # Safety
+    ///
+    /// The parameter has the native signature so the shared process-start
+    /// coordinator can compile under Miri; it is deliberately not invoked.
+    pub(crate) unsafe fn new_with_source_environment(
+        options: VmOptions,
+        _environment_reader: VmOptionEnvironmentReader,
+    ) -> core::result::Result<Self, VmPolicyConfigurationError> {
+        Self::new(options)
     }
 
     #[inline]

@@ -69,10 +69,9 @@ compatibility engineering, not allocator research.
    fixing the pinned-source behavior. Use focused checks during development;
    batch expensive suites at integration and milestone checkpoints as defined
    by `plan.md`. Do not invent a new failing test for a behavior-neutral change.
-5. Follow the current user and repository agent-routing instructions. Use
-   independent workers when useful, with explicit ownership and isolated
-   worktrees for implementation. Do not use Terra or Sol unless the user
-   explicitly authorizes them. The ownership rules in §6 apply to any wave.
+5. Follow the current user-authorized `orchestrate` skill for agent routing.
+   Use independent workers when useful, with explicit ownership and isolated
+   worktrees for implementation. The ownership rules in §6 apply to any wave.
 6. Prefer deleting or bypassing temporary allocator-control scaffolding over
    extending it.
 7. Never weaken, rewrite, or reschedule an upstream workload merely to avoid a

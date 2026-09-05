@@ -48,7 +48,7 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use crate::compiler_tls::current_thread_identity;
 use crate::config::{
     LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE, MEDIUM_PAGE_SIZE, SMALL_MAX_OBJ_SIZE,
-    SMALL_PAGE_SIZE, SMALL_SIZE_MAX,
+    SMALL_PAGE_SIZE, SMALL_SIZE_MAX, VmOptions,
 };
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
@@ -3707,12 +3707,30 @@ impl RuntimeProcessStorage {
             self.retain();
             return false;
         };
+        // Source `mi_process_init_once` observes its environment options
+        // before `_mi_os_init` builds the process memory configuration. The
+        // runtime owns that raw-environ read while startup still owns a stable
+        // initial vector; the resolved image then stays beside this exact
+        // ticket-zero subprocess for its process lifetime.
+        let options = source_vm_options_from_process_environment();
         let config = MemoryConfig::detect(StartupInput::new(page_size));
         // SAFETY: libc calls this only after initial TLS exists and before
         // application constructors. This static owner retains ticket zero for
         // the process lifetime, and no competing runtime lifecycle call can
         // pass the INITIALIZING state above.
-        let owner = unsafe { ProcessMainInitializationStorage::global().initialize(config) };
+        #[cfg(not(miri))]
+        let owner = unsafe {
+            ProcessMainInitializationStorage::global()
+                .initialize_with_vm_options_from_source_environment(
+                    config,
+                    options,
+                    process_environment_pointer,
+                )
+        };
+        #[cfg(miri)]
+        let owner = unsafe {
+            ProcessMainInitializationStorage::global().initialize_with_vm_options(config, options)
+        };
         let Ok(owner) = owner else {
             self.retain();
             return false;
@@ -3747,6 +3765,49 @@ impl RuntimeProcessStorage {
         self.state.store(PROCESS_ACTIVE, Ordering::Release);
         true
     }
+}
+
+/// Resolve the selected VM descriptors from the same raw Unix `environ`
+/// source that pinned `src/prim/unix/prim.c:_mi_prim_getenv` reads.
+///
+/// The static runtime starts after libc has installed the validated kernel
+/// environment vector and before constructors can call its selected mutation
+/// APIs. A foreign direct write still has C's ordinary caller-coordination
+/// obligation. An unavailable or overlong entry remains unresolved in the
+/// permanent process policy: its current source default is usable for that
+/// option read, and only that descriptor retries through this same raw reader
+/// on a later `mi_option_get`-shaped policy access.
+#[cfg(not(miri))]
+fn source_vm_options_from_process_environment() -> VmOptions {
+    let mut options = VmOptions::uninitialized();
+    // SAFETY: `RuntimeProcessStorage::initialize` runs after libc startup
+    // installs `environ`, while its winning process-start transition excludes
+    // another runtime initializer. The ambient C environment lifetime and
+    // direct-mutation synchronization obligation are documented above.
+    unsafe { options.initialize_from_source_environment(process_environment_pointer()) };
+    options
+}
+
+/// Miri has no process-global C `environ` model. Keep every descriptor
+/// unresolved so the private runtime stays inactive there instead of treating
+/// host-model execution as evidence for the native raw-environment boundary.
+#[cfg(miri)]
+fn source_vm_options_from_process_environment() -> VmOptions {
+    VmOptions::uninitialized()
+}
+
+/// Reads the C `environ` object without creating an alias to mutable foreign
+/// state. The selected crabc libc exports it as a weak alias of `__environ`;
+/// native evidence uses the matching musl process global.
+#[cfg(not(miri))]
+fn process_environment_pointer() -> *const *const core::ffi::c_char {
+    unsafe extern "C" {
+        static mut environ: *mut *mut core::ffi::c_char;
+    }
+    // SAFETY: this is a raw machine-word read of the C global only. The
+    // caller of the enclosing source process-start path owns its validity and
+    // lifetime, exactly as pinned mimalloc's direct `environ` primitive does.
+    unsafe { core::ptr::read(core::ptr::addr_of!(environ)).cast_const().cast() }
 }
 
 static RUNTIME_PROCESS: RuntimeProcessStorage = RuntimeProcessStorage::new();

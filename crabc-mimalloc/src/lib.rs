@@ -72,6 +72,7 @@ mod main_static_page;
 mod meta;
 mod once;
 mod os_page;
+mod page_backing;
 mod owned_tls_key_registry;
 #[cfg(miri)]
 #[path = "os_host_model.rs"]

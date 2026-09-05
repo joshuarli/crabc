@@ -25,10 +25,16 @@
 //! every directory invocation saves its entry CWD by descriptor and restores
 //! it along every normal/error/callback exit. Normal traversal behavior is
 //! differentially checked against musl; `FTW_CHDIR` has separate frozen-profile
-//! evidence. Musl's cancellation guard is deliberately not translated because
-//! x86 has no general selected pthread cancellation-state owner. Callbacks must
-//! return normally: C++ exceptions and C `longjmp` must not cross this Rust
-//! frame.
+//! evidence. The standalone feature does not translate musl's cancellation
+//! guard because it has no general selected pthread cancellation-state owner.
+//! The owned static aggregate restores the pinned `nftw.c` source protocol:
+//! it disables selected-worker deferred cancellation for the whole recursive
+//! walk, including callbacks while a `DIR`, path buffer, or temporary CWD can
+//! still be live, then restores the observed prior state only after the walk
+//! releases that state. This is a cancellation-state guard, not an invented
+//! syscall or public-entry cancellation point. `ftw` carries the same guard
+//! because musl implements it through `nftw`. Callbacks must return normally:
+//! C++ exceptions and C `longjmp` must not cross this Rust frame.
 
 use core::ffi::{c_char, c_int};
 use core::ptr;
@@ -68,6 +74,12 @@ const FTW_MOUNT: c_int = 2;
 const FTW_CHDIR: c_int = 4;
 const FTW_DEPTH: c_int = 8;
 
+// Pinned musl's public pthread.h spelling. Keep this local to the
+// feature-gated source translation rather than widening the traversal leaf's
+// standalone contract with a general cancellation-state owner.
+#[cfg(feature = "x86-owned-static-runtime")]
+const PTHREAD_CANCEL_DISABLE: c_int = 1;
+
 #[repr(C)]
 pub(super) struct FtwInfo {
     base: c_int,
@@ -106,6 +118,41 @@ unsafe fn fail(error: c_int) -> c_int {
     // raw Linux errors through the initial-TLS errno slot.
     unsafe { errno::set_errno(error) };
     -1
+}
+
+/// Run a complete `nftw`-style walk under pinned musl's state protocol.
+///
+/// `src/misc/nftw.c` disables cancellation immediately before `do_nftw` and
+/// restores its prior state immediately after it returns. The x86 aggregate
+/// has a deliberately narrower selected-worker cancellation owner: an
+/// unselected caller receives `ENOTSUP` from `pthread_setcancelstate`, in which
+/// case this leaves the standalone traversal behavior untouched. A selected
+/// worker sees the source-faithful disable/walk/restore interval, so a callback
+/// cannot deliver a deferred request while directory, allocation, or CWD
+/// cleanup state is live.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[inline]
+unsafe fn owned_static_nftw_cancellation_guard(walk: impl FnOnce() -> c_int) -> c_int {
+    let mut previous_state = 0;
+    // SAFETY: the aggregate selects this exact current-worker cancellation
+    // owner. Its C ABI accepts valid pinned `PTHREAD_CANCEL_DISABLE` and one
+    // writable local `int` for the prior state.
+    let guarded = unsafe {
+        super::pthread_cancel::pthread_setcancelstate(
+            PTHREAD_CANCEL_DISABLE,
+            &mut previous_state,
+        )
+    } == 0;
+    let result = walk();
+    if guarded {
+        // SAFETY: a successful transition wrote this exact prior state. The
+        // walk has returned, so all of its directory/CWD cleanup state has
+        // already been released before deferred delivery is enabled again.
+        let _ = unsafe {
+            super::pthread_cancel::pthread_setcancelstate(previous_state, ptr::null_mut())
+        };
+    }
+    result
 }
 
 /// Return a caller-contract C-string length.
@@ -578,7 +625,9 @@ unsafe fn prepare_io_path(
 /// must return normally: C++ exceptions and C `longjmp` must not cross this
 /// Rust frame. `FTW_CHDIR` changes process-global CWD during callbacks and
 /// restores the entry CWD before return; callers retain external serialization
-/// of every CWD-sensitive operation. Cancellation interaction is not selected.
+/// of every CWD-sensitive operation. In the owned static aggregate, pinned
+/// musl's disable/walk/restore cancellation-state interval includes every
+/// callback; the standalone feature selects no cancellation owner.
 #[no_mangle]
 pub unsafe extern "C" fn nftw(
     path: *const c_char,
@@ -603,38 +652,48 @@ pub unsafe extern "C" fn nftw(
         ftw: None,
         nftw: callback,
     };
-    if flags & FTW_CHDIR == 0 {
-        return unsafe {
+    let mut io_buffer = [0u8; IO_PATH_MAX];
+    let (io_path, io_length, io_capacity) = if flags & FTW_CHDIR == 0 {
+        (
+            path_buffer.as_mut_ptr(),
+            path_length,
+            path_buffer.len(),
+        )
+    } else {
+        let io_length = match unsafe {
+            prepare_io_path(path, path_length, io_buffer.as_mut_ptr())
+        } {
+            Ok(length) => length,
+            Err(error) => return unsafe { fail(error) },
+        };
+        (io_buffer.as_mut_ptr(), io_length, io_buffer.len())
+    };
+    #[cfg(feature = "x86-owned-static-runtime")]
+    return unsafe {
+        owned_static_nftw_cancellation_guard(|| unsafe {
             walk(
                 path_buffer.as_mut_ptr(),
                 path_length,
                 path_buffer.len(),
-                path_buffer.as_mut_ptr(),
-                path_length,
-                path_buffer.len(),
+                io_path,
+                io_length,
+                io_capacity,
                 &callbacks,
                 fd_limit,
                 flags,
                 ptr::null(),
             )
-        };
-    }
-
-    let mut io_buffer = [0u8; IO_PATH_MAX];
-    let io_length = match unsafe {
-        prepare_io_path(path, path_length, io_buffer.as_mut_ptr())
-    } {
-        Ok(length) => length,
-        Err(error) => return unsafe { fail(error) },
+        })
     };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     unsafe {
         walk(
             path_buffer.as_mut_ptr(),
             path_length,
             path_buffer.len(),
-            io_buffer.as_mut_ptr(),
+            io_path,
             io_length,
-            io_buffer.len(),
+            io_capacity,
             &callbacks,
             fd_limit,
             flags,
@@ -651,7 +710,9 @@ pub unsafe extern "C" fn nftw(
 /// `callback` must be non-null, follow the C `ftw` callback ABI, and return
 /// normally; C++ exceptions and C `longjmp` must not cross this Rust frame.
 /// Callback pointers and stat records are borrowed only for each synchronous
-/// call. This entry selects no CWD mutation or pthread cancellation behavior.
+/// call. The owned static aggregate applies the same pinned-musl
+/// disable/walk/restore cancellation-state interval as `nftw`; this standalone
+/// feature selects no general cancellation owner.
 #[no_mangle]
 pub unsafe extern "C" fn ftw(
     path: *const c_char,
@@ -675,6 +736,24 @@ pub unsafe extern "C" fn ftw(
         ftw: callback,
         nftw: None,
     };
+    #[cfg(feature = "x86-owned-static-runtime")]
+    return unsafe {
+        owned_static_nftw_cancellation_guard(|| unsafe {
+            walk(
+                path_buffer.as_mut_ptr(),
+                path_length,
+                path_buffer.len(),
+                path_buffer.as_mut_ptr(),
+                path_length,
+                path_buffer.len(),
+                &callbacks,
+                fd_limit,
+                FTW_PHYS,
+                ptr::null(),
+            )
+        })
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     unsafe {
         walk(
             path_buffer.as_mut_ptr(),
