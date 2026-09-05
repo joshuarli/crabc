@@ -10709,7 +10709,14 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "run_musl_oracle.sh",
             "run_types_header_abi.sh",
             "run_pthread_c11_header_abi.sh",
-            "assert_private_futex_path",
+            "owned_helper_symbol",
+            "assert_public_reaches_owned_helper",
+            "assert_owned_helper_atomic",
+            "assert_public_atomic",
+            "raw_syscall_helper_symbol",
+            "assert_public_or_bound_futex_path",
+            "TMPDIR physically escapes checkout .work",
+            'realpath -e "${TMPDIR:-}"',
             "-nostdlib -static",
             "-DCRABC_PTHREAD_COND_PRIVATE_FREESTANDING",
             "-Wl,-e,_start",
@@ -10720,15 +10727,27 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "FUTEX_REQUEUE_PRIVATE",
             "requeue val2=1 in x86 r10",
             "uaddr2 handoff through x86 r8",
-            "assert_private_futex_path pthread_cond_wait wait",
-            "assert_private_futex_path pthread_cond_wait requeue",
-            "assert_private_futex_path pthread_cond_signal wake",
-            "assert_private_futex_path pthread_cond_broadcast wake",
+            "assert_public_reaches_owned_helper pthread_mutex_lock lock_selected_normal_mutex_record",
+            "assert_owned_helper_atomic lock_selected_normal_mutex_record cmpxchg",
+            "assert_public_atomic pthread_mutex_unlock xchg",
+            "assert_public_or_bound_futex_path pthread_cond_wait wait syscall4",
+            "assert_public_or_bound_futex_path pthread_cond_wait requeue syscall5",
+            "assert_public_or_bound_futex_path pthread_cond_signal wake syscall4",
+            "assert_public_or_bound_futex_path pthread_cond_broadcast wake syscall4",
             "pthread_cond_timedwait",
             "__tls_get_addr",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
+        self.assertNotIn(
+            "pthread_mutex_lock lacks its x86 atomic compare-exchange",
+            artifact_runner,
+        )
+        self.assertNotIn(
+            "assert_private_futex_path pthread_cond_wait",
+            artifact_runner,
+        )
+        self.assertNotIn("mktemp -d /tmp", artifact_runner)
 
         self.assertTrue(
             {

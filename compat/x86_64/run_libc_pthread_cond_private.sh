@@ -59,42 +59,189 @@ assert_selected_c_abi_surface() {
     fi
 }
 
-assert_private_futex_path() {
-    local symbol="$1"
-    local operation="$2"
-    local disassembly="$work_dir/${symbol}-disassembly"
+owned_helper_symbol() {
+    local helper_leaf="$1"
+    local -a helper_addresses
+    local helper_symbol
 
-    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "${symbol} lacks a raw x86 futex syscall"
-    grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
-        "$disassembly" || fail "${symbol} lacks futex syscall number 202"
+    # The public C entries deliberately decode their input records before
+    # entering private sibling helpers. Resolve the exact outlined helper by
+    # its demangled Rust leaf, then return its mangled ELF symbol for objdump.
+    # This keeps the instruction witness tied to the entry that reaches it,
+    # rather than accepting an unrelated atomic or futex elsewhere in libc.
+    mapfile -t helper_addresses < <(
+        nm --demangle --defined-only --numeric-sort "$candidate" |
+            awk -v helper_leaf="$helper_leaf" \
+                '$2 ~ /^[Tt]$/ && $3 ~ ("::" helper_leaf "$") { print $1 }'
+    )
+    [ "${#helper_addresses[@]}" -eq 1 ] ||
+        fail "expected one owned helper ${helper_leaf}, found ${#helper_addresses[@]}"
+    helper_symbol="$(
+        nm --defined-only --numeric-sort "$candidate" |
+            awk -v address="${helper_addresses[0]}" \
+                '$1 == address && $2 ~ /^[Tt]$/ { print $3 }'
+    )"
+    [ -n "$helper_symbol" ] ||
+        fail "cannot resolve ELF symbol for owned helper ${helper_leaf}"
+    printf '%s\n' "$helper_symbol"
+}
+
+assert_public_reaches_owned_helper() {
+    local public_symbol="$1"
+    local helper_leaf="$2"
+    local helper_symbol
+    local disassembly="$work_dir/${public_symbol}-disassembly"
+
+    helper_symbol="$(owned_helper_symbol "$helper_leaf")"
+    objdump -d --disassemble="$public_symbol" "$candidate" >"$disassembly"
+    if ! awk -v helper_symbol="$helper_symbol" '
+        index($0, "<" helper_symbol ">") && $0 ~ /(call|jmp)/ { found = 1 }
+        END { exit !found }
+    ' "$disassembly"; then
+        fail "${public_symbol} does not reach owned helper ${helper_leaf}"
+    fi
+}
+
+assert_owned_helper_atomic() {
+    local helper_leaf="$1"
+    local instruction="$2"
+    local helper_symbol
+    local disassembly="$work_dir/${helper_leaf}-disassembly"
+
+    helper_symbol="$(owned_helper_symbol "$helper_leaf")"
+    objdump -d --disassemble="$helper_symbol" "$candidate" >"$disassembly"
+    case "$instruction" in
+        cmpxchg)
+            grep -Eq 'lock[[:space:]]+cmpxchg' "$disassembly" ||
+                fail "owned helper ${helper_leaf} lacks x86 atomic compare-exchange"
+            ;;
+        xchg)
+            grep -Eq 'xchg[[:space:]].*\(%r' "$disassembly" ||
+                fail "owned helper ${helper_leaf} lacks x86 atomic exchange release"
+            ;;
+        *) fail "unknown owned helper atomic ${instruction}" ;;
+    esac
+    if grep -Eq '%fs:' "$disassembly"; then
+        fail "owned helper ${helper_leaf} must not mutate errno TLS"
+    fi
+}
+
+assert_public_atomic() {
+    local public_symbol="$1"
+    local instruction="$2"
+    local disassembly="$work_dir/${public_symbol}-disassembly"
+
+    objdump -d --disassemble="$public_symbol" "$candidate" >"$disassembly"
+    case "$instruction" in
+        xchg)
+            grep -Eq 'xchg[[:space:]].*\(%r' "$disassembly" ||
+                fail "${public_symbol} lacks x86 atomic exchange release"
+            ;;
+        *) fail "unknown public atomic ${instruction}" ;;
+    esac
+    if grep -Eq '%fs:' "$disassembly"; then
+        fail "${public_symbol} must not mutate errno TLS"
+    fi
+}
+
+# Rust may leave the raw syscall leaf outlined even when the mapped condition
+# algorithm itself is inlined into the public C entry. Accept either that
+# direct public instruction path or an exact call to the named raw-syscall
+# leaf. `wait`, `wake`, and `requeue` name FUTEX_WAIT_PRIVATE=128,
+# FUTEX_WAKE_PRIVATE=129, and FUTEX_REQUEUE_PRIVATE=131 respectively. This
+# never searches the rest of the final executable for a syscall.
+raw_syscall_helper_symbol() {
+    local helper_leaf="$1"
+    local -a helper_symbols
+
+    mapfile -t helper_symbols < <(
+        nm --defined-only --format=posix "$candidate" |
+            awk -v helper_leaf="$helper_leaf" \
+                '$1 ~ ("raw_syscall8" helper_leaf) && $2 ~ /^[Tt]$/ { print $1 }'
+    )
+    [ "${#helper_symbols[@]}" -eq 1 ] ||
+        fail "expected one raw syscall helper for ${helper_leaf}, found ${#helper_symbols[@]}"
+    printf '%s\n' "${helper_symbols[0]}"
+}
+
+assert_public_or_bound_futex_path() {
+    local public_symbol="$1"
+    local operation="$2"
+    local helper_leaf="$3"
+    local public_disassembly="$work_dir/${public_symbol}-${operation}-disassembly"
+    local helper_symbol
+    local helper_disassembly
+    local syscall_disassembly
+    local argument_disassembly
+    local operation_direct
+    local operation_bound
+
     case "$operation" in
         wait)
-            grep -Eq '\$0x80,%esi|\$0x80,%rsi' "$disassembly" ||
-                fail "${symbol} lacks FUTEX_WAIT_PRIVATE"
+            operation_direct='\$0x80,%e?si'
+            operation_bound='\$0x80,%e?dx'
             ;;
         wake)
-            grep -Eq '\$0x81,%esi|\$0x81,%rsi' "$disassembly" ||
-                fail "${symbol} lacks FUTEX_WAKE_PRIVATE"
+            operation_direct='\$0x81,%e?si'
+            operation_bound='\$0x81,%e?dx'
             ;;
         requeue)
-            grep -Eq '\$0x83,%esi|\$0x83,%rsi' "$disassembly" ||
-                fail "${symbol} lacks FUTEX_REQUEUE_PRIVATE"
-            grep -Eq '\$0x1,%r10(d)?' "$disassembly" ||
-                fail "${symbol} lacks requeue val2=1 in x86 r10"
-            grep -Eq '%r8' "$disassembly" ||
-                fail "${symbol} lacks requeue uaddr2 handoff through x86 r8"
+            operation_direct='\$0x83,%e?si'
+            operation_bound='\$0x83,%e?dx'
             ;;
         *) fail "unknown private futex operation ${operation}" ;;
     esac
-    if grep -Eq '%fs:' "$disassembly"; then
-        fail "${symbol} must not mutate errno TLS"
+
+    objdump -d --disassemble="$public_symbol" "$candidate" >"$public_disassembly"
+    if grep -Eq '\<syscall\>' "$public_disassembly"; then
+        syscall_disassembly="$public_disassembly"
+        argument_disassembly="$public_disassembly"
+        grep -Eq '\$0xca,%e?ax' "$argument_disassembly" ||
+            fail "${public_symbol} lacks futex syscall number 202"
+        grep -Eq "$operation_direct" "$argument_disassembly" ||
+            fail "${public_symbol} lacks ${operation} operation in the x86 syscall ABI"
+    else
+        helper_symbol="$(raw_syscall_helper_symbol "$helper_leaf")"
+        if ! awk -v helper_symbol="$helper_symbol" '
+            index($0, "<" helper_symbol ">") && $0 ~ /(call|jmp)/ { found = 1 }
+            END { exit !found }
+        ' "$public_disassembly"; then
+            fail "${public_symbol} does not reach exact raw syscall helper ${helper_leaf}"
+        fi
+        helper_disassembly="$work_dir/${public_symbol}-${helper_leaf}-disassembly"
+        objdump -d --disassemble="$helper_symbol" "$candidate" >"$helper_disassembly"
+        grep -Eq '\<syscall\>' "$helper_disassembly" ||
+            fail "${public_symbol}'s raw syscall helper lacks the x86 syscall instruction"
+        syscall_disassembly="$helper_disassembly"
+        argument_disassembly="$public_disassembly"
+        grep -Eq '\$0xca,%e?di' "$argument_disassembly" ||
+            fail "${public_symbol} does not pass futex syscall number 202 to ${helper_leaf}"
+        grep -Eq "$operation_bound" "$argument_disassembly" ||
+            fail "${public_symbol} does not pass the ${operation} operation to ${helper_leaf}"
+    fi
+
+    if [ "$operation" = requeue ]; then
+        if [ "$argument_disassembly" = "$public_disassembly" ] &&
+            grep -Eq '\<syscall\>' "$public_disassembly"; then
+            grep -Eq '\$0x1,%r10(d)?' "$argument_disassembly" ||
+                fail "${public_symbol} lacks requeue val2=1 in x86 r10"
+        else
+            grep -Eq '\$0x1,%r8(d)?' "$argument_disassembly" ||
+                fail "${public_symbol} does not pass requeue val2=1 to ${helper_leaf}"
+            grep -Eq '%r8' "$syscall_disassembly" ||
+                fail "${public_symbol}'s raw syscall helper lacks x86 r10/r8 requeue handoff"
+        fi
+        grep -Eq '%r8' "$syscall_disassembly" ||
+            fail "${public_symbol} lacks requeue uaddr2 handoff through x86 r8"
+    fi
+
+    if grep -Eq '%fs:' "$public_disassembly" "$syscall_disassembly"; then
+        fail "${public_symbol} futex path must not mutate errno TLS"
     fi
 }
 
 require_native_linux_x86_64
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf realpath rustup sort timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -103,7 +250,13 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_types_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_pthread_c11_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-pthread-cond-private.XXXXXX)"
+checkout_physical="$(realpath -e "$ROOT_DIR")" || fail "cannot resolve checkout root"
+tmpdir_physical="$(realpath -e "${TMPDIR:-}")" || fail "requires repository-local TMPDIR"
+case "$tmpdir_physical" in
+    "$checkout_physical"/.work/*) ;;
+    *) fail "TMPDIR physically escapes checkout .work" ;;
+esac
+work_dir="$(mktemp -d "$tmpdir_physical/crabc-x86-64-libc-pthread-cond-private.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"
 reference="$work_dir/musl-pthread-cond-private-reference"
@@ -122,8 +275,6 @@ candidate_dynamic="$work_dir/candidate-dynamic"
 candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 errno_disassembly="$work_dir/errno-disassembly"
-mutex_lock_disassembly="$work_dir/pthread-mutex-lock-disassembly"
-mutex_unlock_disassembly="$work_dir/pthread-mutex-unlock-disassembly"
 
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H \
@@ -229,18 +380,13 @@ if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
     compat/x86_64/libc_pthread_cond_private_start.S; then
     fail "fixture start must not install a private FS base"
 fi
-objdump -d --disassemble=pthread_mutex_lock "$candidate" >"$mutex_lock_disassembly"
-grep -Eq 'lock[[:space:]]+cmpxchg' "$mutex_lock_disassembly" ||
-    fail "pthread_mutex_lock lacks its x86 atomic compare-exchange"
-objdump -d --disassemble=pthread_mutex_unlock "$candidate" \
-    >"$mutex_unlock_disassembly"
-grep -Eq 'xchg[[:space:]].*\(%r' "$mutex_unlock_disassembly" ||
-    fail "pthread_mutex_unlock lacks its atomic exchange release"
-
-assert_private_futex_path pthread_cond_wait wait
-assert_private_futex_path pthread_cond_wait requeue
-assert_private_futex_path pthread_cond_signal wake
-assert_private_futex_path pthread_cond_broadcast wake
+assert_public_reaches_owned_helper pthread_mutex_lock lock_selected_normal_mutex_record
+assert_owned_helper_atomic lock_selected_normal_mutex_record cmpxchg
+assert_public_atomic pthread_mutex_unlock xchg
+assert_public_or_bound_futex_path pthread_cond_wait wait syscall4
+assert_public_or_bound_futex_path pthread_cond_wait requeue syscall5
+assert_public_or_bound_futex_path pthread_cond_signal wake syscall4
+assert_public_or_bound_futex_path pthread_cond_broadcast wake syscall4
 
 if timeout "$EXECUTION_TIMEOUT" "$candidate"; then
     :

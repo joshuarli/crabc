@@ -17893,6 +17893,8 @@ def require_static_pthread_private_cond_artifact(family: Mapping[str, Any]) -> N
         "quiescent destruction",
         "four bounded 64-handoff ping-pong rounds",
         "private waiter/barrier/requeue handoff",
+        "exact public-entry/raw-syscall edges",
+        "never accepts a futex found elsewhere in the executable",
         "futex=202",
         "FUTEX_WAIT_PRIVATE=128",
         "FUTEX_WAKE_PRIVATE=129",

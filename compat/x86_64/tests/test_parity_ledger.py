@@ -17113,7 +17113,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         for phrase in (
             "assert_pthread_create_weak_membarrier_owner",
             "for unselected in clone __clone",
-            "pthread_mutex_timedlock pthread_mutex_consistent",
+            "pthread_mutex_timedlock \\\n    pthread_cond_timedwait",
             "archive accidentally exports unselected ${unselected}",
         ):
             self.assert_source_contains(
@@ -17682,6 +17682,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             "quiescent destruction",
             "four bounded 64-handoff ping-pong rounds",
             "private waiter/barrier/requeue handoff",
+            "exact public-entry/raw-syscall edges",
+            "never accepts a futex found elsewhere in the executable",
             "futex=202",
             "FUTEX_WAIT_PRIVATE=128",
             "FUTEX_WAKE_PRIVATE=129",
