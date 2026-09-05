@@ -23,6 +23,28 @@ printf 'signal helpers evidence: %s\n' "$work"
 readonly probe="$ROOT/compat/x86_64/owned_signal_helpers_probe.c"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly cases=(actions interrupt failed-interrupt restart partial-action cancellation reporting partial-reporting)
+# Musl's historical entry points are overridable weak aliases, not merely
+# functions that happen to forward to signal. Retain binding/address evidence.
+assert_signal_aliases() {
+    local binary="$1" table="$2" output="$3"
+    readelf --wide "$table" "$binary" >"$output"
+    python3 -B - "$output" <<'PYTHON'
+from pathlib import Path
+import sys
+symbols = {}
+for line in Path(sys.argv[1]).read_text().splitlines():
+    fields = line.split()
+    if len(fields) == 8 and fields[7] in ('signal', 'bsd_signal', '__sysv_signal'):
+        symbols[fields[7]] = fields
+assert set(symbols) == {'signal', 'bsd_signal', '__sysv_signal'}, symbols
+signal = symbols['signal']
+assert signal[3:6] == ['FUNC', 'GLOBAL', 'DEFAULT'] and signal[6] != 'UND', signal
+for name in ('bsd_signal', '__sysv_signal'):
+    alias = symbols[name]
+    assert alias[3:6] == ['FUNC', 'WEAK', 'DEFAULT'], alias
+    assert alias[1:3] == signal[1:3] and alias[6] == signal[6], (signal, alias)
+PYTHON
+}
 if [ -z "$provided_dynamic" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" --output "$work/static-sysroot" >"$work/static-build.json"
     "$work/static-sysroot/bin/crabc-cc" -static-pie -std=c11 -fno-builtin -c "$probe" -o "$work/workload.o"
@@ -30,12 +52,14 @@ else
     "$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin -c "$probe" -o "$work/workload.o"
 fi
 "$oracle_cc" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
+assert_signal_aliases "$work/oracle" --syms "$work/oracle-symbols.txt"
 for scenario in "${cases[@]}"; do
     timeout 20 "$work/oracle" "$scenario" >"$work/oracle-$scenario.stdout" 2>"$work/oracle-$scenario.stderr"
 done
 if [ -z "$provided_dynamic" ]; then
     for mode in static static-pie; do
         "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" -o "$work/$mode"
+        assert_signal_aliases "$work/$mode" --syms "$work/$mode-symbols.txt"
         for scenario in "${cases[@]}"; do
             timeout 20 "$work/$mode" "$scenario" >"$work/$mode-$scenario.stdout" 2>"$work/$mode-$scenario.stderr"
             cmp "$work/oracle-$scenario.stdout" "$work/$mode-$scenario.stdout"
@@ -45,6 +69,7 @@ if [ -z "$provided_dynamic" ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
     provided_dynamic="$work/dynamic-sysroot"
 fi
+assert_signal_aliases "$provided_dynamic/usr/lib/libc.so" --dyn-syms "$work/dynamic-provider-symbols.txt"
 cp -a "$provided_dynamic" "$work/execution-root"
 for mode in pie non-pie; do
     "$provided_dynamic/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$work/dynamic-$mode"

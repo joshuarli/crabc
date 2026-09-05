@@ -18,8 +18,10 @@ provenance is recorded in `compat/upstreams.toml`. Source mappings are:
 
 Both aliases have the same address as `signal` and install `SA_RESTART` as
 musl does, despite the historical `__sysv_signal` name. The owned product
-exports strong aliases, following its existing public-provider convention;
-the frozen feature continues to use weak aliases. The System V helpers
+preserves the source's overridable weak ELF binding, as does the frozen
+feature. The differential checks both alias bindings and their shared address
+and size against `signal` in the oracle, installed static executables, and
+dynamic libc provider. The System V helpers
 compose the existing public signal-set, action and mask owners. Their
 reserved-signal validation, sticky interrupting-handler bookkeeping and
 SIGABRT action serialization therefore remain on the application path.

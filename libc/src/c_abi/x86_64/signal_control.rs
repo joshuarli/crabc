@@ -60,26 +60,18 @@ const RESERVED_SIGNAL_MASK: u64 = (1_u64 << 31) | (1_u64 << 32) | (1_u64 << 33);
 // Pinned musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`
 // implements `src/signal/signal.c::signal`, then emits
 // `weak_alias(signal, bsd_signal)` and `weak_alias(signal, __sysv_signal)`.
-// Keep this ABI-only compatibility leaf opt-in, and emit its alias directives
-// beside the strong `signal` body. A separate archive member cannot form a
+// Select these aliases for the opt-in private leaf and installed products,
+// emitting their directives beside the strong `signal` body. A separate archive member cannot form a
 // defined ELF `.set` alias to this member's body, while a Rust forwarding
 // wrapper would lose musl's weak same-address and override contract. This
 // feature adds no signal behavior; it leaves the default selected-static
 // archive surface unchanged.
-#[cfg(all(feature = "x86-signal-legacy-aliases", not(feature = "x86-owned-static-runtime")))]
+#[cfg(any(feature = "x86-signal-legacy-aliases", feature = "x86-owned-static-runtime"))]
 core::arch::global_asm!(
     ".weak bsd_signal",
     ".set bsd_signal, signal",
     ".weak __sysv_signal",
     ".set __sysv_signal, signal",
-);
-
-// Owned products publish strong same-address providers. Both historical names
-// retain musl signal.c's SA_RESTART behavior despite the __sysv_signal name.
-#[cfg(feature = "x86-owned-static-runtime")]
-core::arch::global_asm!(
-    ".global bsd_signal", ".set bsd_signal, signal",
-    ".global __sysv_signal", ".set __sysv_signal, signal",
 );
 
 #[inline]
