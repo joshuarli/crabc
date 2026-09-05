@@ -132,6 +132,7 @@ def dso_metadata(path: Path, temporary: Path) -> tuple[str, list[str]]:
         except (ValueError, OSError) as error:
             raise shared.DriverError(f"invalid application search path receipt: {error}") from error
         if (not isinstance(record, dict) or record.get("format") != FORMAT or record.get("output_sha256") != shared.sha256_file(path)
+                or record.get("output_path") != str(path.resolve())
                 or runpaths != [record.get("application_runpath")]):
             raise shared.DriverError("application DSO has an undeclared runtime search path")
     return path.name, needed
@@ -303,6 +304,7 @@ def execute(root: Path, arguments: list[str]) -> None:
                 raise shared.DriverError("linked runtime imports differ from declared contract")
         record = {"schema": 1, "format": FORMAT, "mode": mode, "binding": binding,
                   "runtime_imports": sorted(runtime_imports), "application_runpath": application_runpath,
+                  "output_path": str(output.resolve()),
                   "output_sha256": shared.sha256_file(output),
                   "manifest_sha256": shared.sha256_file(root / "share/crabc/manifest.json"),
                   "application_dsos": {name: shared.sha256_file(path) for name, (path, _) in declared.items()},

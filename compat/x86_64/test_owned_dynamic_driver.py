@@ -84,7 +84,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         path.write_bytes(elf)
         receipt = Path(str(path) + ".crabc-link.json")
         valid = {"format": driver.FORMAT, "output_sha256": driver.shared.sha256_file(path),
-                 "application_runpath": "/app/lib"}
+                 "application_runpath": "/app/lib", "output_path": str(path.resolve())}
         dynamic = "(SONAME) [plugin.so]\n(RUNPATH) [/app/lib]\n"
         for record in ([], {**valid, "application_runpath": "/wrong"},
                        {**valid, "output_sha256": "0" * 64}, valid):
@@ -95,6 +95,16 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                 else:
                     with self.assertRaises(driver.shared.DriverError):
                         driver.dso_metadata(path, Path(self.temporary.name))
+
+        # Moving an ELF and an unchanged sidecar does not transfer the path
+        # declaration. The basename and all file bytes deliberately match.
+        copied = Path(self.temporary.name) / "moved" / path.name
+        copied.parent.mkdir()
+        copied.write_bytes(path.read_bytes())
+        Path(str(copied) + ".crabc-link.json").write_bytes(receipt.read_bytes())
+        with patch.object(driver, "run", side_effect=["", dynamic]):
+            with self.assertRaises(driver.shared.DriverError):
+                driver.dso_metadata(copied, Path(self.temporary.name))
 
     def test_deferred_binding_plan_requires_exact_shared_runtime_imports(self):
         output = io.StringIO()

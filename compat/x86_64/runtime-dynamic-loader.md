@@ -238,7 +238,9 @@ initial-stack tests; they are not full privileged-execution qualification.
 The installed driver accepts `--application-runpath PATHS` and records that
 explicit application policy in both its link plan and hashed output receipt.
 A declared DSO with a nondefault RUNPATH must carry a matching receipt bound
-to its bytes and path. This does not add target libraries to the link command.
+to its bytes, RUNPATH and canonical absolute `output_path`. Moving the DSO
+and unchanged receipt to another directory requires a new declaration.
+This does not add target libraries to the link command.
 The owned default system directory remains `/usr/lib`; musl system-path
 configuration, host directories, preloading and loader command-line execution
 are not introduced. Existing 512-byte admitted pathname storage and a
