@@ -16,7 +16,7 @@ fdiml:
 	subq	$8, %rsp
 	pushq	24(%rsp)
 	pushq	24(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%rsi
 	popq	%rdi
 	testl	%eax, %eax
@@ -28,7 +28,7 @@ fdiml:
 .Lcrabc_x86_math_long_double_completion_src_math_fdiml_13:
 	pushq	40(%rsp)
 	pushq	40(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%rdx
 	popq	%rcx
 	testl	%eax, %eax
@@ -63,7 +63,7 @@ exp10l:
 	leaq	32(%rsp), %rdi
 	pushq	72(%rsp)
 	pushq	72(%rsp)
-	call	modfl
+	call	modfl@PLT
 	fldt	48(%rsp)
 	fld	%st(0)
 	fstpt	16(%rsp)
@@ -81,6 +81,7 @@ exp10l:
 	jne	.Lcrabc_x86_math_long_double_completion_src_math_exp10l_11
 	fstp	%st(1)
 	fnstcw	30(%rsp)
+	leaq	p10.0(%rip), %rdx
 	movzwl	30(%rsp), %eax
 	orb	$12, %ah
 	movw	%ax, 28(%rsp)
@@ -91,7 +92,7 @@ exp10l:
 	addl	$15, %eax
 	cltq
 	salq	$4, %rax
-	fldt	p10.0(%rax)
+	fldt	(%rdx,%rax)
 .Lcrabc_x86_math_long_double_completion_src_math_exp10l_7:
 	addq	$56, %rsp
 	ret
@@ -105,8 +106,9 @@ exp10l:
 	subq	$16, %rsp
 	fmulp	%st, %st(1)
 	fstpt	(%rsp)
-	call	exp2l
+	call	exp2l@PLT
 	fldt	48(%rsp)
+	leaq	p10.0(%rip), %rdx
 	fnstcw	46(%rsp)
 	movzwl	46(%rsp), %eax
 	orb	$12, %ah
@@ -118,7 +120,7 @@ exp10l:
 	addl	$15, %eax
 	cltq
 	salq	$4, %rax
-	fldt	p10.0(%rax)
+	fldt	(%rdx,%rax)
 	popq	%rax
 	popq	%rdx
 	fmulp	%st, %st(1)
@@ -132,7 +134,7 @@ exp10l:
 	fstpt	16(%rsp)
 	pushq	24(%rsp)
 	pushq	24(%rsp)
-	call	powl
+	call	powl@PLT
 	addq	$32, %rsp
 	jmp	.Lcrabc_x86_math_long_double_completion_src_math_exp10l_7
 	.size	exp10l, .-exp10l

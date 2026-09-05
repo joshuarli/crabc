@@ -6,7 +6,8 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly FEATURE=x86-math-long-double-completion
 readonly EXPECTED_ADDITIONS=(exp10l fdiml pow10l)
-readonly EXPECTED_ASSEMBLY_SHA256=e6177957125604374b2d685799a30bad5aada4ecd3f6392e160e6140823ffa53
+# Pinned musl 1.2.6 regeneration with the installed-libc PIC model.
+readonly EXPECTED_ASSEMBLY_SHA256=bf5ec021ae5cf53177314411bc2c80172e4d52c41fcfe66922ec01fb6847b549
 # The final executable has only this source-closed binary80 computation,
 # existing fenv evidence plumbing, and its raw probe entry.  `powl`'s two
 # target-owned helpers remain local and are asserted below rather than added

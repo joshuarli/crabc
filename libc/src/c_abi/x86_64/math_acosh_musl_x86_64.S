@@ -55,7 +55,7 @@ acosh:
 	andl	$2047, %eax
 	cmpl	$1048, %eax
 	jbe	.Lcrabc_x86_math_acosh_src_math_acosh_7
-	call	crabc_x86_math_acosh_provider_log
+	call	crabc_x86_math_acosh_provider_log@PLT
 	addsd	.Lcrabc_x86_math_acosh_src_math_acosh_C1(%rip), %xmm0
 	addq	$24, %rsp
 	ret
@@ -67,10 +67,10 @@ acosh:
 	mulsd	%xmm1, %xmm0
 	addsd	%xmm1, %xmm2
 	addsd	%xmm2, %xmm0
-	call	crabc_x86_math_acosh_provider_sqrt
+	call	crabc_x86_math_acosh_provider_sqrt@PLT
 	addsd	(%rsp), %xmm0
 	addq	$24, %rsp
-	jmp	crabc_x86_math_acosh_provider_log1p
+	jmp	crabc_x86_math_acosh_provider_log1p@PLT
 .Lcrabc_x86_math_acosh_src_math_acosh_7:
 	movapd	%xmm0, %xmm2
 	movsd	%xmm1, (%rsp)
@@ -78,7 +78,7 @@ acosh:
 	mulsd	%xmm0, %xmm0
 	subsd	.Lcrabc_x86_math_acosh_src_math_acosh_C0(%rip), %xmm0
 	movsd	%xmm2, 8(%rsp)
-	call	crabc_x86_math_acosh_provider_sqrt
+	call	crabc_x86_math_acosh_provider_sqrt@PLT
 	addsd	(%rsp), %xmm0
 	movsd	.Lcrabc_x86_math_acosh_src_math_acosh_C0(%rip), %xmm1
 	movsd	8(%rsp), %xmm2
@@ -86,7 +86,7 @@ acosh:
 	divsd	%xmm0, %xmm1
 	subsd	%xmm1, %xmm2
 	movapd	%xmm2, %xmm0
-	jmp	crabc_x86_math_acosh_provider_log
+	jmp	crabc_x86_math_acosh_provider_log@PLT
 	.size	acosh, .-acosh
 	.section	.rodata.cst8,"aM",@progbits,8
 	.align 8
@@ -111,7 +111,7 @@ acoshf:
 	je	.Lcrabc_x86_math_acosh_src_math_acoshf_6
 	cmpl	$1166016511, %eax
 	jbe	.Lcrabc_x86_math_acosh_src_math_acoshf_7
-	call	crabc_x86_math_acosh_provider_logf
+	call	crabc_x86_math_acosh_provider_logf@PLT
 	addss	.Lcrabc_x86_math_acosh_src_math_acoshf_C1(%rip), %xmm0
 	addq	$24, %rsp
 	ret
@@ -123,10 +123,10 @@ acoshf:
 	mulss	%xmm1, %xmm0
 	addss	%xmm1, %xmm2
 	addss	%xmm2, %xmm0
-	call	crabc_x86_math_acosh_provider_sqrtf
+	call	crabc_x86_math_acosh_provider_sqrtf@PLT
 	addss	8(%rsp), %xmm0
 	addq	$24, %rsp
-	jmp	crabc_x86_math_acosh_provider_log1pf
+	jmp	crabc_x86_math_acosh_provider_log1pf@PLT
 .Lcrabc_x86_math_acosh_src_math_acoshf_7:
 	movaps	%xmm0, %xmm2
 	movss	%xmm1, 8(%rsp)
@@ -134,7 +134,7 @@ acoshf:
 	mulss	%xmm0, %xmm0
 	subss	.Lcrabc_x86_math_acosh_src_math_acoshf_C0(%rip), %xmm0
 	movss	%xmm2, 12(%rsp)
-	call	crabc_x86_math_acosh_provider_sqrtf
+	call	crabc_x86_math_acosh_provider_sqrtf@PLT
 	addss	8(%rsp), %xmm0
 	movss	.Lcrabc_x86_math_acosh_src_math_acoshf_C0(%rip), %xmm1
 	movss	12(%rsp), %xmm2
@@ -142,7 +142,7 @@ acoshf:
 	divss	%xmm0, %xmm1
 	subss	%xmm1, %xmm2
 	movaps	%xmm2, %xmm0
-	jmp	crabc_x86_math_acosh_provider_logf
+	jmp	crabc_x86_math_acosh_provider_logf@PLT
 	.size	acoshf, .-acoshf
 	.section	.rodata.cst4,"aM",@progbits,4
 	.align 4
@@ -171,39 +171,42 @@ crabc_x86_math_acosh_provider_log:
 	ja	.Lcrabc_x86_math_acosh_src_math_log_12
 .Lcrabc_x86_math_acosh_src_math_log_4:
 	movabsq	$-4604367669032910848, %rcx
-	movsd	crabc_x86_math_acosh_provider_log_data+48(%rip), %xmm0
+	movsd	48+crabc_x86_math_acosh_provider_log_data(%rip), %xmm0
 	movabsq	$-4503599627370496, %rsi
 	movsd	crabc_x86_math_acosh_provider_log_data(%rip), %xmm2
 	addq	%rax, %rcx
 	pxor	%xmm4, %xmm4
-	movsd	crabc_x86_math_acosh_provider_log_data+32(%rip), %xmm6
+	movsd	32+crabc_x86_math_acosh_provider_log_data(%rip), %xmm6
 	andq	%rcx, %rsi
 	movq	%rcx, %rdx
 	sarq	$52, %rcx
-	shrq	$45, %rdx
 	subq	%rsi, %rax
+	shrq	$45, %rdx
+	leaq	crabc_x86_math_acosh_provider_log_data(%rip), %rsi
 	cvtsi2sdl	%ecx, %xmm4
 	mulsd	%xmm4, %xmm2
 	movq	%rax, %xmm1
 	movq	%rdx, %rax
-	mulsd	crabc_x86_math_acosh_provider_log_data+8(%rip), %xmm4
+	mulsd	8+crabc_x86_math_acosh_provider_log_data(%rip), %xmm4
 	andl	$127, %eax
 	leaq	137(%rax), %rdx
 	addq	$9, %rax
 	salq	$4, %rdx
 	salq	$4, %rax
-	subsd	crabc_x86_math_acosh_provider_log_data(%rdx), %xmm1
-	subsd	crabc_x86_math_acosh_provider_log_data+8(%rdx), %xmm1
-	mulsd	crabc_x86_math_acosh_provider_log_data(%rax), %xmm1
-	addsd	crabc_x86_math_acosh_provider_log_data+8(%rax), %xmm2
+	addq	%rsi, %rdx
+	addq	%rsi, %rax
+	subsd	(%rdx), %xmm1
+	subsd	8(%rdx), %xmm1
+	mulsd	(%rax), %xmm1
+	addsd	8(%rax), %xmm2
 	mulsd	%xmm1, %xmm0
 	movapd	%xmm1, %xmm3
 	movapd	%xmm1, %xmm5
 	mulsd	%xmm1, %xmm3
-	addsd	crabc_x86_math_acosh_provider_log_data+40(%rip), %xmm0
+	addsd	40+crabc_x86_math_acosh_provider_log_data(%rip), %xmm0
 	addsd	%xmm2, %xmm5
 	mulsd	%xmm1, %xmm6
-	addsd	crabc_x86_math_acosh_provider_log_data+24(%rip), %xmm6
+	addsd	24+crabc_x86_math_acosh_provider_log_data(%rip), %xmm6
 	subsd	%xmm5, %xmm2
 	mulsd	%xmm3, %xmm0
 	addsd	%xmm1, %xmm2
@@ -211,7 +214,7 @@ crabc_x86_math_acosh_provider_log:
 	addsd	%xmm6, %xmm0
 	movapd	%xmm1, %xmm6
 	mulsd	%xmm3, %xmm6
-	mulsd	crabc_x86_math_acosh_provider_log_data+16(%rip), %xmm3
+	mulsd	16+crabc_x86_math_acosh_provider_log_data(%rip), %xmm3
 	mulsd	%xmm6, %xmm0
 	addsd	%xmm3, %xmm2
 	addsd	%xmm2, %xmm0
@@ -223,33 +226,33 @@ crabc_x86_math_acosh_provider_log:
 	je	.Lcrabc_x86_math_acosh_src_math_log_8
 	movapd	%xmm0, %xmm1
 	subsd	.Lcrabc_x86_math_acosh_src_math_log_C1(%rip), %xmm1
-	movsd	crabc_x86_math_acosh_provider_log_data+128(%rip), %xmm3
-	movsd	crabc_x86_math_acosh_provider_log_data+120(%rip), %xmm2
-	movsd	crabc_x86_math_acosh_provider_log_data+104(%rip), %xmm5
-	movsd	crabc_x86_math_acosh_provider_log_data+56(%rip), %xmm6
+	movsd	128+crabc_x86_math_acosh_provider_log_data(%rip), %xmm3
+	movsd	120+crabc_x86_math_acosh_provider_log_data(%rip), %xmm2
+	movsd	104+crabc_x86_math_acosh_provider_log_data(%rip), %xmm5
+	movsd	56+crabc_x86_math_acosh_provider_log_data(%rip), %xmm6
 	mulsd	%xmm1, %xmm2
 	movapd	%xmm1, %xmm0
 	movapd	%xmm1, %xmm4
 	mulsd	%xmm1, %xmm0
-	addsd	crabc_x86_math_acosh_provider_log_data+112(%rip), %xmm2
+	addsd	112+crabc_x86_math_acosh_provider_log_data(%rip), %xmm2
 	mulsd	%xmm0, %xmm3
 	mulsd	%xmm0, %xmm4
 	mulsd	%xmm0, %xmm5
-	mulsd	crabc_x86_math_acosh_provider_log_data+80(%rip), %xmm0
+	mulsd	80+crabc_x86_math_acosh_provider_log_data(%rip), %xmm0
 	addsd	%xmm3, %xmm2
-	movsd	crabc_x86_math_acosh_provider_log_data+136(%rip), %xmm3
+	movsd	136+crabc_x86_math_acosh_provider_log_data(%rip), %xmm3
 	mulsd	%xmm4, %xmm3
 	addsd	%xmm3, %xmm2
-	movsd	crabc_x86_math_acosh_provider_log_data+96(%rip), %xmm3
+	movsd	96+crabc_x86_math_acosh_provider_log_data(%rip), %xmm3
 	mulsd	%xmm1, %xmm3
-	addsd	crabc_x86_math_acosh_provider_log_data+88(%rip), %xmm3
+	addsd	88+crabc_x86_math_acosh_provider_log_data(%rip), %xmm3
 	mulsd	%xmm4, %xmm2
 	addsd	%xmm5, %xmm3
 	movapd	%xmm1, %xmm5
 	addsd	%xmm3, %xmm2
-	movsd	crabc_x86_math_acosh_provider_log_data+72(%rip), %xmm3
+	movsd	72+crabc_x86_math_acosh_provider_log_data(%rip), %xmm3
 	mulsd	%xmm1, %xmm3
-	addsd	crabc_x86_math_acosh_provider_log_data+64(%rip), %xmm3
+	addsd	64+crabc_x86_math_acosh_provider_log_data(%rip), %xmm3
 	mulsd	%xmm4, %xmm2
 	addsd	%xmm3, %xmm0
 	addsd	%xmm0, %xmm2
@@ -332,33 +335,35 @@ crabc_x86_math_acosh_provider_logf:
 	cmpl	$2130706431, %edx
 	ja	.Lcrabc_x86_math_acosh_src_math_logf_11
 .Lcrabc_x86_math_acosh_src_math_logf_3:
-	leal	-1060306944(%rax), %ecx
+	leal	-1060306944(%rax), %edx
 	pxor	%xmm1, %xmm1
-	movsd	crabc_x86_math_acosh_provider_logf_data+264(%rip), %xmm2
-	movsd	crabc_x86_math_acosh_provider_logf_data+272(%rip), %xmm0
-	movl	%ecx, %esi
-	movl	%ecx, %edx
-	sarl	$23, %ecx
+	movsd	264+crabc_x86_math_acosh_provider_logf_data(%rip), %xmm2
+	movsd	272+crabc_x86_math_acosh_provider_logf_data(%rip), %xmm0
+	movl	%edx, %esi
+	movl	%edx, %ecx
+	sarl	$23, %edx
 	andl	$-8388608, %esi
-	shrl	$19, %edx
+	shrl	$19, %ecx
 	subl	%esi, %eax
 	movd	%eax, %xmm4
-	movl	%edx, %eax
+	movl	%ecx, %eax
+	leaq	crabc_x86_math_acosh_provider_logf_data(%rip), %rcx
 	andl	$15, %eax
 	cvtss2sd	%xmm4, %xmm1
 	salq	$4, %rax
-	mulsd	crabc_x86_math_acosh_provider_logf_data(%rax), %xmm1
+	addq	%rcx, %rax
+	mulsd	(%rax), %xmm1
 	subsd	.Lcrabc_x86_math_acosh_src_math_logf_C2(%rip), %xmm1
 	mulsd	%xmm1, %xmm0
 	movapd	%xmm1, %xmm3
 	mulsd	%xmm1, %xmm3
-	addsd	crabc_x86_math_acosh_provider_logf_data+280(%rip), %xmm0
+	addsd	280+crabc_x86_math_acosh_provider_logf_data(%rip), %xmm0
 	mulsd	%xmm3, %xmm2
 	addsd	%xmm0, %xmm2
 	pxor	%xmm0, %xmm0
-	cvtsi2sdl	%ecx, %xmm0
-	mulsd	crabc_x86_math_acosh_provider_logf_data+256(%rip), %xmm0
-	addsd	crabc_x86_math_acosh_provider_logf_data+8(%rax), %xmm0
+	cvtsi2sdl	%edx, %xmm0
+	mulsd	256+crabc_x86_math_acosh_provider_logf_data(%rip), %xmm0
+	addsd	8(%rax), %xmm0
 	mulsd	%xmm3, %xmm2
 	addsd	%xmm1, %xmm0
 	addsd	%xmm2, %xmm0
@@ -744,13 +749,14 @@ crabc_x86_math_acosh_provider_sqrt:
 	testb	$1, %dl
 	cmovne	%rcx, %rsi
 	shrq	$46, %rax
-	movl	$3221225472, %ecx
+	leaq	crabc_x86_math_acosh_provider_rsqrt_tab(%rip), %rcx
 	addq	$1023, %rdx
 	andl	$127, %eax
-	movl	%ecx, %r11d
+	movzwl	(%rcx,%rax,2), %eax
 	movq	%rsi, %r9
-	movzwl	crabc_x86_math_acosh_provider_rsqrt_tab(%rax,%rax), %eax
+	movl	$3221225472, %ecx
 	shrq	$32, %r9
+	movl	%ecx, %r11d
 	sall	$16, %eax
 	movq	%r9, %r8
 	imulq	%rax, %r8
@@ -872,9 +878,10 @@ crabc_x86_math_acosh_provider_sqrtf:
 	testl	$8388608, %eax
 	cmovne	%edx, %esi
 	shrl	$17, %eax
+	leaq	crabc_x86_math_acosh_provider_rsqrt_tab(%rip), %rdx
 	andl	$127, %eax
 	shrl	%ecx
-	movzwl	crabc_x86_math_acosh_provider_rsqrt_tab(%rax,%rax), %r8d
+	movzwl	(%rdx,%rax,2), %r8d
 	movl	%esi, %eax
 	sall	$16, %esi
 	addl	$532676608, %ecx
@@ -2243,15 +2250,17 @@ crabc_x86_math_acosh_provider_rsqrt_tab:
 	.type	crabc_x86_math_acosh_provider_divzero, @function
 crabc_x86_math_acosh_provider_divzero:
 	testl	%edi, %edi
-	movl	$.Lcrabc_x86_math_acosh_src_math___math_divzero_C1, %edx
-	pxor	%xmm1, %xmm1
-	movl	$.Lcrabc_x86_math_acosh_src_math___math_divzero_C0, %eax
-	cmove	%rdx, %rax
-	movsd	(%rax), %xmm0
+	je	.Lcrabc_x86_math_acosh_src_math___math_divzero_3
+	movsd	.Lcrabc_x86_math_acosh_src_math___math_divzero_C0(%rip), %xmm0
+.Lcrabc_x86_math_acosh_src_math___math_divzero_2:
 	movsd	%xmm0, -8(%rsp)
 	movsd	-8(%rsp), %xmm0
+	pxor	%xmm1, %xmm1
 	divsd	%xmm1, %xmm0
 	ret
+.Lcrabc_x86_math_acosh_src_math___math_divzero_3:
+	movsd	.Lcrabc_x86_math_acosh_src_math___math_divzero_C1(%rip), %xmm0
+	jmp	.Lcrabc_x86_math_acosh_src_math___math_divzero_2
 	.size	crabc_x86_math_acosh_provider_divzero, .-crabc_x86_math_acosh_provider_divzero
 	.section	.rodata.cst8,"aM",@progbits,8
 	.align 8
@@ -2271,15 +2280,17 @@ crabc_x86_math_acosh_provider_divzero:
 	.type	crabc_x86_math_acosh_provider_divzerof, @function
 crabc_x86_math_acosh_provider_divzerof:
 	testl	%edi, %edi
-	movl	$.Lcrabc_x86_math_acosh_src_math___math_divzerof_C1, %edx
-	pxor	%xmm1, %xmm1
-	movl	$.Lcrabc_x86_math_acosh_src_math___math_divzerof_C0, %eax
-	cmove	%rdx, %rax
-	movss	(%rax), %xmm0
+	je	.Lcrabc_x86_math_acosh_src_math___math_divzerof_3
+	movss	.Lcrabc_x86_math_acosh_src_math___math_divzerof_C0(%rip), %xmm0
+.Lcrabc_x86_math_acosh_src_math___math_divzerof_2:
 	movss	%xmm0, -4(%rsp)
 	movss	-4(%rsp), %xmm0
+	pxor	%xmm1, %xmm1
 	divss	%xmm1, %xmm0
 	ret
+.Lcrabc_x86_math_acosh_src_math___math_divzerof_3:
+	movss	.Lcrabc_x86_math_acosh_src_math___math_divzerof_C1(%rip), %xmm0
+	jmp	.Lcrabc_x86_math_acosh_src_math___math_divzerof_2
 	.size	crabc_x86_math_acosh_provider_divzerof, .-crabc_x86_math_acosh_provider_divzerof
 	.section	.rodata.cst4,"aM",@progbits,4
 	.align 4

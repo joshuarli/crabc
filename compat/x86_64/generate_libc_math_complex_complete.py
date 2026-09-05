@@ -308,6 +308,18 @@ def transform_assembly(relative: str, text: str) -> str:
         text,
         flags=re.MULTILINE,
     )
+    # All complex sources are concatenated into one global-assembly input.
+    # GCC's function/data sections otherwise collide with the independently
+    # selected scalar closures (for example both private complex support and
+    # the public log closure use `.text.log`). Preserve the source compiler's
+    # sectioning, but make the private complex source ownership explicit so
+    # `--gc-sections` cannot retain an unrelated closure through its name.
+    text = re.sub(
+        r"^(\s*\.section\s+)(\.(?:text|rodata|data|bss)[A-Za-z0-9_.$]*)(?=,|\s*$)",
+        rf"\1\2.crabc_x86_math_complex_{tag}",
+        text,
+        flags=re.MULTILINE,
+    )
     return text.rstrip() + "\n"
 
 

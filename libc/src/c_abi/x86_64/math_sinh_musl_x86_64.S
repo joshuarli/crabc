@@ -48,14 +48,13 @@
 	.type	sinh, @function
 sinh:
 	movq	%xmm0, %rax
-	movl	$.Lcrabc_x86_math_sinh_src_math_sinh_C0, %edx
-	movl	$.Lcrabc_x86_math_sinh_src_math_sinh_C1, %ecx
 	testq	%rax, %rax
-	cmovs	%rcx, %rdx
+	js	.Lcrabc_x86_math_sinh_src_math_sinh_6
+	movsd	.Lcrabc_x86_math_sinh_src_math_sinh_C0(%rip), %xmm1
+.Lcrabc_x86_math_sinh_src_math_sinh_2:
 	btrq	$63, %rax
 	movq	%rax, %xmm2
 	shrq	$32, %rax
-	movsd	(%rdx), %xmm1
 	cmpq	$1082535489, %rax
 	ja	.Lcrabc_x86_math_sinh_src_math_sinh_3
 	pushq	%rbx
@@ -64,7 +63,7 @@ sinh:
 	subq	$16, %rsp
 	movq	%rax, 8(%rsp)
 	movsd	%xmm1, (%rsp)
-	call	crabc_x86_math_sinh_provider_expm1
+	call	crabc_x86_math_sinh_provider_expm1@PLT
 	movq	8(%rsp), %rax
 	movapd	%xmm0, %xmm2
 	cmpq	$1072693247, %rax
@@ -81,6 +80,9 @@ sinh:
 	subsd	%xmm3, %xmm0
 	mulsd	(%rsp), %xmm0
 	jmp	.Lcrabc_x86_math_sinh_src_math_sinh_1
+.Lcrabc_x86_math_sinh_src_math_sinh_6:
+	movsd	.Lcrabc_x86_math_sinh_src_math_sinh_C1(%rip), %xmm1
+	jmp	.Lcrabc_x86_math_sinh_src_math_sinh_2
 .Lcrabc_x86_math_sinh_src_math_sinh_4:
 	movsd	.Lcrabc_x86_math_sinh_src_math_sinh_C2(%rip), %xmm3
 	addsd	%xmm0, %xmm3
@@ -118,12 +120,11 @@ sinh:
 	.type	sinhf, @function
 sinhf:
 	movd	%xmm0, %eax
-	movl	$.Lcrabc_x86_math_sinh_src_math_sinhf_C0, %edx
-	movl	$.Lcrabc_x86_math_sinh_src_math_sinhf_C1, %ecx
 	testl	%eax, %eax
-	cmovs	%rcx, %rdx
+	js	.Lcrabc_x86_math_sinh_src_math_sinhf_6
+	movss	.Lcrabc_x86_math_sinh_src_math_sinhf_C0(%rip), %xmm1
+.Lcrabc_x86_math_sinh_src_math_sinhf_2:
 	andl	$2147483647, %eax
-	movss	(%rdx), %xmm1
 	cmpl	$1118925334, %eax
 	ja	.Lcrabc_x86_math_sinh_src_math_sinhf_3
 	pushq	%rbx
@@ -132,7 +133,7 @@ sinhf:
 	subq	$16, %rsp
 	movl	%eax, 12(%rsp)
 	movss	%xmm1, 8(%rsp)
-	call	crabc_x86_math_sinh_provider_expm1f
+	call	crabc_x86_math_sinh_provider_expm1f@PLT
 	movl	12(%rsp), %eax
 	movaps	%xmm0, %xmm2
 	cmpl	$1065353215, %eax
@@ -149,6 +150,9 @@ sinhf:
 	subss	%xmm3, %xmm0
 	mulss	8(%rsp), %xmm0
 	jmp	.Lcrabc_x86_math_sinh_src_math_sinhf_1
+.Lcrabc_x86_math_sinh_src_math_sinhf_6:
+	movss	.Lcrabc_x86_math_sinh_src_math_sinhf_C1(%rip), %xmm1
+	jmp	.Lcrabc_x86_math_sinh_src_math_sinhf_2
 .Lcrabc_x86_math_sinh_src_math_sinhf_4:
 	movss	.Lcrabc_x86_math_sinh_src_math_sinhf_C2(%rip), %xmm3
 	addss	%xmm0, %xmm3
@@ -183,7 +187,6 @@ sinhf:
 	.type	crabc_x86_math_sinh_provider_expm1, @function
 crabc_x86_math_sinh_provider_expm1:
 	movq	%xmm0, %rax
-	movapd	%xmm0, %xmm5
 	movq	%rax, %rcx
 	shrq	$32, %rcx
 	movl	%ecx, %edx
@@ -194,40 +197,39 @@ crabc_x86_math_sinh_provider_expm1:
 	movq	%rax, %rdx
 	btrq	$63, %rdx
 	cmpq	%rdx, %rcx
-	jb	.Lcrabc_x86_math_sinh_src_math_expm1_29
+	jb	.Lcrabc_x86_math_sinh_src_math_expm1_1
 	shrq	$63, %rax
-	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C4(%rip), %xmm0
-	jne	.Lcrabc_x86_math_sinh_src_math_expm1_1
-	comisd	.Lcrabc_x86_math_sinh_src_math_expm1_C5(%rip), %xmm5
-	ja	.Lcrabc_x86_math_sinh_src_math_expm1_31
-	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C8(%rip), %xmm0
+	jne	.Lcrabc_x86_math_sinh_src_math_expm1_22
+	comisd	.Lcrabc_x86_math_sinh_src_math_expm1_C5(%rip), %xmm0
+	ja	.Lcrabc_x86_math_sinh_src_math_expm1_30
+	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C8(%rip), %xmm1
 	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C1(%rip), %xmm4
-	mulsd	%xmm5, %xmm0
-	movapd	%xmm4, %xmm1
-.Lcrabc_x86_math_sinh_src_math_expm1_11:
-	addsd	%xmm1, %xmm0
-	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C7(%rip), %xmm1
-	movapd	%xmm5, %xmm3
-	cvttsd2sil	%xmm0, %eax
-	pxor	%xmm0, %xmm0
-	cvtsi2sdl	%eax, %xmm0
 	mulsd	%xmm0, %xmm1
-	mulsd	.Lcrabc_x86_math_sinh_src_math_expm1_C3(%rip), %xmm0
-	subsd	%xmm1, %xmm3
+	movapd	%xmm4, %xmm2
+.Lcrabc_x86_math_sinh_src_math_expm1_11:
+	addsd	%xmm2, %xmm1
+	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C7(%rip), %xmm2
+	movapd	%xmm0, %xmm3
+	cvttsd2sil	%xmm1, %eax
+	pxor	%xmm1, %xmm1
+	cvtsi2sdl	%eax, %xmm1
+	mulsd	%xmm1, %xmm2
+	mulsd	.Lcrabc_x86_math_sinh_src_math_expm1_C3(%rip), %xmm1
+	subsd	%xmm2, %xmm3
 .Lcrabc_x86_math_sinh_src_math_expm1_10:
-	movapd	%xmm3, %xmm5
-	subsd	%xmm0, %xmm5
-	subsd	%xmm5, %xmm3
+	movapd	%xmm3, %xmm0
+	subsd	%xmm1, %xmm0
 	subsd	%xmm0, %xmm3
+	subsd	%xmm1, %xmm3
 .Lcrabc_x86_math_sinh_src_math_expm1_12:
-	movapd	%xmm5, %xmm0
-	movapd	%xmm5, %xmm2
+	movapd	%xmm0, %xmm6
+	movapd	%xmm0, %xmm2
 	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C9(%rip), %xmm1
-	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C14(%rip), %xmm6
-	mulsd	%xmm4, %xmm0
-	mulsd	%xmm0, %xmm2
-	movapd	%xmm0, %xmm7
-	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C15(%rip), %xmm0
+	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C14(%rip), %xmm5
+	mulsd	%xmm4, %xmm6
+	mulsd	%xmm6, %xmm2
+	movapd	%xmm6, %xmm7
+	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C15(%rip), %xmm6
 	mulsd	%xmm2, %xmm1
 	addsd	.Lcrabc_x86_math_sinh_src_math_expm1_C10(%rip), %xmm1
 	mulsd	%xmm2, %xmm1
@@ -237,136 +239,138 @@ crabc_x86_math_sinh_provider_expm1:
 	mulsd	%xmm2, %xmm1
 	subsd	.Lcrabc_x86_math_sinh_src_math_expm1_C13(%rip), %xmm1
 	mulsd	%xmm2, %xmm1
-	addsd	%xmm6, %xmm1
+	addsd	%xmm5, %xmm1
 	mulsd	%xmm1, %xmm7
-	subsd	%xmm7, %xmm0
+	subsd	%xmm7, %xmm6
 	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C16(%rip), %xmm7
-	subsd	%xmm0, %xmm1
-	mulsd	%xmm5, %xmm0
-	subsd	%xmm0, %xmm7
+	subsd	%xmm6, %xmm1
+	mulsd	%xmm0, %xmm6
+	subsd	%xmm6, %xmm7
 	divsd	%xmm7, %xmm1
 	mulsd	%xmm2, %xmm1
 	testl	%eax, %eax
-	je	.Lcrabc_x86_math_sinh_src_math_expm1_32
+	je	.Lcrabc_x86_math_sinh_src_math_expm1_31
 	subsd	%xmm3, %xmm1
-	mulsd	%xmm5, %xmm1
+	mulsd	%xmm0, %xmm1
 	subsd	%xmm3, %xmm1
 	subsd	%xmm2, %xmm1
 	cmpl	$-1, %eax
-	je	.Lcrabc_x86_math_sinh_src_math_expm1_33
+	je	.Lcrabc_x86_math_sinh_src_math_expm1_32
 	cmpl	$1, %eax
-	je	.Lcrabc_x86_math_sinh_src_math_expm1_34
+	je	.Lcrabc_x86_math_sinh_src_math_expm1_33
 	leal	1023(%rax), %edx
-	salq	$52, %rdx
+	movq	%rdx, %rsi
+	salq	$52, %rsi
 	cmpl	$56, %eax
-	ja	.Lcrabc_x86_math_sinh_src_math_expm1_35
-	movl	$1023, %ecx
-	subl	%eax, %ecx
-	salq	$52, %rcx
+	ja	.Lcrabc_x86_math_sinh_src_math_expm1_34
+	movl	$1023, %edx
+	subl	%eax, %edx
+	salq	$52, %rdx
 	cmpl	$19, %eax
 	jg	.Lcrabc_x86_math_sinh_src_math_expm1_21
-	movq	%rcx, %xmm4
-	subsd	%xmm1, %xmm5
-	movq	%rdx, %xmm0
-	subsd	%xmm4, %xmm6
-	addsd	%xmm6, %xmm5
+	movq	%rdx, %xmm4
+	subsd	%xmm1, %xmm0
+	subsd	%xmm4, %xmm5
+	addsd	%xmm5, %xmm0
+	movq	%rsi, %xmm5
 	mulsd	%xmm5, %xmm0
 	ret
-.Lcrabc_x86_math_sinh_src_math_expm1_31:
-	mulsd	.Lcrabc_x86_math_sinh_src_math_expm1_C6(%rip), %xmm5
-	movapd	%xmm5, %xmm0
+.Lcrabc_x86_math_sinh_src_math_expm1_30:
+	mulsd	.Lcrabc_x86_math_sinh_src_math_expm1_C6(%rip), %xmm0
 	ret
 .Lcrabc_x86_math_sinh_src_math_expm1_2:
 	cmpl	$1071001154, %edx
-	ja	.Lcrabc_x86_math_sinh_src_math_expm1_36
+	ja	.Lcrabc_x86_math_sinh_src_math_expm1_35
+	cmpl	$1016070143, %edx
+	jbe	.Lcrabc_x86_math_sinh_src_math_expm1_36
 	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C1(%rip), %xmm4
 	xorl	%eax, %eax
-	cmpl	$1016070143, %edx
-	ja	.Lcrabc_x86_math_sinh_src_math_expm1_12
-	testl	$2146435072, %ecx
-	jne	.Lcrabc_x86_math_sinh_src_math_expm1_29
-	cvtsd2ss	%xmm0, %xmm0
-	movss	%xmm0, -4(%rsp)
-	jmp	.Lcrabc_x86_math_sinh_src_math_expm1_29
-.Lcrabc_x86_math_sinh_src_math_expm1_36:
+	jmp	.Lcrabc_x86_math_sinh_src_math_expm1_12
+.Lcrabc_x86_math_sinh_src_math_expm1_35:
 	cmpl	$1072734897, %edx
 	ja	.Lcrabc_x86_math_sinh_src_math_expm1_8
 	shrq	$63, %rax
 	movapd	%xmm0, %xmm3
 	jne	.Lcrabc_x86_math_sinh_src_math_expm1_9
 	subsd	.Lcrabc_x86_math_sinh_src_math_expm1_C7(%rip), %xmm3
-	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C3(%rip), %xmm0
+	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C3(%rip), %xmm1
 	movl	$1, %eax
 	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C1(%rip), %xmm4
 	jmp	.Lcrabc_x86_math_sinh_src_math_expm1_10
 .Lcrabc_x86_math_sinh_src_math_expm1_9:
 	addsd	.Lcrabc_x86_math_sinh_src_math_expm1_C7(%rip), %xmm3
-	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C2(%rip), %xmm0
+	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C2(%rip), %xmm1
 	movl	$-1, %eax
 	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C1(%rip), %xmm4
 	jmp	.Lcrabc_x86_math_sinh_src_math_expm1_10
 .Lcrabc_x86_math_sinh_src_math_expm1_8:
-	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C8(%rip), %xmm0
+	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C8(%rip), %xmm1
 	shrq	$63, %rax
-	mulsd	%xmm5, %xmm0
+	mulsd	%xmm0, %xmm1
 	je	.Lcrabc_x86_math_sinh_src_math_expm1_23
-	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C0(%rip), %xmm1
+	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C0(%rip), %xmm2
 	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C1(%rip), %xmm4
 	jmp	.Lcrabc_x86_math_sinh_src_math_expm1_11
 .Lcrabc_x86_math_sinh_src_math_expm1_23:
 	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C1(%rip), %xmm4
-	movapd	%xmm4, %xmm1
+	movapd	%xmm4, %xmm2
 	jmp	.Lcrabc_x86_math_sinh_src_math_expm1_11
-.Lcrabc_x86_math_sinh_src_math_expm1_32:
-	mulsd	%xmm5, %xmm1
-	subsd	%xmm2, %xmm1
-	subsd	%xmm1, %xmm5
-.Lcrabc_x86_math_sinh_src_math_expm1_29:
-	movapd	%xmm5, %xmm0
+.Lcrabc_x86_math_sinh_src_math_expm1_36:
+	testl	$2146435072, %ecx
+	jne	.Lcrabc_x86_math_sinh_src_math_expm1_1
+	pxor	%xmm1, %xmm1
+	cvtsd2ss	%xmm0, %xmm1
+	movss	%xmm1, -4(%rsp)
 	ret
-.Lcrabc_x86_math_sinh_src_math_expm1_33:
-	subsd	%xmm1, %xmm5
-	movapd	%xmm5, %xmm0
+.Lcrabc_x86_math_sinh_src_math_expm1_31:
+	mulsd	%xmm0, %xmm1
+	subsd	%xmm2, %xmm1
+	subsd	%xmm1, %xmm0
+	ret
+.Lcrabc_x86_math_sinh_src_math_expm1_32:
+	subsd	%xmm1, %xmm0
 	mulsd	%xmm4, %xmm0
 	subsd	%xmm4, %xmm0
 	ret
-.Lcrabc_x86_math_sinh_src_math_expm1_34:
-	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C17(%rip), %xmm0
-	comisd	%xmm5, %xmm0
+.Lcrabc_x86_math_sinh_src_math_expm1_33:
+	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C17(%rip), %xmm2
+	comisd	%xmm0, %xmm2
 	jbe	.Lcrabc_x86_math_sinh_src_math_expm1_28
-	addsd	%xmm4, %xmm5
+	addsd	%xmm4, %xmm0
+	subsd	%xmm0, %xmm1
 	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C18(%rip), %xmm0
-	subsd	%xmm5, %xmm1
 	mulsd	%xmm1, %xmm0
 	ret
 .Lcrabc_x86_math_sinh_src_math_expm1_28:
-	subsd	%xmm1, %xmm5
-	movapd	%xmm5, %xmm0
+	subsd	%xmm1, %xmm0
+	addsd	%xmm0, %xmm0
 	addsd	%xmm5, %xmm0
-	addsd	%xmm6, %xmm0
 	ret
-.Lcrabc_x86_math_sinh_src_math_expm1_35:
-	subsd	%xmm1, %xmm5
-	addsd	%xmm6, %xmm5
+.Lcrabc_x86_math_sinh_src_math_expm1_34:
+	subsd	%xmm1, %xmm0
+	addsd	%xmm5, %xmm0
 	cmpl	$1024, %eax
 	je	.Lcrabc_x86_math_sinh_src_math_expm1_37
-	movq	%rdx, %xmm0
-	mulsd	%xmm5, %xmm0
+	movq	%rsi, %xmm4
+	mulsd	%xmm0, %xmm4
+	movapd	%xmm4, %xmm0
 .Lcrabc_x86_math_sinh_src_math_expm1_20:
-	subsd	%xmm6, %xmm0
+	subsd	%xmm5, %xmm0
 	ret
 .Lcrabc_x86_math_sinh_src_math_expm1_37:
-	addsd	%xmm5, %xmm5
-	mulsd	.Lcrabc_x86_math_sinh_src_math_expm1_C6(%rip), %xmm5
-	movapd	%xmm5, %xmm0
+	addsd	%xmm0, %xmm0
+	mulsd	.Lcrabc_x86_math_sinh_src_math_expm1_C6(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_sinh_src_math_expm1_20
 .Lcrabc_x86_math_sinh_src_math_expm1_21:
-	movq	%rcx, %xmm4
-	movq	%rdx, %xmm0
+	movq	%rdx, %xmm4
 	addsd	%xmm4, %xmm1
-	subsd	%xmm1, %xmm5
-	addsd	%xmm6, %xmm5
+	subsd	%xmm1, %xmm0
+	addsd	%xmm5, %xmm0
+	movq	%rsi, %xmm5
 	mulsd	%xmm5, %xmm0
+	ret
+.Lcrabc_x86_math_sinh_src_math_expm1_22:
+	movsd	.Lcrabc_x86_math_sinh_src_math_expm1_C4(%rip), %xmm0
 	ret
 .Lcrabc_x86_math_sinh_src_math_expm1_1:
 	ret
@@ -456,41 +460,39 @@ crabc_x86_math_sinh_provider_expm1:
 	.type	crabc_x86_math_sinh_provider_expm1f, @function
 crabc_x86_math_sinh_provider_expm1f:
 	movd	%xmm0, %edx
-	movaps	%xmm0, %xmm3
 	movl	%edx, %eax
 	andl	$2147483647, %eax
 	cmpl	$1100331075, %eax
 	jbe	.Lcrabc_x86_math_sinh_src_math_expm1f_2
 	cmpl	$2139095040, %eax
-	ja	.Lcrabc_x86_math_sinh_src_math_expm1f_30
+	ja	.Lcrabc_x86_math_sinh_src_math_expm1f_1
 	shrl	$31, %edx
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C4(%rip), %xmm0
-	jne	.Lcrabc_x86_math_sinh_src_math_expm1f_1
+	jne	.Lcrabc_x86_math_sinh_src_math_expm1f_22
 	cmpl	$1118925335, %eax
-	ja	.Lcrabc_x86_math_sinh_src_math_expm1f_32
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C7(%rip), %xmm1
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm4
-	mulss	%xmm3, %xmm1
-	movaps	%xmm4, %xmm0
+	ja	.Lcrabc_x86_math_sinh_src_math_expm1f_31
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C7(%rip), %xmm2
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm3
+	mulss	%xmm0, %xmm2
+	movaps	%xmm3, %xmm1
 .Lcrabc_x86_math_sinh_src_math_expm1f_10:
-	addss	%xmm1, %xmm0
-	pxor	%xmm1, %xmm1
+	addss	%xmm2, %xmm1
 	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C6(%rip), %xmm2
-	cvttss2sil	%xmm0, %edx
-	cvtsi2ssl	%edx, %xmm1
+	movaps	%xmm0, %xmm5
+	cvttss2sil	%xmm1, %eax
+	pxor	%xmm1, %xmm1
+	cvtsi2ssl	%eax, %xmm1
 	mulss	%xmm1, %xmm2
 	mulss	.Lcrabc_x86_math_sinh_src_math_expm1f_C3(%rip), %xmm1
-	subss	%xmm2, %xmm3
-	movaps	%xmm3, %xmm0
+	subss	%xmm2, %xmm5
 .Lcrabc_x86_math_sinh_src_math_expm1f_9:
-	movaps	%xmm0, %xmm3
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C10(%rip), %xmm5
-	subss	%xmm1, %xmm3
-	movaps	%xmm3, %xmm6
-	movaps	%xmm3, %xmm2
-	subss	%xmm3, %xmm0
-	mulss	%xmm4, %xmm6
+	movaps	%xmm5, %xmm0
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C10(%rip), %xmm4
 	subss	%xmm1, %xmm0
+	movaps	%xmm0, %xmm6
+	movaps	%xmm0, %xmm2
+	subss	%xmm0, %xmm5
+	mulss	%xmm3, %xmm6
+	subss	%xmm1, %xmm5
 	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C8(%rip), %xmm1
 	mulss	%xmm6, %xmm2
 	movaps	%xmm6, %xmm7
@@ -498,155 +500,154 @@ crabc_x86_math_sinh_provider_expm1f:
 	mulss	%xmm2, %xmm1
 	subss	.Lcrabc_x86_math_sinh_src_math_expm1f_C9(%rip), %xmm1
 	mulss	%xmm2, %xmm1
-	addss	%xmm5, %xmm1
+	addss	%xmm4, %xmm1
 	mulss	%xmm1, %xmm7
 	subss	%xmm7, %xmm6
 	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C12(%rip), %xmm7
 	subss	%xmm6, %xmm1
-	mulss	%xmm3, %xmm6
+	mulss	%xmm0, %xmm6
 	subss	%xmm6, %xmm7
 	divss	%xmm7, %xmm1
 	mulss	%xmm2, %xmm1
-	testl	%edx, %edx
+	testl	%eax, %eax
 	je	.Lcrabc_x86_math_sinh_src_math_expm1f_11
-	subss	%xmm0, %xmm1
-	mulss	%xmm3, %xmm1
-	subss	%xmm0, %xmm1
+	subss	%xmm5, %xmm1
+	mulss	%xmm0, %xmm1
+	subss	%xmm5, %xmm1
 	subss	%xmm2, %xmm1
-	cmpl	$-1, %edx
+	cmpl	$-1, %eax
+	je	.Lcrabc_x86_math_sinh_src_math_expm1f_32
+	cmpl	$1, %eax
 	je	.Lcrabc_x86_math_sinh_src_math_expm1f_33
-	cmpl	$1, %edx
-	je	.Lcrabc_x86_math_sinh_src_math_expm1f_34
-	leal	127(%rdx), %eax
-	sall	$23, %eax
-	cmpl	$56, %edx
-	ja	.Lcrabc_x86_math_sinh_src_math_expm1f_35
-	movl	$127, %ecx
-	subl	%edx, %ecx
-	sall	$23, %ecx
-	cmpl	$22, %edx
+	leal	127(%rax), %edx
+	sall	$23, %edx
+	movl	%edx, %ecx
+	cmpl	$56, %eax
+	ja	.Lcrabc_x86_math_sinh_src_math_expm1f_34
+	movl	$127, %edx
+	subl	%eax, %edx
+	sall	$23, %edx
+	cmpl	$22, %eax
 	jg	.Lcrabc_x86_math_sinh_src_math_expm1f_21
+	movd	%edx, %xmm7
+	subss	%xmm1, %xmm0
+	subss	%xmm7, %xmm4
+	addss	%xmm4, %xmm0
 	movd	%ecx, %xmm4
-	subss	%xmm1, %xmm3
-	movd	%eax, %xmm0
-	subss	%xmm4, %xmm5
-	addss	%xmm5, %xmm3
-	mulss	%xmm3, %xmm0
+	mulss	%xmm4, %xmm0
 	ret
-.Lcrabc_x86_math_sinh_src_math_expm1f_32:
-	mulss	.Lcrabc_x86_math_sinh_src_math_expm1f_C5(%rip), %xmm3
-	movaps	%xmm3, %xmm0
+.Lcrabc_x86_math_sinh_src_math_expm1f_31:
+	mulss	.Lcrabc_x86_math_sinh_src_math_expm1f_C5(%rip), %xmm0
 	ret
 .Lcrabc_x86_math_sinh_src_math_expm1f_2:
 	cmpl	$1051816472, %eax
-	ja	.Lcrabc_x86_math_sinh_src_math_expm1f_36
+	ja	.Lcrabc_x86_math_sinh_src_math_expm1f_35
 	cmpl	$855638015, %eax
-	jbe	.Lcrabc_x86_math_sinh_src_math_expm1f_37
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm0
-	movaps	%xmm3, %xmm2
+	jbe	.Lcrabc_x86_math_sinh_src_math_expm1f_36
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm3
+	movaps	%xmm0, %xmm2
 	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C8(%rip), %xmm1
-	mulss	%xmm3, %xmm0
-	mulss	%xmm0, %xmm2
-	movaps	%xmm0, %xmm4
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C11(%rip), %xmm0
+	mulss	%xmm0, %xmm3
+	mulss	%xmm3, %xmm2
+	movaps	%xmm3, %xmm4
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C11(%rip), %xmm3
 	mulss	%xmm2, %xmm1
 	subss	.Lcrabc_x86_math_sinh_src_math_expm1f_C9(%rip), %xmm1
 	mulss	%xmm2, %xmm1
 	addss	.Lcrabc_x86_math_sinh_src_math_expm1f_C10(%rip), %xmm1
 	mulss	%xmm1, %xmm4
-	subss	%xmm4, %xmm0
+	subss	%xmm4, %xmm3
 	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C12(%rip), %xmm4
-	subss	%xmm0, %xmm1
-	mulss	%xmm3, %xmm0
-	subss	%xmm0, %xmm4
+	subss	%xmm3, %xmm1
+	mulss	%xmm0, %xmm3
+	subss	%xmm3, %xmm4
 	divss	%xmm4, %xmm1
 	mulss	%xmm2, %xmm1
 .Lcrabc_x86_math_sinh_src_math_expm1f_11:
-	mulss	%xmm3, %xmm1
+	mulss	%xmm0, %xmm1
 	subss	%xmm2, %xmm1
-	subss	%xmm1, %xmm3
-.Lcrabc_x86_math_sinh_src_math_expm1f_30:
-	movaps	%xmm3, %xmm0
+	subss	%xmm1, %xmm0
 	ret
-.Lcrabc_x86_math_sinh_src_math_expm1f_36:
+.Lcrabc_x86_math_sinh_src_math_expm1f_35:
 	cmpl	$1065686417, %eax
 	ja	.Lcrabc_x86_math_sinh_src_math_expm1f_7
 	shrl	$31, %edx
+	movaps	%xmm0, %xmm5
 	jne	.Lcrabc_x86_math_sinh_src_math_expm1f_8
-	subss	.Lcrabc_x86_math_sinh_src_math_expm1f_C6(%rip), %xmm3
+	subss	.Lcrabc_x86_math_sinh_src_math_expm1f_C6(%rip), %xmm5
 	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C3(%rip), %xmm1
-	movl	$1, %edx
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm4
-	movaps	%xmm3, %xmm0
+	movl	$1, %eax
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm3
 	jmp	.Lcrabc_x86_math_sinh_src_math_expm1f_9
 .Lcrabc_x86_math_sinh_src_math_expm1f_8:
-	addss	.Lcrabc_x86_math_sinh_src_math_expm1f_C6(%rip), %xmm3
+	addss	.Lcrabc_x86_math_sinh_src_math_expm1f_C6(%rip), %xmm5
 	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C2(%rip), %xmm1
-	movl	$-1, %edx
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm4
-	movaps	%xmm3, %xmm0
+	movl	$-1, %eax
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm3
 	jmp	.Lcrabc_x86_math_sinh_src_math_expm1f_9
 .Lcrabc_x86_math_sinh_src_math_expm1f_7:
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C7(%rip), %xmm1
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C7(%rip), %xmm2
 	shrl	$31, %edx
-	mulss	%xmm0, %xmm1
+	mulss	%xmm0, %xmm2
 	je	.Lcrabc_x86_math_sinh_src_math_expm1f_23
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C0(%rip), %xmm0
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm4
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C0(%rip), %xmm1
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm3
 	jmp	.Lcrabc_x86_math_sinh_src_math_expm1f_10
 .Lcrabc_x86_math_sinh_src_math_expm1f_23:
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm4
-	movaps	%xmm4, %xmm0
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C1(%rip), %xmm3
+	movaps	%xmm3, %xmm1
 	jmp	.Lcrabc_x86_math_sinh_src_math_expm1f_10
-.Lcrabc_x86_math_sinh_src_math_expm1f_37:
+.Lcrabc_x86_math_sinh_src_math_expm1f_36:
 	andl	$2139095040, %edx
-	jne	.Lcrabc_x86_math_sinh_src_math_expm1f_30
-	mulss	%xmm0, %xmm0
-	movss	%xmm0, -4(%rsp)
-	jmp	.Lcrabc_x86_math_sinh_src_math_expm1f_30
-.Lcrabc_x86_math_sinh_src_math_expm1f_33:
-	subss	%xmm1, %xmm3
-	movaps	%xmm3, %xmm0
-	mulss	%xmm4, %xmm0
-	subss	%xmm4, %xmm0
+	jne	.Lcrabc_x86_math_sinh_src_math_expm1f_1
+	movaps	%xmm0, %xmm1
+	mulss	%xmm0, %xmm1
+	movss	%xmm1, -4(%rsp)
 	ret
-.Lcrabc_x86_math_sinh_src_math_expm1f_34:
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C13(%rip), %xmm0
-	comiss	%xmm3, %xmm0
+.Lcrabc_x86_math_sinh_src_math_expm1f_32:
+	subss	%xmm1, %xmm0
+	mulss	%xmm3, %xmm0
+	subss	%xmm3, %xmm0
+	ret
+.Lcrabc_x86_math_sinh_src_math_expm1f_33:
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C13(%rip), %xmm2
+	comiss	%xmm0, %xmm2
 	jbe	.Lcrabc_x86_math_sinh_src_math_expm1f_29
-	addss	%xmm4, %xmm3
-	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C14(%rip), %xmm0
-	subss	%xmm3, %xmm1
-	mulss	%xmm1, %xmm0
+	addss	%xmm3, %xmm0
+	subss	%xmm0, %xmm1
+	mulss	.Lcrabc_x86_math_sinh_src_math_expm1f_C14(%rip), %xmm1
+	movaps	%xmm1, %xmm0
 	ret
 .Lcrabc_x86_math_sinh_src_math_expm1f_29:
-	subss	%xmm1, %xmm3
-	movaps	%xmm3, %xmm0
-	addss	%xmm3, %xmm0
-	addss	%xmm5, %xmm0
+	subss	%xmm1, %xmm0
+	addss	%xmm0, %xmm0
+	addss	%xmm4, %xmm0
 	ret
-.Lcrabc_x86_math_sinh_src_math_expm1f_35:
-	subss	%xmm1, %xmm3
-	addss	%xmm5, %xmm3
-	cmpl	$128, %edx
-	je	.Lcrabc_x86_math_sinh_src_math_expm1f_38
-	movd	%eax, %xmm0
-	mulss	%xmm3, %xmm0
+.Lcrabc_x86_math_sinh_src_math_expm1f_34:
+	subss	%xmm1, %xmm0
+	addss	%xmm4, %xmm0
+	cmpl	$128, %eax
+	je	.Lcrabc_x86_math_sinh_src_math_expm1f_37
+	movd	%edx, %xmm7
+	mulss	%xmm0, %xmm7
+	movaps	%xmm7, %xmm0
 .Lcrabc_x86_math_sinh_src_math_expm1f_20:
-	subss	%xmm5, %xmm0
+	subss	%xmm4, %xmm0
 	ret
-.Lcrabc_x86_math_sinh_src_math_expm1f_38:
-	addss	%xmm3, %xmm3
-	mulss	.Lcrabc_x86_math_sinh_src_math_expm1f_C5(%rip), %xmm3
-	movaps	%xmm3, %xmm0
+.Lcrabc_x86_math_sinh_src_math_expm1f_37:
+	addss	%xmm0, %xmm0
+	mulss	.Lcrabc_x86_math_sinh_src_math_expm1f_C5(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_sinh_src_math_expm1f_20
 .Lcrabc_x86_math_sinh_src_math_expm1f_21:
+	movd	%edx, %xmm3
+	addss	%xmm3, %xmm1
+	subss	%xmm1, %xmm0
+	addss	%xmm4, %xmm0
 	movd	%ecx, %xmm4
-	movd	%eax, %xmm0
-	addss	%xmm4, %xmm1
-	subss	%xmm1, %xmm3
-	addss	%xmm5, %xmm3
-	mulss	%xmm3, %xmm0
+	mulss	%xmm4, %xmm0
+	ret
+.Lcrabc_x86_math_sinh_src_math_expm1f_22:
+	movss	.Lcrabc_x86_math_sinh_src_math_expm1f_C4(%rip), %xmm0
 	ret
 .Lcrabc_x86_math_sinh_src_math_expm1f_1:
 	ret
@@ -708,7 +709,7 @@ crabc_x86_math_sinh_provider_expo2:
 	subq	$24, %rsp
 	subsd	.Lcrabc_x86_math_sinh_src_math___expo2_C0(%rip), %xmm0
 	movsd	%xmm1, 8(%rsp)
-	call	crabc_x86_math_sinh_provider_exp
+	call	crabc_x86_math_sinh_provider_exp@PLT
 	movsd	8(%rsp), %xmm1
 	movapd	%xmm0, %xmm2
 	movsd	.Lcrabc_x86_math_sinh_src_math___expo2_C1(%rip), %xmm0
@@ -738,7 +739,7 @@ crabc_x86_math_sinh_provider_expo2f:
 	subq	$24, %rsp
 	subss	.Lcrabc_x86_math_sinh_src_math___expo2f_C0(%rip), %xmm0
 	movss	%xmm1, 12(%rsp)
-	call	crabc_x86_math_sinh_provider_expf
+	call	crabc_x86_math_sinh_provider_expf@PLT
 	movss	12(%rsp), %xmm1
 	movaps	%xmm0, %xmm2
 	movss	.Lcrabc_x86_math_sinh_src_math___expo2f_C1(%rip), %xmm0
@@ -771,31 +772,32 @@ crabc_x86_math_sinh_provider_exp:
 	ja	.Lcrabc_x86_math_sinh_src_math_exp_21
 .Lcrabc_x86_math_sinh_src_math_exp_2:
 	movsd	crabc_x86_math_sinh_data_exp(%rip), %xmm2
-	movsd	crabc_x86_math_sinh_data_exp+8(%rip), %xmm1
+	movsd	8+crabc_x86_math_sinh_data_exp(%rip), %xmm1
+	leaq	crabc_x86_math_sinh_data_exp(%rip), %rdi
 	mulsd	%xmm0, %xmm2
 	addsd	%xmm1, %xmm2
 	movq	%xmm2, %rsi
 	subsd	%xmm1, %xmm2
-	movsd	crabc_x86_math_sinh_data_exp+16(%rip), %xmm1
+	movsd	16+crabc_x86_math_sinh_data_exp(%rip), %xmm1
 	movq	%rsi, %rcx
 	movq	%rsi, %rax
 	andl	$127, %ecx
 	salq	$45, %rax
 	mulsd	%xmm2, %xmm1
 	addq	%rcx, %rcx
-	mulsd	crabc_x86_math_sinh_data_exp+24(%rip), %xmm2
-	addq	crabc_x86_math_sinh_data_exp+120(,%rcx,8), %rax
-	movsd	crabc_x86_math_sinh_data_exp+112(,%rcx,8), %xmm3
+	mulsd	24+crabc_x86_math_sinh_data_exp(%rip), %xmm2
+	movsd	112(%rdi,%rcx,8), %xmm3
+	addq	120(%rdi,%rcx,8), %rax
 	addsd	%xmm0, %xmm1
-	movsd	crabc_x86_math_sinh_data_exp+40(%rip), %xmm0
+	movsd	40+crabc_x86_math_sinh_data_exp(%rip), %xmm0
 	addsd	%xmm2, %xmm1
 	mulsd	%xmm1, %xmm0
 	movapd	%xmm1, %xmm2
 	addsd	%xmm1, %xmm3
 	mulsd	%xmm1, %xmm2
-	addsd	crabc_x86_math_sinh_data_exp+32(%rip), %xmm0
-	mulsd	crabc_x86_math_sinh_data_exp+56(%rip), %xmm1
-	addsd	crabc_x86_math_sinh_data_exp+48(%rip), %xmm1
+	addsd	32+crabc_x86_math_sinh_data_exp(%rip), %xmm0
+	mulsd	56+crabc_x86_math_sinh_data_exp(%rip), %xmm1
+	addsd	48+crabc_x86_math_sinh_data_exp(%rip), %xmm1
 	mulsd	%xmm2, %xmm0
 	mulsd	%xmm2, %xmm2
 	addsd	%xmm3, %xmm0
@@ -914,26 +916,27 @@ crabc_x86_math_sinh_provider_expf:
 	ja	.Lcrabc_x86_math_sinh_src_math_expf_13
 .Lcrabc_x86_math_sinh_src_math_expf_2:
 	pxor	%xmm1, %xmm1
-	movsd	crabc_x86_math_sinh_data_exp2f+288(%rip), %xmm2
+	movsd	288+crabc_x86_math_sinh_data_exp2f(%rip), %xmm2
+	leaq	crabc_x86_math_sinh_data_exp2f(%rip), %rdx
 	cvtss2sd	%xmm0, %xmm1
-	mulsd	crabc_x86_math_sinh_data_exp2f+296(%rip), %xmm1
+	mulsd	296+crabc_x86_math_sinh_data_exp2f(%rip), %xmm1
 	movapd	%xmm2, %xmm0
 	addsd	%xmm1, %xmm0
 	movq	%xmm0, %rax
 	subsd	%xmm2, %xmm0
-	movsd	crabc_x86_math_sinh_data_exp2f+320(%rip), %xmm2
-	movq	%rax, %rdx
+	movsd	320+crabc_x86_math_sinh_data_exp2f(%rip), %xmm2
+	movq	%rax, %rcx
 	salq	$47, %rax
-	andl	$31, %edx
+	andl	$31, %ecx
 	subsd	%xmm0, %xmm1
-	movsd	crabc_x86_math_sinh_data_exp2f+304(%rip), %xmm0
-	addq	crabc_x86_math_sinh_data_exp2f(,%rdx,8), %rax
+	movsd	304+crabc_x86_math_sinh_data_exp2f(%rip), %xmm0
+	addq	(%rdx,%rcx,8), %rax
 	movq	%rax, %xmm3
 	mulsd	%xmm1, %xmm2
 	mulsd	%xmm1, %xmm0
 	addsd	.Lcrabc_x86_math_sinh_src_math_expf_C3(%rip), %xmm2
 	mulsd	%xmm1, %xmm1
-	addsd	crabc_x86_math_sinh_data_exp2f+312(%rip), %xmm0
+	addsd	312+crabc_x86_math_sinh_data_exp2f(%rip), %xmm0
 	mulsd	%xmm1, %xmm0
 	addsd	%xmm2, %xmm0
 	mulsd	%xmm3, %xmm0

@@ -50,7 +50,8 @@ COMPILE_FLAGS = (
     "-ffunction-sections",
     "-fdata-sections",
     "-fno-stack-protector",
-    "-fno-pie",
+    # Pinned musl's .lo model keeps table addresses valid in installed libc.so.
+    "-fPIC",
     "-fno-ident",
 )
 

@@ -230,7 +230,7 @@
 
 /* musl-1.2.6/src/complex/__cexp.c */
 	.text
-	.section	.text.__ldexp_cexp,"ax",@progbits
+	.section	.text.__ldexp_cexp.crabc_x86_math_complex_src_complex___cexp,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_ldexp_cexp
 	.hidden	crabc_x86_math_complex_internal_ldexp_cexp
 	.type	crabc_x86_math_complex_internal_ldexp_cexp, @function
@@ -287,7 +287,7 @@ crabc_x86_math_complex_internal_ldexp_cexp:
 	mulsd	%xmm5, %xmm1
 	ret
 	.size	crabc_x86_math_complex_internal_ldexp_cexp, .-crabc_x86_math_complex_internal_ldexp_cexp
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex___cexp,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex___cexp_C0:
 	.long	431623588
@@ -296,7 +296,7 @@ crabc_x86_math_complex_internal_ldexp_cexp:
 
 /* musl-1.2.6/src/complex/__cexpf.c */
 	.text
-	.section	.text.__ldexp_cexpf,"ax",@progbits
+	.section	.text.__ldexp_cexpf.crabc_x86_math_complex_src_complex___cexpf,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_ldexp_cexpf
 	.hidden	crabc_x86_math_complex_internal_ldexp_cexpf
 	.type	crabc_x86_math_complex_internal_ldexp_cexpf, @function
@@ -352,7 +352,7 @@ crabc_x86_math_complex_internal_ldexp_cexpf:
 	popq	%r14
 	ret
 	.size	crabc_x86_math_complex_internal_ldexp_cexpf, .-crabc_x86_math_complex_internal_ldexp_cexpf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex___cexpf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex___cexpf_C0:
 	.long	1126359996
@@ -360,7 +360,7 @@ crabc_x86_math_complex_internal_ldexp_cexpf:
 
 /* musl-1.2.6/src/complex/cabs.c */
 	.text
-	.section	.text.cabs,"ax",@progbits
+	.section	.text.cabs.crabc_x86_math_complex_src_complex_cabs,"ax",@progbits
 	.globl	cabs
 	.type	cabs, @function
 cabs:
@@ -370,7 +370,7 @@ cabs:
 
 /* musl-1.2.6/src/complex/cabsf.c */
 	.text
-	.section	.text.cabsf,"ax",@progbits
+	.section	.text.cabsf.crabc_x86_math_complex_src_complex_cabsf,"ax",@progbits
 	.globl	cabsf
 	.type	cabsf, @function
 cabsf:
@@ -384,7 +384,7 @@ cabsf:
 
 /* musl-1.2.6/src/complex/cabsl.c */
 	.text
-	.section	.text.cabsl,"ax",@progbits
+	.section	.text.cabsl.crabc_x86_math_complex_src_complex_cabsl,"ax",@progbits
 	.globl	cabsl
 	.type	cabsl, @function
 cabsl:
@@ -394,7 +394,7 @@ cabsl:
 
 /* musl-1.2.6/src/complex/cacos.c */
 	.text
-	.section	.text.cacos,"ax",@progbits
+	.section	.text.cacos.crabc_x86_math_complex_src_complex_cacos,"ax",@progbits
 	.globl	cacos
 	.type	cacos, @function
 cacos:
@@ -407,12 +407,12 @@ cacos:
 	subsd	%xmm2, %xmm0
 	ret
 	.size	cacos, .-cacos
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex_cacos,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex_cacos_C0:
 	.long	1413754136
 	.long	1073291771
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_cacos,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_cacos_C1:
 	.long	0
@@ -423,7 +423,7 @@ cacos:
 
 /* musl-1.2.6/src/complex/cacosf.c */
 	.text
-	.section	.text.cacosf,"ax",@progbits
+	.section	.text.cacosf.crabc_x86_math_complex_src_complex_cacosf,"ax",@progbits
 	.globl	cacosf
 	.type	cacosf, @function
 cacosf:
@@ -444,11 +444,11 @@ cacosf:
 	addq	$24, %rsp
 	ret
 	.size	cacosf, .-cacosf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_cacosf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_cacosf_C0:
 	.long	1070141403
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_cacosf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_cacosf_C1:
 	.long	-2147483648
@@ -459,7 +459,7 @@ cacosf:
 
 /* musl-1.2.6/src/complex/cacosh.c */
 	.text
-	.section	.text.cacosh,"ax",@progbits
+	.section	.text.cacosh.crabc_x86_math_complex_src_complex_cacosh,"ax",@progbits
 	.globl	cacosh
 	.type	cacosh, @function
 cacosh:
@@ -481,7 +481,7 @@ cacosh:
 	xorpd	.Lcrabc_x86_math_complex_src_complex_cacosh_C0(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_complex_cacosh_1
 	.size	cacosh, .-cacosh
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_cacosh,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_cacosh_C0:
 	.long	0
@@ -492,7 +492,7 @@ cacosh:
 
 /* musl-1.2.6/src/complex/cacoshf.c */
 	.text
-	.section	.text.cacoshf,"ax",@progbits
+	.section	.text.cacoshf.crabc_x86_math_complex_src_complex_cacoshf,"ax",@progbits
 	.globl	cacoshf
 	.type	cacoshf, @function
 cacoshf:
@@ -520,7 +520,7 @@ cacoshf:
 	xorps	.Lcrabc_x86_math_complex_src_complex_cacoshf_C0(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_complex_cacoshf_1
 	.size	cacoshf, .-cacoshf
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_cacoshf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_cacoshf_C0:
 	.long	-2147483648
@@ -531,7 +531,7 @@ cacoshf:
 
 /* musl-1.2.6/src/complex/cacoshl.c */
 	.text
-	.section	.text.cacoshl,"ax",@progbits
+	.section	.text.cacoshl.crabc_x86_math_complex_src_complex_cacoshl,"ax",@progbits
 	.globl	cacoshl
 	.type	cacoshl, @function
 cacoshl:
@@ -563,7 +563,7 @@ cacoshl:
 
 /* musl-1.2.6/src/complex/cacosl.c */
 	.text
-	.section	.text.cacosl,"ax",@progbits
+	.section	.text.cacosl.crabc_x86_math_complex_src_complex_cacosl,"ax",@progbits
 	.globl	cacosl
 	.type	cacosl, @function
 cacosl:
@@ -581,7 +581,7 @@ cacosl:
 	fxch	%st(1)
 	ret
 	.size	cacosl, .-cacosl
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_cacosl,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_cacosl_C0:
 	.long	560513589
@@ -592,7 +592,7 @@ cacosl:
 
 /* musl-1.2.6/src/complex/carg.c */
 	.text
-	.section	.text.carg,"ax",@progbits
+	.section	.text.carg.crabc_x86_math_complex_src_complex_carg,"ax",@progbits
 	.globl	carg
 	.type	carg, @function
 carg:
@@ -605,7 +605,7 @@ carg:
 
 /* musl-1.2.6/src/complex/cargf.c */
 	.text
-	.section	.text.cargf,"ax",@progbits
+	.section	.text.cargf.crabc_x86_math_complex_src_complex_cargf,"ax",@progbits
 	.globl	cargf
 	.type	cargf, @function
 cargf:
@@ -617,7 +617,7 @@ cargf:
 
 /* musl-1.2.6/src/complex/cargl.c */
 	.text
-	.section	.text.cargl,"ax",@progbits
+	.section	.text.cargl.crabc_x86_math_complex_src_complex_cargl,"ax",@progbits
 	.globl	cargl
 	.type	cargl, @function
 cargl:
@@ -631,7 +631,7 @@ cargl:
 
 /* musl-1.2.6/src/complex/casin.c */
 	.text
-	.section	.text.casin,"ax",@progbits
+	.section	.text.casin.crabc_x86_math_complex_src_complex_casin,"ax",@progbits
 	.globl	casin
 	.type	casin, @function
 casin:
@@ -660,7 +660,7 @@ casin:
 	movapd	%xmm2, %xmm1
 	ret
 	.size	casin, .-casin
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex_casin,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex_casin_C0:
 	.long	0
@@ -669,7 +669,7 @@ casin:
 .Lcrabc_x86_math_complex_src_complex_casin_C1:
 	.long	0
 	.long	-1073741824
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_casin,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_casin_C2:
 	.long	0
@@ -680,7 +680,7 @@ casin:
 
 /* musl-1.2.6/src/complex/casinf.c */
 	.text
-	.section	.text.casinf,"ax",@progbits
+	.section	.text.casinf.crabc_x86_math_complex_src_complex_casinf,"ax",@progbits
 	.globl	casinf
 	.type	casinf, @function
 casinf:
@@ -725,16 +725,16 @@ casinf:
 	addq	$40, %rsp
 	ret
 	.size	casinf, .-casinf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_casinf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_casinf_C0:
 	.long	1065353216
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex_casinf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex_casinf_C1:
 	.long	0
 	.long	-1073741824
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_casinf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_casinf_C2:
 	.long	-2147483648
@@ -745,7 +745,7 @@ casinf:
 
 /* musl-1.2.6/src/complex/casinh.c */
 	.text
-	.section	.text.casinh,"ax",@progbits
+	.section	.text.casinh.crabc_x86_math_complex_src_complex_casinh,"ax",@progbits
 	.globl	casinh
 	.type	casinh, @function
 casinh:
@@ -762,7 +762,7 @@ casinh:
 	movapd	%xmm2, %xmm1
 	ret
 	.size	casinh, .-casinh
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_casinh,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_casinh_C0:
 	.long	0
@@ -773,7 +773,7 @@ casinh:
 
 /* musl-1.2.6/src/complex/casinhf.c */
 	.text
-	.section	.text.casinhf,"ax",@progbits
+	.section	.text.casinhf.crabc_x86_math_complex_src_complex_casinhf,"ax",@progbits
 	.globl	casinhf
 	.type	casinhf, @function
 casinhf:
@@ -794,7 +794,7 @@ casinhf:
 	addq	$24, %rsp
 	ret
 	.size	casinhf, .-casinhf
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_casinhf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_casinhf_C0:
 	.long	-2147483648
@@ -805,7 +805,7 @@ casinhf:
 
 /* musl-1.2.6/src/complex/casinhl.c */
 	.text
-	.section	.text.casinhl,"ax",@progbits
+	.section	.text.casinhl.crabc_x86_math_complex_src_complex_casinhl,"ax",@progbits
 	.globl	casinhl
 	.type	casinhl, @function
 casinhl:
@@ -826,7 +826,7 @@ casinhl:
 
 /* musl-1.2.6/src/complex/casinl.c */
 	.text
-	.section	.text.casinl,"ax",@progbits
+	.section	.text.casinl.crabc_x86_math_complex_src_complex_casinl,"ax",@progbits
 	.globl	casinl
 	.type	casinl, @function
 casinl:
@@ -859,7 +859,7 @@ casinl:
 	fxch	%st(1)
 	ret
 	.size	casinl, .-casinl
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_casinl,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_casinl_C1:
 	.long	-1073741824
@@ -867,7 +867,7 @@ casinl:
 
 /* musl-1.2.6/src/complex/catan.c */
 	.text
-	.section	.text.catan,"ax",@progbits
+	.section	.text.catan.crabc_x86_math_complex_src_complex_catan,"ax",@progbits
 	.globl	catan
 	.type	catan, @function
 catan:
@@ -905,7 +905,7 @@ catan:
 	addq	$40, %rsp
 	ret
 	.size	catan, .-catan
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex_catan,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex_catan_C0:
 	.long	0
@@ -922,7 +922,7 @@ catan:
 
 /* musl-1.2.6/src/complex/catanf.c */
 	.text
-	.section	.text.catanf,"ax",@progbits
+	.section	.text.catanf.crabc_x86_math_complex_src_complex_catanf,"ax",@progbits
 	.globl	catanf
 	.type	catanf, @function
 catanf:
@@ -963,7 +963,7 @@ catanf:
 	addq	$40, %rsp
 	ret
 	.size	catanf, .-catanf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_catanf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_catanf_C0:
 	.long	1065353216
@@ -977,7 +977,7 @@ catanf:
 
 /* musl-1.2.6/src/complex/catanh.c */
 	.text
-	.section	.text.catanh,"ax",@progbits
+	.section	.text.catanh.crabc_x86_math_complex_src_complex_catanh,"ax",@progbits
 	.globl	catanh
 	.type	catanh, @function
 catanh:
@@ -994,7 +994,7 @@ catanh:
 	movapd	%xmm2, %xmm1
 	ret
 	.size	catanh, .-catanh
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_catanh,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_catanh_C0:
 	.long	0
@@ -1005,7 +1005,7 @@ catanh:
 
 /* musl-1.2.6/src/complex/catanhf.c */
 	.text
-	.section	.text.catanhf,"ax",@progbits
+	.section	.text.catanhf.crabc_x86_math_complex_src_complex_catanhf,"ax",@progbits
 	.globl	catanhf
 	.type	catanhf, @function
 catanhf:
@@ -1026,7 +1026,7 @@ catanhf:
 	addq	$24, %rsp
 	ret
 	.size	catanhf, .-catanhf
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_catanhf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_catanhf_C0:
 	.long	-2147483648
@@ -1037,7 +1037,7 @@ catanhf:
 
 /* musl-1.2.6/src/complex/catanhl.c */
 	.text
-	.section	.text.catanhl,"ax",@progbits
+	.section	.text.catanhl.crabc_x86_math_complex_src_complex_catanhl,"ax",@progbits
 	.globl	catanhl
 	.type	catanhl, @function
 catanhl:
@@ -1058,7 +1058,7 @@ catanhl:
 
 /* musl-1.2.6/src/complex/catanl.c */
 	.text
-	.section	.text.catanl,"ax",@progbits
+	.section	.text.catanl.crabc_x86_math_complex_src_complex_catanl,"ax",@progbits
 	.globl	catanl
 	.type	catanl, @function
 catanl:
@@ -1105,7 +1105,7 @@ catanl:
 	addq	$56, %rsp
 	ret
 	.size	catanl, .-catanl
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_catanl,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_catanl_C1:
 	.long	1056964608
@@ -1116,7 +1116,7 @@ catanl:
 
 /* musl-1.2.6/src/complex/ccos.c */
 	.text
-	.section	.text.ccos,"ax",@progbits
+	.section	.text.ccos.crabc_x86_math_complex_src_complex_ccos,"ax",@progbits
 	.globl	ccos
 	.type	ccos, @function
 ccos:
@@ -1126,7 +1126,7 @@ ccos:
 	movapd	%xmm2, %xmm1
 	jmp	ccosh@PLT
 	.size	ccos, .-ccos
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_ccos,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_ccos_C0:
 	.long	0
@@ -1137,7 +1137,7 @@ ccos:
 
 /* musl-1.2.6/src/complex/ccosf.c */
 	.text
-	.section	.text.ccosf,"ax",@progbits
+	.section	.text.ccosf.crabc_x86_math_complex_src_complex_ccosf,"ax",@progbits
 	.globl	ccosf
 	.type	ccosf, @function
 ccosf:
@@ -1149,7 +1149,7 @@ ccosf:
 	movq	-16(%rsp), %xmm0
 	jmp	ccoshf@PLT
 	.size	ccosf, .-ccosf
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_ccosf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_ccosf_C0:
 	.long	-2147483648
@@ -1160,7 +1160,7 @@ ccosf:
 
 /* musl-1.2.6/src/complex/ccosh.c */
 	.text
-	.section	.text.ccosh,"ax",@progbits
+	.section	.text.ccosh.crabc_x86_math_complex_src_complex_ccosh,"ax",@progbits
 	.globl	ccosh
 	.type	ccosh, @function
 ccosh:
@@ -1370,7 +1370,7 @@ ccosh:
 	movapd	%xmm3, %xmm1
 	jmp	.Lcrabc_x86_math_complex_src_complex_ccosh_1
 	.size	ccosh, .-ccosh
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex_ccosh,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex_ccosh_C0:
 	.long	0
@@ -1388,7 +1388,7 @@ ccosh:
 
 /* musl-1.2.6/src/complex/ccoshf.c */
 	.text
-	.section	.text.ccoshf,"ax",@progbits
+	.section	.text.ccoshf.crabc_x86_math_complex_src_complex_ccoshf,"ax",@progbits
 	.globl	ccoshf
 	.type	ccoshf, @function
 ccoshf:
@@ -1597,7 +1597,7 @@ ccoshf:
 	movaps	%xmm2, %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_complex_ccoshf_1
 	.size	ccoshf, .-ccoshf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_ccoshf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_ccoshf_C0:
 	.long	1056964608
@@ -1612,7 +1612,7 @@ ccoshf:
 
 /* musl-1.2.6/src/complex/ccoshl.c */
 	.text
-	.section	.text.ccoshl,"ax",@progbits
+	.section	.text.ccoshl.crabc_x86_math_complex_src_complex_ccoshl,"ax",@progbits
 	.globl	ccoshl
 	.type	ccoshl, @function
 ccoshl:
@@ -1636,7 +1636,7 @@ ccoshl:
 
 /* musl-1.2.6/src/complex/ccosl.c */
 	.text
-	.section	.text.ccosl,"ax",@progbits
+	.section	.text.ccosl.crabc_x86_math_complex_src_complex_ccosl,"ax",@progbits
 	.globl	ccosl
 	.type	ccosl, @function
 ccosl:
@@ -1651,7 +1651,7 @@ ccosl:
 
 /* musl-1.2.6/src/complex/cexp.c */
 	.text
-	.section	.text.cexp,"ax",@progbits
+	.section	.text.cexp.crabc_x86_math_complex_src_complex_cexp,"ax",@progbits
 	.globl	cexp
 	.type	cexp, @function
 cexp:
@@ -1737,7 +1737,7 @@ cexp:
 
 /* musl-1.2.6/src/complex/cexpf.c */
 	.text
-	.section	.text.cexpf,"ax",@progbits
+	.section	.text.cexpf.crabc_x86_math_complex_src_complex_cexpf,"ax",@progbits
 	.globl	cexpf
 	.type	cexpf, @function
 cexpf:
@@ -1823,7 +1823,7 @@ cexpf:
 
 /* musl-1.2.6/src/complex/cexpl.c */
 	.text
-	.section	.text.cexpl,"ax",@progbits
+	.section	.text.cexpl.crabc_x86_math_complex_src_complex_cexpl,"ax",@progbits
 	.globl	cexpl
 	.type	cexpl, @function
 cexpl:
@@ -1847,7 +1847,7 @@ cexpl:
 
 /* musl-1.2.6/src/complex/clog.c */
 	.text
-	.section	.text.clog,"ax",@progbits
+	.section	.text.clog.crabc_x86_math_complex_src_complex_clog,"ax",@progbits
 	.globl	clog
 	.type	clog, @function
 clog:
@@ -1872,7 +1872,7 @@ clog:
 
 /* musl-1.2.6/src/complex/clogf.c */
 	.text
-	.section	.text.clogf,"ax",@progbits
+	.section	.text.clogf.crabc_x86_math_complex_src_complex_clogf,"ax",@progbits
 	.globl	clogf
 	.type	clogf, @function
 clogf:
@@ -1909,7 +1909,7 @@ clogf:
 
 /* musl-1.2.6/src/complex/clogl.c */
 	.text
-	.section	.text.clogl,"ax",@progbits
+	.section	.text.clogl.crabc_x86_math_complex_src_complex_clogl,"ax",@progbits
 	.globl	clogl
 	.type	clogl, @function
 clogl:
@@ -1941,7 +1941,7 @@ clogl:
 
 /* musl-1.2.6/src/complex/cpow.c */
 	.text
-	.section	.text.cpow,"ax",@progbits
+	.section	.text.cpow.crabc_x86_math_complex_src_complex_cpow,"ax",@progbits
 	.globl	cpow
 	.type	cpow, @function
 cpow:
@@ -1978,7 +1978,7 @@ cpow:
 
 /* musl-1.2.6/src/complex/cpowf.c */
 	.text
-	.section	.text.cpowf,"ax",@progbits
+	.section	.text.cpowf.crabc_x86_math_complex_src_complex_cpowf,"ax",@progbits
 	.globl	cpowf
 	.type	cpowf, @function
 cpowf:
@@ -2027,7 +2027,7 @@ cpowf:
 
 /* musl-1.2.6/src/complex/cpowl.c */
 	.text
-	.section	.text.cpowl,"ax",@progbits
+	.section	.text.cpowl.crabc_x86_math_complex_src_complex_cpowl,"ax",@progbits
 	.globl	cpowl
 	.type	cpowl, @function
 cpowl:
@@ -2082,7 +2082,7 @@ cpowl:
 
 /* musl-1.2.6/src/complex/cproj.c */
 	.text
-	.section	.text.cproj,"ax",@progbits
+	.section	.text.cproj.crabc_x86_math_complex_src_complex_cproj,"ax",@progbits
 	.globl	cproj
 	.type	cproj, @function
 cproj:
@@ -2108,7 +2108,7 @@ cproj:
 	movapd	%xmm2, %xmm1
 	ret
 	.size	cproj, .-cproj
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex_cproj,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex_cproj_C1:
 	.long	0
@@ -2117,7 +2117,7 @@ cproj:
 
 /* musl-1.2.6/src/complex/cprojf.c */
 	.text
-	.section	.text.cprojf,"ax",@progbits
+	.section	.text.cprojf.crabc_x86_math_complex_src_complex_cprojf,"ax",@progbits
 	.globl	cprojf
 	.type	cprojf, @function
 cprojf:
@@ -2146,7 +2146,7 @@ cprojf:
 	movss	.Lcrabc_x86_math_complex_src_complex_cprojf_C1(%rip), %xmm2
 	jmp	.Lcrabc_x86_math_complex_src_complex_cprojf_3
 	.size	cprojf, .-cprojf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_cprojf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_cprojf_C1:
 	.long	2139095040
@@ -2154,7 +2154,7 @@ cprojf:
 
 /* musl-1.2.6/src/complex/cprojl.c */
 	.text
-	.section	.text.cprojl,"ax",@progbits
+	.section	.text.cprojl.crabc_x86_math_complex_src_complex_cprojl,"ax",@progbits
 	.globl	cprojl
 	.type	cprojl, @function
 cprojl:
@@ -2191,7 +2191,7 @@ cprojl:
 	addq	$32, %rsp
 	jmp	.Lcrabc_x86_math_complex_src_complex_cprojl_3
 	.size	cprojl, .-cprojl
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_cprojl,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_cprojl_C1:
 	.long	2139095040
@@ -2199,7 +2199,7 @@ cprojl:
 
 /* musl-1.2.6/src/complex/csin.c */
 	.text
-	.section	.text.csin,"ax",@progbits
+	.section	.text.csin.crabc_x86_math_complex_src_complex_csin,"ax",@progbits
 	.globl	csin
 	.type	csin, @function
 csin:
@@ -2216,7 +2216,7 @@ csin:
 	movapd	%xmm2, %xmm1
 	ret
 	.size	csin, .-csin
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_csin,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_csin_C0:
 	.long	0
@@ -2227,7 +2227,7 @@ csin:
 
 /* musl-1.2.6/src/complex/csinf.c */
 	.text
-	.section	.text.csinf,"ax",@progbits
+	.section	.text.csinf.crabc_x86_math_complex_src_complex_csinf,"ax",@progbits
 	.globl	csinf
 	.type	csinf, @function
 csinf:
@@ -2248,7 +2248,7 @@ csinf:
 	addq	$24, %rsp
 	ret
 	.size	csinf, .-csinf
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_csinf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_csinf_C0:
 	.long	-2147483648
@@ -2259,7 +2259,7 @@ csinf:
 
 /* musl-1.2.6/src/complex/csinh.c */
 	.text
-	.section	.text.csinh,"ax",@progbits
+	.section	.text.csinh.crabc_x86_math_complex_src_complex_csinh,"ax",@progbits
 	.globl	csinh
 	.type	csinh, @function
 csinh:
@@ -2452,7 +2452,7 @@ csinh:
 	mulsd	.Lcrabc_x86_math_complex_src_complex_csinh_C4(%rip), %xmm1
 	jmp	.Lcrabc_x86_math_complex_src_complex_csinh_1
 	.size	csinh, .-csinh
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex_csinh,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex_csinh_C0:
 	.long	0
@@ -2474,7 +2474,7 @@ csinh:
 
 /* musl-1.2.6/src/complex/csinhf.c */
 	.text
-	.section	.text.csinhf,"ax",@progbits
+	.section	.text.csinhf.crabc_x86_math_complex_src_complex_csinhf,"ax",@progbits
 	.globl	csinhf
 	.type	csinhf, @function
 csinhf:
@@ -2674,7 +2674,7 @@ csinhf:
 	movaps	%xmm4, %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_complex_csinhf_1
 	.size	csinhf, .-csinhf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_csinhf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_csinhf_C0:
 	.long	1056964608
@@ -2692,7 +2692,7 @@ csinhf:
 
 /* musl-1.2.6/src/complex/csinhl.c */
 	.text
-	.section	.text.csinhl,"ax",@progbits
+	.section	.text.csinhl.crabc_x86_math_complex_src_complex_csinhl,"ax",@progbits
 	.globl	csinhl
 	.type	csinhl, @function
 csinhl:
@@ -2716,7 +2716,7 @@ csinhl:
 
 /* musl-1.2.6/src/complex/csinl.c */
 	.text
-	.section	.text.csinl,"ax",@progbits
+	.section	.text.csinl.crabc_x86_math_complex_src_complex_csinl,"ax",@progbits
 	.globl	csinl
 	.type	csinl, @function
 csinl:
@@ -2737,7 +2737,7 @@ csinl:
 
 /* musl-1.2.6/src/complex/csqrt.c */
 	.text
-	.section	.text.csqrt,"ax",@progbits
+	.section	.text.csqrt.crabc_x86_math_complex_src_complex_csqrt,"ax",@progbits
 	.globl	csqrt
 	.type	csqrt, @function
 csqrt:
@@ -2883,7 +2883,7 @@ csqrt:
 	movapd	%xmm2, %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_complex_csqrt_14
 	.size	csqrt, .-csqrt
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex_csqrt,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex_csqrt_C1:
 	.long	0
@@ -2904,7 +2904,7 @@ csqrt:
 
 /* musl-1.2.6/src/complex/csqrtf.c */
 	.text
-	.section	.text.csqrtf,"ax",@progbits
+	.section	.text.csqrtf.crabc_x86_math_complex_src_complex_csqrtf,"ax",@progbits
 	.globl	csqrtf
 	.type	csqrtf, @function
 csqrtf:
@@ -3026,16 +3026,16 @@ csqrtf:
 	movaps	%xmm0, %xmm3
 	jmp	.Lcrabc_x86_math_complex_src_complex_csqrtf_1
 	.size	csqrtf, .-csqrtf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_csqrtf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_csqrtf_C1:
 	.long	2139095040
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex_csqrtf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex_csqrtf_C2:
 	.long	0
 	.long	1071644672
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_csqrtf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_csqrtf_C3:
 	.long	-2147483648
@@ -3046,7 +3046,7 @@ csqrtf:
 
 /* musl-1.2.6/src/complex/csqrtl.c */
 	.text
-	.section	.text.csqrtl,"ax",@progbits
+	.section	.text.csqrtl.crabc_x86_math_complex_src_complex_csqrtl,"ax",@progbits
 	.globl	csqrtl
 	.type	csqrtl, @function
 csqrtl:
@@ -3070,7 +3070,7 @@ csqrtl:
 
 /* musl-1.2.6/src/complex/ctan.c */
 	.text
-	.section	.text.ctan,"ax",@progbits
+	.section	.text.ctan.crabc_x86_math_complex_src_complex_ctan,"ax",@progbits
 	.globl	ctan
 	.type	ctan, @function
 ctan:
@@ -3087,7 +3087,7 @@ ctan:
 	movapd	%xmm2, %xmm1
 	ret
 	.size	ctan, .-ctan
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_ctan,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_ctan_C0:
 	.long	0
@@ -3098,7 +3098,7 @@ ctan:
 
 /* musl-1.2.6/src/complex/ctanf.c */
 	.text
-	.section	.text.ctanf,"ax",@progbits
+	.section	.text.ctanf.crabc_x86_math_complex_src_complex_ctanf,"ax",@progbits
 	.globl	ctanf
 	.type	ctanf, @function
 ctanf:
@@ -3119,7 +3119,7 @@ ctanf:
 	addq	$24, %rsp
 	ret
 	.size	ctanf, .-ctanf
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_ctanf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_ctanf_C0:
 	.long	-2147483648
@@ -3130,7 +3130,7 @@ ctanf:
 
 /* musl-1.2.6/src/complex/ctanh.c */
 	.text
-	.section	.text.ctanh,"ax",@progbits
+	.section	.text.ctanh.crabc_x86_math_complex_src_complex_ctanh,"ax",@progbits
 	.globl	ctanh
 	.type	ctanh, @function
 ctanh:
@@ -3260,14 +3260,14 @@ ctanh:
 	mulsd	%xmm4, %xmm1
 	jmp	.Lcrabc_x86_math_complex_src_complex_ctanh_1
 	.size	ctanh, .-ctanh
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_ctanh,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_ctanh_C1:
 	.long	0
 	.long	-2147483648
 	.long	0
 	.long	0
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_complex_ctanh,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_complex_ctanh_C2:
 	.long	0
@@ -3280,7 +3280,7 @@ ctanh:
 
 /* musl-1.2.6/src/complex/ctanhf.c */
 	.text
-	.section	.text.ctanhf,"ax",@progbits
+	.section	.text.ctanhf.crabc_x86_math_complex_src_complex_ctanhf,"ax",@progbits
 	.globl	ctanhf
 	.type	ctanhf, @function
 ctanhf:
@@ -3399,14 +3399,14 @@ ctanhf:
 	movaps	%xmm1, %xmm2
 	jmp	.Lcrabc_x86_math_complex_src_complex_ctanhf_1
 	.size	ctanhf, .-ctanhf
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_complex_ctanhf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_complex_ctanhf_C1:
 	.long	-2147483648
 	.long	0
 	.long	0
 	.long	0
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_complex_ctanhf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_complex_ctanhf_C2:
 	.long	1065353216
@@ -3417,7 +3417,7 @@ ctanhf:
 
 /* musl-1.2.6/src/complex/ctanhl.c */
 	.text
-	.section	.text.ctanhl,"ax",@progbits
+	.section	.text.ctanhl.crabc_x86_math_complex_src_complex_ctanhl,"ax",@progbits
 	.globl	ctanhl
 	.type	ctanhl, @function
 ctanhl:
@@ -3441,7 +3441,7 @@ ctanhl:
 
 /* musl-1.2.6/src/complex/ctanl.c */
 	.text
-	.section	.text.ctanl,"ax",@progbits
+	.section	.text.ctanl.crabc_x86_math_complex_src_complex_ctanl,"ax",@progbits
 	.globl	ctanl
 	.type	ctanl, @function
 ctanl:
@@ -3462,7 +3462,7 @@ ctanl:
 
 /* musl-1.2.6/src/math/atan.c */
 	.text
-	.section	.text.atan,"ax",@progbits
+	.section	.text.atan.crabc_x86_math_complex_src_math_atan,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_atan
 	.type	crabc_x86_math_complex_elementary_atan, @function
 crabc_x86_math_complex_elementary_atan:
@@ -3587,7 +3587,7 @@ crabc_x86_math_complex_elementary_atan:
 .Lcrabc_x86_math_complex_src_math_atan_19:
 	ret
 	.size	crabc_x86_math_complex_elementary_atan, .-crabc_x86_math_complex_elementary_atan
-	.section	.rodata.atanlo,"a"
+	.section	.rodata.atanlo.crabc_x86_math_complex_src_math_atan,"a"
 	.align 32
 	.type	crabc_x86_math_complex_src_math_atan_atanlo, @object
 	.size	crabc_x86_math_complex_src_math_atan_atanlo, 32
@@ -3600,7 +3600,7 @@ crabc_x86_math_complex_src_math_atan_atanlo:
 	.long	1013974920
 	.long	856972295
 	.long	1016178214
-	.section	.rodata.atanhi,"a"
+	.section	.rodata.atanhi.crabc_x86_math_complex_src_math_atan,"a"
 	.align 32
 	.type	crabc_x86_math_complex_src_math_atan_atanhi, @object
 	.size	crabc_x86_math_complex_src_math_atan_atanhi, 32
@@ -3613,7 +3613,7 @@ crabc_x86_math_complex_src_math_atan_atanhi:
 	.long	1072657163
 	.long	1413754136
 	.long	1073291771
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_atan,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_atan_C0:
 	.long	1413754136
@@ -3622,14 +3622,14 @@ crabc_x86_math_complex_src_math_atan_atanhi:
 .Lcrabc_x86_math_complex_src_math_atan_C1:
 	.long	0
 	.long	946864128
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_atan,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math_atan_C2:
 	.long	0
 	.long	-2147483648
 	.long	0
 	.long	0
-	.section	.rodata.cst8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_atan
 	.align 8
 .Lcrabc_x86_math_complex_src_math_atan_C3:
 	.long	0
@@ -3694,7 +3694,7 @@ crabc_x86_math_complex_src_math_atan_atanhi:
 
 /* musl-1.2.6/src/math/atanf.c */
 	.text
-	.section	.text.atanf,"ax",@progbits
+	.section	.text.atanf.crabc_x86_math_complex_src_math_atanf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_atanf
 	.type	crabc_x86_math_complex_elementary_atanf, @function
 crabc_x86_math_complex_elementary_atanf:
@@ -3817,7 +3817,7 @@ crabc_x86_math_complex_elementary_atanf:
 .Lcrabc_x86_math_complex_src_math_atanf_16:
 	ret
 	.size	crabc_x86_math_complex_elementary_atanf, .-crabc_x86_math_complex_elementary_atanf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_atanf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_atanf_C0:
 	.long	833369961
@@ -3845,14 +3845,14 @@ crabc_x86_math_complex_elementary_atanf:
 	.align 4
 .Lcrabc_x86_math_complex_src_math_atanf_C8:
 	.long	58720256
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_atanf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math_atanf_C9:
 	.long	-2147483648
 	.long	0
 	.long	0
 	.long	0
-	.section	.rodata.cst4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_atanf
 	.align 4
 .Lcrabc_x86_math_complex_src_math_atanf_C10:
 	.long	1065353216
@@ -3884,7 +3884,7 @@ crabc_x86_math_complex_elementary_atanf:
 
 /* musl-1.2.6/src/math/atan2.c */
 	.text
-	.section	.text.atan2,"ax",@progbits
+	.section	.text.atan2.crabc_x86_math_complex_src_math_atan2,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_atan2
 	.type	crabc_x86_math_complex_elementary_atan2, @function
 crabc_x86_math_complex_elementary_atan2:
@@ -4010,7 +4010,7 @@ crabc_x86_math_complex_elementary_atan2:
 .Lcrabc_x86_math_complex_src_math_atan2_29:
 	ret
 	.size	crabc_x86_math_complex_elementary_atan2, .-crabc_x86_math_complex_elementary_atan2
-	.section	.rodata.CSWTCH.6,"a"
+	.section	.rodata.CSWTCH.6.crabc_x86_math_complex_src_math_atan2,"a"
 	.align 16
 	.type	crabc_x86_math_complex_src_math_atan2_CSWTCH.6, @object
 	.size	crabc_x86_math_complex_src_math_atan2_CSWTCH.6, 24
@@ -4021,7 +4021,7 @@ crabc_x86_math_complex_src_math_atan2_CSWTCH.6:
 	.long	1074340347
 	.long	1413754136
 	.long	-1073143301
-	.section	.rodata.CSWTCH.5,"a"
+	.section	.rodata.CSWTCH.5.crabc_x86_math_complex_src_math_atan2,"a"
 	.align 16
 	.type	crabc_x86_math_complex_src_math_atan2_CSWTCH.5, @object
 	.size	crabc_x86_math_complex_src_math_atan2_CSWTCH.5, 24
@@ -4032,7 +4032,7 @@ crabc_x86_math_complex_src_math_atan2_CSWTCH.5:
 	.long	1073928572
 	.long	2134057426
 	.long	-1073555076
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_atan2,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_atan2_C1:
 	.long	1413754136
@@ -4053,14 +4053,14 @@ crabc_x86_math_complex_src_math_atan2_CSWTCH.5:
 .Lcrabc_x86_math_complex_src_math_atan2_C5:
 	.long	1413754136
 	.long	-1074191877
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_atan2,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math_atan2_C6:
 	.long	0
 	.long	-2147483648
 	.long	0
 	.long	0
-	.section	.rodata.cst8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_atan2
 	.align 8
 .Lcrabc_x86_math_complex_src_math_atan2_C7:
 	.long	856972295
@@ -4069,7 +4069,7 @@ crabc_x86_math_complex_src_math_atan2_CSWTCH.5:
 
 /* musl-1.2.6/src/math/atan2f.c */
 	.text
-	.section	.text.atan2f,"ax",@progbits
+	.section	.text.atan2f.crabc_x86_math_complex_src_math_atan2f,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_atan2f
 	.type	crabc_x86_math_complex_elementary_atan2f, @function
 crabc_x86_math_complex_elementary_atan2f:
@@ -4200,7 +4200,7 @@ crabc_x86_math_complex_elementary_atan2f:
 .Lcrabc_x86_math_complex_src_math_atan2f_31:
 	ret
 	.size	crabc_x86_math_complex_elementary_atan2f, .-crabc_x86_math_complex_elementary_atan2f
-	.section	.rodata.CSWTCH.5,"a"
+	.section	.rodata.CSWTCH.5.crabc_x86_math_complex_src_math_atan2f,"a"
 	.align 8
 	.type	crabc_x86_math_complex_src_math_atan2f_CSWTCH.5, @object
 	.size	crabc_x86_math_complex_src_math_atan2f_CSWTCH.5, 12
@@ -4208,7 +4208,7 @@ crabc_x86_math_complex_src_math_atan2f_CSWTCH.5:
 	.long	-2147483648
 	.long	1078530011
 	.long	-1068953637
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_atan2f,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_atan2f_C1:
 	.long	1070141403
@@ -4236,14 +4236,14 @@ crabc_x86_math_complex_src_math_atan2f_CSWTCH.5:
 	.align 4
 .Lcrabc_x86_math_complex_src_math_atan2f_C9:
 	.long	-1069547520
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_atan2f,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math_atan2f_C10:
 	.long	-2147483648
 	.long	0
 	.long	0
 	.long	0
-	.section	.rodata.cst4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_atan2f
 	.align 4
 .Lcrabc_x86_math_complex_src_math_atan2f_C11:
 	.long	867941678
@@ -4251,7 +4251,7 @@ crabc_x86_math_complex_src_math_atan2f_CSWTCH.5:
 
 /* musl-1.2.6/src/math/copysign.c */
 	.text
-	.section	.text.copysign,"ax",@progbits
+	.section	.text.copysign.crabc_x86_math_complex_src_math_copysign,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_copysign
 	.type	crabc_x86_math_complex_elementary_copysign, @function
 crabc_x86_math_complex_elementary_copysign:
@@ -4268,7 +4268,7 @@ crabc_x86_math_complex_elementary_copysign:
 
 /* musl-1.2.6/src/math/copysignf.c */
 	.text
-	.section	.text.copysignf,"ax",@progbits
+	.section	.text.copysignf.crabc_x86_math_complex_src_math_copysignf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_copysignf
 	.type	crabc_x86_math_complex_elementary_copysignf, @function
 crabc_x86_math_complex_elementary_copysignf:
@@ -4284,7 +4284,7 @@ crabc_x86_math_complex_elementary_copysignf:
 
 /* musl-1.2.6/src/math/copysignl.c */
 	.text
-	.section	.text.copysignl,"ax",@progbits
+	.section	.text.copysignl.crabc_x86_math_complex_src_math_copysignl,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_copysignl
 	.type	crabc_x86_math_complex_elementary_copysignl, @function
 crabc_x86_math_complex_elementary_copysignl:
@@ -4305,7 +4305,7 @@ crabc_x86_math_complex_elementary_copysignl:
 
 /* musl-1.2.6/src/math/cos.c */
 	.text
-	.section	.text.cos,"ax",@progbits
+	.section	.text.cos.crabc_x86_math_complex_src_math_cos,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_cos
 	.type	crabc_x86_math_complex_elementary_cos, @function
 crabc_x86_math_complex_elementary_cos:
@@ -4360,7 +4360,7 @@ crabc_x86_math_complex_elementary_cos:
 	call	crabc_x86_math_complex_internal_sin
 	jmp	.Lcrabc_x86_math_complex_src_math_cos_1
 	.size	crabc_x86_math_complex_elementary_cos, .-crabc_x86_math_complex_elementary_cos
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_cos,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_cos_C0:
 	.long	0
@@ -4369,7 +4369,7 @@ crabc_x86_math_complex_elementary_cos:
 .Lcrabc_x86_math_complex_src_math_cos_C1:
 	.long	0
 	.long	1198522368
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_cos,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math_cos_C3:
 	.long	0
@@ -4383,7 +4383,7 @@ crabc_x86_math_complex_elementary_cos:
 
 /* musl-1.2.6/src/math/cosf.c */
 	.text
-	.section	.text.cosf,"ax",@progbits
+	.section	.text.cosf.crabc_x86_math_complex_src_math_cosf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_cosf
 	.type	crabc_x86_math_complex_elementary_cosf, @function
 crabc_x86_math_complex_elementary_cosf:
@@ -4487,26 +4487,26 @@ crabc_x86_math_complex_elementary_cosf:
 	call	crabc_x86_math_complex_internal_sindf
 	jmp	.Lcrabc_x86_math_complex_src_math_cosf_1
 	.size	crabc_x86_math_complex_elementary_cosf, .-crabc_x86_math_complex_elementary_cosf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_cosf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_cosf_C0:
 	.long	1065353216
 	.align 4
 .Lcrabc_x86_math_complex_src_math_cosf_C1:
 	.long	2071986176
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_cosf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_cosf_C2:
 	.long	1413754136
 	.long	1074340347
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_cosf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math_cosf_C3:
 	.long	-2147483648
 	.long	0
 	.long	0
 	.long	0
-	.section	.rodata.cst8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_cosf
 	.align 8
 .Lcrabc_x86_math_complex_src_math_cosf_C4:
 	.long	1413754136
@@ -4519,7 +4519,7 @@ crabc_x86_math_complex_elementary_cosf:
 .Lcrabc_x86_math_complex_src_math_cosf_C6:
 	.long	2134057426
 	.long	1074977148
-	.section	.rodata.cst16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_cosf
 	.align 16
 .Lcrabc_x86_math_complex_src_math_cosf_C7:
 	.long	0
@@ -4533,7 +4533,7 @@ crabc_x86_math_complex_elementary_cosf:
 
 /* musl-1.2.6/src/math/cosh.c */
 	.text
-	.section	.text.cosh,"ax",@progbits
+	.section	.text.cosh.crabc_x86_math_complex_src_math_cosh,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_cosh
 	.type	crabc_x86_math_complex_elementary_cosh, @function
 crabc_x86_math_complex_elementary_cosh:
@@ -4578,7 +4578,7 @@ crabc_x86_math_complex_elementary_cosh:
 	mulsd	.Lcrabc_x86_math_complex_src_math_cosh_C2(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_math_cosh_1
 	.size	crabc_x86_math_complex_elementary_cosh, .-crabc_x86_math_complex_elementary_cosh
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_cosh,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_cosh_C0:
 	.long	0
@@ -4596,7 +4596,7 @@ crabc_x86_math_complex_elementary_cosh:
 
 /* musl-1.2.6/src/math/coshf.c */
 	.text
-	.section	.text.coshf,"ax",@progbits
+	.section	.text.coshf.crabc_x86_math_complex_src_math_coshf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_coshf
 	.type	crabc_x86_math_complex_elementary_coshf, @function
 crabc_x86_math_complex_elementary_coshf:
@@ -4640,7 +4640,7 @@ crabc_x86_math_complex_elementary_coshf:
 	mulss	.Lcrabc_x86_math_complex_src_math_coshf_C2(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_math_coshf_1
 	.size	crabc_x86_math_complex_elementary_coshf, .-crabc_x86_math_complex_elementary_coshf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_coshf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_coshf_C0:
 	.long	1065353216
@@ -4655,7 +4655,7 @@ crabc_x86_math_complex_elementary_coshf:
 
 /* musl-1.2.6/src/math/exp.c */
 	.text
-	.section	.text.exp,"ax",@progbits
+	.section	.text.exp.crabc_x86_math_complex_src_math_exp,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_exp
 	.type	crabc_x86_math_complex_elementary_exp, @function
 crabc_x86_math_complex_elementary_exp:
@@ -4781,7 +4781,7 @@ crabc_x86_math_complex_elementary_exp:
 	pxor	%xmm0, %xmm0
 	ret
 	.size	crabc_x86_math_complex_elementary_exp, .-crabc_x86_math_complex_elementary_exp
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_exp,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_exp_C1:
 	.long	0
@@ -4801,7 +4801,7 @@ crabc_x86_math_complex_elementary_exp:
 
 /* musl-1.2.6/src/math/expf.c */
 	.text
-	.section	.text.expf,"ax",@progbits
+	.section	.text.expf.crabc_x86_math_complex_src_math_expf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_expf
 	.type	crabc_x86_math_complex_elementary_expf, @function
 crabc_x86_math_complex_elementary_expf:
@@ -4861,14 +4861,14 @@ crabc_x86_math_complex_elementary_expf:
 	pxor	%xmm0, %xmm0
 	ret
 	.size	crabc_x86_math_complex_elementary_expf, .-crabc_x86_math_complex_elementary_expf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_expf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_expf_C1:
 	.long	1118925335
 	.align 4
 .Lcrabc_x86_math_complex_src_math_expf_C2:
 	.long	-1026559564
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_expf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_expf_C3:
 	.long	0
@@ -4880,7 +4880,7 @@ crabc_x86_math_complex_elementary_expf:
 
 /* musl-1.2.6/src/math/expm1.c */
 	.text
-	.section	.text.expm1,"ax",@progbits
+	.section	.text.expm1.crabc_x86_math_complex_src_math_expm1,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_expm1
 	.type	crabc_x86_math_complex_elementary_expm1, @function
 crabc_x86_math_complex_elementary_expm1:
@@ -5073,7 +5073,7 @@ crabc_x86_math_complex_elementary_expm1:
 .Lcrabc_x86_math_complex_src_math_expm1_1:
 	ret
 	.size	crabc_x86_math_complex_elementary_expm1, .-crabc_x86_math_complex_elementary_expm1
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_expm1,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_expm1_C0:
 	.long	0
@@ -5154,7 +5154,7 @@ crabc_x86_math_complex_elementary_expm1:
 
 /* musl-1.2.6/src/math/expm1f.c */
 	.text
-	.section	.text.expm1f,"ax",@progbits
+	.section	.text.expm1f.crabc_x86_math_complex_src_math_expm1f,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_expm1f
 	.type	crabc_x86_math_complex_elementary_expm1f, @function
 crabc_x86_math_complex_elementary_expm1f:
@@ -5351,7 +5351,7 @@ crabc_x86_math_complex_elementary_expm1f:
 .Lcrabc_x86_math_complex_src_math_expm1f_1:
 	ret
 	.size	crabc_x86_math_complex_elementary_expm1f, .-crabc_x86_math_complex_elementary_expm1f
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_expm1f,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_expm1f_C0:
 	.long	-1090519040
@@ -5401,18 +5401,18 @@ crabc_x86_math_complex_elementary_expm1f:
 
 /* musl-1.2.6/src/math/x86_64/fabs.c */
 	.text
-	.section	.text.fabs,"ax",@progbits
+	.section	.text.fabs.crabc_x86_math_complex_src_math_x86_64_fabs,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_fabs
 	.type	crabc_x86_math_complex_elementary_fabs, @function
 crabc_x86_math_complex_elementary_fabs:
 #APP
-# 6 "/musl/src/math/x86_64/fabs.c" 1
+# 6 "/workspace/.work/x86_64/pic-math/source/musl-1.2.6/src/math/x86_64/fabs.c" 1
 	pcmpeqd %xmm1, %xmm1
 # 0 "" 2
-# 7 "/musl/src/math/x86_64/fabs.c" 1
+# 7 "/workspace/.work/x86_64/pic-math/source/musl-1.2.6/src/math/x86_64/fabs.c" 1
 	psrlq   $1, %xmm1
 # 0 "" 2
-# 8 "/musl/src/math/x86_64/fabs.c" 1
+# 8 "/workspace/.work/x86_64/pic-math/source/musl-1.2.6/src/math/x86_64/fabs.c" 1
 	andps   %xmm1, %xmm0
 # 0 "" 2
 #NO_APP
@@ -5422,18 +5422,18 @@ crabc_x86_math_complex_elementary_fabs:
 
 /* musl-1.2.6/src/math/x86_64/fabsf.c */
 	.text
-	.section	.text.fabsf,"ax",@progbits
+	.section	.text.fabsf.crabc_x86_math_complex_src_math_x86_64_fabsf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_fabsf
 	.type	crabc_x86_math_complex_elementary_fabsf, @function
 crabc_x86_math_complex_elementary_fabsf:
 #APP
-# 6 "/musl/src/math/x86_64/fabsf.c" 1
+# 6 "/workspace/.work/x86_64/pic-math/source/musl-1.2.6/src/math/x86_64/fabsf.c" 1
 	pcmpeqd %xmm1, %xmm1
 # 0 "" 2
-# 7 "/musl/src/math/x86_64/fabsf.c" 1
+# 7 "/workspace/.work/x86_64/pic-math/source/musl-1.2.6/src/math/x86_64/fabsf.c" 1
 	psrld   $1, %xmm1
 # 0 "" 2
-# 8 "/musl/src/math/x86_64/fabsf.c" 1
+# 8 "/workspace/.work/x86_64/pic-math/source/musl-1.2.6/src/math/x86_64/fabsf.c" 1
 	andps   %xmm1, %xmm0
 # 0 "" 2
 #NO_APP
@@ -5443,7 +5443,7 @@ crabc_x86_math_complex_elementary_fabsf:
 
 /* musl-1.2.6/src/math/floor.c */
 	.text
-	.section	.text.floor,"ax",@progbits
+	.section	.text.floor.crabc_x86_math_complex_src_math_floor,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_floor
 	.type	crabc_x86_math_complex_elementary_floor, @function
 crabc_x86_math_complex_elementary_floor:
@@ -5493,7 +5493,7 @@ crabc_x86_math_complex_elementary_floor:
 	subsd	.Lcrabc_x86_math_complex_src_math_floor_C3(%rip), %xmm0
 	ret
 	.size	crabc_x86_math_complex_elementary_floor, .-crabc_x86_math_complex_elementary_floor
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_floor,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_floor_C1:
 	.long	0
@@ -5510,7 +5510,7 @@ crabc_x86_math_complex_elementary_floor:
 
 /* musl-1.2.6/src/math/hypot.c */
 	.text
-	.section	.text.hypot,"ax",@progbits
+	.section	.text.hypot.crabc_x86_math_complex_src_math_hypot,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_hypot
 	.type	crabc_x86_math_complex_elementary_hypot, @function
 crabc_x86_math_complex_elementary_hypot:
@@ -5610,7 +5610,7 @@ crabc_x86_math_complex_elementary_hypot:
 .Lcrabc_x86_math_complex_src_math_hypot_10:
 	ret
 	.size	crabc_x86_math_complex_elementary_hypot, .-crabc_x86_math_complex_elementary_hypot
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_hypot,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_hypot_C0:
 	.long	0
@@ -5631,7 +5631,7 @@ crabc_x86_math_complex_elementary_hypot:
 
 /* musl-1.2.6/src/math/hypotf.c */
 	.text
-	.section	.text.hypotf,"ax",@progbits
+	.section	.text.hypotf.crabc_x86_math_complex_src_math_hypotf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_hypotf
 	.type	crabc_x86_math_complex_elementary_hypotf, @function
 crabc_x86_math_complex_elementary_hypotf:
@@ -5693,7 +5693,7 @@ crabc_x86_math_complex_elementary_hypotf:
 .Lcrabc_x86_math_complex_src_math_hypotf_13:
 	ret
 	.size	crabc_x86_math_complex_elementary_hypotf, .-crabc_x86_math_complex_elementary_hypotf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_hypotf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_hypotf_C0:
 	.long	1820327936
@@ -5707,7 +5707,7 @@ crabc_x86_math_complex_elementary_hypotf:
 
 /* musl-1.2.6/src/math/hypotl.c */
 	.text
-	.section	.text.hypotl,"ax",@progbits
+	.section	.text.hypotl.crabc_x86_math_complex_src_math_hypotl,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_hypotl
 	.type	crabc_x86_math_complex_elementary_hypotl, @function
 crabc_x86_math_complex_elementary_hypotl:
@@ -5844,7 +5844,7 @@ crabc_x86_math_complex_elementary_hypotl:
 	fstpt	(%rsp)
 	jmp	.Lcrabc_x86_math_complex_src_math_hypotl_10
 	.size	crabc_x86_math_complex_elementary_hypotl, .-crabc_x86_math_complex_elementary_hypotl
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_hypotl,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math_hypotl_C0:
 	.long	0
@@ -5857,7 +5857,7 @@ crabc_x86_math_complex_elementary_hypotl:
 	.long	-2147483648
 	.long	6383
 	.long	0
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_hypotl,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_hypotl_C4:
 	.long	1048576
@@ -5866,7 +5866,7 @@ crabc_x86_math_complex_elementary_hypotl:
 
 /* musl-1.2.6/src/math/log.c */
 	.text
-	.section	.text.log,"ax",@progbits
+	.section	.text.log.crabc_x86_math_complex_src_math_log,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_log
 	.type	crabc_x86_math_complex_elementary_log, @function
 crabc_x86_math_complex_elementary_log:
@@ -6017,7 +6017,7 @@ crabc_x86_math_complex_elementary_log:
 .Lcrabc_x86_math_complex_src_math_log_1:
 	ret
 	.size	crabc_x86_math_complex_elementary_log, .-crabc_x86_math_complex_elementary_log
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_log,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_log_C1:
 	.long	0
@@ -6037,7 +6037,7 @@ crabc_x86_math_complex_elementary_log:
 
 /* musl-1.2.6/src/math/logf.c */
 	.text
-	.section	.text.logf,"ax",@progbits
+	.section	.text.logf.crabc_x86_math_complex_src_math_logf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_logf
 	.type	crabc_x86_math_complex_elementary_logf, @function
 crabc_x86_math_complex_elementary_logf:
@@ -6106,11 +6106,11 @@ crabc_x86_math_complex_elementary_logf:
 .Lcrabc_x86_math_complex_src_math_logf_1:
 	ret
 	.size	crabc_x86_math_complex_elementary_logf, .-crabc_x86_math_complex_elementary_logf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_logf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_logf_C1:
 	.long	1258291200
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_logf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_logf_C2:
 	.long	0
@@ -6122,7 +6122,7 @@ crabc_x86_math_complex_elementary_logf:
 
 /* musl-1.2.6/src/math/scalbn.c */
 	.text
-	.section	.text.scalbn,"ax",@progbits
+	.section	.text.scalbn.crabc_x86_math_complex_src_math_scalbn,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_scalbn
 	.type	crabc_x86_math_complex_elementary_scalbn, @function
 crabc_x86_math_complex_elementary_scalbn:
@@ -6164,7 +6164,7 @@ crabc_x86_math_complex_elementary_scalbn:
 	cmovl	%eax, %edi
 	jmp	.Lcrabc_x86_math_complex_src_math_scalbn_6
 	.size	crabc_x86_math_complex_elementary_scalbn, .-crabc_x86_math_complex_elementary_scalbn
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_scalbn,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_scalbn_C0:
 	.long	0
@@ -6177,7 +6177,7 @@ crabc_x86_math_complex_elementary_scalbn:
 
 /* musl-1.2.6/src/math/sin.c */
 	.text
-	.section	.text.sin,"ax",@progbits
+	.section	.text.sin.crabc_x86_math_complex_src_math_sin,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_sin
 	.type	crabc_x86_math_complex_elementary_sin, @function
 crabc_x86_math_complex_elementary_sin:
@@ -6240,7 +6240,7 @@ crabc_x86_math_complex_elementary_sin:
 	xorpd	.Lcrabc_x86_math_complex_src_math_sin_C3(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_math_sin_1
 	.size	crabc_x86_math_complex_elementary_sin, .-crabc_x86_math_complex_elementary_sin
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_sin,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_sin_C0:
 	.long	0
@@ -6249,7 +6249,7 @@ crabc_x86_math_complex_elementary_sin:
 .Lcrabc_x86_math_complex_src_math_sin_C1:
 	.long	0
 	.long	1198522368
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_sin,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math_sin_C3:
 	.long	0
@@ -6263,7 +6263,7 @@ crabc_x86_math_complex_elementary_sin:
 
 /* musl-1.2.6/src/math/sinf.c */
 	.text
-	.section	.text.sinf,"ax",@progbits
+	.section	.text.sinf.crabc_x86_math_complex_src_math_sinf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_sinf
 	.type	crabc_x86_math_complex_elementary_sinf, @function
 crabc_x86_math_complex_elementary_sinf:
@@ -6374,38 +6374,38 @@ crabc_x86_math_complex_elementary_sinf:
 	xorps	.Lcrabc_x86_math_complex_src_math_sinf_C3(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_math_sinf_1
 	.size	crabc_x86_math_complex_elementary_sinf, .-crabc_x86_math_complex_elementary_sinf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_sinf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_sinf_C0:
 	.long	58720256
 	.align 4
 .Lcrabc_x86_math_complex_src_math_sinf_C1:
 	.long	2071986176
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_sinf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_sinf_C2:
 	.long	1413754136
 	.long	1073291771
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_sinf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math_sinf_C3:
 	.long	-2147483648
 	.long	0
 	.long	0
 	.long	0
-	.section	.rodata.cst8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_sinf
 	.align 8
 .Lcrabc_x86_math_complex_src_math_sinf_C4:
 	.long	1413754136
 	.long	1074340347
-	.section	.rodata.cst16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math_sinf
 	.align 16
 .Lcrabc_x86_math_complex_src_math_sinf_C5:
 	.long	0
 	.long	-2147483648
 	.long	0
 	.long	0
-	.section	.rodata.cst8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_sinf
 	.align 8
 .Lcrabc_x86_math_complex_src_math_sinf_C6:
 	.long	2134057426
@@ -6421,7 +6421,7 @@ crabc_x86_math_complex_elementary_sinf:
 
 /* musl-1.2.6/src/math/sinh.c */
 	.text
-	.section	.text.sinh,"ax",@progbits
+	.section	.text.sinh.crabc_x86_math_complex_src_math_sinh,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_sinh
 	.type	crabc_x86_math_complex_elementary_sinh, @function
 crabc_x86_math_complex_elementary_sinh:
@@ -6476,7 +6476,7 @@ crabc_x86_math_complex_elementary_sinh:
 	movapd	%xmm2, %xmm0
 	jmp	crabc_x86_math_complex_internal_expo2
 	.size	crabc_x86_math_complex_elementary_sinh, .-crabc_x86_math_complex_elementary_sinh
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_sinh,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_sinh_C0:
 	.long	0
@@ -6494,7 +6494,7 @@ crabc_x86_math_complex_elementary_sinh:
 
 /* musl-1.2.6/src/math/sinhf.c */
 	.text
-	.section	.text.sinhf,"ax",@progbits
+	.section	.text.sinhf.crabc_x86_math_complex_src_math_sinhf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_sinhf
 	.type	crabc_x86_math_complex_elementary_sinhf, @function
 crabc_x86_math_complex_elementary_sinhf:
@@ -6547,7 +6547,7 @@ crabc_x86_math_complex_elementary_sinhf:
 	movd	%eax, %xmm0
 	jmp	crabc_x86_math_complex_internal_expo2f
 	.size	crabc_x86_math_complex_elementary_sinhf, .-crabc_x86_math_complex_elementary_sinhf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_sinhf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_sinhf_C0:
 	.long	1056964608
@@ -6562,12 +6562,12 @@ crabc_x86_math_complex_elementary_sinhf:
 
 /* musl-1.2.6/src/math/x86_64/sqrt.c */
 	.text
-	.section	.text.sqrt,"ax",@progbits
+	.section	.text.sqrt.crabc_x86_math_complex_src_math_x86_64_sqrt,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_sqrt
 	.type	crabc_x86_math_complex_elementary_sqrt, @function
 crabc_x86_math_complex_elementary_sqrt:
 #APP
-# 5 "/musl/src/math/x86_64/sqrt.c" 1
+# 5 "/workspace/.work/x86_64/pic-math/source/musl-1.2.6/src/math/x86_64/sqrt.c" 1
 	sqrtsd %xmm0, %xmm0
 # 0 "" 2
 #NO_APP
@@ -6577,12 +6577,12 @@ crabc_x86_math_complex_elementary_sqrt:
 
 /* musl-1.2.6/src/math/x86_64/sqrtf.c */
 	.text
-	.section	.text.sqrtf,"ax",@progbits
+	.section	.text.sqrtf.crabc_x86_math_complex_src_math_x86_64_sqrtf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_sqrtf
 	.type	crabc_x86_math_complex_elementary_sqrtf, @function
 crabc_x86_math_complex_elementary_sqrtf:
 #APP
-# 5 "/musl/src/math/x86_64/sqrtf.c" 1
+# 5 "/workspace/.work/x86_64/pic-math/source/musl-1.2.6/src/math/x86_64/sqrtf.c" 1
 	sqrtss %xmm0, %xmm0
 # 0 "" 2
 #NO_APP
@@ -6592,7 +6592,7 @@ crabc_x86_math_complex_elementary_sqrtf:
 
 /* musl-1.2.6/src/math/tan.c */
 	.text
-	.section	.text.tan,"ax",@progbits
+	.section	.text.tan.crabc_x86_math_complex_src_math_tan,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_tan
 	.type	crabc_x86_math_complex_elementary_tan, @function
 crabc_x86_math_complex_elementary_tan:
@@ -6637,7 +6637,7 @@ crabc_x86_math_complex_elementary_tan:
 	call	crabc_x86_math_complex_internal_tan
 	jmp	.Lcrabc_x86_math_complex_src_math_tan_1
 	.size	crabc_x86_math_complex_elementary_tan, .-crabc_x86_math_complex_elementary_tan
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_tan,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_tan_C0:
 	.long	0
@@ -6652,7 +6652,7 @@ crabc_x86_math_complex_elementary_tan:
 
 /* musl-1.2.6/src/math/tanf.c */
 	.text
-	.section	.text.tanf,"ax",@progbits
+	.section	.text.tanf.crabc_x86_math_complex_src_math_tanf,"ax",@progbits
 	.local	crabc_x86_math_complex_elementary_tanf
 	.type	crabc_x86_math_complex_elementary_tanf, @function
 crabc_x86_math_complex_elementary_tanf:
@@ -6743,14 +6743,14 @@ crabc_x86_math_complex_elementary_tanf:
 	call	crabc_x86_math_complex_internal_tandf
 	jmp	.Lcrabc_x86_math_complex_src_math_tanf_1
 	.size	crabc_x86_math_complex_elementary_tanf, .-crabc_x86_math_complex_elementary_tanf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math_tanf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math_tanf_C0:
 	.long	58720256
 	.align 4
 .Lcrabc_x86_math_complex_src_math_tanf_C1:
 	.long	2071986176
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math_tanf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math_tanf_C2:
 	.long	1413754136
@@ -6773,7 +6773,7 @@ crabc_x86_math_complex_elementary_tanf:
 
 /* musl-1.2.6/src/math/__cos.c */
 	.text
-	.section	.text.__cos,"ax",@progbits
+	.section	.text.__cos.crabc_x86_math_complex_src_math___cos,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_cos
 	.hidden	crabc_x86_math_complex_internal_cos
 	.type	crabc_x86_math_complex_internal_cos, @function
@@ -6811,7 +6811,7 @@ crabc_x86_math_complex_internal_cos:
 	addsd	%xmm6, %xmm0
 	ret
 	.size	crabc_x86_math_complex_internal_cos, .-crabc_x86_math_complex_internal_cos
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___cos,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___cos_C0:
 	.long	0
@@ -6848,7 +6848,7 @@ crabc_x86_math_complex_internal_cos:
 
 /* musl-1.2.6/src/math/__cosdf.c */
 	.text
-	.section	.text.__cosdf,"ax",@progbits
+	.section	.text.__cosdf.crabc_x86_math_complex_src_math___cosdf,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_cosdf
 	.hidden	crabc_x86_math_complex_internal_cosdf
 	.type	crabc_x86_math_complex_internal_cosdf, @function
@@ -6871,7 +6871,7 @@ crabc_x86_math_complex_internal_cosdf:
 	cvtsd2ss	%xmm0, %xmm0
 	ret
 	.size	crabc_x86_math_complex_internal_cosdf, .-crabc_x86_math_complex_internal_cosdf
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___cosdf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___cosdf_C0:
 	.long	-49521023
@@ -6898,7 +6898,7 @@ crabc_x86_math_complex_internal_cosdf:
 	.text
 	.hidden	crabc_x86_math_complex_internal_exp2f_data
 	.local	crabc_x86_math_complex_internal_exp2f_data
-	.section	.rodata.__exp2f_data,"a"
+	.section	.rodata.__exp2f_data.crabc_x86_math_complex_src_math_exp2f_data,"a"
 	.align 32
 	.type	crabc_x86_math_complex_internal_exp2f_data, @object
 	.size	crabc_x86_math_complex_internal_exp2f_data, 328
@@ -6959,7 +6959,7 @@ crabc_x86_math_complex_internal_exp2f_data:
 	.text
 	.hidden	crabc_x86_math_complex_internal_exp_data
 	.local	crabc_x86_math_complex_internal_exp_data
-	.section	.rodata.__exp_data,"a"
+	.section	.rodata.__exp_data.crabc_x86_math_complex_src_math_exp_data,"a"
 	.align 32
 	.type	crabc_x86_math_complex_internal_exp_data, @object
 	.size	crabc_x86_math_complex_internal_exp_data, 2160
@@ -7252,7 +7252,7 @@ crabc_x86_math_complex_internal_exp_data:
 
 /* musl-1.2.6/src/math/__expo2.c */
 	.text
-	.section	.text.__expo2,"ax",@progbits
+	.section	.text.__expo2.crabc_x86_math_complex_src_math___expo2,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_expo2
 	.hidden	crabc_x86_math_complex_internal_expo2
 	.type	crabc_x86_math_complex_internal_expo2, @function
@@ -7270,7 +7270,7 @@ crabc_x86_math_complex_internal_expo2:
 	mulsd	%xmm1, %xmm0
 	ret
 	.size	crabc_x86_math_complex_internal_expo2, .-crabc_x86_math_complex_internal_expo2
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___expo2,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___expo2_C0:
 	.long	354082187
@@ -7283,7 +7283,7 @@ crabc_x86_math_complex_internal_expo2:
 
 /* musl-1.2.6/src/math/__expo2f.c */
 	.text
-	.section	.text.__expo2f,"ax",@progbits
+	.section	.text.__expo2f.crabc_x86_math_complex_src_math___expo2f,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_expo2f
 	.hidden	crabc_x86_math_complex_internal_expo2f
 	.type	crabc_x86_math_complex_internal_expo2f, @function
@@ -7301,7 +7301,7 @@ crabc_x86_math_complex_internal_expo2f:
 	mulss	%xmm1, %xmm0
 	ret
 	.size	crabc_x86_math_complex_internal_expo2f, .-crabc_x86_math_complex_internal_expo2f
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math___expo2f,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math___expo2f_C0:
 	.long	1126359996
@@ -7314,7 +7314,7 @@ crabc_x86_math_complex_internal_expo2f:
 	.text
 	.hidden	crabc_x86_math_complex_internal_log_data
 	.local	crabc_x86_math_complex_internal_log_data
-	.section	.rodata.__log_data,"a"
+	.section	.rodata.__log_data.crabc_x86_math_complex_src_math_log_data,"a"
 	.align 32
 	.type	crabc_x86_math_complex_internal_log_data, @object
 	.size	crabc_x86_math_complex_internal_log_data, 4240
@@ -8385,7 +8385,7 @@ crabc_x86_math_complex_internal_log_data:
 	.text
 	.hidden	crabc_x86_math_complex_internal_logf_data
 	.local	crabc_x86_math_complex_internal_logf_data
-	.section	.rodata.__logf_data,"a"
+	.section	.rodata.__logf_data.crabc_x86_math_complex_src_math_logf_data,"a"
 	.align 32
 	.type	crabc_x86_math_complex_internal_logf_data, @object
 	.size	crabc_x86_math_complex_internal_logf_data, 288
@@ -8466,7 +8466,7 @@ crabc_x86_math_complex_internal_logf_data:
 
 /* musl-1.2.6/src/math/__math_divzero.c */
 	.text
-	.section	.text.__math_divzero,"ax",@progbits
+	.section	.text.__math_divzero.crabc_x86_math_complex_src_math___math_divzero,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_math_divzero
 	.hidden	crabc_x86_math_complex_internal_math_divzero
 	.type	crabc_x86_math_complex_internal_math_divzero, @function
@@ -8484,7 +8484,7 @@ crabc_x86_math_complex_internal_math_divzero:
 	movsd	.Lcrabc_x86_math_complex_src_math___math_divzero_C1(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_math___math_divzero_2
 	.size	crabc_x86_math_complex_internal_math_divzero, .-crabc_x86_math_complex_internal_math_divzero
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___math_divzero,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___math_divzero_C0:
 	.long	0
@@ -8497,7 +8497,7 @@ crabc_x86_math_complex_internal_math_divzero:
 
 /* musl-1.2.6/src/math/__math_divzerof.c */
 	.text
-	.section	.text.__math_divzerof,"ax",@progbits
+	.section	.text.__math_divzerof.crabc_x86_math_complex_src_math___math_divzerof,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_math_divzerof
 	.hidden	crabc_x86_math_complex_internal_math_divzerof
 	.type	crabc_x86_math_complex_internal_math_divzerof, @function
@@ -8515,7 +8515,7 @@ crabc_x86_math_complex_internal_math_divzerof:
 	movss	.Lcrabc_x86_math_complex_src_math___math_divzerof_C1(%rip), %xmm0
 	jmp	.Lcrabc_x86_math_complex_src_math___math_divzerof_2
 	.size	crabc_x86_math_complex_internal_math_divzerof, .-crabc_x86_math_complex_internal_math_divzerof
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math___math_divzerof,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math___math_divzerof_C0:
 	.long	-1082130432
@@ -8526,7 +8526,7 @@ crabc_x86_math_complex_internal_math_divzerof:
 
 /* musl-1.2.6/src/math/__math_invalid.c */
 	.text
-	.section	.text.__math_invalid,"ax",@progbits
+	.section	.text.__math_invalid.crabc_x86_math_complex_src_math___math_invalid,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_math_invalid
 	.hidden	crabc_x86_math_complex_internal_math_invalid
 	.type	crabc_x86_math_complex_internal_math_invalid, @function
@@ -8539,7 +8539,7 @@ crabc_x86_math_complex_internal_math_invalid:
 
 /* musl-1.2.6/src/math/__math_invalidf.c */
 	.text
-	.section	.text.__math_invalidf,"ax",@progbits
+	.section	.text.__math_invalidf.crabc_x86_math_complex_src_math___math_invalidf,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_math_invalidf
 	.hidden	crabc_x86_math_complex_internal_math_invalidf
 	.type	crabc_x86_math_complex_internal_math_invalidf, @function
@@ -8552,7 +8552,7 @@ crabc_x86_math_complex_internal_math_invalidf:
 
 /* musl-1.2.6/src/math/__math_oflow.c */
 	.text
-	.section	.text.__math_oflow,"ax",@progbits
+	.section	.text.__math_oflow.crabc_x86_math_complex_src_math___math_oflow,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_math_oflow
 	.hidden	crabc_x86_math_complex_internal_math_oflow
 	.type	crabc_x86_math_complex_internal_math_oflow, @function
@@ -8560,7 +8560,7 @@ crabc_x86_math_complex_internal_math_oflow:
 	movsd	.Lcrabc_x86_math_complex_src_math___math_oflow_C0(%rip), %xmm0
 	jmp	crabc_x86_math_complex_internal_math_xflow
 	.size	crabc_x86_math_complex_internal_math_oflow, .-crabc_x86_math_complex_internal_math_oflow
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___math_oflow,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___math_oflow_C0:
 	.long	0
@@ -8570,7 +8570,7 @@ crabc_x86_math_complex_internal_math_oflow:
 
 /* musl-1.2.6/src/math/__math_oflowf.c */
 	.text
-	.section	.text.__math_oflowf,"ax",@progbits
+	.section	.text.__math_oflowf.crabc_x86_math_complex_src_math___math_oflowf,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_math_oflowf
 	.hidden	crabc_x86_math_complex_internal_math_oflowf
 	.type	crabc_x86_math_complex_internal_math_oflowf, @function
@@ -8578,7 +8578,7 @@ crabc_x86_math_complex_internal_math_oflowf:
 	movss	.Lcrabc_x86_math_complex_src_math___math_oflowf_C0(%rip), %xmm0
 	jmp	crabc_x86_math_complex_internal_math_xflowf
 	.size	crabc_x86_math_complex_internal_math_oflowf, .-crabc_x86_math_complex_internal_math_oflowf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math___math_oflowf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math___math_oflowf_C0:
 	.long	1879048192
@@ -8587,7 +8587,7 @@ crabc_x86_math_complex_internal_math_oflowf:
 
 /* musl-1.2.6/src/math/__math_uflow.c */
 	.text
-	.section	.text.__math_uflow,"ax",@progbits
+	.section	.text.__math_uflow.crabc_x86_math_complex_src_math___math_uflow,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_math_uflow
 	.hidden	crabc_x86_math_complex_internal_math_uflow
 	.type	crabc_x86_math_complex_internal_math_uflow, @function
@@ -8595,7 +8595,7 @@ crabc_x86_math_complex_internal_math_uflow:
 	movsd	.Lcrabc_x86_math_complex_src_math___math_uflow_C0(%rip), %xmm0
 	jmp	crabc_x86_math_complex_internal_math_xflow
 	.size	crabc_x86_math_complex_internal_math_uflow, .-crabc_x86_math_complex_internal_math_uflow
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___math_uflow,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___math_uflow_C0:
 	.long	0
@@ -8605,7 +8605,7 @@ crabc_x86_math_complex_internal_math_uflow:
 
 /* musl-1.2.6/src/math/__math_uflowf.c */
 	.text
-	.section	.text.__math_uflowf,"ax",@progbits
+	.section	.text.__math_uflowf.crabc_x86_math_complex_src_math___math_uflowf,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_math_uflowf
 	.hidden	crabc_x86_math_complex_internal_math_uflowf
 	.type	crabc_x86_math_complex_internal_math_uflowf, @function
@@ -8613,7 +8613,7 @@ crabc_x86_math_complex_internal_math_uflowf:
 	movss	.Lcrabc_x86_math_complex_src_math___math_uflowf_C0(%rip), %xmm0
 	jmp	crabc_x86_math_complex_internal_math_xflowf
 	.size	crabc_x86_math_complex_internal_math_uflowf, .-crabc_x86_math_complex_internal_math_uflowf
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_src_math___math_uflowf,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_src_math___math_uflowf_C0:
 	.long	268435456
@@ -8622,7 +8622,7 @@ crabc_x86_math_complex_internal_math_uflowf:
 
 /* musl-1.2.6/src/math/__math_xflow.c */
 	.text
-	.section	.text.__math_xflow,"ax",@progbits
+	.section	.text.__math_xflow.crabc_x86_math_complex_src_math___math_xflow,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_math_xflow
 	.hidden	crabc_x86_math_complex_internal_math_xflow
 	.type	crabc_x86_math_complex_internal_math_xflow, @function
@@ -8637,7 +8637,7 @@ crabc_x86_math_complex_internal_math_xflow:
 	mulsd	%xmm1, %xmm0
 	ret
 	.size	crabc_x86_math_complex_internal_math_xflow, .-crabc_x86_math_complex_internal_math_xflow
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math___math_xflow,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math___math_xflow_C0:
 	.long	0
@@ -8648,7 +8648,7 @@ crabc_x86_math_complex_internal_math_xflow:
 
 /* musl-1.2.6/src/math/__math_xflowf.c */
 	.text
-	.section	.text.__math_xflowf,"ax",@progbits
+	.section	.text.__math_xflowf.crabc_x86_math_complex_src_math___math_xflowf,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_math_xflowf
 	.hidden	crabc_x86_math_complex_internal_math_xflowf
 	.type	crabc_x86_math_complex_internal_math_xflowf, @function
@@ -8663,7 +8663,7 @@ crabc_x86_math_complex_internal_math_xflowf:
 	mulss	%xmm1, %xmm0
 	ret
 	.size	crabc_x86_math_complex_internal_math_xflowf, .-crabc_x86_math_complex_internal_math_xflowf
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math___math_xflowf,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math___math_xflowf_C0:
 	.long	-2147483648
@@ -8674,7 +8674,7 @@ crabc_x86_math_complex_internal_math_xflowf:
 
 /* musl-1.2.6/src/math/__rem_pio2.c */
 	.text
-	.section	.text.__rem_pio2,"ax",@progbits
+	.section	.text.__rem_pio2.crabc_x86_math_complex_src_math___rem_pio2,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_rem_pio2
 	.hidden	crabc_x86_math_complex_internal_rem_pio2
 	.type	crabc_x86_math_complex_internal_rem_pio2, @function
@@ -8945,7 +8945,7 @@ crabc_x86_math_complex_internal_rem_pio2:
 	movups	%xmm0, (%r10)
 	jmp	.Lcrabc_x86_math_complex_src_math___rem_pio2_1
 	.size	crabc_x86_math_complex_internal_rem_pio2, .-crabc_x86_math_complex_internal_rem_pio2
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___rem_pio2,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___rem_pio2_C0:
 	.long	1413480448
@@ -9027,7 +9027,7 @@ crabc_x86_math_complex_internal_rem_pio2:
 
 /* musl-1.2.6/src/math/__rem_pio2f.c */
 	.text
-	.section	.text.__rem_pio2f,"ax",@progbits
+	.section	.text.__rem_pio2f.crabc_x86_math_complex_src_math___rem_pio2f,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_rem_pio2f
 	.hidden	crabc_x86_math_complex_internal_rem_pio2f
 	.type	crabc_x86_math_complex_internal_rem_pio2f, @function
@@ -9114,7 +9114,7 @@ crabc_x86_math_complex_internal_rem_pio2f:
 	negl	%eax
 	jmp	.Lcrabc_x86_math_complex_src_math___rem_pio2f_5
 	.size	crabc_x86_math_complex_internal_rem_pio2f, .-crabc_x86_math_complex_internal_rem_pio2f
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___rem_pio2f,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___rem_pio2f_C0:
 	.long	1841940611
@@ -9143,7 +9143,7 @@ crabc_x86_math_complex_internal_rem_pio2f:
 .Lcrabc_x86_math_complex_src_math___rem_pio2f_C6:
 	.long	1610612736
 	.long	1072243195
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math___rem_pio2f,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math___rem_pio2f_C7:
 	.long	0
@@ -9155,7 +9155,7 @@ crabc_x86_math_complex_internal_rem_pio2f:
 
 /* musl-1.2.6/src/math/__rem_pio2_large.c */
 	.text
-	.section	.text.__rem_pio2_large,"ax",@progbits
+	.section	.text.__rem_pio2_large.crabc_x86_math_complex_src_math___rem_pio2_large,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_rem_pio2_large
 	.hidden	crabc_x86_math_complex_internal_rem_pio2_large
 	.type	crabc_x86_math_complex_internal_rem_pio2_large, @function
@@ -9752,7 +9752,7 @@ crabc_x86_math_complex_internal_rem_pio2_large:
 	movapd	%xmm7, %xmm1
 	jmp	.Lcrabc_x86_math_complex_src_math___rem_pio2_large_15
 	.size	crabc_x86_math_complex_internal_rem_pio2_large, .-crabc_x86_math_complex_internal_rem_pio2_large
-	.section	.rodata.PIo2,"a"
+	.section	.rodata.PIo2.crabc_x86_math_complex_src_math___rem_pio2_large,"a"
 	.align 32
 	.type	crabc_x86_math_complex_src_math___rem_pio2_large_PIo2, @object
 	.size	crabc_x86_math_complex_src_math___rem_pio2_large_PIo2, 64
@@ -9773,7 +9773,7 @@ crabc_x86_math_complex_src_math___rem_pio2_large_PIo2:
 	.long	920879650
 	.long	0
 	.long	896135965
-	.section	.rodata.ipio2,"a"
+	.section	.rodata.ipio2.crabc_x86_math_complex_src_math___rem_pio2_large,"a"
 	.align 32
 	.type	crabc_x86_math_complex_src_math___rem_pio2_large_ipio2, @object
 	.size	crabc_x86_math_complex_src_math___rem_pio2_large_ipio2, 2760
@@ -10468,7 +10468,7 @@ crabc_x86_math_complex_src_math___rem_pio2_large_ipio2:
 	.long	5633276
 	.long	5069057
 	.long	8417760
-	.section	.rodata.init_jk,"a"
+	.section	.rodata.init_jk.crabc_x86_math_complex_src_math___rem_pio2_large,"a"
 	.align 16
 	.type	crabc_x86_math_complex_src_math___rem_pio2_large_init_jk, @object
 	.size	crabc_x86_math_complex_src_math___rem_pio2_large_init_jk, 16
@@ -10477,7 +10477,7 @@ crabc_x86_math_complex_src_math___rem_pio2_large_init_jk:
 	.long	4
 	.long	4
 	.long	6
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___rem_pio2_large,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___rem_pio2_large_C1:
 	.long	0
@@ -10502,7 +10502,7 @@ crabc_x86_math_complex_src_math___rem_pio2_large_init_jk:
 .Lcrabc_x86_math_complex_src_math___rem_pio2_large_C6:
 	.long	0
 	.long	1072693248
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math___rem_pio2_large,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math___rem_pio2_large_C7:
 	.long	0
@@ -10514,7 +10514,7 @@ crabc_x86_math_complex_src_math___rem_pio2_large_init_jk:
 
 /* musl-1.2.6/src/math/__sin.c */
 	.text
-	.section	.text.__sin,"ax",@progbits
+	.section	.text.__sin.crabc_x86_math_complex_src_math___sin,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_sin
 	.hidden	crabc_x86_math_complex_internal_sin
 	.type	crabc_x86_math_complex_internal_sin, @function
@@ -10557,7 +10557,7 @@ crabc_x86_math_complex_internal_sin:
 	subsd	%xmm1, %xmm0
 	ret
 	.size	crabc_x86_math_complex_internal_sin, .-crabc_x86_math_complex_internal_sin
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___sin,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___sin_C0:
 	.long	1523570044
@@ -10594,7 +10594,7 @@ crabc_x86_math_complex_internal_sin:
 
 /* musl-1.2.6/src/math/__sindf.c */
 	.text
-	.section	.text.__sindf,"ax",@progbits
+	.section	.text.__sindf.crabc_x86_math_complex_src_math___sindf,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_sindf
 	.hidden	crabc_x86_math_complex_internal_sindf
 	.type	crabc_x86_math_complex_internal_sindf, @function
@@ -10619,7 +10619,7 @@ crabc_x86_math_complex_internal_sindf:
 	cvtsd2ss	%xmm0, %xmm0
 	ret
 	.size	crabc_x86_math_complex_internal_sindf, .-crabc_x86_math_complex_internal_sindf
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___sindf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___sindf_C0:
 	.long	-1942272345
@@ -10640,7 +10640,7 @@ crabc_x86_math_complex_internal_sindf:
 
 /* musl-1.2.6/src/math/__tan.c */
 	.text
-	.section	.text.__tan,"ax",@progbits
+	.section	.text.__tan.crabc_x86_math_complex_src_math___tan,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_tan
 	.hidden	crabc_x86_math_complex_internal_tan
 	.type	crabc_x86_math_complex_internal_tan, @function
@@ -10747,14 +10747,14 @@ crabc_x86_math_complex_internal_tan:
 	xorpd	.Lcrabc_x86_math_complex_src_math___tan_C1(%rip), %xmm0
 	ret
 	.size	crabc_x86_math_complex_internal_tan, .-crabc_x86_math_complex_internal_tan
-	.section	.rodata.cst16,"aM",@progbits,16
+	.section	.rodata.cst16.crabc_x86_math_complex_src_math___tan,"aM",@progbits,16
 	.align 16
 .Lcrabc_x86_math_complex_src_math___tan_C1:
 	.long	0
 	.long	-2147483648
 	.long	0
 	.long	0
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___tan,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___tan_C2:
 	.long	1413754136
@@ -10827,7 +10827,7 @@ crabc_x86_math_complex_internal_tan:
 
 /* musl-1.2.6/src/math/__tandf.c */
 	.text
-	.section	.text.__tandf,"ax",@progbits
+	.section	.text.__tandf.crabc_x86_math_complex_src_math___tandf,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_tandf
 	.hidden	crabc_x86_math_complex_internal_tandf
 	.type	crabc_x86_math_complex_internal_tandf, @function
@@ -10862,7 +10862,7 @@ crabc_x86_math_complex_internal_tandf:
 	cvtsd2ss	%xmm0, %xmm0
 	ret
 	.size	crabc_x86_math_complex_internal_tandf, .-crabc_x86_math_complex_internal_tandf
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_src_math___tandf,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_src_math___tandf_C0:
 	.long	-1080615987
@@ -10895,7 +10895,7 @@ crabc_x86_math_complex_internal_tandf:
 
 /* compiler-rt-22.1.3 complex multiplication support */
 	.text
-	.section	.text.__mulsc3,"ax",@progbits
+	.section	.text.__mulsc3.crabc_x86_math_complex_compiler_rt_complex_mul_support,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_mulsc3
 	.type	crabc_x86_math_complex_internal_mulsc3, @function
 crabc_x86_math_complex_internal_mulsc3:
@@ -11218,7 +11218,7 @@ crabc_x86_math_complex_internal_mulsc3:
 	movss	8(%rsp), %xmm5
 	jmp	.Lcrabc_x86_math_complex_compiler_rt_complex_mul_support_6
 	.size	crabc_x86_math_complex_internal_mulsc3, .-crabc_x86_math_complex_internal_mulsc3
-	.section	.text.__muldc3,"ax",@progbits
+	.section	.text.__muldc3.crabc_x86_math_complex_compiler_rt_complex_mul_support,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_muldc3
 	.type	crabc_x86_math_complex_internal_muldc3, @function
 crabc_x86_math_complex_internal_muldc3:
@@ -11571,7 +11571,7 @@ crabc_x86_math_complex_internal_muldc3:
 .Lcrabc_x86_math_complex_compiler_rt_complex_mul_support_83:
 	ret
 	.size	crabc_x86_math_complex_internal_muldc3, .-crabc_x86_math_complex_internal_muldc3
-	.section	.text.__mulxc3,"ax",@progbits
+	.section	.text.__mulxc3.crabc_x86_math_complex_compiler_rt_complex_mul_support,"ax",@progbits
 	.local	crabc_x86_math_complex_internal_mulxc3
 	.type	crabc_x86_math_complex_internal_mulxc3, @function
 crabc_x86_math_complex_internal_mulxc3:
@@ -11926,14 +11926,14 @@ crabc_x86_math_complex_internal_mulxc3:
 	addq	$32, %rsp
 	jmp	.Lcrabc_x86_math_complex_compiler_rt_complex_mul_support_124
 	.size	crabc_x86_math_complex_internal_mulxc3, .-crabc_x86_math_complex_internal_mulxc3
-	.section	.rodata.cst4,"aM",@progbits,4
+	.section	.rodata.cst4.crabc_x86_math_complex_compiler_rt_complex_mul_support,"aM",@progbits,4
 	.align 4
 .Lcrabc_x86_math_complex_compiler_rt_complex_mul_support_C0:
 	.long	1065353216
 	.align 4
 .Lcrabc_x86_math_complex_compiler_rt_complex_mul_support_C2:
 	.long	2139095040
-	.section	.rodata.cst8,"aM",@progbits,8
+	.section	.rodata.cst8.crabc_x86_math_complex_compiler_rt_complex_mul_support,"aM",@progbits,8
 	.align 8
 .Lcrabc_x86_math_complex_compiler_rt_complex_mul_support_C3:
 	.long	0

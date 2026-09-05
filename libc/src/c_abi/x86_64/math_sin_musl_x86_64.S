@@ -1014,7 +1014,7 @@ crabc_x86_math_sin_reduce_pio2f:
 	.type	crabc_x86_math_sin_reduce_pio2_large, @function
 crabc_x86_math_sin_reduce_pio2_large:
 	pushq	%r15
-	movslq	%r8d, %rax
+	leaq	crabc_x86_math_sin_src_math___rem_pio2_large_init_jk(%rip), %rax
 	pushq	%r14
 	pushq	%r13
 	pushq	%r12
@@ -1023,170 +1023,175 @@ crabc_x86_math_sin_reduce_pio2_large:
 	pushq	%rbx
 	leal	-1(%rcx), %ebx
 	subq	$648, %rsp
-	movl	crabc_x86_math_sin_src_math___rem_pio2_large_init_jk(,%rax,4), %r14d
+	movl	%ecx, 64(%rsp)
+	movslq	%r8d, %rcx
 	movq	%rsi, 56(%rsp)
-	movl	%ecx, 52(%rsp)
-	movl	%r8d, 64(%rsp)
+	movl	(%rax,%rcx,4), %r14d
+	movl	%r8d, 68(%rsp)
 	cmpl	$-20, %edx
-	jl	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_71
+	jl	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_73
 	leal	-3(%rdx), %ecx
 	movslq	%ecx, %rax
 	sarl	$31, %ecx
 	imulq	$715827883, %rax, %rax
 	sarq	$34, %rax
 	subl	%ecx, %eax
-	movl	%eax, 48(%rsp)
+	movl	%eax, 44(%rsp)
 	addl	$1, %eax
 	leal	0(,%rax,4), %ecx
 	subl	%ecx, %eax
 	sall	$3, %eax
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_2:
-	leal	(%rdx,%rax), %esi
-	movl	48(%rsp), %eax
-	leal	(%r14,%rbx), %ecx
+	addl	%eax, %edx
+	movl	44(%rsp), %eax
+	leaq	160(%rsp), %rdi
+	leal	(%r14,%rbx), %esi
+	movq	%rdi, 32(%rsp)
+	leaq	crabc_x86_math_sin_src_math___rem_pio2_large_ipio2(%rip), %r8
 	subl	%ebx, %eax
 	cltq
-	movq	%rax, %rdx
-	negq	%rdx
-	leaq	160(%rsp,%rdx,8), %rdi
-	xorl	%edx, %edx
+	movq	%rax, %rcx
+	negq	%rcx
+	leaq	(%rdi,%rcx,8), %rdi
+	xorl	%ecx, %ecx
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_3
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_71:
-	movl	$0, 48(%rsp)
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_73:
+	movl	$0, 44(%rsp)
 	movl	$-24, %eax
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_2
 	.p2align 5
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_4:
 	movsd	%xmm0, (%rdi,%rax,8)
-	addl	$1, %edx
+	addl	$1, %ecx
 	addq	$1, %rax
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_3:
-	cmpl	%ecx, %edx
-	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_110
+	cmpl	%esi, %ecx
+	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_100
 	pxor	%xmm0, %xmm0
 	testl	%eax, %eax
 	js	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_4
 	pxor	%xmm0, %xmm0
-	cvtsi2sdl	crabc_x86_math_sin_src_math___rem_pio2_large_ipio2(,%rax,4), %xmm0
+	cvtsi2sdl	(%r8,%rax,4), %xmm0
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_4
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_110:
-	movl	%ebx, %edi
-	xorl	%ecx, %ecx
-	leaq	480(%rsp), %r12
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_100:
+	leaq	480(%rsp), %r13
+	movl	$1, %r8d
+	movl	%ebx, %esi
+	subl	64(%rsp), %r8d
+	movq	%r13, %rdi
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_6
 	.p2align 5
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_7:
 	movsd	0(%rbp,%rax,8), %xmm0
-	mulsd	(%rdx), %xmm0
+	mulsd	(%rcx), %xmm0
 	addq	$1, %rax
-	subq	$8, %rdx
+	subq	$8, %rcx
 	addsd	%xmm0, %xmm1
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_9:
 	cmpl	%eax, %ebx
 	jge	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_7
-	movsd	%xmm1, (%r12,%rcx,8)
-	addl	$1, %edi
-	addq	$1, %rcx
+	movsd	%xmm1, (%rdi)
+	addl	$1, %esi
+	addq	$8, %rdi
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_6:
-	cmpl	%ecx, %r14d
+	leal	(%r8,%rsi), %eax
+	cmpl	%eax, %r14d
 	jl	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_8
-	movslq	%edi, %rax
+	movq	32(%rsp), %rcx
+	movslq	%esi, %rax
 	pxor	%xmm1, %xmm1
-	leaq	160(%rsp,%rax,8), %rdx
+	leaq	(%rcx,%rax,8), %rcx
 	xorl	%eax, %eax
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_9
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_8:
 	leal	-1(%r14), %eax
 	leaq	80(%rsp), %r15
-	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C1(%rip), %xmm4
-	movl	%r14d, %r13d
+	movl	%r14d, %r12d
+	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C1(%rip), %xmm3
 	cltq
+	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C2(%rip), %xmm4
 	leaq	(%r15,%rax,4), %rax
-	movq	%rax, 40(%rsp)
+	movq	%rax, 48(%rsp)
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_10
 	.p2align 6
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_12:
 	movapd	%xmm0, %xmm1
+	subl	$1, %eax
 	addq	$4, %rcx
-	mulsd	%xmm4, %xmm1
+	subq	$8, %rsi
+	mulsd	%xmm3, %xmm1
 	cvttsd2sil	%xmm1, %edi
 	pxor	%xmm1, %xmm1
 	cvtsi2sdl	%edi, %xmm1
 	movapd	%xmm1, %xmm2
-	addsd	(%r12,%rax,8), %xmm1
-	subq	$1, %rax
-	mulsd	%xmm3, %xmm2
+	addsd	8(%rsi), %xmm1
+	mulsd	%xmm4, %xmm2
 	subsd	%xmm2, %xmm0
 	cvttsd2sil	%xmm0, %edi
 	movapd	%xmm1, %xmm0
 	movl	%edi, -4(%rcx)
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_11:
-	leal	1(%rax), %edi
-	testl	%edi, %edi
+	testl	%eax, %eax
 	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_12
-	movl	%esi, %edi
-	movq	%rdx, 32(%rsp)
-	movl	%esi, 28(%rsp)
-	call	crabc_x86_math_sin_provider_scalbn
+	movl	%edx, %edi
+	movl	%r10d, 16(%rsp)
+	movl	%edx, 40(%rsp)
+	call	crabc_x86_math_sin_provider_scalbn@PLT
 	movapd	%xmm0, %xmm1
 	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C3(%rip), %xmm0
-	movsd	%xmm1, 16(%rsp)
+	movsd	%xmm1, 8(%rsp)
 	mulsd	%xmm1, %xmm0
-	call	crabc_x86_math_sin_provider_floor
-	movsd	16(%rsp), %xmm1
-	movl	28(%rsp), %esi
+	call	crabc_x86_math_sin_provider_floor@PLT
+	movsd	8(%rsp), %xmm1
+	movl	40(%rsp), %edx
 	mulsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C4(%rip), %xmm0
-	movq	32(%rsp), %rdx
-	testl	%esi, %esi
-	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C1(%rip), %xmm4
+	movl	16(%rsp), %r10d
+	testl	%edx, %edx
+	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C1(%rip), %xmm3
+	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C2(%rip), %xmm4
 	subsd	%xmm0, %xmm1
 	pxor	%xmm0, %xmm0
 	cvttsd2sil	%xmm1, %r8d
 	cvtsi2sdl	%r8d, %xmm0
 	subsd	%xmm0, %xmm1
 	jle	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_13
-	movslq	24(%rsp), %r10
+	movslq	%r10d, %rdi
 	movl	$24, %ecx
-	subl	%esi, %ecx
-	movl	80(%rsp,%r10,4), %eax
-	movl	%eax, %edi
-	sarl	%cl, %edi
-	addl	%edi, %r8d
-	sall	%cl, %edi
+	movl	80(%rsp,%rdi,4), %eax
+	subl	%edx, %ecx
+	movl	%eax, %esi
+	sarl	%cl, %esi
+	addl	%esi, %r8d
+	sall	%cl, %esi
 	movl	$23, %ecx
-	subl	%edi, %eax
-	subl	%esi, %ecx
-	movl	%eax, 80(%rsp,%r10,4)
+	subl	%esi, %eax
+	subl	%edx, %ecx
+	movl	%eax, 80(%rsp,%rdi,4)
 	sarl	%cl, %eax
 	movl	%eax, %r9d
 	testl	%eax, %eax
-	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_111
+	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_101
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_15:
 	pxor	%xmm0, %xmm0
 	ucomisd	%xmm0, %xmm1
-	jp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_32
-	jne	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_32
-	movl	%edx, %edi
-	xorl	%ecx, %ecx
-	movq	%rdx, %rax
-	subl	%r14d, %edi
-	andl	$1, %edi
+	jp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_30
 	jne	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_30
-	cmpl	%edx, %r14d
-	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_75
-	movl	(%r15,%rdx,4), %ecx
-	leaq	-1(%rdx), %rax
-	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_30
+	movq	24(%rsp), %rdi
+	movl	%r10d, %eax
+	xorl	%esi, %esi
+	salq	$2, %rdi
+	leaq	(%r15,%rdi), %rcx
+	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_32
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_13:
 	jne	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_16
-	movslq	24(%rsp), %rax
+	movslq	%r10d, %rax
 	movl	80(%rsp,%rax,4), %eax
 	sarl	$23, %eax
 	movl	%eax, %r9d
 	testl	%eax, %eax
 	jle	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_15
 	addl	$1, %r8d
-	testl	%r13d, %r13d
+	testl	%r12d, %r12d
 	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_19
 	cmpl	$2, %eax
 	jne	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_15
@@ -1200,46 +1205,46 @@ crabc_x86_math_sin_reduce_pio2_large:
 	jb	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_15
 	addl	$1, %r8d
 	movl	$2, %r9d
-	testl	%r13d, %r13d
+	testl	%r12d, %r12d
 	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_19
 	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C6(%rip), %xmm7
 	subsd	%xmm1, %xmm7
 	movapd	%xmm7, %xmm1
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_15
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_111:
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_101:
 	addl	$1, %r8d
-	xorl	%edi, %edi
-	testl	%r13d, %r13d
+	xorl	%esi, %esi
+	testl	%r12d, %r12d
 	jle	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_20
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_19:
-	movl	(%r15), %edi
+	movl	(%r15), %esi
 	movq	%r15, %rax
-	movq	%r15, %r10
+	movq	%r15, %rdi
 	xorl	%ecx, %ecx
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_25:
-	testl	%edi, %edi
+	testl	%esi, %esi
 	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_22
 	movl	$16777216, %r11d
-	subl	%edi, %r11d
-	movl	%r11d, (%r10)
+	subl	%esi, %r11d
+	movl	%r11d, (%rdi)
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_24
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_112:
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_102:
 	addq	$4, %rax
-	movl	$16777215, %edi
-	subl	(%rax), %edi
-	movl	%edi, (%rax)
+	movl	$16777215, %esi
+	subl	(%rax), %esi
+	movl	%esi, (%rax)
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_24:
 	addl	$1, %ecx
-	cmpl	%ecx, %r13d
-	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_112
-	movl	$1, %edi
+	cmpl	%ecx, %r12d
+	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_102
+	movl	$1, %esi
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_23:
-	testl	%esi, %esi
+	testl	%edx, %edx
 	jle	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_26
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_20:
-	cmpl	$1, %esi
+	cmpl	$1, %edx
 	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_27
-	cmpl	$2, %esi
+	cmpl	$2, %edx
 	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_28
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_26:
 	cmpl	$2, %r9d
@@ -1247,52 +1252,52 @@ crabc_x86_math_sin_reduce_pio2_large:
 	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C6(%rip), %xmm6
 	subsd	%xmm1, %xmm6
 	movapd	%xmm6, %xmm1
-	testl	%edi, %edi
+	testl	%esi, %esi
 	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_15
 	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C6(%rip), %xmm0
-	movl	%esi, %edi
-	movq	%rdx, 72(%rsp)
-	movl	%r9d, 68(%rsp)
-	movl	%r8d, 28(%rsp)
-	movl	%esi, 16(%rsp)
-	movsd	%xmm6, 32(%rsp)
-	call	crabc_x86_math_sin_provider_scalbn
-	movsd	32(%rsp), %xmm1
-	movq	72(%rsp), %rdx
-	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C1(%rip), %xmm4
-	movl	68(%rsp), %r9d
+	movl	%edx, %edi
+	movl	%r10d, 76(%rsp)
+	movl	%r9d, 72(%rsp)
+	movl	%r8d, 40(%rsp)
+	movl	%edx, 8(%rsp)
+	movsd	%xmm6, 16(%rsp)
+	call	crabc_x86_math_sin_provider_scalbn@PLT
+	movsd	16(%rsp), %xmm1
+	movl	76(%rsp), %r10d
+	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C2(%rip), %xmm4
+	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C1(%rip), %xmm3
 	subsd	%xmm0, %xmm1
-	movl	28(%rsp), %r8d
-	movl	16(%rsp), %esi
+	movl	72(%rsp), %r9d
+	movl	40(%rsp), %r8d
+	movl	8(%rsp), %edx
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_15
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_22:
 	addl	$1, %ecx
-	cmpl	%ecx, %r13d
+	cmpl	%ecx, %r12d
 	jle	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_23
 	addq	$4, %rax
-	movl	(%rax), %edi
-	movq	%rax, %r10
+	movl	(%rax), %esi
+	movq	%rax, %rdi
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_25
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_27:
-	movslq	24(%rsp), %rax
+	movslq	%r10d, %rax
 	andl	$8388607, 80(%rsp,%rax,4)
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_26
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_28:
-	movslq	24(%rsp), %rax
+	movslq	%r10d, %rax
 	andl	$4194303, 80(%rsp,%rax,4)
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_26
-	.p2align 5
+	.p2align 4
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_33:
-	orl	(%r15,%rax,4), %ecx
-	orl	-4(%r15,%rax,4), %ecx
-	subq	$2, %rax
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_30:
-	cmpl	%eax, %r14d
-	jle	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_33
-	testl	%ecx, %ecx
-	jne	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_113
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_75:
-	movq	40(%rsp), %rax
+	orl	(%rcx), %esi
+	subl	$1, %eax
+	subq	$4, %rcx
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_32:
+	cmpl	%r14d, %eax
+	jge	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_33
+	testl	%esi, %esi
+	jne	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_103
+	movq	48(%rsp), %rax
 	movl	$1, %r8d
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_34
 	.p2align 4
@@ -1303,142 +1308,146 @@ crabc_x86_math_sin_reduce_pio2_large:
 	subq	$4, %rax
 	testl	%ecx, %ecx
 	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_36
-	movslq	52(%rsp), %rax
-	movl	48(%rsp), %edx
-	leal	1(%r13), %ecx
-	addl	%r13d, %r8d
-	movslq	%ecx, %rcx
+	movslq	64(%rsp), %rax
+	movl	44(%rsp), %ecx
+	addl	%r12d, %r8d
+	leal	1(%r12), %esi
+	movq	32(%rsp), %rdi
+	movslq	%esi, %rsi
+	leaq	crabc_x86_math_sin_src_math___rem_pio2_large_ipio2(%rip), %r9
 	movq	%rax, %r11
-	leal	1(%r13,%rdx), %edx
-	addq	8(%rsp), %rax
-	movslq	%edx, %rdx
-	leal	0(%r13,%r11), %r10d
-	leaq	160(%rsp,%rax,8), %rdi
-	subq	%rcx, %rdx
+	leal	1(%r12,%rcx), %ecx
+	addq	(%rsp), %rax
+	movslq	%ecx, %rcx
+	leal	(%r12,%r11), %r10d
+	leaq	(%rdi,%rax,8), %rdi
+	subq	%rsi, %rcx
 	movslq	%r10d, %r10
-	leaq	0(,%rdx,4), %r9
+	leaq	(%r9,%rcx,4), %r9
 	subq	%rax, %r10
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_37
 	.p2align 5
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_39:
 	movsd	0(%rbp,%rax,8), %xmm0
-	mulsd	(%rdx), %xmm0
+	mulsd	(%rcx), %xmm0
 	addq	$1, %rax
-	subq	$8, %rdx
+	subq	$8, %rcx
 	addsd	%xmm0, %xmm1
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_38:
 	cmpl	%eax, %ebx
 	jge	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_39
-	movsd	%xmm1, (%r12,%rcx,8)
+	movsd	%xmm1, 0(%r13,%rsi,8)
 	addq	$8, %rdi
-	addq	$1, %rcx
+	addq	$1, %rsi
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_37:
-	cmpl	%ecx, %r8d
-	jl	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_114
+	cmpl	%esi, %r8d
+	jl	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_104
 	pxor	%xmm0, %xmm0
-	movq	%rdi, %rdx
+	movq	%rdi, %rcx
 	pxor	%xmm1, %xmm1
 	xorl	%eax, %eax
-	cvtsi2sdl	crabc_x86_math_sin_src_math___rem_pio2_large_ipio2(%r9,%rcx,4), %xmm0
+	cvtsi2sdl	(%r9,%rsi,4), %xmm0
 	movsd	%xmm0, (%rdi,%r10,8)
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_38
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_114:
-	movl	%r8d, %r13d
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_104:
+	movl	%r8d, %r12d
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_10:
-	movslq	%r13d, %rax
-	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C2(%rip), %xmm3
+	movslq	%r12d, %rax
+	leal	-1(%r12), %r10d
 	movq	%r15, %rcx
 	movsd	480(%rsp,%rax,8), %xmm0
-	movq	%rax, 8(%rsp)
-	leal	-1(%r13), %eax
-	movslq	%eax, %rdx
-	movl	%eax, 24(%rsp)
-	movq	%rdx, %rax
+	movq	%rax, (%rsp)
+	movslq	%r10d, %rax
+	movq	%rax, 24(%rsp)
+	leaq	0(%r13,%rax,8), %rsi
+	movl	%r12d, %eax
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_11
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_113:
-	movl	24(%rsp), %r13d
-	subl	$24, %esi
-	leaq	(%r15,%rdx,4), %rax
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_103:
+	movl	%r10d, %r12d
+	subl	$24, %edx
+	addq	%r15, %rdi
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_41
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_42:
-	subl	$1, %r13d
-	subl	$24, %esi
+	subl	$1, %r12d
+	subl	$24, %edx
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_41:
-	movl	(%rax), %edx
-	subq	$4, %rax
-	testl	%edx, %edx
+	movl	(%rdi), %eax
+	subq	$4, %rdi
+	testl	%eax, %eax
 	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_42
-	movslq	%r13d, %rax
-	movq	%rax, 8(%rsp)
+	movslq	%r12d, %rax
+	movq	%rax, (%rsp)
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_43:
 	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C6(%rip), %xmm0
-	movl	%esi, %edi
-	movl	%r9d, 16(%rsp)
-	movl	%r8d, 24(%rsp)
-	call	crabc_x86_math_sin_provider_scalbn
-	movq	8(%rsp), %rax
-	movl	24(%rsp), %r8d
+	movl	%edx, %edi
+	movl	%r9d, 40(%rsp)
+	movl	%r8d, 8(%rsp)
+	call	crabc_x86_math_sin_provider_scalbn@PLT
+	movq	(%rsp), %rax
+	movl	8(%rsp), %r8d
 	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C1(%rip), %xmm2
-	movl	16(%rsp), %r9d
+	movl	40(%rsp), %r9d
 	movapd	%xmm0, %xmm1
-	movq	%rax, %rcx
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_46
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_32:
-	movl	%esi, %edi
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_30:
+	movl	%edx, %edi
 	movapd	%xmm1, %xmm0
-	movl	%r9d, 28(%rsp)
+	movl	%r9d, 16(%rsp)
 	negl	%edi
-	movl	%r8d, 16(%rsp)
-	movl	%esi, 24(%rsp)
-	call	crabc_x86_math_sin_provider_scalbn
-	movl	24(%rsp), %esi
-	movl	16(%rsp), %r8d
+	movl	%r8d, 40(%rsp)
+	movl	%edx, 8(%rsp)
+	call	crabc_x86_math_sin_provider_scalbn@PLT
+	movl	8(%rsp), %edx
+	movl	40(%rsp), %r8d
 	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C2(%rip), %xmm2
-	movl	28(%rsp), %r9d
+	movl	16(%rsp), %r9d
 	comisd	%xmm2, %xmm0
-	jb	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_103
+	jb	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_95
 	movsd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C1(%rip), %xmm1
-	movq	8(%rsp), %rbx
-	addl	$1, %r13d
-	addl	$24, %esi
+	movq	(%rsp), %rbx
+	addl	$1, %r12d
+	addl	$24, %edx
 	mulsd	%xmm0, %xmm1
 	cvttsd2sil	%xmm1, %eax
 	pxor	%xmm1, %xmm1
 	cvtsi2sdl	%eax, %xmm1
 	mulsd	%xmm2, %xmm1
 	subsd	%xmm1, %xmm0
-	cvttsd2sil	%xmm0, %edx
-	movl	%edx, 80(%rsp,%rbx,4)
-	movslq	%r13d, %rbx
-	movq	%rbx, 8(%rsp)
+	cvttsd2sil	%xmm0, %ecx
+	movl	%ecx, 80(%rsp,%rbx,4)
+	movslq	%r12d, %rbx
+	movq	%rbx, (%rsp)
 	movl	%eax, 80(%rsp,%rbx,4)
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_43
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_103:
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_95:
 	cvttsd2sil	%xmm0, %eax
-	movq	8(%rsp), %rbx
+	movq	(%rsp), %rbx
 	movl	%eax, 80(%rsp,%rbx,4)
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_43
-	.p2align 5
+	.p2align 6
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_47:
 	pxor	%xmm0, %xmm0
 	cvtsi2sdl	(%r15,%rax,4), %xmm0
 	mulsd	%xmm1, %xmm0
 	mulsd	%xmm2, %xmm1
-	movsd	%xmm0, (%r12,%rax,8)
+	movsd	%xmm0, 0(%r13,%rax,8)
 	subq	$1, %rax
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_46:
 	testl	%eax, %eax
 	jns	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_47
-	movq	8(%rsp), %rax
-	movl	%r13d, %esi
+	movq	(%rsp), %rax
+	movl	%r12d, %esi
 	xorl	%edx, %edx
-	leaq	0(,%rax,8), %rdi
-	addq	%rdi, %r12
+	leaq	crabc_x86_math_sin_src_math___rem_pio2_large_PIo2(%rip), %rcx
+	leaq	320(%rsp), %rdi
+	leaq	0(,%rax,8), %r10
+	movq	%rdi, %r11
+	addq	%r10, %r13
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_48
 	.p2align 5
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_50:
-	movsd	crabc_x86_math_sin_src_math___rem_pio2_large_PIo2(,%rax,8), %xmm0
-	mulsd	(%r12,%rax,8), %xmm0
+	movsd	(%rcx,%rax,8), %xmm0
+	mulsd	0(%r13,%rax,8), %xmm0
 	addq	$1, %rax
 	addsd	%xmm0, %xmm1
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_51:
@@ -1447,46 +1456,54 @@ crabc_x86_math_sin_reduce_pio2_large:
 	cmpl	%edx, %eax
 	jle	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_50
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_49:
-	movsd	%xmm1, 320(%rsp,%rdx,8)
+	movsd	%xmm1, (%r11)
 	subl	$1, %esi
 	addq	$1, %rdx
-	subq	$8, %r12
+	addq	$8, %r11
+	subq	$8, %r13
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_48:
 	testl	%esi, %esi
-	js	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_115
+	js	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_105
 	xorl	%eax, %eax
 	pxor	%xmm1, %xmm1
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_51
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_115:
-	movl	64(%rsp), %eax
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_105:
+	movl	68(%rsp), %eax
 	cmpl	$2, %eax
 	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_52
+	addq	%rdi, %r10
 	testl	%eax, %eax
-	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_77
+	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_53
 	pxor	%xmm0, %xmm0
-	leaq	320(%rsp), %rax
-	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_54
+	testl	%eax, %eax
+	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_58
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_55
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_52:
-	cmpl	$3, 64(%rsp)
+	cmpl	$3, 68(%rsp)
 	jne	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_55
-	leal	-1(%r13), %eax
-	leaq	320(%rsp), %rdx
-	cltq
-	leaq	(%rdx,%rax,8), %rsi
-	movq	8(%rsp), %rax
-	subq	%rdi, %rsi
+	leal	-1(%r12), %r11d
+	movq	(%rsp), %rsi
+	movl	%r12d, %ecx
+	movslq	%r11d, %r11
+	leaq	(%rdi,%r11,8), %rax
+	subq	%r11, %rsi
+	movq	%rax, %rdx
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_56
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_57:
-	addsd	(%rax,%rcx,8), %xmm0
-	subq	$1, %rcx
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_54:
-	testl	%ecx, %ecx
-	jns	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_57
-	testl	%r9d, %r9d
-	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_58
-	xorpd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C7(%rip), %xmm0
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_53:
+	movl	%r12d, %eax
+	pxor	%xmm1, %xmm1
+	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_57
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_59:
+	addsd	(%r10), %xmm0
+	subl	$1, %r12d
+	subq	$8, %r10
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_58:
+	testl	%r12d, %r12d
+	jns	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_59
+	testl	%r9d, %r9d
+	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_60
+	xorpd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C7(%rip), %xmm0
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_60:
 	movq	56(%rsp), %rax
 	movsd	%xmm0, (%rax)
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_55:
@@ -1500,95 +1517,90 @@ crabc_x86_math_sin_reduce_pio2_large:
 	popq	%r14
 	popq	%r15
 	ret
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_59:
-	addsd	(%rax,%rcx,8), %xmm1
-	subq	$1, %rcx
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_53:
-	testl	%ecx, %ecx
-	jns	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_59
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_61:
+	addsd	(%r10), %xmm1
+	subl	$1, %eax
+	subq	$8, %r10
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_57:
+	testl	%eax, %eax
+	jns	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_61
 	movapd	%xmm1, %xmm0
 	testl	%r9d, %r9d
-	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_60
+	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_62
 	xorpd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C7(%rip), %xmm0
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_60:
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_62:
 	movq	56(%rsp), %rax
-	leaq	320(%rsp), %rdx
 	movsd	%xmm0, (%rax)
-	xorl	%eax, %eax
+	movl	$1, %eax
 	movsd	320(%rsp), %xmm0
 	subsd	%xmm1, %xmm0
-	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_61
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_77:
-	pxor	%xmm1, %xmm1
-	leaq	320(%rsp), %rax
-	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_53
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_62:
-	addsd	(%rdx,%rax,8), %xmm0
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_61:
-	addq	$1, %rax
-	cmpl	%eax, %r13d
-	jge	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_62
-	testl	%r9d, %r9d
-	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_63
-	xorpd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C7(%rip), %xmm0
+	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_63
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_64:
+	addsd	8(%rdi), %xmm0
+	addq	$8, %rdi
+	addl	$1, %eax
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_63:
+	cmpl	%eax, %r12d
+	jge	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_64
+	testl	%r9d, %r9d
+	je	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_65
+	xorpd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C7(%rip), %xmm0
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_65:
 	movq	56(%rsp), %rax
 	movsd	%xmm0, 8(%rax)
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_55
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_64:
-	movsd	(%rsi,%rax,8), %xmm0
-	movsd	(%rdx,%rax,8), %xmm2
-	movapd	%xmm0, %xmm1
-	addsd	%xmm2, %xmm1
-	subsd	%xmm1, %xmm0
-	addsd	%xmm2, %xmm0
-	movsd	%xmm0, (%rdx,%rax,8)
-	movsd	%xmm1, (%rsi,%rax,8)
-	subq	$1, %rax
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_56:
-	testl	%eax, %eax
-	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_64
-	movq	8(%rsp), %rax
-	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_65
 .Lcrabc_x86_math_sin_src_math___rem_pio2_large_66:
-	movsd	(%rsi,%rax,8), %xmm0
-	movsd	(%rdx,%rax,8), %xmm2
+	movsd	(%rdx), %xmm0
+	movsd	(%rdx,%rsi,8), %xmm2
+	subl	$1, %ecx
 	movapd	%xmm0, %xmm1
 	addsd	%xmm2, %xmm1
 	subsd	%xmm1, %xmm0
 	addsd	%xmm2, %xmm0
-	movsd	%xmm0, (%rdx,%rax,8)
-	movsd	%xmm1, (%rsi,%rax,8)
-	subq	$1, %rax
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_65:
-	cmpl	$1, %eax
+	movsd	%xmm0, (%rdx,%rsi,8)
+	subq	$8, %rdx
+	movsd	%xmm1, 8(%rdx)
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_56:
+	testl	%ecx, %ecx
 	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_66
-	pxor	%xmm0, %xmm0
-	testb	$1, 8(%rsp)
-	jne	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_67
-	movq	8(%rsp), %rax
-	cmpl	$1, %eax
-	jle	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_107
-	addsd	(%rdx,%rax,8), %xmm0
-	leaq	-1(%rax), %rcx
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_67:
-	cmpl	$1, %ecx
-	jle	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_107
-	addsd	(%rdx,%rcx,8), %xmm0
-	addsd	-8(%rdx,%rcx,8), %xmm0
-	subq	$2, %rcx
+	movq	(%rsp), %rcx
+	movl	%r12d, %edx
+	subq	%r11, %rcx
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_67
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_107:
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_68:
+	movsd	(%rax), %xmm0
+	movsd	(%rax,%rcx,8), %xmm2
+	subl	$1, %edx
+	movapd	%xmm0, %xmm1
+	addsd	%xmm2, %xmm1
+	subsd	%xmm1, %xmm0
+	addsd	%xmm2, %xmm0
+	movsd	%xmm0, (%rax,%rcx,8)
+	subq	$8, %rax
+	movsd	%xmm1, 8(%rax)
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_67:
+	cmpl	$1, %edx
+	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_68
+	addq	%r10, %rdi
+	pxor	%xmm0, %xmm0
+	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_69
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_70:
+	addsd	(%rdi), %xmm0
+	subl	$1, %r12d
+	subq	$8, %rdi
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_69:
+	cmpl	$1, %r12d
+	jg	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_70
 	movsd	320(%rsp), %xmm2
 	movsd	328(%rsp), %xmm1
 	testl	%r9d, %r9d
-	jne	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_69
+	jne	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_71
 	movq	56(%rsp), %rax
 	movsd	%xmm2, (%rax)
 	movsd	%xmm1, 8(%rax)
 	movsd	%xmm0, 16(%rax)
 	jmp	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_55
-.Lcrabc_x86_math_sin_src_math___rem_pio2_large_69:
+.Lcrabc_x86_math_sin_src_math___rem_pio2_large_71:
 	movq	56(%rsp), %rax
 	xorpd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C7(%rip), %xmm2
 	xorpd	.Lcrabc_x86_math_sin_src_math___rem_pio2_large_C7(%rip), %xmm1

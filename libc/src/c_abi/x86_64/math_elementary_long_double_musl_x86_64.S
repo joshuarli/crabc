@@ -127,7 +127,7 @@ acoshl:
 	js	.Lcrabc_x86_math_elementary_long_double_src_math_acoshl_10
 	pushq	8(%rsp)
 	pushq	8(%rsp)
-	call	logl
+	call	logl@PLT
 	fldt	.Lcrabc_x86_math_elementary_long_double_src_math_acoshl_C1(%rip)
 	popq	%rax
 	popq	%rdx
@@ -147,12 +147,12 @@ acoshl:
 	fstpt	16(%rsp)
 	faddp	%st, %st(1)
 	fstpt	(%rsp)
-	call	sqrtl
+	call	sqrtl@PLT
 	fldt	16(%rsp)
 	faddp	%st, %st(1)
 	fstpt	64(%rsp)
 	addq	$56, %rsp
-	jmp	log1pl
+	jmp	log1pl@PLT
 .Lcrabc_x86_math_elementary_long_double_src_math_acoshl_9:
 	fldt	(%rsp)
 	subq	$16, %rsp
@@ -164,7 +164,7 @@ acoshl:
 	fld1
 	fsubrp	%st, %st(1)
 	fstpt	(%rsp)
-	call	sqrtl
+	call	sqrtl@PLT
 	fldt	16(%rsp)
 	faddp	%st, %st(1)
 	fld1
@@ -173,7 +173,7 @@ acoshl:
 	fsubp	%st, %st(1)
 	fstpt	64(%rsp)
 	addq	$56, %rsp
-	jmp	logl
+	jmp	logl@PLT
 .Lcrabc_x86_math_elementary_long_double_src_math_acoshl_10:
 	fldt	(%rsp)
 	fsub	%st(0), %st
@@ -219,7 +219,7 @@ asinhl:
 .Lcrabc_x86_math_elementary_long_double_src_math_asinhl_11:
 	subq	$16, %rsp
 	fstpt	(%rsp)
-	call	logl
+	call	logl@PLT
 	fldt	.Lcrabc_x86_math_elementary_long_double_src_math_asinhl_C0(%rip)
 	popq	%rax
 	popq	%rdx
@@ -245,7 +245,7 @@ asinhl:
 	fld1
 	faddp	%st, %st(1)
 	fstpt	(%rsp)
-	call	sqrtl
+	call	sqrtl@PLT
 	fldt	16(%rsp)
 	subq	$16, %rsp
 	faddp	%st, %st(1)
@@ -254,7 +254,7 @@ asinhl:
 	fldt	48(%rsp)
 	faddp	%st, %st(1)
 	fstpt	(%rsp)
-	call	logl
+	call	logl@PLT
 	addq	$32, %rsp
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_asinhl_3
 .Lcrabc_x86_math_elementary_long_double_src_math_asinhl_13:
@@ -268,7 +268,7 @@ asinhl:
 	fxch	%st(1)
 	fstpt	16(%rsp)
 	fstpt	(%rsp)
-	call	sqrtl
+	call	sqrtl@PLT
 	subq	$16, %rsp
 	fld1
 	faddp	%st, %st(1)
@@ -277,7 +277,7 @@ asinhl:
 	fldt	48(%rsp)
 	faddp	%st, %st(1)
 	fstpt	(%rsp)
-	call	log1pl
+	call	log1pl@PLT
 	addq	$32, %rsp
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_asinhl_3
 	.size	asinhl, .-asinhl
@@ -331,7 +331,7 @@ atanhl:
 	fdivp	%st, %st(2)
 	faddp	%st, %st(1)
 	fstpt	(%rsp)
-	call	log1pl
+	call	log1pl@PLT
 	popq	%rcx
 	fmuls	.Lcrabc_x86_math_elementary_long_double_src_math_atanhl_C1(%rip)
 	popq	%rsi
@@ -345,7 +345,7 @@ atanhl:
 	fdivrp	%st, %st(1)
 	fadd	%st(0), %st
 	fstpt	(%rsp)
-	call	log1pl
+	call	log1pl@PLT
 	fmuls	.Lcrabc_x86_math_elementary_long_double_src_math_atanhl_C1(%rip)
 	popq	%rax
 	popq	%rdx
@@ -564,7 +564,7 @@ coshl:
 .Lcrabc_x86_math_elementary_long_double_src_math_coshl_3:
 	subq	$16, %rsp
 	fstpt	(%rsp)
-	call	expm1l
+	call	expm1l@PLT
 	popq	%rdi
 	popq	%r8
 	fld	%st(0)
@@ -595,7 +595,7 @@ coshl:
 .Lcrabc_x86_math_elementary_long_double_src_math_coshl_7:
 	subq	$16, %rsp
 	fstpt	(%rsp)
-	call	expl
+	call	expl@PLT
 	popq	%rcx
 	popq	%rsi
 	fld	%st(0)
@@ -609,7 +609,7 @@ coshl:
 	subq	$16, %rsp
 	fmulp	%st, %st(1)
 	fstpt	(%rsp)
-	call	expl
+	call	expl@PLT
 	popq	%rax
 	popq	%rdx
 	fld	%st(0)
@@ -742,21 +742,21 @@ fmal:
 	subq	$104, %rsp
 	pushq	136(%rsp)
 	pushq	136(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%r14
 	popq	%rdx
 	cmpl	$1, %eax
 	jle	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_3
 	pushq	152(%rsp)
 	pushq	152(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%r11
 	popq	%rbx
 	cmpl	$1, %eax
 	jle	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_3
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%r9
 	popq	%r10
 	cmpl	$1, %eax
@@ -809,20 +809,20 @@ fmal:
 	leaq	68(%rsp), %rdi
 	pushq	136(%rsp)
 	pushq	136(%rsp)
-	call	frexpl
+	call	frexpl@PLT
 	leaq	88(%rsp), %rdi
 	fstpt	16(%rsp)
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	frexpl
+	call	frexpl@PLT
 	fstpt	48(%rsp)
 	addq	$32, %rsp
 	leaq	76(%rsp), %rdi
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	frexpl
+	call	frexpl@PLT
 	fstpt	48(%rsp)
-	call	fegetround
+	call	fegetround@PLT
 	movl	92(%rsp), %edi
 	movl	%eax, %ebx
 	movl	88(%rsp), %eax
@@ -838,13 +838,13 @@ fmal:
 	pushq	40(%rsp)
 	subl	%eax, %edi
 	pushq	40(%rsp)
-	call	scalbnl
+	call	scalbnl@PLT
 	popq	%r14
 	popq	%rax
 .Lcrabc_x86_math_elementary_long_double_src_math_fmal_18:
 	xorl	%edi, %edi
 	fstpt	32(%rsp)
-	call	fesetround
+	call	fesetround@PLT
 	fldl	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_C4(%rip)
 	fldt	(%rsp)
 	movl	72(%rsp), %edx
@@ -924,7 +924,7 @@ fmal:
 	fld	%st(0)
 	fstpt	(%rsp)
 	fstpt	32(%rsp)
-	call	ilogbl
+	call	ilogbl@PLT
 	fldt	16(%rsp)
 	movl	48(%rsp), %edx
 	fldt	32(%rsp)
@@ -941,16 +941,16 @@ fmal:
 	subq	$16, %rsp
 	movl	%edx, %edi
 	fstpt	(%rsp)
-	call	scalbnl
+	call	scalbnl@PLT
 	popq	%rcx
 	popq	%rsi
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_1
 .Lcrabc_x86_math_elementary_long_double_src_math_fmal_44:
 	movl	$32, %edi
-	call	feraiseexcept
+	call	feraiseexcept@PLT
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%rdx
 	popq	%rcx
 	cmpl	$4, %eax
@@ -970,7 +970,7 @@ fmal:
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_1
 .Lcrabc_x86_math_elementary_long_double_src_math_fmal_47:
 	movl	$16, %edi
-	call	feraiseexcept
+	call	feraiseexcept@PLT
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_12
 .Lcrabc_x86_math_elementary_long_double_src_math_fmal_14:
 	fldt	160(%rsp)
@@ -993,7 +993,7 @@ fmal:
 	fstpt	(%rsp)
 	pushq	184(%rsp)
 	pushq	184(%rsp)
-	call	nextafterl
+	call	nextafterl@PLT
 	addq	$32, %rsp
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_1
 .Lcrabc_x86_math_elementary_long_double_src_math_fmal_15:
@@ -1029,7 +1029,7 @@ fmal:
 	pushq	8(%rsp)
 	pushq	184(%rsp)
 	pushq	184(%rsp)
-	call	nextafterl
+	call	nextafterl@PLT
 	addq	$32, %rsp
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_1
 .Lcrabc_x86_math_elementary_long_double_src_math_fmal_17:
@@ -1038,7 +1038,7 @@ fmal:
 	pushq	40(%rsp)
 	pushq	$1
 	pushq	%r11
-	call	copysignl
+	call	copysignl@PLT
 	addq	$32, %rsp
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_18
 .Lcrabc_x86_math_elementary_long_double_src_math_fmal_45:
@@ -1050,7 +1050,7 @@ fmal:
 	movl	%edx, 16(%rsp)
 	fstpt	32(%rsp)
 	fstpt	(%rsp)
-	call	fesetround
+	call	fesetround@PLT
 	fldt	(%rsp)
 	subq	$16, %rsp
 	fstpt	96(%rsp)
@@ -1061,7 +1061,7 @@ fmal:
 	fldt	64(%rsp)
 	movl	32(%rsp), %edi
 	fstpt	(%rsp)
-	call	scalbnl
+	call	scalbnl@PLT
 	fldt	16(%rsp)
 	popq	%r9
 	popq	%r10
@@ -1074,12 +1074,12 @@ fmal:
 	movl	%edx, (%rsp)
 	fstpt	32(%rsp)
 	fstpt	16(%rsp)
-	call	fetestexcept
+	call	fetestexcept@PLT
 	movl	$32, %edi
 	movl	%eax, %r14d
-	call	feclearexcept
+	call	feclearexcept@PLT
 	movl	%ebx, %edi
-	call	fesetround
+	call	fesetround@PLT
 	fldt	32(%rsp)
 	subq	$16, %rsp
 	fldt	64(%rsp)
@@ -1088,12 +1088,12 @@ fmal:
 	movl	16(%rsp), %edi
 	faddp	%st, %st(1)
 	fstpt	(%rsp)
-	call	scalbnl
+	call	scalbnl@PLT
 	subq	$16, %rsp
 	fld	%st(0)
 	fstpt	(%rsp)
 	fstpt	32(%rsp)
-	call	ilogbl
+	call	ilogbl@PLT
 	fldt	32(%rsp)
 	addq	$32, %rsp
 	cmpl	$-16382, %eax
@@ -1103,19 +1103,19 @@ fmal:
 	je	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_1
 	movl	$32, %edi
 	fstpt	(%rsp)
-	call	feraiseexcept
+	call	feraiseexcept@PLT
 	fldt	(%rsp)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_1
 .Lcrabc_x86_math_elementary_long_double_src_math_fmal_48:
 	fstp	%st(0)
 	movl	$32, %edi
-	call	fetestexcept
+	call	fetestexcept@PLT
 	fldt	(%rsp)
 	testl	%eax, %eax
 	je	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_22
 	fstp	%st(0)
 	movl	$16, %edi
-	call	feraiseexcept
+	call	feraiseexcept@PLT
 	fldt	(%rsp)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_1
 .Lcrabc_x86_math_elementary_long_double_src_math_fmal_32:
@@ -1129,7 +1129,7 @@ fmal:
 	fstpt	(%rsp)
 	pushq	24(%rsp)
 	pushq	24(%rsp)
-	call	nextafterl
+	call	nextafterl@PLT
 	fstpt	32(%rsp)
 	fldt	64(%rsp)
 	addq	$32, %rsp
@@ -1159,7 +1159,7 @@ fmal:
 	pushq	24(%rsp)
 	movl	%edx, %edi
 	pushq	24(%rsp)
-	call	scalbnl
+	call	scalbnl@PLT
 	popq	%rax
 	popq	%rdx
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_fmal_1
@@ -1177,7 +1177,7 @@ fmal:
 	fstpt	(%rsp)
 	pushq	40(%rsp)
 	pushq	40(%rsp)
-	call	nextafterl
+	call	nextafterl@PLT
 	fstpt	48(%rsp)
 	addq	$32, %rsp
 	movl	(%rsp), %edx
@@ -1206,7 +1206,7 @@ fmaxl:
 	pushq	%rbx
 	pushq	24(%rsp)
 	pushq	24(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%r8
 	popq	%r9
 	testl	%eax, %eax
@@ -1219,7 +1219,7 @@ fmaxl:
 .Lcrabc_x86_math_elementary_long_double_src_math_fmaxl_2:
 	pushq	40(%rsp)
 	pushq	40(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%rsi
 	popq	%rdi
 	testl	%eax, %eax
@@ -1230,11 +1230,11 @@ fmaxl:
 .Lcrabc_x86_math_elementary_long_double_src_math_fmaxl_14:
 	pushq	24(%rsp)
 	pushq	24(%rsp)
-	call	__signbitl
+	call	__signbitl@PLT
 	pushq	56(%rsp)
 	pushq	56(%rsp)
 	movl	%eax, %ebx
-	call	__signbitl
+	call	__signbitl@PLT
 	addq	$32, %rsp
 	cmpl	%eax, %ebx
 	jne	.Lcrabc_x86_math_elementary_long_double_src_math_fmaxl_15
@@ -1247,7 +1247,7 @@ fmaxl:
 .Lcrabc_x86_math_elementary_long_double_src_math_fmaxl_15:
 	pushq	24(%rsp)
 	pushq	24(%rsp)
-	call	__signbitl
+	call	__signbitl@PLT
 	popq	%rdx
 	popq	%rcx
 	testl	%eax, %eax
@@ -1265,7 +1265,7 @@ fminl:
 	pushq	%rbx
 	pushq	24(%rsp)
 	pushq	24(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%r8
 	popq	%r9
 	testl	%eax, %eax
@@ -1278,7 +1278,7 @@ fminl:
 .Lcrabc_x86_math_elementary_long_double_src_math_fminl_14:
 	pushq	40(%rsp)
 	pushq	40(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%rsi
 	popq	%rdi
 	testl	%eax, %eax
@@ -1289,11 +1289,11 @@ fminl:
 .Lcrabc_x86_math_elementary_long_double_src_math_fminl_3:
 	pushq	24(%rsp)
 	pushq	24(%rsp)
-	call	__signbitl
+	call	__signbitl@PLT
 	pushq	56(%rsp)
 	pushq	56(%rsp)
 	movl	%eax, %ebx
-	call	__signbitl
+	call	__signbitl@PLT
 	addq	$32, %rsp
 	cmpl	%eax, %ebx
 	jne	.Lcrabc_x86_math_elementary_long_double_src_math_fminl_15
@@ -1306,7 +1306,7 @@ fminl:
 .Lcrabc_x86_math_elementary_long_double_src_math_fminl_15:
 	pushq	24(%rsp)
 	pushq	24(%rsp)
-	call	__signbitl
+	call	__signbitl@PLT
 	popq	%rdx
 	popq	%rcx
 	testl	%eax, %eax
@@ -1411,7 +1411,7 @@ hypotl:
 	faddp	%st, %st(2)
 	faddp	%st, %st(1)
 	fstpt	(%rsp)
-	call	sqrtl
+	call	sqrtl@PLT
 	fldt	16(%rsp)
 	popq	%rax
 	popq	%rdx
@@ -1428,7 +1428,7 @@ hypotl:
 	fld	%st(0)
 	fstpt	(%rsp)
 	fstpt	16(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%rcx
 	popq	%rsi
 	fldt	(%rsp)
@@ -1487,14 +1487,14 @@ powl:
 	fstpt	112(%rsp)
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%r9
 	popq	%r10
 	testl	%eax, %eax
 	jne	.Lcrabc_x86_math_elementary_long_double_src_math_powl_2
 	pushq	184(%rsp)
 	pushq	184(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%rdi
 	popq	%r8
 	testl	%eax, %eax
@@ -1514,7 +1514,7 @@ powl:
 .Lcrabc_x86_math_elementary_long_double_src_math_powl_2:
 	pushq	184(%rsp)
 	pushq	184(%rsp)
-	call	__fpclassifyl
+	call	__fpclassifyl@PLT
 	popq	%rcx
 	popq	%rsi
 	fld1
@@ -1568,7 +1568,7 @@ powl:
 .Lcrabc_x86_math_elementary_long_double_src_math_powl_98:
 	pushq	184(%rsp)
 	pushq	184(%rsp)
-	call	fabsl
+	call	fabsl@PLT
 	popq	%rax
 	popq	%rdx
 	flds	.Lcrabc_x86_math_elementary_long_double_src_math_powl_C6(%rip)
@@ -1695,7 +1695,7 @@ powl:
 .Lcrabc_x86_math_elementary_long_double_src_math_powl_25:
 	pushq	184(%rsp)
 	pushq	184(%rsp)
-	call	floorl
+	call	floorl@PLT
 	popq	%rbx
 	popq	%r14
 	fldt	176(%rsp)
@@ -1730,7 +1730,7 @@ powl:
 	fstpt	64(%rsp)
 	pushq	184(%rsp)
 	pushq	184(%rsp)
-	call	fabsl
+	call	fabsl@PLT
 	movss	.Lcrabc_x86_math_elementary_long_double_src_math_powl_C10(%rip), %xmm4
 	subq	$16, %rsp
 	movss	%xmm4, 48(%rsp)
@@ -1739,13 +1739,13 @@ powl:
 	fstpt	80(%rsp)
 	fmulp	%st, %st(1)
 	fstpt	(%rsp)
-	call	floorl
+	call	floorl@PLT
 	fstpt	64(%rsp)
 	popq	%r8
 	popq	%r9
 	fldt	80(%rsp)
 	fstpt	(%rsp)
-	call	fabsl
+	call	fabsl@PLT
 	fldt	64(%rsp)
 	popq	%r10
 	popq	%r11
@@ -1819,7 +1819,7 @@ powl:
 .Lcrabc_x86_math_elementary_long_double_src_math_powl_39:
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	floorl
+	call	floorl@PLT
 	popq	%r11
 	popq	%r14
 	fldt	160(%rsp)
@@ -1830,7 +1830,7 @@ powl:
 	jne	.Lcrabc_x86_math_elementary_long_double_src_math_powl_48
 	pushq	184(%rsp)
 	pushq	184(%rsp)
-	call	fabsl
+	call	fabsl@PLT
 	flds	.Lcrabc_x86_math_elementary_long_double_src_math_powl_C14(%rip)
 	popq	%r9
 	popq	%r10
@@ -1857,7 +1857,7 @@ powl:
 	movl	%ecx, 32(%rsp)
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	frexpl
+	call	frexpl@PLT
 	movl	124(%rsp), %esi
 	movl	16(%rsp), %eax
 	popq	%rcx
@@ -1937,7 +1937,7 @@ powl:
 	jbe	.Lcrabc_x86_math_elementary_long_double_src_math_powl_148
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	__signbitl
+	call	__signbitl@PLT
 	popq	%rsi
 	popq	%rdi
 	testl	%eax, %eax
@@ -1973,7 +1973,7 @@ powl:
 	leaq	108(%rsp), %rdi
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	frexpl
+	call	frexpl@PLT
 	fldt	.Lcrabc_x86_math_elementary_long_double_src_math_powl_C21(%rip)
 	movl	124(%rsp), %r14d
 	popq	%rax
@@ -1989,19 +1989,20 @@ powl:
 	jnb	.Lcrabc_x86_math_elementary_long_double_src_math_powl_73
 	movl	%ecx, 108(%rsp)
 .Lcrabc_x86_math_elementary_long_double_src_math_powl_74:
-	leal	4(%rax), %ecx
-	movslq	%ecx, %rdx
+	leal	4(%rax), %esi
+	leaq	crabc_x86_math_elementary_long_double_src_math_powl_A(%rip), %rcx
+	movslq	%esi, %rdx
 	salq	$4, %rdx
-	fldt	crabc_x86_math_elementary_long_double_src_math_powl_A(%rdx)
+	fldt	(%rcx,%rdx)
 	fcomip	%st(1), %st
 	jb	.Lcrabc_x86_math_elementary_long_double_src_math_powl_75
-	movl	%ecx, 108(%rsp)
-	movl	%ecx, %eax
+	movl	%esi, 108(%rsp)
+	movl	%esi, %eax
 .Lcrabc_x86_math_elementary_long_double_src_math_powl_75:
 	addl	$2, %eax
 	movslq	%eax, %rdx
 	salq	$4, %rdx
-	fldt	crabc_x86_math_elementary_long_double_src_math_powl_A(%rdx)
+	fldt	(%rcx,%rdx)
 	fcomip	%st(1), %st
 	jb	.Lcrabc_x86_math_elementary_long_double_src_math_powl_77
 	movl	%eax, 108(%rsp)
@@ -2012,24 +2013,25 @@ powl:
 	fstp	%st(1)
 	jnb	.Lcrabc_x86_math_elementary_long_double_src_math_powl_96
 	movl	108(%rsp), %eax
+	leaq	crabc_x86_math_elementary_long_double_src_math_powl_B(%rip), %rsi
 	addl	$1, %eax
 	movslq	%eax, %rdx
 	salq	$4, %rdx
-	fldt	crabc_x86_math_elementary_long_double_src_math_powl_A(%rdx)
+	fldt	(%rcx,%rdx)
 	movl	%eax, %edx
 	shrl	$31, %edx
 	addl	%eax, %edx
 	sarl	%edx
 	movslq	%edx, %rdx
 	salq	$4, %rdx
-	fldt	crabc_x86_math_elementary_long_double_src_math_powl_B(%rdx)
+	fldt	(%rsi,%rdx)
 .Lcrabc_x86_math_elementary_long_double_src_math_powl_79:
 	fxch	%st(2)
 	movl	%eax, 108(%rsp)
 	subq	$16, %rsp
 	movl	$3, %esi
 	fsub	%st(1), %st
-	movl	$crabc_x86_math_elementary_long_double_src_math_powl_P, %edi
+	leaq	crabc_x86_math_elementary_long_double_src_math_powl_P(%rip), %rdi
 	fsubp	%st, %st(2)
 	fdivrp	%st, %st(1)
 	fld	%st(0)
@@ -2042,7 +2044,7 @@ powl:
 	fldt	128(%rsp)
 	subq	$16, %rsp
 	movl	$3, %esi
-	movl	$crabc_x86_math_elementary_long_double_src_math_powl_Q, %edi
+	leaq	crabc_x86_math_elementary_long_double_src_math_powl_Q(%rip), %rdi
 	fmulp	%st, %st(1)
 	fstpt	64(%rsp)
 	fldt	32(%rsp)
@@ -2090,7 +2092,7 @@ powl:
 	fldt	.Lcrabc_x86_math_elementary_long_double_src_math_powl_C30(%rip)
 	fmulp	%st, %st(1)
 	fstpt	(%rsp)
-	call	floorl
+	call	floorl@PLT
 	fldt	.Lcrabc_x86_math_elementary_long_double_src_math_powl_C29(%rip)
 	subq	$16, %rsp
 	fmulp	%st, %st(1)
@@ -2109,7 +2111,7 @@ powl:
 	fxch	%st(1)
 	fstpt	48(%rsp)
 	fstpt	(%rsp)
-	call	floorl
+	call	floorl@PLT
 	fldt	.Lcrabc_x86_math_elementary_long_double_src_math_powl_C29(%rip)
 	fmulp	%st, %st(1)
 	fldt	48(%rsp)
@@ -2126,7 +2128,7 @@ powl:
 	popq	%r11
 	popq	%r14
 	fstpt	(%rsp)
-	call	floorl
+	call	floorl@PLT
 	fldt	.Lcrabc_x86_math_elementary_long_double_src_math_powl_C29(%rip)
 	subq	$16, %rsp
 	fmulp	%st, %st(1)
@@ -2141,7 +2143,7 @@ powl:
 	fxch	%st(1)
 	fstpt	48(%rsp)
 	fstpt	(%rsp)
-	call	floorl
+	call	floorl@PLT
 	fldt	.Lcrabc_x86_math_elementary_long_double_src_math_powl_C29(%rip)
 	fmulp	%st, %st(1)
 	fldt	32(%rsp)
@@ -2180,13 +2182,14 @@ powl:
 	movq	%rdx, 16(%rsp)
 	subq	$16, %rsp
 	movl	$6, %esi
-	movl	$crabc_x86_math_elementary_long_double_src_math_powl_R, %edi
+	leaq	crabc_x86_math_elementary_long_double_src_math_powl_R(%rip), %rdi
 	fld	%st(0)
 	fstpt	(%rsp)
 	fstpt	16(%rsp)
 	call	crabc_x86_math_elementary_long_double_internal_polevll
 	movq	32(%rsp), %rdx
 	fldt	16(%rsp)
+	leaq	crabc_x86_math_elementary_long_double_src_math_powl_A(%rip), %rcx
 	testq	%rdx, %rdx
 	leaq	31(%rdx), %rdi
 	movq	%rdx, %rax
@@ -2203,7 +2206,7 @@ powl:
 	movl	%edi, 124(%rsp)
 	subq	%rdx, %rax
 	salq	$4, %rax
-	fldt	crabc_x86_math_elementary_long_double_src_math_powl_A(%rax)
+	fldt	(%rcx,%rax)
 	fldt	128(%rsp)
 	fmul	%st(1), %st
 	fstpt	128(%rsp)
@@ -2212,7 +2215,7 @@ powl:
 	fstpt	128(%rsp)
 	fldt	128(%rsp)
 	fstpt	(%rsp)
-	call	scalbnl
+	call	scalbnl@PLT
 	fstpt	128(%rsp)
 	popq	%rdi
 	popq	%r8
@@ -2238,14 +2241,14 @@ powl:
 	ja	.Lcrabc_x86_math_elementary_long_double_src_math_powl_86
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	__signbitl
+	call	__signbitl@PLT
 	popq	%rax
 	popq	%rdx
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math_powl_18
 .Lcrabc_x86_math_elementary_long_double_src_math_powl_148:
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	__signbitl
+	call	__signbitl@PLT
 	popq	%rdx
 	popq	%rcx
 	testl	%eax, %eax
@@ -2310,7 +2313,7 @@ powl:
 .Lcrabc_x86_math_elementary_long_double_src_math_powl_86:
 	pushq	168(%rsp)
 	pushq	168(%rsp)
-	call	__signbitl
+	call	__signbitl@PLT
 	popq	%rcx
 	popq	%rsi
 .Lcrabc_x86_math_elementary_long_double_src_math_powl_53:
@@ -2982,7 +2985,7 @@ sinhl:
 	ja	.Lcrabc_x86_math_elementary_long_double_src_math_sinhl_4
 	subq	$16, %rsp
 	fstpt	(%rsp)
-	call	expm1l
+	call	expm1l@PLT
 	popq	%rdi
 	popq	%r8
 .Lcrabc_x86_math_elementary_long_double_src_math_sinhl_5:
@@ -3003,7 +3006,7 @@ sinhl:
 	movl	%edx, 88(%rsp)
 	movl	%ecx, 32(%rsp)
 	fstpt	(%rsp)
-	call	expm1l
+	call	expm1l@PLT
 	popq	%rcx
 	popq	%rsi
 	movl	16(%rsp), %ecx
@@ -3032,7 +3035,7 @@ sinhl:
 	fmuls	.Lcrabc_x86_math_elementary_long_double_src_math_sinhl_C0(%rip)
 	subq	$16, %rsp
 	fstpt	(%rsp)
-	call	expl
+	call	expl@PLT
 	fldt	16(%rsp)
 	popq	%rax
 	popq	%rdx
@@ -3197,7 +3200,7 @@ tanhl:
 	fadd	%st(0), %st
 	subq	$16, %rsp
 	fstpt	(%rsp)
-	call	expm1l
+	call	expm1l@PLT
 	flds	.Lcrabc_x86_math_elementary_long_double_src_math_tanhl_C3(%rip)
 	popq	%rdi
 	popq	%r8
@@ -3234,7 +3237,7 @@ tanhl:
 	fadd	%st(0), %st
 	subq	$16, %rsp
 	fstpt	(%rsp)
-	call	expm1l
+	call	expm1l@PLT
 	popq	%rcx
 	popq	%rsi
 	fld	%st(0)
@@ -3245,7 +3248,7 @@ tanhl:
 	fmuls	.Lcrabc_x86_math_elementary_long_double_src_math_tanhl_C4(%rip)
 	subq	$16, %rsp
 	fstpt	(%rsp)
-	call	expm1l
+	call	expm1l@PLT
 	popq	%rax
 	popq	%rdx
 	fld	%st(0)
@@ -3807,7 +3810,7 @@ crabc_x86_math_elementary_long_double_internal_rem_pio2l:
 	.type	crabc_x86_math_elementary_long_double_internal_rem_pio2_large, @function
 crabc_x86_math_elementary_long_double_internal_rem_pio2_large:
 	pushq	%r15
-	movslq	%r8d, %rax
+	leaq	crabc_x86_math_elementary_long_double_src_math___rem_pio2_large_init_jk(%rip), %rax
 	pushq	%r14
 	pushq	%r13
 	pushq	%r12
@@ -3815,383 +3818,379 @@ crabc_x86_math_elementary_long_double_internal_rem_pio2_large:
 	movq	%rdi, %rbp
 	pushq	%rbx
 	leal	-1(%rcx), %ebx
-	subq	$648, %rsp
-	movl	crabc_x86_math_elementary_long_double_src_math___rem_pio2_large_init_jk(,%rax,4), %r14d
-	movq	%rsi, 56(%rsp)
-	movl	%ecx, 52(%rsp)
-	movl	%r8d, 64(%rsp)
+	subq	$664, %rsp
+	movl	%ecx, 60(%rsp)
+	movslq	%r8d, %rcx
+	movq	%rsi, 72(%rsp)
+	movl	(%rax,%rcx,4), %r14d
+	movl	%r8d, 88(%rsp)
 	cmpl	$-20, %edx
-	jl	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_71
+	jl	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_73
 	leal	-3(%rdx), %ecx
 	movslq	%ecx, %rax
 	sarl	$31, %ecx
 	imulq	$715827883, %rax, %rax
 	sarq	$34, %rax
 	subl	%ecx, %eax
-	movl	%eax, 48(%rsp)
+	movl	%eax, 56(%rsp)
 	addl	$1, %eax
 	leal	0(,%rax,4), %ecx
 	subl	%ecx, %eax
 	sall	$3, %eax
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_2:
-	leal	(%rdx,%rax), %esi
-	movl	48(%rsp), %eax
-	leal	(%r14,%rbx), %ecx
+	addl	%eax, %edx
+	movl	56(%rsp), %eax
+	leaq	176(%rsp), %rdi
+	leal	(%r14,%rbx), %esi
+	movq	%rdi, 48(%rsp)
+	leaq	crabc_x86_math_elementary_long_double_src_math___rem_pio2_large_ipio2(%rip), %r8
 	subl	%ebx, %eax
 	cltq
-	movq	%rax, %rdx
-	negq	%rdx
-	leaq	160(%rsp,%rdx,8), %rdi
-	xorl	%edx, %edx
+	movq	%rax, %rcx
+	negq	%rcx
+	leaq	(%rdi,%rcx,8), %rdi
+	xorl	%ecx, %ecx
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_3
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_71:
-	movl	$0, 48(%rsp)
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_73:
+	movl	$0, 56(%rsp)
 	movl	$-24, %eax
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_2
 	.p2align 5
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_4:
 	movsd	%xmm0, (%rdi,%rax,8)
-	addl	$1, %edx
+	addl	$1, %ecx
 	addq	$1, %rax
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_3:
-	cmpl	%ecx, %edx
-	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_110
+	cmpl	%esi, %ecx
+	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_100
 	pxor	%xmm0, %xmm0
 	testl	%eax, %eax
 	js	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_4
 	pxor	%xmm0, %xmm0
-	cvtsi2sdl	crabc_x86_math_elementary_long_double_src_math___rem_pio2_large_ipio2(,%rax,4), %xmm0
+	cvtsi2sdl	(%r8,%rax,4), %xmm0
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_4
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_110:
-	movl	%ebx, %edi
-	xorl	%ecx, %ecx
-	leaq	480(%rsp), %r12
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_100:
+	leaq	496(%rsp), %r13
+	movl	$1, %r8d
+	movl	%ebx, %esi
+	subl	60(%rsp), %r8d
+	movq	%r13, %rdi
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_6
 	.p2align 5
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_7:
 	movsd	0(%rbp,%rax,8), %xmm0
-	mulsd	(%rdx), %xmm0
+	mulsd	(%rcx), %xmm0
 	addq	$1, %rax
-	subq	$8, %rdx
+	subq	$8, %rcx
 	addsd	%xmm0, %xmm1
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_9:
 	cmpl	%eax, %ebx
 	jge	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_7
-	movsd	%xmm1, (%r12,%rcx,8)
-	addl	$1, %edi
-	addq	$1, %rcx
+	movsd	%xmm1, (%rdi)
+	addl	$1, %esi
+	addq	$8, %rdi
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_6:
-	cmpl	%ecx, %r14d
+	leal	(%r8,%rsi), %eax
+	cmpl	%eax, %r14d
 	jl	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_8
-	movslq	%edi, %rax
+	movq	48(%rsp), %rcx
+	movslq	%esi, %rax
 	pxor	%xmm1, %xmm1
-	leaq	160(%rsp,%rax,8), %rdx
+	leaq	(%rcx,%rax,8), %rcx
 	xorl	%eax, %eax
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_9
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_8:
 	leal	-1(%r14), %eax
-	leaq	80(%rsp), %r15
-	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C1(%rip), %xmm4
-	movl	%r14d, %r13d
+	leaq	96(%rsp), %r15
+	movl	%r14d, %r12d
+	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C1(%rip), %xmm3
 	cltq
+	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C2(%rip), %xmm4
 	leaq	(%r15,%rax,4), %rax
-	movq	%rax, 40(%rsp)
+	movq	%rax, 64(%rsp)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_10
 	.p2align 6
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_12:
 	movapd	%xmm0, %xmm1
+	subl	$1, %eax
 	addq	$4, %rcx
-	mulsd	%xmm4, %xmm1
+	subq	$8, %rsi
+	mulsd	%xmm3, %xmm1
 	cvttsd2sil	%xmm1, %edi
 	pxor	%xmm1, %xmm1
 	cvtsi2sdl	%edi, %xmm1
 	movapd	%xmm1, %xmm2
-	addsd	(%r12,%rax,8), %xmm1
-	subq	$1, %rax
-	mulsd	%xmm3, %xmm2
+	addsd	8(%rsi), %xmm1
+	mulsd	%xmm4, %xmm2
 	subsd	%xmm2, %xmm0
 	cvttsd2sil	%xmm0, %edi
 	movapd	%xmm1, %xmm0
 	movl	%edi, -4(%rcx)
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_11:
-	leal	1(%rax), %edi
-	testl	%edi, %edi
+	testl	%eax, %eax
 	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_12
-	movl	%esi, %edi
-	movq	%rdx, 32(%rsp)
-	movl	%esi, 28(%rsp)
-	call	crabc_x86_math_elementary_long_double_provider_scalbn
+	movl	%edx, %edi
+	movl	%r9d, 40(%rsp)
+	movq	%r10, 32(%rsp)
+	movl	%edx, 28(%rsp)
+	call	crabc_x86_math_elementary_long_double_provider_scalbn@PLT
 	movapd	%xmm0, %xmm1
 	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C3(%rip), %xmm0
 	movsd	%xmm1, 16(%rsp)
 	mulsd	%xmm1, %xmm0
-	call	crabc_x86_math_elementary_long_double_provider_floor
+	call	crabc_x86_math_elementary_long_double_provider_floor@PLT
 	movsd	16(%rsp), %xmm1
-	movl	28(%rsp), %esi
+	movl	28(%rsp), %edx
 	mulsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C4(%rip), %xmm0
-	movq	32(%rsp), %rdx
-	testl	%esi, %esi
-	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C1(%rip), %xmm4
+	movq	32(%rsp), %r10
+	testl	%edx, %edx
+	movl	40(%rsp), %r9d
+	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C1(%rip), %xmm3
+	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C2(%rip), %xmm4
 	subsd	%xmm0, %xmm1
 	pxor	%xmm0, %xmm0
 	cvttsd2sil	%xmm1, %r8d
 	cvtsi2sdl	%r8d, %xmm0
 	subsd	%xmm0, %xmm1
 	jle	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_13
-	movslq	24(%rsp), %r10
+	movslq	%r9d, %rdi
 	movl	$24, %ecx
-	subl	%esi, %ecx
-	movl	80(%rsp,%r10,4), %eax
-	movl	%eax, %edi
-	sarl	%cl, %edi
-	addl	%edi, %r8d
-	sall	%cl, %edi
+	movl	96(%rsp,%rdi,4), %eax
+	subl	%edx, %ecx
+	movl	%eax, %esi
+	sarl	%cl, %esi
+	addl	%esi, %r8d
+	sall	%cl, %esi
 	movl	$23, %ecx
-	subl	%edi, %eax
-	subl	%esi, %ecx
-	movl	%eax, 80(%rsp,%r10,4)
+	subl	%esi, %eax
+	subl	%edx, %ecx
+	movl	%eax, 96(%rsp,%rdi,4)
 	sarl	%cl, %eax
-	movl	%eax, %r9d
+	movl	%eax, 16(%rsp)
 	testl	%eax, %eax
-	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_111
+	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_101
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_15:
 	pxor	%xmm0, %xmm0
 	ucomisd	%xmm0, %xmm1
-	jp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_32
-	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_32
-	movl	%edx, %edi
-	xorl	%ecx, %ecx
-	movq	%rdx, %rax
-	subl	%r14d, %edi
-	andl	$1, %edi
+	jp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_30
 	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_30
-	cmpl	%edx, %r14d
-	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_75
-	movl	(%r15,%rdx,4), %ecx
-	leaq	-1(%rdx), %rax
-	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_30
+	leaq	0(,%r10,4), %rdi
+	movl	%r9d, %eax
+	xorl	%esi, %esi
+	leaq	(%r15,%rdi), %rcx
+	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_32
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_13:
 	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_16
-	movslq	24(%rsp), %rax
-	movl	80(%rsp,%rax,4), %eax
+	movslq	%r9d, %rax
+	movl	96(%rsp,%rax,4), %eax
 	sarl	$23, %eax
-	movl	%eax, %r9d
+	movl	%eax, 16(%rsp)
 	testl	%eax, %eax
 	jle	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_15
 	addl	$1, %r8d
-	testl	%r13d, %r13d
+	testl	%r12d, %r12d
 	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_19
-	cmpl	$2, %eax
+	cmpl	$2, 16(%rsp)
 	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_15
 	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C6(%rip), %xmm5
 	subsd	%xmm1, %xmm5
 	movapd	%xmm5, %xmm1
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_15
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_16:
-	xorl	%r9d, %r9d
 	comisd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C5(%rip), %xmm1
-	jb	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_15
-	addl	$1, %r8d
-	movl	$2, %r9d
-	testl	%r13d, %r13d
-	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_19
-	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C6(%rip), %xmm7
-	subsd	%xmm1, %xmm7
-	movapd	%xmm7, %xmm1
+	jnb	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_18
+	movl	$0, 16(%rsp)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_15
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_111:
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_101:
 	addl	$1, %r8d
-	xorl	%edi, %edi
-	testl	%r13d, %r13d
+	xorl	%esi, %esi
+	testl	%r12d, %r12d
 	jle	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_20
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_19:
-	movl	(%r15), %edi
+	movl	(%r15), %esi
 	movq	%r15, %rax
-	movq	%r15, %r10
+	movq	%r15, %rdi
 	xorl	%ecx, %ecx
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_25:
-	testl	%edi, %edi
+	testl	%esi, %esi
 	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_22
 	movl	$16777216, %r11d
-	subl	%edi, %r11d
-	movl	%r11d, (%r10)
+	subl	%esi, %r11d
+	movl	%r11d, (%rdi)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_24
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_112:
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_102:
 	addq	$4, %rax
-	movl	$16777215, %edi
-	subl	(%rax), %edi
-	movl	%edi, (%rax)
+	movl	$16777215, %esi
+	subl	(%rax), %esi
+	movl	%esi, (%rax)
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_24:
 	addl	$1, %ecx
-	cmpl	%ecx, %r13d
-	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_112
-	movl	$1, %edi
+	cmpl	%ecx, %r12d
+	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_102
+	movl	$1, %esi
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_23:
-	testl	%esi, %esi
+	testl	%edx, %edx
 	jle	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_26
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_20:
-	cmpl	$1, %esi
+	cmpl	$1, %edx
 	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_27
-	cmpl	$2, %esi
+	cmpl	$2, %edx
 	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_28
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_26:
-	cmpl	$2, %r9d
+	cmpl	$2, 16(%rsp)
 	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_15
 	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C6(%rip), %xmm6
 	subsd	%xmm1, %xmm6
 	movapd	%xmm6, %xmm1
-	testl	%edi, %edi
+	testl	%esi, %esi
 	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_15
 	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C6(%rip), %xmm0
-	movl	%esi, %edi
-	movq	%rdx, 72(%rsp)
-	movl	%r9d, 68(%rsp)
-	movl	%r8d, 28(%rsp)
-	movl	%esi, 16(%rsp)
-	movsd	%xmm6, 32(%rsp)
-	call	crabc_x86_math_elementary_long_double_provider_scalbn
-	movsd	32(%rsp), %xmm1
-	movq	72(%rsp), %rdx
-	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C1(%rip), %xmm4
-	movl	68(%rsp), %r9d
+	movl	%edx, %edi
+	movl	%r9d, 92(%rsp)
+	movq	%r10, 80(%rsp)
+	movl	%r8d, 32(%rsp)
+	movl	%edx, 28(%rsp)
+	movsd	%xmm6, 40(%rsp)
+	call	crabc_x86_math_elementary_long_double_provider_scalbn@PLT
+	movsd	40(%rsp), %xmm1
+	movl	92(%rsp), %r9d
+	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C2(%rip), %xmm4
+	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C1(%rip), %xmm3
 	subsd	%xmm0, %xmm1
-	movl	28(%rsp), %r8d
-	movl	16(%rsp), %esi
+	movq	80(%rsp), %r10
+	movl	32(%rsp), %r8d
+	movl	28(%rsp), %edx
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_15
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_22:
 	addl	$1, %ecx
-	cmpl	%ecx, %r13d
+	cmpl	%ecx, %r12d
 	jle	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_23
 	addq	$4, %rax
-	movl	(%rax), %edi
-	movq	%rax, %r10
+	movl	(%rax), %esi
+	movq	%rax, %rdi
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_25
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_27:
-	movslq	24(%rsp), %rax
-	andl	$8388607, 80(%rsp,%rax,4)
+	movslq	%r9d, %rax
+	andl	$8388607, 96(%rsp,%rax,4)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_26
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_28:
-	movslq	24(%rsp), %rax
-	andl	$4194303, 80(%rsp,%rax,4)
+	movslq	%r9d, %rax
+	andl	$4194303, 96(%rsp,%rax,4)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_26
-	.p2align 5
+	.p2align 4
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_33:
-	orl	(%r15,%rax,4), %ecx
-	orl	-4(%r15,%rax,4), %ecx
-	subq	$2, %rax
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_30:
-	cmpl	%eax, %r14d
-	jle	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_33
-	testl	%ecx, %ecx
-	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_113
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_75:
-	movq	40(%rsp), %rax
+	orl	(%rcx), %esi
+	subl	$1, %eax
+	subq	$4, %rcx
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_32:
+	cmpl	%r14d, %eax
+	jge	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_33
+	testl	%esi, %esi
+	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_103
+	movq	64(%rsp), %rax
 	movl	$1, %r8d
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_34
 	.p2align 4
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_36:
 	addl	$1, %r8d
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_34:
-	movl	(%rax), %ecx
+	movl	(%rax), %r10d
 	subq	$4, %rax
-	testl	%ecx, %ecx
+	testl	%r10d, %r10d
 	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_36
-	movslq	52(%rsp), %rax
-	movl	48(%rsp), %edx
-	leal	1(%r13), %ecx
-	addl	%r13d, %r8d
-	movslq	%ecx, %rcx
+	movslq	60(%rsp), %rax
+	movl	56(%rsp), %ecx
+	addl	%r12d, %r8d
+	leal	1(%r12), %esi
+	movq	48(%rsp), %rdi
+	movslq	%esi, %rsi
+	leaq	crabc_x86_math_elementary_long_double_src_math___rem_pio2_large_ipio2(%rip), %r9
 	movq	%rax, %r11
-	leal	1(%r13,%rdx), %edx
+	leal	1(%r12,%rcx), %ecx
 	addq	8(%rsp), %rax
-	movslq	%edx, %rdx
-	leal	0(%r13,%r11), %r10d
-	leaq	160(%rsp,%rax,8), %rdi
-	subq	%rcx, %rdx
+	movslq	%ecx, %rcx
+	leal	(%r12,%r11), %r10d
+	leaq	(%rdi,%rax,8), %rdi
+	subq	%rsi, %rcx
 	movslq	%r10d, %r10
-	leaq	0(,%rdx,4), %r9
+	leaq	(%r9,%rcx,4), %r9
 	subq	%rax, %r10
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_37
 	.p2align 5
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_39:
 	movsd	0(%rbp,%rax,8), %xmm0
-	mulsd	(%rdx), %xmm0
+	mulsd	(%rcx), %xmm0
 	addq	$1, %rax
-	subq	$8, %rdx
+	subq	$8, %rcx
 	addsd	%xmm0, %xmm1
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_38:
 	cmpl	%eax, %ebx
 	jge	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_39
-	movsd	%xmm1, (%r12,%rcx,8)
+	movsd	%xmm1, 0(%r13,%rsi,8)
 	addq	$8, %rdi
-	addq	$1, %rcx
+	addq	$1, %rsi
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_37:
-	cmpl	%ecx, %r8d
-	jl	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_114
+	cmpl	%esi, %r8d
+	jl	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_104
 	pxor	%xmm0, %xmm0
-	movq	%rdi, %rdx
+	movq	%rdi, %rcx
 	pxor	%xmm1, %xmm1
 	xorl	%eax, %eax
-	cvtsi2sdl	crabc_x86_math_elementary_long_double_src_math___rem_pio2_large_ipio2(%r9,%rcx,4), %xmm0
+	cvtsi2sdl	(%r9,%rsi,4), %xmm0
 	movsd	%xmm0, (%rdi,%r10,8)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_38
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_114:
-	movl	%r8d, %r13d
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_104:
+	movl	%r8d, %r12d
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_10:
-	movslq	%r13d, %rax
-	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C2(%rip), %xmm3
+	leal	-1(%r12), %r9d
+	movslq	%r12d, %rax
 	movq	%r15, %rcx
-	movsd	480(%rsp,%rax,8), %xmm0
+	movslq	%r9d, %r10
 	movq	%rax, 8(%rsp)
-	leal	-1(%r13), %eax
-	movslq	%eax, %rdx
-	movl	%eax, 24(%rsp)
-	movq	%rdx, %rax
+	movsd	496(%rsp,%rax,8), %xmm0
+	movl	%r12d, %eax
+	leaq	0(%r13,%r10,8), %rsi
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_11
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_113:
-	movl	24(%rsp), %r13d
-	subl	$24, %esi
-	leaq	(%r15,%rdx,4), %rax
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_103:
+	movl	%r9d, %r12d
+	subl	$24, %edx
+	addq	%r15, %rdi
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_41
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_42:
-	subl	$1, %r13d
-	subl	$24, %esi
+	subl	$1, %r12d
+	subl	$24, %edx
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_41:
-	movl	(%rax), %edx
-	subq	$4, %rax
-	testl	%edx, %edx
+	movl	(%rdi), %r9d
+	subq	$4, %rdi
+	testl	%r9d, %r9d
 	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_42
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_43:
 	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C6(%rip), %xmm0
-	movl	%esi, %edi
-	movl	%r9d, 24(%rsp)
+	movl	%edx, %edi
 	movl	%r8d, 8(%rsp)
-	call	crabc_x86_math_elementary_long_double_provider_scalbn
-	movslq	%r13d, %rcx
+	call	crabc_x86_math_elementary_long_double_provider_scalbn@PLT
+	movslq	%r12d, %rsi
 	movl	8(%rsp), %r8d
 	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C1(%rip), %xmm2
-	movl	24(%rsp), %r9d
 	movapd	%xmm0, %xmm1
-	movq	%rcx, %rax
+	movq	%rsi, %rax
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_46
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_32:
-	movl	%esi, %edi
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_30:
+	movl	%edx, %edi
 	movapd	%xmm1, %xmm0
-	movl	%r9d, 28(%rsp)
+	movl	%r8d, 32(%rsp)
 	negl	%edi
-	movl	%r8d, 16(%rsp)
-	movl	%esi, 24(%rsp)
-	call	crabc_x86_math_elementary_long_double_provider_scalbn
-	movl	24(%rsp), %esi
-	movl	16(%rsp), %r8d
+	movl	%edx, 28(%rsp)
+	call	crabc_x86_math_elementary_long_double_provider_scalbn@PLT
+	movl	28(%rsp), %edx
+	movl	32(%rsp), %r8d
 	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C2(%rip), %xmm3
-	movl	28(%rsp), %r9d
 	comisd	%xmm3, %xmm0
-	jb	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_103
+	jb	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_95
 	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C1(%rip), %xmm2
 	pxor	%xmm1, %xmm1
-	addl	$1, %r13d
-	addl	$24, %esi
+	addl	$1, %r12d
+	addl	$24, %edx
 	mulsd	%xmm0, %xmm2
 	cvttsd2sil	%xmm2, %eax
 	cvtsi2sdl	%eax, %xmm1
@@ -4200,33 +4199,36 @@ crabc_x86_math_elementary_long_double_internal_rem_pio2_large:
 	subsd	%xmm1, %xmm0
 	unpcklpd	%xmm2, %xmm0
 	cvttpd2dq	%xmm0, %xmm0
-	movq	%xmm0, 80(%rsp,%rax,4)
+	movq	%xmm0, 96(%rsp,%rax,4)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_43
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_103:
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_95:
 	cvttsd2sil	%xmm0, %eax
 	movq	8(%rsp), %rbx
-	movl	%eax, 80(%rsp,%rbx,4)
+	movl	%eax, 96(%rsp,%rbx,4)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_43
-	.p2align 5
+	.p2align 6
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_47:
 	pxor	%xmm0, %xmm0
 	cvtsi2sdl	(%r15,%rax,4), %xmm0
 	mulsd	%xmm1, %xmm0
 	mulsd	%xmm2, %xmm1
-	movsd	%xmm0, (%r12,%rax,8)
+	movsd	%xmm0, 0(%r13,%rax,8)
 	subq	$1, %rax
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_46:
 	testl	%eax, %eax
 	jns	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_47
-	leaq	0(,%rcx,8), %rdi
-	movl	%r13d, %esi
+	leaq	336(%rsp), %r9
+	leaq	0(,%rsi,8), %r10
+	movl	%r12d, %edi
 	xorl	%edx, %edx
-	addq	%rdi, %r12
+	addq	%r10, %r13
+	movq	%r9, %r11
+	leaq	crabc_x86_math_elementary_long_double_src_math___rem_pio2_large_PIo2(%rip), %rcx
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_48
 	.p2align 5
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_50:
-	movsd	crabc_x86_math_elementary_long_double_src_math___rem_pio2_large_PIo2(,%rax,8), %xmm0
-	mulsd	(%r12,%rax,8), %xmm0
+	movsd	(%rcx,%rax,8), %xmm0
+	mulsd	0(%r13,%rax,8), %xmm0
 	addq	$1, %rax
 	addsd	%xmm0, %xmm1
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_51:
@@ -4235,50 +4237,59 @@ crabc_x86_math_elementary_long_double_internal_rem_pio2_large:
 	cmpl	%edx, %eax
 	jle	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_50
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_49:
-	movsd	%xmm1, 320(%rsp,%rdx,8)
-	subl	$1, %esi
+	movsd	%xmm1, (%r11)
+	subl	$1, %edi
 	addq	$1, %rdx
-	subq	$8, %r12
+	addq	$8, %r11
+	subq	$8, %r13
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_48:
-	testl	%esi, %esi
-	js	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_115
+	testl	%edi, %edi
+	js	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_105
 	xorl	%eax, %eax
 	pxor	%xmm1, %xmm1
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_51
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_115:
-	movl	64(%rsp), %eax
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_105:
+	movl	88(%rsp), %eax
 	cmpl	$2, %eax
 	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_52
+	addq	%r9, %r10
 	testl	%eax, %eax
-	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_77
+	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_53
 	pxor	%xmm0, %xmm0
-	leaq	320(%rsp), %rax
-	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_54
+	testl	%eax, %eax
+	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_58
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_55
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_52:
-	cmpl	$3, 64(%rsp)
+	cmpl	$3, 88(%rsp)
 	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_55
-	subl	$1, %r13d
-	leaq	320(%rsp), %rdx
-	movslq	%r13d, %rax
-	leaq	(%rdx,%rax,8), %rsi
-	movq	%rcx, %rax
-	subq	%rdi, %rsi
+	leal	-1(%r12), %r11d
+	movq	%rsi, %rdi
+	movl	%r12d, %ecx
+	movslq	%r11d, %r11
+	leaq	(%r9,%r11,8), %rax
+	subq	%r11, %rdi
+	movq	%rax, %rdx
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_56
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_57:
-	addsd	(%rax,%rcx,8), %xmm0
-	subq	$1, %rcx
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_54:
-	testl	%ecx, %ecx
-	jns	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_57
-	testl	%r9d, %r9d
-	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_58
-	xorpd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C7(%rip), %xmm0
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_53:
+	movl	%r12d, %eax
+	pxor	%xmm1, %xmm1
+	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_57
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_59:
+	addsd	(%r10), %xmm0
+	subl	$1, %r12d
+	subq	$8, %r10
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_58:
-	movq	56(%rsp), %rax
+	testl	%r12d, %r12d
+	jns	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_59
+	movl	16(%rsp), %esi
+	testl	%esi, %esi
+	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_60
+	xorpd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C7(%rip), %xmm0
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_60:
+	movq	72(%rsp), %rax
 	movsd	%xmm0, (%rax)
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_55:
-	addq	$648, %rsp
+	addq	$664, %rsp
 	movl	%r8d, %eax
 	popq	%rbx
 	andl	$7, %eax
@@ -4288,100 +4299,107 @@ crabc_x86_math_elementary_long_double_internal_rem_pio2_large:
 	popq	%r14
 	popq	%r15
 	ret
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_59:
-	addsd	(%rax,%rcx,8), %xmm1
-	subq	$1, %rcx
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_53:
-	testl	%ecx, %ecx
-	jns	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_59
-	movapd	%xmm1, %xmm0
-	testl	%r9d, %r9d
-	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_60
-	xorpd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C7(%rip), %xmm0
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_60:
-	movq	56(%rsp), %rax
-	leaq	320(%rsp), %rdx
-	movsd	%xmm0, (%rax)
-	xorl	%eax, %eax
-	movsd	320(%rsp), %xmm0
-	subsd	%xmm1, %xmm0
-	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_61
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_77:
-	pxor	%xmm1, %xmm1
-	leaq	320(%rsp), %rax
-	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_53
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_62:
-	addsd	(%rdx,%rax,8), %xmm0
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_61:
-	addq	$1, %rax
-	cmpl	%eax, %r13d
-	jge	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_62
-	testl	%r9d, %r9d
-	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_63
+	addsd	(%r10), %xmm1
+	subl	$1, %eax
+	subq	$8, %r10
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_57:
+	testl	%eax, %eax
+	jns	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_61
+	movl	16(%rsp), %ecx
+	movapd	%xmm1, %xmm0
+	testl	%ecx, %ecx
+	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_62
 	xorpd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C7(%rip), %xmm0
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_62:
+	movq	72(%rsp), %rax
+	movsd	%xmm0, (%rax)
+	movl	$1, %eax
+	movsd	336(%rsp), %xmm0
+	subsd	%xmm1, %xmm0
+	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_63
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_64:
+	addsd	8(%r9), %xmm0
+	addq	$8, %r9
+	addl	$1, %eax
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_63:
-	movq	56(%rsp), %rax
+	cmpl	%eax, %r12d
+	jge	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_64
+	movl	16(%rsp), %edx
+	testl	%edx, %edx
+	je	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_65
+	xorpd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C7(%rip), %xmm0
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_65:
+	movq	72(%rsp), %rax
 	movsd	%xmm0, 8(%rax)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_55
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_64:
-	movsd	(%rsi,%rax,8), %xmm0
-	movsd	(%rdx,%rax,8), %xmm2
-	movapd	%xmm0, %xmm1
-	addsd	%xmm2, %xmm1
-	subsd	%xmm1, %xmm0
-	addsd	%xmm2, %xmm0
-	movsd	%xmm0, (%rdx,%rax,8)
-	movsd	%xmm1, (%rsi,%rax,8)
-	subq	$1, %rax
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_56:
-	testl	%eax, %eax
-	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_64
-	movq	%rcx, %rax
-	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_65
 .Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_66:
-	movsd	(%rsi,%rax,8), %xmm0
-	movsd	(%rdx,%rax,8), %xmm2
+	movsd	(%rdx), %xmm0
+	movsd	(%rdx,%rdi,8), %xmm2
+	subl	$1, %ecx
 	movapd	%xmm0, %xmm1
 	addsd	%xmm2, %xmm1
 	subsd	%xmm1, %xmm0
 	addsd	%xmm2, %xmm0
-	movsd	%xmm0, (%rdx,%rax,8)
-	movsd	%xmm1, (%rsi,%rax,8)
-	subq	$1, %rax
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_65:
-	cmpl	$1, %eax
+	movsd	%xmm0, (%rdx,%rdi,8)
+	subq	$8, %rdx
+	movsd	%xmm1, 8(%rdx)
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_56:
+	testl	%ecx, %ecx
 	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_66
-	pxor	%xmm0, %xmm0
-	testb	$1, %cl
-	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_67
-	cmpl	$1, %ecx
-	jle	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_107
-	addsd	(%rdx,%rcx,8), %xmm0
-	subq	$1, %rcx
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_67:
-	cmpl	$1, %ecx
-	jle	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_107
-	addsd	(%rdx,%rcx,8), %xmm0
-	addsd	-8(%rdx,%rcx,8), %xmm0
-	subq	$2, %rcx
+	movl	%r12d, %edx
+	subq	%r11, %rsi
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_67
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_107:
-	movapd	320(%rsp), %xmm1
-	testl	%r9d, %r9d
-	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_69
-	movq	56(%rsp), %rax
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_68:
+	movsd	(%rax), %xmm0
+	movsd	(%rax,%rsi,8), %xmm2
+	subl	$1, %edx
+	movapd	%xmm0, %xmm1
+	addsd	%xmm2, %xmm1
+	subsd	%xmm1, %xmm0
+	addsd	%xmm2, %xmm0
+	movsd	%xmm0, (%rax,%rsi,8)
+	subq	$8, %rax
+	movsd	%xmm1, 8(%rax)
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_67:
+	cmpl	$1, %edx
+	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_68
+	addq	%r10, %r9
+	pxor	%xmm0, %xmm0
+	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_69
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_70:
+	addsd	(%r9), %xmm0
+	subl	$1, %r12d
+	subq	$8, %r9
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_69:
+	cmpl	$1, %r12d
+	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_70
+	movapd	336(%rsp), %xmm1
+	movl	16(%rsp), %eax
+	testl	%eax, %eax
+	jne	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_71
+	movq	72(%rsp), %rax
 	movups	%xmm1, (%rax)
 	movsd	%xmm0, 16(%rax)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_55
-.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_69:
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_71:
 	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C9(%rip), %xmm2
-	movq	56(%rsp), %rax
+	movq	72(%rsp), %rax
 	xorpd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C7(%rip), %xmm0
 	unpcklpd	%xmm2, %xmm2
 	xorpd	%xmm2, %xmm1
 	movsd	%xmm0, 16(%rax)
 	movups	%xmm1, (%rax)
 	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_55
+.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_18:
+	movl	$2, 16(%rsp)
+	addl	$1, %r8d
+	testl	%r12d, %r12d
+	jg	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_19
+	movsd	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_C6(%rip), %xmm7
+	subsd	%xmm1, %xmm7
+	movapd	%xmm7, %xmm1
+	jmp	.Lcrabc_x86_math_elementary_long_double_src_math___rem_pio2_large_15
 	.size	crabc_x86_math_elementary_long_double_internal_rem_pio2_large, .-crabc_x86_math_elementary_long_double_internal_rem_pio2_large
 	.section	.rodata.PIo2,"a"
 	.align 32
@@ -5257,7 +5275,7 @@ crabc_x86_math_elementary_long_double_internal_tanl:
 	subq	$40, %rsp
 	fldt	64(%rsp)
 	fstpt	(%rsp)
-	call	fabsl
+	call	fabsl@PLT
 	popq	%rax
 	popq	%rdx
 	fldl	.Lcrabc_x86_math_elementary_long_double_src_math___tanl_C1(%rip)

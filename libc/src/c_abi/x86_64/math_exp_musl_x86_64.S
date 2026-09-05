@@ -46,31 +46,32 @@ exp:
 	ja	.Lcrabc_x86_math_exp_src_math_exp_21
 .Lcrabc_x86_math_exp_src_math_exp_2:
 	movsd	crabc_x86_math_exp___exp_data(%rip), %xmm2
-	movsd	crabc_x86_math_exp___exp_data+8(%rip), %xmm1
+	movsd	8+crabc_x86_math_exp___exp_data(%rip), %xmm1
+	leaq	crabc_x86_math_exp___exp_data(%rip), %rdi
 	mulsd	%xmm0, %xmm2
 	addsd	%xmm1, %xmm2
 	movq	%xmm2, %rsi
 	subsd	%xmm1, %xmm2
-	movsd	crabc_x86_math_exp___exp_data+16(%rip), %xmm1
+	movsd	16+crabc_x86_math_exp___exp_data(%rip), %xmm1
 	movq	%rsi, %rcx
 	movq	%rsi, %rax
 	andl	$127, %ecx
 	salq	$45, %rax
 	mulsd	%xmm2, %xmm1
 	addq	%rcx, %rcx
-	mulsd	crabc_x86_math_exp___exp_data+24(%rip), %xmm2
-	addq	crabc_x86_math_exp___exp_data+120(,%rcx,8), %rax
-	movsd	crabc_x86_math_exp___exp_data+112(,%rcx,8), %xmm3
+	mulsd	24+crabc_x86_math_exp___exp_data(%rip), %xmm2
+	movsd	112(%rdi,%rcx,8), %xmm3
+	addq	120(%rdi,%rcx,8), %rax
 	addsd	%xmm0, %xmm1
-	movsd	crabc_x86_math_exp___exp_data+40(%rip), %xmm0
+	movsd	40+crabc_x86_math_exp___exp_data(%rip), %xmm0
 	addsd	%xmm2, %xmm1
 	mulsd	%xmm1, %xmm0
 	movapd	%xmm1, %xmm2
 	addsd	%xmm1, %xmm3
 	mulsd	%xmm1, %xmm2
-	addsd	crabc_x86_math_exp___exp_data+32(%rip), %xmm0
-	mulsd	crabc_x86_math_exp___exp_data+56(%rip), %xmm1
-	addsd	crabc_x86_math_exp___exp_data+48(%rip), %xmm1
+	addsd	32+crabc_x86_math_exp___exp_data(%rip), %xmm0
+	mulsd	56+crabc_x86_math_exp___exp_data(%rip), %xmm1
+	addsd	48+crabc_x86_math_exp___exp_data(%rip), %xmm1
 	mulsd	%xmm2, %xmm0
 	mulsd	%xmm2, %xmm2
 	addsd	%xmm3, %xmm0
@@ -190,26 +191,27 @@ expf:
 	ja	.Lcrabc_x86_math_exp_src_math_expf_13
 .Lcrabc_x86_math_exp_src_math_expf_2:
 	pxor	%xmm1, %xmm1
-	movsd	crabc_x86_math_exp___exp2f_data+288(%rip), %xmm2
+	movsd	288+crabc_x86_math_exp___exp2f_data(%rip), %xmm2
+	leaq	crabc_x86_math_exp___exp2f_data(%rip), %rdx
 	cvtss2sd	%xmm0, %xmm1
-	mulsd	crabc_x86_math_exp___exp2f_data+296(%rip), %xmm1
+	mulsd	296+crabc_x86_math_exp___exp2f_data(%rip), %xmm1
 	movapd	%xmm2, %xmm0
 	addsd	%xmm1, %xmm0
 	movq	%xmm0, %rax
 	subsd	%xmm2, %xmm0
-	movsd	crabc_x86_math_exp___exp2f_data+320(%rip), %xmm2
-	movq	%rax, %rdx
+	movsd	320+crabc_x86_math_exp___exp2f_data(%rip), %xmm2
+	movq	%rax, %rcx
 	salq	$47, %rax
-	andl	$31, %edx
+	andl	$31, %ecx
 	subsd	%xmm0, %xmm1
-	movsd	crabc_x86_math_exp___exp2f_data+304(%rip), %xmm0
-	addq	crabc_x86_math_exp___exp2f_data(,%rdx,8), %rax
+	movsd	304+crabc_x86_math_exp___exp2f_data(%rip), %xmm0
+	addq	(%rdx,%rcx,8), %rax
 	movq	%rax, %xmm3
 	mulsd	%xmm1, %xmm2
 	mulsd	%xmm1, %xmm0
 	addsd	.Lcrabc_x86_math_exp_src_math_expf_C3(%rip), %xmm2
 	mulsd	%xmm1, %xmm1
-	addsd	crabc_x86_math_exp___exp2f_data+312(%rip), %xmm0
+	addsd	312+crabc_x86_math_exp___exp2f_data(%rip), %xmm0
 	mulsd	%xmm1, %xmm0
 	addsd	%xmm2, %xmm0
 	mulsd	%xmm3, %xmm0

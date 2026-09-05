@@ -50,40 +50,43 @@ log2:
 	ja	.Lcrabc_x86_math_log2_src_math_log2_12
 .Lcrabc_x86_math_log2_src_math_log2_4:
 	movabsq	$-4604367669032910848, %rcx
-	movsd	crabc_x86_math_log2___log2_data+40(%rip), %xmm0
+	movsd	40+crabc_x86_math_log2___log2_data(%rip), %xmm0
 	pxor	%xmm2, %xmm2
 	movabsq	$-4503599627370496, %rsi
 	addq	%rax, %rcx
-	movsd	crabc_x86_math_log2___log2_data+24(%rip), %xmm3
+	movsd	24+crabc_x86_math_log2___log2_data(%rip), %xmm3
 	movsd	crabc_x86_math_log2___log2_data(%rip), %xmm7
 	andq	%rcx, %rsi
 	movq	%rcx, %rdx
 	sarq	$52, %rcx
-	shrq	$46, %rdx
 	subq	%rsi, %rax
+	shrq	$46, %rdx
 	movapd	%xmm7, %xmm5
 	cvtsi2sdl	%ecx, %xmm2
 	movq	%rax, %xmm1
 	movq	%rdx, %rax
+	leaq	crabc_x86_math_log2___log2_data(%rip), %rsi
 	andl	$63, %eax
 	leaq	73(%rax), %rdx
 	addq	$9, %rax
 	salq	$4, %rdx
 	salq	$4, %rax
-	subsd	crabc_x86_math_log2___log2_data(%rdx), %xmm1
-	subsd	crabc_x86_math_log2___log2_data+8(%rdx), %xmm1
+	addq	%rsi, %rdx
+	addq	%rsi, %rax
+	subsd	(%rdx), %xmm1
+	subsd	8(%rdx), %xmm1
 	movabsq	$-4294967296, %rdx
-	mulsd	crabc_x86_math_log2___log2_data(%rax), %xmm1
-	addsd	crabc_x86_math_log2___log2_data+8(%rax), %xmm2
+	mulsd	(%rax), %xmm1
+	addsd	8(%rax), %xmm2
 	mulsd	%xmm1, %xmm0
 	movapd	%xmm1, %xmm8
 	movq	%xmm1, %rdi
 	mulsd	%xmm1, %xmm8
-	addsd	crabc_x86_math_log2___log2_data+32(%rip), %xmm0
+	addsd	32+crabc_x86_math_log2___log2_data(%rip), %xmm0
 	andq	%rdi, %rdx
 	mulsd	%xmm1, %xmm3
 	movq	%rdx, %xmm6
-	addsd	crabc_x86_math_log2___log2_data+16(%rip), %xmm3
+	addsd	16+crabc_x86_math_log2___log2_data(%rip), %xmm3
 	mulsd	%xmm6, %xmm5
 	mulsd	%xmm8, %xmm0
 	movapd	%xmm8, %xmm9
@@ -91,16 +94,16 @@ log2:
 	movapd	%xmm5, %xmm4
 	addsd	%xmm2, %xmm4
 	addsd	%xmm3, %xmm0
-	movsd	crabc_x86_math_log2___log2_data+56(%rip), %xmm3
+	movsd	56+crabc_x86_math_log2___log2_data(%rip), %xmm3
 	subsd	%xmm4, %xmm2
 	mulsd	%xmm1, %xmm3
-	addsd	crabc_x86_math_log2___log2_data+48(%rip), %xmm3
+	addsd	48+crabc_x86_math_log2___log2_data(%rip), %xmm3
 	addsd	%xmm5, %xmm2
 	mulsd	%xmm9, %xmm3
 	addsd	%xmm3, %xmm0
 	movapd	%xmm1, %xmm3
 	subsd	%xmm6, %xmm3
-	mulsd	crabc_x86_math_log2___log2_data+8(%rip), %xmm1
+	mulsd	8+crabc_x86_math_log2___log2_data(%rip), %xmm1
 	mulsd	%xmm8, %xmm0
 	mulsd	%xmm7, %xmm3
 	addsd	%xmm3, %xmm1
@@ -125,35 +128,35 @@ log2:
 	movq	%rax, %xmm2
 	subsd	%xmm2, %xmm7
 	mulsd	%xmm2, %xmm0
-	movsd	crabc_x86_math_log2___log2_data+8(%rip), %xmm2
+	movsd	8+crabc_x86_math_log2___log2_data(%rip), %xmm2
 	mulsd	%xmm1, %xmm2
 	mulsd	%xmm3, %xmm7
-	movsd	crabc_x86_math_log2___log2_data+72(%rip), %xmm3
+	movsd	72+crabc_x86_math_log2___log2_data(%rip), %xmm3
 	movapd	%xmm6, %xmm5
 	mulsd	%xmm6, %xmm5
 	mulsd	%xmm1, %xmm3
 	movapd	%xmm0, %xmm4
-	addsd	crabc_x86_math_log2___log2_data+64(%rip), %xmm3
+	addsd	64+crabc_x86_math_log2___log2_data(%rip), %xmm3
 	addsd	%xmm2, %xmm7
 	movapd	%xmm0, %xmm2
-	movsd	crabc_x86_math_log2___log2_data+136(%rip), %xmm0
+	movsd	136+crabc_x86_math_log2___log2_data(%rip), %xmm0
 	mulsd	%xmm6, %xmm3
 	mulsd	%xmm1, %xmm0
-	addsd	crabc_x86_math_log2___log2_data+128(%rip), %xmm0
+	addsd	128+crabc_x86_math_log2___log2_data(%rip), %xmm0
 	addsd	%xmm3, %xmm4
 	mulsd	%xmm6, %xmm0
 	subsd	%xmm4, %xmm2
 	addsd	%xmm3, %xmm2
-	movsd	crabc_x86_math_log2___log2_data+120(%rip), %xmm3
+	movsd	120+crabc_x86_math_log2___log2_data(%rip), %xmm3
 	mulsd	%xmm1, %xmm3
-	addsd	crabc_x86_math_log2___log2_data+112(%rip), %xmm3
+	addsd	112+crabc_x86_math_log2___log2_data(%rip), %xmm3
 	addsd	%xmm7, %xmm2
 	addsd	%xmm3, %xmm0
-	movsd	crabc_x86_math_log2___log2_data+104(%rip), %xmm3
+	movsd	104+crabc_x86_math_log2___log2_data(%rip), %xmm3
 	mulsd	%xmm1, %xmm3
-	addsd	crabc_x86_math_log2___log2_data+96(%rip), %xmm3
-	mulsd	crabc_x86_math_log2___log2_data+88(%rip), %xmm1
-	addsd	crabc_x86_math_log2___log2_data+80(%rip), %xmm1
+	addsd	96+crabc_x86_math_log2___log2_data(%rip), %xmm3
+	mulsd	88+crabc_x86_math_log2___log2_data(%rip), %xmm1
+	addsd	80+crabc_x86_math_log2___log2_data(%rip), %xmm1
 	mulsd	%xmm5, %xmm0
 	mulsd	%xmm6, %xmm3
 	addsd	%xmm3, %xmm1
@@ -216,33 +219,35 @@ log2f:
 	cmpl	$2130706431, %edx
 	ja	.Lcrabc_x86_math_log2_src_math_log2f_11
 .Lcrabc_x86_math_log2_src_math_log2f_3:
-	leal	-1060306944(%rax), %ecx
+	leal	-1060306944(%rax), %edx
 	pxor	%xmm1, %xmm1
-	movsd	crabc_x86_math_log2___log2f_data+256(%rip), %xmm2
-	movsd	crabc_x86_math_log2___log2f_data+264(%rip), %xmm0
-	movl	%ecx, %esi
-	movl	%ecx, %edx
-	sarl	$23, %ecx
+	movsd	256+crabc_x86_math_log2___log2f_data(%rip), %xmm2
+	movsd	264+crabc_x86_math_log2___log2f_data(%rip), %xmm0
+	movl	%edx, %esi
+	movl	%edx, %ecx
+	sarl	$23, %edx
 	andl	$-8388608, %esi
-	shrl	$19, %edx
+	shrl	$19, %ecx
 	subl	%esi, %eax
 	movd	%eax, %xmm4
-	movl	%edx, %eax
+	movl	%ecx, %eax
+	leaq	crabc_x86_math_log2___log2f_data(%rip), %rcx
 	andl	$15, %eax
 	cvtss2sd	%xmm4, %xmm1
 	salq	$4, %rax
-	mulsd	crabc_x86_math_log2___log2f_data(%rax), %xmm1
+	addq	%rcx, %rax
+	mulsd	(%rax), %xmm1
 	subsd	.Lcrabc_x86_math_log2_src_math_log2f_C2(%rip), %xmm1
 	mulsd	%xmm1, %xmm0
 	movapd	%xmm1, %xmm3
 	mulsd	%xmm1, %xmm3
-	addsd	crabc_x86_math_log2___log2f_data+272(%rip), %xmm0
-	mulsd	crabc_x86_math_log2___log2f_data+280(%rip), %xmm1
+	addsd	272+crabc_x86_math_log2___log2f_data(%rip), %xmm0
+	mulsd	280+crabc_x86_math_log2___log2f_data(%rip), %xmm1
 	mulsd	%xmm3, %xmm2
 	addsd	%xmm0, %xmm2
 	pxor	%xmm0, %xmm0
-	cvtsi2sdl	%ecx, %xmm0
-	addsd	crabc_x86_math_log2___log2f_data+8(%rax), %xmm0
+	cvtsi2sdl	%edx, %xmm0
+	addsd	8(%rax), %xmm0
 	mulsd	%xmm3, %xmm2
 	addsd	%xmm1, %xmm0
 	addsd	%xmm2, %xmm0
@@ -936,15 +941,17 @@ crabc_x86_math_log2___log2f_data:
 	.type	crabc_x86_math_log2___math_divzero, @function
 crabc_x86_math_log2___math_divzero:
 	testl	%edi, %edi
-	movl	$.Lcrabc_x86_math_log2_src_math___math_divzero_C1, %edx
-	pxor	%xmm1, %xmm1
-	movl	$.Lcrabc_x86_math_log2_src_math___math_divzero_C0, %eax
-	cmove	%rdx, %rax
-	movsd	(%rax), %xmm0
+	je	.Lcrabc_x86_math_log2_src_math___math_divzero_3
+	movsd	.Lcrabc_x86_math_log2_src_math___math_divzero_C0(%rip), %xmm0
+.Lcrabc_x86_math_log2_src_math___math_divzero_2:
 	movsd	%xmm0, -8(%rsp)
 	movsd	-8(%rsp), %xmm0
+	pxor	%xmm1, %xmm1
 	divsd	%xmm1, %xmm0
 	ret
+.Lcrabc_x86_math_log2_src_math___math_divzero_3:
+	movsd	.Lcrabc_x86_math_log2_src_math___math_divzero_C1(%rip), %xmm0
+	jmp	.Lcrabc_x86_math_log2_src_math___math_divzero_2
 	.size	crabc_x86_math_log2___math_divzero, .-crabc_x86_math_log2___math_divzero
 	.section	.rodata.cst8,"aM",@progbits,8
 	.align 8
@@ -965,15 +972,17 @@ crabc_x86_math_log2___math_divzero:
 	.type	crabc_x86_math_log2___math_divzerof, @function
 crabc_x86_math_log2___math_divzerof:
 	testl	%edi, %edi
-	movl	$.Lcrabc_x86_math_log2_src_math___math_divzerof_C1, %edx
-	pxor	%xmm1, %xmm1
-	movl	$.Lcrabc_x86_math_log2_src_math___math_divzerof_C0, %eax
-	cmove	%rdx, %rax
-	movss	(%rax), %xmm0
+	je	.Lcrabc_x86_math_log2_src_math___math_divzerof_3
+	movss	.Lcrabc_x86_math_log2_src_math___math_divzerof_C0(%rip), %xmm0
+.Lcrabc_x86_math_log2_src_math___math_divzerof_2:
 	movss	%xmm0, -4(%rsp)
 	movss	-4(%rsp), %xmm0
+	pxor	%xmm1, %xmm1
 	divss	%xmm1, %xmm0
 	ret
+.Lcrabc_x86_math_log2_src_math___math_divzerof_3:
+	movss	.Lcrabc_x86_math_log2_src_math___math_divzerof_C1(%rip), %xmm0
+	jmp	.Lcrabc_x86_math_log2_src_math___math_divzerof_2
 	.size	crabc_x86_math_log2___math_divzerof, .-crabc_x86_math_log2___math_divzerof
 	.section	.rodata.cst4,"aM",@progbits,4
 	.align 4

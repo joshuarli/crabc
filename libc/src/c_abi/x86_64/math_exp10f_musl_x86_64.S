@@ -40,7 +40,7 @@ exp10f:
 	movd	%xmm0, %ebx
 	subq	$16, %rsp
 	leaq	12(%rsp), %rdi
-	call	crabc_x86_math_exp10f_provider_modff
+	call	crabc_x86_math_exp10f_provider_modff@PLT
 	movl	12(%rsp), %edx
 	shrl	$23, %edx
 	cmpb	$-127, %dl
@@ -50,27 +50,29 @@ exp10f:
 	jp	.Lcrabc_x86_math_exp10f_src_math_exp10f_3
 	jne	.Lcrabc_x86_math_exp10f_src_math_exp10f_3
 	cvttss2sil	12(%rsp), %eax
+	leaq	crabc_x86_math_exp10f_src_math_exp10f_p10.0(%rip), %rdx
 	addl	$7, %eax
 	cltq
-	movss	crabc_x86_math_exp10f_src_math_exp10f_p10.0(,%rax,4), %xmm0
+	movss	(%rdx,%rax,4), %xmm0
 .Lcrabc_x86_math_exp10f_src_math_exp10f_1:
 	addq	$16, %rsp
 	popq	%rbx
 	ret
 .Lcrabc_x86_math_exp10f_src_math_exp10f_3:
 	mulss	.Lcrabc_x86_math_exp10f_src_math_exp10f_C1(%rip), %xmm0
-	call	crabc_x86_math_exp10f_provider_exp2f
+	call	crabc_x86_math_exp10f_provider_exp2f@PLT
 	cvttss2sil	12(%rsp), %eax
+	leaq	crabc_x86_math_exp10f_src_math_exp10f_p10.0(%rip), %rdx
 	addl	$7, %eax
 	cltq
-	mulss	crabc_x86_math_exp10f_src_math_exp10f_p10.0(,%rax,4), %xmm0
+	mulss	(%rdx,%rax,4), %xmm0
 	jmp	.Lcrabc_x86_math_exp10f_src_math_exp10f_1
 .Lcrabc_x86_math_exp10f_src_math_exp10f_2:
 	movd	%ebx, %xmm3
 	pxor	%xmm0, %xmm0
 	cvtss2sd	%xmm3, %xmm0
 	mulsd	.Lcrabc_x86_math_exp10f_src_math_exp10f_C2(%rip), %xmm0
-	call	crabc_x86_math_exp10f_provider_exp2
+	call	crabc_x86_math_exp10f_provider_exp2@PLT
 	cvtsd2ss	%xmm0, %xmm0
 	jmp	.Lcrabc_x86_math_exp10f_src_math_exp10f_1
 	.size	exp10f, .-exp10f
@@ -167,8 +169,9 @@ crabc_x86_math_exp10f_provider_exp2:
 	cmpl	$62, %ecx
 	ja	.Lcrabc_x86_math_exp10f_src_math_exp2_22
 .Lcrabc_x86_math_exp10f_src_math_exp2_2:
-	movsd	crabc_x86_math_exp10f_data_exp+64(%rip), %xmm2
-	movsd	crabc_x86_math_exp10f_data_exp+72(%rip), %xmm3
+	movsd	64+crabc_x86_math_exp10f_data_exp(%rip), %xmm2
+	movsd	72+crabc_x86_math_exp10f_data_exp(%rip), %xmm3
+	leaq	crabc_x86_math_exp10f_data_exp(%rip), %rdi
 	movapd	%xmm2, %xmm1
 	addsd	%xmm0, %xmm1
 	movq	%xmm1, %rsi
@@ -178,17 +181,17 @@ crabc_x86_math_exp10f_provider_exp2:
 	andl	$127, %ecx
 	salq	$45, %rax
 	subsd	%xmm1, %xmm0
-	movsd	crabc_x86_math_exp10f_data_exp+88(%rip), %xmm1
+	movsd	88+crabc_x86_math_exp10f_data_exp(%rip), %xmm1
 	addq	%rcx, %rcx
-	addq	crabc_x86_math_exp10f_data_exp+120(,%rcx,8), %rax
+	addq	120(%rdi,%rcx,8), %rax
 	mulsd	%xmm0, %xmm1
 	movapd	%xmm0, %xmm2
 	mulsd	%xmm0, %xmm2
-	addsd	crabc_x86_math_exp10f_data_exp+80(%rip), %xmm1
+	addsd	80+crabc_x86_math_exp10f_data_exp(%rip), %xmm1
 	mulsd	%xmm0, %xmm3
-	mulsd	crabc_x86_math_exp10f_data_exp+104(%rip), %xmm0
-	addsd	crabc_x86_math_exp10f_data_exp+112(,%rcx,8), %xmm3
-	addsd	crabc_x86_math_exp10f_data_exp+96(%rip), %xmm0
+	mulsd	104+crabc_x86_math_exp10f_data_exp(%rip), %xmm0
+	addsd	112(%rdi,%rcx,8), %xmm3
+	addsd	96+crabc_x86_math_exp10f_data_exp(%rip), %xmm0
 	mulsd	%xmm2, %xmm1
 	mulsd	%xmm2, %xmm2
 	addsd	%xmm3, %xmm1
@@ -312,25 +315,26 @@ crabc_x86_math_exp10f_provider_exp2f:
 	cmpl	$1071, %eax
 	ja	.Lcrabc_x86_math_exp10f_src_math_exp2f_13
 .Lcrabc_x86_math_exp10f_src_math_exp2f_2:
-	movsd	crabc_x86_math_exp10f_data_exp2f+256(%rip), %xmm2
+	movsd	256+crabc_x86_math_exp10f_data_exp2f(%rip), %xmm2
 	cvtss2sd	%xmm0, %xmm0
+	leaq	crabc_x86_math_exp10f_data_exp2f(%rip), %rdx
 	movapd	%xmm2, %xmm1
 	addsd	%xmm0, %xmm1
 	movq	%xmm1, %rax
 	subsd	%xmm2, %xmm1
-	movsd	crabc_x86_math_exp10f_data_exp2f+280(%rip), %xmm2
-	movq	%rax, %rdx
+	movsd	280+crabc_x86_math_exp10f_data_exp2f(%rip), %xmm2
+	movq	%rax, %rcx
 	salq	$47, %rax
-	andl	$31, %edx
+	andl	$31, %ecx
 	subsd	%xmm1, %xmm0
-	movsd	crabc_x86_math_exp10f_data_exp2f+264(%rip), %xmm1
-	addq	crabc_x86_math_exp10f_data_exp2f(,%rdx,8), %rax
+	movsd	264+crabc_x86_math_exp10f_data_exp2f(%rip), %xmm1
+	addq	(%rdx,%rcx,8), %rax
 	movq	%rax, %xmm3
 	mulsd	%xmm0, %xmm2
 	mulsd	%xmm0, %xmm1
 	addsd	.Lcrabc_x86_math_exp10f_src_math_exp2f_C2(%rip), %xmm2
 	mulsd	%xmm0, %xmm0
-	addsd	crabc_x86_math_exp10f_data_exp2f+272(%rip), %xmm1
+	addsd	272+crabc_x86_math_exp10f_data_exp2f(%rip), %xmm1
 	mulsd	%xmm1, %xmm0
 	addsd	%xmm2, %xmm0
 	mulsd	%xmm3, %xmm0

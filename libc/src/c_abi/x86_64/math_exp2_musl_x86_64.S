@@ -44,8 +44,9 @@ exp2:
 	cmpl	$62, %ecx
 	ja	.Lcrabc_x86_math_exp2_src_math_exp2_22
 .Lcrabc_x86_math_exp2_src_math_exp2_2:
-	movsd	crabc_x86_math_exp2_data+64(%rip), %xmm2
-	movsd	crabc_x86_math_exp2_data+72(%rip), %xmm3
+	movsd	64+crabc_x86_math_exp2_data(%rip), %xmm2
+	movsd	72+crabc_x86_math_exp2_data(%rip), %xmm3
+	leaq	crabc_x86_math_exp2_data(%rip), %rdi
 	movapd	%xmm2, %xmm1
 	addsd	%xmm0, %xmm1
 	movq	%xmm1, %rsi
@@ -55,17 +56,17 @@ exp2:
 	andl	$127, %ecx
 	salq	$45, %rax
 	subsd	%xmm1, %xmm0
-	movsd	crabc_x86_math_exp2_data+88(%rip), %xmm1
+	movsd	88+crabc_x86_math_exp2_data(%rip), %xmm1
 	addq	%rcx, %rcx
-	addq	crabc_x86_math_exp2_data+120(,%rcx,8), %rax
+	addq	120(%rdi,%rcx,8), %rax
 	mulsd	%xmm0, %xmm1
 	movapd	%xmm0, %xmm2
 	mulsd	%xmm0, %xmm2
-	addsd	crabc_x86_math_exp2_data+80(%rip), %xmm1
+	addsd	80+crabc_x86_math_exp2_data(%rip), %xmm1
 	mulsd	%xmm0, %xmm3
-	mulsd	crabc_x86_math_exp2_data+104(%rip), %xmm0
-	addsd	crabc_x86_math_exp2_data+112(,%rcx,8), %xmm3
-	addsd	crabc_x86_math_exp2_data+96(%rip), %xmm0
+	mulsd	104+crabc_x86_math_exp2_data(%rip), %xmm0
+	addsd	112(%rdi,%rcx,8), %xmm3
+	addsd	96+crabc_x86_math_exp2_data(%rip), %xmm0
 	mulsd	%xmm2, %xmm1
 	mulsd	%xmm2, %xmm2
 	addsd	%xmm3, %xmm1
@@ -189,25 +190,26 @@ exp2f:
 	cmpl	$1071, %eax
 	ja	.Lcrabc_x86_math_exp2_src_math_exp2f_13
 .Lcrabc_x86_math_exp2_src_math_exp2f_2:
-	movsd	crabc_x86_math_exp2_data_f+256(%rip), %xmm2
+	movsd	256+crabc_x86_math_exp2_data_f(%rip), %xmm2
 	cvtss2sd	%xmm0, %xmm0
+	leaq	crabc_x86_math_exp2_data_f(%rip), %rdx
 	movapd	%xmm2, %xmm1
 	addsd	%xmm0, %xmm1
 	movq	%xmm1, %rax
 	subsd	%xmm2, %xmm1
-	movsd	crabc_x86_math_exp2_data_f+280(%rip), %xmm2
-	movq	%rax, %rdx
+	movsd	280+crabc_x86_math_exp2_data_f(%rip), %xmm2
+	movq	%rax, %rcx
 	salq	$47, %rax
-	andl	$31, %edx
+	andl	$31, %ecx
 	subsd	%xmm1, %xmm0
-	movsd	crabc_x86_math_exp2_data_f+264(%rip), %xmm1
-	addq	crabc_x86_math_exp2_data_f(,%rdx,8), %rax
+	movsd	264+crabc_x86_math_exp2_data_f(%rip), %xmm1
+	addq	(%rdx,%rcx,8), %rax
 	movq	%rax, %xmm3
 	mulsd	%xmm0, %xmm2
 	mulsd	%xmm0, %xmm1
 	addsd	.Lcrabc_x86_math_exp2_src_math_exp2f_C2(%rip), %xmm2
 	mulsd	%xmm0, %xmm0
-	addsd	crabc_x86_math_exp2_data_f+272(%rip), %xmm1
+	addsd	272+crabc_x86_math_exp2_data_f(%rip), %xmm1
 	mulsd	%xmm1, %xmm0
 	addsd	%xmm2, %xmm0
 	mulsd	%xmm3, %xmm0
