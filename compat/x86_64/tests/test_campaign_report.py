@@ -15,6 +15,7 @@ REPORTER = ROOT / "compat" / "x86_64" / "campaign_report.py"
 sys.path.insert(0, str(REPORTER.parent))
 import campaign_report as report  # noqa: E402
 import owned_dynamic_qualification as qualification
+import validate_parity_ledger as ledger
 
 
 class CampaignReportTests(unittest.TestCase):
@@ -153,6 +154,42 @@ class CampaignReportTests(unittest.TestCase):
         self.assertEqual(passed["state"], "passed")
         self.assertTrue(passed["pass"])
         self.assertEqual(passed["transition_commands"], [])
+
+    def test_verified_resolver_evidence_does_not_promote_a_blocked_planned_family(self) -> None:
+        resolver = {
+            "id": "libc.resolver",
+            "status": "planned",
+            "depends_on": ["libc.headers-layouts"],
+            "description": "bounded resolver fixture",
+            "native_evidence": [
+                {
+                    "state": "verified",
+                    "command": "./scripts/dev-x86_64.sh owned-resolver-network",
+                    "scope": "isolated installed and extracted resolver differential",
+                }
+            ],
+        }
+        families = {
+            "libc.resolver": resolver,
+            "libc.headers-layouts": {"id": "libc.headers-layouts", "status": "planned"},
+        }
+
+        records, states = ledger.require_evidence(
+            resolver["native_evidence"], "family[libc.resolver].native_evidence", resolver["status"]
+        )
+        self.assertEqual(records, resolver["native_evidence"])
+        self.assertEqual(states, {"verified"})
+        self.assertEqual(report.readiness(resolver, families), {
+            "state": "blocked",
+            "blocking_dependencies": ["libc.headers-layouts"],
+        })
+        self.assertEqual(report.family_obligation(resolver, []), {
+            "id": "family-transition:libc.resolver",
+            "family": "libc.resolver",
+            "description": "bounded resolver fixture",
+            "unresolved_capabilities": [],
+            "required_evidence": [],
+        })
 
     def test_reviewed_product_does_not_complete_prerequisite_families_or_platform(self):
         with mock.patch.object(qualification, "load_publication", return_value=None):

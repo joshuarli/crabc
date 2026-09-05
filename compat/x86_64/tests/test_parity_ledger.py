@@ -861,6 +861,31 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             ledger.validate_ledger(changed)
 
+    def test_planned_family_evidence_allows_completed_records_without_promotion(self) -> None:
+        evidence = [
+            {"state": "verified", "command": "completed", "scope": "completed"},
+            {"state": "required", "command": "remaining", "scope": "remaining"},
+        ]
+        records, states = ledger.require_evidence(
+            evidence, "family[fixture].native_evidence", "planned"
+        )
+        self.assertEqual(records, evidence)
+        self.assertEqual(states, {"required", "verified"})
+        with self.assertRaisesRegex(ledger.LedgerError, "must be a non-empty array"):
+            ledger.require_evidence([], "family[fixture].native_evidence", "planned")
+        with self.assertRaisesRegex(ledger.LedgerError, "state is invalid"):
+            ledger.require_evidence(
+                [{"state": "complete", "command": "fixture", "scope": "fixture"}],
+                "family[fixture].native_evidence",
+                "planned",
+            )
+        with self.assertRaisesRegex(ledger.LedgerError, "must be entirely verified"):
+            ledger.require_evidence(
+                [{"state": "required", "command": "remaining", "scope": "remaining"}],
+                "family[fixture].native_evidence",
+                "foundation-verified",
+            )
+
     def test_owned_static_sysroot_is_two_private_artifacts_without_promotion(self) -> None:
         data = self.data()
         expectations = {

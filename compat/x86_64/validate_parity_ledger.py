@@ -8860,15 +8860,10 @@ def require_fanotify_header_evidence(family: Mapping[str, Any]) -> None:
         )
 
 
-def require_evidence_state(
-    value: Any,
-    location: str,
-    expected_state: str,
-    *,
-    unique_commands: bool = False,
+def evidence_records(
+    value: Any, location: str, *, unique_commands: bool = False
 ) -> tuple[list[Mapping[str, Any]], set[str]]:
-    """Require one evidence state without promoting its owning family."""
-    require(expected_state in ALLOWED_EVIDENCE_STATES, f"{location} has invalid expected state")
+    """Validate the common native-evidence record shape."""
     require(isinstance(value, list) and value, f"{location} must be a non-empty array")
     records: list[Mapping[str, Any]] = []
     states: set[str] = set()
@@ -8891,6 +8886,19 @@ def require_evidence_state(
             commands.add(command)
         states.add(state)
         records.append(entry)
+    return records, states
+
+
+def require_evidence_state(
+    value: Any,
+    location: str,
+    expected_state: str,
+    *,
+    unique_commands: bool = False,
+) -> tuple[list[Mapping[str, Any]], set[str]]:
+    """Require one evidence state without promoting its owning family."""
+    require(expected_state in ALLOWED_EVIDENCE_STATES, f"{location} has invalid expected state")
+    records, states = evidence_records(value, location, unique_commands=unique_commands)
     require(states == {expected_state}, f"{location} must be entirely {expected_state}")
     return records, states
 
@@ -8898,8 +8906,18 @@ def require_evidence_state(
 def require_evidence(
     value: Any, location: str, status: str
 ) -> tuple[list[Mapping[str, Any]], set[str]]:
-    expected_state = "verified" if status == "foundation-verified" else "required"
-    return require_evidence_state(value, location, expected_state)
+    """Validate family evidence without treating its execution as promotion.
+
+    A planned family may contain evidence that has already run as well as
+    evidence still required.  Its ``status`` and the family-specific
+    completion predicates remain the only promotion boundary.  Once a family
+    is ``foundation-verified``, every family evidence record must be verified.
+    """
+    require(status in ALLOWED_STATUSES, f"{location} has invalid family status")
+    records, states = evidence_records(value, location)
+    if status == "foundation-verified":
+        require(states == {"verified"}, f"{location} must be entirely verified")
+    return records, states
 
 
 def require_oracles(value: Any, location: str) -> None:
