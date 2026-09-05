@@ -76,14 +76,16 @@ use crate::config::{
 };
 use crate::invariants;
 use crate::lock::PrivateLock;
-use crate::os::{MapAccess, Mapping, MemoryConfig, NormalOsAllocation};
+use crate::os::{MapAccess, Mapping, MemoryConfig, NormalOsAllocation, VmProcess};
 use crate::page_map::PageMapHeader;
+use crate::process_init::ProcessMainBackingBinding;
 use crate::process_page_map::{
     MappedAbandonedClaimAccess, MappedAbandonedClaimCompletion,
     MappedAbandonedClaimOutcome, ProcessPageMapError, ProcessPageMapLease,
     ProcessPageMapMutationLease,
 };
 use crate::subproc::MainSubprocess;
+use crate::random::TheapRandomImage;
 
 const COLD: u8 = 0;
 const INITIALIZING: u8 = 1;
@@ -99,6 +101,13 @@ const PAIR_SET: u8 = 1;
 // byte-based. This is not an options implementation or a mutable substitute
 // for one.
 const DEFAULT_ARENA_RESERVE: usize = GIB;
+
+// Pinned `src/arena.c:781-803` passes `MI_SECURE < 5` to the regular
+// `mi_reserve_os_memory_ex2` first-arena call. The selected normal-release
+// profile has `MI_SECURE == 0`, so this ticket-zero source caller always
+// admits the primitive's large-page attempt. The process policy still decides
+// whether that attempt selects a committed large-page route.
+const TICKET_ZERO_FIRST_ARENA_ALLOW_LARGE: bool = true;
 
 /// Process-static sidecar for one source-managed arena backing.
 ///
@@ -425,6 +434,85 @@ impl ProcessSharedArenaStorage {
         }
     }
 
+    /// Reserves ticket zero's first default arena through the one retained
+    /// process policy/PageMap binding.
+    ///
+    /// This is the native Linux/x86-64 continuation of the same first
+    /// `mi_arena_reserve` source decision as [`Self::reserve_default_os_arena`].
+    /// Unlike that preserved explicit-config route, it cannot substitute a
+    /// frozen option image, a policy-less PageMap, a missing default-Theap
+    /// random image, or an arbitrary `allow_large` caller bit. The caller
+    /// must retain `default_random` only for this reservation call; the borrow
+    /// ends before a page engine can activate.
+    pub(crate) fn reserve_default_os_arena_for_process(
+        &'static self,
+        backing: ProcessMainBackingBinding,
+        requested_size: usize,
+        default_random: &mut TheapRandomImage,
+    ) -> Result<ProcessSharedArenaLease, ProcessSharedArenaReserveFailure> {
+        let backed = ProcessBackedArenaPair::from_binding(backing)
+            .map_err(ProcessSharedArenaReserveFailure::rejected)?;
+        let plan = process_default_os_arena_reservation(
+            backed.pair.config,
+            requested_size,
+            backed.process,
+        )
+        .map_err(ProcessSharedArenaReserveFailure::rejected)?;
+        let guard = self
+            .initialization_lock
+            .lock()
+            .map_err(|error| ProcessSharedArenaReserveFailure::rejected(
+                ProcessSharedArenaReserveError::Lock(error),
+            ))?;
+
+        let attempt = match self.state.load(Ordering::Acquire) {
+            READY => {
+                if self.pair_matches(backed.pair) {
+                    ProcessSharedArenaReservationAttempt::Retained(
+                        ProcessSharedArenaReserveError::AlreadyInstalled,
+                    )
+                } else {
+                    ProcessSharedArenaReservationAttempt::Retained(
+                        ProcessSharedArenaReserveError::PairMismatch,
+                    )
+                }
+            }
+            COLD if self.pair_state.load(Ordering::Acquire) == PAIR_SET
+                && !self.pair_matches(backed.pair) =>
+            {
+                ProcessSharedArenaReservationAttempt::Retained(
+                    ProcessSharedArenaReserveError::PairMismatch,
+                )
+            }
+            COLD => self.reserve_cold_default_os_arena_for_process(
+                backed,
+                plan,
+                default_random,
+            ),
+            INITIALIZING | RETAINED | _ => ProcessSharedArenaReservationAttempt::Retained(
+                ProcessSharedArenaReserveError::Retained,
+            ),
+        };
+        let unlock = guard.unlock();
+
+        match (attempt, unlock) {
+            (ProcessSharedArenaReservationAttempt::Ready(lease), Ok(())) => Ok(lease),
+            (ProcessSharedArenaReservationAttempt::Ready(_), Err(error)) => {
+                self.state.store(RETAINED, Ordering::Release);
+                Err(ProcessSharedArenaReserveFailure::retained(
+                    ProcessSharedArenaReserveError::Lock(error),
+                ))
+            }
+            (ProcessSharedArenaReservationAttempt::Rejected(error), Err(_))
+            | (ProcessSharedArenaReservationAttempt::Rejected(error), Ok(())) => {
+                Err(ProcessSharedArenaReserveFailure::rejected(error))
+            }
+            (ProcessSharedArenaReservationAttempt::Retained(error), _) => {
+                Err(ProcessSharedArenaReserveFailure::retained(error))
+            }
+        }
+    }
+
     fn reserve_cold_regular_os_arena(
         &'static self,
         pair: ProcessArenaPair,
@@ -496,6 +584,94 @@ impl ProcessSharedArenaStorage {
         }
     }
 
+    fn reserve_cold_regular_os_arena_for_process(
+        &'static self,
+        backed: ProcessBackedArenaPair,
+        length: usize,
+        access: MapAccess,
+        default_random: &mut TheapRandomImage,
+    ) -> ProcessSharedArenaReservationAttempt {
+        // `INITIALIZING` reserves this final mapping slot before the source
+        // policy-aware map call. A retry can see COLD only after every failed
+        // primitive or unpublished-management owner is cleanly released.
+        self.state.store(INITIALIZING, Ordering::Release);
+        let base_owner = match NormalOsAllocation::allocate_aligned_base_for_process(
+            backed.process,
+            backed.pair.config,
+            length,
+            ARENA_ALIGNMENT,
+            access,
+            TICKET_ZERO_FIRST_ARENA_ALLOW_LARGE,
+            Some(default_random),
+        ) {
+            Ok(mapping) => mapping,
+            Err(failure) => {
+                let error = failure.error();
+                return match failure.into_mapping() {
+                    None => {
+                        self.state.store(COLD, Ordering::Release);
+                        ProcessSharedArenaReservationAttempt::Rejected(
+                            ProcessSharedArenaReserveError::Mapping(error),
+                        )
+                    }
+                    Some(mapping) => {
+                        // A failed aligned-map cleanup can retain a live
+                        // process-accounted mapping. Preserve that exact
+                        // owner and make this sidecar terminal before a
+                        // fallback could reuse overlapping source state.
+                        unsafe { self.write_retained_mapping(mapping) };
+                        self.state.store(RETAINED, Ordering::Release);
+                        ProcessSharedArenaReservationAttempt::Retained(
+                            ProcessSharedArenaReserveError::Mapping(error),
+                        )
+                    }
+                };
+            }
+        };
+        let candidate = match ProcessArenaCandidate::from_pair_and_mapping(
+            backed.pair,
+            base_owner.mapping(),
+        ) {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                let (mapping, memory) = base_owner.into_mapping_and_memory();
+                self.state.store(COLD, Ordering::Release);
+                return self.release_unpublished_os_reservation_for_process(
+                    mapping,
+                    backed.process,
+                    memory.initially_committed().then_some(memory.size().expect(
+                        "a retained process OS memory id has its complete mapping length",
+                    )).unwrap_or(0),
+                    error,
+                );
+            }
+        };
+        let (mapping, memory) = base_owner.into_mapping_and_memory();
+
+        match self.install_cold(candidate, mapping, ManagedArenaBacking::RegularOs(memory)) {
+            ProcessSharedArenaInstallAttempt::Ready(lease) => {
+                ProcessSharedArenaReservationAttempt::Ready(lease)
+            }
+            ProcessSharedArenaInstallAttempt::Retained(error) => {
+                ProcessSharedArenaReservationAttempt::Retained(
+                    ProcessSharedArenaReserveError::Manage(error),
+                )
+            }
+            ProcessSharedArenaInstallAttempt::Returned { error, mapping } => {
+                let committed = mapping.initially_committed();
+                let length = mapping.length().expect(
+                    "the unpublished process-aware mapping remains live until its source release",
+                );
+                self.release_unpublished_os_reservation_for_process(
+                    mapping,
+                    backed.process,
+                    if committed { length } else { 0 },
+                    error,
+                )
+            }
+        }
+    }
+
     fn reserve_cold_default_os_arena(
         &'static self,
         pair: ProcessArenaPair,
@@ -519,6 +695,63 @@ impl ProcessSharedArenaStorage {
             );
         }
         self.reserve_cold_regular_os_arena(pair, fallback_size, plan.access)
+    }
+
+    fn reserve_cold_default_os_arena_for_process(
+        &'static self,
+        backed: ProcessBackedArenaPair,
+        plan: DefaultOsArenaReservation,
+        default_random: &mut TheapRandomImage,
+    ) -> ProcessSharedArenaReservationAttempt {
+        let statistics = backed.process.subprocess().vm_statistics();
+        if plan.adjust_committed {
+            statistics.committed_adjust_decrease(plan.primary_size);
+        }
+        let primary = self.reserve_cold_regular_os_arena_for_process(
+            backed,
+            plan.primary_size,
+            plan.access,
+            default_random,
+        );
+        if matches!(&primary, ProcessSharedArenaReservationAttempt::Ready(_)) {
+            return primary;
+        }
+        // Pinned `mi_arena_reserve` restores this temporary committed
+        // adjustment after every failed primary attempt, including a terminal
+        // retained cleanup failure. A fallback cannot inherit its debit.
+        if plan.adjust_committed {
+            statistics.committed_adjust_increase(plan.primary_size);
+        }
+        if !matches!(&primary, ProcessSharedArenaReservationAttempt::Rejected(_)) {
+            return primary;
+        }
+
+        let Some(fallback_size) = plan.fallback_size else {
+            return primary;
+        };
+        // A rejected process attempt may retry only after it returned the
+        // sidecar to COLD with no retained map, arena, or cleanup owner.
+        if self.state.load(Ordering::Acquire) != COLD {
+            self.state.store(RETAINED, Ordering::Release);
+            return ProcessSharedArenaReservationAttempt::Retained(
+                ProcessSharedArenaReserveError::Retained,
+            );
+        }
+        if plan.adjust_committed {
+            statistics.committed_adjust_decrease(fallback_size);
+        }
+        let fallback = self.reserve_cold_regular_os_arena_for_process(
+            backed,
+            fallback_size,
+            plan.access,
+            default_random,
+        );
+        if !matches!(&fallback, ProcessSharedArenaReservationAttempt::Ready(_))
+            && plan.adjust_committed
+        {
+            statistics.committed_adjust_increase(fallback_size);
+        }
+        fallback
     }
 
     fn release_unpublished_os_reservation(
@@ -548,6 +781,38 @@ impl ProcessSharedArenaStorage {
                 // SAFETY: this exact mapping is still live after failed
                 // `munmap`; the initialization lock is held, and no prior
                 // successful publication can own this final slot.
+                unsafe { self.write_retained_mapping(mapping) };
+                self.state.store(RETAINED, Ordering::Release);
+                ProcessSharedArenaReservationAttempt::Retained(
+                    ProcessSharedArenaReserveError::Release { manage, unmap },
+                )
+            }
+        }
+    }
+
+    fn release_unpublished_os_reservation_for_process(
+        &'static self,
+        mut mapping: Mapping,
+        process: VmProcess<'static>,
+        committed_size: usize,
+        manage: ProcessSharedArenaError,
+    ) -> ProcessSharedArenaReservationAttempt {
+        match mapping.unmap_for_process(process, committed_size, false) {
+            Ok(()) => match self.state.load(Ordering::Acquire) {
+                COLD => ProcessSharedArenaReservationAttempt::Rejected(
+                    ProcessSharedArenaReserveError::Manage(manage),
+                ),
+                RETAINED => ProcessSharedArenaReservationAttempt::Retained(
+                    ProcessSharedArenaReserveError::Manage(manage),
+                ),
+                _ => {
+                    self.state.store(RETAINED, Ordering::Release);
+                    ProcessSharedArenaReservationAttempt::Retained(
+                        ProcessSharedArenaReserveError::Manage(manage),
+                    )
+                }
+            },
+            Err(unmap) => {
                 unsafe { self.write_retained_mapping(mapping) };
                 self.state.store(RETAINED, Ordering::Release);
                 ProcessSharedArenaReservationAttempt::Retained(
@@ -1285,6 +1550,9 @@ pub(crate) enum ProcessSharedArenaReserveError {
     /// The rounded request would not become exactly one complete arena.
     InvalidOneArena,
     PageMap(ProcessPageMapError),
+    /// The source coordinator no longer retains the exact policy/PageMap
+    /// binding required by the native ticket-zero first-arena route.
+    ProcessBackingInactive,
     Mapping(Errno),
     PairMismatch,
     AlreadyInstalled,
@@ -1316,6 +1584,7 @@ struct DefaultOsArenaReservation {
     primary_size: usize,
     fallback_size: Option<usize>,
     access: MapAccess,
+    adjust_committed: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1330,6 +1599,33 @@ struct ProcessArenaPair {
     root: NonNull<PageMapHeader>,
     config: MemoryConfig,
     subprocess: &'static MainSubprocess,
+}
+
+/// The non-forgeable process-policy counterpart to one process arena pair.
+///
+/// It remains private to the first-arena owner so callers cannot extract a
+/// matching-looking `VmProcess` and PageMap pair from arbitrary fixtures.
+#[derive(Clone, Copy)]
+struct ProcessBackedArenaPair {
+    pair: ProcessArenaPair,
+    process: VmProcess<'static>,
+}
+
+impl ProcessBackedArenaPair {
+    fn from_binding(
+        backing: ProcessMainBackingBinding,
+    ) -> Result<Self, ProcessSharedArenaReserveError> {
+        if !backing.is_active() {
+            return Err(ProcessSharedArenaReserveError::ProcessBackingInactive);
+        }
+        let pair = ProcessArenaPair::from_page_map(backing.page_map())
+            .map_err(ProcessSharedArenaReserveError::PageMap)?;
+        let process = backing.process();
+        if !core::ptr::eq(pair.subprocess.as_ptr(), process.subprocess().as_ptr()) {
+            return Err(ProcessSharedArenaReserveError::PairMismatch);
+        }
+        Ok(Self { pair, process })
+    }
 }
 
 impl ProcessArenaPair {
@@ -1439,10 +1735,170 @@ fn default_os_arena_reservation(
         primary_size,
         fallback_size,
         access,
+        adjust_committed: plan.adjust_committed,
+    })
+}
+
+/// Selects ticket zero's first regular arena from its retained VM policy.
+///
+/// This remains exactly one first arena (`arena_count == 0`): general
+/// count-scaled arena growth and later fresh-page routing are outside this
+/// bounded runtime seam. The policy is nevertheless live for the source
+/// reserve/eager-commit/large-page inputs, and the regular mapping receives
+/// the fixed normal-release `MI_SECURE < 5` caller bit.
+fn process_default_os_arena_reservation(
+    config: MemoryConfig,
+    requested_size: usize,
+    process: VmProcess<'static>,
+) -> Result<DefaultOsArenaReservation, ProcessSharedArenaReserveError> {
+    if requested_size == 0 {
+        return Err(ProcessSharedArenaReserveError::InvalidRequest);
+    }
+    if requested_size > MAX_ALLOC_SIZE {
+        return Err(ProcessSharedArenaReserveError::RequestTooLarge);
+    }
+    let policy = process.policy();
+    let plan = crate::arena::ArenaReservationPlan::new(
+        config,
+        0,
+        requested_size,
+        policy.arena_reserve_bytes(),
+        policy.arena_eager_commit(),
+        policy.allow_large_os_pages(),
+    )
+    .ok_or(ProcessSharedArenaReserveError::RequestTooLarge)?;
+    one_regular_os_arena_length(plan.primary_size)?;
+    if let Some(fallback_size) = plan.fallback_size {
+        one_regular_os_arena_length(fallback_size)?;
+    }
+    Ok(DefaultOsArenaReservation {
+        primary_size: plan.primary_size,
+        fallback_size: plan.fallback_size,
+        access: plan.access,
+        adjust_committed: plan.adjust_committed,
     })
 }
 
 static PROCESS_SHARED_ARENA: ProcessSharedArenaStorage = ProcessSharedArenaStorage::new();
+
+/// Address-free observations from one native first-arena policy witness.
+///
+/// The C companion executes the pinned `mi_arena_reserve` body in a child
+/// with the corresponding source environment. This Rust fixture owns one
+/// canonical process policy/PageMap binding and a live default-Theap random
+/// image, then forces the same two large-map failures and THP-advice failure.
+/// It is test-only evidence for the selected ticket-zero policy route; it
+/// grants no general arena or source-option completion claim.
+#[cfg(test)]
+pub(crate) struct M2VmPolicyFirstArenaTrace {
+    pub(crate) source_options_applied: bool,
+    pub(crate) first_arena_size: usize,
+    pub(crate) first_arena_initially_committed: bool,
+    pub(crate) large_high_hint_failed: bool,
+    pub(crate) large_null_hint_retry_failed: bool,
+    pub(crate) regular_hinted_map_after_large_fallback: bool,
+    pub(crate) thp_advice_failure_ignored: bool,
+}
+
+/// Executes the bounded policy record used by the native M2 C/Rust trace.
+#[cfg(test)]
+pub(crate) fn m2_vm_policy_first_arena_trace() -> M2VmPolicyFirstArenaTrace {
+    use crate::config::{VmOption, VmOptionEnvironment, VmOptions};
+    use crate::os::{fault, PageSize};
+    use crate::process_init::ProcessMainInitializationStorage;
+
+    const POLICY_ARENA_SIZE: usize = 4 * ARENA_MIN_SIZE;
+    let config = MemoryConfig::from_observations(
+        PageSize::new(4 * 1024).expect("the selected native base page is valid"),
+        2 * 1024 * 1024,
+        true,
+        true,
+    );
+    let mut options = VmOptions::uninitialized();
+    options.initialize_all(|_| VmOptionEnvironment::Absent);
+    options.set(
+        VmOption::ArenaReserve,
+        i64::try_from(POLICY_ARENA_SIZE / 1024)
+            .expect("the bounded source arena reserve fits the KiB option image"),
+    );
+    options.set(VmOption::ArenaEagerCommit, 2);
+    options.set(VmOption::AllowLargeOsPages, 1);
+    options.set(VmOption::AllowThp, 1);
+
+    let process_storage = ProcessMainInitializationStorage::test_static_owner();
+    let subprocess = MainSubprocess::test_static_owner();
+    let page_map_storage = crate::process_page_map::ProcessPageMapStorage::test_static_owner();
+    // SAFETY: this evidence fixture leaks one isolated process coordinator,
+    // resolved source policy image, subprocess, and PageMap for the selected
+    // process-lifetime first-arena attempt.
+    let backing = unsafe {
+        process_storage.test_prepare_vm_process_backing_binding(
+            config,
+            options,
+            subprocess,
+            page_map_storage,
+        )
+    }
+    .expect("the policy witness publishes its one canonical backing binding");
+    let policy_options = backing.process().policy().options();
+    let mut random = TheapRandomImage::empty_weak();
+    random.initialize_weak();
+    let storage = ProcessSharedArenaStorage::test_static_owner();
+    let fault = fault::install(fault::Plan::at_triple(
+        fault::Point::LargeMap,
+        1,
+        fault::Point::LargeMap,
+        1,
+        fault::Point::Madvise,
+        1,
+        Errno::NOMEM,
+    ));
+    let capture = fault.capture_policy_mmaps();
+    let lease = match storage.reserve_default_os_arena_for_process(
+        backing,
+        ARENA_SLICE_SIZE,
+        &mut random,
+    ) {
+        Ok(lease) => lease,
+        Err(_) => panic!("two failed large source attempts fall through to the policy first arena"),
+    };
+    let arena = lease
+        .arena()
+        .expect("the selected source policy publishes one managed arena");
+    let (attempts, count) = capture
+        .attempts()
+        .expect("the selected policy mmap sequence fits the fixed capture");
+
+    let trace = M2VmPolicyFirstArenaTrace {
+        source_options_applied: policy_options.value(VmOption::ArenaReserve) == Some(131_072)
+            && policy_options.value(VmOption::ArenaEagerCommit) == Some(2)
+            && policy_options.value(VmOption::AllowLargeOsPages) == Some(1)
+            && policy_options.value(VmOption::AllowThp) == Some(1),
+        first_arena_size: arena.size().expect("the source arena retains its extent"),
+        first_arena_initially_committed: arena.arena().memid.initially_committed(),
+        large_high_hint_failed: count == 3
+            && attempts[0].uses_huge_page_flag()
+            && attempts[0].hint.is_some(),
+        large_null_hint_retry_failed: count == 3
+            && attempts[1].uses_huge_page_flag()
+            && attempts[1].hint.is_none()
+            && attempts[1].flags == attempts[0].flags,
+        regular_hinted_map_after_large_fallback: count == 3
+            && !attempts[2].uses_huge_page_flag()
+            && attempts[2].hint == attempts[0].hint,
+        thp_advice_failure_ignored: fault.observed() == 2
+            && fault.secondary_observed() == 1
+            && fault.third_observed() == 1,
+    };
+    assert_eq!(trace.first_arena_size, POLICY_ARENA_SIZE);
+    assert!(trace.source_options_applied);
+    assert!(trace.first_arena_initially_committed);
+    assert!(trace.large_high_hint_failed);
+    assert!(trace.large_null_hint_retry_failed);
+    assert!(trace.regular_hinted_map_after_large_fallback);
+    assert!(trace.thp_advice_failure_ignored);
+    trace
+}
 
 #[cfg(test)]
 mod tests {
@@ -1451,8 +1907,12 @@ mod tests {
     use crate::arena::{
         manage_os_in_place, ArenaId, ArenaRegistry, ManageArenaError,
     };
-    use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE, ARENA_SLICE_SIZE};
+    use crate::config::{
+        ARENA_ALIGNMENT, ARENA_MIN_SIZE, ARENA_SLICE_SIZE, VmOption,
+        VmOptionEnvironment, VmOptions,
+    };
     use crate::os::{fault, MapAccess, NormalOsAllocation, PageSize};
+    use crate::process_init::ProcessMainInitializationStorage;
     use crate::process_page_map::{
         MappedAbandonedClaimCompletion, MappedAbandonedClaimOutcome,
         MappedAbandonedClaimRetainedReason, ProcessPageMapError,
@@ -1477,6 +1937,45 @@ mod tests {
         ProcessPageMapStorage::test_static_owner()
             .initialize(config, subprocess)
             .expect("the isolated process map initializes")
+    }
+
+    fn process_backing_with_arena_options(
+        config: MemoryConfig,
+        arena_reserve_bytes: usize,
+        arena_eager_commit: i64,
+        allow_large_os_pages: i64,
+        allow_thp: i64,
+    ) -> ProcessMainBackingBinding {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(
+            VmOption::ArenaReserve,
+            i64::try_from(arena_reserve_bytes / 1024)
+                .expect("the bounded source KiB option fits its signed image"),
+        );
+        options.set(VmOption::ArenaEagerCommit, arena_eager_commit);
+        options.set(VmOption::AllowLargeOsPages, allow_large_os_pages);
+        options.set(VmOption::AllowThp, allow_thp);
+        let process = ProcessMainInitializationStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map = ProcessPageMapStorage::test_static_owner();
+        // SAFETY: this fixture leaks one isolated coordinator, option image,
+        // subprocess, and PageMap for the exact policy-bound reservation.
+        unsafe {
+            process.test_prepare_vm_process_backing_binding(
+                config,
+                options,
+                subprocess,
+                page_map,
+            )
+        }
+        .expect("the fixture publishes a canonical policy/PageMap binding")
+    }
+
+    fn initialized_random() -> TheapRandomImage {
+        let mut random = TheapRandomImage::empty_weak();
+        random.initialize_weak();
+        random
     }
 
     fn one_arena_mapping(config: MemoryConfig) -> Mapping {
@@ -1700,6 +2199,115 @@ mod tests {
             "a failed 1 GiB first attempt retries the source 128 MiB arena"
         );
         assert!(fault.observed() >= 2, "the failed primary map is followed by a distinct fallback map");
+    }
+
+    #[test]
+    fn process_default_os_arena_retries_the_source_smaller_policy_arena_after_clean_primary_failure() {
+        let config = memory_config();
+        let binding = process_backing_with_arena_options(
+            config,
+            crate::config::GIB,
+            0,
+            0,
+            0,
+        );
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let mut random = initialized_random();
+        // The first source aligned mapping makes its direct and overmap
+        // attempts. Both must fail before the 128-MiB source fallback may
+        // begin; a single injected map error would otherwise only select the
+        // lower aligned-map retry inside the same primary reservation.
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::Map,
+            1,
+            fault::Point::Map,
+            1,
+            Errno::NOMEM,
+        ));
+
+        let lease = match storage.reserve_default_os_arena_for_process(
+            binding,
+            ARENA_SLICE_SIZE,
+            &mut random,
+        ) {
+            Ok(lease) => lease,
+            Err(_) => panic!("a clean failed policy primary reaches the source smaller fallback"),
+        };
+        assert_eq!(
+            lease.arena().unwrap().size(),
+            Some(4 * ARENA_MIN_SIZE),
+            "the live source arena_reserve policy retries the bounded 128-MiB first arena"
+        );
+        assert!(
+            fault.observed() >= 2,
+            "the primary's direct and overmap failures precede its source fallback"
+        );
+    }
+
+    #[test]
+    fn process_default_os_arena_retained_cleanup_restores_adjusted_statistics_without_a_retry() {
+        let mut config = MemoryConfig::from_observations(
+            PageSize::new(4096).expect("the native page size is valid"),
+            1024 * 1024,
+            true,
+            false,
+        );
+        config.test_force_full_aligned_map_trim();
+        let binding = process_backing_with_arena_options(
+            config,
+            4 * ARENA_MIN_SIZE,
+            1,
+            0,
+            0,
+        );
+        let process = binding.process();
+        let statistics = process.subprocess().vm_statistics();
+        let before = statistics.snapshot();
+        let storage = ProcessSharedArenaStorage::test_static_owner();
+        let mut random = initialized_random();
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            1,
+            Errno::NOMEM,
+        ));
+
+        let reservation = storage.reserve_default_os_arena_for_process(
+            binding,
+            ARENA_SLICE_SIZE,
+            &mut random,
+        );
+        match reservation {
+            Err(ProcessSharedArenaReserveFailure::Retained { error }) => assert!(matches!(
+                error,
+                ProcessSharedArenaReserveError::Mapping(Errno::NOMEM),
+            ), "unexpected retained reservation error: {error:?}"),
+            Err(ProcessSharedArenaReserveFailure::Rejected { error }) => {
+                panic!("the failed cleanup must retain its map: {error:?}")
+            }
+            Ok(_) => panic!("the injected commit failure must not publish an arena"),
+        }
+        assert_eq!(storage.test_state(), RETAINED);
+        assert_eq!(storage.registry.count(), 0);
+        let retained = statistics.snapshot();
+        assert_eq!(retained.reserved_current, before.reserved_current);
+        assert_eq!(retained.committed_current, before.committed_current);
+
+        fault.set(fault::Plan::disabled());
+        assert!(matches!(
+            storage.reserve_default_os_arena_for_process(
+                binding,
+                ARENA_SLICE_SIZE,
+                &mut random,
+            ),
+            Err(ProcessSharedArenaReserveFailure::Retained {
+                error: ProcessSharedArenaReserveError::Retained,
+            })
+        ));
+        assert_eq!(
+            statistics.snapshot(),
+            retained,
+            "a retained cleanup owner cannot reapply source accounting through a hidden fallback"
+        );
     }
 
     #[test]

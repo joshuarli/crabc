@@ -1,28 +1,35 @@
 /* Native x86-64 M2 VM-primitives oracle.
  *
- * This intentionally includes the fixed v3.5.0 `src/os.c` into the probe so
- * that its private configuration and OS-allocation wrappers are observed
- * directly.  The Python producer omits that one ordinary source object from
- * the link list.  It records only address-independent, fixed-profile facts:
- * the regular reserved lifecycle; ordinary, aligned, and offset-aligned OS
- * owners; and normalized NUMA observation.  It does not exercise options,
- * hints, THP process policy, huge pages, placement, or diagnostics.
+ * This intentionally includes the fixed v3.5.0 `src/os.c` and `src/arena.c`
+ * into the probe so their private configuration, OS-allocation, and first
+ * arena-reserve bodies are observed directly. The Python producer omits those
+ * two ordinary source objects from the link list. It records address-free
+ * fixed-profile facts for the regular lifecycle and one bounded, child-only
+ * source-option/first-arena policy record. It does not qualify ambient
+ * retries, huge-page success/placement, diagnostics, or general arena use.
  */
+#define _GNU_SOURCE
 #include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <mimalloc.h>
 #include <mimalloc/internal.h>
 #include <mimalloc/prim.h>
 
-/* Resolved through `-I <pinned-source>/src`; keep the private source body
- * singular by omitting `src/os.c` from the ordinary C source list. */
+/* Resolved through `-I <pinned-source>/src`; keep each private source body
+ * singular by omitting `src/os.c` and `src/arena.c` from the ordinary C
+ * source list. */
 #include "os.c"
+#include "arena.c"
 
 /* The producer links with `--wrap=munmap`.  This controlled one-shot seam
  * reaches the unchanged pinned `_mi_prim_free` call inside `src/prim/unix/prim.c`;
@@ -41,7 +48,33 @@ static size_t captured_release_munmap_calls = 0;
 static void* captured_release_munmap_addresses[2];
 static size_t captured_release_munmap_lengths[2];
 
+/* The policy child owns this one selected source `mi_arena_reserve` call. Its
+ * `mmap` wrapper forces both source-generated MAP_HUGETLB attempts to fail,
+ * allowing the unchanged Unix source to retry a null hint and then choose a
+ * regular hinted map. Its `madvise` wrapper makes the selected THP advisory
+ * fail. The record compares source branch relations, never virtual addresses
+ * or a raw trace count. */
+static bool capture_policy_mapping = false;
+static size_t captured_policy_large_calls = 0;
+static void* captured_policy_large_hints[2];
+static size_t captured_policy_regular_calls = 0;
+static void* captured_policy_regular_hint = NULL;
+static size_t captured_policy_thp_calls = 0;
+
+typedef struct policy_child_record_s {
+  bool source_options_applied;
+  size_t first_arena_size;
+  bool first_arena_initially_committed;
+  bool large_high_hint_failed;
+  bool large_null_hint_retry_failed;
+  bool regular_hinted_map_after_large_fallback;
+  bool thp_advice_failure_ignored;
+} policy_child_record_t;
+
 int __real_munmap(void* address, size_t length);
+void* __real_mmap(void* address, size_t length, int protection, int flags,
+                  int descriptor, off_t offset);
+int __real_madvise(void* address, size_t length, int advice);
 
 int __wrap_munmap(void* address, size_t length) {
   wrapped_munmap_calls++;
@@ -60,6 +93,34 @@ int __wrap_munmap(void* address, size_t length) {
   return last_real_munmap_result;
 }
 
+void* __wrap_mmap(void* address, size_t length, int protection, int flags,
+                  int descriptor, off_t offset) {
+  if (capture_policy_mapping) {
+    if ((flags & MAP_HUGETLB) != 0) {
+      if (captured_policy_large_calls < 2) {
+        captured_policy_large_hints[captured_policy_large_calls] = address;
+      }
+      captured_policy_large_calls++;
+      errno = ENOMEM;
+      return MAP_FAILED;
+    }
+    if (captured_policy_regular_calls == 0) {
+      captured_policy_regular_hint = address;
+    }
+    captured_policy_regular_calls++;
+  }
+  return __real_mmap(address, length, protection, flags, descriptor, offset);
+}
+
+int __wrap_madvise(void* address, size_t length, int advice) {
+  if (capture_policy_mapping && advice == MADV_HUGEPAGE) {
+    captured_policy_thp_calls++;
+    errno = ENOMEM;
+    return -1;
+  }
+  return __real_madvise(address, length, advice);
+}
+
 #define U(name, value) printf(name "=%zu\n", (size_t)(value))
 
 static int64_t current_reserved(const mi_subproc_t* subproc) {
@@ -70,7 +131,105 @@ static int64_t current_committed(const mi_subproc_t* subproc) {
   return mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)(&subproc->stats.committed.current));
 }
 
+static bool write_all(int descriptor, const void* buffer, size_t length) {
+  const uint8_t* bytes = buffer;
+  size_t written = 0;
+  while (written < length) {
+    const ssize_t result = write(descriptor, bytes + written, length - written);
+    if (result <= 0) return false;
+    written += (size_t)result;
+  }
+  return true;
+}
+
+static bool read_all(int descriptor, void* buffer, size_t length) {
+  uint8_t* bytes = buffer;
+  size_t read_count = 0;
+  while (read_count < length) {
+    const ssize_t result = read(descriptor, bytes + read_count, length - read_count);
+    if (result <= 0) return false;
+    read_count += (size_t)result;
+  }
+  return true;
+}
+
+static int run_policy_child(int record_descriptor) {
+  policy_child_record_t record = {0};
+  if (setenv("mimalloc_arena_reserve", "128M", 1) != 0
+      || setenv("mimalloc_arena_eager_commit", "2", 1) != 0
+      || setenv("mimalloc_allow_large_os_pages", "1", 1) != 0
+      || setenv("mimalloc_allow_thp", "1", 1) != 0) {
+    return 1;
+  }
+
+  /* This is the unchanged source process initializer, including its raw
+   * environment option read. It runs only after fork, before the parent
+   * selects its separate allow_thp=0 fixed lifecycle. */
+  mi_process_init();
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  if (subproc == NULL) return 2;
+
+  record.source_options_applied =
+      mi_option_get(mi_option_arena_reserve) == 128 * 1024
+      && mi_option_get(mi_option_arena_eager_commit) == 2
+      && mi_option_is_enabled(mi_option_allow_large_os_pages)
+      && mi_option_is_enabled(mi_option_allow_thp);
+
+  mi_arena_id_t arena_id = _mi_arena_id_none();
+  capture_policy_mapping = true;
+  const bool reserved = mi_arena_reserve(
+      subproc, MI_ARENA_SLICE_SIZE, true /* source normal-release caller */, &arena_id);
+  capture_policy_mapping = false;
+  mi_arena_t* const arena = _mi_arena_from_id(arena_id);
+  size_t area_size = 0;
+  void* const area = mi_arena_area(arena_id, &area_size);
+  record.first_arena_size = area_size;
+  record.first_arena_initially_committed =
+      reserved && arena != NULL && area != NULL && arena->memid.initially_committed;
+  record.large_high_hint_failed =
+      captured_policy_large_calls == 2 && captured_policy_large_hints[0] != NULL;
+  record.large_null_hint_retry_failed =
+      captured_policy_large_calls == 2 && captured_policy_large_hints[1] == NULL;
+  record.regular_hinted_map_after_large_fallback =
+      reserved && captured_policy_regular_calls == 1 && captured_policy_regular_hint != NULL;
+  /* Successful reservation after the wrapper's ENOMEM is the source proof
+   * that `unix_mmap` ignores its best-effort MADV_HUGEPAGE result. */
+  record.thp_advice_failure_ignored = reserved && captured_policy_thp_calls == 1;
+
+  if (!write_all(record_descriptor, &record, sizeof(record))) return 3;
+  return (record.source_options_applied && record.first_arena_size == 128 * 1024 * 1024
+          && record.first_arena_initially_committed && record.large_high_hint_failed
+          && record.large_null_hint_retry_failed
+          && record.regular_hinted_map_after_large_fallback
+          && record.thp_advice_failure_ignored) ? 0 : 4;
+}
+
+static bool capture_policy_child(policy_child_record_t* record) {
+  int descriptors[2];
+  if (pipe(descriptors) != 0) return false;
+  const pid_t child = fork();
+  if (child < 0) {
+    close(descriptors[0]);
+    close(descriptors[1]);
+    return false;
+  }
+  if (child == 0) {
+    close(descriptors[0]);
+    const int result = run_policy_child(descriptors[1]);
+    close(descriptors[1]);
+    _exit(result);
+  }
+  close(descriptors[1]);
+  const bool read_record = read_all(descriptors[0], record, sizeof(*record));
+  close(descriptors[0]);
+  int status = 0;
+  return read_record && waitpid(child, &status, 0) == child
+      && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 int main(void) {
+  policy_child_record_t policy_record = {0};
+  if (!capture_policy_child(&policy_record)) return 8;
   /* Keep the source's real startup ordering but suppress prim.c's automatic
    * constructor in the producer build.  `_mi_os_*` updates its subprocess
    * statistics even at MI_STAT=0, so it needs the real initialized owner. */
@@ -241,6 +400,16 @@ int main(void) {
   U("m2.vm.release.retry.real_munmap_success", last_real_munmap_result == 0);
   U("m2.vm.numa.count_at_least_one", numa_count >= 1);
   U("m2.vm.numa.current_lt_count", numa_current < numa_count);
+  U("m2.vm.policy.source_options_applied", policy_record.source_options_applied);
+  U("m2.vm.policy.first_arena_size", policy_record.first_arena_size);
+  U("m2.vm.policy.first_arena_initially_committed",
+      policy_record.first_arena_initially_committed);
+  U("m2.vm.policy.large_high_hint_failed", policy_record.large_high_hint_failed);
+  U("m2.vm.policy.large_null_hint_retry_failed",
+      policy_record.large_null_hint_retry_failed);
+  U("m2.vm.policy.regular_hinted_map_after_large_fallback",
+      policy_record.regular_hinted_map_after_large_fallback);
+  U("m2.vm.policy.thp_advice_failure_ignored", policy_record.thp_advice_failure_ignored);
   puts("CRABC_MI_M2_VM_TRACE_END");
   return 0;
 }

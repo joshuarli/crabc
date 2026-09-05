@@ -3377,6 +3377,19 @@ impl RuntimeProcessStorage {
             self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
             return false;
         };
+        #[cfg(all(target_arch = "x86_64", not(test)))]
+        let backing = match owner.ready().and_then(|ready| ready.process_backing()) {
+            Ok(backing) => backing,
+            Err(_) => {
+                self.retain();
+                self.page_owner_state.store(PAGE_OWNER_RETAINED, Ordering::Release);
+                return false;
+            }
+        };
+        // The paused AArch64 execution path still owns its explicit-config
+        // runtime transition. It deliberately keeps the legacy constructor
+        // rather than treating a missing VM policy as a native x86 fallback.
+        #[cfg(any(not(target_arch = "x86_64"), test))]
         let page_map = match owner.ready().and_then(|ready| ready.page_map()) {
             Ok(page_map) => page_map,
             Err(_) => {
@@ -3393,11 +3406,19 @@ impl RuntimeProcessStorage {
                 return false;
             }
         };
-        let page_owner = match MainStaticRuntimeFirstArenaPageAllocator::begin(
+        #[cfg(all(target_arch = "x86_64", not(test)))]
+        let page_owner = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+            session,
+            backing,
+            arena_storage,
+        );
+        #[cfg(any(not(target_arch = "x86_64"), test))]
+        let page_owner = MainStaticRuntimeFirstArenaPageAllocator::begin_legacy(
             session,
             page_map,
             arena_storage,
-        ) {
+        );
+        let page_owner = match page_owner {
             Ok(owner) => owner,
             Err(_) => {
                 self.retain();

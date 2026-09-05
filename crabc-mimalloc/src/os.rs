@@ -1421,6 +1421,33 @@ pub(crate) struct Mapping {
     is_mapped: bool,
 }
 
+/// The two source meanings of an mmap address argument.
+///
+/// `_mi_prim_alloc` can receive a caller-owned address for the explicit
+/// huge-page claim, while `unix_mmap_prim_aligned` independently derives a
+/// high aligned hint for ordinary mappings. Unix retries only the latter with
+/// a null address after `mmap` fails; replacing a caller's explicit huge-page
+/// claim with a null map would lose its claimed-range ownership.
+#[derive(Clone, Copy)]
+enum MmapHint {
+    Explicit(usize),
+    SourceAligned(usize),
+}
+
+impl MmapHint {
+    #[inline]
+    const fn address(self) -> usize {
+        match self {
+            Self::Explicit(address) | Self::SourceAligned(address) => address,
+        }
+    }
+
+    #[inline]
+    const fn retries_without_hint(self) -> bool {
+        matches!(self, Self::SourceAligned(_))
+    }
+}
+
 impl Mapping {
     /// Maps one page-aligned-length private anonymous region.
     ///
@@ -1547,6 +1574,16 @@ impl Mapping {
         if alignment < page_size || !alignment.is_power_of_two() {
             return Err(AlignedMappingFailure::without_mapping(Errno::INVAL));
         }
+        // Native maps naturally exercise either one of the source's direct
+        // or overmap paths, depending on the kernel-selected address. Keep a
+        // private deterministic test switch so a process-bound reservation
+        // can prove the retained-owner path after a failed direct cleanup.
+        // It only changes the test fixture's chosen address geometry; the
+        // production process path still follows the source kernel result.
+        #[cfg(test)]
+        let force_full_trim_for_test = config.force_full_aligned_map_trim;
+        #[cfg(not(test))]
+        let force_full_trim_for_test = false;
 
         match Self::map_for_process(
             process,
@@ -1562,7 +1599,7 @@ impl Mapping {
                     Ok(base) => base,
                     Err(error) => return Err(AlignedMappingFailure::with_mapping(error, direct)),
                 };
-                if base.addr() % alignment == 0 {
+                if !force_full_trim_for_test && base.addr() % alignment == 0 {
                     return Ok(direct);
                 }
                 if let Err(error) = direct.unmap_for_process(
@@ -1577,7 +1614,15 @@ impl Mapping {
             Err(_) => {}
         }
 
-        let over_length = match length.checked_add(alignment) {
+        let alignment_headroom = if force_full_trim_for_test {
+            match alignment.checked_mul(2) {
+                Some(headroom) => headroom,
+                None => return Err(AlignedMappingFailure::without_mapping(Errno::NOMEM)),
+            }
+        } else {
+            alignment
+        };
+        let over_length = match length.checked_add(alignment_headroom) {
             Some(length) => length,
             None => return Err(AlignedMappingFailure::without_mapping(Errno::NOMEM)),
         };
@@ -1595,9 +1640,16 @@ impl Mapping {
             Ok(base) => base,
             Err(error) => return Err(AlignedMappingFailure::with_mapping(error, over)),
         };
-        let aligned_address = match invariants::align_up(base.addr(), alignment) {
-            Some(address) => address,
-            None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
+        let aligned_address = if force_full_trim_for_test && base.addr() % alignment == 0 {
+            match base.addr().checked_add(alignment) {
+                Some(address) => address,
+                None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
+            }
+        } else {
+            match invariants::align_up(base.addr(), alignment) {
+                Some(address) => address,
+                None => return Err(AlignedMappingFailure::with_mapping(Errno::NOMEM, over)),
+            }
         };
         let prefix = match aligned_address.checked_sub(base.addr()) {
             Some(size) => size,
@@ -1687,8 +1739,10 @@ impl Mapping {
         }
         let protection = access.protection();
         let source_hint = match explicit_hint {
-            Some(hint) => Some(hint),
-            None => policy.aligned_hint(config, try_alignment, length, default_random),
+            Some(hint) => Some(MmapHint::Explicit(hint)),
+            None => policy
+                .aligned_hint(config, try_alignment, length, default_random)
+                .map(MmapHint::SourceAligned),
         };
         let wants_large = allow_large
             && (large_only
@@ -1739,7 +1793,14 @@ impl Mapping {
             // resulting regular map a large-page mapping.
             // SAFETY: this function owns the just-created mapping until it
             // returns the explicit `Mapping` owner below.
-            let _ = unsafe { crabc_core::mm::madvise_raw(address, length, MADV_HUGEPAGE) };
+            let _ = match fault_before(FaultPoint::Madvise) {
+                Ok(()) => {
+                    // SAFETY: this function owns the just-created mapping
+                    // until it returns the explicit Mapping owner below.
+                    unsafe { crabc_core::mm::madvise_raw(address, length, MADV_HUGEPAGE) }
+                }
+                Err(error) => Err(error),
+            };
         }
         Ok(Self::policy_mapping(address, length, config, access, false))
     }
@@ -1765,23 +1826,35 @@ impl Mapping {
 
     #[inline]
     fn mmap_with_hint(
-        hint: Option<usize>,
+        hint: Option<MmapHint>,
         length: usize,
         protection: u32,
         flags: u32,
     ) -> Result<*mut u8> {
-        // SAFETY: `length` is validated by the caller and the optional hint
-        // is only an address suggestion. Linux validates the raw flags and
-        // creates no Rust reference from the returned mapping address.
-        unsafe {
-            crabc_core::mm::mmap_raw(
-                hint.map_or(core::ptr::null_mut(), |value| value as *mut u8),
-                length,
-                protection,
-                flags,
-                -1,
-                0,
-            )
+        let map_once = |address: Option<usize>| {
+            #[cfg(any(test, feature = "native-runtime-test-fault"))]
+            fault::record_policy_mmap(address, flags);
+            if flags & MAP_HUGETLB != 0 {
+                fault_before(FaultPoint::LargeMap)?;
+            }
+            // SAFETY: `length` is validated by the caller and the optional
+            // address is only an mmap hint. Linux validates raw flags and
+            // creates no Rust reference from the returned mapping address.
+            unsafe {
+                crabc_core::mm::mmap_raw(
+                    address.map_or(core::ptr::null_mut(), |value| value as *mut u8),
+                    length,
+                    protection,
+                    flags,
+                    -1,
+                    0,
+                )
+            }
+        };
+        match map_once(hint.map(MmapHint::address)) {
+            Ok(address) => Ok(address),
+            Err(_) if hint.is_some_and(MmapHint::retries_without_hint) => map_once(None),
+            Err(error) => Err(error),
         }
     }
 
@@ -4196,6 +4269,12 @@ pub(crate) enum FaultPoint {
     ThreadYield = 11,
     Entropy = 12,
     HugeMap = 13,
+    /// One raw `MAP_HUGETLB` attempt inside the source aligned Unix mapper.
+    /// This stays distinct from `Map`, which names the enclosing
+    /// `_mi_os_prim_alloc_at` transition and its paired statistics update.
+    LargeMap = 14,
+    /// The best-effort `MADV_HUGEPAGE` advisory after a regular source map.
+    Madvise = 15,
 }
 
 #[cfg(not(any(test, feature = "native-runtime-test-fault")))]
@@ -4226,6 +4305,14 @@ pub(crate) mod fault {
     // failed. Setup `unmap`s before a later metadata `commit` must not
     // consume the cleanup `unmap` injection intended to follow that commit.
     static SECOND_ENABLED: AtomicBool = AtomicBool::new(false);
+    // The bounded option/hint/large/THP witness needs two source large-map
+    // failures followed by one independent best-effort THP advisory failure.
+    // Keep that third edge explicit rather than letting an unrelated map
+    // counter stand in for the source's `madvise` error disposition.
+    static THIRD_SELECTED_POINT: AtomicUsize = AtomicUsize::new(ANY_POINT);
+    static THIRD_FAILURE_ORDINAL: AtomicUsize = AtomicUsize::new(0);
+    static THIRD_OBSERVED: AtomicUsize = AtomicUsize::new(0);
+    static THIRD_ENABLED: AtomicBool = AtomicBool::new(false);
     static FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
     // The M2 native release-failure differential captures only the two
     // selected `_mi_os_free_ex` primitive arguments. This is separate from
@@ -4241,6 +4328,26 @@ pub(crate) mod fault {
         AtomicUsize::new(0),
         AtomicUsize::new(0),
     ];
+    // The option/hint/large/THP policy slice has a small, source-bounded
+    // raw mmap sequence: a high aligned hint can fail and retry at null, and
+    // a large-page attempt can precede the regular mapping. Keep those raw
+    // arguments visible only while a serial test explicitly captures them.
+    // This is evidence for the branch order, never a production callback.
+    const POLICY_MMAP_CAPTURE_CAPACITY: usize = 4;
+    static POLICY_MMAP_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static POLICY_MMAP_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static POLICY_MMAP_CAPTURE_HINTS: [AtomicUsize; POLICY_MMAP_CAPTURE_CAPACITY] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
+    static POLICY_MMAP_CAPTURE_FLAGS: [AtomicUsize; POLICY_MMAP_CAPTURE_CAPACITY] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
 
     /// An allocation-free deterministic failure plan for one serial test.
     #[derive(Clone, Copy)]
@@ -4249,6 +4356,8 @@ pub(crate) mod fault {
         ordinal: usize,
         second_point: usize,
         second_ordinal: usize,
+        third_point: usize,
+        third_ordinal: usize,
         error: Errno,
     }
 
@@ -4259,6 +4368,8 @@ pub(crate) mod fault {
                 ordinal: 0,
                 second_point: ANY_POINT,
                 second_ordinal: 0,
+                third_point: ANY_POINT,
+                third_ordinal: 0,
                 error: Errno::NOMEM,
             }
         }
@@ -4269,6 +4380,8 @@ pub(crate) mod fault {
                 ordinal,
                 second_point: ANY_POINT,
                 second_ordinal: 0,
+                third_point: ANY_POINT,
+                third_ordinal: 0,
                 error,
             }
         }
@@ -4279,6 +4392,8 @@ pub(crate) mod fault {
                 ordinal,
                 second_point: ANY_POINT,
                 second_ordinal: 0,
+                third_point: ANY_POINT,
+                third_ordinal: 0,
                 error,
             }
         }
@@ -4300,6 +4415,33 @@ pub(crate) mod fault {
                 ordinal,
                 second_point: second_point as usize,
                 second_ordinal,
+                third_point: ANY_POINT,
+                third_ordinal: 0,
+                error,
+            }
+        }
+
+        /// Fails two ordered source edges, then one final independent edge.
+        ///
+        /// This represents the fixed policy witness's two `MAP_HUGETLB`
+        /// failures and its later ignored `MADV_HUGEPAGE` error. The third
+        /// point remains disabled until the second failure has occurred.
+        pub(crate) const fn at_triple(
+            point: Point,
+            ordinal: usize,
+            second_point: Point,
+            second_ordinal: usize,
+            third_point: Point,
+            third_ordinal: usize,
+            error: Errno,
+        ) -> Self {
+            Self {
+                point: point as usize,
+                ordinal,
+                second_point: second_point as usize,
+                second_ordinal,
+                third_point: third_point as usize,
+                third_ordinal,
                 error,
             }
         }
@@ -4317,6 +4459,28 @@ pub(crate) mod fault {
     /// fixed M2 trace cannot confuse an unrelated test's map release with
     /// the selected normal-offset failure/retry pair.
     pub(crate) struct UnmapRangeCapture<'guard> {
+        _guard: core::marker::PhantomData<&'guard Guard>,
+    }
+
+    /// One raw mmap argument pair from the bounded process-policy route.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) struct PolicyMmapAttempt {
+        pub(crate) hint: Option<usize>,
+        pub(crate) flags: u32,
+    }
+
+    impl PolicyMmapAttempt {
+        /// Distinguishes the source's `MAP_HUGETLB` retry from its ordinary
+        /// fallback without exposing a raw platform flag outside this
+        /// test-only capture module.
+        #[inline]
+        pub(crate) const fn uses_huge_page_flag(self) -> bool {
+            self.flags & super::MAP_HUGETLB != 0
+        }
+    }
+
+    /// A serial capture of the finite raw mmap sequence selected by one test.
+    pub(crate) struct PolicyMmapCapture<'guard> {
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
 
@@ -4344,6 +4508,11 @@ pub(crate) mod fault {
             SECOND_OBSERVED.load(Ordering::Acquire)
         }
 
+        #[inline]
+        pub(crate) fn third_observed(&self) -> usize {
+            THIRD_OBSERVED.load(Ordering::Acquire)
+        }
+
         /// Starts a fresh capture of exactly two subsequent process-owned
         /// unmap ranges. More or fewer calls are visible as `None` instead of
         /// becoming a partial address/length assertion.
@@ -4358,6 +4527,24 @@ pub(crate) mod fault {
             }
             UNMAP_RANGE_CAPTURE_ACTIVE.store(true, Ordering::Release);
             UnmapRangeCapture {
+                _guard: core::marker::PhantomData,
+            }
+        }
+
+        /// Captures at most four immediately following policy mmap calls.
+        /// More calls deliberately invalidate the record rather than making a
+        /// partial branch-order assertion look complete.
+        pub(crate) fn capture_policy_mmaps(&self) -> PolicyMmapCapture<'_> {
+            POLICY_MMAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            POLICY_MMAP_CAPTURE_COUNT.store(0, Ordering::Release);
+            for hint in &POLICY_MMAP_CAPTURE_HINTS {
+                hint.store(0, Ordering::Release);
+            }
+            for flags in &POLICY_MMAP_CAPTURE_FLAGS {
+                flags.store(0, Ordering::Release);
+            }
+            POLICY_MMAP_CAPTURE_ACTIVE.store(true, Ordering::Release);
+            PolicyMmapCapture {
                 _guard: core::marker::PhantomData,
             }
         }
@@ -4389,9 +4576,35 @@ pub(crate) mod fault {
         }
     }
 
+    impl PolicyMmapCapture<'_> {
+        /// Returns every selected raw call only when it fits the fixed
+        /// bounded capture. A zero stored hint is the source null address.
+        pub(crate) fn attempts(&self) -> Option<([PolicyMmapAttempt; POLICY_MMAP_CAPTURE_CAPACITY], usize)> {
+            let count = POLICY_MMAP_CAPTURE_COUNT.load(Ordering::Acquire);
+            if count > POLICY_MMAP_CAPTURE_CAPACITY {
+                return None;
+            }
+            let attempts = core::array::from_fn(|index| PolicyMmapAttempt {
+                hint: match POLICY_MMAP_CAPTURE_HINTS[index].load(Ordering::Acquire) {
+                    0 => None,
+                    hint => Some(hint),
+                },
+                flags: POLICY_MMAP_CAPTURE_FLAGS[index].load(Ordering::Acquire) as u32,
+            });
+            Some((attempts, count))
+        }
+    }
+
+    impl Drop for PolicyMmapCapture<'_> {
+        fn drop(&mut self) {
+            POLICY_MMAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
+        }
+    }
+
     impl Drop for Guard {
         fn drop(&mut self) {
             UNMAP_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            POLICY_MMAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
             set(Plan::disabled());
             LOCKED.store(false, Ordering::Release);
         }
@@ -4403,10 +4616,14 @@ pub(crate) mod fault {
         FAILURE_ORDINAL.store(plan.ordinal, Ordering::Relaxed);
         SECOND_SELECTED_POINT.store(plan.second_point, Ordering::Relaxed);
         SECOND_FAILURE_ORDINAL.store(plan.second_ordinal, Ordering::Relaxed);
+        THIRD_SELECTED_POINT.store(plan.third_point, Ordering::Relaxed);
+        THIRD_FAILURE_ORDINAL.store(plan.third_ordinal, Ordering::Relaxed);
         FAILURE_ERROR.store(plan.error.raw(), Ordering::Relaxed);
         OBSERVED.store(0, Ordering::Release);
         SECOND_OBSERVED.store(0, Ordering::Release);
+        THIRD_OBSERVED.store(0, Ordering::Release);
         SECOND_ENABLED.store(false, Ordering::Release);
+        THIRD_ENABLED.store(false, Ordering::Release);
     }
 
     #[inline]
@@ -4433,6 +4650,22 @@ pub(crate) mod fault {
             if second_ordinal != 0 {
                 let second_observed = SECOND_OBSERVED.fetch_add(1, Ordering::AcqRel) + 1;
                 if second_observed == second_ordinal {
+                    THIRD_ENABLED.store(true, Ordering::Release);
+                    let error = FAILURE_ERROR.load(Ordering::Acquire);
+                    // SAFETY: `Plan` obtains `error` from a valid `Errno`, so
+                    // the stored integer remains a positive Linux errno.
+                    return Err(unsafe { Errno::from_raw(error).unwrap_unchecked() });
+                }
+            }
+        }
+        let third_selected = THIRD_SELECTED_POINT.load(Ordering::Acquire);
+        if THIRD_ENABLED.load(Ordering::Acquire)
+            && (third_selected == ANY_POINT || third_selected == point as usize)
+        {
+            let third_ordinal = THIRD_FAILURE_ORDINAL.load(Ordering::Acquire);
+            if third_ordinal != 0 {
+                let third_observed = THIRD_OBSERVED.fetch_add(1, Ordering::AcqRel) + 1;
+                if third_observed == third_ordinal {
                     let error = FAILURE_ERROR.load(Ordering::Acquire);
                     // SAFETY: `Plan` obtains `error` from a valid `Errno`, so
                     // the stored integer remains a positive Linux errno.
@@ -4455,6 +4688,19 @@ pub(crate) mod fault {
         if index < 2 {
             UNMAP_RANGE_CAPTURE_ADDRESSES[index].store(address.addr(), Ordering::Release);
             UNMAP_RANGE_CAPTURE_LENGTHS[index].store(length, Ordering::Release);
+        }
+    }
+
+    /// Records one raw Unix mmap edge before a controlled injected result.
+    #[inline]
+    pub(crate) fn record_policy_mmap(hint: Option<usize>, flags: u32) {
+        if !POLICY_MMAP_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+            return;
+        }
+        let index = POLICY_MMAP_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
+        if index < POLICY_MMAP_CAPTURE_CAPACITY {
+            POLICY_MMAP_CAPTURE_HINTS[index].store(hint.unwrap_or(0), Ordering::Release);
+            POLICY_MMAP_CAPTURE_FLAGS[index].store(flags as usize, Ordering::Release);
         }
     }
 }
@@ -4803,6 +5049,102 @@ mod tests {
             5,
             "the source rejects INT_MAX itself as an explicit option and probes the primitive"
         );
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn source_aligned_hint_retries_failed_large_mmap_at_null_before_regular_fallback() {
+        let fault = fault::install(fault::Plan::at_pair(
+            fault::Point::LargeMap,
+            1,
+            fault::Point::LargeMap,
+            1,
+            Errno::NOMEM,
+        ));
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4 * 1024).expect("four KiB is one selected Linux page size"),
+            0,
+            true,
+            true,
+        );
+        let mut policy = VmPolicy::defaults_for_test();
+        policy.set_option(VmOption::AllowLargeOsPages, 1);
+        policy.set_option(VmOption::AllowThp, 1);
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut random = TheapRandomImage::empty_weak();
+        random.initialize_weak();
+        let length = 8 * config.large_page_size();
+        let capture = fault.capture_policy_mmaps();
+
+        let mut mapping = Mapping::map_for_process(
+            process,
+            config,
+            length,
+            config.large_page_size(),
+            MapAccess::Committed,
+            true,
+            Some(&mut random),
+        )
+        .expect("two failed huge attempts fall through to one regular source map");
+        let (attempts, count) = capture
+            .attempts()
+            .expect("the three bounded source mmap attempts fit the capture");
+        assert_eq!(count, 3);
+        assert!(attempts[0].hint.is_some(), "the first huge map uses the source high hint");
+        assert_ne!(attempts[0].flags & MAP_HUGETLB, 0);
+        assert_eq!(attempts[1].hint, None, "a failed source aligned hint retries at null");
+        assert_eq!(attempts[1].flags, attempts[0].flags);
+        assert_eq!(attempts[2].hint, attempts[0].hint);
+        assert_eq!(attempts[2].flags & MAP_HUGETLB, 0);
+        assert_eq!(fault.observed(), 2);
+        assert_eq!(fault.secondary_observed(), 1);
+        assert!(!mapping.is_large());
+        drop(capture);
+        mapping
+            .unmap_for_process(process, length, false)
+            .expect("the regular fallback retains its complete process owner");
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn source_thp_advice_failure_does_not_reject_the_regular_policy_mapping() {
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Madvise,
+            1,
+            Errno::NOMEM,
+        ));
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4 * 1024).expect("four KiB is one selected Linux page size"),
+            0,
+            true,
+            true,
+        );
+        let mut policy = VmPolicy::defaults_for_test();
+        policy.set_option(VmOption::AllowLargeOsPages, 0);
+        policy.set_option(VmOption::AllowThp, 1);
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut random = TheapRandomImage::empty_weak();
+        random.initialize_weak();
+        let length = 8 * config.large_page_size();
+
+        let mut mapping = Mapping::map_for_process(
+            process,
+            config,
+            length,
+            config.large_page_size(),
+            MapAccess::Committed,
+            true,
+            Some(&mut random),
+        )
+        .expect("the source ignores a best-effort MADV_HUGEPAGE error");
+        assert_eq!(fault.observed(), 1);
+        assert!(!mapping.is_large());
+        fault.set(fault::Plan::disabled());
+        mapping
+            .unmap_for_process(process, length, false)
+            .expect("the retained regular policy map releases through its process pair");
     }
 
     #[test]
@@ -6523,7 +6865,10 @@ mod tests {
     /// It also compares the selected `allow_thp=0` source configuration and
     /// process-policy observation. The Rust side executes that `prctl`
     /// transition only in its child and imports its address-free result, so
-    /// the native test runner never inherits the allocator policy.
+    /// the native test runner never inherits the allocator policy. A separate
+    /// bounded record then routes a resolved policy and live ticket-zero
+    /// random image through the first-arena owner, forcing the source-aligned
+    /// large-map retry and ignored THP-advice error.
     ///
     /// It is not a claim for unowned source policy branches. In particular,
     /// ambient option discovery, random aligned hints, large/1-GiB huge-page
@@ -6764,6 +7109,13 @@ mod tests {
         assert!(numa_count >= 1, "the allocator-facing NUMA cache normalizes to one");
         assert!(numa_current < numa_count, "the source current-node route normalizes modulo count");
 
+        // The release record used the serial injection guard above. Its exact
+        // full-range capture is complete now; release it before the separate
+        // policy witness takes the same serial source-fault boundary.
+        drop(failed_release_unmap_ranges);
+        drop(fault);
+        let policy_trace = crate::process_arena::m2_vm_policy_first_arena_trace();
+
         macro_rules! emit {
             ($name:literal, $value:expr) => {
                 std::println!("{}={}", $name, $value);
@@ -6842,6 +7194,31 @@ mod tests {
         emit!("m2.vm.release.retry.real_munmap_success", 1);
         emit!("m2.vm.numa.count_at_least_one", u8::from(numa_count >= 1));
         emit!("m2.vm.numa.current_lt_count", u8::from(numa_current < numa_count));
+        emit!(
+            "m2.vm.policy.source_options_applied",
+            u8::from(policy_trace.source_options_applied)
+        );
+        emit!("m2.vm.policy.first_arena_size", policy_trace.first_arena_size);
+        emit!(
+            "m2.vm.policy.first_arena_initially_committed",
+            u8::from(policy_trace.first_arena_initially_committed)
+        );
+        emit!(
+            "m2.vm.policy.large_high_hint_failed",
+            u8::from(policy_trace.large_high_hint_failed)
+        );
+        emit!(
+            "m2.vm.policy.large_null_hint_retry_failed",
+            u8::from(policy_trace.large_null_hint_retry_failed)
+        );
+        emit!(
+            "m2.vm.policy.regular_hinted_map_after_large_fallback",
+            u8::from(policy_trace.regular_hinted_map_after_large_fallback)
+        );
+        emit!(
+            "m2.vm.policy.thp_advice_failure_ignored",
+            u8::from(policy_trace.thp_advice_failure_ignored)
+        );
         std::println!("CRABC_MI_M2_VM_TRACE_END");
     }
 

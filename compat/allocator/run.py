@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "7b9e95743f00d96e61124d876dd552dfff6c70c2566b1eb8eae2d8237dd029e7"
+M2_X86_64_VM_FRAGMENT_DIGEST = "7ab0fab7775cfdce18fa0687ef6ffbbae4ad8a4d993cdf75137c7efedbbc15da"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -338,6 +338,7 @@ M2_X86_64_PAGE_MAP_CHECK_IDS = (
 M2_X86_64_SOURCE_MAP_REFERENCES: Mapping[str, tuple[dict[str, str], ...]] = {
     "vm-primitives": (
         {"unit_id": "os-allocation-policy", "required_status": "partial"},
+        {"unit_id": "arena-lifecycle", "required_status": "partial"},
         {"unit_id": "linux-unix-primitives", "required_status": "partial"},
         {"unit_id": "primitive-interface", "required_status": "partial"},
     ),
@@ -1532,6 +1533,14 @@ ORACLE_SOURCES = (
 # singular; `src/prim/prim.c` continues to own the Unix primitive inclusion.
 M1_RAW_PRIMITIVE_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/os.c"
+)
+
+# The native M2 VM fixture directly includes both the pinned source OS and
+# first-arena bodies. Keep the ordinary raw source closure otherwise complete
+# and singular: a separately linked `os.c` or `arena.c` would let an unrelated
+# translation unit replace the private source route the trace claims to run.
+M2_X86_64_VM_C_ORACLE_SOURCES = tuple(
+    item for item in M1_RAW_PRIMITIVE_ORACLE_SOURCES if item != "src/arena.c"
 )
 
 # Both compiler-TLS readers include the pinned `src/threadlocal.c` directly
@@ -12375,12 +12384,13 @@ def _m2_x86_64_vm_test_program_is_bound(test_program: object) -> bool:
 def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
     """Require the direct-source C oracle's one complete positional command.
 
-    The M2 fixture directly includes pinned `src/os.c`, so its ordinary source
-    input list must omit that file while retaining the complete raw primitive
-    closure. Every position is fixed apart from the resolved compiler, the
-    extracted-source root, the checkout fixture root, and the runner-owned
-    output root. This rejects injected preprocessor, object, archive, and
-    linker inputs before a trace can masquerade as the selected oracle.
+    The M2 fixture directly includes pinned `src/os.c` and `src/arena.c`, so
+    its ordinary source input list must omit both while retaining the complete
+    raw primitive closure. Every position is fixed apart from the resolved
+    compiler, the extracted-source root, the checkout fixture root, and the
+    runner-owned output root. This rejects injected preprocessor, object,
+    archive, and linker inputs before a trace can masquerade as the selected
+    oracle.
     """
 
     if (
@@ -12403,7 +12413,7 @@ def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
         "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
     )
     fixture = relative(producer.FIXTURE)
-    expected_sources = tuple(M1_RAW_PRIMITIVE_ORACLE_SOURCES)
+    expected_sources = tuple(M2_X86_64_VM_C_ORACLE_SOURCES)
     fixture_position = 1 + len(fixed_prefix) + 4 + len(CONFIGURATION_PROFILES["release"])
     first_source_position = fixture_position + 1
     if len(command) <= first_source_position:
@@ -12436,6 +12446,8 @@ def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
         fixture_argument,
         *(f"{source_root}/{source}" for source in expected_sources),
         "-Wl,--wrap=munmap",
+        "-Wl,--wrap=mmap",
+        "-Wl,--wrap=madvise",
         "-pthread",
         "-o",
         output,
@@ -12480,7 +12492,7 @@ def _m2_x86_64_vm_check_records(
 ) -> list[dict[str, Any]]:
     """Turn the real fixed-profile C/Rust VM differential into its one receipt.
 
-    The other sixteen VM receipts are emitted by the aggregate's exact source
+    The other twenty VM receipts are emitted by the aggregate's exact source
     test batch.  This validator binds the differential to the immutable
     fragment, all pinned-C branch anchors, and the component's explicit open
     frontier so a trace count alone can never stand in for VM qualification.
@@ -12511,7 +12523,7 @@ def _m2_x86_64_vm_check_records(
         or evidence.get("format") != 1
         or evidence.get("status") != "passed"
         or evidence.get("architecture") != "x86_64"
-        or evidence.get("profile") != "release-no-default-features-fixed-regular-vm-thp-disabled-offset-release-fault"
+        or evidence.get("profile") != producer.EVIDENCE_PROFILE
         or evidence.get("upstream") != {
             "revision": pin["revision"], "archive_sha256": pin["sha256"]
         }

@@ -18,6 +18,7 @@
     "completion_status": "partial",
     "source_units": [
       "include/mimalloc/prim.h",
+      "src/arena.c",
       "src/os.c",
       "src/prim/prim.c",
       "src/prim/unix/prim.c"
@@ -25,6 +26,10 @@
     "source_map_records": [
       {
         "unit_id": "os-allocation-policy",
+        "required_status": "partial"
+      },
+      {
+        "unit_id": "arena-lifecycle",
         "required_status": "partial"
       },
       {
@@ -175,6 +180,47 @@
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry"
         ]
+      },
+      {
+        "id": "arena-first-policy-reserve",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 341,
+          "end_line": 406,
+          "sha256": "52181aaf7f41b28c1da4c6ac7bd6cc4f25a77738fd79a2cabd6522533257ec62"
+        },
+        "required_definitions": [
+          "static bool mi_arena_reserve",
+          "mi_option_get_size",
+          "mi_subproc_stat_adjust_decrease",
+          "mi_reserve_os_memory_ex2"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "process-policy-first-arena-clean-primary-fallback",
+          "process-policy-first-arena-retained-cleanup-statistics",
+          "process-policy-ticket-zero-live-random"
+        ]
+      },
+      {
+        "id": "arena-policy-regular-map-and-manage",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 1886,
+          "end_line": 1912,
+          "sha256": "4e64bf11763d092c86eea4e5808653a4aff6f071ca624734dd790665a87c8b17"
+        },
+        "required_definitions": [
+          "static int mi_reserve_os_memory_ex2",
+          "_mi_os_alloc_aligned",
+          "mi_manage_os_memory_ex2"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "process-policy-first-arena-clean-primary-fallback",
+          "process-policy-first-arena-retained-cleanup-statistics",
+          "process-policy-ticket-zero-live-random"
+        ]
       }
     ],
     "branch_matrix": [
@@ -215,7 +261,7 @@
       {
         "id": "unix-configuration-and-thp-process-policy",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch.",
+        "source_scope": "src/prim/unix/prim.c:250-277 host observations and the mi_option_allow_thp PR_GET_THP_DISABLE/PR_SET_THP_DISABLE process-policy branch; the bounded record uses child-isolated allow_thp=0 and allow_thp=1 source-option cases.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -225,10 +271,12 @@
           }
         ],
         "evidence_check_ids": [
-          "native-vm-fixed-lifecycle-differential"
+          "native-vm-fixed-lifecycle-differential",
+          "source-policy-lazy-environment-retry",
+          "process-policy-ticket-zero-live-random"
         ],
         "missing_conditions": [
-          "Ambient source-option discovery, failed-prctl diagnostic evidence, and the production caller that supplies one resolved option image remain unqualified; the selected allow_thp=0 process transaction is only child-isolated evidence."
+          "Ambient source-option discovery beyond the selected source reader, failed-prctl diagnostic evidence, and every production policy caller remain unqualified; the selected allow_thp=0 and allow_thp=1 transactions are only child-isolated evidence."
         ]
       },
       {
@@ -274,7 +322,7 @@
           "aligned-map-process-arena-owner"
         ],
         "missing_conditions": [
-          "Every source large-page/option route and every receiving allocator caller must preserve the selected Rust retained-map failure owner; the current fixed regular path does not establish those branches."
+          "The bounded source-option first arena compares one committed 128-MiB large-page-fallback route, but every other source large-page/option path, aligned cleanup failure disposition, and receiving allocator caller remains unqualified."
         ]
       },
       {
@@ -298,7 +346,7 @@
           "normal-os-source-reservation-caller"
         ],
         "missing_conditions": [
-          "Option-driven large-page/hint policy, all regular and arena callers, prefix-decommit failure disposition, and source statistics/error behavior require their actual owners."
+          "The selected first-arena caller forwards one live allow_large policy and default-Theap random image, but option-driven large-page/hint policy across all regular and arena callers, prefix-decommit failure disposition, and source statistics/error behavior remain unqualified."
         ]
       },
       {
@@ -325,8 +373,8 @@
       },
       {
         "id": "aligned-hint-random-state",
-        "disposition": "unqualified",
-        "source_scope": "src/os.c:110-158 atomic aligned-hint range, virtual-address eligibility, secure/debug random Theap state, and wrap/CAS behavior.",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/os.c:110-158 atomic aligned-hint range, virtual-address eligibility, secure/debug random Theap state, and wrap/CAS behavior; the bounded trace uses one initialized default-Theap random image and verifies a high-hint MAP_HUGETLB failure retries once at null before regular fallback.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -335,9 +383,12 @@
             "sha256": "d5855c977e616eca2f5ed2689d566cafedfe3e2743b5b02665db39c9be2043b5"
           }
         ],
-        "evidence_check_ids": [],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "process-policy-ticket-zero-live-random"
+        ],
         "missing_conditions": [
-          "A nonrecursive default-Theap random-state owner, atomic hint cursor, secure/debug profile routing, and native C/Rust hint/fallback differential evidence."
+          "The selected normal-release default-Theap random image and one source hint retry do not qualify the atomic cursor's complete wrap/CAS matrix, virtual-address eligibility, secure/debug profiles, or every hint caller."
         ]
       },
       {
@@ -356,7 +407,35 @@
           "native-vm-fixed-lifecycle-differential"
         ],
         "missing_conditions": [
-          "The source regular no-hint/no-large mmap slice is compared, but large-page, retry-state, hint, THP advice, and their option/error diagnostics remain unimplemented and unqualified."
+          "The bounded first-arena record compares one source high-hint MAP_HUGETLB failure, null-hint retry, regular hinted fallback, and ignored MADV_HUGEPAGE error. Large-page success, retry-suppression lifetime, MAP_HUGE_1GB modes, option/error diagnostics, and every caller remain unqualified."
+        ]
+      },
+      {
+        "id": "arena-first-policy-reserve",
+        "disposition": "partial-fixed-profile",
+        "source_scope": "src/arena.c:341-406,1886-1912 first mi_arena_reserve sizing/eager-commit adjustment and one regular source map/manage call; the selected normal-release ticket-zero caller uses a resolved 128-MiB policy with allow_large=true.",
+        "source_anchors": [
+          {
+            "member": "src/arena.c",
+            "start_line": 341,
+            "end_line": 406,
+            "sha256": "52181aaf7f41b28c1da4c6ac7bd6cc4f25a77738fd79a2cabd6522533257ec62"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 1886,
+            "end_line": 1912,
+            "sha256": "4e64bf11763d092c86eea4e5808653a4aff6f071ca624734dd790665a87c8b17"
+          }
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "process-policy-first-arena-clean-primary-fallback",
+          "process-policy-first-arena-retained-cleanup-statistics",
+          "process-policy-ticket-zero-live-random"
+        ],
+        "missing_conditions": [
+          "Later arena-count scaling, ordinary fallback success after source primitive failure, multiple arenas, exclusive/NUMA/huge placement, full manage failure ownership, and every non-ticket-zero arena caller remain unqualified."
         ]
       },
       {
@@ -443,10 +522,10 @@
     "unqualified_failure_matrix": [
       {
         "id": "vm-option-hint-large-and-thp-policy",
-        "source_scope": "src/os.c:110-158,303-430,438-527,534-712 and src/prim/unix/prim.c:250-277,308-497 ambient option routing, random hints, large/THP attempts, purge policy, and diagnostics beyond the selected child-isolated allow_thp=0 transaction.",
+        "source_scope": "src/os.c:110-158,303-430,438-527,534-712, src/arena.c:341-406,1886-1912, and src/prim/unix/prim.c:250-277,308-497 ambient option routing, random hints, large/THP attempts, first-arena policy, purge policy, and diagnostics beyond the selected child-isolated 128-MiB first-arena fallback.",
         "required_evidence": [
-          "typed allocator-option and default-Theap random-state owners",
-          "native C/Rust ambient-option, hint, large-page retry, and diagnostic failure differential"
+          "typed allocator-option and default-Theap random-state owners for every caller",
+          "native C/Rust ambient-option, hint, large-page success/retry, THP diagnostic, and full arena-caller failure differential"
         ]
       },
       {
@@ -471,6 +550,30 @@
         "id": "native-vm-fixed-lifecycle-differential",
         "kind": "c-rust-vm-primitives-fixed-lifecycle",
         "target": "os::tests::emit_m2_vm_primitives_c_rust_trace",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "source-policy-lazy-environment-retry",
+        "kind": "rust-unit",
+        "target": "os::tests::process_vm_policy_retries_only_unavailable_source_environment_descriptors",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "process-policy-first-arena-clean-primary-fallback",
+        "kind": "rust-unit",
+        "target": "process_arena::tests::process_default_os_arena_retries_the_source_smaller_policy_arena_after_clean_primary_failure",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "process-policy-first-arena-retained-cleanup-statistics",
+        "kind": "rust-unit",
+        "target": "process_arena::tests::process_default_os_arena_retained_cleanup_restores_adjusted_statistics_without_a_retry",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "process-policy-ticket-zero-live-random",
+        "kind": "rust-unit",
+        "target": "main_static_page::tests::process_bound_runtime_first_arena_uses_its_live_policy_and_random_image",
         "expected_passed_test_count": 1
       },
       {
@@ -571,11 +674,11 @@
       }
     ],
     "remaining_conditions": [
-      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle, normal-offset full-MemoryId release failure/retry, and child-isolated THP-disable transaction, including pinned-C failure ownership and retry evidence for every source branch.",
-      "Complete the aligned-overmap substrate beyond the selected direct/prefix/suffix retained-map owners: source large-page arguments, every receiving allocator caller, callback/counter/error paths, and native cleanup failure/retry differentials remain required.",
-      "Complete random aligned-hint policy, virtual-address eligibility, default-Theap random state, ambient source options and diagnostics, Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE retry behavior, and their native differential evidence.",
+      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle, normal-offset full-MemoryId release failure/retry, child-isolated THP transactions, and one child-isolated 128-MiB first-arena large-page fallback, including pinned-C failure ownership and retry evidence for every source branch.",
+      "Complete the aligned-overmap substrate beyond the selected direct/prefix/suffix retained-map owners and one first-arena high-hint fallback: every receiving allocator caller, callback/counter/error path, and native cleanup failure/retry differential remains required.",
+      "Complete random aligned-hint policy, virtual-address eligibility, secure/debug default-Theap random state, ambient source options and diagnostics, Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success and retry-state behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
-      "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes; the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, and one-page protection retry do not establish those broader source contracts."
+      "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes; the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, and first-arena adjustment restoration do not establish those broader source contracts."
     ]
   }
 }

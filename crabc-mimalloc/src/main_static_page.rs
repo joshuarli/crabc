@@ -34,6 +34,7 @@ use crate::process_arena::{
     ProcessPageArenaLease, ProcessPageArenaLeaseError, ProcessSharedArenaReserveFailure,
     ProcessSharedArenaStorage,
 };
+use crate::process_init::ProcessMainBackingBinding;
 use crate::process_page_map::{ProcessPageMapError, ProcessPageMapMutationLease};
 #[cfg(test)]
 use crate::process_page_map::ProcessPageMapSuspendedEngineAccess;
@@ -578,6 +579,31 @@ struct MainStaticRuntimeActiveEngine {
     arena_storage: &'static ProcessSharedArenaStorage,
 }
 
+/// The only two source-backed entry routes for the permanent ticket-zero
+/// owner. The legacy explicit-config path retains its frozen PageMap-only
+/// state for paused AArch64 and historical fixtures. Native x86 production
+/// must carry the coordinator's non-forgeable process binding instead; an
+/// absent binding cannot select the legacy mapping route.
+#[derive(Clone, Copy)]
+enum MainStaticRuntimeFirstArenaReservation {
+    Legacy {
+        page_map: crate::process_page_map::ProcessPageMapLease,
+    },
+    Process {
+        backing: ProcessMainBackingBinding,
+    },
+}
+
+impl MainStaticRuntimeFirstArenaReservation {
+    #[inline]
+    fn page_map(self) -> crate::process_page_map::ProcessPageMapLease {
+        match self {
+            Self::Legacy { page_map } => page_map,
+            Self::Process { backing } => backing.page_map(),
+        }
+    }
+}
+
 // The old runtime scheduler could suspend a live ticket-zero engine while it
 // lent its PageMap exclusion to a later worker. Native-shadow initial-thread
 // operations now retain their promoted compiler-TLS owner directly, and
@@ -614,7 +640,7 @@ enum MainStaticRuntimeParkedEngineResumeFailure {
 enum MainStaticRuntimeFirstArenaPageAllocatorState {
     AwaitingFreshPage {
         session: MainStaticProcessPageSession,
-        page_map: crate::process_page_map::ProcessPageMapLease,
+        reservation: MainStaticRuntimeFirstArenaReservation,
         arena_storage: &'static ProcessSharedArenaStorage,
     },
     Active(MainStaticRuntimeActiveEngine),
@@ -640,6 +666,7 @@ enum MainStaticRuntimeFirstArenaPageAllocatorState {
 pub(crate) enum MainStaticRuntimeFirstArenaPageAllocatorBeginError {
     PageMap(ProcessPageMapError),
     SubprocessMismatch,
+    ProcessBackingInactive,
 }
 
 /// A free outside the active ticket-zero runtime engine.
@@ -774,17 +801,53 @@ fn retain_runtime_resume_failure(
 }
 
 impl MainStaticRuntimeFirstArenaPageAllocator {
-    /// Forms the lazy process-lifetime owner without reserving an arena.
+    /// Forms the preserved explicit-config lazy owner without reserving an
+    /// arena.
     ///
-    /// The caller already converted the source ticket-zero attachment into
-    /// its permanent page session. This constructor checks only the immutable
-    /// map/subprocess relation; the full root/image/zero-page preflight runs
-    /// again immediately before the first mapping side effect.
-    pub(crate) fn begin(
+    /// This legacy route intentionally retains its frozen PageMap-only state
+    /// for the paused AArch64 execution path and older isolated fixtures. New
+    /// native x86 runtime startup must use [`Self::begin_for_process`].
+    pub(crate) fn begin_legacy(
         session: MainStaticProcessPageSession,
         page_map: crate::process_page_map::ProcessPageMapLease,
         arena_storage: &'static ProcessSharedArenaStorage,
     ) -> Result<Self, MainStaticRuntimeFirstArenaPageAllocatorBeginError> {
+        Self::begin_with_reservation(
+            session,
+            MainStaticRuntimeFirstArenaReservation::Legacy { page_map },
+            arena_storage,
+        )
+    }
+
+    /// Forms the native x86 lazy owner through one coordinator-issued
+    /// process-policy/PageMap binding.
+    ///
+    /// The binding remains in the awaiting state through every clean first-map
+    /// rejection. It cannot be reconstructed from an option policy and a
+    /// PageMap separately, and this constructor never falls back to the
+    /// legacy explicit-config route when it is absent or inactive.
+    pub(crate) fn begin_for_process(
+        session: MainStaticProcessPageSession,
+        backing: ProcessMainBackingBinding,
+        arena_storage: &'static ProcessSharedArenaStorage,
+    ) -> Result<Self, MainStaticRuntimeFirstArenaPageAllocatorBeginError> {
+        if !backing.is_active() {
+            session.retain_terminal();
+            return Err(MainStaticRuntimeFirstArenaPageAllocatorBeginError::ProcessBackingInactive);
+        }
+        Self::begin_with_reservation(
+            session,
+            MainStaticRuntimeFirstArenaReservation::Process { backing },
+            arena_storage,
+        )
+    }
+
+    fn begin_with_reservation(
+        session: MainStaticProcessPageSession,
+        reservation: MainStaticRuntimeFirstArenaReservation,
+        arena_storage: &'static ProcessSharedArenaStorage,
+    ) -> Result<Self, MainStaticRuntimeFirstArenaPageAllocatorBeginError> {
+        let page_map = reservation.page_map();
         let map_subprocess = page_map
             .subprocess()
             .map_err(MainStaticRuntimeFirstArenaPageAllocatorBeginError::PageMap)?;
@@ -795,7 +858,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
         Ok(Self {
             state: MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
                 session,
-                page_map,
+                reservation,
                 arena_storage,
             },
         })
@@ -1215,10 +1278,20 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 block
             }
             MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
-                session,
-                page_map,
+                mut session,
+                reservation,
                 arena_storage,
             } => {
+                if matches!(
+                    reservation,
+                    MainStaticRuntimeFirstArenaReservation::Process { backing }
+                        if !backing.is_active()
+                ) {
+                    session.retain_terminal();
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return None;
+                }
+                let page_map = reservation.page_map();
                 let config = match page_map.memory_config() {
                     Ok(config) => config,
                     Err(_) => {
@@ -1232,7 +1305,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     None => {
                         self.state = MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
                             session,
-                            page_map,
+                            reservation,
                             arena_storage,
                         };
                         return None;
@@ -1247,7 +1320,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                     Err(ProcessPageMapError::LifecycleBusy) => {
                         self.state = MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
                             session,
-                            page_map,
+                            reservation,
                             arena_storage,
                         };
                         return None;
@@ -1258,13 +1331,36 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
-                let arena = match arena_storage.reserve_default_os_arena(page_map, required_size) {
-                    Ok(arena) => arena,
-                    Err(ProcessSharedArenaReserveFailure::Rejected { .. }) => {
+                let reservation_result = match reservation {
+                    MainStaticRuntimeFirstArenaReservation::Legacy { .. } => {
+                        Some(arena_storage.reserve_default_os_arena(page_map, required_size))
+                    }
+                    MainStaticRuntimeFirstArenaReservation::Process { backing } => {
+                        match session.with_zero_page_vm_random(|random| {
+                            arena_storage.reserve_default_os_arena_for_process(
+                                backing,
+                                required_size,
+                                random,
+                            )
+                        }) {
+                            Ok(result) => Some(result),
+                            Err(_) => None,
+                        }
+                    }
+                };
+                let arena = match reservation_result {
+                    None => {
+                        let _ = page_map_lifecycle.finish();
+                        session.retain_terminal();
+                        self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                        return None;
+                    }
+                    Some(Ok(arena)) => arena,
+                    Some(Err(ProcessSharedArenaReserveFailure::Rejected { .. })) => {
                         self.state = if page_map_lifecycle.finish().is_ok() {
                             MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
                                 session,
-                                page_map,
+                                reservation,
                                 arena_storage,
                             }
                         } else {
@@ -1273,7 +1369,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         };
                         return None;
                     }
-                    Err(ProcessSharedArenaReserveFailure::Retained { .. }) => {
+                    Some(Err(ProcessSharedArenaReserveFailure::Retained { .. })) => {
                         let _ = page_map_lifecycle.finish();
                         session.retain_terminal();
                         self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
@@ -2026,9 +2122,12 @@ fn first_ordinary_fresh_page_size(config: MemoryConfig, request: usize) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ARENA_ALIGNMENT, ARENA_MIN_SIZE};
+    use crate::config::{
+        ARENA_ALIGNMENT, ARENA_MIN_SIZE, VmOption, VmOptionEnvironment, VmOptions,
+    };
     use crate::main_theap::{MainStaticAttachmentStorage, MainStaticTheapAttachment};
     use crate::os::{MapAccess, Mapping, MemoryConfig, PageSize};
+    use crate::process_init::ProcessMainInitializationStorage;
     use crate::process_arena::{ProcessSharedArenaLease, ProcessSharedArenaStorage};
     use crate::process_page_map::{ProcessPageMapLease, ProcessPageMapStorage};
     use crate::subproc::MainSubprocess;
@@ -2064,6 +2163,37 @@ mod tests {
             Err(_) => panic!("the selected mapping becomes the one process arena"),
         };
         (page_map, arena)
+    }
+
+    fn process_backing_with_first_arena_options(
+        config: MemoryConfig,
+        subprocess: &'static MainSubprocess,
+        arena_reserve_bytes: usize,
+        arena_eager_commit: i64,
+        allow_large_os_pages: i64,
+    ) -> crate::process_init::ProcessMainBackingBinding {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(
+            VmOption::ArenaReserve,
+            i64::try_from(arena_reserve_bytes / 1024)
+                .expect("the bounded source arena option fits its signed KiB image"),
+        );
+        options.set(VmOption::ArenaEagerCommit, arena_eager_commit);
+        options.set(VmOption::AllowLargeOsPages, allow_large_os_pages);
+        let process = ProcessMainInitializationStorage::test_static_owner();
+        let page_map = ProcessPageMapStorage::test_static_owner();
+        // SAFETY: this isolated fixture owns one permanent coordinator, source
+        // option image, subprocess, and PageMap storage for the thread.
+        unsafe {
+            process.test_prepare_vm_process_backing_binding(
+                config,
+                options,
+                subprocess,
+                page_map,
+            )
+        }
+        .expect("the fixture publishes one canonical policy/PageMap binding")
     }
 
     #[test]
@@ -2496,6 +2626,61 @@ mod tests {
     }
 
     #[test]
+    fn process_bound_runtime_first_arena_uses_its_live_policy_and_random_image() {
+        thread::spawn(|| {
+            let config = memory_config();
+            let attachment_storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let binding = process_backing_with_first_arena_options(
+                config,
+                subprocess,
+                128 * 1024 * 1024,
+                2,
+                1,
+            );
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(attachment_storage, subprocess)
+            }
+            .expect("ticket zero attaches before its policy-bound first page miss");
+            let session = owner
+                .begin_process_lifetime_page_session()
+                .expect("the empty ticket-zero image becomes its permanent page owner");
+            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_for_process(
+                session,
+                binding,
+                arena_storage,
+            )
+            .expect("a canonical VM/PageMap binding opens the native-only lazy owner");
+
+            let block = allocator
+                .allocate(37, false)
+                .expect("the first valid miss reserves through the retained process policy");
+            let arena = arena_storage
+                .ready_lease()
+                .expect("the policy-bound reservation publishes one arena")
+                .arena()
+                .expect("the published source arena remains observable");
+            assert_eq!(arena.size(), Some(128 * 1024 * 1024));
+            assert!(
+                arena.arena().memid.initially_committed(),
+                "allow_large_os_pages plus eager-commit=2 selects the source committed first map"
+            );
+
+            // SAFETY: `block` is the exact current ticket-zero allocation.
+            unsafe { allocator.free(block) }
+                .expect("the policy-bound owner releases its first client normally");
+
+            // A process-lifetime ticket-zero session deliberately retains its
+            // static images and arena after becoming all-free.
+            core::mem::forget(allocator);
+            core::mem::forget(owner);
+        })
+        .join()
+        .expect("the policy-bound fixture remains on its ticket-zero thread");
+    }
+
+    #[test]
     fn process_lifetime_first_arena_stays_lazy_then_retains_ticket_zero_page_owner() {
         thread::spawn(|| {
             let config = memory_config();
@@ -2512,7 +2697,7 @@ mod tests {
             let session = owner
                 .begin_process_lifetime_page_session()
                 .expect("the empty ticket-zero image can become permanent");
-            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin(
+            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_legacy(
                 session,
                 page_map,
                 arena_storage,
@@ -2599,7 +2784,7 @@ mod tests {
             let session = owner
                 .begin_process_lifetime_page_session()
                 .expect("the empty ticket-zero image can become permanent");
-            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin(
+            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_legacy(
                 session,
                 page_map,
                 arena_storage,

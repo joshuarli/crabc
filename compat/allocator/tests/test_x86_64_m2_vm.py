@@ -50,8 +50,10 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "/pinned/src",
             *RUNNER.CONFIGURATION_PROFILES["release"],
             str(RUNNER.ALLOCATOR_ROOT / "m2_vm_x86_64.c"),
-            *(f"/pinned/{path}" for path in RUNNER.M1_RAW_PRIMITIVE_ORACLE_SOURCES),
+            *(f"/pinned/{path}" for path in RUNNER.M2_X86_64_VM_C_ORACLE_SOURCES),
             "-Wl,--wrap=munmap",
+            "-Wl,--wrap=mmap",
+            "-Wl,--wrap=madvise",
             "-pthread",
             "-o",
             str(
@@ -64,13 +66,19 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "c_command": c_command,
             "c_source_files": [
                 {"path": path, "sha256": "a" * 64, "bytes": 1}
-                for path in sorted(("include/mimalloc/prim.h", "src/os.c", "src/prim/prim.c", "src/prim/unix/prim.c"))
+                for path in sorted((
+                    "include/mimalloc/prim.h",
+                    "src/arena.c",
+                    "src/os.c",
+                    "src/prim/prim.c",
+                    "src/prim/unix/prim.c",
+                ))
             ],
             "compared_value_count": len(producer.TRACE_KEYS),
             "comparison": {"compared_value_count": len(producer.TRACE_KEYS), "status": "matched"},
             "fixture": {"path": "compat/allocator/m2_vm_x86_64.c", "sha256": "b" * 64, "bytes": 1},
             "format": 1,
-            "profile": "release-no-default-features-fixed-regular-vm-thp-disabled-offset-release-fault",
+            "profile": producer.EVIDENCE_PROFILE,
             "rust_build_command": [
                 "cargo",
                 "test",
@@ -128,6 +136,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 "m2.vm.aligned.alignment": 64 * 1024,
                 "m2.vm.aligned.good_size": 4096,
                 "m2.vm.offset.good_size": 17 * 4096,
+                "m2.vm.policy.first_arena_size": 128 * 1024 * 1024,
             }
         )
         trace = "\n".join(
@@ -141,6 +150,22 @@ class NativeVmAssemblyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             producer.parse_trace(missing_retry, source="test")
 
+    def test_policy_trace_schema_requires_the_bounded_option_hint_large_and_thp_relations(self):
+        """Keep the coherent policy slice explicit in the C/Rust record."""
+
+        producer = RUNNER._m2_x86_64_vm_producer()
+        for key in (
+            "m2.vm.policy.source_options_applied",
+            "m2.vm.policy.first_arena_size",
+            "m2.vm.policy.first_arena_initially_committed",
+            "m2.vm.policy.large_high_hint_failed",
+            "m2.vm.policy.large_null_hint_retry_failed",
+            "m2.vm.policy.regular_hinted_map_after_large_fallback",
+            "m2.vm.policy.thp_advice_failure_ignored",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(key, producer.TRACE_KEYS)
+
     def summary(self):
         return RUNNER.validate_x86_64_m2_memory_substrate_contract(
             RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT), RUNNER.load_pin()
@@ -151,9 +176,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm = summary["components"][0]
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
-        self.assertEqual(len(vm["checks"]), 17)
-        self.assertEqual(len(vm["bounded_source_definitions"]), 7)
-        self.assertEqual(len(vm["branch_matrix"]), 13)
+        self.assertEqual(len(vm["checks"]), 21)
+        self.assertEqual(len(vm["bounded_source_definitions"]), 9)
+        self.assertEqual(len(vm["branch_matrix"]), 14)
         self.assertEqual(len(vm["unqualified_failure_matrix"]), 3)
         self.assertEqual(len(vm["remaining_conditions"]), 5)
         self.assertEqual(summary["milestone"]["status"], "partial")
@@ -239,6 +264,26 @@ class NativeVmAssemblyTests(unittest.TestCase):
         ]
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, wrong_features)
+
+    def test_vm_producer_requires_policy_wrapper_and_direct_arena_source_closure(self):
+        """The policy record must observe source mmap and madvise, not a model."""
+
+        summary = self.summary()
+
+        without_mmap_wrap = self.vm_evidence(summary)
+        without_mmap_wrap["c_command"].remove("-Wl,--wrap=mmap")
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, without_mmap_wrap)
+
+        without_madvise_wrap = self.vm_evidence(summary)
+        without_madvise_wrap["c_command"].remove("-Wl,--wrap=madvise")
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, without_madvise_wrap)
+
+        direct_arena_source = self.vm_evidence(summary)
+        direct_arena_source["c_command"].append("/pinned/src/arena.c")
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, direct_arena_source)
 
 
 if __name__ == "__main__":

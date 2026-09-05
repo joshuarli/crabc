@@ -4,13 +4,14 @@
 This module owns neither milestone aggregation nor source-map promotion.  It
 checks the target-local fragment's complete source-policy matrix, compiles a
 fresh direct-include C oracle from the pinned archive, and compares its fixed
-regular-VM lifecycle plus one offset-release failure/retry record with one
-already-built Rust exact test. The C release fault wraps only the unchanged
-pinned `munmap` import for the selected `_mi_prim_free` call. The selected
-`allow_thp=0` source transaction runs only in child evidence processes. The
-fragment deliberately remains partial: passing this producer is not a claim
-for huge pages, hints, ambient option discovery, diagnostics, or allocator
-lifecycle integration.
+regular-VM lifecycle, one offset-release failure/retry record, and one
+child-isolated source-option first-arena record with one already-built Rust
+exact test. The C release fault wraps only the unchanged pinned `munmap`
+import for the selected `_mi_prim_free` call; the policy record wraps the
+unchanged Unix `mmap` and `madvise` imports. The fragment deliberately remains
+partial: passing this producer is not a claim for ambient option retries,
+huge-page success/placement, diagnostics, or general allocator lifecycle
+integration.
 """
 
 from __future__ import annotations
@@ -27,12 +28,33 @@ SCHEMA = "crabc-mimalloc-x86_64-m2-component-evidence"
 TRACE_BEGIN = "CRABC_MI_M2_VM_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_M2_VM_TRACE_END"
 EXPECTED_RUST_TEST_COUNT = 1
+EVIDENCE_PROFILE = "release-no-default-features-fixed-regular-vm-and-child-policy-arena-fault"
 
 CHECKS = (
     (
         "native-vm-fixed-lifecycle-differential",
         "c-rust-vm-primitives-fixed-lifecycle",
         "os::tests::emit_m2_vm_primitives_c_rust_trace",
+    ),
+    (
+        "source-policy-lazy-environment-retry",
+        "rust-unit",
+        "os::tests::process_vm_policy_retries_only_unavailable_source_environment_descriptors",
+    ),
+    (
+        "process-policy-first-arena-clean-primary-fallback",
+        "rust-unit",
+        "process_arena::tests::process_default_os_arena_retries_the_source_smaller_policy_arena_after_clean_primary_failure",
+    ),
+    (
+        "process-policy-first-arena-retained-cleanup-statistics",
+        "rust-unit",
+        "process_arena::tests::process_default_os_arena_retained_cleanup_restores_adjusted_statistics_without_a_retry",
+    ),
+    (
+        "process-policy-ticket-zero-live-random",
+        "rust-unit",
+        "main_static_page::tests::process_bound_runtime_first_arena_uses_its_live_policy_and_random_image",
     ),
     (
         "aligned-map-direct-cleanup-owner",
@@ -164,6 +186,13 @@ TRACE_KEYS = (
     "m2.vm.release.retry.real_munmap_success",
     "m2.vm.numa.count_at_least_one",
     "m2.vm.numa.current_lt_count",
+    "m2.vm.policy.source_options_applied",
+    "m2.vm.policy.first_arena_size",
+    "m2.vm.policy.first_arena_initially_committed",
+    "m2.vm.policy.large_high_hint_failed",
+    "m2.vm.policy.large_null_hint_retry_failed",
+    "m2.vm.policy.regular_hinted_map_after_large_fallback",
+    "m2.vm.policy.thp_advice_failure_ignored",
 )
 TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
     {
@@ -180,6 +209,7 @@ TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
         "m2.vm.aligned.alignment",
         "m2.vm.aligned.good_size",
         "m2.vm.offset.good_size",
+        "m2.vm.policy.first_arena_size",
     }
 )
 TRACE_FALSE_KEYS = frozenset(
@@ -199,6 +229,7 @@ BRANCH_IDS = (
     "os-range-transition-policy-and-failure-owners",
     "aligned-hint-random-state",
     "unix-regular-map-large-page-and-thp-routing",
+    "arena-first-policy-reserve",
     "unix-free-primitive",
     "unix-commit-decommit-reset-reuse-and-protect",
     "huge-page-and-numa-placement",
@@ -206,6 +237,7 @@ BRANCH_IDS = (
 )
 SOURCE_UNITS = (
     "include/mimalloc/prim.h",
+    "src/arena.c",
     "src/os.c",
     "src/prim/prim.c",
     "src/prim/unix/prim.c",
@@ -287,6 +319,7 @@ def load_fragment(path: Path) -> dict[str, Any]:
     source_map = component.get("source_map_records")
     expected_source_map = [
         {"unit_id": "os-allocation-policy", "required_status": "partial"},
+        {"unit_id": "arena-lifecycle", "required_status": "partial"},
         {"unit_id": "linux-unix-primitives", "required_status": "partial"},
         {"unit_id": "primitive-interface", "required_status": "partial"},
     ]
@@ -377,7 +410,7 @@ def load_fragment(path: Path) -> dict[str, Any]:
     thp_branch = branches[2]
     if (
         thp_branch["disposition"] != "partial-fixed-profile"
-        or thp_branch["evidence_check_ids"] != [TRACE_CHECK_ID]
+        or TRACE_CHECK_ID not in thp_branch["evidence_check_ids"]
         or not any("ambient" in condition.lower() for condition in thp_branch["missing_conditions"])
         or not any("child-isolated" in condition.lower() for condition in thp_branch["missing_conditions"])
     ):
@@ -520,6 +553,8 @@ def _validate_trace_values(trace: Mapping[str, int], *, source: str) -> None:
     ):
         if trace[key] == 0 or trace[key] % page:
             raise ValueError(f"{source} M2 VM trace has invalid allocation extent: {key}")
+    if trace["m2.vm.policy.first_arena_size"] != 128 * 1024 * 1024:
+        raise ValueError(f"{source} M2 VM trace has an invalid bounded first-arena extent")
 
 
 def _compare(c_trace: Mapping[str, int], rust_trace: Mapping[str, int], harness: Any) -> dict[str, Any]:
@@ -590,8 +625,10 @@ def run_evidence(
             str(source / "src"),
             *harness.CONFIGURATION_PROFILES["release"],
             str(FIXTURE),
-            *(str(source / item) for item in harness.M1_RAW_PRIMITIVE_ORACLE_SOURCES),
+            *(str(source / item) for item in harness.M2_X86_64_VM_C_ORACLE_SOURCES),
             "-Wl,--wrap=munmap",
+            "-Wl,--wrap=mmap",
+            "-Wl,--wrap=madvise",
             "-pthread",
             "-o",
             str(binary),
@@ -625,7 +662,7 @@ def run_evidence(
         "comparison": comparison,
         "fixture": harness.artifact_record(FIXTURE),
         "format": 1,
-        "profile": "release-no-default-features-fixed-regular-vm-thp-disabled-offset-release-fault",
+        "profile": EVIDENCE_PROFILE,
         "rust_build_command": list(test_program.get("build_command", [])),
         "rust_command": rust_command,
         "rust_execution": dict(test_program["execution"]),
