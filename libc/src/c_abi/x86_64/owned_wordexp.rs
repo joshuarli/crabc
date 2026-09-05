@@ -4,11 +4,11 @@
 //! release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417` (MIT),
 //! `src/misc/wordexp.c::{do_wordexp,wordexp,wordfree}`. The shell argument
 //! protocol, NUL-delimited sentinel/word stream, `WRDE_DOOFFS`, append/reuse,
-//! error returns, and word-vector ownership follow that source directly.
-//! `../../wordexp_nocmd.rs` remains the shared hardened lexical scanner from
-//! the established AArch64 implementation, preserving its adversarial quote,
-//! parameter, arithmetic, and command-substitution decisions without making
-//! the two targets share raw process machinery.
+//! error returns, word-vector ownership, and `WRDE_NOCMD` preflight follow
+//! that source directly. `owned_wordexp_nocmd.rs` is a private literal
+//! transliteration of the source scanner under musl's MIT license. The
+//! established hardened scanner in `../../wordexp_nocmd.rs` remains owned by
+//! the AArch64 implementation; it is not an x86 musl source oracle.
 //!
 //! Musl's raw `pipe2`/signal-mask/`fork`/`execl` child sequence maps here to
 //! the existing `owned_spawn` transaction: a stack-local musl-shaped `dup2`
@@ -83,7 +83,7 @@ unsafe extern "C" {
     fn pthread_setcancelstate(state: c_int, old: *mut c_int) -> c_int;
 }
 
-include!("../../wordexp_nocmd.rs");
+include!("owned_wordexp_nocmd.rs");
 
 #[inline]
 unsafe fn close(descriptor: c_int) {

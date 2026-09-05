@@ -105,14 +105,15 @@ audit_receipt_and_elf() {
 	local mode="$1"
 	local label="$2"
 	local mode_root="$work_dir/installed-${label}"
-	local application="$mode_root/probe.o"
-	local candidate="$mode_root/candidate"
-	local receipt="$mode_root/link.receipt.json"
-	local file_header="$mode_root/file-header"
-	local programs="$mode_root/programs"
-	local dynamic="$mode_root/dynamic"
-	local symbols="$mode_root/symbols"
-	local relocations="$mode_root/relocations"
+	local application="${3:-$mode_root/probe.o}"
+	local candidate="${4:-$mode_root/candidate}"
+	local receipt="${5:-$mode_root/link.receipt.json}"
+	local audit_root="$(dirname "$candidate")"
+	local file_header="$audit_root/${label}.file-header"
+	local programs="$audit_root/${label}.programs"
+	local dynamic="$audit_root/${label}.dynamic"
+	local symbols="$audit_root/${label}.symbols"
+	local relocations="$audit_root/${label}.relocations"
 
 	python3 - "$ROOT_DIR" "$sysroot" "$mode" "$application" "$candidate" "$receipt" <<'PY'
 import hashlib
@@ -374,8 +375,57 @@ run_installed_mode() {
 	run_controlled_shell_cases "$label" "$mode_root/candidate"
 }
 
+# Compile the ordinary C probe once with the installed static-PIE translation
+# contract. Its exact bytes then link into the pinned-musl ET_EXEC oracle and
+# both selected crabc static modes. This selector ends in the NOCMD scanner,
+# before /bin/sh could make an external shell fixture relevant.
+run_same_object_nocmd_source_case() {
+	local same_root="$work_dir/same-object-nocmd-source"
+	local application="$same_root/probe.o"
+	local oracle="$same_root/musl-static-et-exec"
+	local static_candidate="$same_root/crabc-static-et-exec"
+	local static_receipt="$same_root/crabc-static-et-exec.receipt.json"
+	local pie_candidate="$same_root/crabc-static-pie"
+	local pie_receipt="$same_root/crabc-static-pie.receipt.json"
+	local program
+	local output
+	local stderr
+
+	mkdir "$same_root"
+	(
+		cd "$same_root"
+		"$sysroot/bin/crabc-cc" -static-pie -std=c11 -D_GNU_SOURCE -fno-builtin \
+			-c "$PROBE" -o probe.o
+		"$ORACLE_CC" -static -fno-pie -no-pie probe.o -o "$(basename "$oracle")"
+		"$sysroot/bin/crabc-cc" -static --link-receipt "$(basename "$static_receipt")" \
+			probe.o -o "$(basename "$static_candidate")"
+		"$sysroot/bin/crabc-cc" -static-pie --link-receipt "$(basename "$pie_receipt")" \
+			probe.o -o "$(basename "$pie_candidate")"
+	)
+	audit_receipt_and_elf -static same-object-static "$application" "$static_candidate" "$static_receipt"
+	audit_receipt_and_elf -static-pie same-object-static-pie "$application" "$pie_candidate" "$pie_receipt"
+	sha256sum "$application" >"$same_root/workload.sha256"
+	for program in "$oracle" "$static_candidate" "$pie_candidate"; do
+		output="$same_root/$(basename "$program").stdout"
+		stderr="$same_root/$(basename "$program").stderr"
+		timeout 20 env -i "$program" --nocmd-source >"$output" 2>"$stderr" ||
+			fail "same-object NOCMD selector failed: $(basename "$program")"
+		printf 'owned-wordexp-nocmd-source: PASS\n' >"$same_root/expected.stdout"
+		cmp -s "$same_root/expected.stdout" "$output" ||
+			fail "same-object NOCMD selector output drifted: $(basename "$program")"
+		[ ! -s "$stderr" ] || fail "same-object NOCMD selector wrote stderr: $(basename "$program")"
+	done
+	cmp -s "$same_root/$(basename "$oracle").stdout" \
+		"$same_root/$(basename "$static_candidate").stdout" ||
+		fail "same-object static NOCMD output differs from pinned musl"
+	cmp -s "$same_root/$(basename "$oracle").stdout" \
+		"$same_root/$(basename "$pie_candidate").stdout" ||
+		fail "same-object static-PIE NOCMD output differs from pinned musl"
+}
+
 python3 "$BUILDER" --output "$sysroot" >"$work_dir/sysroot-build.json"
 run_installed_mode -static et-exec
 run_installed_mode -static-pie static-pie
+run_same_object_nocmd_source_case
 
-printf 'x86 owned wordexp: PASS (pinned static ET_EXEC oracle; installed ET_EXEC/static PIE shell, scanner, ownership, cleanup)\n'
+printf 'x86 owned wordexp: PASS (pinned static ET_EXEC oracle; installed ET_EXEC/static PIE shell, source scanner, ownership, cleanup)\n'

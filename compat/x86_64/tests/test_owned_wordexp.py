@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 MODULE = ROOT / "libc/src/c_abi/x86_64/owned_wordexp.rs"
 SPAWN = ROOT / "libc/src/c_abi/x86_64/owned_spawn.rs"
-SCANNER = ROOT / "libc/src/wordexp_nocmd.rs"
+SCANNER = ROOT / "libc/src/c_abi/x86_64/owned_wordexp_nocmd.rs"
 PROBE = ROOT / "compat/x86_64/owned_wordexp_probe.c"
 RUNNER = ROOT / "compat/x86_64/run_libc_owned_wordexp.sh"
 DISPATCHER = ROOT / "scripts/dev-x86_64.sh"
@@ -23,6 +23,8 @@ class OwnedWordexpContracts(unittest.TestCase):
             "WRDE_DOOFFS | WRDE_APPEND", "WRDE_REUSE", "WRDE_NOCMD",
             "WRDE_CMDSUB", "WRDE_BADCHAR", "WRDE_SYNTAX", "WRDE_UNDEF",
             "check_freed", "--shell-unavailable", "unavailable_shell_case",
+            "--nocmd-source", "source_nocmd_case", "owned-wordexp-nocmd-source: PASS",
+            "$((case $A in a) echo x ;; *) echo y ;; esac))",
             "errno = ERANGE", "errno != ERANGE", "owned-wordexp: PASS",
             "owned-wordexp-shell-unavailable: PASS",
         ):
@@ -36,7 +38,8 @@ class OwnedWordexpContracts(unittest.TestCase):
         self.assertIn("stdio_standard::fdopen", source)
         self.assertIn("stdio_standard::getdelim", source)
         self.assertIn("stdio_standard::fclose", source)
-        self.assertIn('include!("../../wordexp_nocmd.rs")', source)
+        self.assertIn('include!("owned_wordexp_nocmd.rs")', source)
+        self.assertNotIn('include!("../../wordexp_nocmd.rs")', source)
         self.assertNotIn("sys_fork", source)
         self.assertNotIn("sys_execve", source)
         self.assertIn("wordexp_nocmd_check", scanner)
@@ -64,7 +67,9 @@ class OwnedWordexpContracts(unittest.TestCase):
             "run_installed_mode -static-pie static-pie",
             "make_private_shell_root", "missing inaccessible invalid",
             "audit_linker_trace", "runtime allowlist or exact application-object receipt drifted",
-            "chroot_command", "controlled-shell.sha256",
+            "chroot_command", "controlled-shell.sha256", "run_same_object_nocmd_source_case",
+            "same-object-nocmd-source", "workload.sha256", "--nocmd-source",
+            "local audit_root=\"$(dirname \"$candidate\")\"",
         ):
             self.assertIn(boundary, source)
         self.assertNotIn("--wrap=", source)

@@ -147,6 +147,10 @@ and dynamic TLS, DTV/module lifecycle, DSO init/fini, dl*, locking, retained clo
 and admitted reentrancy covered by its contracts. Fixed graphs and isolated
 artifacts are not equivalent.
 
+The [owned word-expansion record](owned-wordexp.md) maps its x86
+`WRDE_NOCMD` scanner literally to musl 1.2.6 and records the same-object
+pre-shell receipt separately from its bounded control-shell fixture.
+
 [owned-libc-test.md](owned-libc-test.md) defines the finite 434-source
 upstream libc-test aggregate. It keeps the pinned source graph, installed
 header traces, same-object pinned-musl links, sealed full product and oracle

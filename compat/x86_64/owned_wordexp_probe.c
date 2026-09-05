@@ -193,6 +193,22 @@ static int unavailable_shell_case(void)
     return 0;
 }
 
+/* This expression never starts a shell: `WRDE_NOCMD` must classify it in the
+ * lexical preflight. Pinned musl 1.2.6 increments its arithmetic-paren count
+ * for `$((`, reaches zero at the inner `*)`, then rejects the following `;`
+ * as `WRDE_BADCHAR`. Keep a real command-substitution control beside it so a
+ * source-shaped scanner does not accidentally weaken that boundary. */
+static int source_nocmd_case(void)
+{
+    if (!check_initial_error(
+            "$((case $A in a) echo x ;; *) echo y ;; esac))",
+            WRDE_NOCMD, WRDE_BADCHAR))
+        return 1;
+    if (!check_initial_error("$(echo x)", WRDE_NOCMD, WRDE_CMDSUB))
+        return 2;
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
     int result;
@@ -204,8 +220,18 @@ int main(int argc, char *argv[])
         puts("owned-wordexp-shell-unavailable: PASS");
         return 0;
     }
+    if (argc == 2 && strcmp(argv[1], "--nocmd-source") == 0) {
+        result = source_nocmd_case();
+        if (result != 0)
+            return 96 + result;
+        puts("owned-wordexp-nocmd-source: PASS");
+        return 0;
+    }
     if (argc != 1)
         return 127;
+    result = source_nocmd_case();
+    if (result != 0)
+        return 96 + result;
     result = ordinary_and_nocmd_cases();
     if (result != 0)
         return result;
