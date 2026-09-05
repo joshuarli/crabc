@@ -277,6 +277,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "asin",
                 "asinf",
                 "asprintf",
+                "at_quick_exit",
                 "atan",
                 "atan2",
                 "atan2f",
@@ -420,6 +421,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "putwchar",
                 "putwchar_unlocked",
                 "pwritev2",
+                "quick_exit",
                 "realpath",
                 "remap_file_pages",
                 "renameat",
@@ -1758,6 +1760,19 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         }
         self.assertIn("lchmod", replacements["x86-owned-static-runtime"])
         self.assertIn("lchmod", partition["default_static"]["members"])
+
+    def test_quick_exit_names_have_the_owned_runtime_provider(self) -> None:
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+        partition = report["callable_provider_partition"]
+        planned = {
+            row["id"]: set(row["members"])
+            for row in partition["declared_unverified_feature_archives"]
+        }
+        quick_exit = {"at_quick_exit", "quick_exit"}
+
+        self.assertTrue(quick_exit <= planned["x86-owned-static-runtime"])
+        self.assertFalse(quick_exit & set(partition["unprovided"]["members"]))
 
     @unittest.skipUnless(all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm")), "requires native binutils and C compiler")
     def test_audit_uses_ordinary_archive_extraction_and_reports_finite_complement(self) -> None:

@@ -97,6 +97,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "linux-control",
                 "vm-mechanisms",
                 "assert",
+                "quick-exit",
                 "syslog",
                 "pthread-spin",
                 "process-trio",

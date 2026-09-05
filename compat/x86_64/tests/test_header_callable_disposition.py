@@ -338,6 +338,22 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         )
         self.assertIn("lchmod", report["primary_disposition"]["default_static"]["members"])
 
+    def test_owned_quick_exit_is_a_planned_owned_static_provider(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        quick_exit = {"at_quick_exit", "quick_exit"}
+
+        self.assertTrue(quick_exit <= providers["x86-owned-static-runtime"])
+        self.assertFalse(quick_exit & deferred)
+
     def test_file_handles_are_verified_opt_in_providers_not_deferred_defaults(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         providers = {

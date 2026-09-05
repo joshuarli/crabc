@@ -585,6 +585,11 @@ mod wait_extensions;
 mod immediate_termination;
 #[path = "posix_exit.rs"]
 mod posix_exit;
+// The generic AArch64 quick-exit list is allocation backed and has no place in
+// this x86 product. The owned profile selects musl's separate fixed table.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_quick_exit.rs"]
+mod owned_quick_exit;
 #[path = "posix_spawnattr_init.rs"]
 mod posix_spawnattr_init;
 #[path = "posix_spawnattr_getpgroup.rs"]

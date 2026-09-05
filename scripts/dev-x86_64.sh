@@ -549,6 +549,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-system-cancellation  qualify isolated system/pclose cancellation and child wait ownership
   owned-dynamic-spawn  qualify installed dynamic spawn semantics against musl
   owned-assert  test installed C assertion diagnostics and termination
+  owned-quick-exit  qualify installed C11 at_quick_exit/quick_exit semantics against musl
   owned-linux-control  test owned Linux C mechanisms and kernel error translation
   owned-vm-mechanisms  test owned VM remap, break, and legacy remap mechanisms
   owned-pthread-spin  qualify installed private/shared pthread spin locking
@@ -5623,7 +5624,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
     owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers|owned-pty) ;;
-    owned-assert|owned-linux-control|owned-filesystem-mechanisms|owned-vm-mechanisms) ;;
+    owned-assert|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-error-reporting) ;;
@@ -7673,6 +7674,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-assert takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_assert.sh
+        ;;
+    owned-quick-exit)
+        [ "$#" -eq 0 ] || fail "owned-quick-exit takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_quick_exit.sh
         ;;
     owned-linux-control)
         [ "$#" -eq 0 ] || fail "owned-linux-control takes no arguments"

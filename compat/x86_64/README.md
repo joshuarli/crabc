@@ -210,3 +210,13 @@ The same-object runner is also a required dynamic product qualification case.
 owned static/static-PIE, and dynamic PIE/non-PIE products. The
 [component contract](owned-vm-mechanisms.md) records the exact musl mapping,
 VM-lifetime seam, same-object matrix, and remaining scope.
+
+## Owned C11 quick termination
+
+`./scripts/dev-x86_64.sh owned-quick-exit` compares one installed-header C11
+workload against pinned musl and the installed static, static-PIE, dynamic PIE,
+and dynamic non-PIE products, including kernel and direct interpreter entry.
+The [component contract](owned-quick-exit.md) records the fixed 32-slot
+registry, fork guard, callback contract, and excluded ordinary-exit behavior.
+The same runner checks strong static and global-default shared providers and is
+a required dynamic product qualification case.

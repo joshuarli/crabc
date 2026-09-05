@@ -56,6 +56,7 @@ CASES = {
     "linux-control": ("run_owned_linux_control.sh", None),
     "vm-mechanisms": ("run_owned_vm_mechanisms.sh", None),
     "assert": ("run_owned_assert.sh", None),
+    "quick-exit": ("run_owned_quick_exit.sh", None),
     "syslog": ("run_owned_syslog.sh", None),
     "pthread-spin": ("run_owned_pthread_spin.sh", None),
     "process-trio": ("run_owned_process_trio.sh", None),

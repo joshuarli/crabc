@@ -2101,7 +2101,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 "owned-system-cancellation",
                 "owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|"
                 "owned-signal-helpers|owned-pty",
-                "owned-assert|owned-linux-control|owned-filesystem-mechanisms|owned-vm-mechanisms",
+                "owned-assert|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms",
                 "owned-pthread-spin",
                 "owned-syslog",
                 "owned-error-reporting",

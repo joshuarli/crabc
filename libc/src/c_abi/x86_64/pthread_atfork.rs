@@ -380,6 +380,10 @@ pub unsafe extern "C" fn fork() -> c_int {
     pthread_tsd::pthread_fork_prepare();
     #[cfg(feature = "x86-owned-static-runtime")]
     unsafe {
+        // Musl `fork.c` locks __at_quick_exit_lockptr after pthread-key
+        // metadata. It comes before the named IPC registry and stdio-family
+        // locks, and retains no user quick-exit callback across raw fork.
+        super::owned_quick_exit::pthread_fork_prepare();
         super::owned_named_ipc::pthread_fork_prepare();
         super::stdio_standard::pthread_fork_prepare();
         super::owned_syslog::pthread_fork_prepare();
@@ -427,7 +431,9 @@ pub unsafe extern "C" fn fork() -> c_int {
         unsafe { pthread_create_join::pthread_fork_child(child_tid) };
         #[cfg(feature = "x86-owned-static-runtime")]
         unsafe {
-            // musl fork.c completes its atfork_locks array in forward order.
+            // `fork.c` completes its private atfork locks forward: the copied
+            // quick-exit guard, then named IPC, then stdio-family state.
+            super::owned_quick_exit::pthread_fork_child();
             super::owned_named_ipc::pthread_fork_child();
             super::stdio_standard::pthread_fork_child();
             super::owned_syslog::pthread_fork_child();
@@ -448,7 +454,9 @@ pub unsafe extern "C" fn fork() -> c_int {
         unsafe { pthread_create_join::pthread_fork_parent() };
         #[cfg(feature = "x86-owned-static-runtime")]
         unsafe {
-            // musl fork.c completes its atfork_locks array in forward order.
+            // `fork.c` completes its private atfork locks forward before user
+            // parent callbacks: quick-exit, named IPC, then stdio-family.
+            super::owned_quick_exit::pthread_fork_parent();
             super::owned_named_ipc::pthread_fork_parent();
             super::stdio_standard::pthread_fork_parent();
             super::owned_syslog::pthread_fork_parent();
