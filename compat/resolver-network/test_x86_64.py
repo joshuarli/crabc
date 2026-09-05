@@ -35,9 +35,29 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
     def test_runner_requires_explicit_prepared_sysroots(self) -> None:
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             runner.parse_args([])
-        arguments = runner.parse_args(["--static-sysroot", "/prepared/static", "--dynamic-sysroot", "/prepared/dynamic"])
+        arguments = runner.parse_args([
+            "--static-sysroot", "/prepared/static", "--dynamic-sysroot", "/prepared/dynamic",
+            "--extracted-static-sysroot", "/prepared/extracted-static",
+            "--extracted-dynamic-sysroot", "/prepared/extracted-dynamic",
+        ])
         self.assertEqual(arguments.static_sysroot, Path("/prepared/static"))
         self.assertEqual(arguments.dynamic_sysroot, Path("/prepared/dynamic"))
+
+    def test_missing_extracted_product_rejects_before_translation(self) -> None:
+        with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
+            root = Path(directory)
+            installed_static = root / "installed-static"
+            installed_dynamic = root / "installed-dynamic"
+            extracted_dynamic = root / "extracted-dynamic"
+            for path in (installed_static, installed_dynamic, extracted_dynamic):
+                path.mkdir()
+            arguments = runner.parse_args([
+                "--static-sysroot", str(installed_static), "--dynamic-sysroot", str(installed_dynamic),
+                "--extracted-static-sysroot", str(root / "missing-static"),
+                "--extracted-dynamic-sysroot", str(extracted_dynamic),
+            ])
+            with self.assertRaisesRegex(runner.RunnerError, "prepared extracted static sysroot"):
+                runner.prepared_product_arms(arguments)
 
     def test_chroot_fixture_writes_only_its_private_conventional_files(self) -> None:
         with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
@@ -65,6 +85,8 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
         self.assertFalse(runner.event_contract(events)["passed"])
         events.append({"name": "tc.example.test.", "transport": "tcp", "action": "answer"})
         self.assertTrue(runner.event_contract(events)["passed"])
+        self.assertFalse(runner.event_contract(events, executions=2)["passed"])
+        self.assertTrue(runner.event_contract(events * 2, executions=2)["passed"])
 
     def test_comparison_keeps_stream_records_raw(self) -> None:
         reference = runner.outcome(0, b"unchanged\n", b"")
@@ -73,6 +95,11 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
             runner.compare(reference, candidate),
             {"exit_status_match": True, "stdout_match": False, "stderr_match": True},
         )
+
+    def test_incomplete_run_never_publishes_the_latest_report(self) -> None:
+        with mock.patch.object(runner, "publish_report") as publish:
+            self.assertIsNone(runner.publish_complete_report({"passed": False}, Path("private.json"), Path("latest.json")))
+        publish.assert_not_called()
 
     def test_static_pie_elf_audit_accepts_the_et_dyn_header(self) -> None:
         with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
@@ -156,14 +183,24 @@ class NativeResolverNetworkPreparationTests(unittest.TestCase):
 
             def produce(arguments, *, timeout):
                 destination = Path(arguments[-1])
-                destination.mkdir()
+                if destination.suffix:
+                    destination.write_bytes(b"package")
+                else:
+                    destination.mkdir()
+                    if destination.name == "static-extraction":
+                        (destination / "crabc-x86_64-owned-static-sysroot").mkdir()
                 return {"argv": list(arguments), "status": 0, "stdout": {}, "stderr": {}}
 
             with mock.patch.object(prepare, "command_record", side_effect=produce) as command:
                 report, report_path = prepare.run(prepare.parse_args(["--output", str(output), "--timeout", "1"]))
             self.assertEqual(report["result"], "pass")
             self.assertTrue(report_path.is_file())
-            self.assertEqual([Path(call.args[0][-1]).name for call in command.call_args_list], ["static-sysroot", "dynamic-sysroot"])
+            self.assertEqual([Path(call.args[0][-1]).name for call in command.call_args_list], [
+                "static-sysroot", "dynamic-sysroot", "static-one.tar.xz", "static-two.tar.xz",
+                "dynamic-one.tar", "dynamic-two.tar", "static-extraction", "dynamic-extraction",
+            ])
+            self.assertTrue(report["packages"]["static"]["byte_identical"])
+            self.assertTrue(report["packages"]["dynamic"]["byte_identical"])
 
 
 if __name__ == "__main__":

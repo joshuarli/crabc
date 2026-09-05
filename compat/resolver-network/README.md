@@ -36,13 +36,18 @@ and architecture in the native development image.
 
 The native x86 gate separates product preparation from resolver execution.
 `prepare_x86_64.py` runs in the ordinary pinned container and creates a fresh
-directory below `.work/x86_64`; it invokes the fixed static and dynamic product
-builders and records their exact output paths. `run_x86_64.py` requires those
-two explicit directories. It validates each installed manifest before it
-compiles one `workload.c` object with the pinned musl 1.2.6 headers, links that
-unchanged object into a pinned-musl static ET_EXEC reference and the owned
-static ET_EXEC/static-PIE plus dynamic PIE/non-PIE artifacts, and audits the
-drivers' receipts, link traces, ELF types, interpreter, and runtime inputs.
+directory below `.work/x86_64`. It invokes the fixed static and dynamic product
+builders, packages each exact installed tree twice through its owned package
+tool, requires the two archive byte streams to match, and safely extracts one
+validated archive of each product. `run_x86_64.py` requires all four explicit
+installed/extracted directories. It validates each manifest and requires the
+installed and extracted trees to have the same complete payload identity before
+it compiles one `workload.c` object with the pinned musl 1.2.6 headers.
+
+That unchanged object links into a pinned-musl static ET_EXEC reference and,
+for each product arm, the owned static ET_EXEC/static-PIE plus dynamic
+PIE/non-PIE artifacts. The runner audits every driver's receipt, link trace,
+ELF type, interpreter, and runtime inputs.
 
 The dispatcher runs only the second phase in a native Linux/x86-64 Docker
 container with `--network none` and `SYS_CHROOT`. The runner rejects any
@@ -53,10 +58,12 @@ contain the validated owned dynamic sysroot. The fixture server remains on the
 same loopback-only namespace. No runner path reads, writes, snapshots, or
 restores the container's `/etc` files.
 
-The reference, static ET_EXEC, static PIE, dynamic PIE ordinary entry, dynamic
-PIE direct interpreter entry, dynamic non-PIE ordinary entry, and dynamic
-non-PIE direct interpreter entry must all produce the same raw exit status,
-stdout, and stderr. The report is published under
+The reference plus all twelve product executions must produce the same raw
+exit status, stdout, and stderr: static ET_EXEC, static PIE, dynamic PIE
+ordinary entry, dynamic PIE direct interpreter entry, dynamic non-PIE ordinary
+entry, and dynamic non-PIE direct interpreter entry through both the installed
+and extracted trees. The DNS event evidence requires every transition from all
+thirteen processes. The report is published under
 `compat/reports/resolver-network/x86_64/` only on a complete pass. This is an
 evidence gate for the named products and resolver/network workload; it does
 not complete or promote the `compat.resolver-network` family.

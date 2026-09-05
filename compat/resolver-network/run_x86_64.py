@@ -2,9 +2,10 @@
 """Qualify the bounded resolver/network workload through owned x86 products.
 
 The sole C object is translated with the pinned musl 1.2.6 headers.  It is
-linked into a pinned-musl reference plus the installed owned static and
-dynamic products, then every candidate runs in a disposable chroot with only
-fixture ``/etc/hosts`` and ``/etc/resolv.conf``.  The outer container must have
+linked into a pinned-musl reference plus both installed and package-extracted
+owned static and dynamic products, then every candidate runs in a disposable
+chroot with only fixture ``/etc/hosts`` and ``/etc/resolv.conf``. The outer
+container must have
 only its loopback network namespace; the local UDP/TCP DNS fixture remains
 outside each chroot but within that same private namespace.
 """
@@ -21,7 +22,6 @@ import re
 import selectors
 import shutil
 import signal
-import stat
 import subprocess
 import sys
 import tempfile
@@ -210,6 +210,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--static-sysroot", type=Path, required=True)
     parser.add_argument("--dynamic-sysroot", type=Path, required=True)
+    parser.add_argument("--extracted-static-sysroot", type=Path, required=True)
+    parser.add_argument("--extracted-dynamic-sysroot", type=Path, required=True)
     parser.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     parser.add_argument("--timeout", type=float, default=30.0)
@@ -297,6 +299,57 @@ def dynamic_manifest(sysroot: Path) -> dict[str, object]:
     for required in ("bin/crabc-cc-dynamic", "lib/ld-crabc-x86_64.so.1", "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o"):
         physical_regular(sysroot / required, f"dynamic sysroot required payload {required}", executable=required.startswith(("bin/", "lib/")))
     return manifest
+
+
+def tree_identity(root: Path) -> dict[str, object]:
+    """Hash the exact payload roster: files by bytes and aliases by target."""
+
+    records: list[dict[str, object]] = []
+    for entry in sorted(root.rglob("*")):
+        relative = entry.relative_to(root).as_posix()
+        if entry.is_symlink():
+            records.append({"path": relative, "kind": "symlink", "target": os.readlink(entry)})
+        elif entry.is_dir():
+            records.append({"path": relative, "kind": "directory"})
+        elif entry.is_file():
+            records.append({"path": relative, "kind": "regular", "sha256": sha256_file(entry)})
+        else:
+            raise RunnerError(f"product tree contains an unsafe entry: {relative}")
+    encoded = json.dumps(records, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return {"entry_count": len(records), "sha256": hashlib.sha256(encoded).hexdigest()}
+
+
+def prepared_product_arms(args: argparse.Namespace) -> dict[str, dict[str, Path]]:
+    """Resolve all four caller-prepared product trees before compilation."""
+
+    requested = {
+        "installed": {"static": args.static_sysroot, "dynamic": args.dynamic_sysroot},
+        "extracted": {"static": args.extracted_static_sysroot, "dynamic": args.extracted_dynamic_sysroot},
+    }
+    return {
+        arm: {
+            kind: physical_directory(path, f"prepared {arm} {kind} sysroot")
+            for kind, path in roots.items()
+        }
+        for arm, roots in requested.items()
+    }
+
+
+def product_identity(
+    installed_static: Path, installed_dynamic: Path, extracted_static: Path, extracted_dynamic: Path,
+    installed_static_manifest: Mapping[str, object], installed_dynamic_manifest: Mapping[str, object],
+    extracted_static_manifest: Mapping[str, object], extracted_dynamic_manifest: Mapping[str, object],
+) -> dict[str, object]:
+    """Require package extraction to preserve every owned product artifact."""
+
+    static = {"installed": tree_identity(installed_static), "extracted": tree_identity(extracted_static)}
+    dynamic = {"installed": tree_identity(installed_dynamic), "extracted": tree_identity(extracted_dynamic)}
+    static["identical"] = static["installed"] == static["extracted"] and installed_static_manifest == extracted_static_manifest
+    dynamic["identical"] = dynamic["installed"] == dynamic["extracted"] and installed_dynamic_manifest == extracted_dynamic_manifest
+    result = {"static": static, "dynamic": dynamic, "passed": static["identical"] is True and dynamic["identical"] is True}
+    if result["passed"] is not True:
+        raise RunnerError("installed and extracted owned product identities differ")
+    return result
 
 
 def compiler_resource_directory(compiler: Path, timeout: float) -> Path:
@@ -475,7 +528,7 @@ def elf_audit(path: Path, *, mode: str, dynamic: bool) -> dict[str, object]:
 
 def link_artifacts(static_root: Path, dynamic_root: Path, object_file: Path, work: Path, timeout: float) -> dict[str, dict[str, object]]:
     artifacts: dict[str, dict[str, object]] = {}
-    work.mkdir()
+    work.mkdir(parents=True)
     static_driver = physical_regular(static_root / "bin/crabc-cc", "sealed static driver", executable=True)
     for option, label in (("--static-et-exec", "static-et-exec"), ("--static-pie", "static-pie")):
         directory = work / label
@@ -614,19 +667,28 @@ def load_events(path: Path) -> tuple[list[dict[str, object]], str | None]:
         return [], str(error)
 
 
-def event_contract(events: Iterable[Mapping[str, object]]) -> dict[str, object]:
+def event_contract(events: Iterable[Mapping[str, object]], *, executions: int = 1) -> dict[str, object]:
+    """Require each named transition from every reference/candidate process."""
+
+    if executions < 1:
+        raise RunnerError("DNS event contract needs at least one execution")
     events = list(events)
     names = {str(event["name"]) for event in events if "name" in event}
     count = lambda predicate: sum(1 for event in events if predicate(event))
-    malformed = any(event.get("name") == "malformed.example.test." and event.get("action") == "malformed-sequence" for event in events)
+    name_counts = {name: count(lambda event, name=name: event.get("name") == name) for name in REQUIRED_SERVER_NAMES}
+    malformed = count(lambda event: event.get("name") == "malformed.example.test." and event.get("action") == "malformed-sequence")
     valid_drop = count(lambda event: event.get("role") == "valid" and event.get("name") == "fallback.example.test." and event.get("action") == "drop")
     drop = count(lambda event: event.get("role") == "drop" and event.get("action") == "drop")
     fallback = count(lambda event: event.get("role") == "fallback" and event.get("name") == "fallback.example.test.")
-    cname = any(event.get("name") == "alias.example.test." and event.get("action") == "cname" for event in events)
-    tc_udp = any(event.get("name") == "tc.example.test." and event.get("transport") == "udp" and event.get("action") == "tc-sequence" for event in events)
-    tc_tcp = any(event.get("name") == "tc.example.test." and event.get("transport") == "tcp" and event.get("action") == "answer" for event in events)
-    passed = REQUIRED_SERVER_NAMES <= names and malformed and valid_drop >= 2 and drop >= 2 and fallback >= 2 and cname and tc_udp and tc_tcp
-    return {"required_names_seen": sorted(REQUIRED_SERVER_NAMES & names), "required_names_missing": sorted(REQUIRED_SERVER_NAMES - names), "malformed_sequence_seen": malformed, "valid_fallback_drop_observations": valid_drop, "drop_endpoint_observations": drop, "fallback_query_observations": fallback, "cname_query_seen": cname, "tc_udp_truncated_seen": tc_udp, "tc_tcp_retry_seen": tc_tcp, "passed": passed}
+    cname = count(lambda event: event.get("name") == "alias.example.test." and event.get("action") == "cname")
+    tc_udp = count(lambda event: event.get("name") == "tc.example.test." and event.get("transport") == "udp" and event.get("action") == "tc-sequence")
+    tc_tcp = count(lambda event: event.get("name") == "tc.example.test." and event.get("transport") == "tcp" and event.get("action") == "answer")
+    passed = (
+        REQUIRED_SERVER_NAMES <= names and all(value >= executions for value in name_counts.values())
+        and malformed >= executions and valid_drop >= executions and drop >= executions and fallback >= executions
+        and cname >= executions and tc_udp >= executions and tc_tcp >= executions
+    )
+    return {"expected_execution_count": executions, "query_counts": name_counts, "required_names_seen": sorted(REQUIRED_SERVER_NAMES & names), "required_names_missing": sorted(REQUIRED_SERVER_NAMES - names), "malformed_sequence_observations": malformed, "valid_fallback_drop_observations": valid_drop, "drop_endpoint_observations": drop, "fallback_query_observations": fallback, "cname_query_observations": cname, "tc_udp_truncated_observations": tc_udp, "tc_tcp_retry_observations": tc_tcp, "passed": passed}
 
 
 def outcome(status: int | str, stdout: bytes, stderr: bytes) -> dict[str, object]:
@@ -668,12 +730,20 @@ def write_report(path: Path, report: Mapping[str, object]) -> None:
     temporary.replace(path)
 
 
+def publish_complete_report(report: Mapping[str, object], report_path: Path, destination: Path) -> Path | None:
+    """Leave an incomplete twelve-arm run private to its disposable state root."""
+
+    if report.get("passed") is not True:
+        return None
+    return publish_report(report_path, destination)
+
+
 def run(args: argparse.Namespace) -> tuple[dict[str, object], Path, Path | None]:
     require_native_loopback_container()
     work_parent = private_work_root(args.work_root)
     state = Path(tempfile.mkdtemp(prefix="run-", dir=work_parent))
     report_path = state / "report.json"
-    report: dict[str, object] = {"schema_version": 1, "runner": "crabc-resolver-network-native-x86", "result": "fail", "passed": False, "state_root": str(state), "published_report": str(args.report), "contract": {"network_namespace": "Docker --network none: loopback is the only observed interface and no default route is admitted", "conventional_files": "each execution chroot has only runner-written etc/hosts and etc/resolv.conf; the host/container /etc is never written", "source_object": "one workload.c object translated with pinned musl 1.2.6 headers and linked unchanged into every reference/candidate artifact", "candidate_modes": ["static-et-exec", "static-pie", "dynamic-pie ordinary", "dynamic-pie direct-entry", "dynamic-non-pie ordinary", "dynamic-non-pie direct-entry"], "comparison": "raw exit status, stdout, and stderr equality; no normalization"}}
+    report: dict[str, object] = {"schema_version": 1, "runner": "crabc-resolver-network-native-x86", "result": "fail", "passed": False, "state_root": str(state), "published_report": str(args.report), "contract": {"network_namespace": "Docker --network none: loopback is the only observed interface and no default route is admitted", "conventional_files": "each execution chroot has only runner-written etc/hosts and etc/resolv.conf; the host/container /etc is never written", "source_object": "one workload.c object translated with pinned musl 1.2.6 headers and linked unchanged into every reference/candidate artifact", "product_arms": ["installed", "extracted"], "candidate_modes_per_arm": ["static-et-exec", "static-pie", "dynamic-pie ordinary", "dynamic-pie direct-entry", "dynamic-non-pie ordinary", "dynamic-non-pie direct-entry"], "candidate_execution_count": 12, "comparison": "raw exit status, stdout, and stderr equality; no normalization"}}
     try:
         compiler = physical_regular(MUSL_COMPILER, "pinned musl compiler", executable=True)
         physical_directory(MUSL_ROOT, "pinned musl root")
@@ -681,62 +751,72 @@ def run(args: argparse.Namespace) -> tuple[dict[str, object], Path, Path | None]
         musl_loader = pinned_musl_loader()
         physical_regular(SOURCE, "resolver workload source")
         physical_regular(DNS_SERVER, "loopback DNS fixture")
-        static_state: dict[str, object] = {"source": "caller-prepared"}
-        dynamic_state: dict[str, object] = {"source": "caller-prepared"}
-        static_root = physical_directory(args.static_sysroot, "prepared static sysroot")
-        dynamic_root = physical_directory(args.dynamic_sysroot, "prepared dynamic sysroot")
-        static_state["path"] = str(static_root)
-        dynamic_state["path"] = str(dynamic_root)
-        static_state["manifest"] = static_manifest(static_root)
-        dynamic_state["manifest"] = dynamic_manifest(dynamic_root)
-        report["products"] = {"static": static_state, "dynamic": dynamic_state}
+        arms = prepared_product_arms(args)
+        product_states: dict[str, dict[str, object]] = {}
+        manifests: dict[str, tuple[dict[str, object], dict[str, object]]] = {}
+        for arm, roots in arms.items():
+            static_state: dict[str, object] = {"source": f"caller-prepared-{arm}", "path": str(roots["static"])}
+            dynamic_state: dict[str, object] = {"source": f"caller-prepared-{arm}", "path": str(roots["dynamic"])}
+            static_state["manifest"] = static_manifest(roots["static"])
+            dynamic_state["manifest"] = dynamic_manifest(roots["dynamic"])
+            product_states[arm] = {"static": static_state, "dynamic": dynamic_state}
+            manifests[arm] = (static_state["manifest"], dynamic_state["manifest"])
+        report["products"] = product_states
+        report["product_identity"] = product_identity(
+            arms["installed"]["static"], arms["installed"]["dynamic"],
+            arms["extracted"]["static"], arms["extracted"]["dynamic"],
+            *manifests["installed"], *manifests["extracted"],
+        )
         resource = compiler_resource_directory(compiler, args.timeout)
         object_file = state / "workload.o"
         report["translation"] = {"compiler": artifact_record(compiler), "musl_root": str(MUSL_ROOT), "musl_loader": musl_loader, "source": artifact_record(SOURCE), "headers": header_trace(compiler, resource, state / "headers.trace", args.timeout), "object": compile_object(compiler, resource, object_file, args.timeout)}
         reference_file = state / "reference"
         report["reference"] = link_reference(compiler, object_file, reference_file, args.timeout)
-        artifacts = link_artifacts(static_root, dynamic_root, object_file, state / "artifacts", args.timeout)
+        artifacts = {
+            arm: link_artifacts(roots["static"], roots["dynamic"], object_file, state / "artifacts" / arm, args.timeout)
+            for arm, roots in arms.items()
+        }
         report["candidates"] = artifacts
         chroots = state / "chroots"
         chroots.mkdir()
-        layouts = {
-            "reference": static_chroot(reference_file, chroots / "reference"),
-            "static-et-exec": static_chroot(Path(str(artifacts["static-et-exec"]["path"])), chroots / "static-et-exec"),
-            "static-pie": static_chroot(Path(str(artifacts["static-pie"]["path"])), chroots / "static-pie"),
-            "dynamic-pie": dynamic_chroot(Path(str(artifacts["dynamic-pie"]["path"])), dynamic_root, chroots / "dynamic-pie"),
-            "dynamic-non-pie": dynamic_chroot(Path(str(artifacts["dynamic-non-pie"]["path"])), dynamic_root, chroots / "dynamic-non-pie"),
-        }
+        layouts: dict[str, dict[str, object]] = {"reference": static_chroot(reference_file, chroots / "reference")}
+        for arm, arm_artifacts in artifacts.items():
+            roots = arms[arm]
+            layouts[f"{arm}-static-et-exec"] = static_chroot(Path(str(arm_artifacts["static-et-exec"]["path"])), chroots / f"{arm}-static-et-exec")
+            layouts[f"{arm}-static-pie"] = static_chroot(Path(str(arm_artifacts["static-pie"]["path"])), chroots / f"{arm}-static-pie")
+            layouts[f"{arm}-dynamic-pie"] = dynamic_chroot(Path(str(arm_artifacts["dynamic-pie"]["path"])), roots["dynamic"], chroots / f"{arm}-dynamic-pie")
+            layouts[f"{arm}-dynamic-non-pie"] = dynamic_chroot(Path(str(arm_artifacts["dynamic-non-pie"]["path"])), roots["dynamic"], chroots / f"{arm}-dynamic-non-pie")
         report["chroots"] = layouts
         events_path = state / "dns-events.json"
         server, ready = start_server(events_path)
         try:
             reference_outcome = outcome(*run_chroot_raw(chroots / "reference", ["/workload"], args.timeout))
-            runs: dict[str, dict[str, object]] = {
-                "static-et-exec": outcome(*run_chroot_raw(chroots / "static-et-exec", ["/workload"], args.timeout)),
-                "static-pie": outcome(*run_chroot_raw(chroots / "static-pie", ["/workload"], args.timeout)),
-                "dynamic-pie-ordinary": outcome(*run_chroot_raw(chroots / "dynamic-pie", ["/workload"], args.timeout)),
-                "dynamic-pie-direct-entry": outcome(*run_chroot_raw(chroots / "dynamic-pie", [DYNAMIC_INTERPRETER, "/workload"], args.timeout)),
-                "dynamic-non-pie-ordinary": outcome(*run_chroot_raw(chroots / "dynamic-non-pie", ["/workload"], args.timeout)),
-                "dynamic-non-pie-direct-entry": outcome(*run_chroot_raw(chroots / "dynamic-non-pie", [DYNAMIC_INTERPRETER, "/workload"], args.timeout)),
-            }
+            runs: dict[str, dict[str, object]] = {}
+            for arm in arms:
+                runs[f"{arm}-static-et-exec"] = outcome(*run_chroot_raw(chroots / f"{arm}-static-et-exec", ["/workload"], args.timeout))
+                runs[f"{arm}-static-pie"] = outcome(*run_chroot_raw(chroots / f"{arm}-static-pie", ["/workload"], args.timeout))
+                runs[f"{arm}-dynamic-pie-ordinary"] = outcome(*run_chroot_raw(chroots / f"{arm}-dynamic-pie", ["/workload"], args.timeout))
+                runs[f"{arm}-dynamic-pie-direct-entry"] = outcome(*run_chroot_raw(chroots / f"{arm}-dynamic-pie", [DYNAMIC_INTERPRETER, "/workload"], args.timeout))
+                runs[f"{arm}-dynamic-non-pie-ordinary"] = outcome(*run_chroot_raw(chroots / f"{arm}-dynamic-non-pie", ["/workload"], args.timeout))
+                runs[f"{arm}-dynamic-non-pie-direct-entry"] = outcome(*run_chroot_raw(chroots / f"{arm}-dynamic-non-pie", [DYNAMIC_INTERPRETER, "/workload"], args.timeout))
         finally:
             stop_server(server)
         events, event_error = load_events(events_path)
         comparisons = {name: compare(reference_outcome, item) for name, item in runs.items()}
         reference_expected = reference_outcome["exit_status"] == 0 and reference_outcome["stdout"] == stream_record(EXPECTED_STDOUT.encode("utf-8")) and reference_outcome["stderr"] == stream_record(b"")
         candidate_expected = {name: item["exit_status"] == 0 and item["stdout"] == stream_record(EXPECTED_STDOUT.encode("utf-8")) and item["stderr"] == stream_record(b"") for name, item in runs.items()}
-        dns = event_contract(events)
+        dns = event_contract(events, executions=1 + len(runs))
         if event_error is not None:
             dns["passed"] = False
             dns["error"] = event_error
-        passed = reference_expected and all(candidate_expected.values()) and all(all(item.values()) for item in comparisons.values()) and dns["passed"] is True
+        passed = reference_expected and len(runs) == 12 and all(candidate_expected.values()) and all(all(item.values()) for item in comparisons.values()) and dns["passed"] is True
         report["execution"] = {"reference": reference_outcome, "candidates": runs, "comparisons": comparisons, "reference_expected": reference_expected, "candidate_expected": candidate_expected, "expected_stdout": stream_record(EXPECTED_STDOUT.encode("utf-8")), "dns_server": {"ready": ready, "events": events, "event_contract": dns}}
         report["passed"] = passed
         report["result"] = "pass" if passed else "fail"
     except RunnerError as error:
         report["error"] = str(error)
     write_report(report_path, report)
-    published = publish_report(report_path, args.report) if report["passed"] is True else None
+    published = publish_complete_report(report, report_path, args.report)
     return report, report_path, published
 
 
