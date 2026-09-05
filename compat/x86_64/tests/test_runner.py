@@ -16,6 +16,56 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "scripts" / "dev-x86_64.sh"
 
+_SELECTED_JOIN_INNER_SIGNATURE = "unsafe fn join_selected_worker_inner("
+_SELECTED_JOIN_CLAIM = re.compile(
+    r"let\s+Some\s*\(\s*control\s*\)\s*=\s*"
+    r"claim_selected_worker_by_thread_pointer\s*\(\s*"
+    r"thread\s*,\s*SelectedWorkerLifecycleState::JoinClaimed\s*,\s*"
+    r"\)\s*else\s*\{\s*return\s+Err\s*\(\s*EINVAL\s*\)\s*;\s*\}\s*;",
+    re.DOTALL,
+)
+_SELECTED_CONTROL_DEREFERENCE = re.compile(r"\(\s*\*\s*control\s*\)")
+
+
+def _selected_join_inner_body(source: str) -> str:
+    """Return the owning join block without swallowing a later helper.
+
+    GNU join modes inserted wait helpers between the public join wrapper and
+    the C ABI `pthread_join` leaf.  This counts the selected inner function's
+    block nesting instead of using that former whole-file delimiter.
+    """
+
+    start = source.find(_SELECTED_JOIN_INNER_SIGNATURE)
+    if start == -1:
+        raise ValueError("missing selected-worker inner join function")
+    opening_brace = source.find("{", start)
+    if opening_brace == -1:
+        raise ValueError("selected-worker inner join function has no body")
+
+    depth = 0
+    for index in range(opening_brace, len(source)):
+        character = source[index]
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start : index + 1]
+    raise ValueError("selected-worker inner join function has an unclosed body")
+
+
+def _selected_join_inner_claims_control_before_dereference(source: str) -> bool:
+    """Check that the opaque handle is registry-claimed before control access."""
+
+    body = _selected_join_inner_body(source)
+    claim = _SELECTED_JOIN_CLAIM.search(body)
+    dereference = _SELECTED_CONTROL_DEREFERENCE.search(body)
+    return (
+        claim is not None
+        and dereference is not None
+        and claim.start() < dereference.start()
+    )
+
 
 class X86_64CoreRunnerTests(unittest.TestCase):
     def assertIn(self, member: object, container: object, msg: object = None) -> None:
@@ -49,6 +99,57 @@ class X86_64CoreRunnerTests(unittest.TestCase):
                 or f"{member!r} is unexpectedly present in a {len(container)}-byte source contract"
             )
         super().assertNotIn(member, container, msg)
+
+    def test_selected_join_source_judge_rejects_unclaimed_control_dereference(
+        self,
+    ) -> None:
+        """Keep the source judge scoped to the owner of the control pointer."""
+
+        guarded = """
+unsafe fn preceding_wait_helper(control: *mut ThreadControl) {
+    unsafe { (*control).child_tid.load(Ordering::Acquire) };
+}
+unsafe fn join_selected_worker_inner(thread: *mut c_void) {
+    let Some(control) = claim_selected_worker_by_thread_pointer(
+        thread,
+        SelectedWorkerLifecycleState::JoinClaimed,
+    ) else {
+        return Err(EINVAL);
+    };
+    unsafe { (*control).child_tid.load(Ordering::Acquire) };
+}
+unsafe fn neighboring_wait_helper(control: *mut ThreadControl) {
+    unsafe { (*control).child_tid.load(Ordering::Acquire) };
+}
+"""
+        unguarded = """
+unsafe fn join_selected_worker_inner(
+    thread: *mut c_void,
+    control: *mut ThreadControl,
+) {
+    unsafe { (*control).child_tid.load(Ordering::Acquire) };
+    let Some(control) = claim_selected_worker_by_thread_pointer(
+        thread,
+        SelectedWorkerLifecycleState::JoinClaimed,
+    ) else {
+        return Err(EINVAL);
+    };
+}
+"""
+
+        self.assertTrue(
+            _selected_join_inner_claims_control_before_dereference(guarded)
+        )
+        self.assertFalse(
+            _selected_join_inner_claims_control_before_dereference(unguarded)
+        )
+        self.assertFalse(
+            _selected_join_inner_claims_control_before_dereference(
+                guarded.replace("JoinClaimed", "Detached", 1)
+            )
+        )
+        with self.assertRaisesRegex(ValueError, "missing selected-worker inner join"):
+            _selected_join_inner_body("unsafe fn unrelated() {}")
 
     def test_fcntl_header_posix_fallocate_declarations_stay_explicit(self) -> None:
         c_probe = (
@@ -7469,18 +7570,17 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
-        selected_join_body = pthread_create_join.split(
-            "pub(super) unsafe fn join_selected_worker", 1
-        )[1].split("/// Join one normal-returning", 1)[0]
-        self.assertIn("claim_selected_worker_by_thread_pointer(", selected_join_body)
-        self.assertIn("SelectedWorkerLifecycleState::JoinClaimed", selected_join_body)
-        self.assertLess(
-            selected_join_body.index("claim_selected_worker_by_thread_pointer("),
-            selected_join_body.index("(*control)"),
+        selected_join_inner = _selected_join_inner_body(pthread_create_join)
+        self.assertTrue(
+            _selected_join_inner_claims_control_before_dereference(
+                pthread_create_join
+            ),
+            "join_selected_worker_inner must registry-claim the opaque handle "
+            "before dereferencing its control pointer",
         )
         self.assertLess(
-            selected_join_body.index("release_selected_worker"),
-            selected_join_body.index("reclaim_withdrawn_selected_worker(control)"),
+            selected_join_inner.index("release_selected_worker"),
+            selected_join_inner.index("reclaim_withdrawn_selected_worker(control)"),
         )
         tls_reclamation = pthread_create_join.split(
             "unsafe fn reclaim_withdrawn_selected_worker", 1
@@ -8260,12 +8360,12 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "core::ptr::write(thread, tls_block.thread_pointer().cast())",
             pthread_create_join,
         )
-        selected_join_body = pthread_create_join.split(
-            "pub(super) unsafe fn join_selected_worker", 1
-        )[1].split("/// Join one normal-returning", 1)[0]
-        self.assertLess(
-            selected_join_body.index("claim_selected_worker_by_thread_pointer("),
-            selected_join_body.index("(*control)"),
+        self.assertTrue(
+            _selected_join_inner_claims_control_before_dereference(
+                pthread_create_join
+            ),
+            "join_selected_worker_inner must registry-claim the opaque handle "
+            "before dereferencing its control pointer",
         )
 
         self.assertIn(
