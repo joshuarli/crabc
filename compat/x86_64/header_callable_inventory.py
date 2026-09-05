@@ -18,6 +18,7 @@ silently promote a header or runtime family.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import os
@@ -738,6 +739,132 @@ def canonical_records(records: Iterable[Mapping[str, Any]]) -> list[dict[str, An
     )
 
 
+def refresh_provider_accounting(report: Mapping[str, Any], contract: InventoryContract) -> dict[str, Any]:
+    """Rebind only provider accounting to a changed feature roster.
+
+    The operation consumes an already reviewed compiler record, retains its
+    compiler facts verbatim, and updates just the parity-ledger digest,
+    provider partition, and provider counts.  It is not a compiler collection,
+    archive-extraction check, or runtime qualification.
+    """
+
+    require(
+        report.get("schema") == SCHEMA
+        and report.get("contract_schema") == "crabc.x86_64-header-callable-inventory/v2"
+        and report.get("target") == TARGET
+        and report.get("platform") == PLATFORM
+        and report.get("oracle") == "Pinned musl 1.2.6",
+        "checked compiler-derived callable facts have an unexpected schema",
+    )
+    require(
+        report.get("profiles")
+        == [
+            {
+                "defines": list(profile.defines),
+                "id": profile.identifier,
+                "language": profile.language,
+                "standard": profile.standard,
+            }
+            for profile in contract.profiles
+        ],
+        "checked compiler-derived callable facts have unexpected profiles",
+    )
+    inputs = report.get("inputs")
+    records = report.get("callables")
+    profile_runs = report.get("profile_runs")
+    summary = report.get("summary")
+    require(isinstance(inputs, Mapping), "checked compiler-derived callable facts have invalid inputs")
+    require(
+        isinstance(records, list) and all(isinstance(record, Mapping) for record in records),
+        "checked compiler-derived callable facts are invalid",
+    )
+    require(
+        isinstance(profile_runs, list) and all(isinstance(run, Mapping) for run in profile_runs),
+        "checked compiler-derived profile runs are invalid",
+    )
+    require(isinstance(summary, Mapping), "checked compiler-derived callable summary is invalid")
+    expected_inputs = {
+        "compiler": "clang JSON AST and preprocessor records",
+        "header_inventory_sha256": sha256_file(contract.public_headers),
+        "linux_uapi_header_manifest_sha256": LINUX_UAPI_HEADER_MANIFEST_SHA256,
+        "linux_uapi_source_sha256": LINUX_UAPI_SOURCE_SHA256,
+        "linux_uapi_version": LINUX_UAPI_VERSION,
+        "musl_source_sha256": MUSL_SOURCE_SHA256,
+        "musl_version": MUSL_VERSION,
+        "static_c_abi_exports_sha256": sha256_file(contract.static_exports),
+    }
+    require(set(inputs) == {*expected_inputs, "parity_ledger_sha256"}, "checked compiler-derived callable facts have unexpected input bindings")
+    for name, expected in expected_inputs.items():
+        require(inputs.get(name) == expected, f"checked compiler-derived callable facts have stale {name}")
+    stale_ledger_digest = inputs.get("parity_ledger_sha256")
+    require(
+        isinstance(stale_ledger_digest, str)
+        and len(stale_ledger_digest) == 64
+        and all(character in "0123456789abcdef" for character in stale_ledger_digest),
+        "checked provider-accounting parity digest is invalid",
+    )
+    candidate_external: list[str] = []
+    for index, record in enumerate(records):
+        if record.get("tree") == "candidate" and record.get("classification") == "external":
+            name = record.get("name")
+            require(isinstance(name, str) and name, f"compiler-derived callable facts contain an invalid name at record {index}")
+            candidate_external.append(name)
+    candidate_external = sorted(set(candidate_external))
+    require(candidate_external, "compiler-derived callable facts contain no candidate external callables")
+    exports = load_static_exports(contract.static_exports)
+    complement = sorted(set(candidate_external) - set(exports))
+    expected_complement = {
+        "kind": "candidate-external-callables-absent-from-static-c-abi-export-ratchet",
+        "members": complement,
+    }
+    require(
+        report.get("static_export_complement") == expected_complement,
+        "checked compiler-derived static export complement is stale",
+    )
+    record_counts = Counter(str(record.get("classification")) for record in records)
+    run_counts = Counter(str(run.get("status")) for run in profile_runs)
+    incomplete_reasons: list[str] = []
+    if run_counts.get("failed", 0):
+        incomplete_reasons.append("one or more declared profile/header compiler records failed")
+    if record_counts.get("missing", 0):
+        incomplete_reasons.append("one or more pinned-musl callable names are absent from the candidate inventory")
+    if complement:
+        incomplete_reasons.append("candidate external callable names are absent from the static export ratchet")
+    expected_fact_summary = {
+        "callable_classification_counts": dict(sorted(record_counts.items())),
+        "candidate_external_callable_count": len(candidate_external),
+        "candidate_public_header_count": contract.candidate_public_header_count,
+        "complete": not incomplete_reasons,
+        "incomplete_reasons": incomplete_reasons,
+        "pinned_public_header_count": contract.pinned_public_header_count,
+        "profile_run_counts": dict(sorted(run_counts.items())),
+        "static_export_complement_count": len(complement),
+    }
+    require(
+        {name: value for name, value in summary.items() if name != "callable_provider_counts"}
+        == expected_fact_summary,
+        "checked compiler-derived callable facts have a stale summary",
+    )
+
+    try:
+        provider_partition = partition_candidate_callables(
+            load_feature_archive_roster(contract.parity_ledger),
+            candidate_callables=candidate_external,
+            static_exports=exports,
+        )
+    except FeatureArchiveRosterError as error:
+        raise InventoryError(f"feature archive provider roster is invalid: {error}") from error
+    refreshed = copy.deepcopy(dict(report))
+    refreshed_inputs = dict(report["inputs"])
+    refreshed_inputs["parity_ledger_sha256"] = sha256_file(contract.parity_ledger)
+    refreshed["inputs"] = refreshed_inputs
+    refreshed["callable_provider_partition"] = provider_partition.as_report()
+    refreshed_summary = dict(summary)
+    refreshed_summary["callable_provider_counts"] = provider_partition.counts()
+    refreshed["summary"] = refreshed_summary
+    return refreshed
+
+
 def build_report(
     *,
     compiler: str,
@@ -889,23 +1016,38 @@ def main(arguments: Sequence[str] | None = None) -> int:
     parser.add_argument("--musl-include", type=Path, default=Path("/opt/musl-1.2.6/include"))
     parser.add_argument("--linux-uapi-include", type=Path, default=Path("/opt/linux-5.10-uapi/include"))
     parser.add_argument("--output", type=Path, help="write a generated inventory to this exact path")
-    parser.add_argument("--write", action="store_true", help="update the reviewed checked inventory")
-    parser.add_argument("--check", action="store_true", help="require the checked inventory to match compiler output")
-    parsed = parser.parse_args(arguments)
-    require(not (parsed.write and parsed.check), "--write and --check cannot be combined")
-    contract = load_contract()
-    report = build_report(
-        compiler=parsed.compiler,
-        project_include=parsed.project_include,
-        musl_include=parsed.musl_include,
-        linux_uapi_include=parsed.linux_uapi_include,
-        contract=contract,
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--write", action="store_true", help="update the reviewed checked inventory from compiler collection")
+    mode.add_argument("--check", action="store_true", help="require the checked inventory to match compiler output")
+    mode.add_argument(
+        "--refresh-provider-accounting",
+        action="store_true",
+        help="rebind only roster-dependent provider accounting; no compiler collection or qualification",
     )
+    parsed = parser.parse_args(arguments)
+    contract = load_contract()
+    if parsed.refresh_provider_accounting:
+        try:
+            checked = json.loads(contract.generated_inventory.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise InventoryError(
+                f"cannot load checked compiler-derived callable facts: {contract.generated_inventory.relative_to(ROOT)} ({error})"
+            ) from error
+        require(isinstance(checked, Mapping), "checked compiler-derived callable facts are not a JSON object")
+        report = refresh_provider_accounting(checked, contract)
+    else:
+        report = build_report(
+            compiler=parsed.compiler,
+            project_include=parsed.project_include,
+            musl_include=parsed.musl_include,
+            linux_uapi_include=parsed.linux_uapi_include,
+            contract=contract,
+        )
     rendered = canonical_json(report)
     if parsed.output is not None:
         require(not parsed.output.is_symlink(), f"inventory output path is a symlink: {parsed.output}")
         parsed.output.write_text(rendered, encoding="utf-8")
-    elif parsed.write:
+    elif parsed.write or parsed.refresh_provider_accounting:
         require(not contract.generated_inventory.is_symlink(), "checked inventory path is a symlink")
         contract.generated_inventory.write_text(rendered, encoding="utf-8")
     elif parsed.check:

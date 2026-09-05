@@ -40,15 +40,15 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertEqual(summary["candidate_external_callable_count"], 1525)
         self.assertEqual(summary["default_static_callable_count"], 1119)
         self.assertEqual(summary["verified_feature_callable_count"], 78)
-        self.assertEqual(summary["declared_unverified_feature_callable_count"], 23)
-        self.assertEqual(summary["unprovided_callable_count"], 305)
+        self.assertEqual(summary["declared_unverified_feature_callable_count"], 34)
+        self.assertEqual(summary["unprovided_callable_count"], 294)
         self.assertEqual(
             summary["deferred_resolution_counts"],
             {
                 "compiler-builtin": 1,
                 "consumer-supplied": 1,
                 "oracle-declared-no-provider": 7,
-                "planned-provider": 296,
+                "planned-provider": 285,
             },
         )
         self.assertEqual(
@@ -63,6 +63,38 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(summary["header_ownership_routing_complete"])
         self.assertFalse(summary["header_declaration_parity_complete"])
         self.assertFalse(summary["final_provider_archive_closure_complete"])
+
+    def test_inverse_trig_names_are_planned_owned_static_not_deferred(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        inverse_trig = {"asin", "acos", "atan", "atan2", "asinf", "acosf", "atanf", "atan2f"}
+
+        self.assertTrue(inverse_trig <= providers["x86-owned-static-runtime"])
+        self.assertFalse(inverse_trig & deferred)
+
+    def test_memory_stream_and_cookie_names_are_planned_owned_static_not_deferred(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        stream_backend = {"fmemopen", "open_memstream", "fopencookie"}
+
+        self.assertTrue(stream_backend <= providers["x86-owned-static-runtime"])
+        self.assertFalse(stream_backend & deferred)
 
     def test_statx_is_a_planned_provider_after_its_header_declaration_closes(self) -> None:
         contract = DISPOSITION.load_contract()

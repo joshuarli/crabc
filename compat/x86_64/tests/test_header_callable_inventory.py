@@ -12,7 +12,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -212,9 +215,9 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             provider_counts,
             {
-                "declared_unverified_feature_archives": 23,
+                "declared_unverified_feature_archives": 34,
                 "default_static": 1119,
-                "unprovided": 305,
+                "unprovided": 294,
                 "verified_feature_archives": 78,
             },
         )
@@ -246,14 +249,25 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertIn("mkdirat", default_static)
         self.assertNotIn("mkdirat", unprovided)
         self.assertEqual(set(planned), {"x86-owned-static-runtime"})
-        self.assertTrue(
+        self.assertEqual(
+            planned["x86-owned-static-runtime"],
             {
                 "abort",
+                "acos",
+                "acosf",
+                "asin",
+                "asinf",
                 "asprintf",
+                "atan",
+                "atan2",
+                "atan2f",
+                "atanf",
                 "dprintf",
                 "fdopen",
                 "fgetc_unlocked",
                 "flockfile",
+                "fmemopen",
+                "fopencookie",
                 "fputc_unlocked",
                 "fread_unlocked",
                 "freopen",
@@ -264,6 +278,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "getchar_unlocked",
                 "getdelim",
                 "getline",
+                "open_memstream",
                 "prctl",
                 "putc_unlocked",
                 "putchar_unlocked",
@@ -271,8 +286,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "syscall",
                 "vasprintf",
                 "vdprintf",
-            }
-            <= planned["x86-owned-static-runtime"]
+            },
         )
         self.assertEqual(
             verified["x86-filesystem-traversal"],
@@ -328,6 +342,78 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(verified["x86-crypt-allocator-composition"], set())
         self.assertFalse({"ftw", "nftw", "scandir", "fmtmsg", "setkey", "encrypt", "getitimer", "setitimer", "name_to_handle_at", "open_by_handle_at", "tempnam", "tmpnam", "posix_spawn_file_actions_addchdir_np", "posix_spawn_file_actions_addclose", "posix_spawn_file_actions_adddup2", "posix_spawn_file_actions_addfchdir_np", "posix_spawn_file_actions_addopen", "posix_spawn_file_actions_destroy", "pthread_spin_lock", "pthread_spin_trylock", "pthread_spin_unlock", "execl", "execle", "execlp", "execv", "execve", "execvp", "execvpe", "fexecve"} & unprovided)
         self.assertIn("fputws", unprovided)
+
+    def test_provider_accounting_refresh_rebinds_only_the_roster_dependent_fields(self) -> None:
+        """A roster refresh preserves compiler facts without recollecting them."""
+        source = json.loads(CHECKED_INVENTORY.read_text(encoding="utf-8"))
+        source["inputs"]["parity_ledger_sha256"] = "0" * 64
+        contract = INVENTORY.load_contract()
+        rows = INVENTORY.load_feature_archive_roster(contract.parity_ledger)
+        replacement_rows = tuple(
+            replace(
+                row,
+                additive_callables=tuple(sorted((*row.additive_callables, "fputws"))),
+            )
+            if row.identifier == "x86-owned-static-runtime"
+            else row
+            for row in rows
+        )
+
+        with patch.object(INVENTORY, "load_feature_archive_roster", return_value=replacement_rows):
+            refreshed = INVENTORY.refresh_provider_accounting(source, contract)
+
+        for field in ("callables", "profile_runs", "profiles", "scope", "static_export_complement"):
+            self.assertEqual(refreshed[field], source[field])
+        self.assertEqual(
+            {key: value for key, value in refreshed["inputs"].items() if key != "parity_ledger_sha256"},
+            {key: value for key, value in source["inputs"].items() if key != "parity_ledger_sha256"},
+        )
+        self.assertEqual(
+            refreshed["inputs"]["parity_ledger_sha256"],
+            INVENTORY.sha256_file(contract.parity_ledger),
+        )
+        source_members = source["callable_provider_partition"]["declared_unverified_feature_archives"][0]["members"]
+        self.assertEqual(
+            refreshed["callable_provider_partition"]
+            ["declared_unverified_feature_archives"][0]["members"],
+            sorted([*source_members, "fputws"]),
+        )
+        source_counts = source["summary"]["callable_provider_counts"]
+        self.assertEqual(
+            refreshed["summary"]["callable_provider_counts"],
+            {
+                "declared_unverified_feature_archives": source_counts["declared_unverified_feature_archives"] + 1,
+                "default_static": source_counts["default_static"],
+                "unprovided": source_counts["unprovided"] - 1,
+                "verified_feature_archives": source_counts["verified_feature_archives"],
+            },
+        )
+        self.assertEqual(
+            {key: value for key, value in refreshed["summary"].items() if key != "callable_provider_counts"},
+            {key: value for key, value in source["summary"].items() if key != "callable_provider_counts"},
+        )
+
+    def test_provider_accounting_refresh_rejects_changed_compiler_facts(self) -> None:
+        source = json.loads(CHECKED_INVENTORY.read_text(encoding="utf-8"))
+        source["callables"] = deepcopy(source["callables"][:-1])
+
+        with self.assertRaisesRegex(INVENTORY.InventoryError, "compiler-derived callable facts"):
+            INVENTORY.refresh_provider_accounting(source, INVENTORY.load_contract())
+
+    def test_provider_accounting_refresh_never_calls_the_compiler_collector(self) -> None:
+        state_root = ROOT / ".work"
+        state_root.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=state_root) as temporary:
+            output = Path(temporary) / "refreshed.json"
+            with patch.object(INVENTORY, "build_report", side_effect=AssertionError("collector called")):
+                self.assertEqual(
+                    INVENTORY.main(["--refresh-provider-accounting", "--output", str(output)]),
+                    0,
+                )
+            self.assertEqual(
+                json.loads(output.read_text(encoding="utf-8")),
+                json.loads(CHECKED_INVENTORY.read_text(encoding="utf-8")),
+            )
 
     def test_ftw_and_gnu_namespace_declarations_match_pinned_visibility(self) -> None:
         """Keep small POSIX header repairs below future C ABI provider work."""
