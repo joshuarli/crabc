@@ -22,8 +22,9 @@
 //! timed-wait EINTR decision uses `signal_control`'s source-defined sticky
 //! non-restarting-handler flag. The standalone six-function archive retains
 //! its previously qualified un-cancelled, signal-uninterrupted route and no
-//! timed entry. Named `sem_open`/`sem_close`/`sem_unlink`, semaphore
-//! destruction races, and general POSIX IPC remain unselected.
+//! timed entry. The owned runtime adds named semaphore lifetime and shared-memory
+//! namespace operations in `owned_named_ipc`; this standalone leaf does not.
+//! Semaphore destruction races and general POSIX IPC remain unselected.
 //!
 //! This is not a Rust synchronization API, a pthread runtime, an allocator,
 //! a loader, a CRT, libc.so, or public x86 support.  The public C entries use

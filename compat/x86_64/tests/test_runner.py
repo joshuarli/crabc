@@ -2100,16 +2100,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             + (
                 "owned-system-cancellation",
                 "owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|"
-                "owned-signal-helpers",
+                "owned-signal-helpers|owned-pty",
                 "owned-assert|owned-linux-control|owned-filesystem-mechanisms",
                 "owned-pthread-spin",
                 "owned-syslog",
                 "owned-error-reporting",
-                "owned-pty",
                 "owned-io-cancellation",
                 "owned-resolver-network",
                 "owned-dynamic-io-cancellation",
-                "owned-pthread-scheduling|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
+                "owned-pthread-scheduling|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
                 "owned-pthread-lifecycle",
                 "qualification-manifest",
             )

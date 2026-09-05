@@ -29,7 +29,8 @@
 //! allocation failure returns `ENOMEM` without changing the list. The private
 //! table still reports `ENOMEM` at 32 records. Both forms retain the selected
 //! application-signal block/restore pair and TSD/worker-list/TLS child reset;
-//! owned products add the stdio/syslog/timezone and inner process-creation locks.
+//! owned products add named-semaphore, stdio/syslog/timezone, and inner
+//! process-creation locks.
 //! The owned dynamic adapter adds the loader's graph/callback transaction and
 //! surviving TLS-root adoption around those same libc owners. Foreign threads,
 //! AIO, allocator-wide fork state, and arbitrary application locks remain
@@ -379,6 +380,7 @@ pub unsafe extern "C" fn fork() -> c_int {
     pthread_tsd::pthread_fork_prepare();
     #[cfg(feature = "x86-owned-static-runtime")]
     unsafe {
+        super::owned_named_ipc::pthread_fork_prepare();
         super::stdio_standard::pthread_fork_prepare();
         super::owned_syslog::pthread_fork_prepare();
         super::owned_timezone::pthread_fork_prepare();
@@ -425,6 +427,8 @@ pub unsafe extern "C" fn fork() -> c_int {
         unsafe { pthread_create_join::pthread_fork_child(child_tid) };
         #[cfg(feature = "x86-owned-static-runtime")]
         unsafe {
+            // musl fork.c completes its atfork_locks array in forward order.
+            super::owned_named_ipc::pthread_fork_child();
             super::stdio_standard::pthread_fork_child();
             super::owned_syslog::pthread_fork_child();
             super::owned_timezone::pthread_fork_child();
@@ -444,6 +448,8 @@ pub unsafe extern "C" fn fork() -> c_int {
         unsafe { pthread_create_join::pthread_fork_parent() };
         #[cfg(feature = "x86-owned-static-runtime")]
         unsafe {
+            // musl fork.c completes its atfork_locks array in forward order.
+            super::owned_named_ipc::pthread_fork_parent();
             super::stdio_standard::pthread_fork_parent();
             super::owned_syslog::pthread_fork_parent();
             super::owned_timezone::pthread_fork_parent();

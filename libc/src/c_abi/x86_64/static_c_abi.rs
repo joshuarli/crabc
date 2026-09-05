@@ -889,6 +889,9 @@ mod socket_messages;
 mod sysv_semaphore;
 #[path = "posix_semaphore.rs"]
 mod posix_semaphore;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_named_ipc.rs"]
+mod owned_named_ipc;
 #[path = "sysv_message_shared_memory.rs"]
 mod sysv_message_shared_memory;
 #[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "general_dlfcn.rs")]

@@ -85,6 +85,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "pthread-scheduling",
                 "signal-helpers",
                 "fcntl",
+                "named-ipc",
                 "pthread-getattr",
                 "pthread-join-cancel",
                 "pthread-cond-cancel",

@@ -558,6 +558,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-scheduling test installed pthread scheduling/default attributes
   owned-fcntl  test installed descriptor-control commands and variadic ABI
+  owned-named-ipc  test installed named semaphore and shared-memory lifecycles
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-atfork-registry  test installed resource-sized atfork callback ordering
   owned-pty [DYNAMIC_SYSROOT]  test installed PTY naming, lifecycle and session handoff
@@ -5628,7 +5629,7 @@ case "$command" in
     owned-io-cancellation) ;;
     owned-resolver-network) ;;
     owned-dynamic-io-cancellation) ;;
-    owned-pthread-scheduling|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
+    owned-pthread-scheduling|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
     qualification-manifest) ;;
     owned-static-sysroot) ;;
@@ -7716,6 +7717,9 @@ case "$command" in
         ;;
     owned-pthread-scheduling)
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_scheduling.sh "$@"
+        ;;
+    owned-named-ipc)
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_named_ipc.sh "$@"
         ;;
     owned-fcntl)
         run_in_container bash /workspace/compat/x86_64/run_owned_fcntl.sh "$@"

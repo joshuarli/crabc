@@ -94,6 +94,14 @@ impl PathMetadata {
     }
 }
 
+/// Observe the inode used by the owned named-semaphore mapping registry.
+/// This retains the kernel/public stat layout in its single owner.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn fstat_inode(descriptor: c_int) -> Option<u64> {
+    let mut metadata: Stat = unsafe { core::mem::zeroed() };
+    if unsafe { fstat(descriptor, &mut metadata) } == 0 { Some(metadata.inode) } else { None }
+}
+
 /// Return the two metadata words consumed by musl's `ftok` formula.
 ///
 /// This keeps the x86 `struct stat` layout in its sole owner while allowing

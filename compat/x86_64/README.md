@@ -191,6 +191,12 @@ does not itself complete the pthread family or qualify a public platform.
 
 ## Installed descriptor control
 
+`./scripts/dev-x86_64.sh owned-named-ipc` checks installed named semaphore and
+shared-memory namespace, mapping/reference lifetime, concurrent creation,
+fork, saturation and cancellation against the same pinned-musl object. Its
+[component contract](owned-named-ipc.md) records the exact source map,
+256-entry registry, private chroot evidence, and required dynamic coverage.
+
 `./scripts/dev-x86_64.sh owned-fcntl` checks the installed command/variadic ABI
 against pinned musl, including duplication, pipe/owner/signal/seal/lease/hint
 controls and POSIX/OFD locking/cancellation. The [component contract](owned-fcntl.md)
