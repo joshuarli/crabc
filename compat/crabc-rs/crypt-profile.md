@@ -13,8 +13,10 @@ base64 codec locally.
 The dependency-backed profile intentionally accepts only canonical
 `Base64ShaCrypt` salt strings of one to sixteen characters that decode and
 re-encode byte-for-byte. Empty salts, non-canonical salts, settings containing
-an additional field, and rounds outside `sha-crypt::Params` are unsupported
-and return `*`. The emitted MCF string consequently uses the dependency's
+an additional field, and unsupported round values return `*`. Decimal rounds below 1000 are
+normalized to 1000 before `sha-crypt::Params` validation; values above its
+maximum or outside the bounded unsigned parser are rejected. This preserves
+the existing adapter behavior on both architectures. The emitted MCF string consequently uses the dependency's
 canonical spelling, including an explicit `rounds=5000` field for default
 rounds. This is a deliberate semantic limit: exact historical acceptance of
 arbitrary short/non-canonical musl salt text would require local MCF/algorithm

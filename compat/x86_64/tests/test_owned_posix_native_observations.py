@@ -315,13 +315,17 @@ class NativeObservationsTests(unittest.TestCase):
         with self.assertRaises(native.NativeObservationError):
             native.collect('signal-process', self.leaf, source_mount='/workspace/../workspace', dynamic_product=self.product, root=self.root)
 
-    def os_test_fixture(self):
+    def os_test_fixture(self, *, profile=False):
         import owned_os_test as contract
         stage = self.leaf / 'source-stage'
         for suite in native.OS_TEST_SUITES:
             self.put(stage / suite / 'case.c', ('/* ' + suite + ' */\n').encode())
         for name in ('dlopen', 'dlclose', 'dlsym'):
             self.put(stage / 'basic/dlfcn' / (name + '.c'), ('/* ' + name + ' */\n').encode())
+        if profile:
+            import owned_posix_native_dispositions as dispositions
+            for alias, content in dispositions.OS_ALIAS_SOURCES.items():
+                self.put(stage / 'basic/unistd' / (alias + '.c'), content.encode())
         self.put(stage / 'GNUmakefile', b'pinned Make graph fixture\n')
         self.put(stage / 'misc/suites.list', ('\n'.join(native.OS_TEST_SUITES) + '\n').encode())
         (stage / 'Makefile').symlink_to('GNUmakefile')
@@ -484,8 +488,11 @@ class NativeObservationsTests(unittest.TestCase):
             for side, root in (('musl', musl), ('dynamic', dynamic)):
                 outcomes = {}
                 for name in expected:
-                    path = self.put(root / 'out/linux' / suite / name, b'good\n')
-                    outcomes[name] = {'sha256': self.binding(path)['sha256'], 'text': 'good\n'}
+                    value = b'good\n'
+                    if profile and suite == 'basic' and name.startswith('unistd/'):
+                        value = b'exit: 0\n' if side == 'musl' else (Path(name).stem + ': ENOTSUP\n').encode()
+                    path = self.put(root / 'out/linux' / suite / name, value)
+                    outcomes[name] = {'sha256': self.binding(path)['sha256'], 'text': value.decode()}
                 command = (contract.musl_make_command(suite, Path(self.recorded(root)), 8) if side == 'musl' else
                            contract.make_command(suite, Path(self.recorded(root)), Path(self.recorded(self.root / 'compat/x86_64/owned_os_test.py')),
                            Path(self.recorded(product)), Path(self.recorded(self.leaf / 'evidence' / suite)), Path(self.recorded(runtime)), 8))
@@ -540,6 +547,11 @@ class NativeObservationsTests(unittest.TestCase):
                         'argv': ['/control/ld-musl-x86_64.so.1', '/control/busybox', 'sh', '<original argv[1..]>']}}
             row['dynamic'].update(execution_control=control, adapter_errors=[],
                                   adapter_event_count=len(list((self.leaf / 'evidence' / suite / 'events').glob('*.json'))))
+            if profile and suite == 'basic':
+                row.update(passed=False, difference_count=4, differences=[
+                    {'case': name, 'dynamic': row['dynamic']['outcomes'][name], 'musl': row['musl']['outcomes'][name]}
+                    for name in expected if name.startswith('unistd/')])
+                report['passed'] = False
             report['suites'].append(row)
             contract.freeze_tree(product)
         report['musl_oracle'] = {'unchanged': True}
@@ -752,7 +764,7 @@ class NativeObservationsTests(unittest.TestCase):
             with self.assertRaises(native.NativeObservationError): validate(altered)
             path.write_bytes(original)
 
-    def libc_test_fixture(self):
+    def libc_test_fixture(self, *, profile=False):
         import owned_libc_test as contract
         stage, prepared = self.leaf / 'source-stage', self.leaf / 'source-prepared'
         source_names = [*contract.COMMON_MEMBERS, contract.RUNTIME_HELPER, *contract.DSO_UNITS]
@@ -764,8 +776,13 @@ class NativeObservationsTests(unittest.TestCase):
         source_names[source_names.index('regression/case_067')] = 'regression/tls_get_new-dtv'
         source_names[source_names.index('regression/case_066')] = 'regression/sem_close-unmap'
         source_names[source_names.index('regression/case_065')] = 'regression/pthread_atfork-errno-clobber'
+        if profile:
+            source_names[source_names.index('functional/case_065')] = 'functional/crypt'
         for name in source_names:
             self.put(stage / 'src' / (name + '.c'), ('/* ' + name + ' */\n').encode())
+        if profile:
+            import owned_posix_native_dispositions as dispositions
+            self.put(stage / 'src/functional/crypt.c', (ROOT / dispositions.CRYPT_REFERENCE).read_bytes())
         self.put(stage / 'src/api/unistd.c', b'C(_PC_TIMESTAMP_RESOLUTION)\nC(_SC_XOPEN_UUCP)\n')
         for number in range(29): self.put(stage / f'src/math/gen/g{number:02d}.c', b'generator\n')
         self.put(stage / 'src/musl/pleval.c', b'excluded upstream target\n')
@@ -952,6 +969,13 @@ class NativeObservationsTests(unittest.TestCase):
                         if name == 'regression/pthread_atfork-errno-clobber':
                             execution_identity, command, _, _ = self.libc_identity_fixture(name, side)
                         record = command_record(command, 'execution/' + name + '/' + side)
+                        if profile and name == 'functional/crypt' and side == 'candidate':
+                            rows = dispositions.crypt_vectors(ROOT)
+                            output = ''.join(f'{self.recorded(source)}:{r["line"]}: crypt({r["key_literal"]}, "{r["setting"]}") failed: got "*" want "{r["oracle"]}"\n'
+                                for r in rows if r['ordinal'] not in (6, 7, 23, 32)).encode() + b'FAIL /functional/crypt [status 1]\n'
+                            path = self.leaf / 'execution' / name / (side + '.stdout')
+                            self.put(path, output)
+                            record.update(exit_status=1, stdout=self.binding(path))
                         status = self.put(self.leaf / 'execution' / name / (side + '.status.json'), record)
                         copied_files = [
                             {'destination': '/runtest', 'sha256': self.binding(self.leaf / 'links' / side / 'common/runtest.exe')['sha256']},
@@ -991,9 +1015,61 @@ class NativeObservationsTests(unittest.TestCase):
                         unit['runtime'][side] = {'status': 'passed', 'root_reclaimed': True, 'record': record,
                                                 'status_record': self.binding(status), 'root_payload': {**phases, 'unchanged': True},
                                                 'execution_identity': execution_identity}
+            if profile and name == 'functional/crypt':
+                unit['status'] = 'runtime-failed'
+                unit['runtime']['candidate']['status'] = 'failed'
+                unit['runtime']['comparison'] = {'status': 'blocked', 'reason': 'candidate runtime did not pass this prepared root'}
+                report.update(status='incomplete', counts={'passed': 433, 'runtime-failed': 1})
             report['units'].append(unit)
         self.put(self.leaf / 'libc-test.json', report)
         return report
+
+    def profile_companions(self):
+        import owned_posix_native_dispositions as dispositions
+        for path in dispositions.PROFILE_SOURCES:
+            self.copy_source(path)
+        return {'credentials': {'receipt': {'path': '.work/family/execution.json', 'sha256': 'b'*64},
+                    'selected_dynamic_entries': {mode: {} for mode in MODES}},
+                'crypt': {'vectors': dispositions.crypt_vectors(self.root),
+                    'receipt': {'path': '.work/crypt/crypt-profile.json', 'sha256': 'c'*64}}}
+
+    def test_native_os_profile_preserves_exact_four_raw_failures(self):
+        report = self.os_test_fixture(profile=True)
+        proof = self.profile_companions()
+        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json'}
+        with self.assertRaises(native.NativeObservationError): self.collect('os-test')
+        with patch.object(native, '_load_profile_companions', return_value=proof):
+            result = native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
+                                    root=self.root, profile_inputs=inputs)
+            self.assertIs(report['passed'], False)
+            self.assertEqual(result['qualification']['status'], 'profile-qualified')
+            self.assertEqual(len(result['qualification']['dispositions']), 4)
+            self.assertIs(result['qualification']['raw_passed'], False)
+            basic = next(row for row in report['suites'] if row['suite'] == 'basic')
+            basic['differences'].append({'case': 'case.out', 'dynamic': {}, 'musl': {}})
+            basic['difference_count'] = 5
+            self.put(self.leaf / 'os-test.json', report)
+            with self.assertRaises(native.NativeObservationError):
+                native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
+                               root=self.root, profile_inputs=inputs)
+
+    def test_native_libc_crypt_profile_preserves_failed_unit_and_every_other_unit(self):
+        report = self.libc_test_fixture(profile=True)
+        proof = self.profile_companions()
+        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json'}
+        with self.assertRaises(native.NativeObservationError): self.collect('libc-test')
+        with patch.object(native, '_load_profile_companions', return_value=proof):
+            result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
+                                    root=self.root, profile_inputs=inputs)
+            self.assertEqual(report['counts'], {'passed': 433, 'runtime-failed': 1})
+            self.assertEqual(len(result['observations']), 434)
+            self.assertEqual(result['qualification']['status'], 'profile-qualified')
+            self.assertEqual(len(result['qualification']['dispositions'][0]['differences']), 28)
+            report['units'][0]['status'] = 'runtime-failed'
+            self.put(self.leaf / 'libc-test.json', report)
+            with self.assertRaises(native.NativeObservationError):
+                native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
+                               root=self.root, profile_inputs=inputs)
 
     def test_libc_test_preserves_graph_roles_and_rejects_tampered_or_incomplete_evidence(self):
         report = self.libc_test_fixture()

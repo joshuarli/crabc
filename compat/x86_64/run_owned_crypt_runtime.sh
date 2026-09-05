@@ -6,8 +6,8 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/libc_crypt_probe.c"
-readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly EXECUTION_EVIDENCE="$ROOT/compat/x86_64/owned_crypt_runtime_evidence.py"
+readonly PROFILE_EVIDENCE="$ROOT/compat/x86_64/owned_crypt_profile.py"
 
 fail() {
     printf 'owned crypt runtime: %s\n' "$*" >&2
@@ -120,6 +120,8 @@ elif [ "$dynamic_was_supplied" -eq 0 ]; then
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
         --output "$static_product" >"$work/static-build.json"
 fi
+
+python3 -B "$PROFILE_EVIDENCE" prepare --work "$work" --product "$installed"
 
 # One object is compiled through the installed dynamic driver.  Its candidate
 # macro activates the existing fixture's public/private aliases, buffer and
@@ -403,11 +405,10 @@ audit_execution_payload() {
 }
 
 run_capture() {
-    local label="$1" status=0
-    shift
-    timeout 30 env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin LC_ALL=C TZ=UTC "$@" >"$work/$label.stdout" 2>"$work/$label.stderr" || status=$?
-    printf '%s\n' "$status" >"$work/$label.status"
-    [ "$status" -eq 0 ] || fail "$label exited with $status"
+    local label="$1"
+    # The owner derives the finite command from its label and retains the
+    # actual command, clean environment, raw streams and exit status.
+    python3 -B "$PROFILE_EVIDENCE" runtime --work "$work" --label "$label"
     grep -qx 'crypt ok' "$work/$label.stdout" || fail "$label did not report the fixture success marker"
 }
 
@@ -422,10 +423,9 @@ compare_oracle() {
 # candidate-only macro intentionally remains off: its guards specify this
 # provider's narrower unsupported/null/buffer contract rather than musl's full
 # historical crypt surface.
-"$ORACLE_CC" -static -fno-pie -no-pie -std=c11 -D_GNU_SOURCE \
-    -fno-builtin -fno-stack-protector "$PROBE" -o "$work/oracle"
+python3 -B "$PROFILE_EVIDENCE" abi-oracle --work "$work"
 compile_receipt verify
-run_capture oracle "$work/oracle"
+run_capture oracle
 
 if [ -n "$static_product" ]; then
     assert_static_provider "$static_product/usr/lib/libc.a"
@@ -440,7 +440,7 @@ if [ -n "$static_product" ]; then
         audit_owned_link "$static_product" "$work/workload.o" "$candidate" "$receipt" \
             "$mode" "$work/$mode-link-evidence.json"
         compile_receipt verify
-        run_capture "$mode" "$candidate"
+        run_capture "$mode"
         compare_oracle "$mode"
         printf 'owned crypt runtime %s: PASS\n' "$mode"
     done
@@ -470,9 +470,9 @@ done
 
 for mode in pie non-pie; do
     execution_root="$work/dynamic-$mode-root"
-    run_capture "dynamic-$mode-kernel" chroot "$execution_root" /consumer
+    run_capture "dynamic-$mode-kernel"
     compare_oracle "dynamic-$mode-kernel"
-    run_capture "dynamic-$mode-direct" chroot "$execution_root" "$INTERPRETER" /consumer
+    run_capture "dynamic-$mode-direct"
     compare_oracle "dynamic-$mode-direct"
     audit_execution_payload audit "$installed" "$execution_root" "$work/dynamic-$mode-consumer" \
         "$execution_root/consumer" "$work/dynamic-$mode-execution-payload.json" \
@@ -493,10 +493,12 @@ for mode in pie non-pie; do
 done
 compile_receipt verify
 
+python3 -B "$PROFILE_EVIDENCE" extend --work "$work" --product "$installed"
+
 if [ -n "$static_product" ]; then
     matrix='pinned musl plus supplied/build static/static-PIE and dynamic PIE/non-PIE kernel/direct'
 else
     matrix='pinned musl plus supplied dynamic PIE/non-PIE kernel/direct'
 fi
-printf 'owned crypt runtime: PASS (one installed-header fixture object; %s; canonical SHA-256/SHA-512, public/private aliases, weak crypt_r, caller/shared-buffer overlap, null and excluded MD5/bcrypt/malformed rejection); evidence: %s\n' \
+printf 'owned crypt runtime: PASS (one installed-header ABI fixture object and one 32-vector observer object; %s; canonical SHA-256/SHA-512, public/private aliases, weak crypt_r, caller/shared-buffer overlap, null and excluded MD5/bcrypt/malformed rejection); evidence: %s\n' \
     "$matrix" "$work"

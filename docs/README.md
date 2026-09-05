@@ -41,6 +41,7 @@ them; this router should explain ownership, not duplicate command contracts.
   clock-adjustment behavior across installed native products; neither
   runtime-family completion nor public support.
 - [Owned POSIX family acceptance proposal](../compat/x86_64/owned-posix-runtime.md)
+- [Finite native POSIX profile dispositions](../compat/x86_64/owned-posix-native-dispositions.md)
 - [Native POSIX aggregate execution](../compat/x86_64/owned-posix-native-execution.md)
   — checked frozen scope, product matrix, and remaining behavior obligations.
 - [Owned classic host and service lookup](../compat/x86_64/owned-classic-netdb.md)

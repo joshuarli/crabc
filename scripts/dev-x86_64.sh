@@ -592,7 +592,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
   owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  execute the prepared static and dynamic POSIX family matrix
-  owned-posix-native --family-execution FILE --output NEW_DIR  execute the five native POSIX components on the matrix's installed product
+  owned-posix-native --family-execution FILE --crypt-profile FILE --output NEW_DIR  execute the five native POSIX components on the matrix's installed product
   owned-posix-filesystem [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX filesystem provider composition
   owned-nftw-relative-base [DYNAMIC_SYSROOT]  regress installed nftw relative FTW.base callback metadata
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
@@ -2759,14 +2759,18 @@ prepare_owned_posix_family_arguments() {
 }
 
 prepare_owned_posix_native_arguments() {
-    local family_receipt='' output=''
-    local expected='usage: ./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --output NEW_DIR'
+    local family_receipt='' crypt_receipt='' output=''
+    local expected='usage: ./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --output NEW_DIR'
     while [ "$#" -gt 0 ]; do
         [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$expected"
         case "$1" in
             --family-execution)
                 [ -z "$family_receipt" ] || fail "$expected"
                 family_receipt="$2"
+                ;;
+            --crypt-profile)
+                [ -z "$crypt_receipt" ] || fail "$expected"
+                crypt_receipt="$2"
                 ;;
             --output)
                 [ -z "$output" ] || fail "$expected"
@@ -2776,10 +2780,11 @@ prepare_owned_posix_native_arguments() {
         esac
         shift 2
     done
-    [ -n "$family_receipt" ] && [ -n "$output" ] || fail "$expected"
+    [ -n "$family_receipt" ] && [ -n "$crypt_receipt" ] && [ -n "$output" ] || fail "$expected"
     family_receipt="$(translate_owned_posix_product "$family_receipt" receipt-file)" || exit 2
+    crypt_receipt="$(translate_owned_posix_product "$crypt_receipt" receipt-file)" || exit 2
     output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
-    POSIX_NATIVE_ARGUMENTS=(--family-execution "$family_receipt" --output "$output")
+    POSIX_NATIVE_ARGUMENTS=(--family-execution "$family_receipt" --crypt-profile "$crypt_receipt" --output "$output")
 }
 
 prepare_owned_posix_replay_arguments() {

@@ -1,4 +1,4 @@
-"""The native aggregate consumes one matrix and a fresh isolated output."""
+"""The native aggregate requires the matrix, crypt companion, and fresh output."""
 import json
 import os
 from pathlib import Path
@@ -21,6 +21,8 @@ class OwnedPosixNativeDispatchTests(unittest.TestCase):
         self.state.mkdir()
         self.receipt = self.state / 'family execution.json'
         self.receipt.write_text('{}\n')
+        self.crypt = self.state / 'crypt profile.json'
+        self.crypt.write_text('{}\n')
         self.output = self.state / 'fresh native'
         self.capture = self.work / 'docker.jsonl'
         docker = self.work / 'docker'
@@ -42,17 +44,19 @@ class OwnedPosixNativeDispatchTests(unittest.TestCase):
 
     def test_paths_reach_only_the_fixed_isolated_native_runner(self):
         expected = ['--family-execution', '/workspace/.work/x86_64/family execution.json',
+                    '--crypt-profile', '/workspace/.work/x86_64/crypt profile.json',
                     '--output', '/workspace/.work/x86_64/fresh native']
-        for receipt, output in ((self.receipt, self.output),
-                (self.receipt.relative_to(ROOT), self.output.relative_to(ROOT)),
-                (expected[1], expected[3])):
+        for receipt, crypt, output in ((self.receipt, self.crypt, self.output),
+                (self.receipt.relative_to(ROOT), self.crypt.relative_to(ROOT), self.output.relative_to(ROOT)),
+                (expected[1], expected[3], expected[5])):
             with self.subTest(receipt=receipt):
-                result = self.invoke(['--family-execution', str(receipt), '--output', str(output)])
+                result = self.invoke(['--family-execution', str(receipt),
+                    '--crypt-profile', str(crypt), '--output', str(output)])
                 self.assertEqual(result.returncode, 0, result.stderr)
                 runs = [a for a in map(json.loads, self.capture.read_text().splitlines()) if a[0] == 'run']
                 self.assertEqual(len(runs), 1)
                 argv = runs[0]
-                self.assertEqual(argv[-8:], ['python3', '-B',
+                self.assertEqual(argv[-10:], ['python3', '-B',
                     '/workspace/compat/x86_64/owned_posix_native_execution.py', 'run', *expected])
                 for flag in ('--network=none', '--cap-add=SYS_ADMIN', '--cap-add=SYS_CHROOT',
                              '--security-opt=apparmor=unconfined', '--security-opt=seccomp=unconfined'):
@@ -62,16 +66,25 @@ class OwnedPosixNativeDispatchTests(unittest.TestCase):
                 self.assertFalse(self.output.exists())
 
     def test_bad_requests_do_not_invoke_docker_or_create_output(self):
-        valid = ['--family-execution', str(self.receipt), '--output', str(self.output)]
+        valid = ['--family-execution', str(self.receipt), '--crypt-profile', str(self.crypt),
+                 '--output', str(self.output)]
         alias = self.state / 'alias'
         alias.symlink_to(self.receipt)
-        invalid = [[], valid[:2], valid[:-1], valid + valid[:2], valid + ['--timeout', '1'],
+        crypt_alias = self.state / 'crypt alias'
+        crypt_alias.symlink_to(self.crypt)
+        invalid = [[], valid[:2], valid[:-1], valid + valid[:2], valid + valid[2:4],
+                   valid + ['--timeout', '1'],
                    ['--family-execution', '', *valid[2:]],
                    ['--family-execution', str(alias), *valid[2:]],
                    ['--family-execution', str(self.state), *valid[2:]],
-                   [*valid[:2], '--output', str(self.receipt)],
-                   [*valid[:2], '--output', str(self.state / 'missing/fresh')],
-                   [*valid[:2], '--output', '/workspace/etc/fresh']]
+                   [*valid[:2], *valid[4:]],
+                   [*valid[:2], '--crypt-profile', str(crypt_alias), *valid[4:]],
+                   [*valid[:2], '--crypt-profile', str(self.state), *valid[4:]],
+                   [*valid[:2], '--crypt-profile', str(self.state / 'missing.json'), *valid[4:]],
+                   [*valid[:2], '--crypt-profile', '/workspace/etc/crypt.json', *valid[4:]],
+                   [*valid[:4], '--output', str(self.receipt)],
+                   [*valid[:4], '--output', str(self.state / 'missing/fresh')],
+                   [*valid[:4], '--output', '/workspace/etc/fresh']]
         before = set(self.state.rglob('*'))
         for arguments in invalid:
             with self.subTest(arguments=arguments):

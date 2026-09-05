@@ -227,7 +227,24 @@ def source_tree(directory, *, ignore_git_metadata=False, allow_symlinks=False):
     return walk(directory).hex(), dict(sorted(files.items()))
 
 
-def collect(component, leaf_root, *, source_mount, dynamic_product, root=ROOT):
+def _load_profile_companions(root, product, inputs):
+    """Only physical prerequisite paths are accepted, never caller waivers."""
+    import owned_posix_family_execution as family
+    import owned_crypt_profile as crypt
+    import owned_posix_native_dispositions as dispositions
+    keys(inputs, ('family_execution', 'crypt_profile'), 'native profile prerequisite paths')
+    paths = {}
+    for key, value in inputs.items():
+        require(isinstance(value, str) and not Path(value).is_absolute(), 'native profile input must be checkout-relative')
+        paths[key] = family.physical(root, root / value)
+    matrix = family.validate_receipt(root, paths['family_execution'])
+    credential = dispositions.credentials_companion(root, matrix, family.file_identity(root, paths['family_execution']), product)
+    crypt_record = crypt.validate_receipt(root, paths['crypt_profile'], product=product)
+    return {'credentials': credential, 'crypt': {'receipt': family.file_identity(root, paths['crypt_profile']),
+            'vectors': crypt_record['vectors'], 'observations': crypt_record['vector_observations']}}
+
+
+def collect(component, leaf_root, *, source_mount, dynamic_product, root=ROOT, profile_inputs=None):
     """Reconstruct one dynamic-only component; never compile, link or execute.
 
     ``source_mount`` is the original absolute checkout path in retained JSON.
@@ -236,9 +253,14 @@ def collect(component, leaf_root, *, source_mount, dynamic_product, root=ROOT):
     """
     require(component in COMPONENTS, 'unknown native POSIX component')
     reader = Reader(leaf_root, source_mount, dynamic_product, root)
+    reader.profile_companions = None
     try:
-        return {'differential': _differential, 'signal-process': _signal_process,
+        if profile_inputs is not None and component in ('os-test', 'libc-test'):
+            reader.profile_companions = _load_profile_companions(root, dynamic_product, profile_inputs)
+        result = {'differential': _differential, 'signal-process': _signal_process,
                 'pthread-stress': _pthread_stress, 'os-test': _os_test, 'libc-test': _libc_test}[component](reader)
+        result.setdefault('qualification', {'status': 'passed', 'raw_passed': True, 'dispositions': []})
+        return result
     except (KeyError, TypeError, IndexError, OSError, RuntimeError, ImportError) as error:
         raise NativeObservationError('incomplete or malformed ' + component + ' evidence: ' + str(error)) from error
 
@@ -454,8 +476,8 @@ def _pthread_stress(reader):
         limits={'iterations': 10, 'case_timeout_seconds': 10.0})
 
 
-def _command_streams(reader, record, *, command=None):
-    same(record['exit_status'], 0, 'retained command exit status')
+def _command_streams(reader, record, *, command=None, expected_status=0):
+    same(record['exit_status'], expected_status, 'retained command exit status')
     require('start_error' not in record, 'retained command did not start')
     if command is not None:
         same(record['command'], command, 'retained command invocation')
@@ -848,9 +870,12 @@ def _libc_test(reader):
     import owned_libc_test as contract
     leaf = reader.leaf
     report = read_json(leaf / 'libc-test.json')
+    profiled = reader.profile_companions is not None
+    dispositions = []
     same({key: report[key] for key in ('schema', 'status', 'campaign_complete', 'public_support', 'target', 'counts')},
-         {'schema': 'crabc.x86_64-owned-libc-test/v1', 'status': 'passed', 'campaign_complete': False,
-          'public_support': False, 'target': 'x86_64-unknown-linux-musl', 'counts': {'passed': 434}}, 'complete libc-test campaign')
+         {'schema': 'crabc.x86_64-owned-libc-test/v1', 'status': 'incomplete' if profiled else 'passed', 'campaign_complete': False,
+          'public_support': False, 'target': 'x86_64-unknown-linux-musl',
+          'counts': {'passed': 433, 'runtime-failed': 1} if profiled else {'passed': 434}}, 'complete libc-test campaign')
     require('fatal_error' not in report and report['candidate_link_blocker'] is None, 'libc-test campaign has a retained blocker')
     product = report['product']
     copied_product, product_identity = _libc_product(reader, report)
@@ -902,8 +927,9 @@ def _libc_test(reader):
     same(actual_objects == {name + '.o' for name in object_paths}, True, 'libc-test canonical object roster')
     for definition, unit in zip(units, report['units']):
         name, kind = definition['id'], definition['kind']
+        crypt_profile = profiled and name == 'functional/crypt'
         same([unit['id'], unit['kind'], unit['suite'], unit['status']],
-             [name, kind, definition['suite'], 'passed'], 'libc-test unit role and status')
+             [name, kind, definition['suite'], 'runtime-failed' if crypt_profile else 'passed'], 'libc-test unit role and status')
         source, obj = leaf / 'source-prepared' / definition['source'], object_paths[name]
         reader.bind(unit['source'], source, 'libc-test prepared compilation source')
         translation, header = unit['candidate_translation'], unit['header_translation']
@@ -948,11 +974,13 @@ def _libc_test(reader):
             observations[name] = {'kind': kind, 'translation': compile_streams}
             continue
         runtime = unit['runtime']
-        same(runtime['comparison'], {'status': 'passed', 'detail': 'passed'}, 'libc-test runtime comparison')
+        same(runtime['comparison'], {'status': 'blocked', 'reason': 'candidate runtime did not pass this prepared root'}
+             if crypt_profile else {'status': 'passed', 'detail': 'passed'}, 'libc-test runtime comparison')
         results, raw = {}, {}
         for side in ('oracle', 'candidate'):
             run = runtime[side]
-            same([run['status'], run['root_reclaimed']], ['passed', True], 'libc-test successful private-root run')
+            same([run['status'], run['root_reclaimed']],
+                 ['failed' if crypt_profile and side == 'candidate' else 'passed', True], 'libc-test private-root raw result')
             record = run['record']
             status_path = leaf / 'execution' / name / (side + '.status.json')
             reader.bind(run['status_record'], status_path, 'libc-test durable runtime status')
@@ -964,7 +992,8 @@ def _libc_test(reader):
             command = record['command']
             identity = _libc_execution_identity(reader, run['execution_identity'], name=name, side=side,
                                                 source=source, command=command)
-            results[side] = {**_command_streams(reader, record), 'status': reader.identity(status_path, raw=True),
+            results[side] = {**_command_streams(reader, record, expected_status=1 if crypt_profile and side == 'candidate' else 0),
+                             'status': reader.identity(status_path, raw=True),
                              'execution_identity': identity}
             raw[side] = [read_bytes(reader.local(record[stream]['path'])) for stream in ('stdout', 'stderr')]
             roles = contract.unit_dso_roles(name)
@@ -981,9 +1010,19 @@ def _libc_test(reader):
                 controls = shell_controls[side]
             _libc_root_phases(reader, run, name=name, side=side, payload=payload, controls=controls, topology=roles,
                               product_identity=product_identity, oracle=oracle, product=copied_product)
-        require(raw['oracle'] == raw['candidate'], 'libc-test raw runtime streams differ: ' + name)
+        if crypt_profile:
+            import owned_posix_native_dispositions as profile_contract
+            dispositions.append(profile_contract.crypt_disposition(reader, source,
+                candidate_status=runtime['candidate']['record']['exit_status'], candidate_stdout=raw['candidate'][0], candidate_stderr=raw['candidate'][1],
+                oracle_status=runtime['oracle']['record']['exit_status'], oracle_stdout=raw['oracle'][0], oracle_stderr=raw['oracle'][1],
+                companion=reader.profile_companions['crypt']))
+        else:
+            require(raw['oracle'] == raw['candidate'], 'libc-test raw runtime streams differ: ' + name)
         observations[name] = {'kind': kind, **results}
+    require(not profiled or len(dispositions) == 1, 'libc-test fixed crypt disposition is missing')
     return reader.finish('libc-test', 'libc-test.json', observations, objects,
+                         qualification={'status': 'profile-qualified' if profiled else 'passed',
+                                        'raw_passed': not profiled, 'dispositions': dispositions},
                          source_tree={'revision': LIBC_TEST_REVISION, 'tree': LIBC_TEST_TREE, 'files': source_files},
                          limits={'runtime_case_seconds': 5, 'outer_timeout_seconds': 20})
 
@@ -1413,8 +1452,10 @@ def _os_test(reader):
     import owned_os_test as contract
     leaf = reader.leaf
     report = read_json(leaf / 'os-test.json')
+    profiled = reader.profile_companions is not None
+    dispositions = []
     same([report['schema'], report['passed'], report['profile'], report['timeout_seconds'], report['work']],
-         ['crabc.x86_64-owned-os-test/v1', True, list(OS_TEST_SUITES), 600.0, reader.recorded(leaf)], 'complete os-test campaign')
+         ['crabc.x86_64-owned-os-test/v1', not profiled, list(OS_TEST_SUITES), 600.0, reader.recorded(leaf)], 'complete os-test campaign')
     require([suite['suite'] for suite in report['suites']] == list(OS_TEST_SUITES), 'os-test full suite roster differs')
     stage, files = _os_source(reader, report)
     product = report['product']
@@ -1430,7 +1471,10 @@ def _os_test(reader):
     observations, objects, commands = {}, {}, {}
     for suite in report['suites']:
         name = suite['suite']
-        same([suite['passed'], suite['differences'], suite['difference_count']], [True, [], 0], 'os-test suite comparison')
+        profiled_suite = profiled and name == 'basic'
+        expected_differences = []
+        if not profiled_suite:
+            same([suite['passed'], suite['differences'], suite['difference_count']], [True, [], 0], 'os-test suite comparison')
         expected = sorted(Path(path).relative_to(name).with_suffix('.out').as_posix() for path in files
                           if Path(path).is_relative_to(name) and path.endswith('.c'))
         require(expected, 'os-test pinned suite has no source outcomes')
@@ -1464,7 +1508,19 @@ def _os_test(reader):
                 observations.setdefault(name + '/' + relative, {})[side] = reader.identity(path, raw=True)
         for relative in expected:
             row = observations[name + '/' + relative]
-            same(row['musl']['base64'], row['dynamic']['base64'], 'os-test exact raw outcome comparison')
+            if profiled_suite and relative in ('unistd/seteuid.out', 'unistd/setegid.out', 'unistd/setreuid.out', 'unistd/setregid.out'):
+                import owned_posix_native_dispositions as profile_contract
+                source = stage / name / Path(relative).with_suffix('.c')
+                dispositions.append(profile_contract.os_alias_disposition(reader, name, relative, source,
+                    base64.b64decode(row['dynamic']['base64']), base64.b64decode(row['musl']['base64']),
+                    reader.profile_companions['credentials']))
+                expected_differences.append({'case': relative, 'dynamic': suite['dynamic']['outcomes'][relative],
+                                             'musl': suite['musl']['outcomes'][relative]})
+            else:
+                same(row['musl']['base64'], row['dynamic']['base64'], 'os-test exact raw outcome comparison')
+        if profiled_suite:
+            same([suite['passed'], suite['differences'], suite['difference_count']],
+                 [False, expected_differences, 4], 'os-test exact four credential differences')
         objects.update(_os_event_graph(reader, name, expected, suite['dynamic'], files, contract))
         _os_product_copy(reader, name, suite['dynamic']['execution_control'], product_roster['entries'], contract)
     oracle = report['musl_oracle']
@@ -1487,6 +1543,9 @@ def _os_test(reader):
         same([roster['schema'], identity['include']['path'], identity['include']['entry_count']],
              ['crabc.x86_64-owned-os-test-musl-include-roster/v1', '/opt/musl-1.2.6/include', len(roster['entries'])],
              'os-test pinned musl header roster')
+    require(not profiled or len(dispositions) == 4, 'os-test fixed credential dispositions are missing')
     return reader.finish('os-test', 'os-test.json', observations, objects, suite_commands=commands,
+        qualification={'status': 'profile-qualified' if profiled else 'passed', 'raw_passed': not profiled,
+                       'dispositions': dispositions},
         source_tree={'revision': OS_TEST_REVISION, 'tree': OS_TEST_TREE, 'files': files},
         oracle_inputs=oracle, limits={'suite_timeout_seconds': 600.0, 'header_jobs': 8})

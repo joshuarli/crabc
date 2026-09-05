@@ -50,12 +50,27 @@ still gets a disposable dynamic product when needed for the one installed
 source translation. Supplying both products invokes no producer. Arguments
 must be nonempty physical directories below this checkout's `.work` tree.
 
-This receipt does **not** turn upstream `libc-test` `functional/crypt` into a
-pass or replace its profile-limitation record. That one executable also asks
-for intentionally unsupported MD5-crypt and bcrypt hashes, plus historical
-SHA input semantics outside this profile: empty and overlong/truncated salts,
-round clamping, and noncanonical round spelling. The receipt is evidence for
-only the canonical supported SHA subset and its installed-product ABI boundary.
+The runner additionally translates one installed-header observer object containing
+all 32 original calls from the pinned libc-test `functional/crypt` source.
+That same object runs against pinned musl and all four owned dynamic entries.
+It records actual pointer nullness and output bytes; expected profile rejection
+requires nonnull `*`. The two supported low-round SHA settings normalize rounds
+to 1000 and retain their exact upstream hashes. Twelve legacy hashes and sixteen
+unsupported SHA settings have finite profile differences. The original upstream
+unit remains unchanged and retains its raw failure and 28 diagnostics.
+
+`owned_crypt_profile.py` reconstructs `crypt-profile.json` from both fixture
+objects, retained compiler/header identities, physical ELF metadata, sealed
+links, copied runtime payloads, all raw executions, and the full artifact tree.
+Host validation requires neither a compiler nor Docker:
+
+```sh
+python3 -B compat/x86_64/owned_crypt_profile.py validate PATH/crypt-profile.json
+```
+
+The native aggregate requires this companion on its identical installed
+product. It supports only the finite qualification described in
+[`owned-posix-native-dispositions.md`](owned-posix-native-dispositions.md).
 It is not an upstream libc-test pass, a full historical crypt implementation,
 a public x86 support claim, or a cryptographic algorithm change.
 

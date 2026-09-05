@@ -21,6 +21,8 @@ import sys
 import owned_posix_family_execution as family
 import owned_posix_family_observations as family_observations
 import owned_posix_native_observations as native
+import owned_crypt_profile as crypt
+import owned_posix_native_dispositions as dispositions
 
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = 'crabc.x86_64-owned-posix-native-execution/v1'
@@ -58,7 +60,9 @@ COMPONENTS = (
     Component('libc-test', 'compat/x86_64/run_owned_libc_test.sh',
         ('compat/x86_64/owned_libc_test.py',), (), '', 'owned-libc-test.'),
 )
-SHARED_SOURCES = (
+SHARED_SOURCES = (*crypt.SOURCES,
+    'compat/x86_64/owned_posix_native_dispositions.py',
+    'compat/x86_64/owned-posix-native-dispositions.md',
     'compat/x86_64/owned_posix_native_execution.py',
     'compat/x86_64/owned-posix-native-execution.md',
     'compat/x86_64/owned_posix_native_observations.py',
@@ -169,7 +173,7 @@ def io_replacement(root, matrix):
 
 
 def input_matrix(root, request):
-    require(isinstance(request, dict) and set(request) == {'schema', 'source_mount', 'family_execution'}
+    require(isinstance(request, dict) and set(request) == {'schema', 'source_mount', 'family_execution', 'crypt_profile'}
             and request['schema'] == SCHEMA, 'native execution request fields differ')
     mount = request['source_mount']
     require(isinstance(mount, str) and Path(mount).is_absolute() and '..' not in Path(mount).parts
@@ -193,7 +197,15 @@ def input_matrix(root, request):
         require(family.digest(selected / 'share/crabc/manifest.json') == products[label]['manifest_sha256'],
                 'matrix product manifest differs')
     product = dynamic_work / 'installed'
-    inputs = {'family_execution': family.file_identity(root, path), 'source': source,
+    crypt_value = request['crypt_profile']
+    require(isinstance(crypt_value, str) and not Path(crypt_value).is_absolute(), 'crypt input must be checkout-relative')
+    crypt_path = family.physical(root, root / crypt_value)
+    crypt_record = crypt.validate_receipt(root, crypt_path, product=product)
+    credentials = dispositions.credentials_companion(root, matrix, family.file_identity(root, path), product)
+    inputs = {'crypt_profile': family.file_identity(root, crypt_path),
+              'crypt_tree': tree_binding(root, crypt_path.parent),
+              'profile_companions': {'credentials': credentials, 'crypt': crypt_record},
+              'family_execution': family.file_identity(root, path), 'source': source,
               'source_files': source_files(root), 'product': product_binding(root, product),
               'matrix_inputs': matrix['inputs'], 'io_cancellation_replacement': io_replacement(root, matrix)}
     return inputs, product
@@ -217,8 +229,14 @@ def collect_component(root, work, index, component, inputs, product, source_moun
     start = work / 'sequence' / f'{index:02d}-{component.id}.json'
     require(same_json(read(start), sequence_record(index, component, predecessor, inputs)),
             'component sequence predecessor or inputs changed')
-    execution = family.check_step(root, step, component_command(root, component, product, source_mount),
-        family.case_environment(root, step, source_mount), source_mount=source_mount)
+    expected_invocation = family.invocation(Path(source_mount),
+        component_command(root, component, product, source_mount), family.case_environment(root, step, source_mount))
+    require(same_json(read(step / 'invocation.json'), expected_invocation), 'workload invocation changed')
+    status = (step / 'status').read_bytes()
+    require(status == b'0\n' or (component.id in ('os-test', 'libc-test') and status == b'1\n'),
+            'native component outer status differs')
+    execution = {name: family.file_identity(root, step / name)
+                 for name in ('invocation.json', 'stdout', 'stderr', 'status')}
     prefix = source_mount.rstrip('/') + '/'
     candidates = set()
     for line in (step / 'stdout').read_text().splitlines():
@@ -239,12 +257,18 @@ def collect_component(root, work, index, component, inputs, product, source_moun
     leaf = candidates.pop()
     require(set((step / 'tmp').iterdir()) == {leaf}, 'undeclared component scratch child')
     try:
-        observed = native.collect(component.id, leaf, source_mount=source_mount, dynamic_product=product, root=root)
+        observed = native.collect(component.id, leaf, source_mount=source_mount, dynamic_product=product, root=root,
+            profile_inputs={key: inputs[key]['path'] for key in ('family_execution', 'crypt_profile')})
     except native.NativeObservationError as error:
         raise family.ExecutionError(str(error)) from error
     require(observed['component'] == component.id and observed['product']['path'] == product.relative_to(root).as_posix()
             and observed['product']['manifest']['sha256'] == inputs['product']['manifest']['sha256'],
             'native component product binding differs')
+    qualification = observed['qualification']
+    require(qualification['status'] == ('profile-qualified' if status == b'1\n' else 'passed')
+            and qualification['raw_passed'] is (status == b'0\n')
+            and bool(qualification['dispositions']) == (status == b'1\n'),
+            'native outer status and strict profile qualification disagree')
     if component.id == 'pthread-stress':
         require(observed['replacement_io_cancellation_required'] == ['READ_FILE', 'ASYNC_LOOP']
                 and observed['replacement_io_cancellation_receipt'] is None
@@ -263,6 +287,9 @@ def guard(root, inputs, product):
     require(same_json(product_binding(root, product), inputs['product']), 'product changed during native execution')
     require(same_json(family.file_identity(root, root / inputs['family_execution']['path']), inputs['family_execution']),
             'matrix input changed during native execution')
+    require(same_json(family.file_identity(root, root / inputs['crypt_profile']['path']), inputs['crypt_profile'])
+            and same_json(tree_binding(root, (root / inputs['crypt_profile']['path']).parent), inputs['crypt_tree']),
+            'crypt input changed during native execution')
 
 
 def collect(root, work):
@@ -296,15 +323,18 @@ def collect(root, work):
             'native_aggregate_complete': True, 'campaign_complete': False, 'family_completion': False, 'public_support': False}
 
 
-def execute(root, work, matrixpath):
+def execute(root, work, matrixpath, cryptpath):
     root = root.resolve(strict=True)
-    work = family.physical(root, work)
+    work = family.physical(root, root / work)
+    matrixpath = family.physical(root, root / matrixpath)
+    cryptpath = family.physical(root, root / cryptpath)
     require(not work.exists(), 'native execution requires fresh output')
     request = {'schema': SCHEMA, 'source_mount': str(root),
-               'family_execution': family.physical(root, matrixpath).relative_to(root).as_posix()}
+               'family_execution': family.physical(root, matrixpath).relative_to(root).as_posix(),
+               'crypt_profile': family.physical(root, cryptpath).relative_to(root).as_posix()}
     inputs, product = input_matrix(root, request)
     matrix_inputs = inputs['matrix_inputs']
-    input_roots = [matrixpath.parent, root / matrix_inputs['dynamic_work']]
+    input_roots = [family.physical(root, cryptpath).parent, matrixpath.parent, root / matrix_inputs['dynamic_work']]
     input_roots.extend((root / matrix_inputs[name]['path']).parent
                        for name in ('static_preparation', 'dynamic_qualification'))
     require(work.is_relative_to(root / '.work'), 'native output must stay under checkout .work')
@@ -333,6 +363,11 @@ def execute(root, work, matrixpath):
                 try:
                     family.run_step(root, step, component_command(root, component, product, str(root)),
                                     family.case_environment(root, step, str(root)))
+                except family.ExecutionError:
+                    # Only these producers may retain an honest raw failure. The
+                    # immediate strict collector must independently qualify it.
+                    if component.id not in ('os-test', 'libc-test') or not (step / 'status').is_file() or (step / 'status').read_bytes() != b'1\n':
+                        raise
                 finally:
                     if step.exists():
                         family.static_products.make_retained_evidence_readable(step)
@@ -381,12 +416,13 @@ def main():
     run = sub.add_parser('run')
     run.add_argument('--output', type=Path, required=True)
     run.add_argument('--family-execution', type=Path, required=True)
+    run.add_argument('--crypt-profile', type=Path, required=True)
     check = sub.add_parser('validate')
     check.add_argument('receipt', type=Path)
     args = parser.parse_args()
     try:
         if args.action == 'run':
-            print(execute(ROOT, args.output, args.family_execution))
+            print(execute(ROOT, args.output, args.family_execution, args.crypt_profile))
         else:
             validate_receipt(ROOT, args.receipt)
             print('native POSIX aggregate receipt: PASS')
