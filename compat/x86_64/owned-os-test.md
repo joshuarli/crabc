@@ -1,0 +1,90 @@
+# Owned native os-test
+
+`run_owned_os_test.sh DYNAMIC_SYSROOT` runs the frozen ten-suite os-test
+profile against one already materialized native dynamic product. Its command is
+intended for the pinned x86-64 container; the supplied product is mandatory and
+the runner never invokes a product producer. The profile is exactly `include`,
+`namespace`, `basic`, `io`, `limits`, `malloc`, `process`, `pty`, `signal`, and
+`stdio` from os-test revision `5e9456d510612f83b6ec8b1a0c06d6b1303a2512`.
+Because that exact profile includes PTY lifecycle cases, its canonical container
+entry needs the dispatcher’s scoped `SYS_CHROOT` and `SYS_ADMIN` authority,
+unconfined AppArmor and seccomp profiles, and no network. The runner spends
+mount authority only for its disposable private devpts instance.
+
+Each fresh source copy first runs through pinned musl 1.2.6, then the supplied
+dynamic product runs the same target. The runner uses a fixed empty build
+environment and preserves os-test's own `CFLAGS`, `CPPFLAGS`, and `LDFLAGS`
+defaults, including its ordinary Linux pthread, math, and realtime aliases.
+It sets only `EXTRA_LDFLAGS=` because Linux's source profile otherwise injects
+unowned gdbm, crypt, and atomic libraries. Musl’s pinned compiler specs select
+its headers and mode; the installed product adapter records its own selected
+headers and ordinary PIE or explicit shared-object mode. `os-test.json` binds
+raw physical Make stdout, stderr, and canonical status records for every
+suite/side, derives each exact expected `.out` roster from the frozen source,
+and compares outcomes by relative pathname and exact bytes. A source or
+runtime difference is a failure; the runner has no inherited exception list.
+
+The source checkout and product must both be physical directories below this
+checkout's `.work` boundary. Before either oracle runs, the runner checks the
+clean source revision and fixed Git tree, clones a pristine `source-stage`,
+records every Git-tracked path with its mode/type/content identity, and removes
+write permission from that reconstruction. It similarly records the complete
+supplied-product payload roster. Each suite first receives a sealed compiler
+and linker product copy that must match that roster path-for-path, then a
+separate execution-root copy. The runtime's control shell, source tree,
+devices, resolver fixtures, and private devpts mount live outside the product
+payload; post-execution product rosters must still match exactly.
+
+The runner creates one `owned-os-test.*` directory directly under `TMPDIR`.
+Its `os-test.json` contains every Make status record, raw stream artifact,
+outcome file, selected-product and staged-source identity, retained adapter
+failure, and pre/post payload proof. It binds musl's wrapper, oracle marker,
+spec digest, libc, and complete include roster before and after the campaign.
+The command exits nonzero when any suite fails. No historic os-test exception
+or AArch64 observation is accepted by this native runner.
+
+os-test drives ordinary compiler spellings that deliberately lie outside the
+installed dynamic driver's target-input surface. `owned_os_test.py` supplies a
+narrow, recorded adapter for its actual Make invocations. It accepts only the
+product's installed include directory and maps os-test's `-fPIE`, `-fPIC`,
+`-pthread`, `-lm`, `-lpthread`, and `-lrt` defaults to the matching mode or
+implicit provider in the selected product. It rejects another include path,
+library search path, library, linker injection, or an unfamiliar flag. Every
+successful target compilation retains the installed-driver object, its exact
+command and streams, exact installed compiler/hash, and a dependency closure
+whose headers may reside only in the copied source or selected installed header
+tree. The runner independently replays the same source and normalized flags
+through that recorded compiler and rejects a byte mismatch.
+
+Each ordinary executable link is validated with
+`owned_posix_product_evidence.validate_link` while os-test's own recipe still
+has its input object. The retained receipt and link identity therefore bind the
+current product, workload, output ELF, interpreter, CRT, libc, builtins, and
+link trace. Shared `basic/dlfcn` fixtures retain their source object, output,
+and receipt too; they are not treated as executable links.
+
+The copied suite source remains the Make authority. Its target executables are
+sealed before a documented execution wrapper replaces only the host copy. The
+wrapper enters a private copy of the selected product and invokes its
+`/lib/ld-crabc-x86_64.so.1` directly. Pinned-musl BusyBox and its loader live
+under `/control` and are invoked explicitly, so they cannot overwrite the
+product's loader aliases or make the candidate's loader and `/usr/lib/libc.so`
+host-control dependencies. The runtime root also retains a minimal deterministic
+`etc/hosts` and `resolv.conf`, target artifacts, and basic device nodes,
+including root-local `/dev/tty`. A missing control-plane facility is recorded
+as an ordinary failing observation; it cannot become a skip or source edit.
+The wrapper preserves os-test’s suite working directory even for nested test
+paths. The PTY suite additionally mounts `devpts` with `newinstance`, links its
+root-local `/dev/ptmx` to that mount, and records both mount and unmount streams
+in the evidence. This private fixture prevents host terminal acquisition while
+keeping the full source fixture and product runtime beneath the disposable root.
+
+`namespace` is the bounded exception to target translation: os-test asks for
+preprocessor output and a host-side analyzer, neither of which is a target
+runtime program. The adapter uses the same installed compiler contract as a
+PIE target compilation, including `-nostdinc`, installed headers,
+freestanding/builtin policy, stack protection, and PIE mode, for `-E` and
+`-dM`. It retains successful preprocessed output and its installed-header
+dependency closure before Make removes intermediates. The pinned host compiler
+is used only for os-test's `CC_FOR_BUILD` analyzer. Both command classes and
+their hashes appear in the evidence.
