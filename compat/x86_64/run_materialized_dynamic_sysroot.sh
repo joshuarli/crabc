@@ -105,4 +105,8 @@ bash "$ROOT/compat/x86_64/run_general_dynamic_constructor_exit.sh" "$work/instal
 bash "$ROOT/compat/x86_64/run_general_dynamic_constructor_exit.sh" "$work/extracted"
 CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/installed"
 CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$work/extracted"
+bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$work/installed"
+bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$work/extracted"
+CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$work/installed"
+CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$work/extracted"
 printf 'materialized dynamic sysroot: PASS (initial and retained runtime graphs); evidence: %s\n' "$work"

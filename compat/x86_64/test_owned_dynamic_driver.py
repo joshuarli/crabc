@@ -57,6 +57,40 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self.assertNotIn("-pie", plan["linker"])
         self.assertIn("--dynamic-linker", plan["linker"])
 
+    def test_deferred_binding_plan_requires_exact_shared_runtime_imports(self):
+        output = io.StringIO()
+        with patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch("sys.stdout", output):
+            driver.execute(self.root, ["--dynamic-shared-object", "--binding", "lazy",
+                                      "--runtime-import", "future_function", "--print-link-plan"])
+        plan = json.loads(output.getvalue())
+        self.assertEqual(plan["binding"], "lazy")
+        self.assertEqual(plan["runtime_imports"], ["future_function"])
+        self.assertIn("lazy", plan["linker"])
+        self.assertNotIn("now", plan["linker"])
+        for arguments in (["--dynamic-pie", "--runtime-import", "future_function"],
+                          ["--dynamic-shared-object", "--binding", "invalid"],
+                          ["--dynamic-shared-object", "--runtime-import", "bad@VERSION"],
+                          ["--dynamic-shared-object", "--runtime-import", "future_function"]):
+            with self.subTest(arguments=arguments), patch.object(driver, "run") as run:
+                with self.assertRaises(driver.shared.DriverError):
+                    driver.execute(self.root, [*arguments, "--print-link-plan"])
+                run.assert_not_called()
+
+    def test_deferred_import_contract_rejects_accidental_or_unused_names_before_link(self):
+        source = Path(self.temporary.name) / "plugin.c"
+        source.write_text("extern int future_function(void); int run(void) { return future_function(); }\n")
+        for required in ({"future_function", "accidental_import"}, set()):
+            output = Path(self.temporary.name) / "plugin.so"
+            def symbols(path, temporary, *, object_symbols=False):
+                return (set(), required) if path.name == "source-0.o" else (set(), set())
+            with self.subTest(required=required), patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch.object(driver.shared, "compiler", return_value="/owned/gcc"), patch.object(driver, "dynamic_symbols", side_effect=symbols), patch.object(driver, "run", return_value="") as run:
+                with self.assertRaisesRegex(driver.shared.DriverError, "exact unresolved"):
+                    driver.execute(self.root, ["--dynamic-shared-object", "--binding", "lazy",
+                        "--runtime-import", "future_function", str(source), "-o", str(output)])
+                self.assertEqual([call.args[0][0] for call in run.call_args_list], ["/owned/gcc"])
+                self.assertFalse(output.exists())
+                self.assertFalse(Path(str(output) + ".crabc-link.json").exists())
+
     def test_installed_driver_import_does_not_mutate_payload_without_python_environment(self):
         for relative, source in (("bin/crabc-cc-dynamic", Path(driver.__file__)),
                                  ("share/crabc/crabc_cc_static.py", Path(driver.shared.__file__))):

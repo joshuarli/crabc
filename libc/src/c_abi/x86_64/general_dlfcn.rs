@@ -75,7 +75,7 @@ pub unsafe extern "C" fn dlopen(name: *const c_char, flags: c_int) -> *mut c_voi
             13 => b": Permission denied", 22 => b": Invalid argument", 36 => b": Filename too long",
             10001 => b": Invalid ELF object", 10002 => b": Relocation failed",
             10003 => b": TLS preparation failed", 10004 => b": Library is not already loaded",
-            10005 => b": Process finalization has begun", 10008 => b": Lazy relocation is not yet supported",
+            10005 => b": Process finalization has begun",
             _ => b": Loader admission failed",
         };
         unsafe { diagnostic(b"Error loading shared library ", name.cast(), reason); }

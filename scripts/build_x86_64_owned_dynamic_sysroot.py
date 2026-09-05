@@ -176,7 +176,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
         "campaign_complete": False, "public_support": False,
         "modes": ["dynamic-pie", "dynamic-non-pie", "dynamic-shared-object"],
         "dlfcn": "general retained runtime graphs, eager relocation, all-thread DTV growth",
-        "remaining": ["deferred-lazy-relocation", "complete-runtime-search-policy",
+        "remaining": ["complete-runtime-search-policy",
                       "dynamic-fork-repair", "dynamic-main-last-pthread-exit", "complete-dynamic-campaign"]})
     files = {path.relative_to(output).as_posix(): common.sha256_file(path)
              for path in sorted(output.rglob("*")) if path.is_file() and not path.is_symlink()}

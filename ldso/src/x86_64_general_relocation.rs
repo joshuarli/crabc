@@ -73,6 +73,8 @@ struct Definition {
     section: u16,
 }
 
+enum SymbolLookup { Defined(Definition), UndefinedWeak, MissingStrong }
+
 pub(super) enum RuntimeSymbol { Address(u64), Tls { module: usize, offset: usize } }
 
 /// Read-only dlsym lookup over an explicitly owned scope. The same symbol
@@ -134,6 +136,19 @@ unsafe fn lookup(
     scope: &SymbolScope<'_>, objects: &[Object],
     requestor: usize, index: usize, tls: bool, copy: bool,
 ) -> Option<Option<Definition>> {
+    match unsafe { lookup_result(scope, objects, requestor, index, tls, copy) }? {
+        SymbolLookup::Defined(symbol) => Some(Some(symbol)),
+        SymbolLookup::UndefinedWeak => Some(None),
+        SymbolLookup::MissingStrong => None,
+    }
+}
+
+/// Missing strong definitions are distinct from malformed symbol metadata.
+/// Only the former may enter musl's deferred PLT/GOT queue.
+unsafe fn lookup_result(
+    scope: &SymbolScope<'_>, objects: &[Object],
+    requestor: usize, index: usize, tls: bool, copy: bool,
+) -> Option<SymbolLookup> {
     let requested = unsafe { definition(objects, requestor, index) }?;
     if !matches!(requested.binding, 0 | 1 | 2)
         || (requested.binding == 0 && requested.visibility == 3)
@@ -141,7 +156,7 @@ unsafe fn lookup(
         || (!tls && !matches!(requested.kind, 0 | 1 | 2))
     { return None; }
     if !copy && (requested.binding == 0 || requested.visibility != 0) {
-        return (requested.section != 0).then_some(Some(requested));
+        return (requested.section != 0).then_some(SymbolLookup::Defined(requested));
     }
     let name = unsafe { symbol_name(&objects[requestor], index) }?;
     if name.is_empty() { return None; }
@@ -158,16 +173,16 @@ unsafe fn lookup(
                 if (requested.kind == 1 && found.kind == 2)
                     || (requested.kind == 2 && found.kind == 1)
                 { return None; }
-                return Some(Some(found));
+                return Some(SymbolLookup::Defined(found));
             }
         }
     }
     // Undefined weak data/function references become null. A defined COPY
     // destination and TLS module references always require an actual owner.
     if !copy && !tls && requested.section == 0 && requested.binding == 2 {
-        Some(None)
+        Some(SymbolLookup::UndefinedWeak)
     } else {
-        None
+        Some(SymbolLookup::MissingStrong)
     }
 }
 
@@ -279,6 +294,23 @@ unsafe fn word_value(
     }
 }
 
+/// None is invalid relocation; Some(None) is a validated deferred strong
+/// PLT/GOT reference. Weak undefined symbols still receive zero immediately.
+unsafe fn word_resolution(scope: &SymbolScope<'_>, objects: &[Object], owner: usize,
+    kind: u32, index: usize, addend: i64, lazy: bool,
+) -> Option<Option<u64>> {
+    if lazy && index != 0 && matches!(kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) {
+        let name = unsafe { symbol_name(&objects[owner], index) }?;
+        let private = is_private_runtime_symbol(name);
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let private = private || x86_64_initial_worker_tls::runtime_function(name).is_some();
+        if !private && matches!(unsafe { lookup_result(scope, objects, owner, index, false, false) }?, SymbolLookup::MissingStrong) {
+            return Some(None);
+        }
+    }
+    unsafe { word_value(scope, objects, owner, kind, index, addend) }.map(Some)
+}
+
 #[derive(Clone, Copy)]
 struct CopyRelocation { source: u64, destination: u64, length: u64 }
 
@@ -370,6 +402,10 @@ unsafe fn write_span(object: &Object, start: u64, length: u64, word: bool) -> Op
 }
 
 unsafe fn preflight_object(scope: &SymbolScope<'_>, objects: &[Object], owner: usize) -> Option<()> {
+    unsafe { preflight_object_binding(scope, objects, owner, false) }
+}
+
+unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], owner: usize, lazy: bool) -> Option<()> {
     let object = &objects[owner];
     preflight_relocation_table_layout(object)?;
     let mut scratch = unsafe { RelocationScratch::new(object) }?;
@@ -390,7 +426,7 @@ unsafe fn preflight_object(scope: &SymbolScope<'_>, objects: &[Object], owner: u
                 if table != object.rela { return None; }
                 unsafe { copy_relocation(scope, objects, owner, offset, symbol, addend) }?.length
             } else {
-                unsafe { word_value(scope, objects, owner, kind, symbol, addend) }?;
+                unsafe { word_resolution(scope, objects, owner, kind, symbol, addend, lazy) }?;
                 8
             };
             *spans.get_mut(count)? = unsafe { write_span(object, offset, length, kind != R_COPY) }?;
@@ -478,3 +514,7 @@ pub(super) unsafe fn relocate_runtime_objects(
     }
     Some(())
 }
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_deferred_relocations.rs"]
+pub(super) mod deferred;

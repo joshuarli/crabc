@@ -12,8 +12,8 @@
 //! callback ordering, __libc_exit_fini retained finalization, do_dlsym,
 //! dladdr and dl_iterate_phdr behavior; src/ldso/dlclose.c retains maps and
 //! src/ldso/dlinfo.c admits LINKMAP only. Stable raw nodes, typed rollback and
-//! coherent retained TLS views are crabc ownership machinery. Deferred lazy
-//! relocation and full search policy remain explicit unimplemented modes;
+//! coherent retained TLS views and deferred relocation journals are crabc
+//! ownership machinery. Full search policy remains an unqualified mode;
 //! see compat/x86_64/runtime-dynamic-loader.md for source mapping and evidence.
 
 use super::*;
@@ -22,6 +22,7 @@ use super::x86_64_general_initial_lifecycle::GeneralInitialLifecycle;
 use super::x86_64_initial_graph_state::InitialGraphState;
 use super::x86_64_runtime_memory::LoaderBuffer;
 use super::x86_64_runtime_lock::{RuntimeGuard, wait_initialization, wake_initialization};
+use super::x86_64_general_relocation::deferred::{self, PendingRelocations, PreparedRetry};
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicI32, Ordering};
 
@@ -180,12 +181,13 @@ struct RuntimeRegistry {
     shutting_down: bool,
     finalizing: bool,
     initial_order: Option<LoaderBuffer<*mut RuntimeObject>>,
+    deferred: Option<PendingRelocations>,
 }
 impl RuntimeRegistry {
     const fn empty() -> Self { Self { head: core::ptr::null_mut(), tail: core::ptr::null_mut(),
         symbols_head: core::ptr::null_mut(), symbols_tail: core::ptr::null_mut(), fini_head: core::ptr::null_mut(),
         count: 0, initial_count: 0, initial_tls_count: 0, tls_count: 0, additions: 0, shutting_down: false, finalizing: false,
-        initial_order: None } }
+        initial_order: None, deferred: None } }
 }
 struct RegistryCell(UnsafeCell<RuntimeRegistry>);
 unsafe impl Sync for RegistryCell {}
@@ -461,7 +463,6 @@ const ERROR_NOLOAD: i32 = 10004;
 const ERROR_SHUTDOWN: i32 = 10005;
 const ERROR_HANDLE: i32 = 10006;
 const ERROR_SYMBOL: i32 = 10007;
-const ERROR_LAZY: i32 = 10008;
 
 unsafe fn node_name(node: *mut RuntimeObject) -> &'static [u8] {
     let name = unsafe { (*node).name.as_ptr() };
@@ -624,13 +625,8 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
     let scope = unsafe { breadth_first_scope(&snapshot, registry, root, true) }.ok_or(12)?;
     let dependencies = unsafe { breadth_first_scope(&snapshot, registry, root, false) }.ok_or(12)?;
     let constructors = unsafe { constructor_order(&snapshot, root) }.ok_or(12)?;
-    // The installed driver emits DF_BIND_NOW. Lazy mode is therefore source-
-    // faithful for those objects; genuinely lazy unbound DSOs are an explicit
-    // remaining binding mode, not silently treated as eager linkage.
-    if binding == 1 && snapshot.objects.as_slice()[registry.count..].iter().any(|object| !object.bind_now) {
-        return Err(ERROR_LAZY);
-    }
-    unsafe { x86_64_general_relocation::relocate_runtime_objects(snapshot.objects.as_slice(), scope.as_slice(), registry.count, registry.initial_tls_count) }.ok_or(ERROR_RELOCATION)?;
+    let deferred = unsafe { deferred::relocate_new(snapshot.objects.as_slice(), scope.as_slice(), registry.count,
+        registry.initial_tls_count, binding == 1) }.ok_or(ERROR_RELOCATION)?;
     for index in registry.count..snapshot.objects.as_slice().len() {
         let object = &snapshot.objects.as_slice()[index];
         unsafe { preflight_runtime_callbacks(snapshot.nodes.as_slice()[index]) }.ok_or(ERROR_BAD_ELF)?;
@@ -640,6 +636,18 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
     let tls = if tls_count != registry.tls_count {
         Some(unsafe { x86_64_runtime_tls_view::PreparedAllThreads::prepare(guard, snapshot.objects.as_slice()) }.ok_or(ERROR_TLS)?)
     } else { None };
+    // Retry against the final global scope, not the temporary local dependency
+    // scope used above. Promoting an already retained provider is sufficient.
+    let mut final_scope = ObjectOrder { indices: LoaderBuffer::new(scope.count, 0).ok_or(12)?, count: 0 };
+    for &index in scope.as_slice() {
+        if flags & 256 != 0 || unsafe { (*snapshot.nodes.as_slice()[index]).global } {
+            final_scope.indices.as_mut_slice()[final_scope.count] = index;
+            final_scope.count += 1;
+        }
+    }
+    let retry = unsafe { PreparedRetry::prepare(snapshot.objects.as_slice(), final_scope.as_slice(),
+        registry.initial_tls_count, registry.deferred.as_ref(), &deferred) }.ok_or(ERROR_RELOCATION)?;
+    let retry = unsafe { retry.make_writable(guard) }.ok_or(ERROR_RELOCATION)?;
     // No fallible work remains. Worker allocation/release shares this guard;
     // every TP receives its coherent view before the new scope is visible.
     if let Some(tls) = tls { unsafe { tls.publish(); } }
@@ -658,6 +666,7 @@ unsafe fn open_transaction(guard: &RuntimeGuard, filename: &[u8], flags: i32) ->
     if flags & 256 != 0 {
         for &index in dependencies.as_slice() { unsafe { add_global(registry, snapshot.nodes.as_slice()[index]); } }
     }
+    registry.deferred = Some(unsafe { retry.commit() });
     registry.additions = registry.additions.wrapping_add(1);
     Ok((root, snapshot, constructors))
 }

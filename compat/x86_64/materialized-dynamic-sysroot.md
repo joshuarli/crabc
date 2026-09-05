@@ -100,7 +100,7 @@ executable. No application memory callback may run in the shared-address-space
 child or during lock-held spawn stack setup; neither child nor parent uses an
 ambient target executable.
 
-The component gate also runs 43 loader tests, 16 driver/package and two CRT-mode
+The component gate also runs 46 loader tests, 18 driver/package and two CRT-mode
 boundary tests. Two cold producer manifests and deterministic package bytes
 must match; the extracted driver must compile and execute the same consumer.
 These checks do not promote public support or the frozen AArch64 baseline.
@@ -112,7 +112,7 @@ and rollback consumers now run through installed and extracted products with
 pinned musl differentials for both PIE and non-PIE entry. Initial/runtime-loaded constructors that call exit
 must skip their own incomplete destructor, while completed objects finalize;
 `run_general_dynamic_constructor_exit.sh` checks both installed product arms.
-Remaining product work includes deferred lazy relocation, complete runtime search policy and broader
+Remaining product work includes complete runtime search policy and broader
 introspection/order qualification, dynamic fork repair and main-thread pthread_exit
 composition, followed by the complete installed dynamic campaign. Musl's
 retained dlclose mappings, not physical unloading, are the parity target.

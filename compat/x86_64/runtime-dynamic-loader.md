@@ -20,8 +20,9 @@ only new maps. Physical close-time unmapping is not the musl parity target.
 
 `x86_64_general_relocation.rs` now takes borrowed slice-sized scope views and
 uses the same lookup, preflight and apply algorithms for initial and runtime
-transactions. Runtime relocation writes only the new suffix: already retained
-maps supply symbols but are never relocated again. The initial private handoff
+transactions. Ordinary runtime relocation writes only the new suffix: retained
+maps supply symbols, while only explicitly queued deferred GOT/PLT words may
+be filled by a later successful admission. The initial private handoff
 remains initial-only. Runtime GD relocations use monotonic module IDs with no
 initial-array ceiling; TPOFF still requires an initial module with retained
 Variant-II placement. Forty-object and new-GD-versus-IE regressions check the
@@ -90,7 +91,8 @@ installed feature; the old initial execution state serves only cfg-disjoint
 private roots. Runtime nodes own newly mapped objects until relocation,
 callback preflight, protection, RELRO and all-thread TLS preparation succeed.
 Failed transactions drop only these new nodes/maps in reverse order. Retained
-objects are neither relocated again nor made rollback eligible.
+objects are not made rollback eligible; previously resolved words are never
+relocated again.
 
 The mutation boundary is a raw private futex lock, independent of libc malloc
 and the pthread list. Constructor claims identify the executing kernel TID;
@@ -137,16 +139,60 @@ fork support; the full source suite remains parallel.
 
 Runtime counts and scratch allocation are resource-sized. Existing initial
 ELF/path/per-object admission bounds remain; this is not a claim to remove
-every initial parser limit. `RTLD_NOW` is implemented. `RTLD_LAZY` currently
-admits only objects whose ELF requests BIND_NOW (including sealed-driver DSOs),
-and explicitly rejects genuinely deferred objects. Musl's
-`prepare_lazy/redo_lazy_relocs` remains the source target for a subsequent
-deferred GOT/PLT owner; the flag is not silently ignored. Search currently uses
+every initial parser limit. Search currently uses
 the admitted absolute RUNPATH and `/usr/lib`, or a direct pathname. Complete
 caller/ancestor/environment search semantics remain unqualified. Initial
 physical enumeration still follows canonical discovery order, while symbol
 scope is breadth-first; broader initial-graph introspection/order parity needs
 its own differential before qualification.
+
+## Deferred GOT/PLT admission and RELRO safety correction
+
+`x86_64_deferred_relocations.rs` implements pinned musl's
+`prepare_lazy/do_relocs/redo_lazy_relocs`: `RTLD_LAZY` may retain unresolved
+strong GOT/PLT relocations, but not malformed symbols, absolute data/TLS
+relocations, or objects requesting BIND_NOW. Undefined weak references bind
+zero immediately. This is retry-on-later-dlopen behavior, not a first-call
+PLT resolver. Calling a still-unresolved function is not made safe.
+
+The registry retains validated pending coordinates in raw loader-owned
+storage. New relocation preflight includes deferred destinations in the same
+metadata/overlap proof. Retries use prospective final global scope: LOCAL
+provider admission leaves a pending word unchanged, while later NOLOAD/GLOBAL
+promotion can resolve it. Failed graph/TLS/relocation preparation cannot alter
+retained pending words, visibility or TLS descriptors. All registered TLS
+views publish before atomic aligned GOT-pointer stores; no callbacks occur
+under the loader lock.
+
+There is one explicitly isolated pinned-source safety correction. Musl seals
+RELRO in `reloc_all`, then `redo_lazy_relocs` writes deferred GLOB_DAT through
+that read-only page when a provider arrives. The ordinary GOT fixture faults
+with SIGSEGV in pinned musl 1.2.6. Crabc preallocates a page/write journal,
+temporarily makes only affected RELRO pages RW as the final fallible admission
+step, publishes the committed graph/TLS and resolved pointers, and restores
+every page read-only before callbacks or return. Abandonment or a later
+mprotect failure restores earlier pages without writing any pointer. An
+impossible restoration failure terminates rather than exposing a writable
+runtime outside the transaction. This correction is not reported as musl
+parity. Source tests prove actual protection faults after abandonment, late
+permission failure and successful commit, with raw no-libc child isolation.
+
+The installed driver defaults to NOW. `--binding lazy` selects genuine lazy
+ELF; unresolved imports additionally require shared-object-only repeated
+`--runtime-import NAME` declarations. Exact strong undefined object symbols
+are checked against owned definitions before linking, and output dynamic
+imports are checked again. No incidental undefined symbol, foreign provider
+or private fixture graph is admitted; the receipt records binding and imports.
+
+`run_general_dynamic_lazy.sh` runs installed/extracted PIE and non-PIE
+consumers. It checks NOW rejection, deferred PLT/GOT admission, a later failed
+absolute relocation leaving old GOT bytes/object count/visibility unchanged,
+LOCAL versus GLOBAL promotion, preexisting-worker GD TLS, retained close, and
+read-only GOT protection after completion. PLT output is a musl differential;
+the GOT/RELRO fault versus success is the isolated safety correction above.
+The prior retained loader rejects the same lazy consumer with status 2 before
+callbacks. The complete dynamic campaign, search policy, dynamic fork and
+main/last-thread process-exit qualification remain open.
 
 Dynamic fork repair and
 main/last-thread pthread_exit remain explicitly unqualified and cfg-excluded
