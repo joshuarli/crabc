@@ -136,6 +136,15 @@ and dynamic TLS, DTV/module lifecycle, DSO init/fini, dl*, locking, retained clo
 and admitted reentrancy covered by its contracts. Fixed graphs and isolated
 artifacts are not equivalent.
 
+[owned-libc-test.md](owned-libc-test.md) defines the finite 434-source
+upstream libc-test aggregate. It keeps the pinned source graph, installed
+header traces, same-object pinned-musl links, sealed full product and oracle
+identities, and fresh raw/candidate runtime roots in one non-promoting report.
+Its source-selected normal kernel-PIE corpus is separate from the 50-case
+all-entry dynamic-product qualification. Its leaf requires a materialized
+dynamic product and runs only through the root-capable native container command
+registered by the dispatcher.
+
 The ordered qualification chain is:
 
 ```
