@@ -32,7 +32,26 @@ static mut SHARED_RECORD: Passwd = EMPTY;
 static mut STREAM_LINE: *mut c_char = ptr::null_mut();
 static mut STREAM_RECORD: Passwd = EMPTY;
 
-unsafe extern "C" { fn free(allocation: *mut c_void); }
+// getline is a public C provider: it obtains its private line through the
+// executable's malloc-family boundary. The matching release must cross that
+// exact boundary too. A Rust extern `free` can instead be folded into this
+// crate's known mimalloc implementation, so retain an opaque tail which the
+// linker resolves through the ordinary public C PLT entry.
+core::arch::global_asm!(r#"
+    .text
+    .p2align 4
+    .globl __crabc_x86_passwd_cabi_free
+    .hidden __crabc_x86_passwd_cabi_free
+    .type __crabc_x86_passwd_cabi_free,@function
+__crabc_x86_passwd_cabi_free:
+    jmp free
+    .size __crabc_x86_passwd_cabi_free, .-__crabc_x86_passwd_cabi_free
+"#);
+
+unsafe extern "C" {
+    #[link_name = "__crabc_x86_passwd_cabi_free"]
+    fn passwd_cabi_free(allocation: *mut c_void);
+}
 
 unsafe fn disable_cancellation() -> c_int {
     let mut old = 0;
@@ -84,7 +103,7 @@ unsafe fn next_record(stream: *mut StandardStream, record: *mut Passwd,
             let length = stdio::getline(line, capacity, stream);
             if length < 0 {
                 error = if stdio::ferror(stream) != 0 { errno::get_errno() } else { 0 };
-                free((*line).cast()); *line = ptr::null_mut(); found = ptr::null_mut(); break;
+                passwd_cabi_free((*line).cast()); *line = ptr::null_mut(); found = ptr::null_mut(); break;
             }
             *(*line).add(length as usize - 1) = 0;
             (*record).name = *line;
@@ -154,7 +173,7 @@ unsafe fn lookup_reentrant(name: *const c_char, uid: u32, record: *mut Passwd,
             (*record).directory = buffer.add((*record).directory.offset_from(line) as usize);
             (*record).shell = buffer.add((*record).shell.offset_from(line) as usize);
         }
-        free(line.cast());
+        passwd_cabi_free(line.cast());
         restore_cancellation(old);
         if error != 0 { errno::set_errno(error); }
         error

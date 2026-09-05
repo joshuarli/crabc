@@ -103,6 +103,11 @@ interposition. Its [component record](owned-stdio-allocator-interposition.md)
 binds the retained upstream `flockfile-list` order to the installed PLT
 allocator boundary and stale-lock storage check.
 
+`./scripts/dev-x86_64.sh owned-c-allocation-interposition` is the focused
+dynamic allocation-boundary check for caller-owned `asprintf` bytes and passwd
+temporary `getline` cleanup. Its [component record](owned-c-allocation-interposition.md)
+keeps those executable allocator edges distinct from the FILE-lifetime receipt.
+
 ## Boundary and caveats
 
 The campaign covers Linux 5.10-or-newer, native x86-64 little-endian execution,

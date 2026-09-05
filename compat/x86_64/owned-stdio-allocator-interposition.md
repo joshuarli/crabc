@@ -39,8 +39,8 @@ held-live pthread CPU-clock regression, early worker signal-handler fork, and al
 for both independent builds and the extracted package. Each product needs its
 own receipt; a focused standalone pass cannot replace those receipts.
 
-This receipt is limited to the owned FILE allocation clients. Other x86
-direct malloc-family clients remain separately owned and need their own
-interposition audit before their allocation lifetimes can claim this property:
-`owned_printf.rs::vasprintf`, `owned_timezone.rs`, `owned_passwd.rs`, and
-`owned_classic_netdb.rs`.
+This receipt is limited to owned FILE allocation clients.
+`owned-c-allocation-interposition.md` separately audits the public `vasprintf`
+and passwd line-lifecycle edges. `owned_timezone.rs` and
+`owned_classic_netdb.rs` remain separately owned allocator clients and do not
+inherit an interposition claim from either focused receipt.
