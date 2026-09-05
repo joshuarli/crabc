@@ -38,6 +38,7 @@ x86-allocator-string-duplication = ["x86-allocator-runtime"]
 # remain gated here so default and older private fixture archives keep their
 # exact contracts.
 x86-owned-static-runtime = [
+    "x86-math-long-double-completion",
     "x86-allocator-runtime",
     "x86-allocator-observability",
     "x86-allocator-string-duplication",
