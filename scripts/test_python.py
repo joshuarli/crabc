@@ -34,9 +34,12 @@ RUN_ROOT_NAME: Final = "python-test-runs"
 DEFAULT_JOBS_CAP: Final = 4
 MAX_JOBS: Final = 8
 DEFAULT_TIMEOUT_SECONDS: Final = 300.0
+DEFAULT_CASE_SHARD_SIZE: Final = 40
 TERMINATION_GRACE_SECONDS: Final = 2.0
 LOG_TAIL_BYTES: Final = 64 * 1024
 RESULT_PREFIX: Final = "CRABC_PYTHON_TEST_RESULT "
+PROGRESS_PREFIX: Final = "CRABC_PYTHON_TEST_PROGRESS "
+PARITY_LEDGER_TEST_MODULE: Final = "compat/x86_64/tests/test_parity_ledger.py"
 
 
 class TestPythonError(RuntimeError):
@@ -55,6 +58,14 @@ class WorkerPaths:
     stderr: Path
 
 
+@dataclass(frozen=True)
+class TestJob:
+    """One module or an isolated, selected-case subset of one module."""
+
+    module: Path
+    case_ids: tuple[str, ...] = ()
+
+
 @dataclass
 class ActiveWorker:
     """A started module process and its immutable accounting information."""
@@ -64,6 +75,19 @@ class ActiveWorker:
     process: subprocess.Popen[bytes]
     started_at: float
     paths: WorkerPaths
+    case_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class WorkerProgress:
+    """Last flushed case boundary, usable when a worker has no final record."""
+
+    tests_started: int
+    tests_completed: int
+    current_test_id: str | None
+    current_started_at: float | None
+    last_test_id: str | None
+    last_elapsed_seconds: float | None
 
 
 @dataclass(frozen=True)
@@ -75,8 +99,12 @@ class ModuleResult:
     status: str
     elapsed_seconds: float
     tests_run: int
+    tests_completed: int
     exit_code: int | None
     paths: WorkerPaths
+    case_ids: tuple[str, ...]
+    current_test_id: str | None
+    current_test_elapsed_seconds: float | None
 
 
 def relative_to_repository(path: Path) -> str:
@@ -194,6 +222,67 @@ def select_modules(args: argparse.Namespace) -> list[Path]:
     return modules
 
 
+def test_cases_in_suite(suite: unittest.TestSuite | unittest.TestCase) -> list[unittest.TestCase]:
+    """Flatten discovery without running test setup or test bodies."""
+
+    if isinstance(suite, unittest.TestSuite):
+        cases: list[unittest.TestCase] = []
+        for child in suite:
+            cases.extend(test_cases_in_suite(child))
+        return cases
+    if not isinstance(suite, unittest.TestCase):
+        raise TestPythonError("discovery error: suite contains a non-test case")
+    return [suite]
+
+
+def parity_ledger_case_ids(module: Path) -> tuple[str, ...]:
+    """Discover the audited parity tests once, solely to form safe case shards."""
+
+    if relative_to_repository(module) != PARITY_LEDGER_TEST_MODULE:
+        raise TestPythonError(
+            "case sharding is currently limited to " + PARITY_LEDGER_TEST_MODULE
+        )
+    original_dont_write_bytecode = sys.dont_write_bytecode
+    sys.dont_write_bytecode = True
+    try:
+        suite = unittest.defaultTestLoader.discover(str(module.parent), pattern=module.name)
+    finally:
+        sys.dont_write_bytecode = original_dont_write_bytecode
+    case_ids = tuple(case.id() for case in test_cases_in_suite(suite))
+    if len(set(case_ids)) != len(case_ids):
+        raise TestPythonError("case-shard discovery produced duplicate test IDs")
+    return case_ids
+
+
+def select_jobs(args: argparse.Namespace) -> list[TestJob]:
+    """Keep ordinary module selection cold; split only explicit case jobs."""
+
+    modules = select_modules(args)
+    if args.case_ids:
+        if args.directory is not None or len(modules) != 1:
+            raise TestPythonError("selected cases require exactly one --module selection")
+        if len(set(args.case_ids)) != len(args.case_ids):
+            raise TestPythonError("selected cases must not contain duplicate test IDs")
+        case_ids = tuple(args.case_ids)
+    elif args.case_shard_size is None:
+        return [TestJob(module) for module in modules]
+    elif args.directory is not None or len(modules) != 1:
+        raise TestPythonError("case sharding requires exactly one --module selection")
+    else:
+        case_ids = parity_ledger_case_ids(modules[0])
+
+    if args.case_shard_size is None:
+        return [TestJob(modules[0], case_ids)]
+    if not case_ids:
+        # Preserve the ordinary zero-test outcome instead of silently passing
+        # an empty sharded selection.
+        return [TestJob(modules[0])]
+    return [
+        TestJob(modules[0], case_ids[index : index + args.case_shard_size])
+        for index in range(0, len(case_ids), args.case_shard_size)
+    ]
+
+
 def worker_paths(run_root: Path, index: int, module: Path) -> WorkerPaths:
     """Create a unique, stable-named private directory for one module."""
 
@@ -237,15 +326,17 @@ def worker_environment(paths: WorkerPaths, run_root: Path) -> dict[str, str]:
     return environment
 
 
-def start_worker(index: int, module: Path, paths: WorkerPaths, run_root: Path) -> ActiveWorker:
+def start_worker(index: int, job: TestJob, paths: WorkerPaths, run_root: Path) -> ActiveWorker:
     """Start one isolated worker with captured logs and a new process group."""
 
     command = [
         sys.executable,
         str(Path(__file__).resolve()),
         "--worker",
-        relative_to_repository(module),
+        relative_to_repository(job.module),
     ]
+    for case_id in job.case_ids:
+        command.extend(("--worker-case", case_id))
     with paths.stdout.open("wb") as stdout, paths.stderr.open("wb") as stderr:
         process = subprocess.Popen(
             command,
@@ -256,7 +347,7 @@ def start_worker(index: int, module: Path, paths: WorkerPaths, run_root: Path) -
             stderr=stderr,
             start_new_session=True,
         )
-    return ActiveWorker(index, module, process, time.monotonic(), paths)
+    return ActiveWorker(index, job.module, process, time.monotonic(), paths, job.case_ids)
 
 
 def read_log_tail(path: Path) -> str:
@@ -287,6 +378,64 @@ def worker_payload(path: Path) -> dict[str, int] | None:
         ):
             return None
         return decoded
+    return None
+
+
+def worker_progress(path: Path) -> WorkerProgress | None:
+    """Read the last complete per-case checkpoint from one private worker log."""
+
+    for line in reversed(read_log_tail(path).splitlines()):
+        if not line.startswith(PROGRESS_PREFIX):
+            continue
+        try:
+            decoded = json.loads(line.removeprefix(PROGRESS_PREFIX))
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(decoded, dict) or set(decoded) != {
+            "tests_started",
+            "tests_completed",
+            "current_test_id",
+            "current_started_at",
+            "last_test_id",
+            "last_elapsed_seconds",
+        }:
+            return None
+        started = decoded["tests_started"]
+        completed = decoded["tests_completed"]
+        if (
+            type(started) is not int
+            or type(completed) is not int
+            or started < completed
+            or completed < 0
+        ):
+            return None
+        current = decoded["current_test_id"]
+        current_started_at = decoded["current_started_at"]
+        last = decoded["last_test_id"]
+        last_elapsed = decoded["last_elapsed_seconds"]
+        if current is not None and not isinstance(current, str):
+            return None
+        if last is not None and not isinstance(last, str):
+            return None
+        if current_started_at is not None and (
+            type(current_started_at) not in (int, float)
+            or not math.isfinite(current_started_at)
+        ):
+            return None
+        if last_elapsed is not None and (
+            type(last_elapsed) not in (int, float)
+            or not math.isfinite(last_elapsed)
+            or last_elapsed < 0
+        ):
+            return None
+        return WorkerProgress(
+            started,
+            completed,
+            current,
+            current_started_at,
+            last,
+            last_elapsed,
+        )
     return None
 
 
@@ -358,18 +507,47 @@ def completed_result(worker: ActiveWorker, status: str | None = None) -> ModuleR
     elapsed = time.monotonic() - worker.started_at
     exit_code = worker.process.returncode
     payload = worker_payload(worker.paths.stdout)
+    progress = worker_progress(worker.paths.stdout)
+    tests_run = 0 if payload is None else payload["tests_run"]
+    tests_completed = tests_run
+    current_test_id = None
+    current_test_elapsed_seconds = None
+    if progress is not None:
+        if payload is None:
+            tests_run = progress.tests_started
+        tests_completed = progress.tests_completed
+        current_test_id = progress.current_test_id
+        if progress.current_started_at is not None:
+            current_test_elapsed_seconds = max(
+                0.0, time.monotonic() - progress.current_started_at
+            )
     if status is not None:
-        tests_run = 0 if payload is None else payload["tests_run"]
-        return ModuleResult(worker.index, worker.module, status, elapsed, tests_run, exit_code, worker.paths)
+        return ModuleResult(
+            worker.index,
+            worker.module,
+            status,
+            elapsed,
+            tests_run,
+            tests_completed,
+            exit_code,
+            worker.paths,
+            worker.case_ids,
+            current_test_id,
+            current_test_elapsed_seconds,
+        )
     if payload is None:
         return ModuleResult(
             worker.index,
             worker.module,
             "worker-protocol-error",
             elapsed,
-            0,
+            tests_run,
+            tests_completed,
             exit_code,
             worker.paths,
+            worker.case_ids,
+            current_test_id,
+            current_test_elapsed_seconds,
         )
     if payload["discovery_errors"]:
         state = "discovery-error"
@@ -384,9 +562,13 @@ def completed_result(worker: ActiveWorker, status: str | None = None) -> ModuleR
         worker.module,
         state,
         elapsed,
-        payload["tests_run"],
+        tests_run,
+        tests_completed,
         exit_code,
         worker.paths,
+        worker.case_ids,
+        current_test_id,
+        current_test_elapsed_seconds,
     )
 
 
@@ -397,10 +579,10 @@ def terminate_active_workers(active: Iterable[ActiveWorker]) -> None:
         terminate_worker_group(worker)
 
 
-def run_modules(modules: Sequence[Path], jobs: int, timeout_seconds: float, run_root: Path) -> tuple[list[ModuleResult], int | None]:
-    """Schedule modules up to ``jobs`` at once and preserve discovery ordering."""
+def run_modules(jobs_to_run: Sequence[TestJob], jobs: int, timeout_seconds: float, run_root: Path) -> tuple[list[ModuleResult], int | None]:
+    """Schedule isolated module or selected-case jobs in stable discovery order."""
 
-    pending = iter(enumerate(modules, start=1))
+    pending = iter(enumerate(jobs_to_run, start=1))
     active: dict[int, ActiveWorker] = {}
     results: list[ModuleResult] = []
     interrupted_by: int | None = None
@@ -421,12 +603,12 @@ def run_modules(modules: Sequence[Path], jobs: int, timeout_seconds: float, run_
 
             while len(active) < jobs and not exhausted:
                 try:
-                    index, module = next(pending)
+                    index, job = next(pending)
                 except StopIteration:
                     exhausted = True
                     break
-                paths = worker_paths(run_root, index, module)
-                active[index] = start_worker(index, module, paths, run_root)
+                paths = worker_paths(run_root, index, job.module)
+                active[index] = start_worker(index, job, paths, run_root)
 
             made_progress = False
             now = time.monotonic()
@@ -463,9 +645,16 @@ def describe_result(result: ModuleResult) -> str:
 
     logs = f"{relative_to_repository(result.paths.stdout)}, {relative_to_repository(result.paths.stderr)}"
     exit_detail = "" if result.exit_code is None else f", exit={result.exit_code}"
+    progress_detail = f", completed={result.tests_completed}"
+    if result.current_test_id is not None:
+        current_elapsed = ""
+        if result.current_test_elapsed_seconds is not None:
+            current_elapsed = f" {result.current_test_elapsed_seconds:.1f}s"
+        progress_detail += f", current={result.current_test_id}{current_elapsed}"
     return (
         f"  {result.status.upper()} {relative_to_repository(result.module)} "
-        f"({result.elapsed_seconds:.1f}s, tests={result.tests_run}{exit_detail}; logs: {logs})"
+        f"({result.elapsed_seconds:.1f}s, tests={result.tests_run}{progress_detail}"
+        f"{exit_detail}; logs: {logs})"
     )
 
 
@@ -475,8 +664,11 @@ def print_summary(results: Sequence[ModuleResult], jobs: int, run_root: Path, st
     ordered = sorted(results, key=lambda result: result.index)
     failures = [result for result in ordered if result.status != "passed"]
     tests_run = sum(result.tests_run for result in ordered)
+    tests_completed = sum(result.tests_completed for result in ordered)
     elapsed = time.monotonic() - started_at
     artifact_root = relative_to_repository(run_root)
+    sharded = any(result.case_ids for result in ordered)
+    unit = "jobs" if sharded else "modules"
     # Retain successful-module timings too: throughput decisions need the
     # whole workload, not only the slow modules that happened to fail. This
     # private run owns the sidecar; no shared timing cache or scheduler state.
@@ -484,14 +676,19 @@ def print_summary(results: Sequence[ModuleResult], jobs: int, run_root: Path, st
         "schema": 1,
         "jobs": jobs,
         "tests_run": tests_run,
+        "tests_completed": tests_completed,
         "elapsed_seconds": elapsed,
         "modules": [
             {
                 "module": relative_to_repository(result.module),
                 "status": result.status,
                 "tests_run": result.tests_run,
+                "tests_completed": result.tests_completed,
                 "exit_code": result.exit_code,
                 "elapsed_seconds": result.elapsed_seconds,
+                "selected_case_ids": list(result.case_ids),
+                "current_test_id": result.current_test_id,
+                "current_test_elapsed_seconds": result.current_test_elapsed_seconds,
             }
             for result in ordered
         ],
@@ -501,14 +698,15 @@ def print_summary(results: Sequence[ModuleResult], jobs: int, run_root: Path, st
         stream.write("\n")
     if not failures:
         print(
-            f"test-python: passed {len(ordered)} modules / {tests_run} tests "
+            f"test-python: passed {len(ordered)} {unit} / {tests_run} tests "
             f"in {elapsed:.1f}s (jobs={jobs}); logs: {artifact_root}"
         )
         return 0
 
     print(
-        f"test-python: {len(failures)} of {len(ordered)} modules failed "
-        f"after {elapsed:.1f}s (tests={tests_run}, jobs={jobs}); logs: {artifact_root}"
+        f"test-python: {len(failures)} of {len(ordered)} {unit} failed "
+        f"after {elapsed:.1f}s (tests={tests_run}, completed={tests_completed}, jobs={jobs}); "
+        f"logs: {artifact_root}"
     )
     print("test-python: ordered failures:")
     for result in failures:
@@ -527,6 +725,22 @@ def failed_test_count(suite: unittest.TestSuite | unittest.TestCase) -> int:
     return 0
 
 
+def selected_case_suite(
+    suite: unittest.TestSuite | unittest.TestCase, case_ids: Sequence[str]
+) -> unittest.TestSuite | unittest.TestCase:
+    """Select exact discovered IDs without importing a second copy of a module."""
+
+    if not case_ids:
+        return suite
+    if len(set(case_ids)) != len(case_ids):
+        raise TestPythonError("worker selected duplicate test case IDs")
+    by_id = {case.id(): case for case in test_cases_in_suite(suite)}
+    missing = [case_id for case_id in case_ids if case_id not in by_id]
+    if missing:
+        raise TestPythonError("worker selected test case was not discovered: " + missing[0])
+    return unittest.TestSuite(by_id[case_id] for case_id in case_ids)
+
+
 class ImmediateDiagnosticResult(unittest.TextTestResult):
     """Retain normal unittest accounting but flush each failure immediately.
 
@@ -534,6 +748,52 @@ class ImmediateDiagnosticResult(unittest.TextTestResult):
     last test finishes. Logs remain worker-private; only diagnostic timing
     changes, not test selection, assertions, or the parent's result protocol.
     """
+
+    def __init__(self, *arguments, **keywords) -> None:
+        super().__init__(*arguments, **keywords)
+        self._tests_completed = 0
+        self._current_test_id: str | None = None
+        self._current_started_at: float | None = None
+        self._last_test_id: str | None = None
+        self._last_elapsed_seconds: float | None = None
+        self.emit_progress()
+
+    def emit_progress(self) -> None:
+        """Flush a compact checkpoint so a killed worker retains its position."""
+
+        print(
+            PROGRESS_PREFIX
+            + json.dumps(
+                {
+                    "tests_started": self.testsRun,
+                    "tests_completed": self._tests_completed,
+                    "current_test_id": self._current_test_id,
+                    "current_started_at": self._current_started_at,
+                    "last_test_id": self._last_test_id,
+                    "last_elapsed_seconds": self._last_elapsed_seconds,
+                },
+                sort_keys=True,
+            ),
+            flush=True,
+        )
+
+    def startTest(self, test) -> None:
+        super().startTest(test)
+        self._current_test_id = test.id()
+        self._current_started_at = time.monotonic()
+        self.emit_progress()
+
+    def stopTest(self, test) -> None:
+        started_at = self._current_started_at
+        super().stopTest(test)
+        self._tests_completed += 1
+        self._last_test_id = test.id()
+        self._last_elapsed_seconds = 0.0 if started_at is None else max(
+            0.0, time.monotonic() - started_at
+        )
+        self._current_test_id = None
+        self._current_started_at = None
+        self.emit_progress()
 
     def emit_latest(self, label: str, records: list) -> None:
         self.stream.writeln()
@@ -568,7 +828,7 @@ class ImmediateDiagnosticResult(unittest.TextTestResult):
             self.stream.writeln()
 
 
-def worker_main(raw_module: str) -> int:
+def worker_main(raw_module: str, case_ids: Sequence[str]) -> int:
     """Private child entry point; its JSON line is the parent protocol."""
 
     try:
@@ -582,6 +842,7 @@ def worker_main(raw_module: str) -> int:
             raise TestPythonError(f"worker test module must be a regular Python file: {raw_module}")
         suite = unittest.defaultTestLoader.discover(str(module.parent), pattern=module.name)
         discovery_errors = failed_test_count(suite)
+        suite = selected_case_suite(suite, case_ids)
         result = unittest.TextTestRunner(
             verbosity=1, stream=sys.stderr, resultclass=ImmediateDiagnosticResult
         ).run(suite)
@@ -619,28 +880,55 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         default=[],
         help="repository-relative test file; may be repeated",
     )
+    parser.add_argument(
+        "--case",
+        dest="case_ids",
+        action="append",
+        default=[],
+        help="exact unittest ID; requires one --module and may be repeated",
+    )
     parser.add_argument("--pattern", default="test_*.py", help="filename pattern for --directory (default: %(default)s)")
     parser.add_argument("--jobs", type=int, help=f"workers, from 1 to {MAX_JOBS} (default: conservative CPU bound)")
     parser.add_argument(
         "--timeout",
         type=float,
         default=DEFAULT_TIMEOUT_SECONDS,
-        help=f"per-module seconds before group termination (default: {DEFAULT_TIMEOUT_SECONDS:g})",
+        help=f"per-worker seconds before group termination (default: {DEFAULT_TIMEOUT_SECONDS:g})",
+    )
+    parser.add_argument(
+        "--case-shard-size",
+        type=int,
+        help=(
+            "split the audited parity-ledger module into selected-case workers "
+            f"of this size (use {DEFAULT_CASE_SHARD_SIZE} for the normal bounded shard)"
+        ),
     )
     parser.add_argument("--worker", help=argparse.SUPPRESS)
+    parser.add_argument("--worker-case", action="append", default=[], help=argparse.SUPPRESS)
     args = parser.parse_args(arguments)
     if args.worker is not None:
-        if args.directory is not None or args.modules:
+        if (
+            args.directory is not None
+            or args.modules
+            or args.case_ids
+            or args.case_shard_size is not None
+        ):
             parser.error("--worker cannot be combined with test selection")
         return args
+    if args.worker_case:
+        parser.error("--worker-case is only valid with --worker")
     if args.directory is None and not args.modules:
         parser.error("one of --directory or --module is required")
+    if args.case_ids and args.directory is not None:
+        parser.error("--case requires exactly one --module selection")
     if args.jobs is None:
         args.jobs = min(max(1, os.cpu_count() or 1), DEFAULT_JOBS_CAP)
     if not 1 <= args.jobs <= MAX_JOBS:
         parser.error(f"--jobs must be between 1 and {MAX_JOBS}")
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         parser.error("--timeout must be finite and greater than zero")
+    if args.case_shard_size is not None and args.case_shard_size <= 0:
+        parser.error("--case-shard-size must be greater than zero")
     return args
 
 
@@ -665,12 +953,12 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     args = parse_args(arguments)
     if args.worker is not None:
-        return worker_main(args.worker)
+        return worker_main(args.worker, args.worker_case)
     try:
-        modules = select_modules(args)
+        jobs_to_run = select_jobs(args)
         run_root = new_run_root()
         started_at = time.monotonic()
-        results, interrupted_by = run_modules(modules, args.jobs, args.timeout, run_root)
+        results, interrupted_by = run_modules(jobs_to_run, args.jobs, args.timeout, run_root)
         if interrupted_by is not None:
             print(
                 f"test-python: interrupted by signal {interrupted_by}; "

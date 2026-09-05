@@ -183,6 +183,78 @@ class SelectedTests(unittest.TestCase):
         self.assertEqual(zero.returncode, 1, zero.stdout + zero.stderr)
         self.assertIn("ZERO-TESTS", zero.stdout)
 
+    def test_selected_cases_run_in_private_bounded_shards(self) -> None:
+        module = self.write_module(
+            "test_sharded.py",
+            """\
+import unittest
+
+class ShardedTests(unittest.TestCase):
+    def test_a(self): self.assertTrue(True)
+    def test_b(self): self.assertTrue(True)
+    def test_c(self): self.assertTrue(True)
+    def test_d(self): self.assertTrue(True)
+    def test_e(self): self.assertTrue(True)
+""",
+        )
+        case_ids = [f"test_sharded.ShardedTests.test_{name}" for name in "abcde"]
+        result = self.invoke(
+            "--module",
+            self.relative(module),
+            *(argument for case_id in case_ids for argument in ("--case", case_id)),
+            "--case-shard-size",
+            "2",
+            "--jobs",
+            "2",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("passed 3 jobs / 5 tests", result.stdout)
+        summary = json.loads((self.only_run_root() / "summary.json").read_text())
+        self.assertEqual(summary["jobs"], 2)
+        self.assertEqual(summary["tests_run"], 5)
+        self.assertEqual(summary["tests_completed"], 5)
+        self.assertEqual(
+            [row["selected_case_ids"] for row in summary["modules"]],
+            [case_ids[:2], case_ids[2:4], case_ids[4:]],
+        )
+        for index, row in enumerate(summary["modules"], start=1):
+            self.assertEqual(row["status"], "passed")
+            self.assertEqual(row["tests_run"], len(row["selected_case_ids"]))
+            self.assertEqual(row["tests_completed"], len(row["selected_case_ids"]))
+            self.assertIsNone(row["current_test_id"])
+            worker = self.only_run_root() / "modules" / f"{index:03d}-test-sharded"
+            progress = [
+                line
+                for line in (worker / "stdout.log").read_text().splitlines()
+                if line.startswith(RUNNER_MODULE.PROGRESS_PREFIX)
+            ]
+            self.assertGreaterEqual(len(progress), 1 + 2 * len(row["selected_case_ids"]))
+
+    def test_parity_ledger_shards_its_discovered_ids_without_running_them(self) -> None:
+        arguments = RUNNER_MODULE.parse_args(
+            [
+                "--module",
+                RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE,
+                "--case-shard-size",
+                str(RUNNER_MODULE.DEFAULT_CASE_SHARD_SIZE),
+                "--jobs",
+                "4",
+            ]
+        )
+        discovered = RUNNER_MODULE.parity_ledger_case_ids(
+            ROOT / RUNNER_MODULE.PARITY_LEDGER_TEST_MODULE
+        )
+        jobs = RUNNER_MODULE.select_jobs(arguments)
+
+        self.assertGreater(len(discovered), 300)
+        self.assertEqual(
+            tuple(case_id for job in jobs for case_id in job.case_ids), discovered
+        )
+        self.assertTrue(
+            all(0 < len(job.case_ids) <= RUNNER_MODULE.DEFAULT_CASE_SHARD_SIZE for job in jobs)
+        )
+
     def test_core_dumps_are_disabled_before_module_import_and_in_descendants(self) -> None:
         module = self.write_module(
             "test_core_policy.py",
@@ -323,6 +395,15 @@ class TimeoutTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("TIMEOUT", result.stdout)
         run_root = self.only_run_root()
+        summary = json.loads((run_root / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["tests_run"], 1)
+        self.assertEqual(summary["tests_completed"], 0)
+        timeout_row = summary["modules"][0]
+        self.assertEqual(
+            timeout_row["current_test_id"],
+            "test_timeout.TimeoutTests.test_hangs_with_a_descendant",
+        )
+        self.assertGreater(timeout_row["current_test_elapsed_seconds"], 0)
         child_pid = int((run_root / "modules/001-test-timeout/child-pid").read_text(encoding="utf-8"))
         self.assert_stopped(child_pid, "timeout left the worker descendant running")
 
