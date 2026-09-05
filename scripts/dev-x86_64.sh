@@ -2687,6 +2687,32 @@ run_in_chroot_cap_container() {
         "$IMAGE" "$@"
 }
 
+# The installed loader's executable-ORIGIN and AT_SECURE evidence mounts a
+# read-only proc filesystem inside disposable child roots, with trap-owned
+# unmount cleanup. Only this gate admits mount authority and disables the
+# container AppArmor profile; its mount namespace contains those changes.
+run_in_dynamic_loader_mount_container() {
+    prepare_work_dir
+    docker run --rm --init \
+        --platform "$PLATFORM" \
+        --cap-add=SYS_CHROOT \
+        --cap-add=SYS_ADMIN \
+        --security-opt=apparmor=unconfined \
+        --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$IMAGE" "$@"
+}
+
 # Only the UTS-identity artifact needs SYS_ADMIN, solely to create a fresh UTS
 # namespace before its fixture changes hostname/domain-name state. Keeping this
 # grant off the shared runner and all other artifact commands does not select a
@@ -7525,7 +7551,7 @@ case "$command" in
     materialized-dynamic-sysroot)
         [ "$#" -eq 0 ] || fail "materialized-dynamic-sysroot takes no arguments"
         ensure_image
-        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh
         ;;
     crt-object-bundle)
         [ "$#" -eq 0 ] || fail "crt-object-bundle takes no arguments"

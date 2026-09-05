@@ -141,3 +141,15 @@ work includes full system-path/preload policy, broader introspection/order
 qualification and dynamic fork repair (still explicitly `EAGAIN`), followed
 by the complete installed dynamic campaign. Musl's
 retained dlclose mappings, not physical unloading, are the parity target.
+
+### Contained process search evidence
+
+The native dispatcher gives only `materialized-dynamic-sysroot` the additional
+mount authority needed for the main-executable ORIGIN and secure-execution
+search matrix: `SYS_ADMIN`, `SYS_CHROOT`, and an unconfined container AppArmor
+profile. It retains Docker's separate mount and PID namespaces. The fixture
+owns a read-only proc mount beneath a disposable `.work/x86_64` child root,
+unmounts it on completion or failure, and retires temporary setuid permissions.
+Other chroot consumers use the existing narrower container helper.
+`tests/test_dynamic_loader_dispatch.py` observes actual Docker arguments for
+the dynamic product, wordexp, and CRT dispatches to guard that boundary.
