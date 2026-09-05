@@ -58,6 +58,8 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("owned-quick-exit", False),
                 ("owned-legacy-time", False),
                 ("owned-syslog", False),
+                ("owned-credentials-profile", False),
+                ("owned-credentials-profile-product", False),
                 ("owned-pthread-spin", False),
                 ("owned-process-trio", False),
                 ("owned-process-control", False),
@@ -80,7 +82,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                     selected_command = (["qualification-manifest", "--through", "compat.abi-differential"]
                         if command == "qualification-manifest-prefix" else
                         [command.removesuffix("-product"), "/workspace/.work/x86_64/supplied-product"]
-                        if command in ("owned-signal-helpers-product", "owned-pty-product", "owned-named-ipc-product", "owned-passwd-product", "owned-message-queues-product") else [command])
+                        if command in ("owned-signal-helpers-product", "owned-pty-product", "owned-named-ipc-product", "owned-passwd-product", "owned-message-queues-product", "owned-credentials-profile-product") else [command])
                     result = subprocess.run(
                         ["bash", str(ROOT / "scripts/dev-x86_64.sh"), *selected_command],
                         cwd=ROOT, env=environment, capture_output=True, text=True,
@@ -91,18 +93,27 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                     for arguments in invocations:
                         self.assertEqual("--cap-add=SYS_ADMIN" in arguments, needs_mount)
                         self.assertEqual("--security-opt=apparmor=unconfined" in arguments, needs_mount)
+                        self.assertEqual(
+                            "--security-opt=seccomp=unconfined" in arguments,
+                            command in (
+                                "materialized-dynamic-sysroot",
+                                "owned-dynamic-sysroot",
+                                "owned-credentials-profile",
+                                "owned-credentials-profile-product",
+                            ),
+                        )
                         self.assertNotIn("--privileged", arguments)
                         self.assertNotIn("--pid=host", arguments)
                         self.assertNotIn("--ipc=host", arguments)
                         self.assertNotIn("--userns=host", arguments)
                         self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", arguments)
-                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-quick-exit", "owned-legacy-time", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio", "owned-process-control", "owned-signal-helpers", "owned-filesystem-mechanisms", "owned-error-reporting", "owned-named-ipc", "owned-vm-mechanisms", "owned-passwd", "owned-group", "owned-message-queues", "owned-pattern", "owned-posix-filesystem", "owned-unix-mechanisms"):
+                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-quick-exit", "owned-legacy-time", "owned-atfork-registry", "owned-syslog", "owned-credentials-profile", "owned-pthread-spin", "owned-process-trio", "owned-process-control", "owned-signal-helpers", "owned-filesystem-mechanisms", "owned-error-reporting", "owned-named-ipc", "owned-vm-mechanisms", "owned-passwd", "owned-group", "owned-message-queues", "owned-pattern", "owned-posix-filesystem", "owned-unix-mechanisms"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-2:], [
                             "bash", "/workspace/compat/x86_64/run_" + command.replace("-", "_") + ".sh",
                         ])
-                    if command in ("owned-signal-helpers-product", "owned-pty-product", "owned-passwd-product"):
+                    if command in ("owned-signal-helpers-product", "owned-pty-product", "owned-passwd-product", "owned-credentials-profile-product"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-3:], [

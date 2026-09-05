@@ -103,6 +103,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "quick-exit",
                 "legacy-time",
                 "syslog",
+                "credentials-profile",
                 "pthread-spin",
                 "process-trio",
                 "process-control",

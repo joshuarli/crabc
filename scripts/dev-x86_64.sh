@@ -562,6 +562,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-process-trio   qualify installed clone/vfork/daemon semantics against musl
   owned-process-control [DYNAMIC_SYSROOT] qualify installed residual POSIX process control
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
+  owned-credentials-profile [DYNAMIC_SYSROOT]  qualify the selected credential-setter profile against musl
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-posix-timers      test installed POSIX timer lifecycle and callback TLS reset
@@ -2750,6 +2751,34 @@ run_in_chroot_cap_container() {
         "$IMAGE" "$@"
 }
 
+# Docker's default seccomp policy rejects unshare(CLONE_NEWUSER). The
+# credentials-profile evidence needs that one transition before chrooting so
+# the selected setters execute as mapped root in a disposable user namespace.
+# Keep the relaxed seccomp filter and SYS_CHROOT at this command boundary; it
+# does not need mount authority, AppArmor relaxation, or a host namespace.
+run_in_user_namespace_chroot_container() {
+    prepare_work_dir
+    docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" \
+        --cap-add=SYS_CHROOT \
+        --security-opt=seccomp=unconfined \
+        --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$IMAGE" "$@"
+}
+
 # Resolver execution sees only loopback and its private conventional files.
 # Product construction happens separately, before network isolation.
 run_in_resolver_network_container() {
@@ -2787,6 +2816,36 @@ run_in_dynamic_loader_mount_container() {
         --cap-add=SYS_CHROOT \
         --cap-add=SYS_ADMIN \
         --security-opt=apparmor=unconfined \
+        --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$IMAGE" "$@"
+}
+
+# The full dynamic-product receipt includes the credentials-profile leaf, which
+# enters a mapped user namespace before its disposable chroot. Docker's default
+# seccomp policy blocks that unshare transition. Keep this relaxation on the
+# two dynamic-product dispatcher routes; the ordinary mount/PTY gates retain
+# their default seccomp filter.
+run_in_dynamic_loader_user_namespace_container() {
+    prepare_work_dir
+    docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" \
+        --cap-add=SYS_CHROOT \
+        --cap-add=SYS_ADMIN \
+        --security-opt=apparmor=unconfined \
+        --security-opt=seccomp=unconfined \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
@@ -5031,7 +5090,7 @@ run_libc_owned_wordexp_probe() {
 }
 
 run_owned_dynamic_sysroot_probe() {
-    run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_dynamic_sysroot.sh
+    run_in_dynamic_loader_user_namespace_container bash /workspace/compat/x86_64/run_owned_dynamic_sysroot.sh
 }
 
 run_crt_object_bundle_probe() {
@@ -5662,7 +5721,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
     owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-pty|owned-passwd|owned-posix-filesystem|owned-unix-mechanisms|owned-posix-composition) ;;
-    owned-assert|owned-legacy-time|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms|owned-group|owned-pattern) ;;
+    owned-assert|owned-legacy-time|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-error-reporting) ;;
@@ -7793,6 +7852,11 @@ case "$command" in
         ensure_image
         run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_filesystem_mechanisms.sh
         ;;
+    owned-credentials-profile)
+        [ "$#" -le 1 ] || fail "owned-credentials-profile takes at most one dynamic sysroot"
+        ensure_image
+        run_in_user_namespace_chroot_container bash /workspace/compat/x86_64/run_owned_credentials_profile.sh "$@"
+        ;;
     owned-error-reporting)
         [ "$#" -eq 0 ] || fail "owned-error-reporting takes no arguments"
         ensure_image
@@ -7892,7 +7956,7 @@ case "$command" in
     materialized-dynamic-sysroot)
         [ "$#" -eq 0 ] || fail "materialized-dynamic-sysroot takes no arguments"
         ensure_image
-        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh
+        run_in_dynamic_loader_user_namespace_container bash /workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh
         ;;
     crt-object-bundle)
         [ "$#" -eq 0 ] || fail "crt-object-bundle takes no arguments"

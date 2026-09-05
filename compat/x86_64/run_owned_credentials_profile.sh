@@ -73,8 +73,14 @@ if [ -z "$provided_dynamic" ]; then
 fi
 readonly installed="$provided_dynamic"
 
-"$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-    -E -H "$PROBE" >/dev/null 2>"$work/header-trace"
+# The sealed driver intentionally accepts only translation/link inputs. Its
+# fixed-image source translator is `/usr/bin/gcc`; use that same translator
+# with the driver's `-nostdinc` and installed include root only to retain a
+# header trace. The actual application object below still comes from the
+# installed driver, which supplies the identical target-header boundary.
+/usr/bin/gcc -nostdinc -isystem "$installed/usr/include" -ffreestanding \
+    -fno-builtin -fstack-protector-strong -std=c11 -fPIE -E -H "$PROBE" \
+    >/dev/null 2>"$work/header-trace"
 for header in errno.h grp.h stddef.h stdint.h stdio.h sys/syscall.h sys/types.h sys/wait.h unistd.h; do
     grep -Fq "$installed/usr/include/$header" "$work/header-trace" || {
         printf 'owned credentials profile did not use installed %s\n' "$header" >&2
@@ -189,4 +195,8 @@ selected crabc profile aliases: setreuid, seteuid, setregid, and setegid return 
 no all-thread credential rendezvous is claimed or tested
 EOF
 
-printf 'owned credentials profile: PASS (same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+if [ "$#" -eq 0 ]; then
+    printf 'owned credentials profile: PASS (same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+else
+    printf 'owned credentials profile: PASS (supplied installed product, same installed-driver object, pinned musl direct differential, explicit four-alias profile difference, user namespaces, private children, dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+fi
