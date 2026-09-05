@@ -59,7 +59,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                 self.put(name + ".crabc-link.json", {
                     "output_sha256": qualification.digest(self.work / name),
                     "manifest_sha256": self.manifest,
-                    "mode": "non-pie" if name.startswith("non-pie-") else "pie",
+                    "mode": "exec" if name.startswith("non-pie-") else "pie",
                     "campaign_complete": False, "binding": "now",
                     "link_trace": ["declared input"], "owned_runtime_inputs": ["usr/lib/libc.so"],
                 })

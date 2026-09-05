@@ -273,7 +273,7 @@ def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:
             receipt = read(receipt_path)
             require(receipt.get("output_sha256") == digest(binary), "base executable receipt hash mismatch")
             require(receipt.get("manifest_sha256") == manifests[product], "base receipt uses another installed product")
-            require(receipt.get("mode") == ("non-pie" if name.startswith("non-pie-") else "pie"), "base executable mode mismatch")
+            require(receipt.get("mode") == ("exec" if name.startswith("non-pie-") else "pie"), "base executable mode mismatch")
             require(receipt.get("campaign_complete") is False and receipt.get("binding") == "now", "base driver purity receipt drifted")
             require(receipt.get("link_trace") and receipt.get("owned_runtime_inputs"), "base driver purity evidence missing")
             for path in (binary, output, receipt_path):
