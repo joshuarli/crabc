@@ -25554,6 +25554,46 @@ def require_process_environment_mutation_slice(family: Mapping[str, Any]) -> Non
         require(snippet in runner, f"static-c-environment runner omits {snippet}")
 
 
+def require_frozen_process_signal_selection(
+    static_root: str, signal_control: str
+) -> None:
+    """Keep frozen signal leaves out of the owned providers' link closure."""
+
+    frozen_modules = (
+        (
+            "reporting",
+            '#[cfg(all(feature = "x86-signal-reporting", '
+            'not(feature = "x86-owned-static-runtime")))]\n'
+            '#[path = "signal_reporting.rs"]\n'
+            "mod signal_reporting;",
+        ),
+        (
+            "SysV helpers",
+            '#[cfg(all(feature = "x86-signal-sysv-helpers", '
+            'not(feature = "x86-owned-static-runtime")))]\n'
+            '#[path = "signal_sysv_helpers.rs"]\n'
+            "mod signal_sysv_helpers;",
+        ),
+    )
+    for name, selection in frozen_modules:
+        require(
+            selection in static_root,
+            f"process.signal frozen {name} selection must exclude the owned runtime",
+        )
+    require(
+        '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        '#[path = "owned_signal_helpers.rs"]\n'
+        "mod owned_signal_helpers;" in static_root,
+        "process.signal owned SysV helper selection is missing",
+    )
+    require(
+        '#[cfg(any(feature = "x86-signal-legacy-aliases", '
+        'feature = "x86-owned-static-runtime"))]\n'
+        "core::arch::global_asm!(" in signal_control,
+        "process.signal weak alias selection must retain both frozen and owned providers",
+    )
+
+
 def require_process_signal_slice(family: Mapping[str, Any]) -> None:
     """Keep the frozen signal aggregate exact, composed, and non-promoting."""
 
@@ -25798,16 +25838,11 @@ def require_process_signal_slice(family: Mapping[str, Any]) -> None:
     static_root = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
-    for snippet in (
-        '#[cfg(feature = "x86-signal-reporting")]\n#[path = "signal_reporting.rs"]\nmod signal_reporting;',
-        '#[cfg(feature = "x86-signal-sysv-helpers")]\n#[path = "signal_sysv_helpers.rs"]\nmod signal_sysv_helpers;',
-    ):
-        require(snippet in static_root, f"process.signal static root omits {snippet}")
     signal_control = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_control.rs"
     ).read_text(encoding="utf-8")
+    require_frozen_process_signal_selection(static_root, signal_control)
     for snippet in (
-        '#[cfg(feature = "x86-signal-legacy-aliases")]',
         ".weak bsd_signal",
         ".set bsd_signal, signal",
         ".weak __sysv_signal",
@@ -26902,7 +26937,8 @@ def require_signal_legacy_aliases_artifact(family: Mapping[str, Any]) -> None:
     for snippet in (
         "Pinned musl 1.2.6",
         "src/signal/signal.c",
-        '#[cfg(feature = "x86-signal-legacy-aliases")]',
+        '#[cfg(any(feature = "x86-signal-legacy-aliases", '
+        'feature = "x86-owned-static-runtime"))]',
         '".weak bsd_signal"',
         '".set bsd_signal, signal"',
         '".weak __sysv_signal"',
@@ -27028,9 +27064,10 @@ def require_sysv_signal_helpers_artifact(family: Mapping[str, Any]) -> None:
         "`sigrelse`",
         "`sigset`",
         "frozen default selected-static archive",
-        "X/Open 800 hides them",
-        "musl 1.2.6 still exposes them",
-        "intentional recorded header divergence",
+        "X/Open 800",
+        "matches musl 1.2.6",
+        "native x86 header-parity evidence",
+        "separate legacy architecture header branch",
         "does not select `process.signal`",
         "public x86 support",
     ):
@@ -27145,11 +27182,11 @@ def require_sysv_signal_helpers_artifact(family: Mapping[str, Any]) -> None:
             and "Strict and POSIX.1-2008" in item
             and "X/Open=700" in item
             and "X/Open=800" in item
-            and "pinned musl 1.2.6 exposes" in item
-            and "post-POSIX.1-2024" in item
+            and "both native x86 header trees" in item
+            and "native x86 declaration parity" in item
             for item in headers
         ),
-        "static-c-sysv-signal-helpers must retain the intentional X/Open divergence",
+        "static-c-sysv-signal-helpers must retain native X/Open declaration parity",
     )
 
     evidence = artifact.get("native_evidence")
@@ -27180,7 +27217,7 @@ def require_sysv_signal_helpers_artifact(family: Mapping[str, Any]) -> None:
                 "rt_sigaction=13",
                 "rt_sigprocmask=14",
                 "hidden syscall-15 restorer",
-                "X/Open=800 project/musl declaration divergence",
+                "X/Open=800 native declaration parity",
                 "does not select `process.signal`",
                 "public x86 support",
             )
@@ -27230,10 +27267,17 @@ def require_sysv_signal_helpers_artifact(family: Mapping[str, Any]) -> None:
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
     require(
-        '#[cfg(feature = "x86-signal-sysv-helpers")]\n'
+        '#[cfg(all(feature = "x86-signal-sysv-helpers", '
+        'not(feature = "x86-owned-static-runtime")))]\n'
         '#[path = "signal_sysv_helpers.rs"]\n'
         "mod signal_sysv_helpers;" in static_root,
-        "x86 static C ABI must keep SysV signal helpers behind their feature",
+        "x86 static C ABI must keep frozen SysV signal helpers outside the owned runtime",
+    )
+    require(
+        '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        '#[path = "owned_signal_helpers.rs"]\n'
+        "mod owned_signal_helpers;" in static_root,
+        "x86 static C ABI must select owned SysV signal helpers for the owned runtime",
     )
 
     source = (
@@ -27306,7 +27350,7 @@ def require_sysv_signal_helpers_artifact(family: Mapping[str, Any]) -> None:
         ),
         (
             "compat/x86_64/run_signal_sysv_helpers_header_abi.sh",
-            ("XOPEN=700", "XOPEN=800", "post-POSIX.1-2024", "retained a mangled"),
+            ("XOPEN=700", "XOPEN=800", "matching that source", "retained a mangled"),
         ),
         (
             "compat/x86_64/libc_signal_sysv_helpers_probe.c",
@@ -37329,6 +37373,23 @@ def require_filesystem_access_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_frozen_lchmod_unsupported_selection(static_root: str) -> None:
+    """Keep the fixed unsupported lchmod leaf out of the owned runtime."""
+
+    require(
+        '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+        '#[path = "lchmod_unsupported.rs"]\n'
+        "mod lchmod_unsupported;" in static_root,
+        "lchmod frozen unsupported selection must exclude the owned runtime",
+    )
+    require(
+        '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        '#[path = "owned_filesystem_mechanisms.rs"]\n'
+        "mod owned_filesystem_mechanisms;" in static_root,
+        "lchmod owned filesystem provider selection is missing",
+    )
+
+
 def require_lchmod_unsupported_slice(family: Mapping[str, Any]) -> None:
     """Keep the selected fixed Linux lchmod result narrow and non-promoting."""
     slices = require_verified_slices(
@@ -37413,10 +37474,7 @@ def require_lchmod_unsupported_slice(family: Mapping[str, Any]) -> None:
     )
     require("lchmod" in static_exports, "filesystem.lchmod-unsupported must export lchmod")
     static_root = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs").read_text(encoding="utf-8")
-    require(
-        '#[path = "lchmod_unsupported.rs"]\nmod lchmod_unsupported;' in static_root,
-        "x86 static C ABI must compose the lchmod unsupported leaf",
-    )
+    require_frozen_lchmod_unsupported_selection(static_root)
     implementation = (ROOT / "libc" / "src" / "c_abi" / "x86_64" / "lchmod_unsupported.rs").read_text(encoding="utf-8")
     for snippet in ("src/stat/lchmod.c", "EOPNOTSUPP", "fn lchmod", "errno::set_errno"):
         require(
@@ -38208,6 +38266,23 @@ def require_mkdirat_artifact(family: Mapping[str, Any]) -> None:
         require(snippet in runner, f"mkdirat runner omits {snippet}")
 
 
+def require_frozen_descriptor_control_selection(static_root: str) -> None:
+    """Keep the frozen fcntl leaf outside the owned descriptor provider."""
+
+    require(
+        '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+        '#[path = "descriptor_control.rs"]\n'
+        "mod descriptor_control;" in static_root,
+        "fcntl frozen descriptor-control selection must exclude the owned runtime",
+    )
+    require(
+        '#[cfg(feature = "x86-owned-static-runtime")]\n'
+        '#[path = "owned_descriptor_control.rs"]\n'
+        "mod descriptor_control;" in static_root,
+        "fcntl owned descriptor-control selection is missing",
+    )
+
+
 def require_fcntl_status_control_artifact(family: Mapping[str, Any]) -> None:
     """Keep the bounded variadic C fcntl artifact honest and non-promoting."""
     artifacts = require_verified_artifacts(
@@ -38224,6 +38299,11 @@ def require_fcntl_status_control_artifact(family: Mapping[str, Any]) -> None:
         len(matching) == 1,
         "libc.posix-runtime must contain exactly one static-c-fcntl-status-control artifact",
     )
+    static_root = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+    ).read_text(encoding="utf-8")
+    require_frozen_descriptor_control_selection(static_root)
+
     artifact = matching[0]
     description = artifact["description"]
     assert isinstance(description, str)

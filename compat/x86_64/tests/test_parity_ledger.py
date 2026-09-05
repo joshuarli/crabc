@@ -19988,10 +19988,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             and entry["id"] == "static-c-sysv-signal-helpers"
         )
         artifact["description"] = artifact["description"].replace(
-            "X/Open 800 hides them", "X/Open 800 exposes them"
+            "matches musl 1.2.6", "diverges from musl 1.2.6"
         )
         with self.assertRaisesRegex(
-            ledger.LedgerError, "description omits X/Open 800 hides them"
+            ledger.LedgerError, "description omits matches musl 1.2.6"
         ):
             ledger.require_sysv_signal_helpers_artifact(
                 self.family(data, "libc.posix-runtime")
@@ -23560,6 +23560,24 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertIn("lchmod", exports)
         self.assertFalse(exports & {"fchmodat", "scandir", "mkdtemp"})
 
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        ledger.require_frozen_lchmod_unsupported_selection(static_root)
+        widened_lchmod = self.replace_required(
+            static_root,
+            '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+            '#[path = "lchmod_unsupported.rs"]\n'
+            "mod lchmod_unsupported;",
+            '#[path = "lchmod_unsupported.rs"]\nmod lchmod_unsupported;',
+            "frozen lchmod unsupported selection",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "lchmod frozen unsupported selection must exclude the owned runtime",
+        ):
+            ledger.require_frozen_lchmod_unsupported_selection(widened_lchmod)
+
         probe = (
             ROOT / "compat" / "x86_64" / "libc_lchmod_unsupported_probe.c"
         ).read_text(encoding="utf-8")
@@ -25065,6 +25083,43 @@ class X86ParityLedgerTests(unittest.TestCase):
             ledger.LedgerError, "closed libc-fcntl-status-control command"
         ):
             ledger.validate_ledger(data)
+
+    def test_fcntl_status_control_keeps_frozen_and_owned_providers_separate(
+        self,
+    ) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        ledger.require_frozen_descriptor_control_selection(static_root)
+
+        widened_frozen = self.replace_required(
+            static_root,
+            '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+            '#[path = "descriptor_control.rs"]\n'
+            "mod descriptor_control;",
+            '#[path = "descriptor_control.rs"]\nmod descriptor_control;',
+            "frozen descriptor-control selection",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "frozen descriptor-control selection must exclude the owned runtime",
+        ):
+            ledger.require_frozen_descriptor_control_selection(widened_frozen)
+
+        stale_owned_provider = self.replace_required(
+            static_root,
+            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[path = "owned_descriptor_control.rs"]\n'
+            "mod descriptor_control;",
+            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[path = "descriptor_control.rs"]\n'
+            "mod descriptor_control;",
+            "owned descriptor-control selection",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError, "owned descriptor-control selection is missing"
+        ):
+            ledger.require_frozen_descriptor_control_selection(stale_owned_provider)
 
     def test_fcntl_record_locks_artifact_keeps_its_pointer_boundary(self) -> None:
         data = self.data()
@@ -30283,6 +30338,59 @@ class X86ParityLedgerTests(unittest.TestCase):
             "family completion, promotion, or public x86 support",
         ):
             self.assertIn(phrase, evidence[0]["scope"])
+
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        signal_control = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "signal_control.rs"
+        ).read_text(encoding="utf-8")
+        ledger.require_frozen_process_signal_selection(static_root, signal_control)
+
+        widened_reporting = self.replace_required(
+            static_root,
+            '#[cfg(all(feature = "x86-signal-reporting", '
+            'not(feature = "x86-owned-static-runtime")))]',
+            '#[cfg(feature = "x86-signal-reporting")]',
+            "frozen signal reporting selection",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "frozen reporting selection must exclude the owned runtime",
+        ):
+            ledger.require_frozen_process_signal_selection(
+                widened_reporting, signal_control
+            )
+
+        widened_sysv_helpers = self.replace_required(
+            static_root,
+            '#[cfg(all(feature = "x86-signal-sysv-helpers", '
+            'not(feature = "x86-owned-static-runtime")))]',
+            '#[cfg(feature = "x86-signal-sysv-helpers")]',
+            "frozen SysV signal-helper selection",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "frozen SysV helpers selection must exclude the owned runtime",
+        ):
+            ledger.require_frozen_process_signal_selection(
+                widened_sysv_helpers, signal_control
+            )
+
+        frozen_only_aliases = self.replace_required(
+            signal_control,
+            '#[cfg(any(feature = "x86-signal-legacy-aliases", '
+            'feature = "x86-owned-static-runtime"))]',
+            '#[cfg(feature = "x86-signal-legacy-aliases")]',
+            "signal weak alias selection",
+        )
+        with self.assertRaisesRegex(
+            ledger.LedgerError,
+            "weak alias selection must retain both frozen and owned providers",
+        ):
+            ledger.require_frozen_process_signal_selection(
+                static_root, frozen_only_aliases
+            )
 
         changed_capability = self.data()
         changed_slice = next(

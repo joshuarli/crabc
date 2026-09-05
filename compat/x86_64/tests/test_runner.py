@@ -2099,14 +2099,15 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             expected_groups[:static_sysroot_index]
             + (
                 "owned-system-cancellation",
-                "owned-dynamic-spawn|owned-atfork-registry|owned-process-trio",
+                "owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|"
+                "owned-signal-helpers",
                 "owned-assert|owned-linux-control|owned-filesystem-mechanisms",
                 "owned-pthread-spin",
                 "owned-syslog",
                 "owned-io-cancellation",
                 "owned-resolver-network",
                 "owned-dynamic-io-cancellation",
-                "owned-pthread-scheduling|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
+                "owned-pthread-scheduling|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
                 "owned-pthread-lifecycle",
                 "qualification-manifest",
             )
@@ -5291,7 +5292,11 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "opt-in",
         ):
             self.assertIn(required, source)
-        self.assertIn('#[cfg(feature = "x86-signal-legacy-aliases")]', source)
+        self.assertIn(
+            '#[cfg(any(feature = "x86-signal-legacy-aliases", '
+            'feature = "x86-owned-static-runtime"))]',
+            source,
+        )
 
         self.assertIn(
             "#if defined(_GNU_SOURCE)\nvoid (*bsd_signal(int, void (*)(int)))(int);",
@@ -5434,9 +5439,16 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         self.assertIn("x86-signal-sysv-helpers = []", cargo_toml)
         self.assertIn(
-            '#[cfg(feature = "x86-signal-sysv-helpers")]\n'
+            '#[cfg(all(feature = "x86-signal-sysv-helpers", '
+            'not(feature = "x86-owned-static-runtime")))]\n'
             '#[path = "signal_sysv_helpers.rs"]\n'
             "mod signal_sysv_helpers;",
+            static_root,
+        )
+        self.assertIn(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[path = "owned_signal_helpers.rs"]\n'
+            "mod owned_signal_helpers;",
             static_root,
         )
         for required in (
@@ -5488,7 +5500,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         for required in (
             "XOPEN=700",
             "XOPEN=800",
-            "post-POSIX.1-2024",
+            "matching that source",
             "CRABC_EXPECT_SYSV_SIGNAL_HELPERS",
             "CRABC_REQUIRE_SYSV_SIGNAL_HELPERS_HIDDEN",
             "retained a mangled",
@@ -5584,7 +5596,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
 
         self.assertIn("x86-signal-reporting = []", manifest)
         self.assertIn(
-            '#[cfg(feature = "x86-signal-reporting")]\n'
+            '#[cfg(all(feature = "x86-signal-reporting", '
+            'not(feature = "x86-owned-static-runtime")))]\n'
             '#[path = "signal_reporting.rs"]\n'
             "mod signal_reporting;",
             static_root,
@@ -28302,7 +28315,18 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         )
         runner = RUNNER.read_text(encoding="utf-8")
 
-        self.assertIn('#[path = "descriptor_control.rs"]', static_root)
+        self.assertIn(
+            '#[cfg(not(feature = "x86-owned-static-runtime"))]\n'
+            '#[path = "descriptor_control.rs"]\n'
+            "mod descriptor_control;",
+            static_root,
+        )
+        self.assertIn(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[path = "owned_descriptor_control.rs"]\n'
+            "mod descriptor_control;",
+            static_root,
+        )
         for required in (
             "musl 1.2.6 release commit",
             "src/fcntl/fcntl.c",
