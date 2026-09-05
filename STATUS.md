@@ -36,6 +36,10 @@ owners:
    evidence are integrated. Priority-inheritance mutexes are implemented;
    priority-protect retains musl's unsupported status. Family closure and
    ordered qualification receipts remain open.
+   Residual POSIX workloads and shared-state composition are integrated into
+   the 50-case dynamic catalog. Fresh three-product qualification and the
+   complete six-static/twelve-dynamic POSIX family receipt remain required;
+   see [`owned-posix-runtime.md`](compat/x86_64/owned-posix-runtime.md).
    Do not restart an export-by-export queue.
 2. Allocator: use the contained `compat/allocator/run-x86_64.sh` launcher,
    then complete native x86 M2 qualification. Imported

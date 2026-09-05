@@ -1,6 +1,22 @@
 # Combined native x86-64 completion goal
 
-## Paused handoff — 2026-09-05
+## Active integration — 2026-09-05
+
+The dynamic catalog now contains 50 cases. The installed POSIX components
+cover the residual filesystem, process-control, credential-profile,
+environment-lifecycle, signal, and kernel-administration workloads, plus a
+shared-state composition workload. Their focused static/static-PIE and dynamic
+matrices are integrated; a fresh 50-case, three-product dynamic qualification
+is still required. The exact family roster and remaining evidence are in
+`compat/x86_64/owned-posix-runtime.md` and its catalog. The family coordinator
+must still bind all 149 frozen spellings to the six static and twelve dynamic
+product cells and the required native aggregate. Neither these component passes
+nor dynamic product qualification alone closes `libc.posix-runtime`.
+
+The combined goal remains active and incomplete. Continue the sequence below;
+the historical pause does not instruct current work to stop.
+
+## Historical handoff — 2026-09-05
 
 Work resumed on 2026-09-05. The expanded 40-case dynamic gate passed at
 `d0d3877a`: both clean builds and extraction, 120 case receipts, identical
@@ -9,14 +25,16 @@ product manifests. Host validation and explicit local publication passed for
 `.work/x86_64/owned-dynamic-integrated-batch.log`. The same revision passed the
 native header provider audit and standalone group, message-queue, legacy-time,
 filename-pattern, and GNU thread-join matrices, including both static modes.
-The classic-netdb and Unix-mechanism cases extend the catalog to 42; their
-integration requires fresh qualification. Subsequent source changes invalidate the earlier
+The classic-netdb and Unix-mechanism additions then extended the catalog to
+42. Later POSIX and resolver additions are described in the active integration
+section above. Subsequent source changes invalidate the earlier
 selection. These component results do not close the planned runtime families
 or promotion chain. The paused narrative below records the preceding boundary,
 not a renewed instruction to stop.
 
-The user requested winding down the current work, letting the active tasks
-finish and commit, and leaving this handoff. Resume only when asked. The
+At the preceding pause, the user requested winding down the work, letting the
+active tasks finish and commit, and leaving this handoff. The subsequent resume
+instruction supersedes that pause. The
 combined goal is **not complete**: AArch64 remains paused, C mimalloc remains
 the production backend, and public x86 promotion remains false. The detailed
 acceptance criteria below and in the two execution plans remain unchanged.
@@ -94,8 +112,8 @@ These are component measurements, not final same-revision qualification.
    builds: the dynamic producer hashes **all nonignored source content and
    modes**, so even a concurrent documentation merge rejects a run.
 2. Run `./scripts/dev-x86_64.sh owned-dynamic-sysroot` from a clean committed
-   checkout. The new 17-case, three-product qualification path has not yet had
-   its first full native run after all these integrations. Review its generated
+   checkout. The current 50-case, three-product qualification path needs a
+   fresh complete native run after the latest integrations. Review its generated
    `qualification.json`, then use
    `python3 -B compat/x86_64/owned_dynamic_qualification.py publish --receipt PATH`
    to select that exact ignored receipt. Later source edits invalidate the
@@ -107,7 +125,8 @@ These are component measurements, not final same-revision qualification.
    and run real dependency-ready family prefixes. The current first promotion
    gate correctly rejects execution while planned; the private five-case
    admission remains separate and non-promoting.
-4. Complete remaining pthread mutex implementations and family evidence.
+4. Complete pthread family evidence using the integrated normal, recursive,
+   error-checking, robust, timed, and priority-inheritance mutex behavior.
    The Linux pinned Rust `std::Condvar` uses futexes; its Unix pthread fallback
    is not evidence that Linux Rust-std uses this condition implementation.
 5. Continue POSIX family completion from actual current providers. Installed
@@ -118,8 +137,9 @@ These are component measurements, not final same-revision qualification.
    Private leaf selection and component passes do not replace that aggregate.
    Preserve the selected credential profile: four effective-ID aliases reject
    changes with `EOPNOTSUPP`; direct setters retain calling-task semantics. Resolver cancellation
-   cleanup and malformed-record parser ordering remain explicit obligations in
-   `compat/x86_64/owned-classic-netdb.md` for the later resolver family.
+   cleanup now has a focused installed-product regression; retain it alongside
+   the parser-ordering evidence and complete the later resolver family through
+   its own aggregate contract.
 6. Continue allocator M2–M11 and Rust-std only after resolving the existing
    automatic tool-review restrictions described below. Requalify installed
    products after native Rust allocator promotion. All 223 capabilities,
