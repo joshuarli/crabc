@@ -97,6 +97,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "spawn",
                 "linux-control",
                 "vm-mechanisms",
+                "group",
                 "assert",
                 "quick-exit",
                 "syslog",

@@ -56,6 +56,7 @@ CASES = {
     "spawn": ("run_owned_dynamic_spawn.sh", None),
     "linux-control": ("run_owned_linux_control.sh", None),
     "vm-mechanisms": ("run_owned_vm_mechanisms.sh", None),
+    "group": ("run_owned_group.sh", None),
     "assert": ("run_owned_assert.sh", None),
     "quick-exit": ("run_owned_quick_exit.sh", None),
     "syslog": ("run_owned_syslog.sh", None),

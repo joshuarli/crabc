@@ -552,6 +552,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-quick-exit  qualify installed C11 at_quick_exit/quick_exit semantics against musl
   owned-linux-control  test owned Linux C mechanisms and kernel error translation
   owned-vm-mechanisms  test owned VM remap, break, and legacy remap mechanisms
+  owned-group  test installed local /etc/group C APIs against musl
   owned-pthread-spin  qualify installed private/shared pthread spin locking
   owned-syslog  qualify owned C syslog delivery and state against musl
   owned-process-trio   qualify installed clone/vfork/daemon semantics against musl
@@ -5626,7 +5627,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
     owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers|owned-pty|owned-passwd) ;;
-    owned-assert|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms) ;;
+    owned-assert|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms|owned-group) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-error-reporting) ;;
@@ -7696,6 +7697,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-vm-mechanisms takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_vm_mechanisms.sh
+        ;;
+    owned-group)
+        [ "$#" -eq 0 ] || fail "owned-group takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_group.sh
         ;;
     owned-pthread-spin)
         [ "$#" -eq 0 ] || fail "owned-pthread-spin takes no arguments"

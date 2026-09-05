@@ -381,8 +381,9 @@ and receive the same installed-link, ELF, and extracted-package checks.
 runner but selected by `scripts/build_x86_64_owned_sysroot.py`. Its direct
 header-callable additions are the owned `abort`/`syscall`/`prctl`/`realpath`
 support, descriptor-stream lifecycle and lock entries, allocated-line input,
-the eight unlocked byte/block entries, and `asprintf`/`dprintf` plus their
-`va_list` forms. It replaces the selected default stream and byte-buffer
+the eight unlocked byte/block entries, `asprintf`/`dprintf` plus their
+`va_list` forms, and the conventional local `/etc/group` C APIs documented in
+`owned-group.md`. It replaces the selected default stream and byte-buffer
 formatting implementations where `owned_static_stdio.rs` and `owned_printf.rs`
 select a different owner; the feature's allocator, environment, exec,
 permanent-format, and resolver dependencies retain their own feature-provider

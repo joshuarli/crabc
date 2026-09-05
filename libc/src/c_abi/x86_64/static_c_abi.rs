@@ -618,6 +618,12 @@ mod process_globals;
 #[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_static_stdio.rs")]
 #[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "stdio_standard.rs")]
 mod stdio_standard;
+// Conventional account files need the installed owned FILE lifecycle and its
+// cancellation/fork boundaries. Keep this local `/etc/group` provider inside
+// the owned aggregate rather than widening the frozen default archive.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_group.rs"]
+mod owned_group;
 #[path = "stdio_format_scan.rs"]
 mod stdio_format_scan;
 #[path = "bsearch.rs"]

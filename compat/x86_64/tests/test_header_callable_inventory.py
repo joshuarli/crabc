@@ -289,6 +289,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "ctime",
                 "ctime_r",
                 "dprintf",
+                "endgrent",
                 "endpwent",
                 "fgetpwent",
                 "getpwent",
@@ -307,6 +308,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "fdopen",
                 "fflush_unlocked",
                 "fgetc_unlocked",
+                "fgetgrent",
                 "fgetln",
                 "fgets_unlocked",
                 "fgetwc",
@@ -335,6 +337,12 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "getc_unlocked",
                 "getchar_unlocked",
                 "getdelim",
+                "getgrent",
+                "getgrgid",
+                "getgrgid_r",
+                "getgrnam",
+                "getgrnam_r",
+                "getgrouplist",
                 "getline",
                 "gets",
                 "getw",
@@ -345,6 +353,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "gmtime",
                 "hypot",
                 "hypotf",
+                "initgroups",
                 "localtime",
                 "localtime_r",
                 "lockf",
@@ -424,6 +433,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "pthread_sigmask",
                 "putc_unlocked",
                 "putchar_unlocked",
+                "putgrent",
                 "putw",
                 "putwc",
                 "putwc_unlocked",
@@ -438,6 +448,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "sem_timedwait",
                 "setbuf",
                 "setbuffer",
+                "setgrent",
                 "setlinebuf",
                 "statx",
                 "strftime",
@@ -1783,6 +1794,33 @@ class HeaderCallableInventoryTests(unittest.TestCase):
 
         self.assertTrue(quick_exit <= planned["x86-owned-static-runtime"])
         self.assertFalse(quick_exit & set(partition["unprovided"]["members"]))
+
+    def test_owned_group_callables_are_planned_not_unprovided_or_default_static(self) -> None:
+        """Keep the local group-file provider separate from the default fixture."""
+        with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
+            report = json.load(stream)
+
+        owned_group = {
+            "endgrent",
+            "fgetgrent",
+            "getgrent",
+            "getgrgid",
+            "getgrgid_r",
+            "getgrnam",
+            "getgrnam_r",
+            "getgrouplist",
+            "initgroups",
+            "putgrent",
+            "setgrent",
+        }
+        partition = report["callable_provider_partition"]
+        planned = {
+            row["id"]: set(row["members"])
+            for row in partition["declared_unverified_feature_archives"]
+        }
+        self.assertTrue(owned_group <= planned["x86-owned-static-runtime"])
+        self.assertFalse(owned_group & set(partition["unprovided"]["members"]))
+        self.assertFalse(owned_group & set(partition["default_static"]["members"]))
 
     @unittest.skipUnless(all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm")), "requires native binutils and C compiler")
     def test_audit_uses_ordinary_archive_extraction_and_reports_finite_complement(self) -> None:

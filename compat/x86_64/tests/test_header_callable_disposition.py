@@ -134,6 +134,35 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(owned_vm <= providers["x86-owned-static-runtime"])
         self.assertFalse(owned_vm & deferred)
 
+    def test_owned_group_callables_are_planned_owned_static_not_deferred(self) -> None:
+        """The local conventional-file ABI is one selected product provider."""
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        owned_group = {
+            "endgrent",
+            "fgetgrent",
+            "getgrent",
+            "getgrgid",
+            "getgrgid_r",
+            "getgrnam",
+            "getgrnam_r",
+            "getgrouplist",
+            "initgroups",
+            "putgrent",
+            "setgrent",
+        }
+
+        self.assertTrue(owned_group <= providers["x86-owned-static-runtime"])
+        self.assertFalse(owned_group & deferred)
+
     def test_memory_stream_and_cookie_names_are_planned_owned_static_not_deferred(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         providers = {

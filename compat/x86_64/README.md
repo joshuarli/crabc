@@ -220,3 +220,12 @@ The [component contract](owned-quick-exit.md) records the fixed 32-slot
 registry, fork guard, callback contract, and excluded ordinary-exit behavior.
 The same runner checks strong static and global-default shared providers and is
 a required dynamic product qualification case.
+
+## Owned local group database
+
+`./scripts/dev-x86_64.sh owned-group` checks installed C `getgr*`,
+`getgrouplist`, and `initgroups` against pinned musl through one source object,
+owned static/static-PIE, and dynamic PIE/non-PIE kernel and direct-interpreter
+products. The [component contract](owned-group.md) records the local
+`/etc/group` scope, explicit nscd/NSS omission, source storage and cancellation
+boundaries, and disposable credential-transition evidence.
