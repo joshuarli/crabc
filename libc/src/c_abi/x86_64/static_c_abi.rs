@@ -695,6 +695,9 @@ mod owned_strftime;
 #[path = "owned_strptime.rs"]
 mod owned_strptime;
 #[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_getdate.rs"]
+mod owned_getdate;
+#[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_mount_table.rs"]
 mod owned_mount_table;
 // The process-global C logger shares the owned descriptor, calendar, printf,

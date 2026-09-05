@@ -357,6 +357,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "fwscanf",
                 "getc_unlocked",
                 "getchar_unlocked",
+                "getdate",
                 "getdelim",
                 "getgrent",
                 "getgrgid",
@@ -604,12 +605,15 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         """A roster refresh preserves compiler facts without recollecting them."""
         source = json.loads(CHECKED_INVENTORY.read_text(encoding="utf-8"))
         source["inputs"]["parity_ledger_sha256"] = "0" * 64
+        unprovided = source["callable_provider_partition"]["unprovided"]["members"]
+        self.assertTrue(unprovided)
+        added_callable = unprovided[0]
         contract = INVENTORY.load_contract()
         rows = INVENTORY.load_feature_archive_roster(contract.parity_ledger)
         replacement_rows = tuple(
             replace(
                 row,
-                additive_callables=tuple(sorted((*row.additive_callables, "getdate"))),
+                additive_callables=tuple(sorted((*row.additive_callables, added_callable))),
             )
             if row.identifier == "x86-owned-static-runtime"
             else row
@@ -633,7 +637,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             refreshed["callable_provider_partition"]
             ["declared_unverified_feature_archives"][0]["members"],
-            sorted([*source_members, "getdate"]),
+            sorted([*source_members, added_callable]),
         )
         source_counts = source["summary"]["callable_provider_counts"]
         self.assertEqual(

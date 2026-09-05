@@ -206,6 +206,7 @@
           "get_current_dir_name",
           "getc_unlocked",
           "getchar_unlocked",
+          "getdate",
           "getdelim",
           "getgrent",
           "getgrgid",
@@ -1632,7 +1633,6 @@
         "endutxent",
         "fgetspent",
         "getcontext",
-        "getdate",
         "getspent",
         "getspnam",
         "getspnam_r",
@@ -417437,7 +417437,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "4d92cb8f8c171f96ebc4748d226be9550471486290527ad0f04b38ef2bd9508c",
+    "parity_ledger_sha256": "80562db1bd3ea9a385b2bf17ba1a77cd66e149a7bab1e65a1f1b0bdb65c74f82",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -436247,9 +436247,9 @@
       "macro": 5202
     },
     "callable_provider_counts": {
-      "declared_unverified_feature_archives": 263,
+      "declared_unverified_feature_archives": 264,
       "default_static": 1122,
-      "unprovided": 62,
+      "unprovided": 61,
       "verified_feature_archives": 78
     },
     "candidate_external_callable_count": 1525,

@@ -175,6 +175,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "get_current_dir_name",
                 "getc_unlocked",
                 "getchar_unlocked",
+                "getdate",
                 "getdelim",
                 "getgrent",
                 "getgrgid",
