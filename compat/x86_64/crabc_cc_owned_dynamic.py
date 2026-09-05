@@ -1,0 +1,231 @@
+#!/usr/bin/env python3
+"""Sealed materialized initial-graph dynamic driver (not campaign completion).
+
+The static driver's input/ELF/tool checks are reused verbatim from the installed
+package. This owner adds only dynamic linkage and explicit application DSOs.
+The interpreter name is canonical; run applications in the installed root.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+# Installed tools are immutable payload, including when callers do not set a
+# Python environment policy. Importing the shared checks must not create a
+# bytecode cache inside the validated installation.
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "share/crabc"))
+import crabc_cc_static as shared
+
+FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+ALIASES = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
+REQUIRED = {"usr/lib/libc.so", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
+            "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1"}
+
+
+def validate(root: Path) -> dict:
+    manifest = root / "share/crabc/manifest.json"
+    shared.require_regular(manifest, "dynamic manifest")
+    try:
+        record = json.loads(manifest.read_text())
+    except (ValueError, OSError) as error:
+        raise shared.DriverError(f"invalid dynamic manifest: {error}") from error
+    if not isinstance(record, dict) or type(record.get("schema")) is not int or record.get("schema") != 1 or record.get("format") != FORMAT or record.get("target") != shared.TARGET or record.get("symlinks") != ALIASES:
+        raise shared.DriverError("wrong installed dynamic product contract")
+    files = record.get("files")
+    if not isinstance(files, dict) or not REQUIRED <= files.keys():
+        raise shared.DriverError("incomplete installed dynamic payload")
+    observed = set()
+    aliases = {}
+    for path in root.rglob("*"):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            aliases[relative] = os.readlink(path)
+        elif path.is_file():
+            if relative != "share/crabc/manifest.json":
+                observed.add(relative)
+        elif not path.is_dir():
+            raise shared.DriverError(f"nonregular installed payload: {relative}")
+    if observed != files.keys() or aliases != ALIASES:
+        raise shared.DriverError("installed payload differs from exact manifest roster")
+    for relative, digest in files.items():
+        if Path(relative).is_absolute() or ".." in Path(relative).parts or not re.fullmatch("[0-9a-f]{64}", str(digest)):
+            raise shared.DriverError("unsafe manifest payload entry")
+        if shared.sha256_file(root / relative) != digest:
+            raise shared.DriverError(f"installed payload hash mismatch: {relative}")
+    return record
+
+
+def run(command: list[str], temporary: Path) -> str:
+    environment = shared.clean_environment()
+    environment["TMPDIR"] = str(temporary)
+    result = subprocess.run(command, env=environment, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if result.returncode:
+        raise shared.DriverError(f"command failed: {command[0]}\n{result.stdout}{result.stderr}")
+    return result.stdout
+
+
+def dso_metadata(path: Path, temporary: Path) -> tuple[str, list[str]]:
+    data = path.read_bytes()
+    if len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01" or int.from_bytes(data[16:18], "little") != 3 or int.from_bytes(data[18:20], "little") != 62:
+        raise shared.DriverError(f"application DSO is not native ET_DYN: {path}")
+    segments = run(["/usr/bin/readelf", "-lW", str(path)], temporary)
+    dynamic = run(["/usr/bin/readelf", "-dW", str(path)], temporary)
+    if "INTERP" in segments or "TEXTREL" in dynamic or "(RPATH)" in dynamic:
+        raise shared.DriverError("application DSO contains forbidden interpreter/textrel/RPATH")
+    sonames = re.findall(r"\(SONAME\).*\[([^\]]+)\]", dynamic)
+    if sonames != [path.name] or "/" in path.name:
+        raise shared.DriverError("application DSO must own exactly its basename SONAME")
+    needed = re.findall(r"\(NEEDED\).*\[([^\]]+)\]", dynamic)
+    if any("/" in name for name in needed):
+        raise shared.DriverError("application DSO contains pathname DT_NEEDED")
+    runpaths = re.findall(r"\(RUNPATH\).*\[([^\]]*)\]", dynamic)
+    if runpaths not in ([], ["/usr/lib"]):
+        raise shared.DriverError("application DSO has an undeclared runtime search path")
+    return path.name, needed
+
+
+def dynamic_symbols(path: Path, temporary: Path) -> tuple[set[str], set[str]]:
+    definitions, required = set(), set()
+    for line in run(["/usr/bin/readelf", "--dyn-syms", "-W", str(path)], temporary).splitlines():
+        fields = line.split()
+        if len(fields) < 8 or not fields[0].endswith(":"): continue
+        kind, binding, visibility, section, name = fields[3:8]
+        if binding not in ("GLOBAL", "WEAK"): continue
+        if "@" in name or kind == "IFUNC":
+            raise shared.DriverError("symbol versions and IFUNC are not admitted by this initial product")
+        if section == "UND":
+            if binding == "GLOBAL": required.add(name)
+        elif visibility in ("DEFAULT", "PROTECTED"):
+            definitions.add(name)
+    return definitions, required
+
+
+def execute(root: Path, arguments: list[str]) -> None:
+    validate(root)
+    mode = None
+    dsos = []
+    common = []
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in ("--dynamic-pie", "-pie", "--dynamic-shared-object", "-shared"):
+            if mode is not None: raise shared.DriverError("select exactly one dynamic mode")
+            mode = "shared" if argument in ("-shared", "--dynamic-shared-object") else "pie"
+        elif argument == "--application-dso":
+            index += 1
+            if index == len(arguments): raise shared.DriverError("missing application DSO")
+            path = Path(arguments[index])
+            if path.suffix != ".so" or shared.rejects_runtime_object(path) or path.name == "libc.so":
+                raise shared.DriverError("unowned application DSO")
+            dsos.append(path)
+        elif argument in ("-static", "--static-et-exec", "-static-pie", "--static-pie"):
+            raise shared.DriverError("static linkage is not a dynamic mode")
+        else:
+            common.append(argument)
+        index += 1
+    if mode is None: raise shared.DriverError("select --dynamic-pie or --dynamic-shared-object")
+    invocation = shared.parse_invocation(common)
+    if invocation.compile_only and dsos: raise shared.DriverError("compile-only accepts no DSO")
+    if invocation.link_receipt is not None:
+        raise shared.DriverError("dynamic link receipt path is derived from -o")
+    library = root / "usr/lib"
+    link = [shared.linker(), "-shared" if mode == "shared" else "-pie", "--hash-style=sysv",
+            "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+            "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib"]
+    if mode == "pie":
+        link += ["--dynamic-linker", INTERPRETER, str(library / "Scrt1.o"),
+                 str(library / "crabc-dynamic-attach.o")]
+    if invocation.print_link_plan:
+        if dsos: raise shared.DriverError("link plan accepts no application inputs")
+        print(json.dumps({"format": FORMAT, "mode": mode, "linker": link,
+                          "campaign_complete": False}, sort_keys=True))
+        return
+    output = (invocation.output or Path("a.out")).absolute()
+    shared.validate_application_output(root, output)
+    shared.validate_application_output_disjoint(output, invocation.sources + invocation.objects + tuple(dsos))
+    receipt = Path(str(output) + ".crabc-link.json")
+    shared.validate_application_output(root, receipt)
+    shared.validate_application_output_disjoint(receipt, invocation.sources + invocation.objects + tuple(dsos) + (output,))
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="crabc-dynamic-link.", dir=output.parent) as temporary_name:
+        temporary = Path(temporary_name)
+        objects = [shared.require_x86_64_relocatable_object(root, path) for path in invocation.objects]
+        for index, source in enumerate(invocation.sources):
+            source = shared.require_application_file(root, source, "source")
+            obj = output if invocation.compile_only else temporary / f"source-{index}.o"
+            run([shared.compiler(), "-nostdinc", "-isystem", str(root / "usr/include"),
+                 "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
+                 *invocation.compiler_flags, "-fPIC" if mode == "shared" else "-fPIE",
+                 "-c", str(source), "-o", str(obj)], temporary)
+            objects.append(obj)
+        if invocation.compile_only:
+            return
+        declared = {}
+        for path in dsos:
+            path = shared.require_application_file(root, path, "DSO")
+            name, needed = dso_metadata(path, temporary)
+            if name in declared: raise shared.DriverError("duplicate application SONAME")
+            declared[name] = (path, needed)
+        for path, needed in declared.values():
+            if not set(needed) <= {"libc.so", *declared.keys()}:
+                raise shared.DriverError(f"undeclared transitive dependency of {path}")
+        provided, _ = dynamic_symbols(library / "libc.so", temporary)
+        requirements = set()
+        for path, _ in declared.values():
+            definitions, required = dynamic_symbols(path, temporary)
+            provided.update(definitions)
+            requirements.update(required)
+        if requirements - provided:
+            raise shared.DriverError(f"application DSOs have unresolved runtime imports: {sorted(requirements - provided)}")
+        if mode == "shared": link += ["-soname", output.name]
+        link += [str(library / "crti.o"), *(str(path) for path in objects),
+                 *(str(path) for path, _ in declared.values()), str(library / "libc.so"),
+                 str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(output)]
+        trace = run([*link[:-2], "--trace", *link[-2:]], temporary).splitlines()
+        runtime = [library / name for name in ("crti.o", "libc.so", "crtn.o")]
+        if mode == "pie": runtime += [library / "Scrt1.o", library / "crabc-dynamic-attach.o"]
+        direct = [*runtime, *objects, *(path for path, _ in declared.values())]
+        archive = library / "libcrabc-builtins.a"
+        # LLD may not extract an archive member. Every other input must appear,
+        # and no ambient startup, library, script or helper input is permitted.
+        seen = set()
+        for line in trace:
+            if line in {str(path) for path in direct}:
+                seen.add(line)
+            elif line == str(archive) or (line.startswith(str(archive) + "(") and line.endswith(")")):
+                continue
+            else:
+                raise shared.DriverError(f"unadmitted dynamic link trace input: {line}")
+        if seen != {str(path) for path in direct}:
+            raise shared.DriverError("dynamic link trace omitted an explicit input")
+        record = {"schema": 1, "format": FORMAT, "mode": mode,
+                  "output_sha256": shared.sha256_file(output),
+                  "manifest_sha256": shared.sha256_file(root / "share/crabc/manifest.json"),
+                  "application_dsos": {name: shared.sha256_file(path) for name, (path, _) in declared.items()},
+                  "owned_runtime_inputs": sorted(path.relative_to(root).as_posix() for path in [*runtime, archive]),
+                  "input_receipts": [{"path": str(path), "sha256": shared.sha256_file(path)} for path in [*direct, archive]],
+                  "resolved_linker": {"path": link[0], "sha256": shared.sha256_file(Path(link[0]))},
+                  "link_command": link, "link_trace": trace, "campaign_complete": False}
+        receipt.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
+
+
+def main() -> int:
+    try:
+        execute(ROOT, sys.argv[1:])
+    except (shared.DriverError, OSError) as error:
+        print(f"crabc-cc-dynamic: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

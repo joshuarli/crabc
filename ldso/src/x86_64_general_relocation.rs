@@ -264,7 +264,34 @@ unsafe fn copy_relocation(
 
 #[derive(Clone, Copy)]
 struct WriteSpan { start: u64, length: u64 }
-const EMPTY_SPAN: WriteSpan = WriteSpan { start: 0, length: 0 };
+
+/// Exclusive preflight scratch, sized from already range-checked ELF tables.
+/// It owns only anonymous loader memory: no libc allocator, TLS or callbacks
+/// are available at this point. Drop releases it on every validation failure.
+struct RelocationScratch { mapping: *mut u8, bytes: usize, spans: usize, relrs: usize }
+impl RelocationScratch {
+    unsafe fn new(object: &Object) -> Option<Self> {
+        let relrs = (object.relrsz / ELF64_RELR_SIZE).checked_mul(63)?;
+        let spans = (object.relasz / ELF64_RELA_SIZE)
+            .checked_add(object.pltrelsz / ELF64_RELA_SIZE)?.checked_add(relrs)?;
+        let bytes = spans.checked_mul(core::mem::size_of::<WriteSpan>())?
+            .checked_add(relrs.checked_mul(8)?)?.max(1);
+        if bytes > isize::MAX as usize { return None; }
+        let address = unsafe { syscall6(SYS_MMAP, 0, bytes as i64,
+            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
+        if is_linux_error(address) { return None; }
+        Some(Self { mapping: address as *mut u8, bytes, spans, relrs })
+    }
+    unsafe fn slices(&mut self) -> (&mut [WriteSpan], &mut [u64]) {
+        // The lengths were checked together before mapping. Anonymous pages
+        // initialize every integer field to zero; the two regions are disjoint.
+        unsafe { (core::slice::from_raw_parts_mut(self.mapping.cast(), self.spans),
+            core::slice::from_raw_parts_mut(self.mapping.add(self.spans * core::mem::size_of::<WriteSpan>()).cast(), self.relrs)) }
+    }
+}
+impl Drop for RelocationScratch {
+    fn drop(&mut self) { unsafe { syscall2(SYS_MUNMAP, self.mapping as i64, self.bytes as i64); } }
+}
 
 /// Reject writes into every ELF table read again during apply, not just the
 /// relocation tables. COPY may be byte-aligned and larger than a machine word.
@@ -289,7 +316,8 @@ unsafe fn write_span(object: &Object, start: u64, length: u64, word: bool) -> Op
 unsafe fn preflight_object(scope: &InitialSymbolScope, objects: &[Object; MAX_OBJECTS], owner: usize) -> Option<()> {
     let object = &objects[owner];
     preflight_relocation_table_layout(object)?;
-    let mut spans = [EMPTY_SPAN; MAX_RELOCATION_TARGETS];
+    let mut scratch = unsafe { RelocationScratch::new(object) }?;
+    let (spans, relr_targets) = unsafe { scratch.slices() };
     let mut count = 0;
     for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
         if bytes == 0 { continue; }
@@ -313,8 +341,7 @@ unsafe fn preflight_object(scope: &InitialSymbolScope, objects: &[Object; MAX_OB
             count += 1;
         }
     }
-    let mut relr_targets = [0u64; MAX_RELOCATION_TARGETS];
-    let relr_count = unsafe { preflight_relr_table(object, &mut relr_targets, 0) }?;
+    let relr_count = unsafe { preflight_relr_table(object, relr_targets, 0) }?;
     for &offset in &relr_targets[..relr_count] {
         *spans.get_mut(count)? = unsafe { write_span(object, offset, 8, true) }?;
         count += 1;

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Materialized initial-graph product evidence. Full dynamic campaign stays open.
+set -euo pipefail
+readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+[ "$(uname -sm)" = 'Linux x86_64' ]
+python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
+from pathlib import Path
+import sys
+root, temporary = map(Path, sys.argv[1:])
+if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / '.work'):
+    raise SystemExit('materialized dynamic TMPDIR must be a physical checkout .work directory')
+PY
+work="$(mktemp -d "$TMPDIR/materialized-dynamic.XXXXXX")"
+readonly work
+python3 -B -m unittest discover -s "$ROOT/compat/x86_64" -p test_owned_dynamic_driver.py
+rustc --edition=2021 --test --cfg crabc_general_initial_graph \
+    --cfg crabc_general_initial_tls_materialization_v1 --cfg crabc_general_loader_libc_tls_runtime_v1 \
+    --cfg crabc_general_initial_lifecycle --cfg crabc_dynamic_main_thread_runtime_v1 \
+    --cfg 'feature="x86_64-owned-dynamic-runtime"' \
+    "$ROOT/ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs" -o "$work/loader-tests"
+"$work/loader-tests"
+bash "$ROOT/compat/x86_64/run_musl_oracle.sh"
+/usr/local/bin/crabc-x86_64-musl-gcc -fPIC -shared "$ROOT/compat/x86_64/owned_dynamic_dependency.c" \
+    -Wl,-soname,liboracle-dependency.so -o "$work/liboracle-dependency.so"
+/usr/local/bin/crabc-x86_64-musl-gcc -fPIE -pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
+    -L"$work" -Wl,-rpath,"$work" -l:liboracle-dependency.so -o "$work/oracle"
+timeout 20 "$work/oracle" >"$work/oracle.stdout"
+python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/installed"
+driver="$work/installed/bin/crabc-cc-dynamic"
+"$driver" --dynamic-shared-object "$ROOT/compat/x86_64/owned_dynamic_dependency.c" -o "$work/libapplication.so"
+"$driver" --dynamic-pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
+    --application-dso "$work/libapplication.so" -o "$work/consumer"
+for artifact in "$work/installed/lib/ld-crabc-x86_64.so.1" "$work/installed/usr/lib/libc.so"; do
+    readelf -dW "$artifact" >"$work/$(basename "$artifact").dynamic.txt"
+    ! grep -E '\(NEEDED\)|\(TEXTREL\)' "$work/$(basename "$artifact").dynamic.txt"
+done
+readelf -lW "$work/consumer" >"$work/consumer.segments.txt"
+grep -Fq '/lib/ld-crabc-x86_64.so.1' "$work/consumer.segments.txt"
+# Chroot changes only pathname resolution inside this private container. The
+# complete runtime image and its writable scratch still live below .work.
+cp -a "$work/installed" "$work/execution-root"
+mkdir "$work/execution-root/tmp"
+cp "$work/consumer" "$work/execution-root/consumer"
+cp "$work/libapplication.so" "$work/execution-root/usr/lib/libapplication.so"
+timeout 20 chroot "$work/execution-root" /consumer >"$work/consumer.stdout"
+printf 'installed dynamic: allocation errno stdio threads\nordinary exit\n' >"$work/expected.stdout"
+cmp "$work/expected.stdout" "$work/consumer.stdout"
+cmp "$work/oracle.stdout" "$work/consumer.stdout"
+python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/installed" "$work/runtime.tar"
+python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" extract "$work/runtime.tar" "$work/extracted"
+extracted_driver="$work/extracted/bin/crabc-cc-dynamic"
+"$extracted_driver" --dynamic-shared-object "$ROOT/compat/x86_64/owned_dynamic_dependency.c" -o "$work/libextracted.so"
+"$extracted_driver" --dynamic-pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
+    --application-dso "$work/libextracted.so" -o "$work/extracted-consumer"
+cp -a "$work/extracted" "$work/extracted-execution-root"
+mkdir "$work/extracted-execution-root/tmp"
+cp "$work/extracted-consumer" "$work/extracted-execution-root/consumer"
+cp "$work/libextracted.so" "$work/extracted-execution-root/usr/lib/libextracted.so"
+timeout 20 chroot "$work/extracted-execution-root" /consumer >"$work/extracted-consumer.stdout"
+cmp "$work/expected.stdout" "$work/extracted-consumer.stdout"
+python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/second"
+cmp "$work/installed/share/crabc/manifest.json" "$work/second/share/crabc/manifest.json"
+python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" package "$work/second" "$work/second-runtime.tar"
+cmp "$work/runtime.tar" "$work/second-runtime.tar"
+printf 'materialized dynamic sysroot: PASS (initial graph only); evidence: %s\n' "$work"

@@ -42,9 +42,10 @@ undefined strong/default function-or-NOTYPE requests, zero-addend GOT/PLT
 relocations. Existing weak/main-only RuntimeV1 and CRT wire checks stay intact.
 
 Native evidence at this component boundary: the general RuntimeV1 source root
-with the installed loader feature passes 27 tests, including actual mmap
+with the installed loader feature and lifecycle cfgs passes 33 tests, including actual mmap
 ownership regressions for wrong span, wrong TP, stale ID and double release,
-plus independent over-aligned template/TBSS/DTV copies with unchanged FS;
+plus independent over-aligned template/TBSS/DTV copies with unchanged FS and
+rejection of malformed private function imports before any graph write;
 the unchanged `run_general_dynamic_lifecycle.sh` still passes ordinary PIE,
 musl callback ordering, malformed handoffs, entropy guard and one-FS-install
 checks. Installed worker and package evidence belongs to the materialized

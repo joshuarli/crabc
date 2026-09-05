@@ -1,4 +1,14 @@
-# Planned x86 owned-dynamic product boundary
+# X86 owned-dynamic product boundary
+
+An initial-graph component is now materialized by
+`scripts/build_x86_64_owned_dynamic_sysroot.py`, with an executing installed
+driver and native package gate. See [materialized-dynamic-sysroot.md](materialized-dynamic-sysroot.md)
+for its exact implementation, evidence and remaining conditions. It does not
+complete the broader `dynamic-product.toml` campaign contract below.
+
+The older `crabc_cc_dynamic.py`, `dynamic-product-state.json` and
+`run_owned_dynamic_sysroot.sh` remain explicitly plan-only compatibility
+seeds. They are not the installed driver or evidence for the new component.
 
 `dynamic-product.toml` is the non-promoting contract for the future
 Linux/x86-64 dynamic half of `sysroot.owned-artifact`. It makes the dynamic

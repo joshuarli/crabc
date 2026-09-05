@@ -107,6 +107,8 @@ pub unsafe extern "C" fn __libc_start_main(
         core::ptr::write(core::ptr::addr_of_mut!(EXECUTABLE_FINI), Some(fini));
         core::ptr::write(core::ptr::addr_of_mut!(LOADER_FINI), Some(rtld_fini));
     }
+    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    if !unsafe { super::prepare(argc, argv) } { immediate_termination::_Exit(127); }
     PROCESS_STATE.store(READY, Ordering::Release);
     unsafe { init() };
     let status = unsafe { main(argc, argv, vectors.envp) };
@@ -129,5 +131,7 @@ pub unsafe extern "C" fn exit(status: c_int) -> ! {
     if let Some(callback) = executable { unsafe { callback() }; }
     let loader = unsafe { core::ptr::replace(core::ptr::addr_of_mut!(LOADER_FINI), None) };
     if let Some(callback) = loader { unsafe { callback() }; }
+    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    unsafe { super::flush_on_exit() };
     immediate_termination::_Exit(status)
 }

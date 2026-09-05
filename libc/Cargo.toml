@@ -45,6 +45,9 @@ x86-owned-static-runtime = [
     "x86-stdio-permanent-format-scan",
     "x86-resolver-runtime",
 ]
+# Share the owned leaf roster; process linkage is selected independently in
+# the target root. This does not select the static startup or TLS owner.
+x86-owned-dynamic-runtime = ["x86-owned-static-runtime"]
 # Legacy C temporary-name generation returns an allocator-owned pathname from
 # tempnam while tmpnam retains its source-compatible static-buffer path. Keep
 # both opt-in over the already audited strdup client so the default archive

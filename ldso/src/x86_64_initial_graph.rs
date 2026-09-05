@@ -343,6 +343,7 @@ const FIXED_GRAPH_TEXT_CAPACITY: usize = 256;
 // empty bitmap record has no destination, so a destination-only cap would let
 // a malformed table consume unbounded loader time. The valid main -> mid ->
 // leaf graph is intentionally far below both ceilings.
+// General graph preflight instead owns checked ELF-sized anonymous scratch.
 const MAX_RELOCATION_TARGETS: usize = 512;
 const ELF64_RELA_SIZE: usize = 24;
 const ELF64_RELR_SIZE: usize = 8;
@@ -1604,7 +1605,7 @@ unsafe fn parse_mapped(
             if entry_len == ELF64_RELR_SIZE as u64
                 && byte_len != 0
                 && byte_len % ELF64_RELR_SIZE as u64 == 0
-                && byte_len <= MAX_RELR_BYTE_LEN as u64
+                && (general_initial_graph || byte_len <= MAX_RELR_BYTE_LEN as u64)
                 && address & (ELF64_RELR_SIZE as u64 - 1) == 0
                 && virtual_range_in_load(phdr, phnum, address, byte_len) =>
         {
@@ -2458,7 +2459,7 @@ unsafe fn preflight_rela_table(
 
 unsafe fn preflight_relr_table(
     object: &Object,
-    targets: &mut [u64; MAX_RELOCATION_TARGETS],
+    targets: &mut [u64],
     mut target_count: usize,
 ) -> Option<usize> {
     if object.relrsz == 0 {
@@ -2466,7 +2467,7 @@ unsafe fn preflight_relr_table(
     }
     if object.relr.is_null()
         || object.relrsz % ELF64_RELR_SIZE != 0
-        || object.relrsz > MAX_RELR_BYTE_LEN
+        || (!cfg!(crabc_general_initial_graph) && object.relrsz > MAX_RELR_BYTE_LEN)
     {
         return None;
     }
@@ -2533,7 +2534,7 @@ unsafe fn preflight_relocation_target(object: &Object, virtual_address: u64) -> 
 }
 
 fn record_relocation_target(
-    targets: &mut [u64; MAX_RELOCATION_TARGETS],
+    targets: &mut [u64],
     count: usize,
     virtual_address: u64,
 ) -> Option<usize> {
@@ -2570,7 +2571,7 @@ unsafe fn apply_relr_table(object: &Object) -> Option<()> {
     }
     if object.relr.is_null()
         || object.relrsz % ELF64_RELR_SIZE != 0
-        || object.relrsz > MAX_RELR_BYTE_LEN
+        || (!cfg!(crabc_general_initial_graph) && object.relrsz > MAX_RELR_BYTE_LEN)
     {
         return None;
     }

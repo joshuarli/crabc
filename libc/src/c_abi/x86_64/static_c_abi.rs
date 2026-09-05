@@ -201,7 +201,8 @@ mod atomic;
 mod raw_syscall;
 #[path = "temp_name_random.rs"]
 mod temp_name_random;
-#[path = "static_tls.rs"]
+#[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), path = "static_tls.rs")]
+#[cfg_attr(feature = "x86-owned-dynamic-runtime", path = "dynamic_tls.rs")]
 mod static_tls;
 #[path = "stat_compat.rs"]
 mod stat_compat;
@@ -576,8 +577,12 @@ mod posix_spawnattr_getschedpolicy;
 mod posix_spawnattr_signal_fields;
 #[path = "posix_spawnattr_getschedparam.rs"]
 mod posix_spawnattr_getschedparam;
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 #[path = "static_startup.rs"]
 mod static_startup;
+#[cfg(feature = "x86-owned-dynamic-runtime")]
+#[path = "owned_dynamic_runtime.rs"]
+mod owned_dynamic_runtime;
 #[path = "stack_chk_fail.rs"]
 mod stack_chk_fail;
 #[path = "process_globals.rs"]

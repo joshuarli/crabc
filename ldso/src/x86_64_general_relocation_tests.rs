@@ -52,6 +52,88 @@ fn graph(count: usize) -> InitialGraphState {
 }
 
 #[test]
+fn general_relocation_scratch_tracks_elf_size_and_rejects_late_overlap_before_writes() {
+    let count = 1025;
+    let mut data = self::std::vec![0xfeedu64; count];
+    let mut relocations: self::std::vec::Vec<[u64; 3]> = (0..count)
+        .map(|index| [0x1000 + index as u64 * 8, R_X86_64_RELATIVE as u64, 0x1000])
+        .collect();
+    let phdr = [1u64 | (7 << 32), 0, 0x1000, 0, count as u64 * 8, count as u64 * 8, 4096];
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = Object { base: data.as_ptr() as u64 - 0x1000,
+        phdr: phdr.as_ptr().cast(), phnum: 1,
+        rela: relocations.as_ptr().cast(), relasz: relocations.len() * 24, ..EMPTY_OBJECT };
+    assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_some());
+    assert!(data.iter().all(|word| *word == data.as_ptr() as u64));
+    data.fill(0xfeed);
+    relocations[count - 1][0] = 0x1000;
+    assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_none());
+    assert!(data.iter().all(|word| *word == 0xfeed));
+}
+
+#[test]
+fn general_relr_scratch_exceeds_legacy_table_and_target_limits_without_weakening_overlap_checks() {
+    let count = 600;
+    let mut data = self::std::vec![0u64; count];
+    let mut relr: self::std::vec::Vec<u64> = (0..count).map(|index| 0x1000 + index as u64 * 8).collect();
+    let phdr = [1u64 | (7 << 32), 0, 0x1000, 0, count as u64 * 8, count as u64 * 8, 4096];
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = Object { base: data.as_ptr() as u64 - 0x1000,
+        phdr: phdr.as_ptr().cast(), phnum: 1,
+        relr: relr.as_ptr().cast(), relrsz: relr.len() * 8, ..EMPTY_OBJECT };
+    assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_some());
+    assert!(data.iter().all(|word| *word == objects[0].base));
+    data.fill(0);
+    relr[count - 1] = 0x1000;
+    assert!(unsafe { relocate_initial_graph(&graph(1), &objects) }.is_none());
+    assert!(data.iter().all(|word| *word == 0));
+    let oversized = Object { relrsz: usize::MAX, ..EMPTY_OBJECT };
+    assert!(unsafe { RelocationScratch::new(&oversized) }.is_none());
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn installed_runtime_function_imports_validate_shape_before_any_graph_write() {
+    for name in [
+        b"\0__crabc_x86_64_initial_tls_allocate\0".as_slice(),
+        b"\0__crabc_x86_64_initial_tls_release\0".as_slice(),
+        b"\0__crabc_x86_64_resolve_initial_tls\0".as_slice(),
+    ] {
+        for (relocation, kind, binding, visibility, section, addend, admitted) in [
+            (R_X86_64_GLOB_DAT, 2, 1, 0, 0, 0, true),
+            (R_X86_64_JUMP_SLOT, 0, 1, 0, 0, 0, true),
+            (R_X86_64_GLOB_DAT, 2, 2, 0, 0, 0, false),
+            (R_X86_64_GLOB_DAT, 1, 1, 0, 0, 0, false),
+            (R_X86_64_GLOB_DAT, 2, 1, 3, 0, 0, false),
+            (R_X86_64_GLOB_DAT, 2, 1, 0, 1, 0, false),
+            (R_64, 2, 1, 0, 0, 0, false),
+            (R_X86_64_GLOB_DAT, 2, 1, 0, 0, 1, false),
+        ] {
+            let mut main = Image::new();
+            let mut library = Image::new();
+            main.data[0] = 0xfeed;
+            library.data[0] = 0xbeef;
+            main.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1000);
+            library.symbol(1, kind, binding, visibility, section, 0, 0);
+            library.rela(0x1000, relocation, 1, addend);
+            let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+            objects[0] = main.object(false);
+            objects[1] = library.object(true);
+            objects[1].strtab = name.as_ptr();
+            objects[1].strsz = name.len();
+            assert_eq!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some(), admitted);
+            if admitted {
+                assert_eq!(main.data[0], main.data.as_ptr() as u64);
+                assert_eq!(library.data[0], x86_64_initial_worker_tls::runtime_function(&name[1..name.len()-1]).unwrap());
+            } else {
+                assert_eq!(main.data[0], 0xfeed);
+                assert_eq!(library.data[0], 0xbeef);
+            }
+        }
+    }
+}
+
+#[test]
 fn copy_runs_after_provider_fixups_and_preserves_main_interposition_addresses() {
     let mut main = Image::new();
     let mut provider = Image::new();
