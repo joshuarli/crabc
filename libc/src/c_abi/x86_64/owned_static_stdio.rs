@@ -33,8 +33,12 @@
 //! the shared spawn owner, also used by system. `owned_wide_format` consumes
 //! the held wide and stack-string adapters. `owned_stdio_extensions` maps
 //! ext.c/ext2.c and fgetln.c to the same active buffering and FILE-owned line
-//! lifetime. Cancellation integration remains separate; fork preparation
-//! consumes the narrow registry triplet. This is not stdio-family completion.
+//! lifetime. Ordinary FILE backend I/O remains non-canceling, as in musl.
+//! ftrylockfile.c::{__register_locked_file,__unlist_locked_file,
+//! __do_orphaned_stdio_locks} maps to the explicit-lock list and non-final
+//! pthread retirement hook below; internal guards never enter that list.
+//! Fork preparation consumes the narrow registry triplet and preserves the
+//! surviving task's lock list. This is not stdio-family completion.
 
 use core::{ffi::{c_char, c_int, c_void}, ptr, sync::atomic::{AtomicI32, Ordering}};
 use super::{c_off_status, c_ssize_status, c_status, errno, raw_syscall};

@@ -151,8 +151,12 @@ and growing wide-memory streams with overflow/ownership checks.
 `owned_stdio_extensions_probe.c` checks active buffer direction, borrowed
 read/line views, FILE-owned line allocation, flush/purge/error transitions,
 setbuf-family configuration, and unlocked compatibility entries against musl.
-All reuse the same FILE owner and receive separate installed link evidence. Syscall
-cancellation and allocator-wide fork recovery remain unqualified.
+All reuse the same FILE owner and receive separate installed link evidence.
+Ordinary FILE descriptor I/O remains non-canceling, as in pinned musl. Explicit
+FILE locks belong to a current-task intrusive list; cleanup handlers may release
+them, while non-final task retirement marks remaining locks orphaned before
+clearing the FS+32 cancellation-state pointer. Allocator-wide fork recovery
+remains unqualified.
 
 `owned_static_printf_probe.c` additionally covers positional integer/string/
 count/pointer/errno/hex-float formatting and FILE, descriptor, allocated, and
@@ -174,7 +178,7 @@ standard streams, forwarded va_lists, long strings, and allocated results.
 The digest-checked wide parser source and owned FILE callbacks are mapped in
 `owned_wide_format.rs`; there is no foreign FILE representation. Both wide
 probes run unchanged against pinned musl and all four installed product arms.
-The 24 bounded jobs now cover 84 installed binaries.
+The 24 bounded jobs now include separately receipted syscall-cancellation consumers.
 
 Each TLS job also runs `owned_pthread_lifecycle_consumer.c` through a separate
 installed link: initialized attributes, private guarded and caller-owned
@@ -191,8 +195,8 @@ remains alive. Controls remain owned until creator handoff and kernel
 clear-child-TID both complete. The same consumer proves normal robust-mutex
 owner death, `EOWNERDEAD` recovery with `pthread_mutex_consistent`,
 `ENOTRECOVERABLE` after an unrecovered unlock, and process-shared owner death
-across `fork`. Explicit scheduling, asynchronous and arbitrary syscall
-cancellation, recursive/error-checking/PI robust mutexes, allocator-wide fork
+across `fork`. Explicit scheduling, remaining syscall cancellation points,
+recursive/error-checking/PI robust mutexes, allocator-wide fork
 recovery, and dynamic TLS lifetime remain open.
 
 The focused `./scripts/dev-x86_64.sh owned-pthread-lifecycle` gate runs this
@@ -211,6 +215,20 @@ drains earlier leases before unmapping. Initial-task target state has process
 lifetime; fork adopts the surviving task's existing cancellation pointer and
 refreshes its TID. This seam alone does not qualify signal-driven cancellation;
 the cancellation owner must supply and test its handler and delivery callback.
+
+Each TLS job also links `owned_io_cancellation_probe.c` in both installed modes
+and extracted copies. The pinned-musl reference observes workers blocked in
+`read`, `readv`, `write`, and `writev` through `/proc`, then requires signal-driven
+cancellation with LIFO cleanup. It checks disabled and masked requests, a request
+before syscall entry, asynchronous delivery, explicit FILE cleanup and orphan
+locks, initial-task cancellation, and fork inheritance of pending state, type,
+and cleanup for initial and adopted-worker tasks. `owned_syscall_cancel.rs` maps
+musl's SIGCANCEL **33** and x86 PC window; FS+32 is a separate private TCB slot.
+The target lifecycle lease protects both TID delivery and mapped cancellation
+state after registry lookup. The focused command is
+`./scripts/dev-x86_64.sh owned-io-cancellation`; the aggregate remains the
+installed/extracted product judge. Other syscall cancellation points and dynamic
+initial-task/fork cancellation are still separate work.
 
 Each POSIX job separately links `owned_spawn_probe.c`: spawn/spawnp file-action
 ordering, working-directory and PATH search, signal/process attributes, worker

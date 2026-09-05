@@ -24,9 +24,9 @@
 //!
 //! Musl routes `read`, `write`, `pread`, `pwrite`, `close`, `fsync`, and
 //! `fdatasync` through cancellation-point machinery, and `close` coordinates
-//! an AIO hook. Those runtime integrations remain deliberately deferred until
-//! the selected x86 pthread/TLS boundary exists. This leaf issues the direct
-//! Linux syscalls instead. It preserves musl's non-cancellation `close`
+//! an AIO hook. The owned product routes `read` and `write` through its
+//! SIGCANCEL/PC-window owner; legacy fixtures and the other operations remain
+//! direct Linux syscalls. It preserves musl's non-cancellation `close`
 //! `EINTR` success mapping, the `dup2`/`dup3` `EBUSY` retry loops, and the
 //! current musl `pwrite` algorithm: remap C offset `-1` to `-2` before the
 //! kernel can interpret `-1` as the pwritev2 current-offset sentinel, use

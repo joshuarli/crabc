@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ordinary installed x86 pthread/C11 cancellation consumer evidence.
+# Ordinary installed x86 syscall cancellation and explicit FILE cleanup evidence.
 #
 # This one composition runner first executes the project-header consumer with
 # pinned musl 1.2.6, then builds the installed owned static product and runs
@@ -219,4 +219,4 @@ run_installed_mode -static et-exec
 run_installed_mode -static-pie static-pie
 
 printf '%s\n' \
-    'x86 owned I/O cancellation: PASS (pinned musl + installed ET_EXEC/static-PIE attributes, C11, explicit/condition cancellation teardown, normal robust owner-death/recovery, detached reaping, atfork)'
+    'x86 owned I/O cancellation: PASS (pinned musl + installed ET_EXEC/static-PIE blocked scalar/vector I/O, disabled/masked/pending/async delivery, FILE locks, initial task, fork inheritance)'

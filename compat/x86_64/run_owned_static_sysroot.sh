@@ -800,6 +800,11 @@ run_static_mode() {
             expected_output=''
             minimum_tls_alignment=1
             ;;
+        io-cancellation)
+            probe=owned_io_cancellation_probe.c
+            expected_output="$(cat "$printf_matrix_reference")"
+            minimum_tls_alignment=1
+            ;;
         pthread-lifecycle)
             probe=owned_pthread_lifecycle_consumer.c
             expected_output=''
@@ -1062,6 +1067,8 @@ run_static_mode() {
             "$label pthread composition" pthread
         run_static_mode "$installed_root" "$mode" "$mode_root/lifecycle" \
             "$label pthread lifecycle" pthread-lifecycle
+        run_static_mode "$installed_root" "$mode" "$mode_root/cancellation" \
+            "$label I/O cancellation" io-cancellation "$printf_matrix_reference.cancellation"
     fi
     if [ "$consumer_kind" = posix ]; then
         run_static_mode "$installed_root" "$mode" "$mode_root/temp" \
@@ -1147,7 +1154,7 @@ for tree_name, installed_root, consumer_root in (
             label if tree_name == "primary" else f"extracted {label}",
             kind,
         ]
-        if kind in ("printf", "stdio", "posix"):
+        if kind in ("printf", "stdio", "posix", "tls"):
             argv.append(str(printf_matrix_reference))
         jobs.append(
             {
@@ -1403,6 +1410,14 @@ reference_output="$(env -i "$header_consumer/reference")" || fail "pinned-musl r
 reference_output="$(env -i "$header_consumer/pthread-lifecycle-reference")" ||
     fail "pinned-musl pthread lifecycle reference failed"
 [ -z "$reference_output" ] || fail "pinned-musl pthread lifecycle reference emitted output"
+
+"$ORACLE_CC" -std=c11 -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_io_cancellation_probe.c" \
+    -o "$header_consumer/io-cancellation-reference"
+env -i "$header_consumer/io-cancellation-reference" >"$printf_matrix_reference.cancellation" ||
+    fail "pinned-musl I/O cancellation reference failed"
+grep -qx owned-io-cancellation-ok "$printf_matrix_reference.cancellation" ||
+    fail "pinned-musl I/O cancellation completion missing"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -I"$ROOT_DIR/include" \

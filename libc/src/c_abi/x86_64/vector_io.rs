@@ -20,8 +20,8 @@
 //!   fallback.
 //!
 //! Musl routes all four operations through cancellation-point machinery. The
-//! selected static x86 C ABI does not yet own that runtime integration, so
-//! these wrappers issue the otherwise matching Linux syscalls directly.
+//! owned product routes `readv` and `writev` through its SIGCANCEL/PC-window
+//! owner. Legacy fixtures and positioned vector I/O remain direct syscalls.
 
 use core::ffi::{c_int, c_long, c_void};
 

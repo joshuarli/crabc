@@ -14,8 +14,9 @@
 //!   transitions, initial-thread `pthread_exit`, and the last-thread ordinary
 //!   exit decision. The separate deferred cancellation leaf owns active
 //!   selected-worker cleanup records, explicit `pthread_testcancel`, and one
-//!   paired private `pthread_cond_wait` cancellation point; signal-driven
-//!   cancellation and robust lists remain unselected.
+//!   paired private `pthread_cond_wait` cancellation point. The owned product
+//!   additionally uses SIGCANCEL and its syscall PC window; normal robust
+//!   mutex owner death composes through the selected robust-list owner.
 //! - `src/thread/x86_64/clone.s::__clone` supplies the seven-argument SysV
 //!   entry layout, `clone=56` register shuffle, aligned child-stack callback,
 //!   and `exit=60` tail. The assembly below is a lexical private-symbol rename
@@ -54,8 +55,7 @@
 //! reaping shape; it is not a claim of general detached-thread reclamation or
 //! full pthread parity. It provides the selected static initial-thread
 //! `pthread_exit` and static fork child-list/TLS/TSD reset paths, but not
-//! signal-driven cancellation, robust lists, dynamic
-//! main-thread exit/fork, scheduler application, GNU default attributes,
+//! dynamic main-thread exit/fork, scheduler application, GNU default attributes,
 //! affinity attributes, live-thread inspection, or general pthread semantics.
 //! Dynamic workers retain the loader's opaque allocation/release token through
 //! the same create/join seam, while the static-only initial/last-task and fork
@@ -96,9 +96,9 @@ const PAGE_SIZE: usize = 4_096;
 /// The static startup and materialized dynamic startup composition boundaries
 /// call this before any constructor or application callback can execute. The
 /// backing state is process-lifetime storage, so unlike a worker record it
-/// has no registry membership or mapped-control retirement edge. Signal
-/// delivery remains unselected until the cancellation owner installs its
-/// source-shaped handler and target transaction.
+/// has no registry membership or mapped-control retirement edge. The first
+/// cancellation request installs the source handler before delivering through
+/// the lifecycle-owned target transaction.
 #[cfg(feature = "x86-owned-static-runtime")]
 pub(super) unsafe fn publish_initial_selected_pthread_cancellation_state() {
     // SAFETY: each selected process startup calls this only after its static
