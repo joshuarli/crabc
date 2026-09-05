@@ -243,6 +243,25 @@ unsafe fn robust_head_node(list: *mut SelectedRobustList) -> *mut c_void {
     unsafe { core::ptr::addr_of_mut!((*list).head).cast() }
 }
 
+/// Publish Linux's kernel-visible robust pending-node pointer.
+///
+/// The kernel may inspect this word asynchronously after `set_robust_list`.
+/// Match musl's volatile pointer stores so compiler optimization cannot merge,
+/// elide, or move this transition across the adjacent list/CAS operations.
+#[inline(always)]
+unsafe fn publish_robust_pending_node(list: *mut SelectedRobustList, node: *mut c_void) {
+    // SAFETY: `pending` is the exact third pointer-sized word in the current
+    // task's live repr(C) Linux robust-list record.
+    unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!((*list).pending), node) };
+}
+
+/// Observe one Linux robust-list head pointer without creating a Rust borrow.
+#[inline(always)]
+unsafe fn load_robust_head_node(list: *mut SelectedRobustList) -> *mut c_void {
+    // SAFETY: `head` is kernel-visible and this task owns its list mutation.
+    unsafe { core::ptr::read_volatile(core::ptr::addr_of!((*list).head)) }
+}
+
 /// Initialize one fresh task-local Linux robust-list record.
 ///
 /// # Safety
@@ -255,9 +274,9 @@ pub(super) unsafe fn initialize_selected_robust_list(list: *mut SelectedRobustLi
     // head begins as a self-referential sentinel and has no pending node or
     // kernel registration offset.
     unsafe {
-        (*list).head = robust_head_node(list);
+        core::ptr::write_volatile(core::ptr::addr_of_mut!((*list).head), robust_head_node(list));
         (*list).offset = 0;
-        (*list).pending = core::ptr::null_mut();
+        publish_robust_pending_node(list, core::ptr::null_mut());
     }
 }
 
@@ -280,7 +299,7 @@ pub(super) unsafe fn adopt_selected_initial_robust_list_after_fork(
     // the fork caller can still be unlocked in the child.
     unsafe {
         (*list).offset = 0;
-        (*list).pending = core::ptr::null_mut();
+        publish_robust_pending_node(list, core::ptr::null_mut());
     }
     SELECTED_ADOPTED_INITIAL_ROBUST_LIST.store(list as usize, Ordering::Release);
 }
@@ -298,12 +317,12 @@ pub(super) unsafe fn reset_selected_initial_robust_list_after_fork() {
     let list = core::ptr::addr_of_mut!(SELECTED_INITIAL_ROBUST_LIST);
     // SAFETY: a freshly bootstrapped main can lazily have a null sentinel;
     // preserve existing linked nodes if it already owns robust mutexes.
-    if unsafe { (*list).head.is_null() } {
+    if unsafe { load_robust_head_node(list).is_null() } {
         unsafe { initialize_selected_robust_list(list) };
     } else {
         unsafe {
             (*list).offset = 0;
-            (*list).pending = core::ptr::null_mut();
+            publish_robust_pending_node(list, core::ptr::null_mut());
         }
     }
 }
@@ -325,7 +344,7 @@ fn current_selected_robust_list() -> Option<*mut SelectedRobustList> {
         };
         // SAFETY: the static main record is task-owned, while an adopted
         // worker record remains mapped for the fork child's lifetime.
-        if unsafe { (*list).head.is_null() } {
+        if unsafe { load_robust_head_node(list).is_null() } {
             unsafe { initialize_selected_robust_list(list) };
         }
         return Some(list);
@@ -728,7 +747,7 @@ unsafe fn begin_shared_robust_transition(
     }
     // SAFETY: the pending node protects exactly the unlinked acquire window
     // if Linux tears down this process-shared task before its CAS completes.
-    unsafe { (*list).pending = robust_node(mutex) };
+    unsafe { publish_robust_pending_node(list, robust_node(mutex)) };
 }
 
 /// Link a successfully acquired robust mutex at the current task list head.
@@ -743,7 +762,7 @@ unsafe fn link_robust_mutex(list: *mut SelectedRobustList, mutex: *mut PublicPth
     let sentinel = unsafe { robust_head_node(list) };
     // SAFETY: `head` is a kernel-visible pointer slot, accessed raw to avoid
     // manufacturing a shared Rust reference.
-    let next = unsafe { core::ptr::read_volatile(core::ptr::addr_of!((*list).head)) };
+    let next = unsafe { load_robust_head_node(list) };
     let node = unsafe { robust_node(mutex) };
     // SAFETY: the selected pointer slots are private list links inside the
     // caller-owned live mutex record.
@@ -793,6 +812,7 @@ unsafe fn try_lock_selected_robust_mutex_record(mutex: *mut PublicPthreadMutex) 
         return ENOTSUP;
     };
     let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
+    let waiters = unsafe { mutex_word(mutex, MUTEX_WAITERS_WORD) };
     // SAFETY: the public lock word is the selected atomic state machine.
     let old = unsafe { atomic::x86_64_load_acquire_i32(lock) };
     let owner = old & MUTEX_OWNER_MASK;
@@ -815,12 +835,21 @@ unsafe fn try_lock_selected_robust_mutex_record(mutex: *mut PublicPthreadMutex) 
         // writes become kernel-visible or the failed-CAS path clears it.
         unsafe { begin_shared_robust_transition(list, mutex) };
     }
-    let desired = thread_id | (old & MUTEX_OWNER_DIED_BIT);
+    // A process-shared robust owner must retain an already-published waiter
+    // hint in the kernel-visible lock word. If it dies abruptly after this
+    // acquisition, Linux uses that sign bit to wake the waiting process.
+    let desired = thread_id
+        | (old & MUTEX_OWNER_DIED_BIT)
+        | if !is_private && unsafe { atomic::x86_64_load_relaxed_i32(waiters) } != 0 {
+            MUTEX_WAITER_BIT
+        } else {
+            0
+        };
     // SAFETY: all selected contenders use this raw atomic owner transition.
     if unsafe { atomic::x86_64_compare_exchange_acqrel_i32(lock, old, desired) } != old {
         if !is_private {
             // SAFETY: the failed transition never linked the node.
-            unsafe { (*list).pending = core::ptr::null_mut() };
+            unsafe { publish_robust_pending_node(list, core::ptr::null_mut()) };
         }
         return EBUSY;
     }
@@ -830,7 +859,7 @@ unsafe fn try_lock_selected_robust_mutex_record(mutex: *mut PublicPthreadMutex) 
     unsafe { link_robust_mutex(list, mutex) };
     if !is_private {
         // SAFETY: the mutex node is now reachable from the registered head.
-        unsafe { (*list).pending = core::ptr::null_mut() };
+        unsafe { publish_robust_pending_node(list, core::ptr::null_mut()) };
     }
     if old != 0 {
         // SAFETY: this count field is musl's owner-recovery bookkeeping. The
@@ -902,6 +931,10 @@ unsafe fn unlock_selected_robust_mutex_record(mutex: *mut PublicPthreadMutex) ->
     };
     let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
     let waiters = unsafe { mutex_word(mutex, MUTEX_WAITERS_WORD) };
+    // Snapshot before the owner release. A successful release permits another
+    // owner to acquire and destroy this caller-owned public object, so no
+    // later load may dereference its waiter field.
+    let waiter_hint = unsafe { atomic::x86_64_load_relaxed_i32(waiters) };
     let old = unsafe { atomic::x86_64_load_acquire_i32(lock) };
     if old & MUTEX_OWNER_MASK != thread_id {
         return EPERM;
@@ -916,17 +949,17 @@ unsafe fn unlock_selected_robust_mutex_record(mutex: *mut PublicPthreadMutex) ->
         // SAFETY: source holds vmlock while a kernel-visible pending node is
         // detached, so destroy waits for this exact transition to finish.
         unsafe { pthread_vmlock::lock() };
-        unsafe { (*list).pending = robust_node(mutex) };
+        unsafe { publish_robust_pending_node(list, robust_node(mutex)) };
     }
     // SAFETY: the verified owner inserted this node exactly once.
     unsafe { unlink_robust_mutex(list, mutex) };
     let previous = unsafe { atomic::x86_64_swap_acqrel_i32(lock, new) };
     if !is_private {
         // SAFETY: unlink and lock release are complete before pending clears.
-        unsafe { (*list).pending = core::ptr::null_mut() };
+        unsafe { publish_robust_pending_node(list, core::ptr::null_mut()) };
         unsafe { pthread_vmlock::unlock() };
     }
-    if previous < 0 || unsafe { atomic::x86_64_load_relaxed_i32(waiters) } != 0 {
+    if previous < 0 || waiter_hint != 0 {
         // SAFETY: the caller retains the public mutex through the wake.
         unsafe { futex_wake(lock, is_private) };
     }
@@ -948,23 +981,26 @@ pub(super) unsafe fn mark_current_selected_robust_mutexes_owner_dead() {
     unsafe { pthread_vmlock::lock() };
     let sentinel = unsafe { robust_head_node(list) };
     loop {
-        let node = unsafe { core::ptr::read_volatile(core::ptr::addr_of!((*list).head)) };
+        let node = unsafe { load_robust_head_node(list) };
         if node.is_null() || node == sentinel {
             break;
         }
         let mutex = unsafe { mutex_from_robust_node(node) };
         let waiters = unsafe { mutex_word(mutex, MUTEX_WAITERS_WORD) };
         let lock = unsafe { mutex_word(mutex, MUTEX_LOCK_WORD) };
+        // Snapshot before the owner-death exchange. A new owner may acquire
+        // and destroy its caller-owned mutex immediately after that exchange.
+        let waiter_hint = unsafe { atomic::x86_64_load_relaxed_i32(waiters) };
         let mutex_type = unsafe { selected_mutex_type(mutex) };
         let is_private = mutex_is_private(mutex_type);
         // SAFETY: pending protects the current detached node until the list
         // head and owner word publish a complete owner-death transition.
-        unsafe { (*list).pending = node };
+        unsafe { publish_robust_pending_node(list, node) };
         let next = unsafe { core::ptr::read_volatile(node.cast::<*mut c_void>()) };
         unsafe { core::ptr::write_volatile(core::ptr::addr_of_mut!((*list).head), next) };
         let previous = unsafe { atomic::x86_64_swap_acqrel_i32(lock, MUTEX_OWNER_DIED_BIT) };
-        unsafe { (*list).pending = core::ptr::null_mut() };
-        if previous < 0 || unsafe { atomic::x86_64_load_relaxed_i32(waiters) } != 0 {
+        unsafe { publish_robust_pending_node(list, core::ptr::null_mut()) };
+        if previous < 0 || waiter_hint != 0 {
             // SAFETY: a valid robust-mutex caller retains its public object
             // until it is no longer locked/contended; this mirrors musl's
             // caller-owned object-lifetime contract at task exit.

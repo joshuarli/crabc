@@ -26,6 +26,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <sched.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/mman.h>
@@ -956,6 +957,162 @@ struct robust_shared_round {
     pthread_mutex_t mutex;
 };
 
+/* The installed x86 public mutex representation deliberately retains musl's
+ * volatile `_m_waiters` word at index two. This is not a new C API: the
+ * regression observes it only to stop an already-blocked process before the
+ * first kernel owner dies. That makes the source `tid |= 0x80000000` handoff
+ * observable: a recovery process must preserve the waiter bit so its own
+ * abrupt kernel exit wakes the stopped peer. */
+static int wait_for_robust_pshared_waiter(pthread_mutex_t *mutex)
+{
+    unsigned int spin;
+
+    for (spin = 0; spin != CRABC_WAIT_LIMIT; ++spin) {
+        if (__atomic_load_n(&mutex->__u.__vi[2], __ATOMIC_ACQUIRE) > 0)
+            return 0;
+        sched_yield();
+    }
+    return -1;
+}
+
+static void reap_robust_kernel_child(pid_t child)
+{
+    int status;
+
+    if (child > 0) {
+        (void)kill(child, SIGKILL);
+        (void)waitpid(child, &status, 0);
+    }
+}
+
+/*
+ * Three processes make the pshared waiter-bit handoff deterministic without
+ * a runtime hook. The first owner holds the mutex; a second process reaches
+ * the actual futex wait and is SIGSTOPped; the recovery process then takes
+ * EOWNERDEAD and exits while holding it. Resuming the blocked peer checks the
+ * real kernel robust-list registration/owner-death route rather than merely a
+ * userspace owner-death swap. The exact source owner-word waiter-bit
+ * preservation is audited in `pthread_mutex.rs`; this process witness does
+ * not rely on a timing-sensitive assertion about the kernel wake race.
+ */
+static int run_robust_pshared_kernel_owner_death_with_waiter(void)
+{
+    pthread_mutexattr_t attributes;
+    struct robust_shared_round *round = MAP_FAILED;
+    int owner_ready[2] = { -1, -1 };
+    int owner_release[2] = { -1, -1 };
+    unsigned char marker = 0;
+    pid_t owner = -1;
+    pid_t waiter = -1;
+    pid_t recovery = -1;
+    int status;
+    int failure = 0;
+
+    if (pthread_mutexattr_init(&attributes) != 0 ||
+        pthread_mutexattr_setrobust(&attributes, PTHREAD_MUTEX_ROBUST) != 0 ||
+        pthread_mutexattr_setpshared(&attributes, PTHREAD_PROCESS_SHARED) != 0 ||
+        pipe(owner_ready) != 0 || pipe(owner_release) != 0) {
+        failure = 1;
+        goto finish;
+    }
+    round = mmap(0, sizeof(*round), PROT_READ | PROT_WRITE,
+        MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (round == MAP_FAILED ||
+        pthread_mutex_init(&round->mutex, &attributes) != 0) {
+        failure = 2;
+        goto finish;
+    }
+
+    owner = fork();
+    if (owner == 0) {
+        (void)close(owner_ready[0]);
+        (void)close(owner_release[1]);
+        if (pthread_mutex_lock(&round->mutex) != 0 ||
+            write(owner_ready[1], "O", 1) != 1 ||
+            read(owner_release[0], &marker, 1) != 1)
+            _Exit(81);
+        _Exit(0);
+    }
+    if (owner < 0 || close(owner_ready[1]) != 0 || close(owner_release[0]) != 0 ||
+        read(owner_ready[0], &marker, 1) != 1 || marker != 'O') {
+        failure = 3;
+        goto finish;
+    }
+    owner_ready[0] = -1;
+    owner_release[0] = -1;
+
+    waiter = fork();
+    if (waiter == 0) {
+        int result;
+
+        /* A missing wake is a failed owner-death transition, not an
+         * indefinitely retained test child. */
+        (void)alarm(5);
+        result = pthread_mutex_lock(&round->mutex);
+        (void)alarm(0);
+        _Exit(result == EOWNERDEAD ? 0 : 82);
+    }
+    if (waiter < 0 || wait_for_robust_pshared_waiter(&round->mutex) != 0 ||
+        kill(waiter, SIGSTOP) != 0 || waitpid(waiter, &status, WUNTRACED) != waiter ||
+        !WIFSTOPPED(status)) {
+        failure = 4;
+        goto finish;
+    }
+
+    if (write(owner_release[1], "R", 1) != 1 || close(owner_release[1]) != 0 ||
+        waitpid(owner, &status, 0) != owner || !WIFEXITED(status) ||
+        WEXITSTATUS(status) != 0) {
+        failure = 5;
+        goto finish;
+    }
+    owner = -1;
+    owner_release[1] = -1;
+
+    recovery = fork();
+    if (recovery == 0) {
+        /* Deliberately keep the recovered robust lock through _Exit so Linux,
+         * rather than the selected userspace exit walk, must use the waiter
+         * bit copied into this owner word. */
+        _Exit(pthread_mutex_lock(&round->mutex) == EOWNERDEAD ? 0 : 83);
+    }
+    if (recovery < 0 || waitpid(recovery, &status, 0) != recovery ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0 ||
+        kill(waiter, SIGCONT) != 0 || waitpid(waiter, &status, 0) != waiter ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0 ||
+        pthread_mutex_lock(&round->mutex) != EOWNERDEAD ||
+        pthread_mutex_consistent(&round->mutex) != 0 ||
+        pthread_mutex_unlock(&round->mutex) != 0 ||
+        pthread_mutex_destroy(&round->mutex) != 0) {
+        failure = 6;
+        goto finish;
+    }
+    recovery = -1;
+    waiter = -1;
+
+finish:
+    if (owner_ready[0] >= 0)
+        (void)close(owner_ready[0]);
+    if (owner_ready[1] >= 0)
+        (void)close(owner_ready[1]);
+    if (owner_release[0] >= 0)
+        (void)close(owner_release[0]);
+    if (owner_release[1] >= 0)
+        (void)close(owner_release[1]);
+    reap_robust_kernel_child(owner);
+    reap_robust_kernel_child(recovery);
+    if (waiter > 0)
+        (void)kill(waiter, SIGCONT);
+    reap_robust_kernel_child(waiter);
+    if (round != MAP_FAILED) {
+        if (failure == 0 && munmap(round, sizeof(*round)) != 0)
+            failure = 7;
+        else if (failure != 0)
+            (void)munmap(round, sizeof(*round));
+    }
+    (void)pthread_mutexattr_destroy(&attributes);
+    return failure;
+}
+
 static void *robust_private_owner(void *opaque)
 {
     struct robust_private_round *round = opaque;
@@ -1032,7 +1189,9 @@ static int run_robust_mutex_owner_death(void)
         (void)munmap(shared_round, sizeof(*shared_round));
         return 5;
     }
-    return pthread_mutexattr_destroy(&attributes) == 0 ? 0 : 6;
+    if (run_robust_pshared_kernel_owner_death_with_waiter() != 0)
+        return 6;
+    return pthread_mutexattr_destroy(&attributes) == 0 ? 0 : 7;
 }
 
 int main(void)
