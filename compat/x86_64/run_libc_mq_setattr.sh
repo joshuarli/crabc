@@ -36,8 +36,21 @@ assert_fixture_tls_capacity() {
 }
 assert_mq_setattr_syscall_path() {
     objdump -d --disassemble=mq_setattr "$candidate" >"$work_dir/disassembly"
-    grep -Eq '\$0xf5,%(e|r)ax' "$work_dir/disassembly" || fail "mq_setattr lacks Linux syscall 245"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$work_dir/disassembly" || fail "mq_setattr lacks syscall"
+    if grep -Eq '\$0xf5,%(e|r)ax' "$work_dir/disassembly"; then
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$work_dir/disassembly" || fail "mq_setattr lacks syscall"
+        return
+    fi
+    # The pinned compiler may keep this typed owned helper out of line.
+    # Its C ABI takes number/three arguments in rdi/rsi/rdx/rcx; it then
+    # moves those words into the Linux syscall registers. Require that exact
+    # call target and syscall body rather than requiring an inline decision.
+    local helper
+    helper="$(awk '$NF ~ /raw_syscall.*syscall3/ {print $NF}' "$candidate_symbols")"
+    [ -n "$helper" ] && [[ "$helper" != *$'\n'* ]] || fail "mq_setattr lacks a unique owned syscall3 helper"
+    grep -Eq '\$0xf5,%(e|r)di' "$work_dir/disassembly" || fail "mq_setattr lacks Linux syscall 245"
+    awk -v target="<$helper>" '$0 ~ /[[:space:]]call[[:space:]]/ && index($0,target) {found=1} END {exit !found}' "$work_dir/disassembly" || fail "mq_setattr does not call its owned syscall3 helper"
+    objdump -d --disassemble="$helper" "$candidate" >"$work_dir/syscall3-disassembly"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$work_dir/syscall3-disassembly" || fail "mq_setattr helper lacks syscall"
 }
 
 require_native_linux_x86_64
@@ -47,7 +60,7 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_mq_setattr_header_abi.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_x86_mqueue_reference.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-mq-setattr.XXXXXX)"; trap 'rm -rf -- "$work_dir"' EXIT
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-mq-setattr.XXXXXX")"; trap 'rm -rf -- "$work_dir"' EXIT
 cargo_target="$work_dir/cargo-target"; archive="$cargo_target/x86_64-unknown-linux-musl/debug/libc.a"
 candidate="$work_dir/crabc-static-mq-setattr-candidate"; header_trace="$work_dir/header-trace"
 archive_symbols="$work_dir/archive-symbols"; archive_relocations="$work_dir/archive-relocations"

@@ -191,6 +191,12 @@ does not itself complete the pthread family or qualify a public platform.
 
 ## Installed descriptor control
 
+`./scripts/dev-x86_64.sh owned-message-queues` checks installed POSIX queue
+transfer, cancellation, signal notification, and the source SIGEV_THREAD
+worker lifecycle against the same pinned-musl object. The
+[component contract](owned-message-queues.md) records source mapping, ABI,
+private IPC isolation, callback lifetime, and provider accounting.
+
 `./scripts/dev-x86_64.sh owned-named-ipc` checks installed named semaphore and
 shared-memory namespace, mapping/reference lifetime, concurrent creation,
 fork, saturation and cancellation against the same pinned-musl object. Its

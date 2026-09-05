@@ -15,7 +15,7 @@ case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-ipc.XXXXXX)"
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-ipc.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 probe="$work_dir/x86-mqueue-reference"
 env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH -u LIBRARY_PATH \

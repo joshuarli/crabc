@@ -87,6 +87,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "signal-helpers",
                 "fcntl",
                 "named-ipc",
+                "message-queues",
                 "pthread-getattr",
                 "pthread-join-cancel",
                 "pthread-cond-cancel",

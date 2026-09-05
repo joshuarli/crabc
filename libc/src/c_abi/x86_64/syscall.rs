@@ -439,6 +439,12 @@ pub(crate) const SYS_CLOCK_NANOSLEEP: i64 = 230;
 pub(crate) const SYS_EXIT_GROUP: i64 = 231;
 pub(crate) const SYS_EPOLL_CTL: i64 = 233;
 pub(crate) const SYS_TGKILL: i64 = 234;
+// Linux/x86-64 POSIX message queues use the native LP64 time ABI.
+pub(crate) const SYS_MQ_OPEN: i64 = 240;
+pub(crate) const SYS_MQ_UNLINK: i64 = 241;
+pub(crate) const SYS_MQ_TIMEDSEND: i64 = 242;
+pub(crate) const SYS_MQ_TIMEDRECEIVE: i64 = 243;
+pub(crate) const SYS_MQ_NOTIFY: i64 = 244;
 /// Linux x86-64 `mq_getsetattr` uses `rdi/rsi/rdx` for its three arguments.
 pub(crate) const SYS_MQ_GETSETATTR: i64 = 245;
 pub(crate) const SYS_WAITID: i64 = 247;

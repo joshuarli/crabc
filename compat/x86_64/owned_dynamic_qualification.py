@@ -46,6 +46,7 @@ CASES = {
     "signal-helpers": ("run_owned_signal_helpers.sh", None),
     "fcntl": ("run_owned_fcntl.sh", None),
     "named-ipc": ("run_owned_named_ipc.sh", None),
+    "message-queues": ("run_owned_message_queues.sh", None),
     "pthread-getattr": ("run_owned_pthread_getattr.sh", None),
     "pthread-join-cancel": ("run_owned_pthread_join_cancel.sh", None),
     "pthread-cond-cancel": ("run_owned_pthread_cond_cancel.sh", None),

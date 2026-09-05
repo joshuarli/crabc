@@ -23,7 +23,7 @@ bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 
 c_probe="$ROOT_DIR/compat/x86_64/mq_setattr_header_abi_probe.c"
 cxx_probe="$ROOT_DIR/compat/x86_64/mq_setattr_header_abi_probe.cpp"
-work_dir="$(mktemp -d /tmp/crabc-x86-64-mq-setattr-header.XXXXXX)"
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-mq-setattr-header.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 header_trace="$work_dir/header-trace"
 

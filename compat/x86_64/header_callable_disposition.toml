@@ -81,7 +81,7 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "planned-provider"
 provider_target = "future selected C ABI providers in libc.posix-runtime"
 source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["aio_cancel", "aio_fsync", "aio_read", "aio_return", "aio_suspend", "aio_write", "get_current_dir_name", "initstate", "isastream", "lio_listio", "mount", "mq_close", "mq_getattr", "mq_notify", "mq_open", "mq_receive", "mq_send", "mq_timedreceive", "mq_timedsend", "mq_unlink", "rand", "random", "setstate", "srand", "srandom", "tcdrain", "times", "umount", "umount2", "vhangup", "vmsplice"]
+members = ["aio_cancel", "aio_fsync", "aio_read", "aio_return", "aio_suspend", "aio_write", "get_current_dir_name", "initstate", "isastream", "lio_listio", "mount", "rand", "random", "setstate", "srand", "srandom", "tcdrain", "times", "umount", "umount2", "vhangup", "vmsplice"]
 
 [[deferred_owner_group]]
 id = "x86-cabi-compat-errors-users-v1"

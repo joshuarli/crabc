@@ -49,6 +49,8 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("owned-signal-helpers-product", False),
                 ("owned-named-ipc", False),
                 ("owned-named-ipc-product", False),
+                ("owned-message-queues", False),
+                ("owned-message-queues-product", False),
                 ("owned-linux-control", False),
                 ("owned-vm-mechanisms", False),
                 ("owned-group", False),
@@ -73,7 +75,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                     selected_command = (["qualification-manifest", "--through", "compat.abi-differential"]
                         if command == "qualification-manifest-prefix" else
                         [command.removesuffix("-product"), "/workspace/.work/x86_64/supplied-product"]
-                        if command in ("owned-signal-helpers-product", "owned-pty-product", "owned-named-ipc-product", "owned-passwd-product") else [command])
+                        if command in ("owned-signal-helpers-product", "owned-pty-product", "owned-named-ipc-product", "owned-passwd-product", "owned-message-queues-product") else [command])
                     result = subprocess.run(
                         ["bash", str(ROOT / "scripts/dev-x86_64.sh"), *selected_command],
                         cwd=ROOT, env=environment, capture_output=True, text=True,
@@ -86,9 +88,10 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertEqual("--security-opt=apparmor=unconfined" in arguments, needs_mount)
                         self.assertNotIn("--privileged", arguments)
                         self.assertNotIn("--pid=host", arguments)
+                        self.assertNotIn("--ipc=host", arguments)
                         self.assertNotIn("--userns=host", arguments)
                         self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", arguments)
-                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-quick-exit", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio", "owned-signal-helpers", "owned-filesystem-mechanisms", "owned-error-reporting", "owned-named-ipc", "owned-vm-mechanisms", "owned-passwd", "owned-group"):
+                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert", "owned-quick-exit", "owned-atfork-registry", "owned-syslog", "owned-pthread-spin", "owned-process-trio", "owned-signal-helpers", "owned-filesystem-mechanisms", "owned-error-reporting", "owned-named-ipc", "owned-vm-mechanisms", "owned-passwd", "owned-group", "owned-message-queues"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-2:], [
@@ -106,6 +109,13 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-3:], [
                             "bash", "/workspace/compat/x86_64/run_owned_named_ipc.sh",
+                            "/workspace/.work/x86_64/supplied-product",
+                        ])
+                    if command == "owned-message-queues-product":
+                        self.assertEqual(len(invocations), 1)
+                        self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
+                        self.assertEqual(invocations[0][-3:], [
+                            "bash", "/workspace/compat/x86_64/run_owned_message_queues.sh",
                             "/workspace/.work/x86_64/supplied-product",
                         ])
                     if command == "qualification-manifest":

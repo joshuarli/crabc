@@ -792,6 +792,9 @@ mod readiness_waits;
 mod event_descriptors;
 #[path = "mq_setattr.rs"]
 mod mq_setattr;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_message_queues.rs"]
+mod owned_message_queues;
 #[path = "aio_error.rs"]
 mod aio_error;
 #[path = "timer_fd.rs"]
