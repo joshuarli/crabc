@@ -2113,7 +2113,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         dynamic_sysroot_index = expected_groups.index("owned-dynamic-sysroot") + 1
         expected_groups = (
             expected_groups[:dynamic_sysroot_index]
-            + ("owned-dynamic-pthread-exit", "materialized-dynamic-sysroot")
+            + ("owned-dynamic-pthread-exit", "owned-dynamic-fork", "materialized-dynamic-sysroot")
             + expected_groups[dynamic_sysroot_index:]
         )
         self.assertEqual(actual_groups, expected_groups)
@@ -7807,7 +7807,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "EAGAIN",
             "No user callback may recurse",
             "callbacks must return normally.",
-            "Foreign threads, dynamic/loader TLS repair, AIO, allocator state, and",
+            "AIO, allocator-wide fork state, and arbitrary application locks remain",
         ):
             self.assertIn(required, atfork)
         fork_body = atfork.split('pub unsafe extern "C" fn fork()', 1)[1]
