@@ -195,6 +195,23 @@ across `fork`. Explicit scheduling, asynchronous and arbitrary syscall
 cancellation, recursive/error-checking/PI robust mutexes, allocator-wide fork
 recovery, and dynamic TLS lifetime remain open.
 
+The focused `./scripts/dev-x86_64.sh owned-pthread-lifecycle` gate runs this
+consumer with pinned musl and installed ET_EXEC/static-PIE. It also blocks
+reserved SIGCANCEL (33) in the creator through the raw kernel mask interface
+and proves a new worker unblocks it. `pthread_create_join::worker_entry`
+publishes the owned FS+32 cancellation pointer before that unmask.
+
+`pthread_create_join::with_selected_pthread_signal_target` is the private
+signal-delivery lifetime boundary: registry lookup acquires a mapping lease,
+then releases the registry before taking the per-target kill lock. The
+callback owns pending publication and raw delivery under that lock; callers
+must block every signal until the lease is dropped. Non-final task exit
+retires its target TID under the same lock, and post-withdrawal reclamation
+drains earlier leases before unmapping. Initial-task target state has process
+lifetime; fork adopts the surviving task's existing cancellation pointer and
+refreshes its TID. This seam alone does not qualify signal-driven cancellation;
+the cancellation owner must supply and test its handler and delivery callback.
+
 Each POSIX job separately links `owned_spawn_probe.c`: spawn/spawnp file-action
 ordering, working-directory and PATH search, signal/process attributes, worker
 calls, and failure cleanup compare against pinned musl. The installed and

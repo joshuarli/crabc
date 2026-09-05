@@ -1194,8 +1194,47 @@ static int run_robust_mutex_owner_death(void)
     return pthread_mutexattr_destroy(&attributes) == 0 ? 0 : 7;
 }
 
+/* Linux's reserved cancellation signal is deliberately hidden by the public
+ * mask API. Probe the kernel word directly: musl pthread_create.c clears
+ * SIGCANCEL in the child's saved mask even when its creator blocked it. */
+static long raw_kernel_signal_mask(long how, const uint64_t *set, uint64_t *old)
+{
+    register long size __asm__("r10") = 8;
+    long result;
+    __asm__ volatile("syscall" : "=a"(result)
+        : "a"(14L), "D"(how), "S"(set), "d"(old), "r"(size)
+        : "rcx", "r11", "memory");
+    return result;
+}
+
+static void *worker_cancellation_signal_mask(void *unused)
+{
+    uint64_t mask = 0;
+    (void)unused;
+    if (raw_kernel_signal_mask(0, 0, &mask) != 0)
+        return (void *)2;
+    return (void *)(uintptr_t)((mask >> 32) & 1);
+}
+
+static int run_worker_cancellation_signal_mask(void)
+{
+    const uint64_t cancel = UINT64_C(1) << 32;
+    uint64_t old = 0;
+    pthread_t worker;
+    void *result = (void *)3;
+    if (raw_kernel_signal_mask(0, &cancel, &old) != 0)
+        return 1;
+    const int created = pthread_create(&worker, 0, worker_cancellation_signal_mask, 0);
+    const int restored = raw_kernel_signal_mask(2, &old, 0);
+    if (created || restored || pthread_join(worker, &result))
+        return 2;
+    return result != 0;
+}
+
 int main(void)
 {
+    if (run_worker_cancellation_signal_mask() != 0)
+        return 99;
     const int capacity = run_concurrent_lifecycle_capacity();
     const int detached_handoff = run_parallel_detached_creator_handoff();
     const int attrs = run_attr_and_cancellation();
