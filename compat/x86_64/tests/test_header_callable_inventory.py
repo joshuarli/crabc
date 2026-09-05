@@ -321,6 +321,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "fma",
                 "fmaf",
                 "fmemopen",
+                "fnmatch",
                 "fopencookie",
                 "fputc_unlocked",
                 "fputs_unlocked",
@@ -352,6 +353,8 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "getwc_unlocked",
                 "getwchar",
                 "getwchar_unlocked",
+                "glob",
+                "globfree",
                 "gmtime",
                 "hypot",
                 "hypotf",
@@ -575,7 +578,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         replacement_rows = tuple(
             replace(
                 row,
-                additive_callables=tuple(sorted((*row.additive_callables, "fnmatch"))),
+                additive_callables=tuple(sorted((*row.additive_callables, "getdate"))),
             )
             if row.identifier == "x86-owned-static-runtime"
             else row
@@ -599,7 +602,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             refreshed["callable_provider_partition"]
             ["declared_unverified_feature_archives"][0]["members"],
-            sorted([*source_members, "fnmatch"]),
+            sorted([*source_members, "getdate"]),
         )
         source_counts = source["summary"]["callable_provider_counts"]
         self.assertEqual(

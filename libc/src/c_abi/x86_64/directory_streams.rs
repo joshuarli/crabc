@@ -118,6 +118,9 @@ pub(super) struct DirectoryStream {
 pub(super) struct DirectoryEntryName {
     pub(super) bytes: *const c_char,
     pub(super) length: usize,
+    /// The validated Linux d_type fact from this exact record. Consumers must
+    /// retain `DT_UNKNOWN` as unknown rather than infer a non-directory.
+    pub(super) entry_type: u8,
 }
 
 const _: () = {
@@ -483,6 +486,7 @@ pub(super) unsafe fn next_entry_name(
     Ok(Some(DirectoryEntryName {
         bytes: name,
         length,
+        entry_type: unsafe { (*record).entry_type },
     }))
 }
 

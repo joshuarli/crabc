@@ -822,6 +822,13 @@ mod lchown;
 mod hasmntopt;
 #[path = "directory_streams.rs"]
 mod directory_streams;
+// Pinned-musl C filename matching and pathname expansion compose the selected
+// locale, directory, stat, allocator, environment, and passwd owners only in
+// the owned runtime aggregate. The frozen private archive keeps its current
+// public provider boundary until this dedicated product evidence is selected.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_pattern.rs"]
+mod owned_pattern;
 #[cfg(feature = "x86-filesystem-traversal")]
 #[path = "filesystem_traversal.rs"]
 mod filesystem_traversal;

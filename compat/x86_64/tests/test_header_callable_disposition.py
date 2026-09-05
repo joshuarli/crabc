@@ -330,6 +330,25 @@ class HeaderCallableDispositionTests(unittest.TestCase):
             <= set(report["primary_disposition"]["default_static"]["members"])
         )
 
+    def test_pattern_names_are_planned_owned_static_not_deferred(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        pattern = {"fnmatch", "glob", "globfree"}
+
+        self.assertTrue(pattern <= providers["x86-owned-static-runtime"])
+        self.assertFalse(pattern & deferred)
+        self.assertFalse(
+            pattern & set(report["primary_disposition"]["default_static"]["members"])
+        )
+
     def test_owned_filesystem_mechanisms_are_planned_owned_static_providers(self) -> None:
         contract = DISPOSITION.load_contract()
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

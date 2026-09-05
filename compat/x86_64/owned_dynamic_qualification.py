@@ -68,6 +68,7 @@ CASES = {
     "error-reporting": ("run_owned_error_reporting.sh", None),
     "pty": ("run_owned_pty.sh", None),
     "passwd": ("run_owned_passwd.sh", None),
+    "pattern": ("run_owned_pattern.sh", None),
 }
 MATERIALIZATION_PROFILE = "retained dlclose mappings; default NOW with declared lazy imports; runtime GD growth; new runtime IE rejected"
 MATERIALIZATION_QUALIFICATION = "separate live three-product receipt and review required"

@@ -556,6 +556,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-group  test installed local /etc/group C APIs against musl
   owned-pthread-spin  qualify installed private/shared pthread spin locking
   owned-syslog  qualify owned C syslog delivery and state against musl
+  owned-pattern  qualify owned C fnmatch/glob/globfree behavior against musl
   owned-process-trio   qualify installed clone/vfork/daemon semantics against musl
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
@@ -5629,7 +5630,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-system-cancellation) ;;
     owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-signal-helpers|owned-pty|owned-passwd) ;;
-    owned-assert|owned-legacy-time|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms|owned-group) ;;
+    owned-assert|owned-legacy-time|owned-linux-control|owned-quick-exit|owned-filesystem-mechanisms|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-error-reporting) ;;
@@ -7719,6 +7720,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-syslog takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_syslog.sh
+        ;;
+    owned-pattern)
+        [ "$#" -eq 0 ] || fail "owned-pattern takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_pattern.sh
         ;;
     owned-filesystem-mechanisms)
         [ "$#" -eq 0 ] || fail "owned-filesystem-mechanisms takes no arguments"

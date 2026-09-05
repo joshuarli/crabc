@@ -27,6 +27,9 @@ them; this router should explain ownership, not duplicate command contracts.
   — source-mapped `times`, interval-timer, and seccomp-contained
   clock-adjustment behavior across installed native products; neither
   runtime-family completion nor public support.
+- [Owned C filename-pattern evidence](../compat/x86_64/owned-pattern.md)
+  — source-mapped `fnmatch`/`glob` C ABI slice across owned products; neither
+  pattern-family completion nor public support.
 - [Runtime ownership architecture](design/architecture.md) — layer ownership,
   dependency direction, and the private runtime wire boundary.
 - [Agent/project handoff](../AGENTS.md) — code map, source precedence, and

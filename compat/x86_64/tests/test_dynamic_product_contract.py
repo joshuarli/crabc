@@ -109,6 +109,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "error-reporting",
                 "pty",
                 "passwd",
+                "pattern",
             ],
         )
         self.assertEqual(report["status"], "implemented-unqualified")

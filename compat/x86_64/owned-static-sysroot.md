@@ -549,3 +549,10 @@ formatting. [`owned-passwd.md`](owned-passwd.md) records the pinned source,
 local-only provider boundary, storage/cancellation contracts, and same-object
 musl/static/dynamic evidence. The Rust facade's snapshot semantics and the
 remaining `users.databases` C roster are separate contracts.
+
+The installed C filename-pattern entries are qualified by `owned-pattern`.
+[`owned-pattern.md`](owned-pattern.md) records the musl source mapping,
+multibyte/classification, `glob_t` allocation, local passwd lookup, directory,
+and dropped-privilege error boundaries, along with the same-object
+musl/static/dynamic product evidence. They do not complete the broader C
+pattern, locale, filesystem, or account contracts.

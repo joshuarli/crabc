@@ -51,7 +51,7 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "planned-provider"
 provider_target = "future selected C ABI providers in libc.text-math-locale-stdio"
 source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["fnmatch", "getdate", "glob", "globfree", "mbsnrtowcs", "strfmon", "strfmon_l", "strptime", "wcsdup", "wcsftime", "wcsftime_l", "wcsnrtombs"]
+members = ["getdate", "mbsnrtowcs", "strfmon", "strfmon_l", "strptime", "wcsdup", "wcsftime", "wcsftime_l", "wcsnrtombs"]
 
 [[deferred_owner_group]]
 id = "x86-cabi-pthread-tls-completion-v1"
