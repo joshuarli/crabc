@@ -62,6 +62,7 @@ CASES = {
     "quick-exit": ("run_owned_quick_exit.sh", None),
     "legacy-time": ("run_owned_legacy_time.sh", None),
     "syslog": ("run_owned_syslog.sh", None),
+    "credentials-profile": ("run_owned_credentials_profile.sh", None),
     "pthread-spin": ("run_owned_pthread_spin.sh", None),
     "process-trio": ("run_owned_process_trio.sh", None),
     "process-control": ("run_owned_process_control.sh", None),

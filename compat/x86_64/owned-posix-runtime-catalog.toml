@@ -81,7 +81,7 @@ closure_workloads = ["control-residual", "global-state-composition"]
 [[capability]]
 id = "process.credentials"
 symbols = ["setegid", "seteuid", "setgid", "setgroups", "setregid", "setresgid", "setresuid", "setreuid", "setuid"]
-source_bindings = ["COMPATIBILITY-PROFILE.md", "libc/src/c_abi/x86_64/credentials.rs", "compat/x86_64/libc_credentials_probe.c"]
+source_bindings = ["COMPATIBILITY-PROFILE.md", "libc/src/c_abi/x86_64/credentials.rs", "compat/x86_64/libc_credentials_probe.c", "compat/x86_64/owned_credentials_profile_probe.c", "compat/x86_64/run_owned_credentials_profile.sh"]
 current_installed_evidence = []
 private_or_static_only_evidence = ["run_libc_credentials.sh proves the private static selected profile: direct setresuid/setresgid no-change calls, rejected setuid/setgid/setgroups inputs, and four EOPNOTSUPP aliases with unchanged IDs.", "The four aliases are the governing profile limitation; direct setters remain caller-coordinated calling-task Linux operations, not a runtime all-thread rendezvous."]
 unproven = ["No installed-product workload proves the selected four-alias EOPNOTSUPP/no-mutation behavior.", "No installed user-namespace workload proves the caller-coordinated direct setter behavior, including no-change and rejected calls.", "No static extraction or three-product dynamic receipt exists for this exact selected profile."]

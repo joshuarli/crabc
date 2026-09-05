@@ -205,6 +205,12 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             ("run_owned_process_control.sh", None),
         )
 
+    def test_credentials_profile_case_stays_bound_to_its_profile_runner(self):
+        self.assertEqual(
+            qualification.CASES["credentials-profile"],
+            ("run_owned_credentials_profile.sh", None),
+        )
+
     def test_materialization_binds_payload_source_and_contracts_without_publication(self):
         product = self.work / "installed"
         payloads = {"payload": qualification.digest(product / "payload")}
