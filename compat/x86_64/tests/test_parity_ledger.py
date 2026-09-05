@@ -117,7 +117,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         report = ledger.validate_ledger(self.data())
         self.assertEqual(report["schema"], "crabc.x86_64-runtime-parity/v3")
         self.assertEqual(report["family_count"], 26)
-        self.assertEqual(report["status_counts"], {"foundation-verified": 8, "planned": 18})
+        self.assertEqual(report["status_counts"], {"foundation-verified": 9, "planned": 17})
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 51)
@@ -3548,7 +3548,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_inet_address_header_gate_stays_compile_only_and_non_promoting(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
-        self.assertEqual(headers_layouts["status"], "planned")
+        self.assertEqual(headers_layouts["status"], "foundation-verified")
         self.assertIn(
             "./scripts/dev-x86_64.sh header-declaration-macro-visibility-matrix",
             {entry["command"] for entry in headers_layouts["native_evidence"]},
@@ -4082,10 +4082,19 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         headers_layouts = self.family(data, "libc.headers-layouts")
 
+        # The aggregate is the foundation proof.  The family-level entries
+        # deliberately keep the C-ABI and runtime leaves required so this
+        # header-only transition cannot imply their completion.
+        self.assertEqual(headers_layouts["status"], "foundation-verified")
+        self.assertEqual(
+            {entry["state"] for entry in headers_layouts["native_evidence"]},
+            {"required"},
+        )
+
         self.assertEqual(
             manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v18"
         )
-        self.assertEqual(manifest["status"], "planned")
+        self.assertEqual(manifest["status"], "foundation-verified")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
         self.assertEqual(
             headers_layouts["header_foundation_manifest"],
@@ -4276,14 +4285,13 @@ class X86ParityLedgerTests(unittest.TestCase):
             feature_visibility["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 1189,
-                "mismatch": 91,
+                "matched": 1280,
                 "oracle-not-applicable": 1,
             },
         )
         self.assertEqual(
             feature_visibility["identity_difference_counts"],
-            {"candidate_only": 147, "reference_only": 21},
+            {"candidate_only": 0, "reference_only": 0},
         )
         callable_visibility = manifest["callable_feature_visibility_matrix"]
         assert isinstance(callable_visibility, dict)
@@ -4303,8 +4311,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             prototype_layout["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 1124,
-                "mismatch": 156,
+                "matched": 1280,
                 "oracle-not-applicable": 1,
             },
         )
@@ -5414,7 +5421,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_all_header_declaration_macro_visibility_is_a_reviewable_non_abi_artifact(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
-        self.assertEqual(headers_layouts["status"], "planned")
+        self.assertEqual(headers_layouts["status"], "foundation-verified")
         artifacts = headers_layouts["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
@@ -5449,15 +5456,14 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(owner, artifact["source_owners"])
         for phrase in (
-            "still-planned `libc.headers-layouts`",
+            "foundation-verified `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
-            "91 current comparable declaration-or-macro identity mismatch rows",
-            "1,189 matched identity rows",
+            "zero comparable declaration-or-macro identity mismatch rows",
+            "1,280 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "checked candidate fact summaries and digests",
-            "187 same-identity source-form differences across 86 rows",
-            "65 form-only rows",
+            "zero same-identity source-form differences",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])
@@ -5492,9 +5498,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             {"./scripts/dev-x86_64.sh header-callable-visibility-matrix"},
         )
         for phrase in (
-            "still-planned `libc.headers-layouts`",
+            "foundation-verified `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "45 current comparable callable name/class mismatch rows",
+            "zero current comparable callable name/class mismatch rows",
             "one current oracle-not-applicable `aio.h` row",
             "56 project-only header/profile rows",
             "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -5504,7 +5510,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_all_header_prototype_layout_matrix_is_a_reviewable_non_abi_artifact(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
-        self.assertEqual(headers_layouts["status"], "planned")
+        self.assertEqual(headers_layouts["status"], "foundation-verified")
         artifacts = headers_layouts["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
@@ -5532,9 +5538,10 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(owner, artifact["source_owners"])
         for phrase in (
-            "still-planned `libc.headers-layouts`",
+            "foundation-verified `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
-            "393 current comparable prototype or named source-form mismatch rows",
+            "zero current comparable prototype or named source-form mismatch rows",
+            "1,280 matched rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
             "does not classify raw spelling differences as ABI differences",
@@ -5560,7 +5567,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     ) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
-        self.assertEqual(headers_layouts["status"], "planned")
+        self.assertEqual(headers_layouts["status"], "foundation-verified")
         artifacts = headers_layouts["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
@@ -5588,7 +5595,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(owner, artifact["source_owners"])
         for phrase in (
-            "still-planned `libc.headers-layouts`",
+            "foundation-verified `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
             "zero current comparable record-byte-layout mismatch rows",
             "1,280 matched rows",
@@ -5620,7 +5627,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         manifest = self.header_foundation_manifest()
         headers_layouts = self.family(data, "libc.headers-layouts")
-        self.assertEqual(headers_layouts["status"], "planned")
+        self.assertEqual(headers_layouts["status"], "foundation-verified")
         artifacts = headers_layouts["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 16
         matching = [
@@ -5652,7 +5659,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(owner, artifact["source_owners"])
         for phrase in (
-            "still-planned `libc.headers-layouts`",
+            "foundation-verified `libc.headers-layouts`",
             "183 pinned-musl public paths",
             "eight classified source-only",
             "project-private `bits/**`",
@@ -5697,7 +5704,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_installed_header_tree_closure_is_a_private_materialized_artifact(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
-        self.assertEqual(headers_layouts["status"], "planned")
+        self.assertEqual(headers_layouts["status"], "foundation-verified")
         artifacts = headers_layouts["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 16
         matching = [
@@ -5729,7 +5736,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(owner, artifact["source_owners"])
         for phrase in (
-            "still-planned `libc.headers-layouts`",
+            "foundation-verified `libc.headers-layouts`",
             "disposable `usr/include` tree",
             "source-tree manifest equality",
             "seven-profile 1,337-row",
@@ -5762,7 +5769,7 @@ class X86ParityLedgerTests(unittest.TestCase):
     def test_header_layouts_baseline_is_a_closed_c_and_cxx_artifact(self) -> None:
         data = self.data()
         headers_layouts = self.family(data, "libc.headers-layouts")
-        self.assertEqual(headers_layouts["status"], "planned")
+        self.assertEqual(headers_layouts["status"], "foundation-verified")
         artifacts = headers_layouts["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 16
         artifact = next(
@@ -5789,7 +5796,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             {"./scripts/dev-x86_64.sh libc-header-layouts-baseline"},
         )
         for phrase in (
-            "still-planned `libc.headers-layouts`",
+            "foundation-verified `libc.headers-layouts`",
             "freestanding C++17 companion",
             "unmangled C entry called from C",
             "no new C export",
@@ -5859,7 +5866,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             {"./scripts/dev-x86_64.sh atomic-addressable-abi"},
         )
         for phrase in (
-            "still-planned `libc.headers-layouts`",
+            "foundation-verified `libc.headers-layouts`",
             "explicit `#undef`",
             "one-byte `atomic_flag`",
             "no C atomic surface to C++17",
@@ -5916,7 +5923,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             {"./scripts/dev-x86_64.sh libc-uio-cxx-linkage"},
         )
         for phrase in (
-            "still-planned `libc.headers-layouts`",
+            "foundation-verified `libc.headers-layouts`",
             "freestanding C++17 companion",
             "`readv`, `writev`, `preadv`, and `pwritev`",
             "no C++ runtime",
@@ -14352,7 +14359,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         ):
             self.assertIn(owner, builtins_bundle["source_owners"])
         headers_layouts = self.family(data, "libc.headers-layouts")
-        self.assertEqual(headers_layouts["status"], "planned")
+        self.assertEqual(headers_layouts["status"], "foundation-verified")
         for owner in (
             "include/arpa/inet.h",
             "include/netinet/in.h",

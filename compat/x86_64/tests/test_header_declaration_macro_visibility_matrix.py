@@ -104,27 +104,22 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-pending-c-abi-policy": 56,
-                "matched": 1189,
-                "mismatch": 91,
+                "matched": 1280,
                 "oracle-not-applicable": 1,
             },
         )
-        self.assertEqual(report["summary"]["source_form_difference_count"], 187)
-        self.assertEqual(report["summary"]["source_form_difference_row_count"], 86)
-        self.assertEqual(report["summary"]["source_form_only_difference_row_count"], 65)
+        self.assertEqual(report["summary"]["source_form_difference_count"], 0)
+        self.assertEqual(report["summary"]["source_form_difference_row_count"], 0)
+        self.assertEqual(report["summary"]["source_form_only_difference_row_count"], 0)
         mismatches = [row for row in report["rows"] if row["comparison"] == "mismatch"]
-        self.assertTrue(mismatches)
-        for row in mismatches:
-            for entry in [*row["candidate_only"], *row["reference_only"]]:
-                self.assertEqual(set(entry), {"kind", "name"})
-        self.assertTrue(
-            any(
-                row["comparison"] == "matched"
-                and row.get("source_form_comparison") == "mismatch"
-                and row["separately_accounted_source_form_difference_count"] > 0
-                for row in report["rows"]
-            )
-        )
+        self.assertEqual(mismatches, [])
+        for row in report["rows"]:
+            if row["comparison"] != "matched":
+                continue
+            self.assertEqual(row["candidate_only"], [])
+            self.assertEqual(row["reference_only"], [])
+            self.assertEqual(row["source_form_comparison"], "matched")
+            self.assertEqual(row["separately_accounted_source_form_difference_count"], 0)
 
     def test_noncomparable_rows_retain_checked_summaries_not_identity_deltas(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

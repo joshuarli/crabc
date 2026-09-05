@@ -402,6 +402,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.headers-layouts"
         )
         self.assertEqual(headers_layouts["verified_artifact_count"], 16)
+        self.assertEqual(headers_layouts["contract_state"], "implemented-foundation")
         self.assertIn(
             {
                 "family": "libc.headers-layouts",

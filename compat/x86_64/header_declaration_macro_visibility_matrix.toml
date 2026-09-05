@@ -41,7 +41,7 @@ focused_evidence_command = "./scripts/dev-x86_64.sh header-declaration-macro-vis
 family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
 product_command = "./scripts/dev-x86_64.sh campaign-static"
 negative_scope = "This matrix derives compiler-visible named declaration and macro identity only. It does not compare declaration forms, macro replacements, record byte layouts, archive extraction, selected callable implementation, runtime behavior, installed sysroot closure, family promotion, or public x86 support."
-expected_transition = "feature-visibility moves from planned to partial-verified while libc.headers-layouts remains planned."
+expected_transition = "feature-visibility is a completed header-foundation dimension; final provider/archive closure and public support remain downstream."
 evidence = ["all-header-declaration-macro-feature-visibility-matrix"]
 
 [[oracle_not_applicable]]

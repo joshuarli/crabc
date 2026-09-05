@@ -77,4 +77,4 @@ for runner_contract in "${runner_contracts[@]}"; do
 done
 
 python3 "$AGGREGATE" --check
-printf 'x86 headers/layouts aggregate: PASS (finite accounting; family remains planned)\n'
+printf 'x86 headers/layouts aggregate: PASS (completed header foundation; C-ABI closure remains downstream)\n'

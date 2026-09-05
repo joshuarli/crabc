@@ -36,7 +36,7 @@ focused_evidence_command = "./scripts/dev-x86_64.sh header-abi-matrix"
 family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
 product_command = "./scripts/dev-x86_64.sh campaign-static"
 negative_scope = "This matrix records compiler-visible declaration and macro replacement forms only. It does not classify raw spelling differences as ABI differences or prove byte-offset record layouts, archive extraction, selected callable implementation, runtime behavior, installed sysroot closure, family promotion, or public x86 support."
-expected_transition = "callable-prototype-layout and noncallable-header-abi move from planned to partial-verified while libc.headers-layouts remains planned."
+expected_transition = "callable-prototype-layout and noncallable-header-abi are completed header-foundation dimensions; final provider/archive closure and public support remain downstream."
 evidence = ["generated-x86-prototype-layout-matrix"]
 
 # Clang's pinned-musl C11 AST pass has this intentional strict-profile source

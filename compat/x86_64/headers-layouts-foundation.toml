@@ -1,8 +1,8 @@
 # Forward-looking native x86-64 header/layout foundation contract.
 #
-# This is deliberately a planning and accounting manifest, not a promotion.
-# `headers-layouts.toml` remains the v1 inventory of fifty-five direct probes.
-# This v17 manifest accounts for every pinned public header and every project-
+# This records the completed native header foundation, not C ABI archive or
+# public-support completion. `headers-layouts.toml` remains the v1 inventory
+# of fifty-five direct probes. This v18 manifest accounts for every pinned public header and every project-
 # only extension, pins the one Linux-UAPI input needed by its wrapper paths,
 # and records selected UAPI-wrapper, ioctl, x86 sys/io inline-port-I/O, epoll,
 # event-descriptor, timeval-transitive, direct sys/time, and access-header profile ABI slices
@@ -18,7 +18,7 @@ family = "libc.headers-layouts"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
 kernel_msrv = "5.10"
-status = "planned"
+status = "foundation-verified"
 oracle = "Pinned musl 1.2.6"
 legacy_direct_manifest = "compat/x86_64/headers-layouts.toml"
 pinned_public_inventory = "compat/x86_64/public_headers.txt"
@@ -106,7 +106,7 @@ description = "The aggregate's pure `header-foundation-v1` assessment requires t
 # generic report in one digest-bound result. The separate
 # `header_completion_assessment` decides header completion from its named
 # dimensions; it must not infer that outcome from this control's current
-# planned status or downstream provider/archive evidence.
+# foundation status or downstream provider/archive evidence.
 [aggregate_control]
 id = "x86-headers-layouts-accounting-control"
 state = "partial-verified"
@@ -131,7 +131,7 @@ supporting_commands = ["./scripts/dev-x86_64.sh musl-oracle", "./scripts/dev-x86
 source_owners = ["compat/x86_64/headers_layouts_aggregate.py", "compat/x86_64/run_headers_layouts_aggregate.sh", "compat/x86_64/tests/test_headers_layouts_aggregate.py", "compat/x86_64/generated/headers_layouts_aggregate/report.json"]
 family_promotion = false
 public_support = false
-description = "The checked aggregate records finite current header evidence, a pure header-completion assessment, and separate downstream provider/archive obligations. It executes only reviewed direct runner paths through its dedicated native wrapper, preserves every partial report, and cannot change family status, promotion readiness, or public x86 support."
+description = "The checked aggregate records finite current header evidence, a pure header-completion assessment, and separate downstream provider/archive obligations. It executes only reviewed direct runner paths through its dedicated native wrapper, preserves every partial report, and cannot claim C-ABI archive completion, promotion readiness, or public x86 support."
 
 [[aggregate_control.runner]]
 command = "./scripts/dev-x86_64.sh candidate-header-closure"
@@ -312,8 +312,8 @@ role = "explicit input for pinned-musl public wrappers that include Linux UAPI p
 paths = ["linux/kd.h", "linux/soundcard.h", "linux/vt.h"]
 closure_rule = "candidate and oracle probes must use this same hash-pinned tree; ambient host headers are forbidden"
 
-# This is the first fully resolved profile cross-product in the otherwise
-# planned header matrix. The fixed wrappers are unconditional direct includes,
+# This is the first fully resolved profile cross-product in the completed
+# header foundation. The fixed wrappers are unconditional direct includes,
 # so every row compiles a selected constant/layout/ioctl assertion set through
 # both the pinned-musl reference and raw-GCC project-header-first candidate.
 # It intentionally leaves all callable declarations (including soundcard's
@@ -1478,12 +1478,12 @@ profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-7
 pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
-comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 1189, mismatch = 91, oracle-not-applicable = 1 }
-identity_difference_counts = { candidate_only = 147, reference_only = 21 }
-source_form_difference_count = 187
-source_form_difference_row_count = 86
-source_form_only_difference_row_count = 65
-scope = "Derived from the checked compiler-generated declaration-form report, this all-header direct-public-include C11/C++17 matrix compares named function, typedef, record, enum, variable, and macro identities only for comparable rows. It preserves same-identity source-form differences as separately accounted context, records every current comparable identity gap, and accounts for project-only and oracle-not-applicable rows through checked candidate fact summaries and digests. It excludes declaration-form equality, macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, and public support."
+comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 1280, oracle-not-applicable = 1 }
+identity_difference_counts = { candidate_only = 0, reference_only = 0 }
+source_form_difference_count = 0
+source_form_difference_row_count = 0
+source_form_only_difference_row_count = 0
+scope = "Derived from the checked compiler-generated declaration-form report, this all-header direct-public-include C11/C++17 matrix compares named function, typedef, record, enum, variable, and macro identities only for comparable rows. All 1,280 comparable rows have matching identities and source forms; future same-identity source-form differences remain separately accounted context rather than ABI equality. Project-only and oracle-not-applicable rows retain checked candidate fact summaries and digests. It excludes declaration-form equality, macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, and public support."
 
 [callable_feature_visibility_matrix]
 id = "all-header-callable-feature-visibility-matrix"
@@ -1499,8 +1499,8 @@ record_count = 1337
 scope = "Compiler-derived direct-public-include callable name-and-class visibility across all seven C11/C++17 profiles. It records every current pinned-musl/project difference and project-only current surface, but excludes prototype and macro-replacement equality, typedefs, records, constants, noncallable ABI, archive linkage, runtime behavior, family promotion, and public support."
 
 # This checked compiler-derived report is the first finite comparison layer for
-# callable signatures and named noncallable declarations. It deliberately
-# preserves every red difference; record byte offsets, archive extraction, and
+# callable signatures and named noncallable declarations. It records every
+# compiler-visible difference; record byte offsets, archive extraction, and
 # runtime behavior remain separate proof obligations.
 [prototype_layout_matrix]
 id = "generated-x86-prototype-layout-matrix"
@@ -1513,9 +1513,9 @@ profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-7
 pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
-comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 1124, mismatch = 156, oracle-not-applicable = 1 }
-mismatch_fact_counts = { candidate_only_count = 147, incompatible_count = 187, reference_only_count = 21 }
-scope = "Compiler-derived direct-public-include source declaration forms: function signatures with emitted linkage spellings, named typedefs, named record shapes, enum values, variables, and macro replacement forms across all seven C11/C++17 profiles. It records red source-form differences and one pinned-musl C11 strict aio.h oracle-not-applicable row, but does not classify raw spelling differences as ABI differences or prove record byte layouts, anonymous declarations, archive linkage, runtime behavior, family promotion, or public support."
+comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 1280, oracle-not-applicable = 1 }
+mismatch_fact_counts = {}
+scope = "Compiler-derived direct-public-include source declaration forms: function signatures with emitted linkage spellings, named typedefs, named record shapes, enum values, variables, and macro replacement forms across all seven C11/C++17 profiles. All 1,280 comparable rows match pinned musl, while one C11 strict aio.h row remains oracle-not-applicable. It does not classify raw spelling differences as ABI differences or prove record byte layouts, anonymous declarations, archive linkage, runtime behavior, family promotion, or public support."
 
 [record_layout_matrix]
 id = "all-header-record-byte-layout-matrix"
@@ -1792,11 +1792,10 @@ header = "sys/vt.h"
 dependency = "linux/vt.h"
 state = "pinned-input-verified"
 
-# ABI facets are deliberate proof obligations. A `partial-verified` facet
-# retains its documented narrow evidence and cannot promote this family. The
-# planned facets close the gap between current direct probes and a real header
-# foundation: isolated candidate transitive headers, all language modes,
-# ABI-bearing declarations/layouts, and linkage ownership.
+# ABI facets are deliberate proof obligations. Each `partial-verified` facet
+# retains its documented narrow evidence; the aggregate combines the named
+# facets into the header foundation without claiming final provider/archive
+# linkage or runtime behavior.
 [[abi_facet]]
 id = "public-path-inventory"
 state = "partial-verified"
@@ -1947,7 +1946,7 @@ state = "partial-verified"
 scope = "all-pinned-and-project-only-public-headers"
 owner = "libc.headers-layouts"
 evidence = ["all-header-declaration-macro-feature-visibility-matrix"]
-description = "The checked derived 1,337-row matrix compares compiler-visible named declaration and macro identities across the full C11/C++17 profile cross-product. It keeps 187 same-identity source-form differences separately accounted, records all 91 comparable identity mismatch rows, and accounts for project-only and oracle-not-applicable surface dispositions through checked candidate fact summaries and digests. It excludes declaration-form equality, layouts, linkage, runtime, and promotion closure."
+description = "The checked derived 1,337-row matrix compares compiler-visible named declaration and macro identities across the full C11/C++17 profile cross-product. All 1,280 comparable rows match pinned musl in identity and source form; project-only and oracle-not-applicable surface dispositions retain checked candidate fact summaries and digests. It excludes declaration-form equality, layouts, linkage, runtime, and promotion closure."
 
 [[abi_facet]]
 id = "callable-feature-visibility"

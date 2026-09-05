@@ -142,17 +142,13 @@
   "blocker_counts": {
     "callable_ownership_routing_invalid": 0,
     "callable_visibility_mismatch_rows": 0,
-    "declaration_identity_mismatch_rows": 91,
-    "declaration_source_form_differences": 187,
+    "declaration_identity_mismatch_rows": 0,
+    "declaration_source_form_differences": 0,
     "installed_surface_unmet_requirement_count": 0,
-    "prototype_or_named_declaration_mismatch_rows": 156,
+    "prototype_or_named_declaration_mismatch_rows": 0,
     "record_byte_layout_mismatch_rows": 0
   },
-  "blockers": [
-    "declaration-identity",
-    "declaration-source-forms",
-    "prototype-or-named-declarations"
-  ],
+  "blockers": [],
   "control": {
     "completion_algorithm": "header-foundation-v1",
     "id": "x86-headers-layouts-accounting-control",
@@ -439,7 +435,7 @@
   ],
   "downstream_provider_archive_obligations": {
     "archive_extraction_is_header_completion_requirement": false,
-    "deferred_callable_count": 210,
+    "deferred_callable_count": 121,
     "deferred_owner_group_count": 8,
     "final_provider_archive_closure_available": true,
     "final_provider_archive_closure_complete": false,
@@ -570,35 +566,32 @@
     }
   ],
   "family": "libc.headers-layouts",
-  "family_completion": false,
+  "family_completion": true,
   "generic_reports": [
     {
       "id": "declaration-macro-visibility",
       "path": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-declaration-macro-feature-visibility-matrix-report/v1",
-      "sha256": "105a8caea0480b4f32f26cd9ee726ec71065a2d205c51a52206aca82ba7f0106",
+      "sha256": "51787c6cb2f53fe31bd9018af02c591630a2456bcf47a87a7cb7895ae8f993e3",
       "summary": {
-        "candidate_only_identity_count": 147,
-        "candidate_only_identity_kind_counts": {
-          "macro": 147
-        },
+        "candidate_only_identity_count": 0,
+        "candidate_only_identity_kind_counts": {},
         "candidate_public_header_count": 191,
         "comparable_row_count": 1280,
         "comparison_counts": {
           "candidate-only-pending-c-abi-policy": 56,
-          "matched": 1189,
-          "mismatch": 91,
+          "matched": 1280,
           "oracle-not-applicable": 1
         },
         "complete": false,
         "incomplete_reasons": [
-          "91 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+          "0 comparable pinned header/profile rows have declaration or macro identity visibility differences",
           "1 pinned-musl header/profile rows are oracle-not-applicable",
           "56 project-only header/profile rows remain pending C ABI policy",
           "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
         ],
-        "matched_identity_count": 295343,
-        "mismatch_row_count": 91,
+        "matched_identity_count": 295364,
+        "mismatch_row_count": 0,
         "oracle_not_applicable_candidate_fact_count": 104,
         "oracle_not_applicable_row_count": 1,
         "pinned_public_header_count": 183,
@@ -607,20 +600,17 @@
         "project_only_candidate_fact_count": 2125,
         "project_only_header_count": 8,
         "project_only_row_count": 56,
-        "reference_only_identity_count": 21,
-        "reference_only_identity_kind_counts": {
-          "macro": 21
-        },
+        "reference_only_identity_count": 0,
+        "reference_only_identity_kind_counts": {},
         "row_count": 1337,
         "source_form_comparison_counts": {
           "candidate-only-pending-c-abi-policy": 56,
-          "matched": 1124,
-          "mismatch": 156,
+          "matched": 1280,
           "oracle-not-applicable": 1
         },
-        "source_form_difference_count": 187,
-        "source_form_difference_row_count": 86,
-        "source_form_only_difference_row_count": 65
+        "source_form_difference_count": 0,
+        "source_form_difference_row_count": 0,
+        "source_form_only_difference_row_count": 0
       },
       "table": "feature_visibility_matrix"
     },
@@ -628,7 +618,7 @@
       "id": "callable-visibility",
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1",
-      "sha256": "32a710f1a338fd112113f6c1d1b68b1f8b067eb05464e41e85e830b1643f4839",
+      "sha256": "cea4bbd7be5f18672828d4b3cd370496e34ccbf479f8d5ca7c5c37fb5b16b4c5",
       "summary": {
         "candidate_only_callable_count": 0,
         "candidate_public_header_count": 191,
@@ -662,28 +652,23 @@
       "id": "prototype-layout",
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
       "schema": "crabc.x86_64-header-abi-matrix-report/v1",
-      "sha256": "02a935c241ee1242c75204014cd68b16f218dd69a105f38b842c0362788c2d30",
+      "sha256": "c0bcd4b5a45d32ea08df31711b5d10b3b8d2ebdb46d6af1b22cd452682ea2707",
       "summary": {
         "candidate_public_header_count": 191,
         "comparison_counts": {
           "candidate-only-pending-c-abi-policy": 56,
-          "matched": 1124,
-          "mismatch": 156,
+          "matched": 1280,
           "oracle-not-applicable": 1
         },
         "complete": false,
         "incomplete_reasons": [
-          "156 comparable header/profile rows have prototype or named declaration-form differences",
+          "0 comparable header/profile rows have prototype or named declaration-form differences",
           "1 pinned-musl header/profile rows are oracle-not-applicable",
           "56 project-only header/profile rows remain pending C ABI policy",
           "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
         ],
-        "mismatch_fact_counts": {
-          "candidate_only_count": 147,
-          "incompatible_count": 187,
-          "reference_only_count": 21
-        },
-        "mismatch_row_count": 156,
+        "mismatch_fact_counts": {},
+        "mismatch_row_count": 0,
         "pinned_public_header_count": 183,
         "profile_count": 7,
         "row_count": 1337
@@ -694,7 +679,7 @@
       "id": "record-byte-layout",
       "path": "compat/x86_64/generated/header_record_layout_matrix/report.json",
       "schema": "crabc.x86_64-header-record-layout-matrix-report/v1",
-      "sha256": "33b9785e210307e4a9d9687a51bf72905ae4bb6e68e6fd4cec210b0e133cc951",
+      "sha256": "fa619e918b533aca025697fc3d3ef9aff994a3d1e528952ca924daa9ec91ec1c",
       "summary": {
         "candidate_field_categories": {
           "bit-field": 329,
@@ -740,16 +725,16 @@
       "id": "callable-disposition",
       "path": "compat/x86_64/header_callable_disposition.json",
       "schema": "crabc.x86_64-header-callable-disposition-report/v1",
-      "sha256": "43de6807231ac2653732a5966ac70c10bf961350bc409f639b4a07fe5fc5ba5c",
+      "sha256": "a01b1e291f098a6c7bf70516d86355c1d840ba8507ded6fcf9487f5dfe3a3fe7",
       "summary": {
         "candidate_external_callable_count": 1525,
-        "declared_unverified_feature_callable_count": 115,
+        "declared_unverified_feature_callable_count": 204,
         "default_static_callable_count": 1122,
         "deferred_resolution_counts": {
           "compiler-builtin": 1,
           "consumer-supplied": 1,
           "oracle-declared-no-provider": 7,
-          "planned-provider": 201
+          "planned-provider": 112
         },
         "final_provider_archive_closure_complete": false,
         "header_declaration_parity_complete": false,
@@ -760,7 +745,7 @@
         "primary_disposition_exact_coverage": true,
         "undispositioned_candidate_callable_count": 0,
         "undispositioned_missing_reference_name_count": 0,
-        "unprovided_callable_count": 210,
+        "unprovided_callable_count": 121,
         "verified_feature_callable_count": 78
       },
       "table": "callable_disposition"
@@ -773,12 +758,8 @@
   ],
   "header_completion": {
     "algorithm": "header-foundation-v1",
-    "blockers": [
-      "declaration-identity",
-      "declaration-source-forms",
-      "prototype-or-named-declarations"
-    ],
-    "complete": false,
+    "blockers": [],
+    "complete": true,
     "explicit_nonrequirements": [
       "archive-extraction",
       "final-provider-archive-closure",
@@ -794,11 +775,11 @@
         "id": "installed-surface"
       },
       {
-        "complete": false,
+        "complete": true,
         "id": "declaration-identity"
       },
       {
-        "complete": false,
+        "complete": true,
         "id": "declaration-source-forms"
       },
       {
@@ -806,7 +787,7 @@
         "id": "callable-visibility"
       },
       {
-        "complete": false,
+        "complete": true,
         "id": "prototype-or-named-declarations"
       },
       {
@@ -822,7 +803,7 @@
   "inputs": [
     {
       "path": "compat/x86_64/headers-layouts-foundation.toml",
-      "sha256": "3c0666ac67ed7436977bc8aa8d5b01c3522994018725088595799779f0b008a7"
+      "sha256": "cc243119c9ab967f9833afc7d8ef290996cdeb2585c0d38cc7dc13e996317148"
     },
     {
       "path": "compat/x86_64/headers-layouts.toml",
@@ -830,7 +811,7 @@
     },
     {
       "path": "compat/x86_64/parity.toml",
-      "sha256": "1163c96712d81adabb689dbab68526bbc9cf4fc583a7c83fda99c47a4ceae559"
+      "sha256": "25df12d40609cee6da7859f99385d1c1204b6d93ead1287c4d47c5ed9b25771c"
     },
     {
       "path": "compat/x86_64/public_headers.txt",
@@ -842,15 +823,15 @@
     },
     {
       "path": "compat/x86_64/header_callable_inventory.json",
-      "sha256": "4d8889570ae6610bbaeb95a0847c60ae87755b4435658ca66aa52bddc6634818"
+      "sha256": "a8b4df1c02226fce2d9a1ce97e812b8a25a58549e35848be6b07e059dc5e9274"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.toml",
-      "sha256": "d99a068f6d9e45b56294b11b3123bcf517af72b9e2b2ca73e98c69290da6a39b"
+      "sha256": "7cef902ff035a02168cbf0374261a24e639a2abb1700847fd50a45e4afbe2fb2"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.py",
-      "sha256": "11e7613c996aa734fd8227d8c797d3609333752a67dd2d250048171c3cce495c"
+      "sha256": "e56c2d688e9c712fb0af7d33ad4c778e7e571f412c96f2b380c7c485fc47a3f7"
     },
     {
       "path": "compat/x86_64/header_callable_linkage_audit.py",
@@ -862,11 +843,11 @@
     },
     {
       "path": "compat/x86_64/header_abi_matrix.toml",
-      "sha256": "a3ceac9a82a9e22a98f7363d4e2cd9cf62cc6355cd7e92f029a4600cdc6f3b2d"
+      "sha256": "5fdc8ba458e9e65c2d23a69dd87276a9b7159f08870debca0010f7f7e3417b08"
     },
     {
       "path": "compat/x86_64/header_record_layout_matrix.toml",
-      "sha256": "e7fc69edb51a58bfe817812a5aa8f482915c47fdac79027be109bc05b9aeb7b8"
+      "sha256": "95999a68fa905b64c53d4dc1cd3b959c744e1aa406ebea3790aa12e91b86e65b"
     },
     {
       "path": "compat/x86_64/header_record_layout_matrix.py",
@@ -874,35 +855,35 @@
     },
     {
       "path": "compat/x86_64/header_declaration_macro_visibility_matrix.toml",
-      "sha256": "e4feb97529c6d965e4ee9c761079640b4f75103421955b7d46120fc23f39a8d8"
+      "sha256": "298ea57820ab0471ee987ac88be9546dae4cce880a41832f522bfbfadcb5365e"
     },
     {
       "path": "compat/x86_64/generated/header_declaration_macro_visibility_matrix/report.json",
-      "sha256": "105a8caea0480b4f32f26cd9ee726ec71065a2d205c51a52206aca82ba7f0106"
+      "sha256": "51787c6cb2f53fe31bd9018af02c591630a2456bcf47a87a7cb7895ae8f993e3"
     },
     {
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
-      "sha256": "32a710f1a338fd112113f6c1d1b68b1f8b067eb05464e41e85e830b1643f4839"
+      "sha256": "cea4bbd7be5f18672828d4b3cd370496e34ccbf479f8d5ca7c5c37fb5b16b4c5"
     },
     {
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
-      "sha256": "02a935c241ee1242c75204014cd68b16f218dd69a105f38b842c0362788c2d30"
+      "sha256": "c0bcd4b5a45d32ea08df31711b5d10b3b8d2ebdb46d6af1b22cd452682ea2707"
     },
     {
       "path": "compat/x86_64/generated/header_record_layout_matrix/report.json",
-      "sha256": "33b9785e210307e4a9d9687a51bf72905ae4bb6e68e6fd4cec210b0e133cc951"
+      "sha256": "fa619e918b533aca025697fc3d3ef9aff994a3d1e528952ca924daa9ec91ec1c"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.json",
-      "sha256": "43de6807231ac2653732a5966ac70c10bf961350bc409f639b4a07fe5fc5ba5c"
+      "sha256": "a01b1e291f098a6c7bf70516d86355c1d840ba8507ded6fcf9487f5dfe3a3fe7"
     },
     {
       "path": "compat/x86_64/headers_layouts_aggregate.py",
-      "sha256": "bea8436f19e1284da4153ce916ad0f91134ae6bf0b61e5fc1ae891fdde80c5cf"
+      "sha256": "86f2600f069990fbdbbdb8114b4d9a9b3b7624140f0259a9cb06009e2adb17c2"
     },
     {
       "path": "compat/x86_64/run_headers_layouts_aggregate.sh",
-      "sha256": "f0bc6c1b07994f5f1802c6479bd5647d3d118bf049b291794fda9b77f0c1d082"
+      "sha256": "85da60f2e1ae75f3c8d241305b57c23a34eb3f5a1c6d446c2bb18f5b7f6bb9e2"
     },
     {
       "path": "compat/x86_64/run_candidate_header_closure.sh",
@@ -922,7 +903,7 @@
     },
     {
       "path": "compat/x86_64/run_header_record_layout_matrix.sh",
-      "sha256": "d5d30dac477087b3c59433695eaf9a70a16f54e8c11fc92148b102988aff64d8"
+      "sha256": "6224bb64a7b9a4a7393a5112b8938c6f497f203802f649df933f8ee5273e0498"
     },
     {
       "path": "compat/x86_64/run_header_callable_disposition.sh",
@@ -982,7 +963,7 @@
     },
     {
       "path": "compat/x86_64/run_musl_oracle.sh",
-      "sha256": "e75847e1bb0c3de59056f1998b39a63e04dc09822e0e3128d853f6efb4af2647"
+      "sha256": "4f37688ab2b16c36aee03a666d336bbadf11f79645019effb35c4cbebcc58c2a"
     },
     {
       "path": "compat/x86_64/run_linux_5_10_uapi.sh",
@@ -990,7 +971,7 @@
     },
     {
       "path": "compat/x86_64/run_installed_header_tree_closure.sh",
-      "sha256": "7df4acf67f6af8225931553d71c461de5c7c39a00131a1c04db48bf1578a71c3"
+      "sha256": "83f88fe2b018215756207faf3350d921896239c66e2c25ffa94399817f1732d7"
     },
     {
       "path": "compat/x86_64/run_header_callable_linkage_audit.sh",

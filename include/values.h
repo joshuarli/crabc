@@ -1,5 +1,5 @@
-#ifndef _CRABC_VALUES_H
-#define _CRABC_VALUES_H
+#ifndef _VALUES_H
+#define _VALUES_H
 
 #include <float.h>
 #include <limits.h>

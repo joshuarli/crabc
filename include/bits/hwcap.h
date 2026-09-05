@@ -1,10 +1,9 @@
-#ifndef _CRABC_BITS_HWCAP_H
-#define _CRABC_BITS_HWCAP_H
-
 /* Linux HWCAP values belong to the target architecture.  Pinned musl 1.2.6
  * intentionally exposes an empty `arch/x86_64/bits/hwcap.h`; keep the
  * AArch64 vocabulary here so <sys/auxv.h> cannot leak it into x86 programs. */
 #if defined(__aarch64__)
+#ifndef _CRABC_BITS_HWCAP_H
+#define _CRABC_BITS_HWCAP_H
 #define HWCAP_FP (1 << 0)
 #define HWCAP_ASIMD (1 << 1)
 #define HWCAP_EVTSTRM (1 << 2)

@@ -1,11 +1,4 @@
-#ifndef _BITS_SHM_H
-#define _BITS_SHM_H
-
-/* Linux/x86-64 System V shared-memory records from pinned musl. */
-#if !defined(__x86_64__) || !defined(__LP64__)
-#error "crabc x86-64 bits/shm.h requires LP64 x86-64"
-#endif
-
+#if defined(__x86_64__)
 #define SHMLBA 4096
 
 struct shmid_ds {
@@ -30,5 +23,4 @@ struct shm_info {
 	unsigned long shm_tot, shm_rss, shm_swp;
 	unsigned long __swap_attempts, __swap_successes;
 };
-
 #endif

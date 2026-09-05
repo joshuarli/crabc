@@ -10,6 +10,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -289,22 +290,214 @@ class HeaderAbiMatrixTests(unittest.TestCase):
 
         self.assertEqual(MATRIX.enum_signature(node), "enum{DEMO_ZERO=0,DEMO_FOUR=4}")
 
-    def test_type_spelling_normalizes_anonymous_source_locations(self) -> None:
+    def test_anonymous_ast_identities_ignore_coordinates_but_retain_each_shape(self) -> None:
         with tempfile.TemporaryDirectory() as project_directory, tempfile.TemporaryDirectory() as musl_directory:
             project_root = Path(project_directory)
             musl_root = Path(musl_directory)
-            project_type = f"struct (unnamed at {project_root}/resolv.h:40:5)[10]"
-            musl_type = f"struct (unnamed at {musl_root}/resolv.h:40:5)[10]"
 
-            project_normalized = MATRIX.normalize_type_spelling(
-                project_type, ((project_root, "public"),)
+            def anonymous_ast(
+                header: Path,
+                *,
+                line_offset: int = 0,
+                first_enum_value: str = "1",
+                first_record_member_type: str = "int",
+                switch_enum_fields: bool = False,
+            ) -> dict[str, object]:
+                first_enum_line = 10 + line_offset
+                second_enum_line = 14 + line_offset
+                first_record_line = 18 + line_offset
+                second_record_line = 23 + line_offset
+
+                def location(line: int) -> dict[str, object]:
+                    return {"file": str(header), "line": line, "col": 5}
+
+                def compact_location(line: int) -> dict[str, object]:
+                    # Clang omits repeated file paths from nested AST nodes.
+                    return {"offset": line * 16, "line": line, "col": 5}
+
+                first_enum = f"enum (unnamed at {header}:{first_enum_line}:5)"
+                second_enum = f"enum (unnamed at {header}:{second_enum_line}:5)"
+                return {
+                    "kind": "TranslationUnitDecl",
+                    "inner": [
+                        {
+                            "kind": "RecordDecl",
+                            "name": "container",
+                            "tagUsed": "struct",
+                            "completeDefinition": True,
+                            "loc": location(1 + line_offset),
+                            "inner": [
+                                {
+                                    "kind": "EnumDecl",
+                                    "loc": compact_location(first_enum_line),
+                                    "inner": [
+                                        {"kind": "EnumConstantDecl", "name": "FIRST", "value": first_enum_value}
+                                    ],
+                                },
+                                {
+                                    "kind": "FieldDecl",
+                                    "name": "first_mode",
+                                    "type": {"qualType": second_enum if switch_enum_fields else first_enum},
+                                },
+                                {
+                                    "kind": "EnumDecl",
+                                    "loc": compact_location(second_enum_line),
+                                    "inner": [
+                                        {"kind": "EnumConstantDecl", "name": "SECOND", "value": "2"}
+                                    ],
+                                },
+                                {
+                                    "kind": "FieldDecl",
+                                    "name": "second_mode",
+                                    "type": {"qualType": first_enum if switch_enum_fields else second_enum},
+                                },
+                                {
+                                    "kind": "RecordDecl",
+                                    "tagUsed": "struct",
+                                    "completeDefinition": True,
+                                    "loc": compact_location(first_record_line),
+                                    "inner": [
+                                        {
+                                            "kind": "FieldDecl",
+                                            "name": "member",
+                                            "type": {"qualType": first_record_member_type},
+                                        }
+                                    ],
+                                },
+                                {
+                                    "kind": "FieldDecl",
+                                    "name": "first_record",
+                                    "type": {
+                                        "qualType": f"struct (unnamed at {header}:{first_record_line}:5)"
+                                    },
+                                },
+                                {
+                                    "kind": "RecordDecl",
+                                    "tagUsed": "struct",
+                                    "completeDefinition": True,
+                                    "loc": compact_location(second_record_line),
+                                    "inner": [
+                                        {
+                                            "kind": "FieldDecl",
+                                            "name": "member",
+                                            "type": {"qualType": "long"},
+                                        }
+                                    ],
+                                },
+                                {
+                                    "kind": "FieldDecl",
+                                    "name": "second_record",
+                                    "type": {
+                                        "qualType": f"struct (unnamed at {header}:{second_record_line}:5)"
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                }
+
+            project_header = project_root / "anonymous.h"
+            musl_header = musl_root / "anonymous.h"
+            project_header.write_text("/* candidate */\n", encoding="utf-8")
+            musl_header.write_text("/* reference */\n", encoding="utf-8")
+
+            candidate = MATRIX.discover_ast_facts(anonymous_ast(project_header), project_root)
+            moved_reference = MATRIX.discover_ast_facts(
+                anonymous_ast(musl_header, line_offset=30), musl_root
             )
-            musl_normalized = MATRIX.normalize_type_spelling(
-                musl_type, ((musl_root, "public"),)
+            changed_enum = MATRIX.discover_ast_facts(
+                anonymous_ast(musl_header, first_enum_value="9"), musl_root
+            )
+            changed_record = MATRIX.discover_ast_facts(
+                anonymous_ast(musl_header, first_record_member_type="long"), musl_root
+            )
+            switched_fields = MATRIX.discover_ast_facts(
+                anonymous_ast(musl_header, switch_enum_fields=True), musl_root
             )
 
-        self.assertEqual(project_normalized, "struct (unnamed at public/resolv.h:40:5)[10]")
-        self.assertEqual(project_normalized, musl_normalized)
+        self.assertEqual(MATRIX.compare_facts(candidate, moved_reference)["incompatible"], [])
+        self.assertEqual(MATRIX.compare_facts(candidate, changed_enum)["incompatible_count"], 1)
+        self.assertEqual(MATRIX.compare_facts(candidate, changed_record)["incompatible_count"], 1)
+        self.assertEqual(MATRIX.compare_facts(candidate, switched_fields)["incompatible_count"], 1)
+        container = next(fact for fact in candidate if fact["name"] == "container")
+        self.assertIn("enum{FIRST=1}", container["signature"])
+        self.assertIn("struct{member:int}", container["signature"])
+
+    def test_real_clang_anonymous_records_retain_nested_and_promoted_members(self) -> None:
+        """Keep pinned-Clang's anonymous-record AST facts structural.
+
+        This uses Clang's actual compact locations and its distinct
+        ``unnamed struct`` and promoted ``anonymous`` type spellings. Moving
+        the declarations is not a source-form difference, while changing a
+        deeply nested anonymous member or a promoted anonymous union member
+        is one named-record difference.
+        """
+
+        def source(*, padding: int = 0, deep_type: str = "int", union_type: str = "int") -> str:
+            return (
+                "\n" * padding
+                + "struct nested_owner {\n"
+                + "    struct {\n"
+                + "        struct {\n"
+                + f"            {deep_type} deep;\n"
+                + "        } middle;\n"
+                + "    } outer;\n"
+                + "};\n\n"
+                + "struct promoted_owner {\n"
+                + "    union {\n"
+                + f"        {union_type} first;\n"
+                + "        struct {\n"
+                + "            int nested;\n"
+                + "        } record;\n"
+                + "    };\n"
+                + "};\n"
+            )
+
+        with tempfile.TemporaryDirectory(
+            prefix="anonymous-record-clang-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            root = Path(temporary)
+            header = root / "anonymous.h"
+            probe = root / "probe.c"
+            probe.write_text('#include "anonymous.h"\n', encoding="utf-8")
+
+            def facts_for(**source_arguments: object) -> list[dict[str, str]]:
+                header.write_text(source(**source_arguments), encoding="utf-8")
+                result = subprocess.run(
+                    [
+                        "clang",
+                        "-x",
+                        "c",
+                        "-std=c11",
+                        "-nostdinc",
+                        "-I",
+                        str(root),
+                        "-Xclang",
+                        "-ast-dump=json",
+                        "-fsyntax-only",
+                        str(probe),
+                    ],
+                    cwd=ROOT,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                ast = json.loads(result.stdout)
+                return MATRIX.discover_ast_facts(ast, root, "anonymous.h")
+
+            candidate = facts_for()
+            moved_reference = facts_for(padding=11)
+            changed_nested = facts_for(deep_type="long")
+            changed_promoted = facts_for(union_type="long")
+
+        self.assertEqual(MATRIX.compare_facts(candidate, moved_reference)["incompatible"], [])
+        self.assertEqual(MATRIX.compare_facts(candidate, changed_nested)["incompatible_count"], 1)
+        self.assertEqual(MATRIX.compare_facts(candidate, changed_promoted)["incompatible_count"], 1)
+        promoted = next(fact for fact in candidate if fact["name"] == "promoted_owner")
+        self.assertIn("anonymous", promoted["signature"])
+        self.assertIn("union", promoted["signature"])
 
     def test_macro_discovery_keeps_only_the_final_active_definition(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -327,6 +520,40 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             facts,
             [MATRIX.fact("macro", "O_CREAT", "object-like: 0100")],
         )
+
+    def test_macro_facts_retain_whitespace_visible_to_stringification(self) -> None:
+        """A macro space survives two-stage stringification and is a source fact."""
+
+        with tempfile.TemporaryDirectory(
+            prefix="macro-stringification-",
+            dir=self.matrix_test_work_root(),
+        ) as temporary:
+            probe = Path(temporary) / "stringification.c"
+            probe.write_text(
+                "#define STRINGIFY_RAW(value) #value\n"
+                "#define STRINGIFY(value) STRINGIFY_RAW(value)\n"
+                "#define SPACED ((void *) -1)\n"
+                "#define COMPACT ((void *)-1)\n"
+                "const char *spaced = STRINGIFY(SPACED);\n"
+                "const char *compact = STRINGIFY(COMPACT);\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["clang", "-E", "-P", str(probe)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('const char *spaced = "((void *) -1)";', result.stdout)
+        self.assertIn('const char *compact = "((void *)-1)";', result.stdout)
+        spaced = MATRIX.macro_definition("#define MAP_FAILED ((void *) -1)")
+        compact = MATRIX.macro_definition("#define MAP_FAILED ((void *)-1)")
+        self.assertNotEqual(spaced, compact)
+        self.assertEqual(spaced, ("MAP_FAILED", "object-like: ((void *) -1)"))
+        self.assertEqual(compact, ("MAP_FAILED", "object-like: ((void *)-1)"))
 
     def test_compiler_collection_digest_binds_headers_profiles_pins_and_oracle(self) -> None:
         """Provider accounting is not a compiler input, unlike these facts."""
@@ -1316,15 +1543,15 @@ class HeaderAbiMatrixTests(unittest.TestCase):
 
         self.assertEqual(len(profiles), 7)
 
-    def test_ifaddrs_header_preserves_musl_x86_source_coordinates(self) -> None:
-        """Keep the direct interface record's selected source form exact.
+    def test_ifaddrs_header_preserves_musl_x86_record_form_and_feature_context(self) -> None:
+        """Keep the direct interface record's selected declaration form exact.
 
         The anonymous union in struct ifaddrs is a named declaration-form
-        fact. Musl's direct features.h request fixes its source coordinate as
-        well as the selected feature context; moving that request or reshaping
-        the record would silently recreate source-form debt in every C/C++
-        profile. This remains header evidence only, not an interface discovery
-        provider or runtime claim.
+        relationship. Musl's direct features.h request fixes its selected
+        feature context; reshaping the record would recreate source-form debt
+        in every C/C++ profile. Blank lines and comments do not alter that
+        relationship. This remains header evidence only, not an interface
+        discovery provider or runtime claim.
         """
         checked = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         rows = {
@@ -1744,49 +1971,6 @@ class HeaderAbiMatrixTests(unittest.TestCase):
             "cxx17-strict",
         )
 
-        signal_form_debt = frozenset({"sigaction", "sigevent"})
-        signal_form_debt_with_fpstate = signal_form_debt | {"_fpstate"}
-        signal_profiles_with_fpstate = frozenset(
-            {"c11-bsd", "c11-gnu", "cxx17-gnu", "cxx17-strict"}
-        )
-        signal_profiles_without_fpstate = frozenset(
-            {"c11-posix-2008", "c11-xopen-700"}
-        )
-
-        expected_incompatible = {
-            **{
-                ("signal.h", profile): signal_form_debt_with_fpstate
-                for profile in signal_profiles_with_fpstate
-            },
-            **{
-                ("signal.h", profile): signal_form_debt
-                for profile in signal_profiles_without_fpstate
-            },
-            **{
-                ("sys/wait.h", profile): signal_form_debt_with_fpstate
-                for profile in {"c11-gnu", "cxx17-gnu", "cxx17-strict"}
-            },
-            (
-                "sys/wait.h",
-                "c11-bsd",
-            ): signal_form_debt_with_fpstate,
-            **{
-                ("sys/wait.h", profile): signal_form_debt
-                for profile in signal_profiles_without_fpstate
-            },
-            **{
-                ("aio.h", profile): signal_form_debt_with_fpstate
-                for profile in signal_profiles_with_fpstate
-            },
-            **{
-                ("aio.h", profile): signal_form_debt
-                for profile in signal_profiles_without_fpstate
-            },
-        }
-        aio_candidate_only = frozenset()
-
-        matched = 0
-        mismatched = 0
         for header in headers:
             for profile in profiles:
                 row = rows[(header, profile)]
@@ -1796,56 +1980,28 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                     self.assertEqual(row["reference_status"], "oracle-not-applicable")
                     continue
 
-                expected_incompatible_names = expected_incompatible.get(
-                    (header, profile), frozenset()
-                )
-                expected_candidate_only_names = (
-                    aio_candidate_only if header == "aio.h" else frozenset()
-                )
-                comparison = (
-                    "mismatch"
-                    if expected_incompatible_names or expected_candidate_only_names
-                    else "matched"
-                )
                 self.assertEqual(
                     row["comparison"],
-                    comparison,
-                    f"{header}:{profile} must retain only its reviewed form debt",
+                    "matched",
+                    f"{header}:{profile} must retain musl's exact source form",
                 )
                 self.assertEqual(row["reference_status"], "ok")
                 difference = row["difference"]
                 self.assertEqual(
-                    {fact["name"] for fact in difference["candidate_only"]},
-                    expected_candidate_only_names,
-                    f"{header}:{profile} candidate-only declaration owners",
+                    difference,
+                    {
+                        "candidate_only": [],
+                        "candidate_only_count": 0,
+                        "incompatible": [],
+                        "incompatible_count": 0,
+                        "matched_count": row["candidate"]["count"],
+                        "reference_only": [],
+                        "reference_only_count": 0,
+                    },
+                    f"{header}:{profile} source declarations",
                 )
-                self.assertEqual(
-                    {fact["name"] for fact in difference["incompatible"]},
-                    expected_incompatible_names,
-                    f"{header}:{profile} source-form debt",
-                )
-                self.assertEqual(
-                    difference["reference_only"],
-                    [],
-                    f"{header}:{profile} must not lose a musl declaration",
-                )
-                self.assertEqual(
-                    difference["candidate_only_count"],
-                    len(expected_candidate_only_names),
-                )
-                self.assertEqual(
-                    difference["incompatible_count"],
-                    len(expected_incompatible_names),
-                )
-                self.assertEqual(difference["reference_only_count"], 0)
-                if comparison == "matched":
-                    matched += 1
-                else:
-                    mismatched += 1
 
         self.assertEqual(len(headers) * len(profiles), 28)
-        self.assertEqual(matched, 9)
-        self.assertEqual(mismatched, 18)
 
     def test_unistd_and_sendfile_headers_match_musl_x86_ownership(self) -> None:
         """Keep the process/file declaration boundary source-faithful.
@@ -2098,6 +2254,29 @@ class HeaderAbiMatrixTests(unittest.TestCase):
                     r"(?m)^#ifndef\s+",
                     f"{header_name} must preserve musl's unguarded source form",
                 )
+
+    def test_x86_macro_forms_preserve_the_paused_aarch64_spellings(self) -> None:
+        """Keep x86 source-form repair from changing the frozen AArch64 side."""
+
+        mman = (ROOT / "include" / "sys" / "mman.h").read_text(encoding="utf-8")
+        self.assertIn(
+            "#if defined(__x86_64__)\n"
+            "#define MLOCK_ONFAULT 0x01\n"
+            "#else\n"
+            "#define MLOCK_ONFAULT 0x01U\n"
+            "#endif",
+            mman,
+        )
+
+        acct = (ROOT / "include" / "sys" / "acct.h").read_text(encoding="utf-8")
+        self.assertIn(
+            "#if defined(__x86_64__)\n"
+            "#define ACCT_BYTEORDER (128*(__BYTE_ORDER==__BIG_ENDIAN))\n"
+            "#else\n"
+            "#define ACCT_BYTEORDER (128 * (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__))\n"
+            "#endif",
+            acct,
+        )
 
 
 if __name__ == "__main__":

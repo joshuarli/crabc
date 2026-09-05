@@ -1,11 +1,5 @@
-#ifndef _BITS_IPC_H
-#define _BITS_IPC_H
-
+#if defined(__x86_64__)
 /* Linux/x86-64 System V IPC permission record from pinned musl. */
-#if !defined(__x86_64__) || !defined(__LP64__)
-#error "crabc x86-64 bits/ipc.h requires LP64 x86-64"
-#endif
-
 struct ipc_perm {
 	key_t __ipc_perm_key;
 	uid_t uid;
@@ -17,5 +11,4 @@ struct ipc_perm {
 	long __pad1;
 	long __pad2;
 };
-
 #endif

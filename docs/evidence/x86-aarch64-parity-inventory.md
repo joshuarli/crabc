@@ -11,7 +11,7 @@ promotion family:
 - `implemented-foundation` means only that its family is an x86 native
   foundation, not that the whole public contract is complete.
 - `selected-private` means an explicitly recorded private x86 vertical owns
-  that capability inside a still-planned family.
+  that capability inside a family that has not reached its own foundation state.
 - `missing` means the family still owes the capability to the promotion
   program. It is not an unsupported-platform claim.
 - `unsupported_contracts` lists only x86 ledger surfaces explicitly excluded

@@ -257,7 +257,11 @@ def feature_rows(
         replacements[identifier] = row
     expected = {row.identifier for row in roster if row.state == "verified"}
     provider_require(set(verified) == expected, "inventory verified provider ids drift from the feature archive roster")
-    expected_replacements = {row.identifier for row in roster if row.state == "verified" and row.replacement_callables}
+    # The inventory records every declared replacement variant, including
+    # unverified profiles. This selected-provider audit only builds verified
+    # archives below, but it must still reject an inventory that omits or
+    # invents an unverified replacement ownership record.
+    expected_replacements = {row.identifier for row in roster if row.replacement_callables}
     provider_require(set(replacements) == expected_replacements, "inventory replacement provider ids drift from the feature archive roster")
     return verified, replacements
 

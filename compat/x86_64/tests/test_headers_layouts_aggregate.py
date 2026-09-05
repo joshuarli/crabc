@@ -102,14 +102,14 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         comparisons["mismatch"] = 0
         return reports
 
-    def test_current_assessment_is_finite_planned_header_evidence(self) -> None:
+    def test_current_assessment_is_finite_completed_header_foundation(self) -> None:
         report = self.current_report()
         AGGREGATE.validate_report(report)
 
         self.assertEqual(report["schema"], AGGREGATE.REPORT_SCHEMA)
         self.assertEqual(report["family"], "libc.headers-layouts")
         self.assertTrue(report["accounting_complete"])
-        self.assertFalse(report["family_completion"])
+        self.assertTrue(report["family_completion"])
         self.assertFalse(report["promotion_ready"])
         self.assertFalse(report["public_support"])
         self.assertEqual(report["direct_probe_count"], 55)
@@ -117,14 +117,7 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         self.assertEqual(report["language_profile_count"], 7)
         self.assertEqual(report["abi_facet_count"], 25)
         self.assertEqual(report["linkage_owner_count"], 3)
-        self.assertEqual(
-            report["blockers"],
-            [
-                "declaration-identity",
-                "declaration-source-forms",
-                "prototype-or-named-declarations",
-            ],
-        )
+        self.assertEqual(report["blockers"], [])
         self.assertNotIn("callable-provider-closure", report["blockers"])
         self.assertNotIn("runtime-semantics", report["blockers"])
         self.assertNotIn("family-promotion", report["blockers"])
@@ -134,7 +127,7 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         self.assertEqual(blocker_counts["callable_ownership_routing_invalid"], 0)
         header_completion = report["header_completion"]
         assert isinstance(header_completion, dict)
-        self.assertFalse(header_completion["complete"])
+        self.assertTrue(header_completion["complete"])
         self.assertEqual(header_completion["algorithm"], "header-foundation-v1")
         self.assertEqual(
             header_completion["explicit_nonrequirements"],
@@ -171,15 +164,15 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
     def test_control_rejects_manual_completion_or_omitted_coverage(self) -> None:
         report = self.current_report()
         changed = copy.deepcopy(report)
-        changed["family_completion"] = True
+        changed["family_completion"] = False
         with self.assertRaisesRegex(AGGREGATE.AggregateError, "family completion"):
             AGGREGATE.validate_report(changed)
 
         changed = copy.deepcopy(report)
         header_completion = changed["header_completion"]
         assert isinstance(header_completion, dict)
-        header_completion["complete"] = True
-        changed["family_completion"] = True
+        header_completion["complete"] = False
+        changed["family_completion"] = False
         with self.assertRaisesRegex(
             AGGREGATE.AggregateError, "header completion assessment"
         ):
@@ -464,6 +457,10 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
                 self.assertIn("callable-ownership-routing", assessment["blockers"])
 
     def test_accounted_incomplete_linkage_audit_is_explicit(self) -> None:
+        inventory = AGGREGATE.load_json(AGGREGATE.HEADER_CALLABLE_INVENTORY_PATH)
+        counts = inventory["summary"]["callable_provider_counts"]
+        external_count = len(AGGREGATE.candidate_external_callable_names(inventory))
+        default_count = counts["default_static"]
         report = {
             "schema": "crabc.x86_64-header-callable-linkage-audit/v2",
             "inventory_schema": "crabc.x86_64-header-callable-inventory-report/v2",
@@ -474,22 +471,17 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
                 "public_support": False,
                 "uses_whole_archive": False,
             },
-            "external_callable_count": 1525,
-            "ratcheted_external_callable_count": 1119,
+            "external_callable_count": external_count,
+            "ratcheted_external_callable_count": default_count,
             "summary": {
-                "callable_provider_counts": {
-                    "declared_unverified_feature_archives": 0,
-                    "default_static": 1119,
-                    "unprovided": 328,
-                    "verified_feature_archives": 78,
-                },
+                "callable_provider_counts": counts,
                 "complete": False,
-                "extraction_status_counts": {"extracted": 1119},
+                "extraction_status_counts": {"extracted": default_count},
                 "incomplete_reasons": [
                     "static export complement is nonempty",
                     "one or more candidate external callables have no declared archive provider",
                 ],
-                "static_export_complement_count": 406,
+                "static_export_complement_count": external_count - default_count,
             },
         }
         AGGREGATE.validate_accounted_incomplete_linkage_audit_report(report)
@@ -500,6 +492,18 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         summary["complete"] = True
         with self.assertRaisesRegex(AGGREGATE.AggregateError, "must remain incomplete"):
             AGGREGATE.validate_accounted_incomplete_linkage_audit_report(changed)
+
+        for field in ("callable_provider_counts", "extraction_status_counts", "static_export_complement_count"):
+            with self.subTest(stale_summary=field):
+                changed = copy.deepcopy(report)
+                if field == "callable_provider_counts":
+                    changed["summary"][field]["declared_unverified_feature_archives"] -= 1
+                elif field == "extraction_status_counts":
+                    changed["summary"][field] = {"extracted": default_count - 1, "not-extracted": 1}
+                else:
+                    changed["summary"][field] += 1
+                with self.assertRaisesRegex(AGGREGATE.AggregateError, "must remain incomplete"):
+                    AGGREGATE.validate_accounted_incomplete_linkage_audit_report(changed)
 
     def test_runner_list_is_safe_complete_and_has_no_dispatcher_recursion(self) -> None:
         runners = AGGREGATE.runner_paths()

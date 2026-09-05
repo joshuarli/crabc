@@ -459,7 +459,7 @@ Layout: <ASTRecordLayout
         self.assertIn("--check", source)
         self.assertIn("header_record_layout_matrix.py", source)
         self.assertIn("-fdump-record-layouts-simple", MATRIX_PATH.read_text(encoding="utf-8"))
-        self.assertIn("family remains planned", source)
+        self.assertIn("header family is foundation-verified", source)
 
 
 if __name__ == "__main__":

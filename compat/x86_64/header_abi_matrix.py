@@ -48,7 +48,8 @@ PLATFORM = "Linux/x86-64 little-endian"
 ORACLE = "Pinned musl 1.2.6"
 FACT_KINDS = frozenset({"enum", "function", "macro", "record", "typedef", "variable"})
 ANONYMOUS_TYPE_LOCATION = re.compile(
-    r"\(unnamed at (?P<path>.+?):(?P<line>[0-9]+):(?P<column>[0-9]+)\)"
+    r"\((?:unnamed|anonymous)(?: (?:struct|union|class|enum))? at "
+    r"(?P<path>.+?):(?P<line>[0-9]+):(?P<column>[0-9]+)\)"
 )
 POLICY = {
     "compiler_ast_json": True,
@@ -679,34 +680,216 @@ def is_compact_source_location(location: object) -> bool:
 
 
 def normalize_type_spelling(
-    value: str, path_roots: Sequence[tuple[Path, str]]
+    value: str,
+    path_roots: Sequence[tuple[Path, str]],
+    anonymous_type_identities: Mapping[str, str] | None = None,
 ) -> str:
-    """Replace compiler absolute anonymous-type paths with stable root labels."""
+    """Normalize anonymous-type provenance through structural AST identities.
 
-    resolved_roots = [(root.resolve(), label) for root, label in path_roots]
+    Clang spells anonymous member types with the declaration's file, line, and
+    column. Coordinates only locate the corresponding anonymous AST node;
+    `anonymous_type_identities` preserves that node's recursive structural
+    owner, local ordinal, and shape. A blank line or comment therefore cannot
+    create ABI debt, while distinct anonymous declarations, including nested
+    and promoted members, remain distinct facts.
+    """
 
     def replace(match: re.Match[str]) -> str:
-        source = Path(match["path"])
-        try:
-            resolved_source = source.resolve()
-        except OSError:
-            resolved_source = source
-        for root, label in resolved_roots:
-            try:
-                relative = resolved_source.relative_to(root).as_posix()
-            except ValueError:
-                continue
-            return f"(unnamed at {label}/{relative}:{match['line']}:{match['column']})"
-        # The compiler-provided path can only be an input outside the three
-        # controlled roots. Preserve its basename and position for review
-        # without leaking a machine-specific checkout prefix into the report.
-        return f"(unnamed at external/{source.name}:{match['line']}:{match['column']})"
+        location = anonymous_type_location_key(
+            match["path"], int(match["line"]), int(match["column"]), path_roots
+        )
+        if anonymous_type_identities is not None:
+            identity = anonymous_type_identities.get(location)
+            if identity is not None:
+                return f"(anonymous {identity})"
+        return f"(unnamed at {location})"
 
     return ANONYMOUS_TYPE_LOCATION.sub(replace, value)
 
 
+def anonymous_type_location_key(
+    source_path: str, line: int, column: int, path_roots: Sequence[tuple[Path, str]]
+) -> str:
+    """Render one compiler anonymous-type coordinate as a repository-local key."""
+
+    source = Path(source_path)
+    try:
+        resolved_source = source.resolve()
+    except OSError:
+        resolved_source = source
+    for root, label in ((root.resolve(), label) for root, label in path_roots):
+        try:
+            relative = resolved_source.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        return f"{label}/{relative}:{line}:{column}"
+    # The compiler-provided path can only be an input outside the three
+    # controlled roots. Preserve its basename and position without leaking a
+    # machine-specific checkout prefix into the report.
+    return f"external/{source.name}:{line}:{column}"
+
+
+def anonymous_type_node_location_key(
+    node: Mapping[str, Any], path_roots: Sequence[tuple[Path, str]]
+) -> str | None:
+    """Return the compiler coordinate that names one anonymous AST node."""
+
+    location = node.get("loc")
+    if not isinstance(location, Mapping):
+        return None
+    candidates: list[object] = [location]
+    for field in ("spellingLoc", "expansionLoc"):
+        nested = location.get(field)
+        if isinstance(nested, Mapping):
+            candidates.append(nested)
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            continue
+        source_path = candidate.get("file")
+        line = candidate.get("line")
+        column = candidate.get("col")
+        if (
+            isinstance(source_path, str)
+            and source_path
+            and not source_path.startswith("<")
+            and isinstance(line, int)
+            and line > 0
+            and isinstance(column, int)
+            and column > 0
+        ):
+            return anonymous_type_location_key(source_path, line, column, path_roots)
+    return None
+
+
+@dataclass(frozen=True)
+class AnonymousTypeNode:
+    """One unnamed enum or record with a coordinate used only for AST lookup."""
+
+    location_key: str
+    structural_anchor: str
+    node: Mapping[str, Any]
+
+
+def anonymous_type_identities(
+    ast: Mapping[str, Any], path_roots: Sequence[tuple[Path, str]]
+) -> dict[str, str]:
+    """Map compiler anonymous coordinates to stable owner/ordinal/shape facts.
+
+    `qualType` refers to anonymous declarations by source coordinate. The map
+    converts that incidental lookup key into a structural identity: public
+    header, enclosing named declaration chain, anonymous kind, and local
+    ordinal. Its rendered enum or record shape remains part of the identity.
+    A record shape resolves nested anonymous member identities recursively, so
+    a change below an otherwise stable outer anonymous record reaches every
+    named declaration that exposes that record.
+    """
+
+    nodes: list[AnonymousTypeNode] = []
+    seen_locations: set[str] = set()
+    ordinals: Counter[tuple[str, tuple[str, ...], str]] = Counter()
+    last_public_header: str | None = None
+
+    def visit(
+        node: Mapping[str, Any], owner: tuple[str, ...], current_header: str | None
+    ) -> None:
+        nonlocal last_public_header
+        kind = node.get("kind")
+        location_key = anonymous_type_node_location_key(node, path_roots)
+        header = current_header
+        if location_key is not None and location_key.startswith("public/"):
+            header = location_key.rsplit(":", 2)[0]
+            last_public_header = header
+        elif is_compact_source_location(node.get("loc")):
+            header = current_header or last_public_header
+            location = node["loc"]
+            assert isinstance(location, Mapping)
+            line = location.get("line")
+            column = location.get("col")
+            if header is not None and isinstance(line, int) and isinstance(column, int):
+                location_key = f"{header}:{line}:{column}"
+
+        child_owner = owner
+        name = node.get("name")
+        if kind in {"RecordDecl", "CXXRecordDecl", "EnumDecl"} and isinstance(name, str) and name:
+            child_owner = owner + (f"{kind}:{name}",)
+        elif kind in {"RecordDecl", "CXXRecordDecl", "EnumDecl"} and not name:
+            is_record = kind in {"RecordDecl", "CXXRecordDecl"}
+            if (
+                location_key is not None
+                and location_key.startswith("public/")
+                and (not is_record or node.get("completeDefinition") is True)
+            ):
+                if location_key not in seen_locations:
+                    header_owner = header or location_key.rsplit(":", 2)[0]
+                    ordinal_key = (header_owner, owner, str(kind))
+                    ordinal = ordinals[ordinal_key]
+                    ordinals[ordinal_key] += 1
+                    anchor = "/".join(
+                        (header_owner, *owner, f"{kind.lower()}#{ordinal}")
+                    )
+                    nodes.append(AnonymousTypeNode(location_key, anchor, node))
+                    seen_locations.add(location_key)
+                else:
+                    anchor = next(
+                        entry.structural_anchor
+                        for entry in nodes
+                        if entry.location_key == location_key
+                    )
+                child_owner = owner + (anchor.rsplit("/", 1)[-1],)
+
+        children = node.get("inner")
+        if isinstance(children, list):
+            for child in children:
+                if isinstance(child, Mapping):
+                    visit(child, child_owner, header)
+
+    visit(ast, ("translation-unit",), None)
+    entries = {entry.location_key: entry for entry in nodes}
+    completed: dict[str, str] = {}
+    resolving: set[str] = set()
+
+    class RecursiveAnonymousIdentities(dict[str, str]):
+        """Resolve nested source-coordinate references on demand."""
+
+        def get(self, key: str, default: str | None = None) -> str | None:
+            if key not in entries:
+                return default
+            return resolve(key)
+
+    identities = RecursiveAnonymousIdentities()
+
+    def resolve(location_key: str) -> str:
+        prior = completed.get(location_key)
+        if prior is not None:
+            return prior
+        entry = entries[location_key]
+        if location_key in resolving:
+            # An anonymous type can only form a source-level cycle through a
+            # reference. Its stable owner/ordinal remains the finite identity
+            # fact at that edge; the surrounding record still records every
+            # other reachable member shape.
+            return f"{entry.structural_anchor}=<recursive>"
+        resolving.add(location_key)
+        try:
+            kind = entry.node.get("kind")
+            if kind == "EnumDecl":
+                shape = enum_signature(entry.node)
+            else:
+                shape = record_signature(entry.node, path_roots, identities)
+                require(shape is not None, "anonymous record shape is invalid")
+            identity = f"{entry.structural_anchor}={shape}"
+            completed[location_key] = identity
+            return identity
+        finally:
+            resolving.remove(location_key)
+
+    return {location_key: resolve(location_key) for location_key in entries}
+
+
 def qualified_type(
-    node: Mapping[str, Any], path_roots: Sequence[tuple[Path, str]] = ()
+    node: Mapping[str, Any],
+    path_roots: Sequence[tuple[Path, str]] = (),
+    anonymous_type_identities: Mapping[str, str] | None = None,
 ) -> str | None:
     type_info = node.get("type")
     if not isinstance(type_info, Mapping):
@@ -714,7 +897,7 @@ def qualified_type(
     value = type_info.get("qualType")
     if not isinstance(value, str) or not value:
         return None
-    return normalize_type_spelling(value, path_roots)
+    return normalize_type_spelling(value, path_roots, anonymous_type_identities)
 
 
 def constant_expression_value(node: Mapping[str, Any]) -> str | None:
@@ -734,12 +917,25 @@ def constant_expression_value(node: Mapping[str, Any]) -> str | None:
 
 
 def field_signature(
-    node: Mapping[str, Any], path_roots: Sequence[tuple[Path, str]] = ()
+    node: Mapping[str, Any],
+    path_roots: Sequence[tuple[Path, str]] = (),
+    anonymous_type_identities: Mapping[str, str] | None = None,
+    anonymous_ordinal: int | None = None,
 ) -> str | None:
     name = node.get("name")
-    type_name = qualified_type(node, path_roots)
-    if not isinstance(name, str) or not name or type_name is None:
+    type_name = qualified_type(node, path_roots, anonymous_type_identities)
+    if type_name is None:
         return None
+    if not isinstance(name, str) or not name:
+        require(
+            isinstance(anonymous_ordinal, int) and anonymous_ordinal >= 0,
+            "unnamed record field ordinal is invalid",
+        )
+        # Clang represents a promoted anonymous record/union as an implicit,
+        # unnamed FieldDecl. Retain every unnamed field, including a
+        # zero-width bitfield, because omitting it would hide a structural
+        # member or layout-affecting source fact.
+        name = f"<anonymous-field#{anonymous_ordinal}>"
     bit_width = node.get("bitWidth")
     suffix = ""
     if isinstance(bit_width, Mapping):
@@ -754,19 +950,32 @@ def field_signature(
 
 
 def record_signature(
-    node: Mapping[str, Any], path_roots: Sequence[tuple[Path, str]] = ()
+    node: Mapping[str, Any],
+    path_roots: Sequence[tuple[Path, str]] = (),
+    anonymous_type_identities: Mapping[str, str] | None = None,
 ) -> str | None:
     tag = node.get("tagUsed")
     require(isinstance(tag, str) and tag in {"struct", "union"}, "record tag is invalid")
     if node.get("completeDefinition") is not True:
         return f"{tag};"
-    fields = [
-        signature
-        for child in node.get("inner", [])
-        if isinstance(child, Mapping) and child.get("kind") == "FieldDecl"
-        for signature in [field_signature(child, path_roots)]
-        if signature is not None
-    ]
+    fields: list[str] = []
+    anonymous_ordinal = 0
+    for child in node.get("inner", []):
+        if not isinstance(child, Mapping) or child.get("kind") != "FieldDecl":
+            continue
+        name = child.get("name")
+        field_ordinal: int | None = None
+        if not isinstance(name, str) or not name:
+            field_ordinal = anonymous_ordinal
+            anonymous_ordinal += 1
+        signature = field_signature(
+            child,
+            path_roots,
+            anonymous_type_identities,
+            field_ordinal,
+        )
+        if signature is not None:
+            fields.append(signature)
     return f"{tag}" + "{" + ",".join(fields) + "}"
 
 
@@ -785,9 +994,11 @@ def enum_signature(node: Mapping[str, Any]) -> str:
 
 
 def function_signature(
-    node: Mapping[str, Any], path_roots: Sequence[tuple[Path, str]] = ()
+    node: Mapping[str, Any],
+    path_roots: Sequence[tuple[Path, str]] = (),
+    anonymous_type_identities: Mapping[str, str] | None = None,
 ) -> str | None:
-    type_name = qualified_type(node, path_roots)
+    type_name = qualified_type(node, path_roots, anonymous_type_identities)
     if type_name is None:
         return None
     mangled = node.get("mangledName")
@@ -828,6 +1039,7 @@ def discover_ast_facts(
     """
     discovered: list[dict[str, str]] = []
     path_roots = ((header_root, "public"),) if path_roots is None else path_roots
+    anonymous_identities = anonymous_type_identities(ast, path_roots)
     stack: list[tuple[Mapping[str, Any], bool]] = [(ast, False)]
     last_header_provenance: str | None = None
     while stack:
@@ -872,21 +1084,21 @@ def discover_ast_facts(
         if not isinstance(name, str) or not name:
             continue
         if kind == "TypedefDecl":
-            signature = qualified_type(node, path_roots)
+            signature = qualified_type(node, path_roots, anonymous_identities)
             if signature is not None:
                 discovered.append(fact("typedef", name, signature))
         elif kind in {"RecordDecl", "CXXRecordDecl"}:
-            signature = record_signature(node, path_roots)
+            signature = record_signature(node, path_roots, anonymous_identities)
             if signature is not None:
                 discovered.append(fact("record", name, signature))
         elif kind == "EnumDecl":
             discovered.append(fact("enum", name, enum_signature(node)))
         elif kind == "VarDecl":
-            signature = qualified_type(node, path_roots)
+            signature = qualified_type(node, path_roots, anonymous_identities)
             if signature is not None:
                 discovered.append(fact("variable", name, signature))
         elif kind == "FunctionDecl":
-            signature = function_signature(node, path_roots)
+            signature = function_signature(node, path_roots, anonymous_identities)
             if signature is not None:
                 discovered.append(fact("function", name, signature))
     return canonical_facts(discovered)

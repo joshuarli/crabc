@@ -58,7 +58,11 @@ struct acct_v3 {
 #define ASU 2
 #define ACORE 8
 #define AXSIG 16
+#if defined(__x86_64__)
+#define ACCT_BYTEORDER (128*(__BYTE_ORDER==__BIG_ENDIAN))
+#else
 #define ACCT_BYTEORDER (128 * (__BYTE_ORDER__ == __ORDER_BIG_ENDIAN__))
+#endif
 #define AHZ 100
 
 int acct(const char *);

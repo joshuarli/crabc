@@ -1,4 +1,4 @@
-# Compiler-derived x86-64 record byte-layout facts for the still-planned
+# Compiler-derived x86-64 record byte-layout facts for the foundation-verified
 # libc.headers-layouts family. This is a checked partial matrix: mismatches and
 # records/fields for which byte offsets are not addressable remain explicit.
 schema = "crabc.x86_64-header-record-layout-matrix/v1"
@@ -24,7 +24,7 @@ target_family = "libc.headers-layouts"
 target_obligations = ["record-byte-layouts"]
 focused_evidence_command = "./scripts/dev-x86_64.sh header-record-layout-matrix"
 negative_scope = "This matrix records compiler-derived x86 size, alignment, and named field offsets from direct public includes. It does not infer provider/runtime semantics, archive linkage, C++ ABI beyond the C-compatible record facts, family promotion, or public x86 support."
-expected_transition = "record-byte-layouts moves from unmeasured to partial-verified while libc.headers-layouts remains planned."
+expected_transition = "record-byte-layouts is a completed header-foundation dimension; final provider/archive closure and public support remain downstream."
 not_applicable_categories = ["incomplete", "anonymous-only", "bit-field", "flexible-tail", "non-addressable-field"]
 
 [[oracle_not_applicable]]

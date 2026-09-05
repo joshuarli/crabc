@@ -183,7 +183,14 @@ done
 [ -f "$INVENTORY" ] || fail "missing checked-in public-header inventory"
 [ -f "$CXX_CLOSURE_PROBE" ] || fail "missing focused C++ header-closure probe"
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-installed-header-tree-closure.XXXXXX)"
+readonly temporary_root="${TMPDIR:-}"
+case "$temporary_root" in
+    "$ROOT_DIR"/.work/*) ;;
+    *) fail "TMPDIR must be a physical checkout .work directory" ;;
+esac
+[ -d "$temporary_root" ] && [ "$(realpath "$temporary_root")" = "$temporary_root" ] ||
+    fail "TMPDIR must be a physical checkout .work directory"
+work_dir="$(mktemp -d "$temporary_root/crabc-x86-64-installed-header-tree-closure.XXXXXX")"
 report_tmp=''
 trap 'rm -rf -- "$work_dir"; [ -z "$report_tmp" ] || rm -f -- "$report_tmp"' EXIT
 
@@ -205,7 +212,12 @@ fi
 source_manifest_sha256="$(sha256sum "$source_manifest" | sed 's/[[:space:]].*$//')"
 
 prepare_materialized_runner "$materialized_project"
-if ! "$materialized_project/compat/x86_64/run_candidate_header_closure.sh" \
+# The copied oracle derives its checkout boundary from the materialized
+# project. Give that project its own physical scratch beneath the outer
+# checkout's contained work tree instead of inheriting the parent's TMPDIR.
+materialized_temporary="$materialized_project/.work/x86_64/tmp"
+mkdir -p "$materialized_temporary"
+if ! TMPDIR="$materialized_temporary" "$materialized_project/compat/x86_64/run_candidate_header_closure.sh" \
     >"$child_stdout" 2>"$child_stderr"; then
     cat "$child_stderr" >&2
     fail "existing candidate header-closure matrix failed against materialized usr/include"

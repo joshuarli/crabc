@@ -453,23 +453,18 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 1124,
-        "mismatch": 156,
+        "matched": 1280,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "156 comparable header/profile rows have prototype or named declaration-form differences",
+        "0 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "mismatch_fact_counts": {
-        "candidate_only_count": 147,
-        "incompatible_count": 187,
-        "reference_only_count": 21,
-    },
-    "mismatch_row_count": 156,
+    "mismatch_fact_counts": {},
+    "mismatch_row_count": 0,
     "pinned_public_header_count": 183,
     "profile_count": 7,
     "row_count": 1337,
@@ -520,27 +515,24 @@ EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND = (
     "./scripts/dev-x86_64.sh header-callable-disposition"
 )
 EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
-    "candidate_only_identity_count": 147,
-    "candidate_only_identity_kind_counts": {
-        "macro": 147,
-    },
+    "candidate_only_identity_count": 0,
+    "candidate_only_identity_kind_counts": {},
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 1189,
-        "mismatch": 91,
+        "matched": 1280,
         "oracle-not-applicable": 1,
     },
     "complete": False,
     "incomplete_reasons": [
-        "91 comparable pinned header/profile rows have declaration or macro identity visibility differences",
+        "0 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
         "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 295343,
-    "mismatch_row_count": 91,
+    "matched_identity_count": 295364,
+    "mismatch_row_count": 0,
     "oracle_not_applicable_candidate_fact_count": 104,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
@@ -549,20 +541,17 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_candidate_fact_count": 2125,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
-    "reference_only_identity_count": 21,
-    "reference_only_identity_kind_counts": {
-        "macro": 21,
-    },
+    "reference_only_identity_count": 0,
+    "reference_only_identity_kind_counts": {},
     "row_count": 1337,
     "source_form_comparison_counts": {
         "candidate-only-pending-c-abi-policy": 56,
-        "matched": 1124,
-        "mismatch": 156,
+        "matched": 1280,
         "oracle-not-applicable": 1,
     },
-    "source_form_difference_count": 187,
-    "source_form_difference_row_count": 86,
-    "source_form_only_difference_row_count": 65,
+    "source_form_difference_count": 0,
+    "source_form_difference_row_count": 0,
+    "source_form_only_difference_row_count": 0,
 }
 
 EXPECTED_HEADER_FOUNDATION_LANGUAGE_PROFILES = {
@@ -2527,8 +2516,8 @@ def validate_header_layout_manifest(
     )
 
     require(
-        family.get("status") == "planned",
-        "libc.headers-layouts must remain planned while its manifest is partial",
+        family.get("status") == "foundation-verified",
+        "libc.headers-layouts must be foundation-verified while its direct manifest remains partial",
     )
     require(
         family.get("capabilities") == [],
@@ -3105,7 +3094,8 @@ def require_header_record_layout_matrix(manifest: Mapping[str, Any]) -> int:
         "--check",
         "pinned musl",
         "Linux 5.10",
-        "checked partial 1,337-row matrix",
+        "checked 1,337-row matrix",
+        "foundation-verified",
         "requires native Linux",
     ):
         require(phrase in runner, f"record byte-layout matrix runner omits {phrase}")
@@ -3288,7 +3278,7 @@ def validate_header_layout_foundation_manifest(
     legacy_manifest: Mapping[str, Any],
     manifest: Mapping[str, Any],
 ) -> dict[str, int]:
-    """Validate the planned all-header accounting contract without promoting it.
+    """Validate the completed all-header foundation without public promotion.
 
     The v14 contract resolves every current pathname into one class and expands
     every class into explicit language/feature obligations. It pins the one
@@ -3361,7 +3351,10 @@ def validate_header_layout_foundation_manifest(
         manifest["kernel_msrv"] == EXPECTED_KERNEL_MSRV,
         "header-foundation manifest kernel MSRV drifted",
     )
-    require(manifest["status"] == "planned", "header-foundation manifest must remain planned")
+    require(
+        manifest["status"] == "foundation-verified",
+        "header-foundation manifest must be foundation-verified",
+    )
     require(manifest["oracle"] == "Pinned musl 1.2.6", "header-foundation manifest oracle drifted")
 
     policy = manifest["policy"]
@@ -3674,8 +3667,8 @@ def validate_header_layout_foundation_manifest(
     )
 
     require(
-        family.get("status") == "planned",
-        "libc.headers-layouts must remain planned while header foundation is incomplete",
+        family.get("status") == "foundation-verified",
+        "libc.headers-layouts must be foundation-verified once the header foundation is complete",
     )
     require(
         family.get("capabilities") == [],
@@ -3872,7 +3865,7 @@ def validate_header_layout_foundation_manifest(
         and "finite" in aggregate_control["description"]
         and "pure header-completion assessment" in aggregate_control["description"]
         and "downstream provider/archive obligations" in aggregate_control["description"]
-        and "cannot change family status" in aggregate_control["description"],
+        and "cannot claim C-ABI archive completion" in aggregate_control["description"],
         "header-foundation aggregate control description drifted",
     )
     aggregate_report_path = repository_path(
@@ -6720,15 +6713,14 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
-        "91 current comparable declaration-or-macro identity mismatch rows",
-        "1,189 matched identity rows",
+        "zero comparable declaration-or-macro identity mismatch rows",
+        "1,280 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "checked candidate fact summaries and digests",
-        "187 same-identity source-form differences across 86 rows",
-        "65 form-only rows",
+        "zero same-identity source-form differences",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
         require(phrase in description, f"declaration/macro visibility artifact description omits {phrase}")
@@ -6794,9 +6786,9 @@ def require_all_header_callable_feature_visibility_artifact(
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "45 current comparable callable name/class mismatch rows",
+        "zero current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6842,7 +6834,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "current names",
         "default-static",
         "verified feature-provider",
@@ -7034,7 +7026,7 @@ def require_selected_header_callable_provider_linkage_audit_artifact(
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "no-feature default static archive",
         "isolated exact Cargo requests",
         "ordinary archive extraction",
@@ -7140,9 +7132,10 @@ def require_all_header_prototype_layout_artifact(
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
-        "393 current comparable prototype or named source-form mismatch rows",
+        "zero current comparable prototype or named source-form mismatch rows",
+        "1,280 matched rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
         "does not classify raw spelling differences as ABI differences",
@@ -7201,7 +7194,7 @@ def require_all_header_record_byte_layout_artifact(
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
         "zero current comparable record-byte-layout mismatch rows",
         "1,280 matched rows",
@@ -7278,7 +7271,7 @@ def require_selected_header_install_projection_artifact(
     assert isinstance(description, str)
     for phrase in (
         "Private native x86 selected installed-header projection artifact",
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "183 pinned-musl public paths",
         "eight classified source-only",
         "project-private `bits/**`",
@@ -7437,7 +7430,7 @@ def require_installed_header_tree_closure_artifact(
     assert isinstance(description, str)
     for phrase in (
         "Private native x86 installed-header-tree closure artifact",
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "disposable `usr/include` tree",
         "source-tree manifest equality",
         "seven-profile 1,337-row",
@@ -7577,7 +7570,7 @@ def require_dirent_header_profile_matrix_artifact(family: Mapping[str, Any]) -> 
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "seven base plus four GNU/strict `_LARGEFILE64_SOURCE`",
         "source-faithful private `bits/dirent.h` record owner",
         "`struct dirent`",
@@ -7713,7 +7706,7 @@ def require_stdlib_header_profile_matrix_artifact(family: Mapping[str, Any]) -> 
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "strict, POSIX.1-2008, X/Open 700, GNU, BSD, and `_LARGEFILE64_SOURCE` profiles",
         "LP64 div-record layouts",
         "POSIX/XOPEN/GNU/BSD declaration and hidden-name partitions",
@@ -7879,7 +7872,7 @@ def require_header_layouts_baseline_artifact(family: Mapping[str, Any]) -> None:
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "freestanding C++17 companion",
         "unmangled C entry called from C",
         "`__errno_location`",
@@ -8005,7 +7998,7 @@ def require_addressable_stdatomic_artifact(family: Mapping[str, Any]) -> None:
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "`atomic_flag_clear`",
         "`atomic_thread_fence`",
         "explicit `#undef`",
@@ -8121,7 +8114,7 @@ def require_uio_cxx_archive_linkage_artifact(family: Mapping[str, Any]) -> None:
     description = artifact["description"]
     assert isinstance(description, str)
     for phrase in (
-        "still-planned `libc.headers-layouts`",
+        "foundation-verified `libc.headers-layouts`",
         "freestanding C++17 companion",
         "`readv`, `writev`, `preadv`, and `pwritev`",
         "no C++ runtime",
@@ -8919,6 +8912,24 @@ def require_evidence(
     if status == "foundation-verified":
         require(states == {"verified"}, f"{location} must be entirely verified")
     return records, states
+
+
+def require_header_foundation_downstream_evidence(
+    value: Any, location: str, status: str
+) -> tuple[list[Mapping[str, Any]], set[str]]:
+    """Keep downstream C-ABI/runtime gates required after header promotion.
+
+    ``libc.headers-layouts`` earns its foundation status from the checked
+    aggregate and its verified artifacts.  Its top-level evidence instead
+    names C-ABI/provider/runtime leaves that remain explicitly downstream, so
+    treating them as family-completion evidence would overstate the result.
+    """
+
+    require(
+        status == "foundation-verified",
+        "header-foundation downstream evidence requires a verified family",
+    )
+    return require_evidence_state(value, location, "required")
 
 
 def require_oracles(value: Any, location: str) -> None:
@@ -50092,6 +50103,7 @@ def require_protocol_database_artifact(family: Mapping[str, Any]) -> None:
                 "1079 to 1084",
                 "387 to 382",
                 "1513",
+                "foundation-verified",
                 "remain planned",
                 "public support boundary changes",
             ),
@@ -79386,7 +79398,12 @@ def _validate_ledger(
             repository_path(path_text, f"{location}.source_owners[{owner_index}]")
         nonempty_strings(entry["x86_abi_prerequisites"], f"{location}.x86_abi_prerequisites")
         nonempty_strings(entry["x86_header_prerequisites"], f"{location}.x86_header_prerequisites")
-        require_evidence(entry["native_evidence"], f"{location}.native_evidence", status)
+        if identifier == "libc.headers-layouts":
+            require_header_foundation_downstream_evidence(
+                entry["native_evidence"], f"{location}.native_evidence", status
+            )
+        else:
+            require_evidence(entry["native_evidence"], f"{location}.native_evidence", status)
         require_oracles(entry["oracle"], f"{location}.oracle")
         family_capabilities = string_list(
             entry["capabilities"], f"{location}.capabilities", allow_empty=True

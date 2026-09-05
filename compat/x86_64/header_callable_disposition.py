@@ -465,8 +465,7 @@ def build_report(contract: DispositionContract) -> dict[str, Any]:
     header_ownership_routing_complete = not undispositioned and not undispositioned_missing
     missing_reference_declaration_routing_complete = not undispositioned_missing
     # Missing reference declarations are only one dimension of header
-    # declaration parity. The independent declaration/macro matrix still has
-    # red identity rows, so this routing report can never promote that broader
+    # declaration parity. This routing report cannot promote that broader
     # completion claim merely because its missing-name roster becomes empty.
     header_declaration_parity_complete = False
 

@@ -7,7 +7,7 @@ oracle = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947
 [work_package]
 target_family = "libc.headers-layouts"
 target_obligations = ["network-resolver-header-closure", "selected-header-declaration-forms"]
-blocker = "The x86 network/resolver source-closure sub-obligation is exact across all 105 direct profile rows. The wider libc.headers-layouts declaration/layout/provider aggregate remains incomplete and separately tracked."
+blocker = "The x86 network/resolver source-closure sub-obligation is exact across all 105 direct profile rows. The completed libc.headers-layouts foundation accounts for declaration, layout, and callable ownership; final provider/archive closure remains separately tracked by libc.c-abi-compat."
 prerequisites = ["oracle.musl-toolchain", "libc.errno-tls", "libc.headers-layouts callable declaration inventory"]
 dependent_work = ["libc.headers-layouts family aggregate", "libc.resolver public C ABI integration", "libc.posix-runtime socket consumers", "owned static and dynamic sysroot header closure"]
 baseline_contract = "Pinned musl 1.2.6 x86-64 public header source, Linux 5.10 UAPI inputs, System V AMD64 LP64 ABI, and the frozen AArch64 header baseline."
@@ -52,7 +52,7 @@ focused_evidence_command = "./scripts/dev-x86_64.sh header-abi-matrix"
 family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
 product_command = "./scripts/dev-x86_64.sh campaign-static"
 negative_scope = "This x86-only package restores selected public header declarations, layouts, macros, include ownership, and C/C++ linkage. It does not select archive providers, resolver configuration or DNS I/O, socket runtime behavior, libc.so, CRT, loader, sysroot completion, family promotion, or public x86 support."
-expected_transition = "All 105 listed direct header/profile records are exact through the musl-owned string.h/strings.h closure, with no network/resolver declaration-form attribution left outstanding. libc.headers-layouts remains planned until its complete declaration/layout/provider aggregate is satisfied; no capability, product, promotion, or public-support state changes here."
+expected_transition = "All 105 listed direct header/profile records are exact through the musl-owned string.h/strings.h closure, with no network/resolver declaration-form attribution left outstanding. libc.headers-layouts is foundation-verified; final provider/archive closure remains a libc.c-abi-compat obligation, and no capability, product, promotion, or public-support state changes here."
 evidence = [
   "pinned-musl/project direct C11/C++17 all-profile declaration-form matrix",
   "int_fast16_t/int_fast32_t LP64 width and limits regression",

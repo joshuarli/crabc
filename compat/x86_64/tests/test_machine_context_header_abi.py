@@ -27,16 +27,23 @@ class MachineContextHeaderAbiTests(unittest.TestCase):
         self.assertIn("struct user_fpregs_struct", bits_user)
         self.assertIn("#define ELF_NGREG 27", bits_user)
         self.assertIn("struct user {", bits_user)
-        self.assertIn("#elif defined(__aarch64__)", bits_user)
-        self.assertIn("struct user_fpsimd_struct", bits_user)
-        self.assertIn("#define ELF_NREG 34", bits_user)
+        x86_user, aarch64_user = bits_user.split("#elif defined(__aarch64__)", 1)
+        self.assertNotIn("_CRABC_BITS_USER_H", x86_user)
+        self.assertIn("#ifndef _CRABC_BITS_USER_H", aarch64_user)
+        self.assertIn("#define _CRABC_BITS_USER_H", aarch64_user)
+        self.assertIn("struct user_fpsimd_struct", aarch64_user)
+        self.assertIn("#define ELF_NREG 34", aarch64_user)
+        self.assertTrue(aarch64_user.rstrip().endswith("#endif\n#endif"))
 
         auxv = SYS_AUXV.read_text(encoding="utf-8")
         self.assertIn("#include <bits/hwcap.h>", auxv)
         self.assertNotIn("#define HWCAP_FP", auxv)
 
         hwcap = BITS_HWCAP.read_text(encoding="utf-8")
-        self.assertIn("#if defined(__aarch64__)", hwcap)
+        self.assertIn(
+            "#if defined(__aarch64__)\n#ifndef _CRABC_BITS_HWCAP_H",
+            hwcap,
+        )
         self.assertIn("#define HWCAP_FP", hwcap)
         self.assertIn("#define HWCAP2_MTE", hwcap)
 

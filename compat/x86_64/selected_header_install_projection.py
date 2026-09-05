@@ -229,9 +229,9 @@ def _validate_work_package(raw: Any) -> tuple[str, str]:
         "work_package must name the dedicated native command",
     )
     _require(
-        "partial-verified" in raw["expected_transition"]
-        and "remains planned" in raw["expected_transition"],
-        "work_package expected transition must retain the unpromoted family",
+        "completed header foundation" in raw["expected_transition"]
+        and "provider/archive closure" in raw["expected_transition"],
+        "work_package expected transition must retain downstream C-ABI closure",
     )
     return target_family, target_obligation
 

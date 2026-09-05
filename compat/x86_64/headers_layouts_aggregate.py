@@ -423,7 +423,7 @@ def header_family(parity: Mapping[str, Any]) -> Mapping[str, Any]:
     matches = [row for row in families if row.get("id") == FAMILY]
     require(len(matches) == 1, "parity ledger must name libc.headers-layouts exactly once")
     family = matches[0]
-    require(family.get("status") == "planned", "aggregate control must retain the planned header family")
+    require(family.get("status") == "foundation-verified", "aggregate control requires the verified header foundation")
     return family
 
 
@@ -467,7 +467,7 @@ def aggregate_control(foundation: Mapping[str, Any], direct: Mapping[str, Any], 
     require(foundation.get("target") == TARGET, "header foundation target drifted")
     require(foundation.get("platform") == PLATFORM, "header foundation platform drifted")
     require(foundation.get("oracle") == ORACLE, "header foundation oracle drifted")
-    require(foundation.get("status") == "planned", "header foundation must remain planned")
+    require(foundation.get("status") == "foundation-verified", "header foundation must be verified")
     policy = foundation.get("policy")
     require(isinstance(policy, Mapping), "header foundation policy is invalid")
     require(policy.get("public_support") is False, "header foundation must not claim public support")
@@ -735,7 +735,37 @@ def evidence_records(foundation: Mapping[str, Any], control: Mapping[str, Any]) 
 
 
 def validate_accounted_incomplete_linkage_audit_report(report: Mapping[str, Any]) -> None:
-    """Require the one known red native audit to retain its finite blocker."""
+    """Require the fresh default-archive audit to retain its finite blocker."""
+    # This is a fresh native audit of the current default archive. Provider
+    # additions must change its expected counts without reviving historical
+    # gaps or weakening the requirement that every default symbol extracted.
+    from header_callable_linkage_audit import (
+        LinkageAuditError,
+        callable_provider_partition,
+        candidate_external_symbols,
+        load_static_exports,
+    )
+
+    inventory = load_json(HEADER_CALLABLE_INVENTORY_PATH)
+    inputs = inventory.get("inputs")
+    require(
+        isinstance(inputs, Mapping)
+        and inputs.get("static_c_abi_exports_sha256")
+        == sha256_file(STATIC_C_ABI_EXPORTS_PATH),
+        "accounted-incomplete linkage inventory static-export digest is stale",
+    )
+    try:
+        external = candidate_external_symbols(inventory)
+        exports = load_static_exports(STATIC_C_ABI_EXPORTS_PATH)
+        _, counts = callable_provider_partition(inventory, external, exports)
+    except LinkageAuditError as error:
+        raise AggregateError(f"accounted-incomplete linkage inventory is invalid: {error}") from error
+    default_count = counts["default_static"]
+    complement_count = len(external) - default_count
+    require(complement_count > 0, "accounted-incomplete linkage contract has no remaining default archive gap")
+    incomplete_reasons = ["static export complement is nonempty"]
+    if counts["unprovided"]:
+        incomplete_reasons.append("one or more candidate external callables have no declared archive provider")
     require(
         report.get("schema") == "crabc.x86_64-header-callable-linkage-audit/v2",
         "accounted-incomplete linkage audit schema drifted",
@@ -756,26 +786,18 @@ def validate_accounted_incomplete_linkage_audit_report(report: Mapping[str, Any]
         "accounted-incomplete linkage audit scope drifted",
     )
     require(
-        report.get("external_callable_count") == 1525
-        and report.get("ratcheted_external_callable_count") == 1119,
+        report.get("external_callable_count") == len(external)
+        and report.get("ratcheted_external_callable_count") == default_count,
         "accounted-incomplete linkage audit callable counts drifted",
     )
     require(
         report.get("summary")
         == {
-            "callable_provider_counts": {
-                "declared_unverified_feature_archives": 0,
-                "default_static": 1119,
-                "unprovided": 328,
-                "verified_feature_archives": 78,
-            },
+            "callable_provider_counts": counts,
             "complete": False,
-            "extraction_status_counts": {"extracted": 1119},
-            "incomplete_reasons": [
-                "static export complement is nonempty",
-                "one or more candidate external callables have no declared archive provider",
-            ],
-            "static_export_complement_count": 406,
+            "extraction_status_counts": {"extracted": default_count},
+            "incomplete_reasons": incomplete_reasons,
+            "static_export_complement_count": complement_count,
         },
         "accounted-incomplete linkage audit must remain incomplete with the declared provider gap",
     )
@@ -1578,11 +1600,11 @@ def main(arguments: Sequence[str] | None = None) -> int:
         report = build_report()
         if parsed.write:
             write_output(report)
-            print("x86 headers/layouts aggregate: wrote checked partial accounting report")
+            print("x86 headers/layouts aggregate: wrote checked header-foundation report")
             return 0
         if parsed.check:
             check_output(report)
-            print("x86 headers/layouts aggregate: PASS (finite accounting; family remains planned)")
+            print("x86 headers/layouts aggregate: PASS (completed header foundation; C-ABI closure remains downstream)")
             return 0
         print(render_report(report), end="")
         return 0

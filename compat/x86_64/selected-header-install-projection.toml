@@ -32,7 +32,7 @@ focused_evidence_command = "./scripts/dev-x86_64.sh selected-header-install-proj
 family_aggregate = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
 product_command = "./scripts/dev-x86_64.sh campaign-static"
 negative_scope = "This excludes source-only project headers from one private x86 installed-header projection only; it does not delete them, select providers, change the shared source-tree diagnostic, or claim ABI/runtime/sysroot/product closure."
-expected_transition = "project-only-extension-policy moves from planned to partial-verified while libc.headers-layouts remains planned."
+expected_transition = "project-only-extension-policy is accounted by the completed header foundation; final provider/archive closure and public support remain downstream."
 
 [[excluded_header]]
 path = "daemon.h"

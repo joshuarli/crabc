@@ -20,17 +20,30 @@ extern "C" {
 #include <sys/types.h>
 #endif
 
+/* Pinned x86 musl uses decimal protection literals; preserve frozen AArch64 forms. */
+#if defined(__x86_64__)
+#define PROT_READ   1
+#define PROT_WRITE  2
+#define PROT_EXEC   4
+#define PROT_NONE   0
+#else
 #define PROT_READ   0x1
 #define PROT_WRITE  0x2
 #define PROT_EXEC   0x4
 #define PROT_NONE   0x0
+#endif
 
 #define MAP_SHARED    0x01
 #define MAP_PRIVATE   0x02
 #define MAP_FIXED     0x10
 #define MAP_ANON      0x20
 #define MAP_ANONYMOUS MAP_ANON
+/* x86 musl spacing is stringification-visible; retain the frozen other target form. */
+#if defined(__x86_64__)
+#define MAP_FAILED    ((void *) -1)
+#else
 #define MAP_FAILED    ((void *)-1)
+#endif
 
 #if defined(__x86_64__)
 /* Staged source-only Linux/x86-64 mapping declarations. Keep this extension
@@ -119,7 +132,11 @@ int posix_madvise(void *, size_t, int);
 #endif
 int mlock2(const void *, size_t, unsigned);
 int remap_file_pages(void *, size_t, int, size_t, int);
+#if defined(__x86_64__)
+#define MLOCK_ONFAULT 0x01
+#else
 #define MLOCK_ONFAULT 0x01U
+#endif
 #if defined(__x86_64__)
 #define MFD_CLOEXEC 0x0001U
 #define MFD_ALLOW_SEALING 0x0002U

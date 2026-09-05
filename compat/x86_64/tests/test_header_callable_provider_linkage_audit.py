@@ -267,6 +267,48 @@ class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
             report["summary"]["incomplete_reasons"],
         )
 
+    def test_unverified_replacement_variant_remains_an_inventory_fact(self) -> None:
+        verified = ROSTER.FeatureArchive(
+            identifier="x86-verified-replacement",
+            state="verified",
+            evidence_record="verified-replacement",
+            runner="compat/x86_64/run_verified_replacement.sh",
+            dispatch_command="verified-replacement",
+            baseline_features=(),
+            enabled_features=("x86-verified-replacement",),
+            additive_callables=(),
+            replacement_callables=("verified_replacement",),
+            aliases=(),
+        )
+        planned = ROSTER.FeatureArchive(
+            identifier="x86-planned-replacement",
+            state="planned",
+            evidence_record=None,
+            runner="compat/x86_64/run_planned_replacement.sh",
+            dispatch_command="planned-replacement",
+            baseline_features=(),
+            enabled_features=("x86-planned-replacement",),
+            additive_callables=(),
+            replacement_callables=("planned_replacement",),
+            aliases=(),
+        )
+        partition = {
+            "verified_feature_archives": [{"id": verified.identifier}],
+            "replacement_variants": [
+                {"id": planned.identifier},
+                {"id": verified.identifier},
+            ],
+        }
+
+        verified_rows, replacement_rows = AUDIT.feature_rows(
+            partition, (verified, planned)
+        )
+
+        self.assertEqual(set(verified_rows), {verified.identifier})
+        self.assertEqual(
+            set(replacement_rows), {planned.identifier, verified.identifier}
+        )
+
     def test_runner_and_dispatcher_keep_the_provider_audit_non_promoting(self) -> None:
         result = subprocess.run(
             ["bash", "-n", str(RUNNER)],

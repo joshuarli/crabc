@@ -2,8 +2,8 @@
   "contract_schema": "crabc.x86_64-header-record-layout-matrix/v1",
   "inputs": {
     "compiler": "clang",
-    "compiler_collection_inputs_sha256": "9a005f20d2013668042e57d6bae424e2cea27a22809711720f8dcc0717c8c057",
-    "header_record_layout_matrix_contract_sha256": "e7fc69edb51a58bfe817812a5aa8f482915c47fdac79027be109bc05b9aeb7b8",
+    "compiler_collection_inputs_sha256": "0914e2fa6e14a98920dd8cbcbff8f8c0fdc98282b06e6994689d66cd1df8f2d9",
+    "header_record_layout_matrix_contract_sha256": "95999a68fa905b64c53d4dc1cd3b959c744e1aa406ebea3790aa12e91b86e65b",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -137189,7 +137189,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:87:2",
+          "key": "struct-anonymous:86:2",
           "name": null,
           "reason": "anonymous-only",
           "size": null,
@@ -137911,7 +137911,7 @@
           "alignment": null,
           "applicability": "not-applicable",
           "fields": [],
-          "key": "struct-anonymous:87:2",
+          "key": "struct-anonymous:86:2",
           "name": null,
           "reason": "anonymous-only",
           "size": null,

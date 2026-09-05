@@ -1,6 +1,3 @@
-#ifndef _CRABC_BITS_USER_H
-#define _CRABC_BITS_USER_H
-
 #if defined(__x86_64__)
 /* Linux/x86-64 user-area and core-register ABI from musl 1.2.6
  * `arch/x86_64/bits/user.h`.  These records are consumed by <sys/user.h> and
@@ -23,29 +20,31 @@ struct user_regs_struct {
 typedef unsigned long long elf_greg_t, elf_gregset_t[ELF_NGREG];
 
 struct user {
-	struct user_regs_struct regs;
-	int u_fpvalid;
-	struct user_fpregs_struct i387;
-	unsigned long u_tsize;
-	unsigned long u_dsize;
-	unsigned long u_ssize;
-	unsigned long start_code;
-	unsigned long start_stack;
-	long signal;
-	int reserved;
-	struct user_regs_struct *u_ar0;
-	struct user_fpregs_struct *u_fpstate;
-	unsigned long magic;
-	char u_comm[32];
-	unsigned long u_debugreg[8];
+	struct user_regs_struct		regs;
+	int				u_fpvalid;
+	struct user_fpregs_struct	i387;
+	unsigned long			u_tsize;
+	unsigned long			u_dsize;
+	unsigned long			u_ssize;
+	unsigned long			start_code;
+	unsigned long			start_stack;
+	long				signal;
+	int				reserved;
+	struct user_regs_struct		*u_ar0;
+	struct user_fpregs_struct	*u_fpstate;
+	unsigned long			magic;
+	char				u_comm[32];
+	unsigned long			u_debugreg[8];
 };
 
-#define PAGE_MASK (~(PAGESIZE-1))
-#define NBPG PAGESIZE
-#define UPAGES 1
-#define HOST_TEXT_START_ADDR (u.start_code)
-#define HOST_STACK_END_ADDR (u.start_stack + u.u_ssize * NBPG)
+#define PAGE_MASK		(~(PAGESIZE-1))
+#define NBPG			PAGESIZE
+#define UPAGES			1
+#define HOST_TEXT_START_ADDR	(u.start_code)
+#define HOST_STACK_END_ADDR	(u.start_stack + u.u_ssize * NBPG)
 #elif defined(__aarch64__)
+#ifndef _CRABC_BITS_USER_H
+#define _CRABC_BITS_USER_H
 struct user_regs_struct {
 	unsigned long long regs[31];
 	unsigned long long sp;
@@ -63,5 +62,4 @@ struct user_fpsimd_struct {
 typedef unsigned long elf_greg_t, elf_gregset_t[ELF_NREG];
 typedef struct user_fpsimd_struct elf_fpregset_t;
 #endif
-
 #endif
