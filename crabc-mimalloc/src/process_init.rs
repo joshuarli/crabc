@@ -452,26 +452,20 @@ impl ProcessMainInitializationStorage {
             // only its post-preloading read state to every later source
             // owner. A later startup failure is terminal and deliberately
             // leaves this exact policy image retained with its process.
-            let policy = match unsafe { self.bind_vm_policy(policy) } {
-                Ok(policy) => policy,
+            match unsafe {
+                self.retain_vm_process(
+                    policy,
+                    subprocess,
+                    &mut config,
+                    apply_process_memory_policy,
+                )
+            } {
+                Ok(process) => Some(process),
                 Err(error) => {
                     self.publish_terminal_state_and_release(completion, RETAINED);
                     return Err(error);
                 }
-            };
-            policy.finish_preloading();
-            if apply_process_memory_policy {
-                // Pinned `mi_process_init_once` invokes `_mi_os_init` after
-                // options/statistics initialization and before heap/PageMap
-                // initialization.  The Linux primitive may change only this
-                // process's THP state; its result is intentionally
-                // best-effort, just as the source ignores `prctl` failures.
-                #[cfg(not(miri))]
-                let _outcome = policy.apply_thp_process_policy(&mut config);
-                #[cfg(miri)]
-                let _ = (&policy, &mut config);
             }
-            Some(VmProcess::new(policy, subprocess))
         } else {
             None
         };
@@ -605,6 +599,94 @@ impl ProcessMainInitializationStorage {
         // SAFETY: callers first observed READY with Acquire, whose Release
         // publication follows this final-slot write.
         unsafe { *(*self.config.get()).assume_init_ref() }
+    }
+
+    /// Retains one resolved policy beside its exact source subprocess before
+    /// the process coordinator creates a metadata or PageMap consumer.
+    ///
+    /// The caller holds the source main-process claim and supplies the one
+    /// final process configuration. The returned pair remains valid through
+    /// the process lifetime even if a later source startup step is retained.
+    unsafe fn retain_vm_process(
+        &'static self,
+        policy: VmPolicy,
+        subprocess: &'static MainSubprocess,
+        config: &mut MemoryConfig,
+        apply_process_memory_policy: bool,
+    ) -> Result<VmProcess<'static>, ProcessMainInitError> {
+        let policy = unsafe { self.bind_vm_policy(policy) }?;
+        policy.finish_preloading();
+        if apply_process_memory_policy {
+            // Pinned `mi_process_init_once` invokes `_mi_os_init` after
+            // options/statistics initialization and before heap/PageMap
+            // initialization. The Linux primitive may change only this
+            // process's THP state; its result is intentionally best-effort,
+            // just as the source ignores `prctl` failures.
+            #[cfg(not(miri))]
+            let _outcome = policy.apply_thp_process_policy(config);
+            #[cfg(miri)]
+            let _ = (&policy, config);
+        }
+        Ok(VmProcess::new(policy, subprocess))
+    }
+
+    /// Builds the canonical VM/PageMap backing proof for one deliberately
+    /// incomplete isolated metadata fixture.
+    ///
+    /// This exists only because metadata's direct allocation/failure tests
+    /// must exercise its process-backing boundary before a full ticket-zero
+    /// Heap/TLS startup can occur. It retains the supplied options in this
+    /// isolated coordinator, initializes the exact supplied PageMap storage,
+    /// and returns the same non-forgeable pre-READY binding that production
+    /// creates immediately before its metadata bind. It never publishes a
+    /// source main thread, metadata backing, or READY process state.
+    ///
+    /// # Safety
+    ///
+    /// All supplied owners must be isolated, process-lifetime test statics.
+    /// The caller must make this the sole setup attempt and retain them for
+    /// every use of the returned binding.
+    #[cfg(test)]
+    pub(crate) unsafe fn test_prepare_vm_process_backing_binding(
+        &'static self,
+        mut config: MemoryConfig,
+        options: VmOptions,
+        subprocess: &'static MainSubprocess,
+        page_map_storage: &'static ProcessPageMapStorage,
+    ) -> Result<ProcessMainBackingBinding, ProcessMainInitError> {
+        if self
+            .state
+            .compare_exchange(COLD, INITIALIZING, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(ProcessMainInitError::AlreadyInitialized);
+        }
+        let policy = match VmPolicy::new(options) {
+            Ok(policy) => policy,
+            Err(error) => {
+                self.mark_retained();
+                return Err(ProcessMainInitError::VmPolicy(error));
+            }
+        };
+        // SAFETY: this test-only method owns the successful COLD ->
+        // INITIALIZING transition and the supplied owners are all static.
+        let process = match unsafe {
+            self.retain_vm_process(policy, subprocess, &mut config, false)
+        } {
+            Ok(process) => process,
+            Err(error) => {
+                self.mark_retained();
+                return Err(error);
+            }
+        };
+        let page_map = match page_map_storage.initialize(config, subprocess) {
+            Ok(page_map) => page_map,
+            Err(error) => {
+                self.mark_retained();
+                return Err(ProcessMainInitError::PageMap(error));
+            }
+        };
+        Ok(ProcessMainBackingBinding::new(self, process, page_map))
     }
 
     /// Moves one resolved policy into its permanent process slot and returns
@@ -768,11 +850,12 @@ impl ProcessMainBackingBinding {
     pub(crate) const fn page_map(self) -> ProcessPageMapLease { self.page_map }
 
     /// Confirms that this capability still names the coordinator's one
-    /// terminal ready image. Consumers call this before an idempotent rebind;
-    /// it is intentionally not a constructor for raw pair/map inputs.
+    /// retained policy/root pair. Production metadata binding occurs before
+    /// READY, while later idempotent consumers see READY; neither state lets
+    /// an arbitrary raw pair/map input become a binding capability.
     #[inline]
-    pub(crate) fn is_ready(self) -> bool {
-        self.storage.state.load(Ordering::Acquire) == READY
+    pub(crate) fn is_active(self) -> bool {
+        matches!(self.storage.state.load(Ordering::Acquire), INITIALIZING | READY)
     }
 }
 
@@ -1275,6 +1358,37 @@ mod tests {
         })
         .join()
         .expect("VM-aware process-main test thread completes");
+    }
+
+    #[test]
+    fn process_main_pre_ready_binding_issues_only_its_retained_policy_and_page_map() {
+        let config = memory_config();
+        let storage = ProcessMainInitializationStorage::test_static_owner();
+        let subprocess = MainSubprocess::test_static_owner();
+        let page_map_storage = ProcessPageMapStorage::test_static_owner();
+        // SAFETY: these leaked test owners are used for this one isolated
+        // pre-READY binding preparation and remain alive for the test.
+        let binding = unsafe {
+            storage.test_prepare_vm_process_backing_binding(
+                config,
+                resolved_vm_options(),
+                subprocess,
+                page_map_storage,
+            )
+        }
+        .expect("the isolated coordinator retains one canonical VM/PageMap tuple");
+
+        assert!(binding.is_active());
+        assert_eq!(binding.process().subprocess().as_ptr(), subprocess.as_ptr());
+        assert_eq!(
+            binding.page_map().root().unwrap(),
+            page_map_storage.initialize(config, subprocess).unwrap().root().unwrap(),
+            "the non-forgeable binding retains the one PageMap root selected by its coordinator"
+        );
+        assert!(matches!(
+            storage.ready_lease(config, subprocess),
+            Err(ProcessMainInitError::Retained)
+        ));
     }
 
     #[cfg(not(miri))]
