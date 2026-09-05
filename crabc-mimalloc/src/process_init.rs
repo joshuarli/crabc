@@ -509,6 +509,16 @@ impl ProcessMainInitializationStorage {
                 return Err(ProcessMainInitError::PageMap(error));
             }
         };
+        // SAFETY: this CAS winner still owns the source once envelope and
+        // state is INITIALIZING, so no READY lease can observe these final
+        // slots. Record the one retained policy/subprocess/PageMap tuple
+        // before metadata receives its canonical pre-READY binding; a later
+        // failure retains this exact selected image instead of letting a
+        // receiver reason only from caller-local copies.
+        unsafe { (*self.config.get()).write(config) };
+        self.subprocess.store(subprocess.as_ptr(), Ordering::Release);
+        self.page_map_storage
+            .store(core::ptr::from_ref(page_map_storage).cast_mut(), Ordering::Release);
         if let Some(process) = vm_process {
             // The policy-aware path has now published every predecessor that
             // metadata needs: its detached Theap identity is bound and the
@@ -539,12 +549,6 @@ impl ProcessMainInitializationStorage {
             }
         };
 
-        // SAFETY: this CAS winner owns every final startup slot; no READY
-        // reader can observe any field before the Release store below.
-        unsafe { (*self.config.get()).write(config) };
-        self.subprocess.store(subprocess.as_ptr(), Ordering::Release);
-        self.page_map_storage
-            .store(core::ptr::from_ref(page_map_storage).cast_mut(), Ordering::Release);
         self.publish_terminal_state_and_release_with_hook(completion, READY, before_release);
 
         let ready = ProcessMainReadyLease {
@@ -686,6 +690,13 @@ impl ProcessMainInitializationStorage {
                 return Err(ProcessMainInitError::PageMap(error));
             }
         };
+        // SAFETY: the test owns this INITIALIZING storage and supplies final
+        // static owners. These are the same final tuple slots production
+        // records before it issues its metadata-binding capability.
+        unsafe { (*self.config.get()).write(config) };
+        self.subprocess.store(subprocess.as_ptr(), Ordering::Release);
+        self.page_map_storage
+            .store(core::ptr::from_ref(page_map_storage).cast_mut(), Ordering::Release);
         Ok(ProcessMainBackingBinding::new(self, process, page_map))
     }
 
@@ -833,6 +844,12 @@ impl ProcessMainBackingBinding {
         process: VmProcess<'static>,
         page_map: ProcessPageMapLease,
     ) -> Self {
+        debug_assert!(matches!(storage.state.load(Ordering::Acquire), INITIALIZING | READY));
+        debug_assert!(core::ptr::eq(
+            storage.subprocess.load(Ordering::Acquire),
+            process.subprocess().as_ptr(),
+        ));
+        debug_assert!(!storage.page_map_storage.load(Ordering::Acquire).is_null());
         Self {
             storage,
             process,
