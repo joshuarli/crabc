@@ -5,6 +5,11 @@ narrow dynamic C-allocation boundaries against pinned musl 1.2.6 commit
 `9fa28ece75d8a2191de7c5bb53bed224c5947417`. It is focused x86 evidence; it
 does not close stdio, passwd, allocator, or dynamic-runtime qualification.
 
+`run_owned_c_allocation_interposition.sh [DYNAMIC_SYSROOT]` accepts the
+qualification owner's supplied product. Without an argument it builds a fresh
+product. The dynamic product catalog requires a separate passing receipt for
+each independent build and the extracted package.
+
 The one consumer object in `owned_c_allocation_interposition_probe.c` defines
 aligned executable `malloc`, `realloc`, and `free` providers. It records each
 allocation and overwrites released storage with byte 42. The `asprintf` case

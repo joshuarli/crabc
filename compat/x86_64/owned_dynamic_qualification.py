@@ -73,6 +73,7 @@ CASES = {
     "process-control": ("run_owned_process_control.sh", None),
     "filesystem-mechanisms": ("run_owned_filesystem_mechanisms.sh", None),
     "error-reporting": ("run_owned_error_reporting.sh", None),
+    "c-allocation-interposition": ("run_owned_c_allocation_interposition.sh", None),
     "stdio-allocator-interposition": ("run_owned_stdio_allocator_interposition.sh", None),
     "mimalloc-startup-errno": ("run_owned_mimalloc_startup_errno.sh", None),
     "pty": ("run_owned_pty.sh", None),

@@ -15,19 +15,27 @@ readonly MUSL_INTERPRETER=/lib/ld-musl-x86_64.so.1
 readonly PASSWD_RECORD='crabc:x:64:64:Crabc:/home/crabc:/bin/sh'
 readonly -a scenarios=(asprintf passwd)
 
-[ "$#" -eq 0 ] || {
-    printf 'usage: %s\n' "$0" >&2
+[ "$#" -le 1 ] || {
+    printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
 [ "$(uname -sm)" = 'Linux x86_64' ]
 
-python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
+provided_dynamic="${1:-}"
+if [ -n "$provided_dynamic" ]; then
+    provided_dynamic="$(realpath -e "$provided_dynamic")"
+fi
+python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
 from pathlib import Path
 import sys
 
-root, temporary = map(Path, sys.argv[1:])
+root, temporary = map(Path, sys.argv[1:3])
 if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / '.work'):
     raise SystemExit('owned C allocator interposition TMPDIR must be a physical checkout .work directory')
+if sys.argv[3]:
+    product = Path(sys.argv[3])
+    if not product.is_dir() or not product.is_relative_to(root / '.work'):
+        raise SystemExit('owned C allocator interposition product must be a checkout .work directory')
 PY
 
 readonly work="$(mktemp -d "$TMPDIR/owned-c-allocation-interposition.XXXXXX")"
@@ -35,9 +43,12 @@ chmod a+rx "$work"
 printf 'owned C allocator interposition evidence: %s\n' "$work"
 
 bash "$ROOT/compat/x86_64/run_musl_oracle.sh" >/dev/null
-python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
-    --output "$work/installed" >"$work/dynamic-build.json"
-readonly installed="$work/installed"
+if [ -z "$provided_dynamic" ]; then
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
+        --output "$work/installed" >"$work/dynamic-build.json"
+    provided_dynamic="$work/installed"
+fi
+readonly installed="$provided_dynamic"
 readonly provider="$installed/usr/lib/libc.so"
 
 # Keep a direct product artifact beside the behavioral receipt. vasprintf's
