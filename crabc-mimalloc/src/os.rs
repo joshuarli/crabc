@@ -28,8 +28,9 @@
 //! resolved [`VmPolicy`], supply the real [`TheapRandomImage`] to the source
 //! callers that consume it, and bind arena/metadata backing before those
 //! callers can claim full process VM integration. One-GiB huge-page progress,
-//! timeout, and release ownership remain unqualified until that owner exists;
-//! this module never represents those missing paths as a successful fallback.
+//! timeout, and release ownership have a staged retaining primitive, but no
+//! live arena/request dispatch selects it yet; that process path remains
+//! unqualified, and this module never represents it as a successful fallback.
 //!
 //! `StartupInput` is supplied by a future runtime owner. In particular, this
 //! module deliberately does not read `/proc/self/environ` or autonomously
