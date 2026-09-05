@@ -87,6 +87,27 @@ const MAP_PRIVATE_ANONYMOUS: i64 = 0x22;
 const FUTEX_WAIT: i64 = 0;
 const PAGE_SIZE: usize = 4_096;
 
+/// Publish the process-main selected cancellation state after its TLS owner
+/// established the documented FS+32 cache word.
+///
+/// The static startup and materialized dynamic startup composition boundaries
+/// call this before any constructor or application callback can execute. The
+/// backing state is process-lifetime storage, so unlike a worker record it
+/// has no registry membership or mapped-control retirement edge. Signal
+/// delivery remains unselected until the cancellation owner installs its
+/// source-shaped handler and target transaction.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn publish_initial_selected_pthread_cancellation_state() {
+    // SAFETY: each selected process startup calls this only after its static
+    // or dynamic TLS owner installed the concrete x86 TCB and before it
+    // exposes constructor/application execution on this initial task.
+    unsafe {
+        pthread_identity::publish_current_selected_cancellation_state(
+            pthread_cancel::main_cancellation_state(),
+        )
+    };
+}
+
 const CLONE_VM: i32 = 0x0000_0100;
 const CLONE_FS: i32 = 0x0000_0200;
 const CLONE_FILES: i32 = 0x0000_0400;
@@ -1420,6 +1441,15 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // selected pthread_exit path acquires the release below before it uses
     // this identity to validate the callback's current task.
     unsafe { (*control).worker_tid.store(worker_tid, Ordering::Release) };
+    // SAFETY: this selected worker's fully initialized cancellation state is
+    // embedded in the control mapping. It remains mapped through task exit
+    // until join/detached reclamation, and the x86 TLS owner supplied the
+    // aligned FS+32 opaque cache before this callback can receive SIGCANCEL.
+    unsafe {
+        pthread_identity::publish_current_selected_cancellation_state(
+            core::ptr::addr_of!((*control).cancellation),
+        )
+    };
     // SAFETY: pthread_create initialized this private record before clone;
     // the child owns the callback invocation and parent only reads result
     // after `finished` is published and the child has exited.
@@ -1438,6 +1468,10 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // assembly tail calls SYS_exit. Destructors must finish before its result
     // becomes join-observable.
     unsafe {
+        // A normal callback return commits this task to retirement too. Disable
+        // its selected cancellation state before any later exit transition;
+        // the helper leaves C11 state untouched.
+        pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
         pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
         publish_selected_worker_result(control, result);
     }
@@ -1458,6 +1492,10 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
             unsafe { super::static_startup::exit(0) }
         }
     }
+    // SAFETY: a non-final worker has completed its selected state users and
+    // returns only to the private clone tail that ends this Linux task. A
+    // future orphaned-FILE repair runs immediately before this clear.
+    unsafe { pthread_identity::clear_current_selected_cancellation_state() };
     0
 }
 
@@ -1717,6 +1755,10 @@ unsafe fn create_selected_worker_with_attributes(
 unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
     #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
     if current_is_selected_initial_thread() {
+        // SAFETY: selected pthread-exit disables cancellation before any
+        // cleanup/TSD or final-task transition. The current implementation
+        // retains no C11 cancellation state.
+        unsafe { pthread_cancel::disable_current_selected_pthread_cancellation_for_exit() };
         // SAFETY: this is the static bootstrapped task's process-lifetime TSD
         // table. Destructors run before the musl-shaped list/last-thread
         // decision, so they may still use selected lifecycle operations.
@@ -1734,6 +1776,10 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             // task-state transition, so pthread_exit is ordinary process exit.
             unsafe { super::static_startup::exit(0) }
         }
+        // SAFETY: only a non-final initial task reaches this point. Its
+        // cancellation state is disabled and no ordinary-exit callback will
+        // run; clear the signal-safe pointer before Linux task retirement.
+        unsafe { pthread_identity::clear_current_selected_cancellation_state() };
         // SAFETY: another selected worker remains. End only this initial task;
         // the final worker takes the ordinary process-exit path above.
         unsafe { exit_selected_linux_task() }
@@ -1771,6 +1817,11 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             }
         }
     }
+    // SAFETY: a selected non-final worker reaches only the immediate Linux
+    // task exit below after cancellation is disabled for pthread-mode exits
+    // and all current selected state users have completed. Do not move this
+    // above the future orphaned-FILE repair hook.
+    unsafe { pthread_identity::clear_current_selected_cancellation_state() };
     // SAFETY: Linux SYS_exit terminates precisely the calling task and does
     // not return. The CLONE_CHILD_CLEARTID lifecycle attached during clone
     // clears/wakes the joiner's shared child-TID word after this exit.
