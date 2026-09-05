@@ -99,9 +99,13 @@ done
     -o "$work_dir/oracle"
 "$work_dir/oracle"
 
+# Pin one codegen unit for the instruction-level syscall ABI judge below.
+# Multi-unit dev builds may retain calls to private raw_syscall helpers; the
+# installed release product already uses one unit. Keep the direct-instruction
+# assertions intact instead of depending on cross-unit inlining heuristics.
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+    -C relocation-model=static -C code-model=small -C panic=abort -C codegen-units=1
 [ -f "$archive" ] || fail "cargo did not emit libc.a"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
@@ -120,7 +124,7 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_VECTOR_IO_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_vector_io_probe.c \
+    -Wl,--no-undefined -Wl,--gc-sections compat/x86_64/libc_vector_io_probe.c \
     compat/x86_64/libc_vector_io_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"

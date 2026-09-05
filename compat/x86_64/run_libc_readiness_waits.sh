@@ -118,9 +118,13 @@ else
     fail "pinned-musl readiness/signal-waits fixture exited ${status}"
 fi
 
+# Pin one codegen unit for the instruction-level syscall ABI judge below.
+# Multi-unit dev builds may retain calls to private raw_syscall helpers; the
+# installed release product already uses one unit. Keep the direct-instruction
+# assertions intact instead of depending on cross-unit inlining heuristics.
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+    -C relocation-model=static -C code-model=small -C panic=abort -C codegen-units=1
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
