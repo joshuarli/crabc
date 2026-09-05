@@ -68,10 +68,28 @@ direct-interpreter parent entry. `owned_spawn_probe.c` uses the explicit
 `/proc/self/exe` path. The workload checks attributes, signal masks/defaults,
 sessions, ordered file actions and descriptor collisions, directory actions,
 PATH search, worker spawn, denied syscalls, descriptor exhaustion and rollback.
-`run_owned_dynamic_spawn.sh` retains the object, link receipts, ELF inspections
-and observations; the qualification catalog executes it on both clean products
+`run_owned_dynamic_spawn.sh` retains the object, link receipts, ELF inspections,
+shared-validator link identities, and raw stdout/stderr/exit status for every
+entry. Each candidate's three raw results are compared to the oracle; a
+nonzero timeout/chroot status is retained before failing. The qualification
+catalog executes it on both clean products
 and the extracted package. Run its focused gate with
 `./scripts/dev-x86_64.sh owned-dynamic-spawn`.
+
+For reused POSIX-family evidence inside the pinned native environment, the
+leaf accepts `bash compat/x86_64/run_owned_dynamic_spawn.sh [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`.
+Its default remains dynamic-only. Supplying a static product additionally
+links the same `/consumer` workload object as ordinary static and static PIE,
+requests sealed static receipts, and checks each link through
+`owned_posix_product_evidence.validate_link`. Dynamic links use that same
+strict validator. The exact returned identities are retained in
+`static.link-identity.json`, `static-pie.link-identity.json`,
+`pie.link-identity.json`, and `non-pie.link-identity.json` for the selected modes.
+There is no static producer in this leaf. Static-only replay builds the default
+dynamic product for compilation and dynamic execution; supplying both products
+invokes no producer. Empty, option-valued, or duplicate product arguments fail
+with usage status 2 before evidence creation. This extra replay does not close
+the POSIX family or replace its per-product execution receipt.
 
 The `atfork-registry` case verifies more than 65 ordered registrations,
 parent/child/worker additions, and failed-fork parent completion in both
