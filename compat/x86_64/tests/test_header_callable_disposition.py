@@ -101,6 +101,22 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(inverse_trig <= providers["x86-owned-static-runtime"])
         self.assertFalse(inverse_trig & deferred)
 
+    def test_scalar_math_completion_is_planned_owned_static_not_deferred(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        scalar_math = {"fma", "fmaf", "hypot", "hypotf", "log1p", "log1pf"}
+
+        self.assertTrue(scalar_math <= providers["x86-owned-static-runtime"])
+        self.assertFalse(scalar_math & deferred)
+
     def test_memory_stream_and_cookie_names_are_planned_owned_static_not_deferred(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         providers = {

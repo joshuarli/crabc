@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "d4ac3c7dbecf8648ff33f62022fe826480f1d501b7388cb989c0a70879726ac7",
+    "callable_inventory_sha256": "d4d08921e5bc0b9d59dc508bb8f9c2d7b9f0b6d6660ce336d51ae67acdaf00a2",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "109407f6820020013a0f9b7ed556d259dce0fd5dba8bee6f58737983919245ac",
+    "parity_ledger_sha256": "d2ac92dcef28f97d7186e33232fcdd818cdba1e52a2c624db54c85eab77c45dc",
     "static_c_abi_exports_sha256": "45f72e92160db0ccf514f310a07a65cac97e0ea4755628599b52d44822206b36"
   },
   "missing_reference_declaration_groups": [],
@@ -47,6 +47,8 @@
           "fgetws",
           "fgetws_unlocked",
           "flockfile",
+          "fma",
+          "fmaf",
           "fmemopen",
           "fopencookie",
           "fputc_unlocked",
@@ -74,8 +76,12 @@
           "getwchar",
           "getwchar_unlocked",
           "gmtime",
+          "hypot",
+          "hypotf",
           "localtime",
           "localtime_r",
+          "log1p",
+          "log1pf",
           "mkdtemp",
           "mkostemp",
           "mkostemps",
@@ -1256,16 +1262,10 @@
         "members": [
           "adjtime",
           "adjtimex",
-          "fma",
-          "fmaf",
           "fnmatch",
           "getdate",
           "glob",
           "globfree",
-          "hypot",
-          "hypotf",
-          "log1p",
-          "log1pf",
           "mbsnrtowcs",
           "settimeofday",
           "stime",
@@ -1794,13 +1794,13 @@
   },
   "summary": {
     "candidate_external_callable_count": 1525,
-    "declared_unverified_feature_callable_count": 104,
+    "declared_unverified_feature_callable_count": 110,
     "default_static_callable_count": 1119,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 7,
-      "planned-provider": 215
+      "planned-provider": 209
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1811,7 +1811,7 @@
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 224,
+    "unprovided_callable_count": 218,
     "verified_feature_callable_count": 78
   },
   "target": "x86_64-unknown-linux-musl",

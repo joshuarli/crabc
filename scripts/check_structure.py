@@ -356,6 +356,9 @@ X86_RUNTIME_FOUNDATION_LIBC_SOURCES = {
     # This eight-entry musl assembly component is gated by the owned static
     # profile; admitting its exact source does not widen the default archive.
     Path("libc/src/c_abi/x86_64/owned_inverse_trig.rs"),
+    # This six-entry musl scalar component is likewise selected only by the
+    # owned static profile; its local scalbn closure cannot widen default ABI.
+    Path("libc/src/c_abi/x86_64/math_scalar_completion.rs"),
     Path("libc/src/c_abi/x86_64/math_asinh.rs"),
     Path("libc/src/c_abi/x86_64/math_atanh.rs"),
     Path("libc/src/c_abi/x86_64/math_cos.rs"),

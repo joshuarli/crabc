@@ -19,7 +19,9 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#if !defined(CRABC_MATH_SCALAR_COMPLETION_FREESTANDING)
 #include <unistd.h>
+#endif
 
 #pragma STDC FENV_ACCESS ON
 
@@ -274,7 +276,18 @@ static int write_all(const void *buffer, size_t length)
     const unsigned char *cursor = buffer;
 
     while (length != 0) {
+#if defined(CRABC_MATH_SCALAR_COMPLETION_FREESTANDING)
+        long written;
+
+        __asm__ volatile (
+            "syscall"
+            : "=a" (written)
+            : "a" (1), "D" (1), "S" (cursor), "d" (length)
+            : "rcx", "r11", "memory"
+        );
+#else
         ssize_t written = write(1, cursor, length);
+#endif
 
         if (written <= 0)
             return 1;
