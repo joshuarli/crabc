@@ -65,6 +65,10 @@ use crate::types::{
 mod selection;
 pub(crate) use selection::{ArenaReservationPlan, ArenaSearch};
 
+#[path = "arena_owned.rs"]
+mod owned;
+pub(crate) use owned::{ProcessArenaBacking, ProcessArenaInstallFailure};
+
 // Fixed `src/options.c` defaults for the frozen v3.5.0 profile. This remains
 // an arena-local delay because the one-thread slice has no source subprocess
 // global-expiry owner or registry iteration policy yet.
@@ -2115,6 +2119,17 @@ impl<'arena> ArenaView<'arena> {
         commit: bool,
         thread_sequence: usize,
     ) -> Option<ArenaSliceClaim<'arena>> {
+        self.try_claim_slices_with_owner(requested, slice_count, commit, thread_sequence, None)
+    }
+
+    fn try_claim_slices_with_owner(
+        &self,
+        requested: ArenaId,
+        slice_count: usize,
+        commit: bool,
+        thread_sequence: usize,
+        owner: Option<&owned::OwnedArenaMapping>,
+    ) -> Option<ArenaSliceClaim<'arena>> {
         let arena = self.arena();
         if slice_count == 0
             || slice_count > arena.slice_count
@@ -2149,12 +2164,14 @@ impl<'arena> ArenaView<'arena> {
         // `mi_bitmap_setN` returns whether every selected dirty bit was
         // previously clear. The result is the source's zero observation for
         // a range whose backing external memory was initially zero.
+        let mut touched_slices = 0;
         if arena.memid.initially_zero() {
             let Some(dirty_transition) = dirty.set_range(slice_index, slice_count) else {
                 let _ = rollback();
                 return None;
             };
             memory.initially_zero = dirty_transition.all_transitioned();
+            touched_slices = slice_count - dirty_transition.already_set();
         }
 
         if commit {
@@ -2164,19 +2181,16 @@ impl<'arena> ArenaView<'arena> {
                 return None;
             };
             if already_committed < slice_count {
-                let Some(commit_function) = arena.commit_function else {
-                    let _ = rollback();
-                    return None;
-                };
                 let mut commit_zero = false;
-                let committed_now = unsafe {
-                    commit_function(
-                        true,
-                        start.as_ptr(),
-                        size.get(),
-                        &mut commit_zero,
-                        arena.commit_function_argument,
-                    )
+                let committed_now = if let Some(owner) = owner {
+                    owner.commit(start.as_ptr(), size.get(), already_committed * ARENA_SLICE_SIZE)
+                } else if let Some(commit_function) = arena.commit_function {
+                    unsafe {
+                        commit_function(true, start.as_ptr(), size.get(), &mut commit_zero,
+                            arena.commit_function_argument)
+                    }
+                } else {
+                    false
                 };
                 if !committed_now {
                     // `mi_arena_try_alloc_at` returns only ownership here;
@@ -2202,6 +2216,12 @@ impl<'arena> ArenaView<'arena> {
                 match os::reuse_arena_range(start, size) {
                     crate::os::ReuseOutcome::NoOp => {}
                 }
+                if let Some(owner) = owner {
+                    if owner.config.has_overcommit() && touched_slices > 0 && !arena.memid.is_pinned() {
+                        owner.process.subprocess().vm_statistics()
+                            .committed_increase(touched_slices * ARENA_SLICE_SIZE);
+                    }
+                }
             }
             memory.initially_committed = true;
         } else {
@@ -2213,12 +2233,19 @@ impl<'arena> ArenaView<'arena> {
             if !is_committed {
                 // Source accounting treats a mixed commitment observation as
                 // uncommitted: it first observes all bits set, then clears the
-                // exact span. There are no statistics in this isolated slice.
-                if committed.set_range(slice_index, slice_count).is_none()
-                    || committed.clear_range(slice_index, slice_count).is_none()
-                {
+                // exact span. The source's set transition, not a separate
+                // popcount, supplies the already-committed statistics input.
+                let Some(transition) = committed.set_range(slice_index, slice_count) else {
                     let _ = rollback();
                     return None;
+                };
+                if committed.clear_range(slice_index, slice_count).is_none() {
+                    let _ = rollback();
+                    return None;
+                }
+                if let Some(owner) = owner {
+                    owner.process.subprocess().vm_statistics()
+                        .committed_decrease(transition.already_set() * ARENA_SLICE_SIZE);
                 }
             }
         }

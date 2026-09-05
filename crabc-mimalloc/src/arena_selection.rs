@@ -135,6 +135,23 @@ impl ArenaRegistry {
         alignment: usize,
         commit: bool,
     ) -> Option<ArenaSliceClaim<'_>> {
+        unsafe {
+            self.try_find_free_with(search, slice_count, alignment, |view| {
+                view.try_claim_suitable_slices(search.requested, slice_count, commit, search.thread_sequence)
+            })
+        }
+    }
+
+    /// Shares the source candidate order with process-owned commitment. The
+    /// callback may claim only the supplied live arena; failed claims continue
+    /// the same pass rather than restarting or skipping its NUMA preference.
+    pub(super) unsafe fn try_find_free_with<'arena>(
+        &'arena self,
+        search: ArenaSearch,
+        slice_count: usize,
+        alignment: usize,
+        mut claim: impl FnMut(ArenaView<'arena>) -> Option<ArenaSliceClaim<'arena>>,
+    ) -> Option<ArenaSliceClaim<'arena>> {
         if alignment > ARENA_SLICE_SIZE || slice_count == 0 {
             return None;
         }
@@ -162,9 +179,7 @@ impl ArenaRegistry {
                     if numa_suitable != (pass == 0) { continue; }
                 }
                 let view = unsafe { ArenaView::from_ptr(pointer) }?;
-                if let Some(claim) = view.try_claim_suitable_slices(
-                    search.requested, slice_count, commit, search.thread_sequence,
-                ) {
+                if let Some(claim) = claim(view) {
                     return Some(claim);
                 }
             }
