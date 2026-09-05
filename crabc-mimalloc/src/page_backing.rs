@@ -109,7 +109,41 @@ impl PageBacking<'static> for ProcessMetadataPageBacking {
             && unsafe { self.backing().release_slices(memory) }
     }
     fn collect(&self, config: MemoryConfig, force: bool, thread_sequence: usize) -> bool {
-        unsafe { self.backing().collect_purge(self.process, config, force, false, thread_sequence) };
-        true
+        unsafe { self.backing().collect_purge(self.process, config, force, false, thread_sequence) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate std;
+    use super::*;
+    use crate::config::{VmOptions, VmOption, VmOptionEnvironment};
+    use crate::os::{PageSize, VmPolicy};
+    use crate::subproc::MainSubprocess;
+    use std::boxed::Box;
+
+    #[test]
+    fn collection_propagates_owned_arena_bitmap_invariant_failure() {
+        let _fault = crate::os::fault::install(crate::os::fault::Plan::disabled());
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ArenaReserve, 64 * 1024);
+        let policy = Box::leak(Box::new(VmPolicy::new(options).unwrap()));
+        policy.finish_preloading();
+        let process = VmProcess::new(policy, MainSubprocess::test_static_owner());
+        let config = MemoryConfig::from_observations(PageSize::new(4096).unwrap(), 1 << 20, true, false);
+        let backing = ProcessMetadataPageBacking::new(process);
+        assert!(backing.collect(config, true, 0), "an empty owner is a successful no-op");
+        let claim = backing.claim(config, ArenaId::none(), 1, true, 0).unwrap();
+        let arena = claim.memory_id().arena_memory().unwrap().arena;
+        assert!(claim.release());
+        // This isolated owner has no outstanding claim or concurrent user.
+        // Replace only the bitmap pointer (not its allocation) to exercise
+        // the checked invariant boundary without dereferencing invalid data.
+        let saved = unsafe { (*arena).slices_purge };
+        unsafe { (*arena).slices_purge = core::ptr::null_mut(); }
+        let collected = backing.collect(config, true, 0);
+        unsafe { (*arena).slices_purge = saved; }
+        assert!(!collected, "the page engine must observe the owned purge failure");
     }
 }

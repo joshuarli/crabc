@@ -112,6 +112,32 @@ impl ProcessArenaBacking {
     #[inline]
     pub(crate) fn registry(&self) -> &ArenaRegistry { &self.registry }
 
+    /// Validates a new coordinator consumer against every arena mapping
+    /// already retained by this process owner. This is a one-time binding
+    /// check, not a page allocation/free scan. Taking the reserve lock excludes
+    /// an unpublished slot being moved or reused while its owner is examined.
+    pub(crate) fn matches_existing_process_binding(
+        &self, process: VmProcess<'_>, config: MemoryConfig,
+    ) -> Result<bool, Errno> {
+        let _guard = self.reserve_lock.lock()?;
+        let registered = self.registry.subprocess();
+        if !registered.is_null() && registered != process.subprocess().as_ptr() { return Ok(false); }
+        for slot in &self.slots {
+            match slot.state.load(Ordering::Acquire) {
+                EMPTY => continue,
+                PUBLISHED | RETAINED => {}
+                _ => return Ok(false),
+            }
+            // SAFETY: these initialized final states are immutable, and the
+            // reserve lock additionally excludes unpublished transitions.
+            let Some(owner) = (unsafe { slot.initialized() }) else { return Ok(false); };
+            if !core::ptr::eq(owner.process.policy(), process.policy())
+                || !core::ptr::eq(owner.process.subprocess(), process.subprocess())
+                || owner.config != config { return Ok(false); }
+        }
+        Ok(true)
+    }
+
     /// Claims from existing process-owned arenas with source commitment and
     /// unconditional touched/mixed-commit accounting. Reservation and the OS
     /// fallback are separate decisions after this complete two-pass search.
