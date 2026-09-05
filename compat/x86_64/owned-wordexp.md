@@ -28,8 +28,9 @@ cases, the runner translates one project-header C object with the installed
 static-PIE compiler contract. It links those exact bytes to a pinned-musl
 static ET_EXEC oracle and to the owned static ET_EXEC and static-PIE products,
 then checks the two pre-shell scanner results and receipt object identities.
-The ordinary workload also runs these checks, so the existing dynamic catalog
-retains the regression in each installed and extracted replay.
+The ordinary wordexp workload also runs these checks. The existing dynamic
+catalog's pattern workload repeats them in each installed and extracted replay,
+including the error code, unchanged errno, and empty word-vector ownership.
 The controlled shell fixture remains a separately recorded execution input;
 this scanner receipt does not claim general shell compatibility or waive an
 oracle shell failure.

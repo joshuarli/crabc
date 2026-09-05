@@ -18,6 +18,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <wordexp.h>
 
 static int failure_line;
 
@@ -27,6 +28,27 @@ static int failure_line;
         return -1; \
     } \
 } while (0)
+
+/* Musl's WRDE_NOCMD source preflight rejects these before starting /bin/sh.
+ * Keep the scanner regression in the installed/extracted pattern workload. */
+static int wordexp_nocmd_source_case(void)
+{
+    const char *inputs[] = {
+        "$((case $A in a) echo x ;; *) echo y ;; esac))",
+        "$(echo x)",
+    };
+    const int expected[] = {WRDE_BADCHAR, WRDE_CMDSUB};
+    for (size_t index = 0; index < 2; index++) {
+        wordexp_t result = {0};
+        errno = ERANGE;
+        CHECK(wordexp(inputs[index], &result, WRDE_NOCMD) == expected[index]);
+        CHECK(errno == ERANGE);
+        CHECK(result.we_wordc == 0 && result.we_wordv == 0);
+        wordfree(&result);
+        CHECK(result.we_wordc == 0 && result.we_wordv == 0);
+    }
+    return 0;
+}
 
 static int vector_is(const glob_t *result, const char *const expected[], size_t count)
 {
@@ -373,7 +395,8 @@ static int run_selected_case(const char *selector)
         failure_line = __LINE__;
         return -1;
     }
-    if (matcher_c_and_posix_cases()
+    if (wordexp_nocmd_source_case()
+        || matcher_c_and_posix_cases()
         || matcher_utf8_and_invalid_cases()
         || glob_literal_path_case()
         || glob_nested_path_case()
