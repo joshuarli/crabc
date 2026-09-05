@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Replay the unchanged aggregate with supplied installed owned products.
+# Replay the pinned native stress remainder with supplied installed products.
 set -euo pipefail
 ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

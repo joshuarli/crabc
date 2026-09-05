@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay the unchanged pthread stress aggregate through supplied owned products."""
+"""Replay a pinned native pthread stress source profile through supplied products."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,13 +16,15 @@ import tempfile
 
 import crabc_cc_static as compiler_contract
 import owned_posix_product_evidence as product_evidence
+import owned_pthread_stress_source as source_profile
 
 ROOT = Path(__file__).resolve().parents[2]
 HERE = ROOT / "compat/x86_64"
 SOURCE = ROOT / "tests/fixtures/pthread_stress_test.c"
+IO_CANCELLATION_SOURCE = HERE / "owned_io_cancellation_probe.c"
 ORACLE = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 FLAGS = ["-std=c11", "-O2", "-D_POSIX_C_SOURCE=200809L", "-fno-builtin"]
-USAGE = "usage: run_owned_pthread_stress.sh [--static-sysroot STATIC_SYSROOT] [--iterations N] [--timeout SECONDS] DYNAMIC_SYSROOT"
+USAGE = "usage: run_owned_pthread_stress.sh [--static-sysroot STATIC_SYSROOT] [--iterations N] [--timeout SECONDS] [--source-profile native-v1|frozen] DYNAMIC_SYSROOT"
 
 
 class ArgumentError(ValueError):
@@ -39,6 +41,7 @@ class Options:
     dynamic: Path
     iterations: int = 10
     timeout: float = 10.0
+    source_profile: str = "native-v1"
 
 
 @dataclass(frozen=True)
@@ -47,12 +50,17 @@ class Observation:
     stdout: bytes
     stderr: bytes
 
+    def __post_init__(self):
+        # JSON false compares equal to zero in Python; it is never an exit code.
+        if type(self.status) is not int and not (type(self.status) is str and self.status == "TIMEOUT"):
+            raise EvidenceError("observation status type must be an integer or exact TIMEOUT")
+
 
 def parse_arguments(arguments):
     remaining, values = list(arguments), {}
     while remaining and remaining[0].startswith("--"):
         option = remaining.pop(0)
-        if option not in ("--static-sysroot", "--iterations", "--timeout") or option in values or not remaining or not remaining[0] or remaining[0].startswith("-"):
+        if option not in ("--static-sysroot", "--iterations", "--timeout", "--source-profile") or option in values or not remaining or not remaining[0] or remaining[0].startswith("-"):
             raise ArgumentError(USAGE)
         values[option] = remaining.pop(0)
     if len(remaining) != 1 or not remaining[0] or remaining[0].startswith("-"):
@@ -64,8 +72,11 @@ def parse_arguments(arguments):
         raise ArgumentError(USAGE) from error
     if not 1 <= iterations <= 100 or not math.isfinite(timeout) or not 0 < timeout <= 300:
         raise ArgumentError(USAGE)
+    profile = values.get("--source-profile", "native-v1")
+    if profile not in source_profile.PROFILES:
+        raise ArgumentError(USAGE)
     return Options(Path(values["--static-sysroot"]) if "--static-sysroot" in values else None,
-                   Path(remaining[0]), iterations, timeout)
+                   Path(remaining[0]), iterations, timeout, profile)
 
 
 def digest(path):
@@ -183,17 +194,18 @@ def audit_link(product, workload, executable, receipt, linkage):
     return product_evidence.validate_link(product, workload, executable, receipt, linkage)
 
 
-def header_audit(product, work):
+def header_audit(product, work, source=None):
+    source = SOURCE if source is None else source
     compiler = compiler_contract.compiler()
     base = [compiler, "-nostdinc", "-isystem", str(product / "usr/include"), "-ffreestanding",
             "-fno-builtin", "-fstack-protector-strong", *FLAGS, "-fPIE"]
-    commands = {"dependencies": [*base, "-M", str(SOURCE)], "preprocessor": [*base, "-E", str(SOURCE)]}
+    commands = {"dependencies": [*base, "-M", str(source)], "preprocessor": [*base, "-E", str(source)]}
     environment = compiler_contract.clean_environment()
     outputs = {name: subprocess.check_output(argv, cwd=ROOT, env=environment) for name, argv in commands.items()}
     headers = {}
     for name in outputs["dependencies"].decode().replace("\\\n", " ").split(":", 1)[1].split():
         path = Path(name).resolve(strict=True)
-        if path == SOURCE:
+        if path == source:
             continue
         if not path.is_relative_to(product / "usr/include"):
             raise EvidenceError(f"unowned header: {path}")
@@ -214,6 +226,18 @@ def audit_raw_observation(prefix, expected):
         raise EvidenceError(f"retained raw observation changed: {prefix}")
 
 
+def profile_result(profile, passed):
+    """A passing remainder cannot satisfy the separate I/O cancellation owner."""
+    return {"passed_scope": "remaining-native-pthread-stress-workload" if profile == "native-v1" else "frozen-pthread-stress-workload",
+            "remaining_stress_workload_passed": passed if profile == "native-v1" else None,
+            "native_aggregate_complete": False,
+            "replacement_io_cancellation_required": ["READ_FILE", "ASYNC_LOOP"],
+            "replacement_io_cancellation_source": {"path": str(IO_CANCELLATION_SOURCE.relative_to(ROOT)),
+                                                   "sha256": digest(IO_CANCELLATION_SOURCE)},
+            "replacement_io_cancellation_receipt": None,
+            "replacement_io_cancellation_binding": "composite owner must bind the same-product I/O-cancellation family receipt"}
+
+
 def run(arguments):
     options = parse_arguments(arguments)
     product = physical_directory(options.dynamic)
@@ -225,8 +249,12 @@ def run(arguments):
     work = Path(tempfile.mkdtemp(prefix="owned-pthread-stress.", dir=temporary))
     print(f"pthread-stress evidence: {work}", flush=True)
     workload = work / "workload.o"
-    compile_argv = [product / "bin/crabc-cc-dynamic", "--dynamic-pie", *FLAGS, "-c", SOURCE, "-o", workload]
-    provenance = [SOURCE, Path(__file__), HERE / "run_owned_pthread_stress.sh",
+    prepared_source = work / "pthread_stress_test.c"
+    source_map = source_profile.materialize(SOURCE, prepared_source, options.source_profile)
+    write_json(work / "source-map.json", source_map)
+    compile_argv = [product / "bin/crabc-cc-dynamic", "--dynamic-pie", *FLAGS, "-c", prepared_source, "-o", workload]
+    provenance = [SOURCE, prepared_source, work / "source-map.json", Path(source_profile.__file__), IO_CANCELLATION_SOURCE,
+                  Path(__file__), HERE / "run_owned_pthread_stress.sh",
                   Path(product_evidence.__file__), Path(compiler_contract.__file__), ROOT / "compat/pthread-stress/run.py",
                   ROOT / "compat/pthread-stress/README.md", product / "bin/crabc-cc-dynamic",
                   product / "share/crabc/crabc_cc_static.py", product / "share/crabc/manifest.json",
@@ -234,14 +262,14 @@ def run(arguments):
                   Path("/opt/musl-1.2.6/.crabc-oracle")]
     # Freeze source, tool, and oracle inputs before the installed driver consumes them.
     inputs = identities(provenance)
-    header_record, header_outputs = header_audit(product, work)
+    header_record, header_outputs = header_audit(product, work, prepared_source)
     command(compile_argv, work / "compile")
     compiled_object = identities([workload])
     for name, data in header_outputs.items():
         (work / (name + (".d" if name == "dependencies" else ".i"))).write_bytes(data)
     write_json(work / "compile.json", {"command": list(map(str, compile_argv)), "inputs": inputs,
                "compiler_environment": header_record["environment"], "compiler": header_record["compiler"],
-               "header_audit": header_record, "object_sha256": digest(workload)})
+               "header_audit": header_record, "source_map": source_map, "object_sha256": digest(workload)})
     oracle_argv = [ORACLE, "-static", "-fno-pie", "-no-pie", "-pthread", workload, "-o", work / "oracle"]
     command(oracle_argv, work / "oracle-link")
     links, bindings = [], []
@@ -298,18 +326,23 @@ def run(arguments):
     audit_identities(consumed)
     if digest(work / "consumed.json") != consumed_receipt:
         raise EvidenceError("consumed receipt changed")
-    if header_audit(product, work)[0] != header_record:
+    if header_audit(product, work, prepared_source)[0] != header_record:
         raise EvidenceError("installed header/preprocessor closure changed")
     final_links = [audit_link(*binding) for binding in bindings]
     if final_links != links:
         raise EvidenceError("link identity changed")
-    report.update({"schema": "crabc.x86_64-owned-pthread-stress/v1", "campaign_complete": False,
+    report.update(profile_result(options.source_profile, report["passed"]))
+    report.update({"schema": "crabc.x86_64-owned-pthread-stress/v2", "campaign_complete": False,
+                   "source_profile": options.source_profile, "source_map": source_map,
+                   "source_map_receipt_sha256": digest(work / "source-map.json"),
+                   "prepared_source_sha256": digest(prepared_source),
                    "source_sha256": digest(SOURCE), "workload_object_sha256": digest(workload),
                    "compile_receipt_sha256": digest(work / "compile.json"), "consumed_receipt_sha256": consumed_receipt,
                    "oracle_link_command": list(map(str, oracle_argv)), "links": links,
                    "raw_artifacts": identities(raw_files), "timeout_seconds": options.timeout})
     write_json(work / "pthread-stress.json", report)
-    print(f"owned pthread stress: {'PASS' if report['passed'] else 'FAIL'} ({report['observation_count']} raw observations)", flush=True)
+    print(f"owned pthread stress {report['passed_scope']}: {'PASS' if report['passed'] else 'FAIL'} "
+          f"({report['observation_count']} raw observations; native aggregate incomplete)", flush=True)
     return 0 if report["passed"] else 1
 
 

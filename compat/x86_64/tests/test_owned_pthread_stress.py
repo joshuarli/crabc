@@ -28,9 +28,11 @@ class OwnedPthreadStressTests(unittest.TestCase):
         self.assertEqual((options.iterations, options.timeout), (10, 10.0))
         self.assertIsNone(options.static)
         self.assertEqual(options.dynamic, Path("dynamic"))
+        self.assertEqual(options.source_profile, "native-v1")
+        self.assertEqual(stress.parse_arguments(["--source-profile", "frozen", "dynamic"]).source_profile, "frozen")
         options = stress.parse_arguments(["--iterations", "100", "--static-sysroot", "static", "--timeout", "300", "dynamic"])
         self.assertEqual((options.iterations, options.timeout, options.static), (100, 300.0, Path("static")))
-        for arguments in ([], [""], ["--static-sysroot", "static"], ["--iterations", "0", "d"],
+        for arguments in ([], [""], ["--source-profile", "unknown", "d"], ["--source-profile", "native-v1", "--source-profile", "frozen", "d"], ["--static-sysroot", "static"], ["--iterations", "0", "d"],
                           ["--iterations", "101", "d"], ["--iterations", "1", "--iterations", "2", "d"],
                           ["--iterations", "1.0", "d"], ["--timeout", "0", "d"], ["--timeout", "301", "d"],
                           ["--timeout", "nan", "d"], ["--timeout", "inf", "d"],
@@ -62,6 +64,25 @@ class OwnedPthreadStressTests(unittest.TestCase):
         snapshot = stress.stream_snapshot(b"\x00\xff\n")
         self.assertEqual(snapshot["hex"], "00ff0a")
         self.assertEqual(snapshot["byte_length"], 3)
+
+    def test_status_requires_exact_integer_or_timeout_before_comparison(self):
+        for status in (False, True, 0.0, "0", "FAILED", None):
+            with self.subTest(status=status):
+                with self.assertRaisesRegex(stress.EvidenceError, "status type"):
+                    observation = stress.Observation(status, b"pthread stress ok\n", b"")
+                    stress.snapshot(observation)
+                    stress.compare(observation, observation)
+        self.assertEqual(stress.Observation("TIMEOUT", b"", b"").status, "TIMEOUT")
+
+    def test_raw_status_false_cannot_equal_success_zero(self):
+        prefix = self.work / "typed"
+        original = stress.observe([sys.executable, "-c", "print('pthread stress ok')"], self.work, prefix, 2)
+        status_path = Path(str(prefix) + ".status.json")
+        record = json.loads(status_path.read_text())
+        record["status"] = False
+        status_path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(stress.EvidenceError, "status type"):
+            stress.audit_raw_observation(prefix, original)
 
     def test_frozen_aarch64_source_exception_is_not_a_native_pass(self):
         source_failure = stress.Observation(1, b"pthread stress FAIL 4\n",
@@ -154,6 +175,17 @@ class OwnedPthreadStressTests(unittest.TestCase):
             stress.summarize(records, 2, True)
         with self.assertRaisesRegex(stress.EvidenceError, "iteration roster"):
             stress.summarize([], 2, True)
+
+    def test_native_remainder_success_never_claims_complete_aggregate(self):
+        receipt = stress.profile_result("native-v1", True)
+        self.assertTrue(receipt["remaining_stress_workload_passed"])
+        self.assertFalse(receipt["native_aggregate_complete"])
+        self.assertEqual(receipt["replacement_io_cancellation_required"], ["READ_FILE", "ASYNC_LOOP"])
+        self.assertIsNone(receipt["replacement_io_cancellation_receipt"])
+        source = ROOT / receipt["replacement_io_cancellation_source"]["path"]
+        self.assertEqual(receipt["replacement_io_cancellation_source"]["sha256"], stress.digest(source))
+        self.assertFalse(stress.profile_result("native-v1", False)["remaining_stress_workload_passed"])
+        self.assertIsNone(stress.profile_result("frozen", True)["remaining_stress_workload_passed"])
 
     def test_pre_run_identities_reject_mutation_of_source_or_consumed_copy(self):
         source, copy = self.work / "source", self.work / "copy"
