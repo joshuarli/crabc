@@ -171,3 +171,47 @@ sides pass their own prepared root.
 The report's counts are a current measurement. A non-passing result names the
 failed or blocked boundary and retains its exact command and bytes for the
 owner; it does not convert that unit into a skip or a supported capability.
+
+## Source-required execution identity
+
+`regression/pthread_atfork-errno-clobber` sets `RLIMIT_NPROC` to zero and
+requires `fork` to fail before checking that atfork callbacks preserve its
+error. A root identity bypasses that limit. This one source therefore selects
+the fixed nonroot identity in `execution_identity_fixture_for_unit`: UID/GID
+65534, no supplementary groups, and zero inheritable, permitted, effective,
+and ambient capabilities. Other units declare a null identity fixture. This
+is an execution precondition; the source, runner, expected result, and
+comparison remain unchanged.
+
+The host-only `owned_libc_test_identity.py` accepts only that unit and has no
+caller-selectable identity or target command. Both candidate and oracle use
+`/usr/bin/timeout 20 /usr/bin/python3 -B HELPER --root ROOT --receipt RECEIPT
+--unit regression/pthread_atfork-errno-clobber`. The helper opens its evidence
+and `/proc/self/status` descriptors, enters the disposable root, clears
+supplementary groups, and sets all real/effective/saved IDs. It checks the
+actual IDs, including filesystem IDs, and capability sets through the
+preopened proc descriptor. Its capability bounding set must remain unchanged.
+After closing those descriptors it replaces itself with exactly
+`/runtest -w '' /regression/pthread_atfork-errno-clobber` in the existing clean
+environment. Neither helper nor host Python is copied into the execution root.
+
+Every observed runtime side carries `execution_identity`: null for ordinary
+units, or the fixed fixture, helper/Python source and retained artifact hashes,
+prepared-source before/after binding, identity receipt, and unchanged producer
+parent identity for this source. Control bytes remain in `execution-controls`
+so an independent collector can verify them without using its host Python
+installation. The helper/Python `source` and `after` artifacts must agree, as
+must their retained bytes. Both root-payload phases also declare the exact
+`execution_identity_fixture` or null. The child receipt measures the transition
+immediately before exec; it makes no claim about identity after target
+execution. Existing product, oracle, and root-payload before/after checks
+still apply. Missing or invalid identity evidence is a setup failure, even
+when a child reports exit zero.
+
+The isolated proof reused the unchanged full-campaign target and `runtest`
+binaries: root candidate and musl both failed with `fork succeeded despite
+rlimit`; the fixed nonroot identity made both pass with empty stdout/stderr.
+The producer's focused native replay also passes on both sides. This evidence
+does not rewrite the earlier incomplete aggregate or replace a fresh full
+campaign after producer/collector integration. Focused receipt and invocation
+regressions live in `test_owned_libc_test_identity.py`.

@@ -38,6 +38,8 @@ CANONICAL_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 MUSL_INTERPRETER = "/lib/ld-musl-x86_64.so.1"
 SOURCE_RUNTEST_TIMEOUT_SECONDS = 5
 SOURCE_RUNTEST_WRAP = ""
+EXECUTION_IDENTITY_UNIT = "regression/pthread_atfork-errno-clobber"
+EXECUTION_IDENTITY_HELPER = Path(__file__).with_name("owned_libc_test_identity.py")
 
 # These are source-level target translation flags from libc-test's pinned
 # config.mak.def.  `-pipe` is intentionally absent: it is only a host process
@@ -1252,6 +1254,105 @@ def filesystem_fixture_for_unit(unit_id: str) -> list[dict[str, str]]:
     return []
 
 
+
+def identity_helper_module() -> Any:
+    """Load only the small host identity contract, without importing target code."""
+
+    specification = importlib.util.spec_from_file_location("owned_libc_test_identity", EXECUTION_IDENTITY_HELPER)
+    if specification is None or specification.loader is None:
+        fail("cannot load the fixed execution-identity helper")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def execution_identity_fixture_for_unit(unit_id: str) -> dict[str, Any] | None:
+    """The atfork errno test requires a nonroot RLIMIT_NPROC execution identity."""
+
+    if unit_id != EXECUTION_IDENTITY_UNIT:
+        return None
+    return identity_helper_module().fixture_for_unit(unit_id)
+
+
+def validate_execution_identity_receipt(
+    receipt: dict[str, Any], *, root: Path, unit_id: str, source: dict[str, str],
+    parent_before: dict[str, Any],
+) -> None:
+    """Validate the measured transition; this is not a post-exec observation."""
+
+    fixture = execution_identity_fixture_for_unit(unit_id)
+    expected = {
+        "schema": "crabc.x86_64-owned-libc-test-execution-identity/v1",
+        "unit": unit_id, "root": str(root), "fixture": fixture, "source": source,
+        "command": source_runtest_arguments(f"/{unit_id}"), "before_drop": parent_before,
+    }
+    if fixture is None or not isinstance(receipt, dict) or set(receipt) != {*expected, "before_exec"}:
+        fail("execution identity receipt has an undeclared shape or unit")
+    if any(receipt.get(name) != value for name, value in expected.items()):
+        fail("execution identity receipt differs from its source, parent, or command")
+    try:
+        identity_helper_module().validate_transition(receipt["before_drop"], receipt["before_exec"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise EvidenceError(f"execution identity precondition failed: {error}") from error
+
+
+def retain_identity_control(invoked: Path, work: Path, name: str) -> dict[str, Any]:
+    """Retain control bytes so a host-only collector need not execute Python."""
+
+    source = artifact(physical(invoked.resolve(strict=True), f"identity {name} source"), f"identity {name} source")
+    retained = work / "execution-controls" / name
+    if retained.exists():
+        if digest(retained) != source["sha256"]:
+            fail(f"retained identity control changed: {name}")
+    else:
+        copy_regular(Path(source["path"]), retained, f"retained identity {name}")
+    return {"invoked_path": str(invoked), "source": source, "retained": artifact(retained, f"retained identity {name}")}
+
+
+def execute_with_identity(
+    *, root: Path, unit_id: str, output: Path, work: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Use identical fixed identity controls for raw and candidate observations."""
+
+    fixture = execution_identity_fixture_for_unit(unit_id)
+    if fixture is None:
+        fail("execution identity requested for an undeclared unit")
+    timeout = find_control_tool("timeout")
+    python = find_control_tool("python3")
+    if timeout != Path("/usr/bin/timeout") or python != Path("/usr/bin/python3"):
+        fail("identity control commands differ from the pinned invocation")
+    helper = physical(EXECUTION_IDENTITY_HELPER, "fixed execution identity helper")
+    controls = {
+        "helper": retain_identity_control(helper, work, "owned_libc_test_identity.py"),
+        "python": retain_identity_control(python, work, "python3"),
+    }
+    source_path = work / "source-prepared/src" / f"{unit_id}.c"
+    source = artifact(source_path, "fixed execution identity source")
+    receipt_path = output.with_suffix(".identity.json")
+    parent_before = identity_helper_module().observe_process_identity()
+    record = run_capture([
+        str(timeout), "20", str(python), "-B", str(helper), "--root", str(root),
+        "--receipt", str(receipt_path), "--unit", unit_id,
+    ], cwd=output.parent, environment=clean_environment(), stdout=output, stderr=output.with_suffix(".stderr"))
+    parent_after = identity_helper_module().observe_process_identity()
+    if parent_before != parent_after:
+        fail("execution identity control changed the producer parent credentials")
+    for name, control in controls.items():
+        control["after"] = artifact(Path(control["source"]["path"]), f"identity {name} after execution")
+        if control["source"] != control["after"] or digest(Path(control["retained"]["path"])) != control["source"]["sha256"]:
+            fail(f"identity control changed during execution: {name}")
+    source_after = artifact(source_path, "fixed execution identity source after execution")
+    if source != source_after:
+        fail("fixed execution identity source changed during execution")
+    receipt = read_json(receipt_path, "execution identity receipt")
+    validate_execution_identity_receipt(receipt, root=root, unit_id=unit_id, source=source, parent_before=parent_before)
+    return record, {
+        "fixture": fixture, **controls, "source": source, "source_after": source_after,
+        "receipt": artifact(receipt_path, "execution identity receipt"),
+        "parent": {"before": parent_before, "after": parent_after, "unchanged": True},
+    }
+
+
 def fixture_relative_path(value: str, description: str) -> Path:
     """Validate one canonical absolute private-root fixture pathname."""
 
@@ -1669,6 +1770,7 @@ def runtime_root_payload_record(
         "program": copied,
         "control_fixture": [*shell, *echo],
         "filesystem_fixture": filesystem_fixture,
+        "execution_identity_fixture": execution_identity_fixture_for_unit(unit_id),
         "topology": roles,
     }
 
@@ -1767,6 +1869,7 @@ def write_root_payload_phase(
         "copied_files": copied,
         "control_fixture": payload["control_fixture"],
         "filesystem_fixture": filesystem_fixture,
+        "execution_identity_fixture": payload["execution_identity_fixture"],
         "topology": payload["topology"],
         "canonical_source_bindings": source_bindings,
     }
@@ -1816,7 +1919,11 @@ def execute_runtime_side(
             roots=roots, root=root, side=side, phase="before", runtime_base=runtime_base,
             payload=payload, candidate_product=candidate_product, oracle=oracle,
         )
-        record = execute_in_root(root, f"/{unit_id}", output)
+        execution_identity = None
+        if execution_identity_fixture_for_unit(unit_id) is None:
+            record = execute_in_root(root, f"/{unit_id}", output)
+        else:
+            record, execution_identity = execute_with_identity(root=root, unit_id=unit_id, output=output, work=work)
         root_after = write_root_payload_phase(
             roots=roots, root=root, side=side, phase="after", runtime_base=runtime_base,
             payload=payload, candidate_product=candidate_product, oracle=oracle,
@@ -1826,6 +1933,7 @@ def execute_runtime_side(
         result = {
             "status": "passed" if record["exit_status"] == 0 else "failed", "record": record,
             "status_record": artifact(status_path, f"{side} runtime status"),
+            "execution_identity": execution_identity,
             "root_payload": {
                 "before": root_before,
                 "after": root_after,
@@ -1838,6 +1946,7 @@ def execute_runtime_side(
         result = {
             "status": "setup-failed", "detail": str(error),
             "setup_error": artifact(setup_error, f"{side} runtime setup error"), "root_reclaimed": True,
+            "execution_identity": None,
         }
     finally:
         remove_execution_root(root, work)
