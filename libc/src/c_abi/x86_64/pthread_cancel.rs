@@ -22,18 +22,16 @@
 //! exclusion. Public read/readv/write/writev are cancellation points; ordinary
 //! FILE descriptor I/O deliberately remains non-canceling, as in musl.
 //! Explicit FILE locks are source-tracked for non-final task retirement.
-//! Both paths retain the explicit `pthread_testcancel` point and the
-//! paired selected private `pthread_cond_wait` point. The latter uses the
-//! worker control mapping's durable waiter barrier: a request changes that
-//! barrier before waking it, so no wake can be lost between publication and
-//! futex sleep. Withdrawal takes the same registry lock as cancellation's
-//! lookup-and-lease handoff and drains every older wake before that mapping is
-//! reset for another wait. The condition leaf repairs its waiter list, relocks
-//! the mutex, and only then asks this leaf to deliver cancellation and drain
-//! the user cleanup chain. This private condition point still excludes main
-//! and C11 tasks; other syscall cancellation points remain separate routing
-//! obligations. C11 cancellation, foreign tasks and stale handles are not
-//! admitted by this state contract. No full pthread-family claim follows.
+//! Both paths retain explicit `pthread_testcancel` and private
+//! `pthread_cond_wait` points. The legacy condition route uses the worker
+//! control mapping's durable barrier and registry-serialized wake leases.
+//! Owned main tasks and pthread workers instead use automatic waiter storage
+//! and the source MASKED syscall boundary in `pthread_cond.rs`: ECANCELED
+//! returns to list repair and mutex reacquisition before user cleanup.
+//! A consumed condition signal suppresses cancellation for that handoff.
+//! C11 cancellation, foreign tasks and stale handles are not admitted by this
+//! state contract. Other syscall cancellation points remain separate routing
+//! obligations; no full pthread-family claim follows.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread cancellation leaf requires little-endian Linux/x86-64");
@@ -101,7 +99,7 @@ pub(super) struct SelectedWorkerCancellation {
     cleanup_head: AtomicUsize,
     // Explicit flockfile ownership, not internal FILE operation guards.
     stdio_locks: AtomicUsize,
-    // A selected pthread condition wait uses a waiter in the private control
+    // A legacy selected pthread condition wait uses a waiter in the private control
     // mapping, rather than automatic storage, only while it is an implicit
     // cancellation point. Its barrier stays mapped through join/detach
     // reclamation, so a canceller that validated this control under the

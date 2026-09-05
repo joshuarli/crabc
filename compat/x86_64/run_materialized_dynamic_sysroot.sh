@@ -99,6 +99,7 @@ check_runtime_suites() {
     bash "$ROOT/compat/x86_64/run_general_dynamic_fork.sh" "$product"
     bash "$ROOT/compat/x86_64/run_owned_pthread_getattr.sh" "$product"
     bash "$ROOT/compat/x86_64/run_owned_pthread_join_cancel.sh" "$product"
+    bash "$ROOT/compat/x86_64/run_owned_pthread_cond_cancel.sh" "$product"
     CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$product"
     bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$product"
     CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$product"

@@ -4,7 +4,7 @@
  * can release the fixture's futex while the observer checks it. */
 #include <fcntl.h>
 #include <sys/syscall.h>
-static void witness_pthread_futex_wait(int tid, unsigned long operation)
+static void witness_pthread_futex_wait_at(int tid, unsigned long operation, unsigned long expected_address)
 {
     const char *value = getenv("CRABC_TEST_PROC_FD");
     if (!value) _Exit(70);
@@ -21,8 +21,14 @@ static void witness_pthread_futex_wait(int tid, unsigned long operation)
             long number;
             unsigned long address, observed_operation;
             if (sscanf(record, "%ld %lx %lx", &number, &address, &observed_operation) == 3 &&
-                number == SYS_futex && address && observed_operation == operation) return;
+                number == SYS_futex && address && observed_operation == operation &&
+                (!expected_address || address == expected_address)) return;
         }
         sched_yield();
     }
+}
+
+static void witness_pthread_futex_wait(int tid, unsigned long operation)
+{
+    witness_pthread_futex_wait_at(tid, operation, 0);
 }

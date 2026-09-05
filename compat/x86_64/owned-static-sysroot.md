@@ -186,7 +186,8 @@ stacks, 96 simultaneously live workers, concurrent detached creator/reaper
 handoffs, typed C11 results, cleanup/TSD teardown at explicit and blocked
 private-condition deferred cancellation points, and atfork order. Condition
 cancellation repairs the waiter and relocks its mutex before user cleanup;
-registry-serialized withdrawal drains outstanding wake leases before waiter reuse.
+owned waits use musl's automatic waiter and MASKED syscall boundary. The
+frozen archive keeps its separate mapped-waiter wake-lease protocol.
 Fork repairs the selected pthread/TSD, stdio, timezone, and shared process-lock
 state; a worker becomes the child's adopted main thread. Logical task exit is
 serialized separately from kernel clear-child-TID: the final live task owns
@@ -415,3 +416,18 @@ execution without requiring a proc mount. The owned join boundary registers an
 explicit private cleanup node before enabling cancellation while waiting;
 Rust destructors cannot restore ownership when cancellation exits the task.
 Retirement and cleanup-node removal run with cancellation disabled.
+
+The focused `owned-pthread-cond-cancel` command qualifies ordinary private
+`pthread_cond_wait` in original main tasks and pthread workers against pinned
+musl through both static and both dynamic executable entries. The fixture
+`owned_pthread_cond_cancel_probe.c` covers pending entry and kernel-observed
+blocked cancellation, disabled and masked callers, mutex ownership during
+cleanup, and reuse of the same condition after cancellation. A signaled waiter
+is held at the exact mutex relock futex before cancellation: it consumes the
+signal and returns normally, leaving cancellation pending for the next point.
+An unsignaled MASKED caller instead observes `ECANCELED` with cancellation
+disabled, as at musl's `__pthread_cond_timedwait` done label. The owned syscall
+boundary replaces the old worker-only signal-free route, so the original main
+task participates in the same list repair and mutex reacquisition contract.
+Timed waits, shared conditions, and non-normal mutexes remain outside this
+component's admitted boundary.

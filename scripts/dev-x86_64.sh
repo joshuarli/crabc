@@ -530,6 +530,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-pthread-join-cancel  test installed join cancellation and target reclamation
+  owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
   owned-pthread-lifecycle  run pinned-musl and installed pthread lifetime consumers
   owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
   lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
@@ -5534,7 +5535,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-io-cancellation) ;;
-    owned-pthread-getattr|owned-pthread-join-cancel) ;;
+    owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel) ;;
     owned-pthread-lifecycle) ;;
     qualification-manifest) ;;
     owned-static-sysroot) ;;
@@ -7539,6 +7540,9 @@ case "$command" in
         ;;
     owned-pthread-join-cancel)
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_join_cancel.sh "$@"
+        ;;
+    owned-pthread-cond-cancel)
+        run_in_container bash /workspace/compat/x86_64/run_owned_pthread_cond_cancel.sh "$@"
         ;;
     owned-pthread-getattr)
         [ "$#" -eq 0 ] || fail "owned-pthread-getattr takes no arguments"

@@ -233,3 +233,10 @@ runs the same leaf roster for all three. The integrated gate passed at the
 `.work/x86_64/three-dynamic-products-integrated.log`, retained product
 `.work/x86_64/tmp/materialized-dynamic.uyzJLv`. Dedicated dynamic cancellation
 composition and current publication receipts remain separate work.
+
+Installed and extracted products run `run_owned_pthread_cond_cancel.sh` for
+main and worker pending/blocked condition cancellation, cleanup with the mutex
+reacquired, condition reuse, disabled/MASKED states, and consumed-signal
+suppression. Blocked checks read the exact futex syscall through an inherited
+read-only `/proc` descriptor; private chroots require no additional proc mount.
+The same fixture runs unchanged against pinned musl 1.2.6.
