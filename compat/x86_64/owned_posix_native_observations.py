@@ -637,6 +637,23 @@ def _libc_oracle(reader, report):
     return value
 
 
+def _libc_filesystem_fixture(name):
+    """Reconstruct only the pinned source's declared disposable-root inputs.
+
+    Named semaphores/shared memory require /dev/shm. Musl's main-executable
+    $ORIGIN lookup requires /proc/self/exe for the one source-selected TLS
+    test; its literal target is that unit's separately bound executable.
+    These records describe fixtures, not extra runtime providers.
+    """
+    if name in ('functional/sem_open', 'regression/sem_close-unmap', 'functional/pthread_cancel-points'):
+        return [{'path': '/dev/shm', 'type': 'directory', 'mode': '01777'}]
+    if name == 'regression/tls_get_new-dtv':
+        return [{'path': '/proc', 'type': 'directory', 'mode': '0755'},
+                {'path': '/proc/self', 'type': 'directory', 'mode': '0755'},
+                {'path': '/proc/self/exe', 'type': 'symlink', 'target': '/regression/tls_get_new-dtv'}]
+    return []
+
+
 def _libc_root_phases(reader, run, *, name, side, payload, controls, topology, product_identity, oracle, product):
     phases = run['root_payload']
     keys(phases, ('before', 'after', 'unchanged'), 'libc-test private-root phase roster')
@@ -656,57 +673,61 @@ def _libc_root_phases(reader, run, *, name, side, payload, controls, topology, p
         reader.bind(phases[phase], path, 'libc-test retained private-root phase')
         same(read_json(path), {'schema': 'crabc.x86_64-owned-libc-test-root-payload/v1', 'side': side, 'phase': phase,
              'runtime': runtime, 'copied_files': copied, 'control_fixture': controls, 'topology': topology,
+             'filesystem_fixture': _libc_filesystem_fixture(name),
              'canonical_source_bindings': sources}, 'libc-test copied runtime, programs, and controls')
 
 
-def _libc_shell_fixture(reader, fixture, *, contract, product, compiler, environment, oracle):
-    """Bind the declared shell control to one installed-driver source object.
+def _libc_control_launcher(reader, fixture, *, contract, product, compiler, environment, oracle, launcher):
+    """Bind either declared launcher to one installed-driver source object.
 
     The helper is a control fixture outside the pinned 434-unit source graph.
     Each runtime side links that same object, preserving the product loader
-    alias while explicitly entering the separately copied musl/BusyBox shell.
+    alias while explicitly entering the separately copied musl/BusyBox shell or echo applet.
     """
-    work = reader.leaf / 'external-shell'
-    source, obj = work / 'shell-launcher.c', work / 'shell-launcher.o'
-    same(fixture['status'], 'passed', 'libc-test shell fixture status')
-    reader.bind(fixture['source'], source, 'libc-test declared shell launcher source')
-    require(read_bytes(source) == contract.CONTROL_SHELL_SOURCE, 'libc-test shell fixture source differs')
+    require(launcher in ('shell', 'echo'), 'libc-test unknown control launcher')
+    destination = '/bin/sh' if launcher == 'shell' else '/bin/echo'
+    expected_source = contract.CONTROL_SHELL_SOURCE if launcher == 'shell' else contract.CONTROL_ECHO_SOURCE
+    work = reader.leaf / ('external-' + launcher)
+    source, obj = work / (launcher + '-launcher.c'), work / (launcher + '-launcher.o')
+    same(fixture['status'], 'passed', 'libc-test control fixture status')
+    reader.bind(fixture['source'], source, 'libc-test declared control launcher source')
+    require(read_bytes(source) == expected_source, 'libc-test control fixture source differs')
     translation, header = fixture['candidate_translation'], fixture['header_translation']
-    same([translation['status'], header['status']], ['passed', 'passed'], 'libc-test shell fixture translation')
-    reader.bind(translation['object'], obj, 'libc-test shell fixture canonical object')
+    same([translation['status'], header['status']], ['passed', 'passed'], 'libc-test control fixture translation')
+    reader.bind(translation['object'], obj, 'libc-test control fixture canonical object')
     mapped = lambda path: Path(reader.recorded(path))
     _command_streams(reader, translation['record'], command=contract.compile_command(
         mapped(product), mapped(source), mapped(obj), shared_object=False, quote_dirs=(), kind='runtime'))
     _command_streams(reader, header['record'], command=contract.header_command(
         Path(compiler['path']), mapped(product), mapped(source), shared_object=False, quote_dirs=(), kind='runtime'))
     for value in (translation, header):
-        same(value['record']['environment'], environment, 'libc-test shell fixture compiler environment')
-    reader.bind(header['trace'], reader.local(header['record']['stderr']['path']), 'libc-test shell fixture header trace')
+        same(value['record']['environment'], environment, 'libc-test control fixture compiler environment')
+    reader.bind(header['trace'], reader.local(header['record']['stderr']['path']), 'libc-test control fixture header trace')
     trace = read_bytes(reader.local(header['trace']['path'])).decode('utf-8', errors='replace')
     paths = [match.group(1) for line in trace.splitlines() if (match := re.match(r'^\.+\s+(.*)$', line))]
-    same(header['trace_paths'], paths, 'libc-test shell fixture header closure')
+    same(header['trace_paths'], paths, 'libc-test control fixture header closure')
     require(all(reader.local(path, within=reader.root).is_relative_to(product / 'usr/include') for path in paths),
-            'libc-test shell fixture has foreign headers')
+            'libc-test control fixture has foreign headers')
     control = fixture['control']
-    same(control['layout'], {'busybox': '/control/busybox', 'loader': '/control/ld-musl-x86_64.so.1', 'launcher': '/bin/sh'},
-         'libc-test explicit shell control layout')
+    same(control['layout'], {'busybox': '/control/busybox', 'loader': '/control/ld-musl-x86_64.so.1', 'launcher': destination},
+         'libc-test explicit launcher control layout')
     for name in ('busybox', 'loader'):
         value = control[name]
-        keys(value, ('path', 'sha256'), 'libc-test shell control identity')
+        keys(value, ('path', 'sha256'), 'libc-test launcher control identity')
         require(Path(value['path']).is_absolute() and re.fullmatch('[0-9a-f]{64}', value['sha256']) is not None,
                 'libc-test malformed shell control identity')
-    same(control['loader']['sha256'], oracle['files']['loader']['sha256'], 'libc-test shell control pinned loader')
-    same(control['loader']['path'], '/opt/musl-1.2.6/lib/libc.so', 'libc-test shell control pinned source')
+    same(control['loader']['sha256'], oracle['files']['loader']['sha256'], 'libc-test launcher control pinned loader')
+    same(control['loader']['path'], '/opt/musl-1.2.6/lib/libc.so', 'libc-test launcher control pinned source')
     controls = {}
     for side in ('candidate', 'oracle'):
-        output = work / (side + '-shell-launcher')
-        _libc_test_link(reader, fixture[side + '_link'], unit={'id': 'external-shell', 'kind': 'runtime'},
+        output = work / (side + '-' + launcher + '-launcher')
+        _libc_test_link(reader, fixture[side + '_link'], unit={'id': 'external-' + launcher, 'kind': 'runtime'},
                         side=side, objects=[obj], contract=contract, product=product, output=output)
-        reader.bind(fixture[side + '_launcher'], output, 'libc-test side-specific shell launcher')
+        reader.bind(fixture[side + '_launcher'], output, 'libc-test side-specific control launcher')
         controls[side] = [{'source': value, 'destination': destination, 'copied_sha256': value['sha256']}
                          for value, destination in ((control['busybox'], control['layout']['busybox']),
                                                     (control['loader'], control['layout']['loader']),
-                                                    (reader.binding(output), '/bin/sh'))]
+                                                    (reader.binding(output), destination))]
     return controls
 
 
@@ -726,8 +747,12 @@ def _libc_test(reader):
     units, source_files = _libc_test_source(reader, report, contract)
     shell_controls = None
     if any(unit['id'] in contract.SHELL_RUNTIME_UNITS for unit in units):
-        shell_controls = _libc_shell_fixture(reader, report['external_shell_fixture'], contract=contract,
-            product=copied_product, compiler=product['compiler'], environment=product['compiler_environment'], oracle=oracle)
+        shell_controls = _libc_control_launcher(reader, report['external_shell_fixture'], contract=contract,
+            product=copied_product, compiler=product['compiler'], environment=product['compiler_environment'], oracle=oracle, launcher='shell')
+    echo_controls = None
+    if any(unit['id'] == 'functional/spawn' for unit in units):
+        echo_controls = _libc_control_launcher(reader, report['external_echo_fixture'], contract=contract,
+            product=copied_product, compiler=product['compiler'], environment=product['compiler_environment'], oracle=oracle, launcher='echo')
     options = report['source_preparation']['options']
     same(options['status'], 'passed', 'libc-test generated API options')
     reader.bind(options['input'], leaf / 'source-prepared/src/common/options.h.in', 'libc-test generated options template')
@@ -839,7 +864,11 @@ def _libc_test(reader):
                         for dso, destination in roles['runtime']]
             payload += [{'source': reader.binding(leaf / 'links' / side / (dso + '.so')), 'destination': '/usr/lib/' + Path(dso).name + '.so'}
                         for dso in roles['initial']]
-            controls = shell_controls[side] if name in contract.SHELL_RUNTIME_UNITS else []
+            controls = []
+            if name == 'functional/spawn':
+                controls = echo_controls[side]
+            elif name in contract.SHELL_RUNTIME_UNITS:
+                controls = shell_controls[side]
             _libc_root_phases(reader, run, name=name, side=side, payload=payload, controls=controls, topology=roles,
                               product_identity=product_identity, oracle=oracle, product=copied_product)
         require(raw['oracle'] == raw['candidate'], 'libc-test raw runtime streams differ: ' + name)

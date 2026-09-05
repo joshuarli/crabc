@@ -661,9 +661,10 @@ class NativeObservationsTests(unittest.TestCase):
         for suite, count in (('functional', 74), ('math', 199), ('regression', 68), ('api', 78)):
             source_names += [f'{suite}/case_{number:03d}' for number in range(count)]
         source_names += ['api/unistd']
-        for number, name in enumerate(('popen', 'dlopen', 'tls_align', 'tls_align_dlopen', 'tls_init_dlopen')):
+        for number, name in enumerate(('popen', 'dlopen', 'tls_align', 'tls_align_dlopen', 'tls_init_dlopen', 'sem_open', 'pthread_cancel-points', 'spawn')):
             source_names[source_names.index(f'functional/case_{73-number:03d}')] = 'functional/' + name
         source_names[source_names.index('regression/case_067')] = 'regression/tls_get_new-dtv'
+        source_names[source_names.index('regression/case_066')] = 'regression/sem_close-unmap'
         for name in source_names:
             self.put(stage / 'src' / (name + '.c'), ('/* ' + name + ' */\n').encode())
         self.put(stage / 'src/api/unistd.c', b'C(_PC_TIMESTAMP_RESOLUTION)\nC(_SC_XOPEN_UUCP)\n')
@@ -797,27 +798,32 @@ class NativeObservationsTests(unittest.TestCase):
             if definition['kind'] == 'dso':
                 for side in ('oracle', 'candidate'):
                     link(definition, side, [object_paths[definition['id']]])
-        shell_work = self.leaf / 'external-shell'
-        shell_source = self.put(shell_work / 'shell-launcher.c', contract.CONTROL_SHELL_SOURCE)
-        shell_object = self.put(shell_work / 'shell-launcher.o', b'canonical shell fixture object')
-        shell_header = command_record(contract.header_command(Path('/usr/bin/gcc'), mapped(copied_product), mapped(shell_source),
-            shared_object=False, quote_dirs=(), kind='runtime'), 'external-shell/shell-launcher.headers')
-        shell = {'status': 'passed', 'source': self.binding(shell_source),
-                 'control': {'busybox': {'path': '/bin/busybox', 'sha256': 'd' * 64},
-                             'loader': {'path': '/opt/musl-1.2.6/lib/libc.so', 'sha256': oracle_files['loader']['sha256']},
-                             'layout': {'busybox': '/control/busybox', 'loader': '/control/ld-musl-x86_64.so.1', 'launcher': '/bin/sh'}},
-                 'header_translation': {'status': 'passed', 'record': shell_header, 'trace': shell_header['stderr'], 'trace_paths': []},
-                 'candidate_translation': {'status': 'passed', 'object': self.binding(shell_object), 'record': command_record(
-                    contract.compile_command(mapped(copied_product), mapped(shell_source), mapped(shell_object), shared_object=False,
-                        quote_dirs=(), kind='runtime'), 'external-shell/shell-launcher.compile')}}
-        shell_controls = {}
-        for side in ('oracle', 'candidate'):
-            shell[side + '_link'] = link({'id': 'external-shell', 'kind': 'runtime'}, side, [shell_object], shell_work / (side + '-shell-launcher'))
-            shell[side + '_launcher'] = shell[side + '_link']['output']
-            shell_controls[side] = [{'source': value, 'destination': destination, 'copied_sha256': value['sha256']}
-                for value, destination in ((shell['control']['busybox'], '/control/busybox'),
-                    (shell['control']['loader'], '/control/ld-musl-x86_64.so.1'), (shell[side + '_launcher'], '/bin/sh'))]
-        report['external_shell_fixture'] = shell
+        controls_by_fixture = {}
+        for name, destination, source_bytes in (('shell', '/bin/sh', contract.CONTROL_SHELL_SOURCE),
+                                                  ('echo', '/bin/echo', contract.CONTROL_ECHO_SOURCE)):
+            fixture_work = self.leaf / ('external-' + name)
+            fixture_source = self.put(fixture_work / (name + '-launcher.c'), source_bytes)
+            fixture_object = self.put(fixture_work / (name + '-launcher.o'), (name + ' canonical fixture object').encode())
+            fixture_header = command_record(contract.header_command(Path('/usr/bin/gcc'), mapped(copied_product), mapped(fixture_source),
+                shared_object=False, quote_dirs=(), kind='runtime'), 'external-' + name + '/' + name + '-launcher.headers')
+            fixture = {'status': 'passed', 'source': self.binding(fixture_source),
+                     'control': {'busybox': {'path': '/bin/busybox', 'sha256': 'd' * 64},
+                                 'loader': {'path': '/opt/musl-1.2.6/lib/libc.so', 'sha256': oracle_files['loader']['sha256']},
+                                 'layout': {'busybox': '/control/busybox', 'loader': '/control/ld-musl-x86_64.so.1', 'launcher': destination}},
+                     'header_translation': {'status': 'passed', 'record': fixture_header, 'trace': fixture_header['stderr'], 'trace_paths': []},
+                     'candidate_translation': {'status': 'passed', 'object': self.binding(fixture_object), 'record': command_record(
+                        contract.compile_command(mapped(copied_product), mapped(fixture_source), mapped(fixture_object), shared_object=False,
+                            quote_dirs=(), kind='runtime'), 'external-' + name + '/' + name + '-launcher.compile')}}
+            fixture_controls = {}
+            for side in ('oracle', 'candidate'):
+                fixture[side + '_link'] = link({'id': 'external-' + name, 'kind': 'runtime'}, side, [fixture_object], fixture_work / (side + '-' + name + '-launcher'))
+                fixture[side + '_launcher'] = fixture[side + '_link']['output']
+                fixture_controls[side] = [{'source': value, 'destination': destination, 'copied_sha256': value['sha256']}
+                    for value, destination in ((fixture['control']['busybox'], '/control/busybox'),
+                        (fixture['control']['loader'], '/control/ld-musl-x86_64.so.1'), (fixture[side + '_launcher'], destination))]
+            report['external_' + name + '_fixture'] = fixture
+            controls_by_fixture[name] = fixture_controls
+        shell_controls, echo_controls = controls_by_fixture['shell'], controls_by_fixture['echo']
         for definition in units:
             name, kind = definition['id'], definition['kind']
             source, obj = prepared / definition['source'], object_paths[name]
@@ -863,12 +869,20 @@ class NativeObservationsTests(unittest.TestCase):
                                 'copied_sha256': oracle_files[key]['sha256'], 'observed_sha256': oracle_files[key]['sha256']}
                                 for key, destination in (('loader', '/lib/ld-musl-x86_64.so.1'), ('libc', '/usr/lib/libc.so'))}}
                             source_bindings = {'oracle': oracle}
-                        controls = shell_controls[side] if name in contract.SHELL_RUNTIME_UNITS else []
+                        controls = echo_controls[side] if name == 'functional/spawn' else shell_controls[side] if name in contract.SHELL_RUNTIME_UNITS else []
                         copied_files += [{'destination': entry['destination'], 'sha256': entry['source']['sha256']} for entry in controls]
+                        filesystem = []
+                        if name in ('functional/sem_open', 'regression/sem_close-unmap', 'functional/pthread_cancel-points'):
+                            filesystem = [{'path': '/dev/shm', 'type': 'directory', 'mode': '01777'}]
+                        elif name == 'regression/tls_get_new-dtv':
+                            filesystem = [{'path': '/proc', 'type': 'directory', 'mode': '0755'},
+                                {'path': '/proc/self', 'type': 'directory', 'mode': '0755'},
+                                {'path': '/proc/self/exe', 'type': 'symlink', 'target': '/regression/tls_get_new-dtv'}]
                         phases = {}
                         for phase in ('before', 'after'):
                             payload_record = {'schema': 'crabc.x86_64-owned-libc-test-root-payload/v1', 'side': side, 'phase': phase,
                                 'runtime': runtime_payload, 'copied_files': copied_files, 'control_fixture': controls,
+                                'filesystem_fixture': filesystem,
                                 'topology': contract.unit_dso_roles(name), 'canonical_source_bindings': source_bindings}
                             phases[phase] = self.binding(self.put(self.leaf / 'execution' / name / (side + '.root-payload-' + phase + '.json'), payload_record))
                         unit['runtime'][side] = {'status': 'passed', 'root_reclaimed': True, 'record': record,
@@ -904,6 +918,10 @@ class NativeObservationsTests(unittest.TestCase):
             'foreign options compiler': lambda r: r['source_preparation']['options']['record']['command'].__setitem__(0, '/foreign/gcc'),
             'foreign shell control loader': lambda r: r['external_shell_fixture']['control']['loader'].update(sha256='0' * 64),
             'foreign shell object': lambda r: r['external_shell_fixture']['candidate_translation']['object'].update(sha256='0' * 64),
+            'missing echo fixture': lambda r: r.pop('external_echo_fixture'),
+            'unbound echo object': lambda r: r['external_echo_fixture']['candidate_translation']['object'].update(sha256='0' * 64),
+            'foreign echo control loader': lambda r: r['external_echo_fixture']['control']['loader'].update(path='/lib/ld-musl-x86_64.so.1'),
+            'echo installed as another command': lambda r: r['external_echo_fixture']['control']['layout'].update(launcher='/bin/sh'),
             'foreign header compiler': lambda r: r['units'][0]['header_translation']['record']['command'].__setitem__(0, '/foreign/gcc'),
         }
         for description, mutate in mutations.items():
@@ -925,17 +943,25 @@ class NativeObservationsTests(unittest.TestCase):
             self.collect('libc-test')
         self.put(status_path, status_before)
         self.put(self.leaf / 'libc-test.json', original)
-        for description, mutate in (
-            ('changed copied candidate libc', lambda record: record['runtime']['candidate_product']['files'].update({'usr/lib/libc.so': '0' * 64})),
-            ('foreign copied program', lambda record: record['copied_files'][1].update(sha256='0' * 64)),
-            ('replaced candidate loader alias', lambda record: record['runtime']['candidate_product']['aliases'].update({'lib/ld-musl-x86_64.so.1': '/control/loader'})),
+        for unit_name, description, mutate in (
+            ('functional/case_000', 'changed copied candidate libc', lambda record: record['runtime']['candidate_product']['files'].update({'usr/lib/libc.so': '0' * 64})),
+            ('functional/case_000', 'foreign copied program', lambda record: record['copied_files'][1].update(sha256='0' * 64)),
+            ('functional/case_000', 'replaced candidate loader alias', lambda record: record['runtime']['candidate_product']['aliases'].update({'lib/ld-musl-x86_64.so.1': '/control/loader'})),
+            ('functional/sem_open', 'missing shared-memory fixture', lambda record: record['filesystem_fixture'].clear()),
+            ('regression/sem_close-unmap', 'changed shared-memory permissions', lambda record: record['filesystem_fixture'][0].update(mode='00755')),
+            ('functional/pthread_cancel-points', 'changed filesystem mode type', lambda record: record['filesystem_fixture'][0].update(mode=0o1777)),
+            ('regression/tls_get_new-dtv', 'foreign executable origin', lambda record: record['filesystem_fixture'][-1].update(target='/unrelated')),
+            ('regression/tls_get_new-dtv', 'omitted proc fixture parent', lambda record: record['filesystem_fixture'].pop(0)),
+            ('functional/case_000', 'undeclared filesystem fixture', lambda record: record['filesystem_fixture'].append({'path': '/dev/shm', 'type': 'directory', 'mode': '01777'})),
+            ('functional/spawn', 'missing copied echo control', lambda record: record['control_fixture'].pop()),
+            ('functional/spawn', 'copied echo from another launcher', lambda record: record['control_fixture'][-1]['source'].update(path='/workspace/.work/foreign/echo')),
         ):
             with self.subTest(description=description):
                 changed = json.loads(original)
-                runtime = next(unit for unit in changed['units'] if unit['id'] == 'functional/case_000')['runtime']['candidate']
+                runtime = next(unit for unit in changed['units'] if unit['id'] == unit_name)['runtime']['candidate']
                 phases = []
                 for phase in ('before', 'after'):
-                    path = self.leaf / 'execution/functional/case_000' / ('candidate.root-payload-' + phase + '.json')
+                    path = self.leaf / 'execution' / unit_name / ('candidate.root-payload-' + phase + '.json')
                     phases.append((path, path.read_bytes()))
                     record = json.loads(path.read_bytes())
                     mutate(record)
