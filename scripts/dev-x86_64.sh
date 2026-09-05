@@ -571,7 +571,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pty [DYNAMIC_SYSROOT]  test installed PTY naming, lifecycle and session handoff
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
   owned-signal-helpers [DYNAMIC_SYSROOT]  test installed signal aliases, bookkeeping and reporting
-  owned-pthread-join-cancel  test installed join cancellation and target reclamation
+  owned-pthread-join-cancel  test installed ordinary/try/timed join ownership and cancellation
   owned-pthread-cond-cancel  test condition cancellation and mutex reacquisition
   owned-pthread-cond-timed  test timed/shared condition transactions and mutex handoffs
   owned-pthread-mutex  test owned recursive, error-checking, and timed mutex behavior

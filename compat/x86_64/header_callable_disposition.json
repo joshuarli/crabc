@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "e870728f127c5a8cb2924c58c1c944a64446eedd94bc145d885ef71fb96bb96e",
+    "callable_inventory_sha256": "8ae449e729673017844da38117c042cd28930722b963ee617843f75d28899f78",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "9435c43f63e9f3e287b2503d5fcc192b4c3dd0c64d7bfd5af0cc07694d8f363f",
+    "parity_ledger_sha256": "2185a578584eda95c93cab3f80fcf8c2998b8b1b6fc51276c535cd898e314bd6",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "missing_reference_declaration_groups": [],
@@ -173,6 +173,8 @@
           "pthread_setschedparam",
           "pthread_setschedprio",
           "pthread_sigmask",
+          "pthread_timedjoin_np",
+          "pthread_tryjoin_np",
           "ptrace",
           "ptsname",
           "ptsname_r",
@@ -1406,9 +1408,7 @@
         "linkage_owner_obligation": "final-callable-provider-archive-closure",
         "members": [
           "pthread_mutexattr_getprioceiling",
-          "pthread_mutexattr_setprioceiling",
-          "pthread_timedjoin_np",
-          "pthread_tryjoin_np"
+          "pthread_mutexattr_setprioceiling"
         ],
         "provider_target": "future selected C ABI providers in libc.pthread-tls",
         "resolution": "planned-provider",
@@ -1794,13 +1794,13 @@
   },
   "summary": {
     "candidate_external_callable_count": 1525,
-    "declared_unverified_feature_callable_count": 232,
+    "declared_unverified_feature_callable_count": 234,
     "default_static_callable_count": 1122,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 7,
-      "planned-provider": 84
+      "planned-provider": 82
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1811,7 +1811,7 @@
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 93,
+    "unprovided_callable_count": 91,
     "verified_feature_callable_count": 78
   },
   "target": "x86_64-unknown-linux-musl",

@@ -414,19 +414,41 @@ resolver obligations. Those remain requirements of the planned families in
 `compat/x86_64/parity.toml`. The artifact does not change x86 promotion or
 public-support state.
 
-The focused `owned-pthread-join-cancel` command qualifies `pthread_join` entry
-and blocked cancellation against pinned musl in both static and both dynamic
-executable modes. `owned_pthread_join_cancel_probe.c` verifies user cleanup,
-continued target joinability after cancellation, joining from user cleanup,
-exact target reclamation,
-and disabled/masked state restoration. The blocked cases observe the joiner
-in its exact kernel `FUTEX_WAIT` through a read-only inherited `/proc` directory
-descriptor before cancellation; the target cannot complete during observation.
-`run_pthread_wait_witness.py` retains that descriptor across private chroot
-execution without requiring a proc mount. The owned join boundary registers an
-explicit private cleanup node before enabling cancellation while waiting;
-Rust destructors cannot restore ownership when cancellation exits the task.
-Retirement and cleanup-node removal run with cancellation disabled.
+The focused `owned-pthread-join-cancel` command qualifies `pthread_join`,
+`pthread_tryjoin_np`, and `pthread_timedjoin_np` against pinned musl through
+one fixture object compiled by the selected dynamic product, then linked in
+static ET_EXEC/static-PIE and dynamic PIE/non-PIE entries. Both dynamic modes
+are checked through kernel and direct-loader entries. The owned GNU pair uses the existing
+selected worker claim/reclamation transaction: `pthread_tryjoin_np` reports `EBUSY`
+before a cancellation point while the target has a live clear-child-TID, then
+uses ordinary join once it has exited. `pthread_timedjoin_np` tests
+cancellation before it reads the absolute `CLOCK_REALTIME` deadline, converts
+the deadline locally for the shared clear-child-TID futex, and returns
+`ETIMEDOUT` or `EINVAL` without consuming the target or changing result
+storage. A completed target succeeds before an invalid deadline is read. Musl
+times its private `detach_state` wait before an untimed `__tl_sync`; the
+selected lifecycle instead times the shared clear-child-TID until it reaches
+zero, then enters its existing result/reclamation transaction. This is a
+state-transition adaptation, not a claim that the two private records have
+byte identity. The owned public GNU spellings are weak same-address aliases of
+hidden strong `__pthread_tryjoin_np` and `__pthread_timedjoin_np` bodies.
+
+`owned_pthread_join_cancel_probe.c` checks result and errno preservation on
+busy/timeout/invalid-deadline paths, user cleanup, continued target joinability
+after cancellation, cleanup rejoin and exact target reclamation, cancellation
+after a completed tryjoin delegates to `pthread_join`, and disabled/masked
+state restoration. Blocked ordinary and timed joins are observed in their exact
+shared `FUTEX_WAIT` through a read-only inherited `/proc` directory descriptor;
+the target cannot complete during observation. The runner supplies the
+oracle's private-futex versus owned shared-futex expectation at execution time
+without rebuilding the fixture object. `run_pthread_wait_witness.py` retains
+that descriptor across private chroot execution without requiring a proc mount.
+The same runner witnesses the weak alias graph in pinned musl, the owned static
+archive and static executables, and the dynamic `libc.so` provider.
+The owned join boundary registers an explicit private cleanup node before
+enabling cancellation while waiting; Rust destructors cannot restore ownership
+when cancellation exits the task. Retirement and cleanup-node removal run with
+cancellation disabled.
 
 The focused `owned-pthread-cond-cancel` command qualifies ordinary private
 `pthread_cond_wait` in original main tasks and pthread workers against pinned

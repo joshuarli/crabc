@@ -447,6 +447,8 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "pthread_mutex_timedlock",
                 "pthread_mutexattr_setprotocol",
                 "pthread_sigmask",
+                "pthread_timedjoin_np",
+                "pthread_tryjoin_np",
                 "putc_unlocked",
                 "putchar_unlocked",
                 "putgrent",

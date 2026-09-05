@@ -22,11 +22,22 @@
 //!   entry layout, `clone=56` register shuffle, aligned child-stack callback,
 //!   and `exit=60` tail. The assembly below is a lexical private-symbol rename
 //!   of that source.
-//! - `src/thread/pthread_join.c` supplies the essential wait-before-reclaim
-//!   ordering: a joiner waits for `CLONE_CHILD_CLEARTID` to clear the worker
-//!   TID before it releases worker-owned memory. Its entry testcancel and
-//!   disabled/masked state handling also govern the owned join path. Because
-//!   this runtime additionally claims the target, it registers explicit
+//! - `src/thread/pthread_join.c::{__pthread_timedjoin_np,__pthread_tryjoin_np}`
+//!   supplies the essential wait-before-reclaim ordering and GNU join modes:
+//!   a joiner waits for `CLONE_CHILD_CLEARTID` to clear the worker TID before it
+//!   releases worker-owned memory; timed joins test cancellation before their
+//!   first deadline read, while tryjoin returns `EBUSY` before it enters that
+//!   cancellation point. Its `weak_alias(__pthread_timedjoin_np,
+//!   pthread_timedjoin_np)` and `weak_alias(__pthread_tryjoin_np,
+//!   pthread_tryjoin_np)` targets supply the public weak binding below. Its
+//!   disabled/masked state handling also governs the owned join path.
+//!   `src/thread/__timedwait.c::__timedwait_cp` supplies the absolute-realtime
+//!   deadline validation and relative futex conversion. Musl times its private
+//!   `detach_state` wait before its untimed `__tl_sync`; this selected lifecycle
+//!   instead times its shared clear-child-TID edge until it is zero, then enters
+//!   its existing result/reclamation transaction. It deliberately makes no
+//!   claim that the two private state records have byte identity.
+//!   Because this runtime additionally claims the target, it registers explicit
 //!   cancellation cleanup to restore joinability before any user handlers.
 //! - `src/thread/pthread_detach.c` supplies the single successful
 //!   joinable-to-detached ownership transition. This selected artifact keeps
@@ -78,7 +89,7 @@
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread create/join leaf requires little-endian Linux/x86-64");
 
-use core::ffi::{c_int, c_void};
+use core::ffi::{c_int, c_long, c_void};
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
@@ -90,6 +101,9 @@ use super::{
 const EAGAIN: c_int = 11;
 const EINTR: c_int = 4;
 const EINVAL: c_int = 22;
+const EBUSY: c_int = 16;
+const ETIMEDOUT: c_int = 110;
+const ECANCELED: c_int = 125;
 const ENOTSUP: c_int = 95;
 const LINUX_ERRNO_MAX: i64 = 4_095;
 
@@ -97,7 +111,25 @@ const PROT_NONE: i64 = 0;
 const PROT_READ_WRITE: i64 = 0x3;
 const MAP_PRIVATE_ANONYMOUS: i64 = 0x22;
 const FUTEX_WAIT: i64 = 0;
+const CLOCK_REALTIME: c_int = 0;
+const NANOS_PER_SECOND: c_long = 1_000_000_000;
 const PAGE_SIZE: usize = 4_096;
+
+/// Linux/x86-64's public `struct timespec` ABI at the timed-join boundary.
+///
+/// This private raw record is read only after a joinable selected target has
+/// actually reached its wait loop. That preserves musl's rule that a completed
+/// target succeeds even if the supplied deadline would otherwise be invalid.
+#[repr(C)]
+struct RawTimespec {
+    tv_sec: c_long,
+    tv_nsec: c_long,
+}
+
+const _: () = {
+    assert!(size_of::<RawTimespec>() == 16);
+    assert!(align_of::<RawTimespec>() == 8);
+};
 
 /// Publish the process-main selected cancellation state after its TLS owner
 /// established the documented FS+32 cache word.
@@ -2418,6 +2450,33 @@ pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
 pub(super) unsafe fn join_selected_worker(
     thread: *mut c_void,
 ) -> Result<SelectedWorkerJoinResult, c_int> {
+    // SAFETY: the C11 and ordinary pthread leaves retain their existing
+    // selected-worker ownership contract through the untimed route.
+    unsafe { join_selected_worker_with_wait(thread, SelectedWorkerJoinWait::Blocking) }
+}
+
+/// One selected-worker wait policy after a lifecycle claim.
+///
+/// The public timed GNU join route retains the raw caller deadline until the
+/// worker has not already reached the clear-child-TID edge. That keeps its
+/// deadline-read ordering separate from ordinary `pthread_join` and the C11
+/// sibling, which always use the null-timeout futex route.
+#[derive(Clone, Copy)]
+enum SelectedWorkerJoinWait {
+    Blocking,
+    Timed(*const RawTimespec),
+}
+
+/// Join one selected worker after choosing its source-shaped wait policy.
+///
+/// Timed joins and ordinary joins share the lifecycle claim, cancellation
+/// cleanup, result publication, registry withdrawal, and mapping reclamation
+/// transaction. Only the wait syscall's deadline conversion differs.
+#[inline(always)]
+unsafe fn join_selected_worker_with_wait(
+    thread: *mut c_void,
+    wait: SelectedWorkerJoinWait,
+) -> Result<SelectedWorkerJoinResult, c_int> {
     #[cfg(feature = "x86-owned-static-runtime")]
     unsafe {
         pthread_cancel::pthread_testcancel();
@@ -2425,14 +2484,20 @@ pub(super) unsafe fn join_selected_worker(
         pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, &mut original_state);
         let mut cleanup = core::mem::MaybeUninit::<pthread_cancel::CleanupNode>::uninit();
         let mut registered = false;
-        let result = join_selected_worker_inner(thread, cleanup.as_mut_ptr(), &mut registered, original_state);
+        let result = join_selected_worker_inner(
+            thread,
+            wait,
+            cleanup.as_mut_ptr(),
+            &mut registered,
+            original_state,
+        );
         pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut());
         if registered { pthread_cancel::_pthread_cleanup_pop(cleanup.as_mut_ptr(), 0); }
         pthread_cancel::pthread_setcancelstate(original_state, core::ptr::null_mut());
         return result;
     }
     #[cfg(not(feature = "x86-owned-static-runtime"))]
-    unsafe { join_selected_worker_inner(thread) }
+    unsafe { join_selected_worker_inner(thread, wait) }
 }
 
 #[cfg(feature = "x86-owned-static-runtime")]
@@ -2448,9 +2513,107 @@ unsafe extern "C" fn cancel_selected_worker_join(argument: *mut c_void) {
     unsafe { release_join_claim(argument.cast::<ThreadControl>()) };
 }
 
+/// Wait once through musl's `__timedwait_cp` shape for a selected child-TID.
+///
+/// The GNU deadline is absolute `CLOCK_REALTIME`, while Linux `FUTEX_WAIT`
+/// accepts a relative timeout. The child-TID futex stays shared because the
+/// kernel's `CLONE_CHILD_CLEARTID` wake has that key; this helper deliberately
+/// does not route through the public `clock_gettime` C ABI or write `errno`.
+/// It retains `__timedwait_cp`'s error normalization: only deadline validation,
+/// expiration, interruption, and masked cancellation remain observable by the
+/// surrounding timed-join loop.
+///
+/// # Safety
+///
+/// `control` remains linked through the caller's join claim, `child_tid` is
+/// its current nonzero clear-child-TID value, and `absolute_timeout`, when
+/// non-null, names readable native x86-64 `struct timespec` storage.
+#[inline(always)]
+unsafe fn timed_selected_worker_futex_wait(
+    control: *mut ThreadControl,
+    child_tid: c_int,
+    absolute_timeout: *const RawTimespec,
+) -> c_int {
+    let mut relative_timeout = RawTimespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let timeout = if absolute_timeout.is_null() {
+        core::ptr::null()
+    } else {
+        // SAFETY: raw copying preserves musl's deferred foreign-storage read
+        // and avoids manufacturing a Rust reference to caller C memory.
+        let absolute = unsafe { core::ptr::read(absolute_timeout) };
+        if absolute.tv_nsec < 0 || absolute.tv_nsec >= NANOS_PER_SECOND {
+            return EINVAL;
+        }
+        let mut now = RawTimespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        // SAFETY: Linux writes only the complete local x86 timespec. This is
+        // intentionally an ordinary raw observation, not a cancellation point.
+        let clock_result = unsafe {
+            raw_syscall::syscall2(
+                raw_syscall::SYS_CLOCK_GETTIME,
+                i64::from(CLOCK_REALTIME),
+                core::ptr::addr_of_mut!(now) as usize as i64,
+            )
+        };
+        if is_linux_error(clock_result) {
+            return EINVAL;
+        }
+        relative_timeout.tv_sec = absolute.tv_sec.wrapping_sub(now.tv_sec);
+        relative_timeout.tv_nsec = absolute.tv_nsec.wrapping_sub(now.tv_nsec);
+        if relative_timeout.tv_nsec < 0 {
+            relative_timeout.tv_sec = relative_timeout.tv_sec.wrapping_sub(1);
+            relative_timeout.tv_nsec += NANOS_PER_SECOND;
+        }
+        if relative_timeout.tv_sec < 0 {
+            return ETIMEDOUT;
+        }
+        core::ptr::addr_of!(relative_timeout)
+    };
+
+    // SAFETY: the claimed control keeps this exact child-TID word mapped,
+    // while the local relative timeout remains live for the syscall duration.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe {
+        pthread_cancel::syscall_cp(
+            raw_syscall::SYS_FUTEX,
+            core::ptr::addr_of_mut!((*control).child_tid) as usize as i64,
+            FUTEX_WAIT,
+            i64::from(child_tid),
+            timeout as usize as i64,
+            0,
+            0,
+        )
+    };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
+    let result = unsafe {
+        raw_syscall::syscall4(
+            raw_syscall::SYS_FUTEX,
+            core::ptr::addr_of_mut!((*control).child_tid) as usize as i64,
+            FUTEX_WAIT,
+            i64::from(child_tid),
+            timeout as usize as i64,
+        )
+    };
+    if !is_linux_error(result) {
+        return 0;
+    }
+    let error = positive_linux_error(result);
+    if error == EINTR || error == ETIMEDOUT || error == ECANCELED {
+        error
+    } else {
+        0
+    }
+}
+
 #[inline(always)]
 unsafe fn join_selected_worker_inner(
     thread: *mut c_void,
+    wait: SelectedWorkerJoinWait,
     #[cfg(feature = "x86-owned-static-runtime")] cleanup: *mut pthread_cancel::CleanupNode,
     #[cfg(feature = "x86-owned-static-runtime")] registered: &mut bool,
     #[cfg(feature = "x86-owned-static-runtime")] original_state: c_int,
@@ -2495,6 +2658,21 @@ unsafe fn join_selected_worker_inner(
             unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
             unsafe { release_join_claim(control) };
             return Err(EINVAL);
+        }
+        if let SelectedWorkerJoinWait::Timed(absolute_timeout) = wait {
+            let timed_wait = unsafe {
+                timed_selected_worker_futex_wait(control, child_tid, absolute_timeout)
+            };
+            if timed_wait == ETIMEDOUT || timed_wait == EINVAL {
+                #[cfg(feature = "x86-owned-static-runtime")]
+                unsafe { pthread_cancel::pthread_setcancelstate(JOIN_CANCEL_DISABLE, core::ptr::null_mut()); }
+                unsafe { release_join_claim(control) };
+                return Err(timed_wait);
+            }
+            // `__timedwait_cp` leaves EINTR and ECANCELED visible, but
+            // `__pthread_timedjoin_np` retries both until the target exits or
+            // the absolute timeout/validation branch wins.
+            continue;
         }
         // CLONE_CHILD_CLEARTID wakes this shared (not FUTEX_PRIVATE) word as
         // the last kernel action on normal child exit. EAGAIN and EINTR only
@@ -2659,6 +2837,142 @@ pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_v
     if !result.is_null() {
         // SAFETY: the caller gave writable pointer-result storage and the
         // local value survives the just-completed worker mapping release.
+        unsafe { core::ptr::write(result, worker_result as *mut c_void) };
+    }
+    0
+}
+
+/// Check whether one selected target has crossed its nonblocking join edge.
+///
+/// Musl's `pthread_tryjoin_np` checks `detach_state` before it calls the
+/// cancellable join path. Our lifecycle state represents that ownership edge,
+/// while `child_tid` represents the separate running/exited edge. Keep both
+/// reads under the registry lock so a completed target is handed to the common
+/// reclamation path only while its control mapping is still linked.
+#[cfg(feature = "x86-owned-static-runtime")]
+fn selected_worker_tryjoin_preflight(thread: *mut c_void) -> Result<(), c_int> {
+    if thread.is_null() {
+        return Err(EINVAL);
+    }
+    lock_selected_worker_registry();
+    let result = selected_worker_by_thread_pointer_locked(thread as usize)
+        .map(|control| {
+            // SAFETY: registry membership keeps this control record mapped
+            // for the complete lifecycle/child-TID snapshot.
+            let lifecycle = unsafe { (*control).lifecycle.load(Ordering::Acquire) };
+            let creator_handoff_pending = unsafe {
+                (*control).creator_handoff_pending.load(Ordering::Acquire)
+            };
+            let child_tid = unsafe { (*control).child_tid.load(Ordering::Acquire) };
+            if lifecycle != SelectedWorkerLifecycleState::Joinable.encode() {
+                Err(EINVAL)
+            } else if creator_handoff_pending != 0 || child_tid > 0 {
+                // This is the source `DT_JOINABLE` fast outcome: do not
+                // enter `__pthread_join`, and therefore do not testcancel.
+                Err(EBUSY)
+            } else if child_tid == 0 {
+                Ok(())
+            } else {
+                Err(EINVAL)
+            }
+        })
+        .unwrap_or(Err(EINVAL));
+    unlock_selected_worker_registry();
+    result
+}
+
+// Musl publishes the GNU join-mode names as weak aliases. Keep each selected
+// strong internal body hidden and give the public spelling the same ELF
+// address: a Rust forwarding wrapper would change both pointer identity and
+// normal archive override behavior.
+#[cfg(feature = "x86-owned-static-runtime")]
+core::arch::global_asm!(
+    ".hidden __pthread_tryjoin_np",
+    ".weak pthread_tryjoin_np",
+    ".set pthread_tryjoin_np, __pthread_tryjoin_np",
+    ".hidden __pthread_timedjoin_np",
+    ".weak pthread_timedjoin_np",
+    ".set pthread_timedjoin_np, __pthread_timedjoin_np",
+);
+
+/// Attempt to join one selected pthread worker without waiting.
+///
+/// This GNU entry preserves musl's two-phase behavior: a still-running
+/// joinable target reports `EBUSY` before any cancellation point, while an
+/// exited target takes the ordinary `pthread_join` cancellation/reclamation
+/// transaction. Error and busy paths leave the target and optional result
+/// storage unchanged and never publish C `errno`.
+///
+/// # Safety
+///
+/// `thread` must be an opaque selected pthread handle. `result`, when
+/// non-null, must designate aligned writable pointer storage for a successful
+/// result handoff. The caller must not concurrently take another selected
+/// lifecycle ownership operation on the same handle.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn __pthread_tryjoin_np(
+    thread: *mut c_void,
+    result: *mut *mut c_void,
+) -> c_int {
+    if let Err(error) = selected_worker_tryjoin_preflight(thread) {
+        return error;
+    }
+    let worker_result = match unsafe {
+        join_selected_worker_with_wait(thread, SelectedWorkerJoinWait::Blocking)
+    } {
+        Ok(worker_result) if worker_result.kind == SelectedWorkerResultKind::Pthread => {
+            worker_result.encoded_result
+        }
+        Ok(_) => return EINVAL,
+        Err(error) => return error,
+    };
+    if !result.is_null() {
+        // SAFETY: the caller supplied writable result storage; the encoded
+        // value was copied before its selected worker mappings were released.
+        unsafe { core::ptr::write(result, worker_result as *mut c_void) };
+    }
+    0
+}
+
+/// Join one selected pthread worker before an absolute realtime deadline.
+///
+/// This GNU entry is the selected owned translation of musl
+/// `__pthread_timedjoin_np`: it tests deferred cancellation before it reads
+/// the deadline, waits through the shared clear-child-TID futex at a relative
+/// `CLOCK_REALTIME` timeout, and leaves the lifecycle/result storage untouched
+/// on `ETIMEDOUT` or `EINVAL`. A target already past clear-child-TID succeeds
+/// without reading an invalid deadline, as in the source loop.
+///
+/// # Safety
+///
+/// `thread` must be an opaque selected pthread handle. `result`, when
+/// non-null, must designate aligned writable pointer storage. `absolute_time`,
+/// when non-null and reached by the wait loop, must point to aligned readable
+/// native x86-64 `struct timespec` storage. The caller must not concurrently
+/// take another selected lifecycle ownership operation on `thread`.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn __pthread_timedjoin_np(
+    thread: *mut c_void,
+    result: *mut *mut c_void,
+    absolute_time: *const c_void,
+) -> c_int {
+    let worker_result = match unsafe {
+        join_selected_worker_with_wait(
+            thread,
+            SelectedWorkerJoinWait::Timed(absolute_time.cast::<RawTimespec>()),
+        )
+    } {
+        Ok(worker_result) if worker_result.kind == SelectedWorkerResultKind::Pthread => {
+            worker_result.encoded_result
+        }
+        Ok(_) => return EINVAL,
+        Err(error) => return error,
+    };
+    if !result.is_null() {
+        // SAFETY: the caller supplied writable result storage; the encoded
+        // value was copied before its selected worker mappings were released.
         unsafe { core::ptr::write(result, worker_result as *mut c_void) };
     }
     0

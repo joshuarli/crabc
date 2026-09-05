@@ -208,10 +208,26 @@ transactions and existing cancellation/lifecycle consumers; retained log:
 `.work/x86_64/tmp/materialized-dynamic.irVBKA`. This is component evidence,
 not final same-revision platform qualification.
 
-Installed and extracted products also run `run_owned_pthread_join_cancel.sh`:
-pending entry and blocked joins cancel with user cleanup while preserving the
-target for a later join; disabled and masked callers complete their join and
-retain their original cancellation state. The oracle is pinned musl 1.2.6.
+Installed and extracted products also run `run_owned_pthread_join_cancel.sh`.
+The selected installed or extracted product compiles one fixture object, which
+links through each PIE/non-PIE consumer and runs through both its PT_INTERP and
+direct `/lib/ld-crabc-x86_64.so.1` entries. A supplied product resolves before
+evidence creation and must be a physical directory below the checkout `.work`
+tree. The runner compares `pthread_join`, `pthread_tryjoin_np`, and
+`pthread_timedjoin_np` with
+musl: busy/timeout/invalid-deadline paths preserve the result and target,
+completed `pthread_tryjoin_np` delegates to the cancellation point, and pending
+entry/blocked/disabled or masked callers retain the source cleanup and state
+behavior. The owned wait
+uses the shared clear-child-TID futex while the musl oracle uses its private
+detach-state futex; the shared object receives that expected observation from
+the runner. Musl times its private detach-state wait before its untimed
+`__tl_sync`; the selected lifecycle times the shared clear-child-TID until it
+reaches zero before its existing result/reclamation transaction. This does not
+claim byte identity between those private state records. The public GNU names
+are weak same-address aliases of hidden strong `__pthread_tryjoin_np` and
+`__pthread_timedjoin_np` bodies; the runner checks the alias graph in the
+dynamic `libc.so` provider. The oracle is pinned musl 1.2.6.
 
 Initial dependency cycles use musl 1.2.6 `ldso/dynlink.c:queue_ctors`
 (mark before descending, skip visited edges, append on completion), matching

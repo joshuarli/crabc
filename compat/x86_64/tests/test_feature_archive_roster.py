@@ -245,6 +245,8 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "pthread_setschedparam",
                 "pthread_setschedprio",
                 "pthread_sigmask",
+                "pthread_timedjoin_np",
+                "pthread_tryjoin_np",
                 "ptrace",
                 "ptsname",
                 "ptsname_r",
@@ -398,6 +400,16 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 ROSTER.ArchiveAlias("fileno_unlocked", "fileno", "weak-same-address"),
                 ROSTER.ArchiveAlias("fpurge", "__fpurge", "weak-same-address"),
                 ROSTER.ArchiveAlias("fputs_unlocked", "fputs", "weak-same-address"),
+                ROSTER.ArchiveAlias(
+                    "pthread_timedjoin_np",
+                    "__pthread_timedjoin_np",
+                    "weak-same-address",
+                ),
+                ROSTER.ArchiveAlias(
+                    "pthread_tryjoin_np",
+                    "__pthread_tryjoin_np",
+                    "weak-same-address",
+                ),
             ),
         )
         owned_dynamic = next(item for item in rows if item.identifier == "x86-owned-dynamic-runtime")

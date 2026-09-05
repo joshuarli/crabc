@@ -7546,6 +7546,157 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         # the cancellation-specific contract below owns its selected exports.
         self.assertIn("libc-pthread-create-join-tls", runner)
 
+    def test_owned_pthread_tryjoin_and_timedjoin_preserve_join_lifecycle(self) -> None:
+        """Keep the owned GNU join modes on the selected lifecycle boundary."""
+
+        implementation_path = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "pthread_create_join.rs"
+        )
+        probe_path = ROOT / "compat" / "x86_64" / "owned_pthread_join_cancel_probe.c"
+        runner_path = ROOT / "compat" / "x86_64" / "run_owned_pthread_join_cancel.sh"
+        static_documentation_path = ROOT / "compat" / "x86_64" / "owned-static-sysroot.md"
+        dynamic_documentation_path = (
+            ROOT / "compat" / "x86_64" / "materialized-dynamic-sysroot.md"
+        )
+        for path in (
+            implementation_path,
+            probe_path,
+            runner_path,
+            static_documentation_path,
+            dynamic_documentation_path,
+        ):
+            self.assertTrue(path.is_file(), f"missing owned pthread join-mode input: {path}")
+
+        implementation = implementation_path.read_text(encoding="utf-8")
+        probe = probe_path.read_text(encoding="utf-8")
+        owned_runner = runner_path.read_text(encoding="utf-8")
+        static_documentation = static_documentation_path.read_text(encoding="utf-8")
+        dynamic_documentation = dynamic_documentation_path.read_text(encoding="utf-8")
+        static_exports = {
+            line
+            for line in (
+                ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
+            ).read_text(encoding="utf-8").splitlines()
+            if line and not line.startswith("#")
+        }
+
+        for required in (
+            "src/thread/pthread_join.c::{__pthread_timedjoin_np,__pthread_tryjoin_np}",
+            "src/thread/__timedwait.c::__timedwait_cp",
+            "weak_alias(__pthread_timedjoin_np,",
+            "weak_alias(__pthread_tryjoin_np,",
+            "SelectedWorkerJoinWait",
+            "Timed(*const RawTimespec)",
+            "timed_selected_worker_futex_wait",
+            "CLOCK_REALTIME",
+            "NANOS_PER_SECOND",
+            "creator_handoff_pending",
+            "selected_worker_tryjoin_preflight",
+            "SelectedWorkerLifecycleState::Joinable.encode()",
+            "pthread_cancel::syscall_cp(",
+            "Musl times its private",
+            "claim that the two private state records have byte identity",
+            "pub unsafe extern \"C\" fn __pthread_tryjoin_np",
+            "pub unsafe extern \"C\" fn __pthread_timedjoin_np",
+        ):
+            self.assertIn(required, implementation)
+        for internal_symbol, public_symbol in (
+            ("__pthread_tryjoin_np", "pthread_tryjoin_np"),
+            ("__pthread_timedjoin_np", "pthread_timedjoin_np"),
+        ):
+            self.assertIn(
+                '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\n'
+                f'pub unsafe extern "C" fn {internal_symbol}',
+                implementation,
+            )
+            self.assertIn(f".hidden {internal_symbol}", implementation)
+            self.assertIn(f".weak {public_symbol}", implementation)
+            self.assertIn(f".set {public_symbol}, {internal_symbol}", implementation)
+        join_wait = implementation.split("unsafe fn join_selected_worker_with_wait", 1)[1].split(
+            "const JOIN_CANCEL_ENABLE", 1
+        )[0]
+        self.assertLess(
+            join_wait.index("pthread_cancel::pthread_testcancel()"),
+            join_wait.index("join_selected_worker_inner("),
+        )
+        timed_wait = implementation.split("unsafe fn timed_selected_worker_futex_wait", 1)[1].split(
+            "unsafe fn join_selected_worker_inner", 1
+        )[0]
+        self.assertLess(
+            timed_wait.index("core::ptr::read(absolute_timeout)"),
+            timed_wait.index("raw_syscall::syscall2("),
+        )
+        self.assertLess(
+            timed_wait.index("raw_syscall::syscall2("),
+            timed_wait.index("pthread_cancel::syscall_cp("),
+        )
+        tryjoin = implementation.split('pub unsafe extern "C" fn __pthread_tryjoin_np', 1)[1].split(
+            "/// Join one selected pthread worker before an absolute realtime deadline.", 1
+        )[0]
+        self.assertLess(
+            tryjoin.index("selected_worker_tryjoin_preflight(thread)"),
+            tryjoin.index("join_selected_worker_with_wait"),
+        )
+        self.assertTrue(
+            {"pthread_tryjoin_np", "pthread_timedjoin_np"}.isdisjoint(static_exports)
+        )
+
+        for required in (
+            "try-status",
+            "timed-status",
+            "timed-exited-invalid",
+            "timed-entry",
+            "timed-blocked",
+            "timed-disabled",
+            "timed-masked",
+            "try-pending-busy",
+            "try-pending-exited",
+            "selected_join_futex_operation",
+            "CRABC_TEST_PTHREAD_JOIN_FUTEX_OPERATION",
+            "tryjoin_pending_exited_body",
+        ):
+            self.assertIn(required, probe + owned_runner)
+        for required in (
+            "build_static=1",
+            "build_static=0",
+            "resolve(strict=True)",
+            '"$provided_dynamic_sysroot/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin -c "$probe" -o "$work/probe.o"',
+            "pthread-join-cancel product must be a checkout .work directory",
+            '"$work/probe.o"',
+            "run_case 128",
+            "run_case 0",
+            "assert_join_mode_aliases",
+            "musl-join",
+            "static-archive-join",
+            "dynamic-provider-join",
+            "/lib/ld-crabc-x86_64.so.1",
+            '"/consumer-$mode"',
+            "direct-$mode-$scenario.stdout",
+        ):
+            self.assertIn(required, owned_runner)
+        self.assertNotIn("-fPIC", owned_runner)
+        self.assertNotIn('-I"$ROOT/include"', owned_runner)
+        for required in (
+            "pthread_tryjoin_np",
+            "pthread_timedjoin_np",
+            "direct-loader entries",
+            "clear-child-TID",
+            "__tl_sync",
+            "byte identity",
+            "weak same-address aliases",
+        ):
+            self.assertIn(required, static_documentation)
+        for required in (
+            "pthread_tryjoin_np",
+            "pthread_timedjoin_np",
+            "direct `/lib/ld-crabc-x86_64.so.1` entries",
+            "__tl_sync",
+            "byte identity",
+            "weak same-address aliases",
+        ):
+            self.assertIn(required, dynamic_documentation)
+        self.assertIn("owned-pthread-join-cancel)", RUNNER.read_text(encoding="utf-8"))
+
     def test_libc_static_c_abi_pthread_cancel_deferred_artifact_stays_bounded(
         self,
     ) -> None:
