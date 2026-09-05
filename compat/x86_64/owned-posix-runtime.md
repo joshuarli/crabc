@@ -81,10 +81,14 @@ the atfork-registry and static fork/exec sources only for static evidence. Run
 to check this structural map. It does not execute a runtime workload or close
 any qualification cell.
 
-The family coordinator itself remains unimplemented. It must combine the
-focused and reused inputs into its six static cells and twelve dynamic cells,
-with one family receipt. Nothing in these current bindings closes
-`libc.posix-runtime`, promotes a product, or changes public x86 support.
+`owned_posix_family_execution.py` combines the focused and reused inputs into
+the six static and twelve dynamic cells. Its command, retained-artifact and
+validation contract is in
+[`owned-posix-family-execution.md`](owned-posix-family-execution.md).
+The implementation requires fresh execution against source-matched prepared
+products; its existence is not a passing matrix. A complete matrix still does
+not close `libc.posix-runtime`, replace the native aggregate, promote a product,
+or change public x86 support.
 
 ### Registered dynamic signal audit
 
@@ -110,9 +114,9 @@ complete contract.
 
 ## Required family coordinator
 
-Add one coordinator for this catalog after the implementation gaps are closed.
-It may dispatch existing focused runners, but it must own the finite capability
-map, the product matrix, and the family receipt. The coordinator must:
+The coordinator dispatches existing focused runners and owns the finite
+capability map, product matrix and workload receipt. Its acceptance criteria
+remain independent of the implementation. The coordinator must:
 
 1. Compile each C workload with the selected installed crabc driver and
    its installed project headers, retain that exact object, then link the same

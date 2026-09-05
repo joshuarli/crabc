@@ -11,6 +11,10 @@ import owned_posix_family_observations as observations
 
 
 class ObservationsTests(unittest.TestCase):
+    def test_layout_roster_matches_executable_family_workload_names(self):
+        import owned_posix_family_workloads as workloads
+        self.assertEqual(set(observations.LAYOUTS), {item.id for item in workloads.WORKLOADS})
+
     def setUp(self):
         scratch = HERE.parents[1] / '.work/x86_64/observation-tests'
         scratch.mkdir(parents=True, exist_ok=True)
@@ -99,11 +103,11 @@ class ObservationsTests(unittest.TestCase):
                         (evidence / f'{label}.{suffix}').write_bytes(raw)
                     if scenario == 'worker-survivor':
                         (evidence / f'{label}.raw.stdout').write_bytes(str(index).encode() + b'\n' + body)
-        result = observations.collect('dynamic-fork', evidence, static_required=False, root=source_root)
+        result = observations.collect('fork', evidence, static_required=False, root=source_root)
         self.assertEqual(result['scenarios']['pie/worker-survivor']['kind'], 'pid-protocol-semantic-projection')
         (evidence / 'owned-layout-non-pie-direct-worker-survivor.raw.stdout').unlink()
         with self.assertRaises(observations.ObservationError):
-            observations.collect('dynamic-fork', evidence, static_required=False, root=source_root)
+            observations.collect('fork', evidence, static_required=False, root=source_root)
 
     def test_fork_survivor_requires_complete_pid_transcript_and_exact_projection(self):
         body = b'dynamic fork survives adopted main exit: ok\n'

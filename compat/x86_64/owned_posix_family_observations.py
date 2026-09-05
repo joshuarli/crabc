@@ -56,7 +56,7 @@ LAYOUTS = {
     'pthread-signal': Layout('pthread_signal'),
     'io-cancellation': Layout('dynamic_io_cancellation', IO_SCENARIOS, '{scenario}-{mode}', '{scenario}-{mode}', '{scenario}-oracle'),
     'posix-timers': Layout('posix_timers', ('ordinary',), '{mode}-{scenario}', 'dynamic-{mode}-{scenario}', 'oracle-{scenario}', '.stdout.stderr', '.stdout.status'),
-    'dynamic-fork': Layout('dynamic_fork', FORK_SCENARIOS),
+    'fork': Layout('dynamic_fork', FORK_SCENARIOS),
     'static-fork': Layout('posix_static_fork', ('atfork-registry', 'static-posix-forkexec')),
 }
 
@@ -134,7 +134,7 @@ def collect(case: str, leaf_root: Path, *, static_required: bool, root: Path = R
         if not static_required:
             raise ObservationError('static fork requires the static product replay')
         return _static_fork(leaf, root, layout)
-    if case == 'dynamic-fork':
+    if case == 'fork':
         if static_required:
             raise ObservationError('dynamic fork has no static entries')
         return _fork(leaf, root, layout)
@@ -305,8 +305,8 @@ def _fork(leaf, root, layout):
                     witness['protocol'] = _fork_survivor(leaf, f'owned-layout-{mode}-{entry}-{scenario}', witness_raw, expected)
                 row['owned-layout-witnesses'][entry] = witness
             rows[f'{mode}/{scenario}'] = row
-    _roster(leaf, expected, 'dynamic-fork')
-    return {'case': 'dynamic-fork', 'scenarios': rows, 'supplemental': {}, 'sources': _sources(root, layout)}
+    _roster(leaf, expected, 'fork')
+    return {'case': 'fork', 'scenarios': rows, 'supplemental': {}, 'sources': _sources(root, layout)}
 
 
 def _static_fork(leaf, root, layout):
