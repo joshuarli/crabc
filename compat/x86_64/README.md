@@ -207,13 +207,19 @@ does not itself complete the pthread family or qualify a public platform.
 
 ## Installed pthread CPU-clock IDs
 
-`./scripts/dev-x86_64.sh owned-pthread-cpuclock` compares one held-live-worker
-consumer with pinned musl across installed static ET_EXEC/static PIE and
-dynamic PIE/non-PIE kernel/direct-loader entries. The
-[component contract](owned-pthread-cpuclock.md) records the source mapping,
-the registry's copied child-TID boundary, exact Linux CPU-clock encoding, and
-the excluded completion/join/detach/reaping race. It is focused private
-evidence and does not complete the pthread family or qualify a public platform.
+`./scripts/dev-x86_64.sh owned-pthread-cpuclock` compares one consumer with
+pinned musl across installed static ET_EXEC/static PIE and dynamic PIE/non-PIE
+kernel/direct-loader entries. It holds main live while a selected worker queries
+the saved main handle, then holds that worker live for worker-self and parent
+queries. The [component contract](owned-pthread-cpuclock.md) records the source
+mapping, exact Linux CPU-clock encoding, and distinct target-lifetime rules:
+finished or withdrawn `ESRCH` applies only to selected-worker registry handles;
+the retained initial-main token has no exited-main invalidation and is valid
+only while its caller holds main live. The pre-route behavioral red records the
+expanded consumer exiting 86 under the retained installed product while musl
+exited 0; the added initial-target route closes that live case. It is focused
+private evidence and does not complete the pthread family or qualify a public
+platform.
 
 ## Installed descriptor control
 

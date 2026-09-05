@@ -45,11 +45,29 @@ It checks worker-to-held-main, worker-self, and parent-to-live-worker IDs,
 their exact 32-bit encoding, `clock_gettime` acceptance, and separate
 caller-errno preservation.
 
-Null, foreign, finished, and withdrawn handles fail closed with positive
-`ESRCH` before the output slot is observed. This is candidate behavior outside
-musl's valid-TCB dereference precondition. The component excludes arbitrary
-foreign handles, completed-target and lifecycle races, a public TCB or
-all-thread list, `clock_getcpuclockid`, general clock APIs, affinity or
-scheduling attributes, cancellation, synchronization, TSS, dynamic TLS
-policy, CRT/sysroot completion, pthread-family completion, promotion, and
-public x86 support.
+Null and foreign handles fail closed with positive `ESRCH` before the output
+slot is observed. A finished or withdrawn selected-worker registry handle also
+fails closed that way. The retained initial-main token is deliberately not
+invalidated when main exits: this bounded route has only the caller-held-live
+main contract above, so querying it after main exits is outside the selected
+case because Linux can reuse its recorded TID. These diagnostics are candidate
+behavior outside musl's valid-TCB dereference precondition. The component
+excludes arbitrary foreign handles, completed-target and lifecycle races, a
+public TCB or all-thread list, `clock_getcpuclockid`, general clock APIs,
+affinity or scheduling attributes, cancellation, synchronization, TSS,
+dynamic TLS policy, CRT/sysroot completion, pthread-family completion,
+promotion, and public x86 support.
+
+## Behavioral regression direction
+
+The retained pre-route installed dynamic product was compiled with this
+unchanged consumer after the worker-to-held-main check was added. Pinned musl
+exited 0; the installed product exited 86 with empty standard output and
+error. The consumer encodes that result as main's `64` plus the held-main
+worker check's `22`: its old resolver reached the selected-worker registry for
+the main token, found no registry record, and returned `ESRCH=3`, which the
+consumer records as its nonzero call result. The retained red receipt is
+`cpuclock-main-target-red.z62Sok/assertion.txt` below this worktree's ignored
+`.work/x86_64/tmp/` state. It demonstrates the normal live-main target that
+the initial-target scalar route now covers; it is not evidence for exited-main
+or other lifecycle cases.

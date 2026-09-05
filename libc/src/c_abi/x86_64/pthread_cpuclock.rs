@@ -23,10 +23,12 @@
 //! `pthread_detach`, or a later selected lifecycle/reaping boundary that can
 //! clear its TID, withdraw its mapping, or permit TID reuse. The initial
 //! target is the same scalar snapshot: a worker querying a saved main handle
-//! must keep main executing. A null, foreign, finished, or withdrawn handle
-//! fails closed with `ESRCH` before observing the output slot; that diagnostic
-//! is candidate-only because musl's full-TCB implementation requires a valid
-//! handle.
+//! must keep main executing. Null and foreign handles fail closed with `ESRCH`
+//! before observing the output slot, as do finished or withdrawn
+//! selected-worker handles. The retained initial-main token has no
+//! exited-main invalidation; its only supported condition is the held-live
+//! target contract. Those diagnostics are candidate-only because musl's
+//! full-TCB implementation requires a valid handle.
 //!
 //! The leaf selects only `pthread_getcpuclockid` for the bootstrapped main
 //! thread, a held process-main target, and a live selected worker. It does not
