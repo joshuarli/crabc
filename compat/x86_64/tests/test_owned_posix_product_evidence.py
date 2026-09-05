@@ -7,7 +7,6 @@ import hashlib
 import importlib.util
 import json
 import os
-import shutil
 import sys
 import tempfile
 import unittest
@@ -42,6 +41,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         self.workload = self.put("workload.o", b"one owned workload object\n")
         self.executable = self.put("consumer", b"owned executable bytes\n")
         self.linker = self.put("tools/ld.lld", b"sealed linker bytes\n")
+        os.chmod(self.linker, 0o755)
         self.static = self.install_static()
         self.dynamic = self.install_dynamic()
 
@@ -275,6 +275,32 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "workload|application"):
             self.validate("pie", receipt)
 
+    def test_dotdot_workload_path_fails_before_normalization(self) -> None:
+        receipt = self.dynamic_receipt()
+        redirected = self.root / "redirected-work"
+        redirected.symlink_to(self.root, target_is_directory=True)
+        lexical_workload = redirected / ".." / self.workload.name
+        with mock.patch.object(evidence, "_readelf", return_value=self.readelf("pie")):
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "lexical parent"):
+                evidence.validate_link(
+                    self.dynamic, lexical_workload, self.executable, receipt, "pie"
+                )
+
+    def test_receipt_linker_must_be_an_executable_ld_lld(self) -> None:
+        receipt = self.static_receipt()
+        record = json.loads(receipt.read_text(encoding="utf-8"))
+        other = self.put("tools/not-a-linker", b"not lld\n")
+        os.chmod(other, 0o755)
+        record["resolved_linker"] = {"path": str(other), "sha256": digest(other)}
+        self.write_json(receipt, record)
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "ld.lld"):
+            self.validate("static", receipt)
+
+        receipt = self.static_receipt("static-pie")
+        os.chmod(self.linker, 0o644)
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "executable"):
+            self.validate("static-pie", receipt)
+
     def test_foreign_runtime_roster_fails(self) -> None:
         receipt = self.dynamic_receipt()
         record = json.loads(receipt.read_text(encoding="utf-8"))
@@ -286,6 +312,26 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         record["owned_runtime_inputs"].append("usr/lib/libforeign.so")
         self.write_json(receipt, record)
         with self.assertRaisesRegex(evidence.ProductEvidenceError, "runtime roster"):
+            self.validate("pie", receipt)
+
+    def test_dynamic_product_requires_its_sealed_driver(self) -> None:
+        receipt = self.dynamic_receipt()
+        (self.dynamic / "bin/crabc-cc-dynamic").unlink()
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "sealed driver"):
+            self.validate("pie", receipt)
+
+    def test_dynamic_product_requires_its_shared_static_helper(self) -> None:
+        receipt = self.dynamic_receipt()
+        (self.dynamic / "share/crabc/crabc_cc_static.py").unlink()
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "shared static helper"):
+            self.validate("pie", receipt)
+
+    def test_dynamic_product_requires_its_headers(self) -> None:
+        receipt = self.dynamic_receipt()
+        headers = self.dynamic / "usr/include"
+        (headers / "fixture.h").unlink()
+        headers.rmdir()
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "headers"):
             self.validate("pie", receipt)
 
     def test_stale_runtime_and_manifest_fail(self) -> None:

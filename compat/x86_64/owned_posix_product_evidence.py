@@ -37,6 +37,8 @@ STATIC_REQUIRED = (
     "usr/lib/libcrabc-builtins.a",
 )
 DYNAMIC_REQUIRED = (
+    "bin/crabc-cc-dynamic",
+    "share/crabc/crabc_cc_static.py",
     "lib/ld-crabc-x86_64.so.1",
     "usr/lib/crt1.o",
     "usr/lib/Scrt1.o",
@@ -70,6 +72,8 @@ def _absolute(path: Path) -> Path:
 def _reject_symlink_components(path: Path, description: str) -> Path:
     """Return an absolute existing path only after checking lexical ancestry."""
 
+    if ".." in path.parts:
+        _fail(f"{description} has lexical parent traversal: {path}")
     absolute = _absolute(path)
     current = Path(absolute.anchor)
     try:
@@ -97,6 +101,18 @@ def _physical_regular(path: Path, description: str) -> Path:
     try:
         if not stat.S_ISREG(absolute.lstat().st_mode):
             _fail(f"{description} is not a physical regular file: {path}")
+    except OSError as error:
+        raise ProductEvidenceError(f"{description} is unreadable: {path}") from error
+    return absolute
+
+
+def _physical_executable(path: Path, description: str) -> Path:
+    """Require a physical regular executable, never merely named link input."""
+
+    absolute = _physical_regular(path, description)
+    try:
+        if not absolute.lstat().st_mode & 0o111:
+            _fail(f"{description} is not executable: {path}")
     except OSError as error:
         raise ProductEvidenceError(f"{description} is unreadable: {path}") from error
     return absolute
@@ -233,8 +249,9 @@ def _validate_static_product(root: Path) -> tuple[Path, dict[str, str]]:
     missing = sorted(set(STATIC_REQUIRED) - set(files))
     if missing:
         _fail(f"static product manifest omits required runtime payload: {missing[0]}")
-    _validate_payload_tree(root, files, aliases={})
+    _physical_executable(root / "bin/crabc-cc", "static product sealed driver")
     _physical_directory(root / "usr/include", "static product headers")
+    _validate_payload_tree(root, files, aliases={})
     return manifest_path, files
 
 
@@ -250,6 +267,11 @@ def _validate_dynamic_product(root: Path) -> tuple[Path, dict[str, str]]:
     missing = sorted(set(DYNAMIC_REQUIRED) - set(files))
     if missing:
         _fail(f"dynamic product manifest omits required runtime payload: {missing[0]}")
+    _physical_executable(root / "bin/crabc-cc-dynamic", "dynamic product sealed driver")
+    _physical_regular(
+        root / "share/crabc/crabc_cc_static.py", "dynamic product shared static helper"
+    )
+    _physical_directory(root / "usr/include", "dynamic product headers")
     _validate_payload_tree(root, files, aliases=aliases)
     return manifest_path, files
 
@@ -274,6 +296,9 @@ def _check_file_record(value: object, receipt: Path, expected: Path, description
 def _check_linker(value: object, receipt: Path) -> str:
     record = _require_keys(value, {"path", "sha256"}, "resolved linker")
     linker = _recorded_file(record["path"], receipt, "resolved linker")
+    if linker.name != "ld.lld":
+        _fail("resolved linker is not ld.lld")
+    _physical_executable(linker, "resolved linker")
     if record["path"] != str(linker):
         _fail("resolved linker path is not physical")
     _require_digest(record["sha256"], _sha256(linker), "resolved linker")
@@ -325,7 +350,7 @@ def _validate_static_trace(trace: Path, root: Path, workload: Path, linkage: str
 
 
 def _validate_static_receipt(
-    root: Path, workload: Path, executable: Path, receipt: Path, linkage: str
+    root: Path, workload: Path, executable: Path, receipt: Path, linkage: str,
 ) -> str:
     record = _json_object(receipt, "static link receipt")
     expected_keys = {"schema", "format", "target", "mode", "resolved_linker", "owned_link_contract", "input_receipts", "output", "map", "trace"}
@@ -524,7 +549,9 @@ def validate_link(
     receipt_path = _physical_regular(receipt, "link receipt")
     if linkage in {"static", "static-pie"}:
         manifest, _ = _validate_static_product(root)
-        receipt_hash = _validate_static_receipt(root, workload_path, executable_path, receipt_path, linkage)
+        receipt_hash = _validate_static_receipt(
+            root, workload_path, executable_path, receipt_path, linkage
+        )
         product_format = STATIC_PRODUCT_FORMAT
     else:
         manifest, _ = _validate_dynamic_product(root)
