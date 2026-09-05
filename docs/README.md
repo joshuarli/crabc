@@ -30,6 +30,9 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Installed residual POSIX process-control evidence](../compat/x86_64/owned-process-control.md)
   — source-mapped 31-name C ABI workload across owned products; its 44-name
   process-control accounting remains composite and non-promoting.
+- [Owned kernel-residual C API evidence](../compat/x86_64/owned-kernel-residual.md)
+  — source-mapped installed residual `system.kernel-admin` slice across owned
+  products; neither POSIX-family completion nor public support.
 - [Owned C11 quick-termination evidence](../compat/x86_64/owned-quick-exit.md)
   — fixed-capacity `at_quick_exit`/`quick_exit` behavior across the installed
   native products; neither runtime-family completion nor public support.

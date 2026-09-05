@@ -97,6 +97,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "system-cancellation",
                 "spawn",
                 "linux-control",
+                "kernel-residual",
                 "vm-mechanisms",
                 "group",
                 "assert",

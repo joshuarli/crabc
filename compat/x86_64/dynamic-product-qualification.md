@@ -53,8 +53,8 @@ recovery, C11 mapping, and both `PT_INTERP` and direct-loader consumer entry,
 the shared full I/O cancellation roster, and the separate `system()`
 cancellation protocol, the contained C `syslog` state/delivery matrix, and
 private/shared pthread spin-lock publication, owned Linux-control and
-filesystem mechanisms, the `perror`/`err(3)` reporting matrix, and the C
-filename-pattern matrix.
+kernel-residual mechanisms, filesystem mechanisms, the `perror`/`err(3)`
+reporting matrix, and the C filename-pattern matrix.
 The runtime-loading leaf also
 runs search policy, all-thread GD TLS growth, initial IE, new-runtime-IE
 rejection, retained scope/lifecycle and rollback differentials. Both clean

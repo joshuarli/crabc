@@ -33,7 +33,7 @@ readonly CASES=(
 
 provided_dynamic="${1:-}"
 if [ -n "$provided_dynamic" ]; then
-    provided_dynamic="$(realpath -e "$provided_dynamic")"
+    provided_dynamic="$(realpath "$provided_dynamic")"
 fi
 python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
 from pathlib import Path
@@ -212,6 +212,9 @@ if [ "$#" -eq 0 ]; then
     assert_static_symbols "$work/static-product/usr/lib/libc.a"
     run_static_mode "$work/static-product" static
     run_static_mode "$work/static-product" static-pie
+    matrix='static/static-PIE plus dynamic PIE/non-PIE kernel/direct'
+else
+    matrix='provided dynamic PIE/non-PIE kernel/direct'
 fi
 
 assert_dynamic_symbols "$installed/usr/lib/libc.so"
@@ -221,4 +224,4 @@ for mode in pie non-pie; do
     done
 done
 
-printf 'owned kernel residual: PASS (same project-header object with pinned musl; configuration, scheduler ENOSYS/output preservation, host identity, membarrier, personality, variadic prctl/syscall/ulimit, and private UTS/seccomp negatives; static/static-PIE/dynamic PIE/non-PIE kernel/direct); evidence: %s\n' "$work"
+printf 'owned kernel residual: PASS (same project-header object with pinned musl; configuration, scheduler ENOSYS/output preservation, host identity, membarrier, personality, variadic prctl/syscall/ulimit, and private UTS/seccomp negatives; %s); evidence: %s\n' "$matrix" "$work"

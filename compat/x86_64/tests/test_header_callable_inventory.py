@@ -1823,6 +1823,15 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         }
         self.assertIn("lchmod", replacements["x86-owned-static-runtime"])
         self.assertIn("lchmod", partition["default_static"]["members"])
+        configuration_replacements = {
+            "confstr", "fpathconf", "getdtablesize", "getpagesize", "pathconf", "sysconf",
+        }
+        self.assertTrue(
+            configuration_replacements <= replacements["x86-owned-static-runtime"]
+        )
+        self.assertTrue(
+            configuration_replacements <= set(partition["default_static"]["members"])
+        )
 
     def test_quick_exit_names_have_the_owned_runtime_provider(self) -> None:
         with CHECKED_INVENTORY.open(encoding="utf-8") as stream:
