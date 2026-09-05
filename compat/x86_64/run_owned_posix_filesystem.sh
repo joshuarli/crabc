@@ -167,11 +167,18 @@ PY
 # only observes legacy absent names below /work or /tmp inside that chroot.
 run_in_root() {
     local root="$1" output="$2"
+    local status
     shift 2
     mkdir -p "$root/tmp"
     step="run-${output##*/}"
-    timeout 35 env -i PATH="$PATH" chroot "$root" "$@" \
-        >"$output" 2>"${output%.stdout}.stderr"
+    if timeout 35 env -i PATH="$PATH" chroot "$root" "$@" \
+            >"$output" 2>"${output%.stdout}.stderr"; then
+        status=0
+    else
+        status=$?
+    fi
+    printf '%s\n' "$status" >"${output%.stdout}.status"
+    [ "$status" -eq 0 ]
 }
 
 # Build the dynamic product first so exactly one installed dynamic driver emits
@@ -233,6 +240,7 @@ if [ -n "$static_product" ]; then
             run_in_root "$root" "$work/static-$mode-$scenario.stdout" /consumer "$scenario"
             cmp "$work/oracle-$scenario.stdout" "$work/static-$mode-$scenario.stdout"
             cmp "$work/oracle-$scenario.stderr" "$work/static-$mode-$scenario.stderr"
+            cmp "$work/oracle-$scenario.status" "$work/static-$mode-$scenario.status"
         done
         printf 'owned POSIX filesystem static %s: PASS\n' "$mode"
     done
@@ -258,6 +266,7 @@ for mode in pie non-pie; do
             run_in_root "$root" "$work/dynamic-$mode-$entry-$scenario.stdout" "${command[@]}"
             cmp "$work/oracle-$scenario.stdout" "$work/dynamic-$mode-$entry-$scenario.stdout"
             cmp "$work/oracle-$scenario.stderr" "$work/dynamic-$mode-$entry-$scenario.stderr"
+            cmp "$work/oracle-$scenario.status" "$work/dynamic-$mode-$entry-$scenario.status"
         done
     done
     printf 'owned POSIX filesystem dynamic %s: PASS\n' "$mode"

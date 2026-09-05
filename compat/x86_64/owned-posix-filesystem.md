@@ -33,6 +33,11 @@ trace, output, mode, and ELF boundary, and rejects application DSOs or runtime
 imports. Supplied static and dynamic products receive that full payload check
 before the runner creates mutable evidence.
 
+Every oracle and candidate scenario retains raw stdout, stderr, and a `.status`
+sibling containing the actual timeout/chroot process exit status. Candidate
+observations must match the oracle in all three channels. This process status
+is distinct from the workload's C return values and `errno` transcript.
+
 The runner accepts `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`.
 It rejects empty or option-looking values, repeated product arguments, and
 canonical duplicate static/dynamic paths before creating evidence. With no

@@ -431,6 +431,20 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
         self.assertNotIn("name_to_handle_at(AT_FDCWD, NULL", probe)
         self.assertNotIn("open_by_handle_at(-1, NULL", probe)
 
+    def test_runner_retains_and_compares_per_scenario_process_status(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+
+        self.assertIn('local status', source)
+        self.assertIn('status=$?', source)
+        self.assertIn('>"${output%.stdout}.status"', source)
+        self.assertIn('[ "$status" -eq 0 ]', source)
+        self.assertLess(source.index('status=$?'), source.index('[ "$status" -eq 0 ]'))
+        for comparison in (
+            'cmp "$work/oracle-$scenario.status" "$work/static-$mode-$scenario.status"',
+            'cmp "$work/oracle-$scenario.status" "$work/dynamic-$mode-$entry-$scenario.status"',
+        ):
+            self.assertIn(comparison, source)
+
     def test_dynamic_qualification_replays_the_composed_runner(self) -> None:
         source = QUALIFICATION.read_text(encoding="utf-8")
         self.assertIn(
@@ -450,6 +464,7 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
             "canonical duplicate static/dynamic paths",
             "does not build or run a static product",
             "invokes neither producer",
+            "process exit status",
         ):
             self.assertIn(required, document)
         self.assertNotIn("null-pointer", document)
