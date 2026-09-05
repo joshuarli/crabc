@@ -1,7 +1,7 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "5a36a410a3e83c0ff26f906562037d54c01c5f4fc667e737e33337fd2d661ffd",
+    "callable_inventory_sha256": "3acde30c3558ae68a47de4b5eaafe945d3e01ad8cafa7b06eb7152daa3af29b7",
     "matrix_contract_sha256": "335eeba75e30e98d996a35f079d1e7b2da36df2ebd3be023ab85253049ac0113",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },

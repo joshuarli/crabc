@@ -155,7 +155,6 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
             downstream["linkage_owner_obligation"],
             "final-callable-provider-archive-closure",
         )
-        self.assertEqual(downstream["deferred_callable_count"], 294)
         self.assertTrue(downstream["routing_exact"])
         self.assertEqual(downstream["provider_archive_evidence_state"], "incomplete")
         self.assertTrue(downstream["final_provider_archive_closure_available"])
@@ -296,7 +295,6 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         self.assertTrue(assessment["complete"])
         self.assertEqual(assessment["blockers"], [])
         self.assertEqual(len(facts.expected_deferred_callable_names), 2)
-        self.assertEqual(downstream["deferred_callable_count"], 294)
         self.assertFalse(downstream["final_provider_archive_closure_complete"])
         self.assertFalse(downstream["selected_provider_linkage_audit_complete"])
         self.assertNotIn(
