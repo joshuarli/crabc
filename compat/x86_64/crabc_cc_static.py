@@ -394,6 +394,8 @@ def parse_invocation(arguments: Sequence[str]) -> Invocation:
     sources: list[Path] = []
     objects: list[Path] = []
     compiler_flags: list[str] = []
+    debug_requested = False
+    explicit_uncompressed_debug = False
     index = 0
 
     while index < len(arguments):
@@ -426,9 +428,35 @@ def parse_invocation(arguments: Sequence[str]) -> Invocation:
             output = Path(arguments[index])
         elif rejects_runtime_flag(argument):
             raise DriverError(f"unowned target-runtime flag is rejected: {argument}")
+        elif argument.startswith("-gz"):
+            # The pinned Rust-distributed LLD intentionally has no zlib
+            # support.  GCC in this image otherwise emits compressed DWARF
+            # for `-g`, which makes a perfectly valid admitted application
+            # object impossible to link.  Preserve debug information and
+            # make its physical representation part of the sealed driver
+            # contract instead of stripping it or depending on a new decoder.
+            if argument != "-gz=none":
+                raise DriverError(
+                    "compressed debug data is unsupported by the installed linker; use -gz=none"
+                )
+            if explicit_uncompressed_debug:
+                raise DriverError("-gz=none may be specified only once")
+            explicit_uncompressed_debug = True
+            compiler_flags.append(argument)
         elif argument.startswith("-"):
             if argument.startswith(("-D", "-U", "-O", "-g", "-std=", "-W", "-fno-")):
                 compiler_flags.append(argument)
+                # Retain the existing family of admitted GCC debug spellings
+                # while making every debug-producing one linkable.  `-g0`
+                # explicitly requests no debug payload and must preserve the
+                # no-debug command path unchanged.
+                # GCC applies these options in command-line order.  In
+                # particular, ``-g -g0`` deliberately returns to a
+                # no-debug translation, while ``-g0 -g`` re-enables DWARF.
+                # Track the final admitted debug request so the injected
+                # representation flag follows the actual compiler state.
+                if argument.startswith("-g"):
+                    debug_requested = argument != "-g0"
             else:
                 raise DriverError(f"unsupported driver flag: {argument}")
         else:
@@ -459,6 +487,10 @@ def parse_invocation(arguments: Sequence[str]) -> Invocation:
         raise DriverError("-c requires exactly one admitted application source")
     if not compile_only and not (sources or objects):
         raise DriverError("linking requires at least one admitted application source or object")
+    if explicit_uncompressed_debug and not debug_requested:
+        raise DriverError("-gz=none requires an admitted debug-generation flag")
+    if debug_requested and not explicit_uncompressed_debug:
+        compiler_flags.append("-gz=none")
     return Invocation(
         mode,
         compile_only,

@@ -299,6 +299,40 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                     driver.execute(self.root, arguments)
                 run.assert_not_called()
 
+    def test_debug_translation_forces_uncompressed_dwarf_for_both_driver_layers(self):
+        """The pinned LLD cannot consume the image's default compressed DWARF."""
+
+        source = Path(self.temporary.name) / "consumer.c"
+        source.write_text("int value;\n")
+        static = driver.shared.parse_invocation(["-g", "-c", str(source), "-o", str(Path(self.temporary.name) / "static.o")])
+        self.assertEqual(static.compiler_flags, ("-g", "-gz=none"))
+        no_debug = driver.shared.parse_invocation(["-c", str(source), "-o", str(Path(self.temporary.name) / "plain.o")])
+        self.assertNotIn("-gz=none", no_debug.compiler_flags)
+        disabled_debug = driver.shared.parse_invocation(["-g", "-g0", "-c", str(source), "-o", str(Path(self.temporary.name) / "disabled.o")])
+        self.assertEqual(disabled_debug.compiler_flags, ("-g", "-g0"))
+        reenabled_debug = driver.shared.parse_invocation(["-g0", "-g", "-c", str(source), "-o", str(Path(self.temporary.name) / "reenabled.o")])
+        self.assertEqual(reenabled_debug.compiler_flags, ("-g0", "-g", "-gz=none"))
+
+        output = Path(self.temporary.name) / "dynamic.o"
+        with patch.object(driver.shared, "compiler", return_value="/owned/gcc"), patch.object(driver, "run", return_value="") as run:
+            driver.execute(self.root, ["--dynamic-pie", "-g", "-c", str(source), "-o", str(output)])
+        compiler_command = run.call_args.args[0]
+        self.assertEqual(compiler_command.count("-g"), 1)
+        self.assertEqual(compiler_command.count("-gz=none"), 1)
+        self.assertLess(compiler_command.index("-g"), compiler_command.index("-gz=none"))
+
+    def test_compressed_debug_requests_are_rejected_before_translation(self):
+        source = Path(self.temporary.name) / "consumer.c"
+        source.write_text("int value;\n")
+        for flag in ("-gz", "-gz=zlib", "-gz=zstd", "-gz=zlib-gnu"):
+            with self.subTest(flag=flag):
+                with self.assertRaisesRegex(driver.shared.DriverError, "compressed debug"):
+                    driver.shared.parse_invocation(["-g", flag, "-c", str(source), "-o", str(Path(self.temporary.name) / "out.o")])
+                with patch.object(driver, "run") as run:
+                    with self.assertRaisesRegex(driver.shared.DriverError, "compressed debug"):
+                        driver.execute(self.root, ["--dynamic-pie", "-g", flag, "-c", str(source), "-o", str(Path(self.temporary.name) / "out.o")])
+                    run.assert_not_called()
+
     def test_install_output_cannot_be_modified(self):
         source = Path(self.temporary.name) / "input.c"
         source.write_text("int main(void) { return 0; }\n")

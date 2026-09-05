@@ -97,6 +97,13 @@ selected compiler for every source in that invocation. This supports source
 oracles whose runtime-rounding checks require GCC to preserve dynamic rounding;
 it does not authorize arbitrary `-f` controls.
 
+The shared installed helper preserves an admitted `-g` request, but appends
+`-gz=none` unless the caller already supplied that exact spelling. The pinned
+Rust-distributed LLD cannot read GCC's compressed DWARF, so this keeps source
+debug information linkable without stripping it. Explicit compressed forms
+such as `-gz`, `-gz=zlib`, and `-gz=zstd` fail before translation. `-g0`
+retains GCC's ordinary no-debug behavior and receives no injected flag.
+
 `-rdynamic` may occur once on an executable dynamic link only. The driver
 turns it into the fixed LLD `--export-dynamic` option, which permits a
 `dlopen(0)` consumer to resolve executable definitions. Shared-object and
@@ -112,6 +119,12 @@ runs the resulting dynamic-rounding object against pinned musl, and executes
 an exported-main `dlopen(0)` consumer through a copied owned product. With no
 argument it materializes a private development product; the libc-test leaf
 itself always requires a supplied product.
+
+`run_owned_driver_debug_info.sh` is the accompanying native debug-information
+proof. It builds fresh static and dynamic products, links a `-g` dynamic DSO
+and a static executable, verifies retained uncompressed DWARF, verifies that a
+no-debug object remains free of DWARF, and records the rejected compressed
+request.
 
 ## Evidence and limits
 

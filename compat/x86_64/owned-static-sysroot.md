@@ -55,6 +55,10 @@ Receipt-bearing links accept only caller-owned object inputs, reserve their
 JSON/map/trace sidecars before linking, and reject output aliases of those
 sidecars or any installed-tree path. The source translator remains a
 fixed-image development-environment tool; it is not a target runtime input.
+When an admitted source request enables GCC debug information with `-g`, the
+helper passes `-gz=none` unless that exact option is already present. This
+preserves linkable uncompressed DWARF for the pinned LLD; compressed `-gz`
+forms fail at the driver boundary, while `-g0` remains a no-debug request.
 
 The private package helper creates a normalized `tar.xz` only from that
 manifest-bound regular-file payload. It rejects archive/extraction paths through existing
