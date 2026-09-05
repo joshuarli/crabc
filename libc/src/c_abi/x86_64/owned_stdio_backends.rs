@@ -59,7 +59,7 @@ unsafe fn allocate(extra: usize, flags: u32) -> *mut StandardStream {
         let Some(size) = core::mem::size_of::<StandardStream>().checked_add(extra) else {
             errno::set_errno(12); return ptr::null_mut();
         };
-        let stream = malloc(size).cast::<StandardStream>();
+        let stream = stdio_cabi_malloc(size).cast::<StandardStream>();
         if !stream.is_null() { stream.write(StandardStream::new(-1, flags & !F_APP, BUFSIZ)); }
         stream
     }
@@ -106,8 +106,8 @@ pub unsafe extern "C" fn open_memstream(output: *mut *mut c_char, size: *mut usi
     unsafe {
         let stream = allocate(0, F_NORD);
         if stream.is_null() { return stream; }
-        let buffer = malloc(1).cast::<u8>();
-        if buffer.is_null() { free(stream.cast()); return ptr::null_mut(); }
+        let buffer = stdio_cabi_malloc(1).cast::<u8>();
+        if buffer.is_null() { stdio_cabi_free(stream.cast()); return ptr::null_mut(); }
         *buffer = 0; *output = buffer.cast(); *size = 0;
         (*stream).backend = Backend::Growing(Growing { output, size, position: 0, buffer, length: 0, space: 0 });
         (*stream).orientation = -1;
@@ -126,8 +126,8 @@ pub unsafe extern "C" fn open_wmemstream(output: *mut *mut c_int, size: *mut usi
     unsafe {
         let stream = allocate(0, F_NORD);
         if stream.is_null() { return stream; }
-        let buffer = malloc(4).cast::<c_int>();
-        if buffer.is_null() { free(stream.cast()); return ptr::null_mut(); }
+        let buffer = stdio_cabi_malloc(4).cast::<c_int>();
+        if buffer.is_null() { stdio_cabi_free(stream.cast()); return ptr::null_mut(); }
         *buffer = 0; *output = buffer; *size = 0;
         (*stream).capacity = 0;
         (*stream).backend = Backend::WideGrowing(WideGrowing {
@@ -149,7 +149,7 @@ unsafe fn write_wide(stream: *mut StandardStream, source: *const u8, length: usi
             let Some(doubled) = state.space.checked_mul(2).and_then(|n| n.checked_add(1)) else { return 0; };
             let space = doubled | minimum;
             if space > isize::MAX as usize / 4 { return 0; }
-            let buffer = realloc(state.buffer.cast(), space*4).cast::<c_int>();
+            let buffer = stdio_cabi_realloc(state.buffer.cast(), space*4).cast::<c_int>();
             if buffer.is_null() { return 0; }
             ptr::write_bytes(buffer.add(state.space), 0, space-state.space);
             state.buffer = buffer; state.space = space; *state.output = buffer;
@@ -273,7 +273,7 @@ pub(super) unsafe fn write(stream: *mut StandardStream, source: *const u8, lengt
                     let Some(minimum) = end.checked_add(1) else { errno::set_errno(12); return 0; };
                     let Some(doubled) = state.space.checked_mul(2).and_then(|n| n.checked_add(1)) else { errno::set_errno(12); return 0; };
                     let space = doubled | minimum;
-                    let buffer = realloc(state.buffer.cast(), space).cast::<u8>();
+                    let buffer = stdio_cabi_realloc(state.buffer.cast(), space).cast::<u8>();
                     if buffer.is_null() { return 0; }
                     *state.output = buffer.cast();
                     ptr::write_bytes(buffer.add(state.space), 0, space-state.space);

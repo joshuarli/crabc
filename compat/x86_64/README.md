@@ -97,6 +97,12 @@ Its [component record](owned-loader-short-stack.md) identifies the pinned
 launcher behavior, raw transaction-storage boundary, and contained
 musl-versus-owned observation.
 
+`./scripts/dev-x86_64.sh owned-stdio-allocator-interposition` is the focused
+dynamic FILE lifetime regression for executable `malloc`/`realloc`/`free`
+interposition. Its [component record](owned-stdio-allocator-interposition.md)
+binds the retained upstream `flockfile-list` order to the installed PLT
+allocator boundary and stale-lock storage check.
+
 ## Boundary and caveats
 
 The campaign covers Linux 5.10-or-newer, native x86-64 little-endian execution,

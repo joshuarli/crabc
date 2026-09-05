@@ -572,6 +572,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
   owned-credentials-profile [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify the selected credential-setter profile against musl
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
+  owned-stdio-allocator-interposition  qualify dynamic FILE allocation ownership against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-signal [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test installed pthread signal delivery and task retirement
   owned-posix-timers [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX timer lifecycle and callback TLS reset
@@ -5866,7 +5867,7 @@ case "$command" in
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
-    owned-error-reporting) ;;
+    owned-error-reporting|owned-stdio-allocator-interposition) ;;
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation) ;;
     owned-dynamic-io-cancellation) ;;
@@ -8051,6 +8052,11 @@ PY
         [ "$#" -eq 0 ] || fail "owned-error-reporting takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_error_reporting.sh
+        ;;
+    owned-stdio-allocator-interposition)
+        [ "$#" -eq 0 ] || fail "owned-stdio-allocator-interposition takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_stdio_allocator_interposition.sh
         ;;
     owned-io-cancellation)
         ensure_image

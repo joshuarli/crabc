@@ -150,10 +150,48 @@ pub static mut stdout: *mut StandardStream = ptr::addr_of_mut!(STDOUT_STREAM);
 #[no_mangle]
 pub static mut stderr: *mut StandardStream = ptr::addr_of_mut!(STDERR_STREAM);
 
+// Dynamic FILE records, their growing backend storage, and getdelim input all
+// cross the public C allocation boundary. The executable may replace that
+// boundary, so every release/reallocation must select the same provider as
+// allocation. A Rust extern spelling is insufficient here: LLVM can fold it
+// into this crate's known mimalloc wrapper before the ELF lookup boundary.
+// These opaque tails are source-matched to directory_streams.rs's selected C
+// allocator client thunks; the linker emits ordinary PLT relocations for the
+// public symbols, preserving executable interposition in libc.so.
+core::arch::global_asm!(r#"
+    .text
+    .p2align 4
+    .globl __crabc_x86_stdio_cabi_malloc
+    .hidden __crabc_x86_stdio_cabi_malloc
+    .type __crabc_x86_stdio_cabi_malloc,@function
+__crabc_x86_stdio_cabi_malloc:
+    jmp malloc
+    .size __crabc_x86_stdio_cabi_malloc, .-__crabc_x86_stdio_cabi_malloc
+
+    .p2align 4
+    .globl __crabc_x86_stdio_cabi_realloc
+    .hidden __crabc_x86_stdio_cabi_realloc
+    .type __crabc_x86_stdio_cabi_realloc,@function
+__crabc_x86_stdio_cabi_realloc:
+    jmp realloc
+    .size __crabc_x86_stdio_cabi_realloc, .-__crabc_x86_stdio_cabi_realloc
+
+    .p2align 4
+    .globl __crabc_x86_stdio_cabi_free
+    .hidden __crabc_x86_stdio_cabi_free
+    .type __crabc_x86_stdio_cabi_free,@function
+__crabc_x86_stdio_cabi_free:
+    jmp free
+    .size __crabc_x86_stdio_cabi_free, .-__crabc_x86_stdio_cabi_free
+"#);
+
 unsafe extern "C" {
-    fn malloc(size: usize) -> *mut c_void;
-    fn realloc(pointer: *mut c_void, size: usize) -> *mut c_void;
-    fn free(pointer: *mut c_void);
+    #[link_name = "__crabc_x86_stdio_cabi_malloc"]
+    fn stdio_cabi_malloc(size: usize) -> *mut c_void;
+    #[link_name = "__crabc_x86_stdio_cabi_realloc"]
+    fn stdio_cabi_realloc(pointer: *mut c_void, size: usize) -> *mut c_void;
+    #[link_name = "__crabc_x86_stdio_cabi_free"]
+    fn stdio_cabi_free(pointer: *mut c_void);
 }
 
 // All pointer initialization is performed under the individual stream lock.
@@ -495,13 +533,13 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut Standard
             || (current & 3 == 1 && stream_flags & F_NORD == 0) {
             errno::set_errno(EINVAL); return ptr::null_mut();
         }
-        let stream = malloc(core::mem::size_of::<StandardStream>()).cast::<StandardStream>();
+        let stream = stdio_cabi_malloc(core::mem::size_of::<StandardStream>()).cast::<StandardStream>();
         if stream.is_null() { return stream; }
         ptr::write(stream, StandardStream::new(fd, stream_flags, BUFSIZ));
         if flags & 0o2000000 != 0 { raw_syscall::syscall3(72, fd as i64, 2, 1); }
         if flags & 0o2000 != 0 && current & 0o2000 == 0 {
             if c_status(raw_syscall::syscall3(72, fd as i64, 4, (current | 0o2000) as i64)) < 0 {
-                free(stream.cast()); return ptr::null_mut();
+                stdio_cabi_free(stream.cast()); return ptr::null_mut();
             }
         }
         // Unpublished dynamic state needs no lock. Establish terminal mode
@@ -642,10 +680,10 @@ pub unsafe extern "C" fn getdelim(line: *mut *mut c_char, capacity: *mut usize, 
                 let minimum = end + 2;
                 let mut wanted = minimum;
                 if !found && wanted < usize::MAX / 4 { wanted += wanted / 2; }
-                let mut grown = realloc((*line).cast(), wanted).cast::<c_char>();
+                let mut grown = stdio_cabi_realloc((*line).cast(), wanted).cast::<c_char>();
                 if grown.is_null() {
                     wanted = minimum;
-                    grown = realloc((*line).cast(), wanted).cast::<c_char>();
+                    grown = stdio_cabi_realloc((*line).cast(), wanted).cast::<c_char>();
                     if grown.is_null() {
                         // Pinned getdelim consumes only the prefix which fits
                         // the original allocation, retaining its ownership.
@@ -730,7 +768,7 @@ pub unsafe extern "C" fn fclose(stream: *mut StandardStream) -> c_int {
         }
         if !permanent {
             unlist_locked_file(stream);
-            free((*stream).getln_buffer.cast()); free(stream.cast());
+            stdio_cabi_free((*stream).getln_buffer.cast()); stdio_cabi_free(stream.cast());
         }
         result
     }
