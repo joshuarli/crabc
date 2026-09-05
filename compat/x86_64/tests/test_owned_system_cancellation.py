@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 
@@ -14,6 +16,28 @@ DOCUMENT = ROOT / "compat/x86_64/owned-system-cancellation.md"
 
 
 class OwnedSystemCancellationTests(unittest.TestCase):
+    def test_static_replay_parser_rejects_short_options_before_product_tools(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            tools = Path(temporary)
+            python = tools / "python3"
+            python.write_text("#!/bin/sh\nexit 79\n", encoding="utf-8")
+            python.chmod(0o755)
+            environment = {**os.environ, "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}"}
+            for arguments in (("-x",), ("--static-sysroot", "-x")):
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(
+                        ["bash", str(RUNNER), *arguments], cwd=ROOT,
+                        env=environment, capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(
+                        result.stderr,
+                        f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n",
+                    )
+
     def test_static_replay_parser_rejects_incomplete_or_ambiguous_arguments(
         self,
     ) -> None:
@@ -60,7 +84,7 @@ class OwnedSystemCancellationTests(unittest.TestCase):
             '-fno-stack-protector -c "$CHILD" -o "$work/child.o"',
             "audit_canonical_objects",
             "audit_musl_links",
-            "crabc.system-cancellation-compile/v1",
+            "crabc.system-cancellation-compile/v2",
             '"effective_codegen_flag": "-fPIE"',
             '"not_selected": ["-fPIC", "-fno-pie"]',
             "consumer and child objects unexpectedly coincide",
@@ -100,6 +124,33 @@ class OwnedSystemCancellationTests(unittest.TestCase):
             "system(3)",
             "pclose(3)",
             "supervisor",
+        ):
+            self.assertIn(required, document)
+
+    def test_compile_receipt_binds_each_actual_translation_and_rechecks_all_inputs(self) -> None:
+        runner = RUNNER.read_text(encoding="utf-8")
+        document = DOCUMENT.read_text(encoding="utf-8")
+
+        for required in (
+            "crabc.system-cancellation-compile/v2",
+            "actual_compile_command",
+            "dependency_audit", "installed_helper", "compiler", "clean_environment",
+            "compiler_contract.compiler()", "compiler_contract.clean_environment()",
+            "assert_canonical_compile_receipt",
+            "canonical compile source changed", "canonical compile header changed",
+            '"consumer", probe', '"child", child',
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn('"/usr/bin/gcc"', runner)
+        self.assertLess(
+            runner.index('actual_compile_command = [str(driver), "--dynamic-pie", *caller_flags'),
+            runner.index('TMPDIR="$work" "$ORACLE_CC"'),
+        )
+        self.assertGreaterEqual(
+            runner.count('assert_canonical_compile_receipt "$installed_dynamic"'), 4,
+        )
+        for required in (
+            "actual installed-driver command", "installed helper and compiler", "after every link matrix",
         ):
             self.assertIn(required, document)
 

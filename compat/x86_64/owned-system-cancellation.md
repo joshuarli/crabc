@@ -14,13 +14,17 @@ shell as the protocol target.
 The runner creates two distinct installed-header objects, one for the consumer
 and one for the child. It compiles each once through the installed dynamic
 driver with `--dynamic-pie`, `-std=c11`, `-fno-builtin`, and
-`-fno-stack-protector`, then records the exact compiler/header dependency
-closure, source and object hashes, and relocations in `compile.json`. The
-driver's effective code-generation flag is `-fPIE`; it does not assume that
-`-fPIC` is a universal application-object policy. Native linking and execution
-prove that each unchanged object serves pinned musl, static/static-PIE, and
-dynamic PIE/non-PIE. The latter runs through both kernel and direct interpreter
-entry, while the fixed child continues to enter through its owned interpreter.
+`-fno-stack-protector`, then records the actual installed-driver command,
+installed helper and compiler identities, clean compiler environment, exact
+compiler/header dependency closure, source and object hashes, and relocations
+in `compile.json`. The driver's effective code-generation flag is `-fPIE`; it
+does not assume that `-fPIC` is a universal application-object policy. The
+runner checks both source roles, every installed header hash, and both immutable
+objects before the musl links, after those links, and after every link matrix.
+Native linking and execution prove that each unchanged object serves pinned
+musl, static/static-PIE, and dynamic PIE/non-PIE. The latter runs through both
+kernel and direct interpreter entry, while the fixed child continues to enter
+through its owned interpreter.
 
 Each static link requests a static receipt. The runner's local two-role audit
 binds the selected consumer or child object to its source receipt, the current

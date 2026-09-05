@@ -23,13 +23,13 @@ while [ "$#" -gt 0 ]; do
             [ "$#" -ge 2 ] || usage
             [ -n "$2" ] || usage
             case "$2" in
-                --*) usage ;;
+                -*) usage ;;
             esac
             [ -z "$provided_static" ] || usage
             provided_static="$2"
             shift 2
             ;;
-        --*)
+        -*)
             usage
             ;;
         *)
@@ -133,11 +133,23 @@ work = work.resolve()
 probe = probe.resolve()
 child = child.resolve()
 headers = product / "usr/include"
+driver = product / "bin/crabc-cc-dynamic"
+helper = product / "share/crabc/crabc_cc_static.py"
+manifest = product / "share/crabc/manifest.json"
 sys.path.insert(0, str(product / "share/crabc"))
 import crabc_cc_static as compiler_contract
+if Path(compiler_contract.__file__).resolve() != helper.resolve():
+    raise SystemExit("system cancellation compile helper is not installed")
 
 def digest(path: Path) -> str:
     return sha256(path.read_bytes()).hexdigest()
+
+def binding(path: Path) -> dict[str, str]:
+    return {"path": str(path), "sha256": digest(path)}
+
+compiler = Path(compiler_contract.compiler())
+clean_environment = compiler_contract.clean_environment()
+audit_environment = {**clean_environment, "TMPDIR": str(work)}
 
 prefix = [
     "-nostdinc", "-isystem", str(headers), "-ffreestanding", "-fno-builtin",
@@ -160,11 +172,11 @@ objects = []
 for role, source, source_files, required_headers in roles:
     object_path = work / f"{role}.o"
     dependency_path = work / f"{role}.d"
-    dependency_command = [compiler_contract.compiler(), *prefix, *caller_flags, "-fPIE", "-M", str(source)]
-    environment = compiler_contract.clean_environment()
-    environment["TMPDIR"] = str(work)
+    actual_compile_command = [str(driver), "--dynamic-pie", *caller_flags,
+                              "-c", str(source), "-o", str(object_path)]
+    dependency_command = [str(compiler), *prefix, *caller_flags, "-fPIE", "-M", str(source)]
     with dependency_path.open("wb") as output:
-        subprocess.run(dependency_command, stdout=output, stderr=subprocess.PIPE, check=True, env=environment)
+        subprocess.run(dependency_command, stdout=output, stderr=subprocess.PIPE, check=True, env=audit_environment)
     text = dependency_path.read_text(encoding="utf-8").replace("\\\n", " ")
     try:
         names = text.split(":", 1)[1].split()
@@ -173,6 +185,8 @@ for role, source, source_files, required_headers in roles:
     dependencies = [Path(name).resolve(strict=True) for name in names]
     if source not in dependencies:
         raise SystemExit(f"system cancellation compile audit omits its {role} source")
+    if len(dependencies) != len(set(dependencies)):
+        raise SystemExit(f"system cancellation compile audit repeats a {role} dependency")
     for dependency in dependencies:
         if dependency not in source_files and not dependency.is_relative_to(headers):
             raise SystemExit(f"system cancellation compile audit escapes installed headers for {role}: {dependency}")
@@ -181,7 +195,7 @@ for role, source, source_files, required_headers in roles:
             raise SystemExit(f"system cancellation compile audit omits {role} header: {header}")
     relocation_path = work / f"{role}.relocations"
     with relocation_path.open("wb") as output:
-        subprocess.run(["/usr/bin/readelf", "-rW", str(object_path)], stdout=output, check=True, env=environment)
+        subprocess.run(["/usr/bin/readelf", "-rW", str(object_path)], stdout=output, check=True, env=audit_environment)
     relocations = relocation_path.read_text(encoding="utf-8")
     if "R_X86_64_32" in relocations or "R_X86_64_32S" in relocations:
         raise SystemExit(f"system cancellation canonical {role} object is not PIE-relocatable")
@@ -191,24 +205,166 @@ for role, source, source_files, required_headers in roles:
         "source_sha256": digest(source),
         "object": str(object_path),
         "object_sha256": digest(object_path),
+        "actual_compile_command": actual_compile_command,
         "dependency_audit_command": dependency_command,
+        "dependency_audit": {"path": dependency_path.name, "sha256": digest(dependency_path)},
         "dependencies": {str(path): digest(path) for path in dependencies},
         "relocations": {"path": relocation_path.name, "sha256": digest(relocation_path)},
     })
 if objects[0]["object_sha256"] == objects[1]["object_sha256"]:
     raise SystemExit("system cancellation consumer and child objects unexpectedly coincide")
 record = {
-    "schema": "crabc.system-cancellation-compile/v1",
+    "schema": "crabc.system-cancellation-compile/v2",
     "installed_dynamic": {
         "root": str(product),
-        "manifest_sha256": digest(product / "share/crabc/manifest.json"),
-        "driver": {"path": str(product / "bin/crabc-cc-dynamic"), "sha256": digest(product / "bin/crabc-cc-dynamic")},
+        "manifest": binding(manifest),
+        "driver": binding(driver),
+        "installed_helper": binding(helper),
+        "compiler": binding(compiler),
+        "clean_environment": clean_environment,
     },
     "translation": translation,
     "objects": objects,
 }
 (work / "compile.json").write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY_COMPILE
+}
+
+assert_canonical_compile_receipt() {
+    local dynamic_product="$1"
+    python3 -B - "$dynamic_product" "$work" "$PROBE" "$CHILD" <<'PY_VERIFY'
+from hashlib import sha256
+import json
+from pathlib import Path
+import sys
+
+product, work, probe, child = map(Path, sys.argv[1:])
+product = product.resolve(strict=True)
+work = work.resolve(strict=True)
+probe = probe.resolve(strict=True)
+child = child.resolve(strict=True)
+headers = (product / "usr/include").resolve(strict=True)
+driver = product / "bin/crabc-cc-dynamic"
+helper = product / "share/crabc/crabc_cc_static.py"
+manifest = product / "share/crabc/manifest.json"
+
+def fail(message: str) -> None:
+    raise SystemExit("system cancellation canonical compile: " + message)
+
+def digest(path: Path) -> str:
+    if not path.is_file() or path.is_symlink():
+        fail(f"non-physical artifact: {path}")
+    return sha256(path.read_bytes()).hexdigest()
+
+def compiler_digest(path: Path) -> str:
+    try:
+        return sha256(path.read_bytes()).hexdigest()
+    except OSError as error:
+        fail(f"compiler is unreadable: {path}: {error}")
+
+def binding(path: Path, *, compiler: bool = False) -> dict[str, str]:
+    return {"path": str(path), "sha256": compiler_digest(path) if compiler else digest(path)}
+
+try:
+    record = json.loads((work / "compile.json").read_text(encoding="utf-8"))
+except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+    fail(f"receipt is unreadable: {error}")
+if not isinstance(record, dict) or set(record) != {"schema", "installed_dynamic", "translation", "objects"}:
+    fail("receipt fields drifted")
+sys.path.insert(0, str(product / "share/crabc"))
+import crabc_cc_static as compiler_contract
+if Path(compiler_contract.__file__).resolve() != helper.resolve():
+    fail("helper is not installed")
+compiler = Path(compiler_contract.compiler())
+clean_environment = compiler_contract.clean_environment()
+prefix = [
+    "-nostdinc", "-isystem", str(headers), "-ffreestanding", "-fno-builtin",
+    "-fstack-protector-strong",
+]
+caller_flags = ["-std=c11", "-fno-builtin", "-fno-stack-protector"]
+expected_translation = {
+    "driver_mode": "--dynamic-pie",
+    "effective_codegen_flag": "-fPIE",
+    "driver_compile_prefix": prefix,
+    "caller_flags": caller_flags,
+    "not_selected": ["-fPIC", "-fno-pie"],
+}
+expected_installed = {
+    "root": str(product),
+    "manifest": binding(manifest),
+    "driver": binding(driver),
+    "installed_helper": binding(helper),
+    "compiler": binding(compiler, compiler=True),
+    "clean_environment": clean_environment,
+}
+if record["schema"] != "crabc.system-cancellation-compile/v2":
+    fail("receipt schema drifted")
+if record["installed_dynamic"] != expected_installed:
+    fail("installed driver/helper/compiler changed after links")
+if record["translation"] != expected_translation:
+    fail("translation flags drifted")
+roles = {
+    "consumer": (
+        probe, {probe, probe.parent / "owned_cancellation_proc_witness.h"},
+        ("errno.h", "pthread.h", "stdio.h", "stdlib.h", "signal.h", "sys/wait.h", "poll.h", "bits/alltypes.h"),
+    ),
+    "child": (
+        child, {child}, ("stdio.h", "stdlib.h", "string.h", "signal.h", "unistd.h", "bits/alltypes.h"),
+    ),
+}
+objects = record["objects"]
+if (not isinstance(objects, list) or not all(isinstance(item, dict) for item in objects) or
+        [item.get("role") for item in objects] != ["consumer", "child"]):
+    fail("object role roster drifted")
+for item in objects:
+    role = item["role"]
+    source, source_files, required_headers = roles[role]
+    object_path = work / f"{role}.o"
+    dependency_path = work / f"{role}.d"
+    relocation_path = work / f"{role}.relocations"
+    expected_fields = {
+        "role", "source", "source_sha256", "object", "object_sha256", "actual_compile_command",
+        "dependency_audit_command", "dependency_audit", "dependencies", "relocations",
+    }
+    if set(item) != expected_fields:
+        fail(f"{role} receipt fields drifted")
+    if (item["source"] != str(source) or item["source_sha256"] != digest(source) or
+            item["object"] != str(object_path) or item["object_sha256"] != digest(object_path)):
+        fail(f"canonical compile source changed after links: {role}")
+    expected_actual_command = [str(driver), "--dynamic-pie", *caller_flags,
+                               "-c", str(source), "-o", str(object_path)]
+    expected_dependency_command = [str(compiler), *prefix, *caller_flags, "-fPIE", "-M", str(source)]
+    if item["actual_compile_command"] != expected_actual_command:
+        fail(f"{role} actual compile command drifted")
+    if item["dependency_audit_command"] != expected_dependency_command:
+        fail(f"{role} dependency command drifted")
+    if item["dependency_audit"] != {"path": dependency_path.name, "sha256": digest(dependency_path)}:
+        fail(f"{role} dependency audit changed after links")
+    if item["relocations"] != {"path": relocation_path.name, "sha256": digest(relocation_path)}:
+        fail(f"{role} relocations changed after links")
+    dependencies = item["dependencies"]
+    if not isinstance(dependencies, dict) or not dependencies:
+        fail(f"{role} dependency roster drifted")
+    for name, identity in dependencies.items():
+        if not isinstance(name, str) or not isinstance(identity, str):
+            fail(f"{role} dependency identity drifted")
+        path = Path(name).resolve(strict=True)
+        if path in source_files:
+            if digest(path) != identity:
+                fail(f"canonical compile source changed after links: {path}")
+        elif path.is_relative_to(headers):
+            if digest(path) != identity:
+                fail(f"canonical compile header changed after links: {path}")
+        else:
+            fail(f"{role} dependency escaped installed headers: {path}")
+    if str(source) not in dependencies:
+        fail(f"{role} dependency audit omits its source")
+    for header in required_headers:
+        if str(headers / header) not in dependencies:
+            fail(f"{role} dependency audit omits {header}")
+if objects[0]["object_sha256"] == objects[1]["object_sha256"]:
+    fail("consumer and child objects unexpectedly coincide")
+PY_VERIFY
 }
 
 audit_musl_links() {
@@ -313,16 +469,32 @@ expected_translation = {
 }
 sys.path.insert(0, str(dynamic_product / "share/crabc"))
 import crabc_cc_static as compiler_contract
+helper = dynamic_product / "share/crabc/crabc_cc_static.py"
+if Path(compiler_contract.__file__).resolve() != helper.resolve():
+    fail("canonical compile helper is not installed")
+compiler = Path(compiler_contract.compiler())
+clean_environment = compiler_contract.clean_environment()
+def compiler_digest(path: Path) -> str:
+    return sha256(path.read_bytes()).hexdigest()
+
 installed = compile_record.get("installed_dynamic")
-if (compile_record.get("schema") != "crabc.system-cancellation-compile/v1" or
-        not isinstance(installed, dict) or installed != {
-            "root": str(dynamic_product),
-            "manifest_sha256": digest(dynamic_product / "share/crabc/manifest.json"),
-            "driver": {
-                "path": str(dynamic_product / "bin/crabc-cc-dynamic"),
-                "sha256": digest(dynamic_product / "bin/crabc-cc-dynamic"),
-            },
-        } or compile_record.get("translation") != expected_translation):
+expected_installed = {
+    "root": str(dynamic_product),
+    "manifest": {
+        "path": str(dynamic_product / "share/crabc/manifest.json"),
+        "sha256": digest(dynamic_product / "share/crabc/manifest.json"),
+    },
+    "driver": {
+        "path": str(dynamic_product / "bin/crabc-cc-dynamic"),
+        "sha256": digest(dynamic_product / "bin/crabc-cc-dynamic"),
+    },
+    "installed_helper": {"path": str(helper), "sha256": digest(helper)},
+    "compiler": {"path": str(compiler), "sha256": compiler_digest(compiler)},
+    "clean_environment": clean_environment,
+}
+if (compile_record.get("schema") != "crabc.system-cancellation-compile/v2" or
+        not isinstance(installed, dict) or installed != expected_installed or
+        compile_record.get("translation") != expected_translation):
     fail("canonical installed-header compile identity drifted")
 objects = compile_record.get("objects")
 if (not isinstance(objects, list) or not all(isinstance(item, dict) for item in objects) or
@@ -333,8 +505,20 @@ selected = by_role.get(role)
 if role not in sources or not isinstance(selected, dict):
     fail("selected canonical object role drifted")
 relocations = compile_path.with_name(role + ".relocations")
-if (selected.get("source") != str(sources[role]) or selected.get("source_sha256") != digest(sources[role]) or
+dependency_path = compile_path.with_name(role + ".d")
+expected_object_fields = {
+    "role", "source", "source_sha256", "object", "object_sha256", "actual_compile_command",
+    "dependency_audit_command", "dependency_audit", "dependencies", "relocations",
+}
+expected_actual_compile_command = [
+    str(dynamic_product / "bin/crabc-cc-dynamic"), "--dynamic-pie",
+    *expected_translation["caller_flags"], "-c", str(sources[role]), "-o", str(object_path),
+]
+if (set(selected) != expected_object_fields or selected.get("source") != str(sources[role]) or
+        selected.get("source_sha256") != digest(sources[role]) or
         selected.get("object") != str(object_path) or selected.get("object_sha256") != digest(object_path) or
+        selected.get("actual_compile_command") != expected_actual_compile_command or
+        selected.get("dependency_audit") != {"path": dependency_path.name, "sha256": digest(dependency_path)} or
         selected.get("relocations") != {"path": relocations.name, "sha256": digest(relocations)}):
     fail("selected canonical object identity drifted")
 dependencies = selected.get("dependencies")
@@ -350,7 +534,7 @@ required_headers = {
     "child": ("stdio.h", "stdlib.h", "string.h", "signal.h", "unistd.h", "bits/alltypes.h"),
 }[role]
 expected_dependency_command = [
-    compiler_contract.compiler(), *expected_translation["driver_compile_prefix"],
+    str(compiler), *expected_translation["driver_compile_prefix"],
     *expected_translation["caller_flags"], "-fPIE", "-M", str(sources[role]),
 ]
 if selected.get("dependency_audit_command") != expected_dependency_command:
@@ -579,12 +763,14 @@ readonly installed_dynamic="$provided_dynamic"
 "$installed_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -fno-stack-protector -c "$CHILD" -o "$work/child.o"
 audit_canonical_objects "$installed_dynamic"
+assert_canonical_compile_receipt "$installed_dynamic"
 
 mkdir -p "$work/oracle-root/bin"
 TMPDIR="$work" "$ORACLE_CC" -static -fno-pie -no-pie -pthread "$work/consumer.o" \
     -o "$work/oracle-root/consumer"
 TMPDIR="$work" "$ORACLE_CC" -static -fno-pie -no-pie "$work/child.o" \
     -o "$work/oracle-root/bin/sh"
+assert_canonical_compile_receipt "$installed_dynamic"
 audit_musl_links
 run_consumer "$work/oracle-root" /consumer oracle
 printf 'system cancellation pinned-musl oracle: PASS\n'
@@ -599,6 +785,8 @@ elif [ "$dynamic_was_supplied" -eq 0 ]; then
 fi
 if [ -n "$static_product" ]; then
     run_product static "$static_product"
+    assert_canonical_compile_receipt "$installed_dynamic"
 fi
 run_product dynamic "$installed_dynamic"
+assert_canonical_compile_receipt "$installed_dynamic"
 printf 'owned system cancellation: PASS (two canonical installed-header objects link unchanged to pinned musl, static/static-PIE and dynamic kernel/direct entries; source system/pclose waits, child ownership and supervisor cleanup remain contained); evidence: %s\n' "$work"
