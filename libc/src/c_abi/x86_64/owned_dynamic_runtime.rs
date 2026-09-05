@@ -13,6 +13,11 @@ mod startup;
 
 pub(super) unsafe fn prepare(argc: core::ffi::c_int, argv: *const *const core::ffi::c_char) -> bool {
     if !unsafe { super::static_tls::attach_initial_thread() } { return false; }
+    // SAFETY: the dynamic TLS owner installed this initial task's concrete
+    // FS+32 cache word above.  Publish the process-lifetime cancellation
+    // state before process globals or executable constructors are visible;
+    // the signal handler and delivery transaction remain a separate owner.
+    unsafe { super::pthread_create_join::publish_initial_selected_pthread_cancellation_state() };
     unsafe { super::process_globals::install(argc, argv) };
     true
 }
