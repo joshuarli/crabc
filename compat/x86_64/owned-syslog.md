@@ -31,8 +31,15 @@ installed dynamic PIE/non-PIE products; dynamic parents additionally use
 direct interpreter entry. The static driver deliberately rejects caller
 `-fPIC`; the dynamic PIE object has no absolute 32-bit relocations, and the
 static/static-PIE/dynamic link and runtime receipts prove the supported
-cross-mode object boundary instead. Each link uses the shared sealed-product
-validator and records the one source/object SHA-256 binding. The fixture keeps
+cross-mode object boundary instead. Before translation,
+`owned_syslog_evidence.py` imports the installed dynamic driver's shared
+compiler contract and records its selected compiler identity, fixed clean
+environment, exact source/header-trace commands, and installed driver/helper
+identities. It saves the complete `readelf -rW` output before checking
+forbidden absolute relocations, so a matching `grep` cannot hide a producer
+SIGPIPE. Each link uses the shared sealed-product validator and type-strictly
+revalidates one source/object binding that also hashes those retained
+translation and relocation records. The fixture keeps
 raw status, stdout, and stderr for every normal, worker, fork, and
 deferred-cancellation scenario, then compares all three streams with the
 pinned-musl oracle. The dynamic qualification catalog repeats its dynamic

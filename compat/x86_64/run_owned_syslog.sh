@@ -10,6 +10,7 @@ readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly probe="$ROOT/compat/x86_64/owned_syslog_probe.c"
 readonly interpreter=/lib/ld-crabc-x86_64.so.1
+readonly evidence_helper="$ROOT/compat/x86_64/owned_syslog_evidence.py"
 
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -208,53 +209,9 @@ PY
 bind_workload_object() {
     local initial_source_sha256="$1" identity="$2" binding="$3"
 
-    python3 -B - "$probe" "$work/workload.o" "$initial_source_sha256" "$identity" "$binding" <<'PY'
-import hashlib
-import json
-from pathlib import Path
-import sys
-
-source, workload, initial_source_sha256, identity_path, binding_path = sys.argv[1:]
-source_path = Path(source).resolve(strict=True)
-workload_path = Path(workload).resolve(strict=True)
-identity = json.loads(Path(identity_path).read_text(encoding="utf-8"))
-expected_identity = {
-    "linkage", "product", "product_format", "product_manifest_sha256",
-    "workload_sha256", "executable_sha256", "receipt_sha256",
-}
-if not isinstance(identity, dict) or set(identity) != expected_identity:
-    raise SystemExit("owned syslog link identity drifted")
-
-def digest(path):
-    value = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            value.update(block)
-    return value.hexdigest()
-
-if digest(source_path) != initial_source_sha256:
-    raise SystemExit("owned syslog workload source changed before binding")
-if digest(workload_path) != identity["workload_sha256"]:
-    raise SystemExit("owned syslog receipt names another workload object")
-record = {
-    "schema": 1,
-    "format": "crabc-x86-64-owned-syslog-workload-binding-v1",
-    "source": {"path": str(source_path), "sha256": initial_source_sha256},
-    "workload": {"path": str(workload_path), "sha256": identity["workload_sha256"]},
-}
-path = Path(binding_path)
-if path.exists() or path.is_symlink():
-    if path.is_symlink() or not path.is_file() or json.loads(path.read_text(encoding="utf-8")) != record:
-        raise SystemExit("owned syslog workload object binding drifted")
-elif not path.parent.is_dir() or path.parent.is_symlink():
-    raise SystemExit("owned syslog workload binding output is unsafe")
-else:
-    with path.open("x", encoding="utf-8", newline="\n") as stream:
-        json.dump(record, stream, indent=2, sort_keys=True)
-        stream.write("\n")
-if digest(source_path) != initial_source_sha256:
-    raise SystemExit("owned syslog workload object binding drifted")
-PY
+    python3 -B "$evidence_helper" bind-workload \
+        "$probe" "$work/workload.o" "$initial_source_sha256" "$identity" "$binding" \
+        "$work/workload.relocations" "$work/installed-header-translation.json"
 }
 
 link_product() {
@@ -306,20 +263,27 @@ if [ "$dynamic_was_supplied" -eq 0 ]; then
 fi
 readonly installed="$provided_dynamic"
 
-# Match the installed dynamic driver's fixed source translator, header
-# boundary, and preprocessor-relevant compile flags before it produces the one
-# workload object below.
-/usr/bin/gcc -std=c11 -nostdinc -isystem "$installed/usr/include" \
-    -ffreestanding -fno-builtin -fno-stack-protector -fPIE -E -H "$probe" \
-    >/dev/null 2>"$work/installed.headers"
+# Record the installed dynamic driver's exact source-translation composition
+# before it produces the one workload object below.  The helper imports the
+# same installed compiler contract as `crabc-cc-dynamic`; it does not assume a
+# host spelling for GCC.
+source_sha256_before_compile="$(sha256sum "$probe" | awk '{ print $1 }')"
+python3 -B "$evidence_helper" capture-header-translation \
+    "$installed" "$probe" "$work/workload.o" "$work/installed.headers" \
+    "$work/installed-header-translation.json"
+if [ "$source_sha256_before_compile" != "$(sha256sum "$probe" | awk '{ print $1 }')" ]; then
+    printf 'owned syslog: workload source changed while recording its installed translation\n' >&2
+    exit 1
+fi
 for header in errno.h fcntl.h poll.h pthread.h sys/socket.h sys/un.h sys/wait.h syslog.h time.h unistd.h; do
     grep -Fq "$installed/usr/include/$header" "$work/installed.headers"
 done
 
 # This is the sole behavior workload object. The dynamic driver's supported
 # PIE compile path has no absolute 32-bit relocations, then its exact bytes
-# cross into musl and every sealed static/dynamic link.
-source_sha256_before_compile="$(sha256sum "$probe" | awk '{ print $1 }')"
+# cross into musl and every sealed static/dynamic link.  Save every relocation
+# before matching it: a matching `grep -q` can close a pipe early and make a
+# producer's SIGPIPE look like a clean no-match under `pipefail`.
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin -fno-stack-protector \
     -c "$probe" -o "$work/workload.o"
 if [ "$source_sha256_before_compile" != "$(sha256sum "$probe" | awk '{ print $1 }')" ]; then
@@ -327,7 +291,8 @@ if [ "$source_sha256_before_compile" != "$(sha256sum "$probe" | awk '{ print $1 
     exit 1
 fi
 sha256sum "$work/workload.o" >"$work/workload.sha256"
-if readelf -rW "$work/workload.o" | grep -Eq 'R_X86_64_(32|32S)'; then
+readelf -rW "$work/workload.o" >"$work/workload.relocations"
+if grep -Eq 'R_X86_64_(32|32S)' "$work/workload.relocations"; then
     printf 'owned syslog: installed PIE workload object has an absolute 32-bit relocation\n' >&2
     exit 1
 fi
