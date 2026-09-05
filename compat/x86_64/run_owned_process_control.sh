@@ -224,7 +224,7 @@ PY_STATIC
 
 assert_static_receipt_tampering_rejected() {
     local product="$1" consumer="$2" mode="$3" object="$4" receipt="$5"
-    local forged_root="$work/forged-static-receipts-$mode" label
+    local forged_root="$work/forged-static-receipts-$mode" label expected stderr
     python3 -B - "$receipt" "$forged_root" <<'PY_TAMPER'
 from copy import deepcopy
 from hashlib import sha256
@@ -259,9 +259,25 @@ for label in ("application", "runtime", "output"):
     forged.write_text(json.dumps(changed, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 PY_TAMPER
     for label in application runtime output; do
+        case "$label" in
+            application|runtime)
+                expected='process-control static receipt runtime or workload input receipt drifted'
+                ;;
+            output)
+                expected='process-control static receipt output identity drifted'
+                ;;
+        esac
+        stderr="$forged_root/$label/audit.stderr"
         if assert_static_receipt_and_elf "$product" "$consumer" "$mode" "$object" \
-            "$forged_root/$label/$(basename "$receipt")" >/dev/null 2>&1; then
+            "$forged_root/$label/$(basename "$receipt")" \
+            >"$forged_root/$label/audit.stdout" 2>"$stderr"; then
             printf 'process-control static receipt audit accepted %s tampering\n' "$label" >&2
+            return 1
+        fi
+        if ! grep -Fxq "$expected" "$stderr"; then
+            printf 'process-control static receipt %s tampering reported the wrong failure\n' \
+                "$label" >&2
+            cat "$stderr" >&2
             return 1
         fi
     done
@@ -270,7 +286,52 @@ PY_TAMPER
 assert_static_manifest_tampering_rejected() {
     local product="$1" consumer="$2" mode="$3" object="$4" receipt="$5"
     local forged_product="$work/forged-static-manifest"
+    local receipt_root="$work/forged-static-manifest-receipt"
+    local forged_receipt="$receipt_root/$(basename "$receipt")"
+    local expected='process-control static receipt manifest/runtime identity drifted: libc'
     cp -a "$product" "$forged_product"
+    python3 -B - "$product" "$forged_product" "$receipt" "$forged_receipt" <<'PY_REBIND'
+from hashlib import sha256
+import json
+from pathlib import Path
+import shutil
+import sys
+
+source_product = Path(sys.argv[1]).resolve()
+forged_product = Path(sys.argv[2]).resolve()
+source_receipt = Path(sys.argv[3]).resolve()
+forged_receipt = Path(sys.argv[4])
+record = json.loads(source_receipt.read_text(encoding="utf-8"))
+source_map = source_receipt.with_suffix(".map")
+source_trace = source_receipt.with_suffix(".trace")
+forged_receipt.parent.mkdir(parents=True)
+forged_map = forged_receipt.with_suffix(".map")
+forged_trace = forged_receipt.with_suffix(".trace")
+
+def rebind(data):
+    return data.replace(str(source_product).encode(), str(forged_product).encode())
+
+if str(source_product) not in "\n".join(record.get("owned_link_contract", [])):
+    raise SystemExit("process-control static manifest tamper fixture lacks the source contract root")
+if str(source_product).encode() not in source_trace.read_bytes():
+    raise SystemExit("process-control static manifest tamper fixture lacks the source trace root")
+shutil.copyfile(source_map, forged_map)
+forged_trace.write_bytes(rebind(source_trace.read_bytes()))
+record["owned_link_contract"] = [
+    field.replace(str(source_product), str(forged_product))
+    if isinstance(field, str) else field
+    for field in record["owned_link_contract"]
+]
+record["map"] = {"path": forged_map.name, "sha256": sha256(forged_map.read_bytes()).hexdigest()}
+record["trace"] = {"path": forged_trace.name, "sha256": sha256(forged_trace.read_bytes()).hexdigest()}
+forged_receipt.write_text(
+    json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8"
+)
+PY_REBIND
+    # First prove the copied product and rebound receipt form a valid receipt
+    # boundary. The later failure then isolates the manifest mutation itself.
+    assert_static_receipt_and_elf "$forged_product" "$consumer" "$mode" "$object" \
+        "$forged_receipt"
     python3 -B - "$forged_product/share/crabc/manifest.json" <<'PY_MANIFEST'
 import json
 from pathlib import Path
@@ -281,9 +342,14 @@ manifest = json.loads(path.read_text(encoding="utf-8"))
 manifest["installed"]["files"]["usr/lib/libc.a"] = "0" * 64
 path.write_text(json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
 PY_MANIFEST
-    if assert_static_receipt_and_elf "$forged_product" "$consumer" "$mode" "$object" "$receipt" \
-        >/dev/null 2>&1; then
+    if assert_static_receipt_and_elf "$forged_product" "$consumer" "$mode" "$object" "$forged_receipt" \
+        >"$receipt_root/manifest-tamper.stdout" 2>"$receipt_root/manifest-tamper.stderr"; then
         printf 'process-control static receipt audit accepted manifest tampering\n' >&2
+        return 1
+    fi
+    if ! grep -Fxq "$expected" "$receipt_root/manifest-tamper.stderr"; then
+        printf 'process-control static receipt manifest tampering reported the wrong failure\n' >&2
+        cat "$receipt_root/manifest-tamper.stderr" >&2
         return 1
     fi
 }

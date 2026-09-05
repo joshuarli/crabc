@@ -128,10 +128,28 @@ class OwnedProcessControlTests(unittest.TestCase):
             "assert_static_receipt_tampering_rejected",
             "assert_static_manifest_tampering_rejected",
             "manifest/runtime identity",
+            "runtime or workload input receipt drifted",
+            "output identity drifted",
+            "manifest/runtime identity drifted: libc",
             "owned_link_contract",
             "input_receipts",
         ):
             self.assertIn(required, runner)
+
+        # The manifest mutation must be tested only after both receipt paths
+        # have been rebound to the copied product and that copy has passed.
+        self.assertIn(
+            "forged_trace.write_bytes(rebind(source_trace.read_bytes()))",
+            runner,
+        )
+        self.assertIn(
+            "field.replace(str(source_product), str(forged_product))",
+            runner,
+        )
+        self.assertLess(
+            runner.index('assert_static_receipt_and_elf "$forged_product"'),
+            runner.index("PY_MANIFEST"),
+        )
 
     def test_residual_and_reused_spellings_partition_the_frozen_control_roster(self) -> None:
         coverage = tomllib.loads(COVERAGE.read_text(encoding="utf-8"))
