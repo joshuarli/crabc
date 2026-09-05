@@ -7,14 +7,35 @@ notification defaults, and `SIGEV_THREAD` use the Linux 5.10 baseline. The froze
 private rejected-handle leaves and all AArch64 paths retain their selection and
 contracts. This component does not close a parity family or promote x86 support.
 
-`./scripts/dev-x86_64.sh owned-posix-timers` compiles one workload object against
-the installed headers using `crabc-cc-dynamic` and links that object to pinned
-musl, owned static, static PIE, dynamic PIE and dynamic non-PIE. Both dynamic forms run through
-kernel and direct loader entry. The dynamic workload loads a TLS DSO from the
-first live callback; the exact DSO object is shared with the musl comparison.
-The runner accepts an existing dynamic sysroot for the `posix-timers` case in
-the three-product qualification roster. It always retains objects, products,
-receipts, outputs and failure observations, printing `evidence: PATH` on exit.
+`./scripts/dev-x86_64.sh owned-posix-timers` compiles an application object and
+a distinct TLS-DSO object against the installed headers using
+`crabc-cc-dynamic`. The application object links to pinned musl, owned static,
+static PIE, dynamic PIE and dynamic non-PIE. Both dynamic forms run through
+kernel and direct loader entry. The dynamic workload loads the TLS DSO at
+callback-time, on the first live callback; the TLS DSO has no initial `DT_NEEDED`
+edge from the application. Its exact object is shared with the musl
+comparison, while the application object remains the one object in every
+executable link.
+
+The runner accepts `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]` for
+the `posix-timers` qualification case. With neither product supplied, it builds
+and checks both products. A supplied static product is used for both static
+links; a supplied dynamic product supplies compilation and dynamic links. When
+both are supplied, it starts no product producer and checks all six executable
+forms. A dynamic product without a supplied static product retains the aggregate
+dynamic-only boundary and skips static execution. It always retains products,
+objects, compile/header audits, receipts, raw stdout/stderr/status, outputs and
+failure observations, printing `evidence: PATH` on exit.
+
+The four executable links retain the shared
+`owned_posix_product_evidence.validate_link` identities: static, static PIE,
+dynamic PIE and dynamic non-PIE. The callback-loaded DSO has a separate
+shared-mode receipt audit in `owned_posix_timers_evidence.py`. It binds the TLS
+source and object hashes, installed driver and manifest, installed-header trace,
+DSO output and receipt hashes, exact shared-mode command and real link trace,
+SONAME `libtimer-tls.so`, and `DT_NEEDED` exactly `libc.so`. Its receipt and the
+four executable receipts keep `application_dsos` empty; passing the TLS DSO as
+`--application-dso` would incorrectly create an initial dependency.
 
 The shared workload also isolates pending creator cancellation in disposable
 children, containing musl's resulting orphan timer. It requires cancellation
@@ -133,8 +154,13 @@ qualification-receipt and dispatcher checks also passed (41 Python tests).
 Full three-product receipt production and family qualification remain separate
 integration gates; this development run makes no promotion claim.
 
-The aggregate runner accepts only a physical product directory inside the
-checkout’s `.work` tree. A supplied extracted product drives compilation of both
-the workload and TLS DSO; the oracle and candidate links reuse those same objects.
+The aggregate runner accepts only physical product directories inside the
+checkout’s `.work` tree. A supplied extracted dynamic product drives compilation
+of both roles; the oracle and candidate links reuse the application object, and
+the oracle and callback-loaded candidate DSO reuse the TLS object. Ordinary
+static output is compared only to ordinary musl output; kernel/direct dynamic
+output is compared only to dynamic musl output. Failure reclamation and the
+isolated `failure-once` race retain raw observations without becoming musl byte
+comparisons.
 `timer_create` is an owned-static additive callable; the four other timer entry
 points replace their frozen default-static providers in the owned profile.
