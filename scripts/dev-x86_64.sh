@@ -567,6 +567,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-pthread-spin  qualify installed private/shared pthread spin locking
   owned-syslog [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify owned C syslog delivery and state against musl
   owned-pattern  qualify owned C fnmatch/glob/globfree behavior against musl
+  owned-regex [DYNAMIC_SYSROOT]  compare installed TRE regex behavior with musl
   owned-wcsftime [DYNAMIC_SYSROOT]  compare installed wide calendar formatting with musl
   owned-process-trio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed clone/vfork/daemon semantics against musl
   owned-process-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed residual POSIX process control
@@ -761,6 +762,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-ctype  run the static x86 crabc-libc C-locale ctype slice
   libc-locale-profile  run the static x86 fixed setlocale/localeconv profile slice
   libc-locale-multibyte  run the static x86 crabc-libc named locale/multibyte slice
+  owned-regex-compiler  run isolated TRE compiler and allocation-failure checks
+  owned-regex-execution  run isolated TRE execution and allocation-failure checks
   libc-regex  run the bounded static x86 crabc-libc POSIX regex slice
   libc-locale-wide-iconv  run the static x86 crabc-libc locale/wide/iconv composition slice
   libc-wide-character  run the static x86 crabc-libc allocation-free wide-character core
@@ -5908,7 +5911,7 @@ case "$command" in
     owned-crypt-runtime) ;;
     owned-system-cancellation) ;;
     owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
-    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime) ;;
+    owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-regex) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
     owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
@@ -6020,7 +6023,7 @@ case "$command" in
     libc-timer-settime) ;;
     libc-tee|libc-splice) ;;
     libc-sync-file-range|libc-copy-file-range) ;;
-    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-crypt-allocator-composition|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-service-lifecycle|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-uchar-stateful|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network) ;;
+    libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|owned-regex-compiler|owned-regex-execution|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-crypt-allocator-composition|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-service-lifecycle|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-uchar-stateful|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network) ;;
     libc-vector-io|libc-uio-cxx-linkage) ;;
     libc-sysv-semaphore|libc-posix-semaphore) ;;
     libc-sysv-message-shared-memory) ;;
@@ -6078,7 +6081,7 @@ case "$command" in
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
-    owned-nftw-relative-base|owned-wcsftime)
+    owned-nftw-relative-base|owned-wcsftime|owned-regex)
         prepare_owned_dynamic_product_argument "$command" "$@"
         set -- "${OWNED_DYNAMIC_PRODUCT_ARGUMENTS[@]}"
         ;;
@@ -8086,6 +8089,10 @@ PY
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_syslog.sh "$@"
         ;;
+    owned-regex)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_regex.sh "$@"
+        ;;
     owned-wcsftime)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_wcsftime.sh "$@"
@@ -8612,6 +8619,11 @@ PY
         [ "$#" -eq 0 ] || fail "libc-locale-multibyte takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_libc_locale_multibyte.sh
+        ;;
+    owned-regex-compiler|owned-regex-execution)
+        [ "$#" -eq 0 ] || fail "$command takes no arguments"
+        ensure_image
+        run_in_container bash "/workspace/compat/x86_64/run_${command//-/_}.sh"
         ;;
     libc-regex)
         [ "$#" -eq 0 ] || fail "libc-regex takes no arguments"

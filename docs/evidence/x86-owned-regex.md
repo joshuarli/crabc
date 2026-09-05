@@ -37,7 +37,8 @@ owners; this leaf does not add a locale database or a Rust regex API.
 
 ## Installed-product proof
 
-`compat/x86_64/run_owned_regex.sh [DYNAMIC_SYSROOT]` builds fresh owned static
+`./scripts/dev-x86_64.sh owned-regex [DYNAMIC_SYSROOT]` dispatches
+`compat/x86_64/run_owned_regex.sh`, which builds fresh owned static
 and dynamic products when no product is supplied. It compiles
 `compat/x86_64/owned_regex_probe.c` once with the installed dynamic driver and
 records hashes for both the source and resulting object. That unchanged object
@@ -60,3 +61,7 @@ allocator-failure checkpoint. It uses copied source routing and a recording
 allocator to prove compiler and parallel/backtracking cleanup under every
 observed allocation-failure edge. It is not replaced by the installed-product
 proof and does not establish aggregate runtime closure.
+
+The dynamic qualification catalog requires `regex` for each installed,
+relocated, and second product. Its receipt binds this runner to the complete
+product and source closure; catalog registration is not an aggregate pass.

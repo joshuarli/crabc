@@ -56,7 +56,7 @@ class OwnedNftwRelativeBaseTests(unittest.TestCase):
             'cmp "$work/oracle.status"',
         ):
             self.assertIn(required, source)
-        self.assertIn('owned-nftw-relative-base|owned-wcsftime)', DISPATCHER.read_text(encoding="utf-8"))
+        self.assertIn('owned-nftw-relative-base|owned-wcsftime|owned-regex)', DISPATCHER.read_text(encoding="utf-8"))
 
     def test_dispatch_accepts_and_translates_only_an_optional_dynamic_product(self) -> None:
         scratch = ROOT / ".work/x86_64/tmp"

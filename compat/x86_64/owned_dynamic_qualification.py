@@ -79,6 +79,7 @@ CASES = {
     "pty": ("run_owned_pty.sh", None),
     "passwd": ("run_owned_passwd.sh", None),
     "pattern": ("run_owned_pattern.sh", None),
+    "regex": ("run_owned_regex.sh", None),
     "wide-calendar": ("run_owned_wcsftime.sh", None),
     "classic-netdb": ("run_owned_classic_netdb.sh", None),
     "posix-filesystem": ("run_owned_posix_filesystem.sh", None),

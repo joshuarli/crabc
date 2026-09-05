@@ -287,8 +287,14 @@ mod wide_character_tables;
 mod wide_character;
 #[path = "wcswcs.rs"]
 mod wcswcs;
+// Preserve the frozen bounded provider for the default archive. Owned
+// products select the pinned-musl TRE compiler and executor as one owner.
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[path = "regex.rs"]
 mod regex;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_regex/mod.rs"]
+mod owned_regex;
 #[path = "iconv.rs"]
 mod iconv;
 #[path = "integer_arithmetic.rs"]

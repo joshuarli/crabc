@@ -120,6 +120,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "pty",
                 "passwd",
                 "pattern",
+                "regex",
                 "wide-calendar",
                 "classic-netdb",
                 "posix-filesystem",

@@ -1,6 +1,6 @@
 //! Pinned-musl TRE records for the owned static Linux/x86-64 regex provider.
 //!
-//! This is a source-shaped port scaffold, not a second regex implementation.
+//! This is a semantic port of the pinned TRE implementation.
 //! It starts with the exact compiled-TNFA records from musl 1.2.6's
 //! `src/regex/tre.h:91-229` (`e734e68decc33b5ee983db12cabcbdd2589c2d16088677228087b0e5dc365cf3`)
 //! and the active dynamic compiler/matcher arena from
@@ -24,8 +24,9 @@
 //! that they were substantially modified by Rich Felker.  The later
 //! `regcomp.c` and `regexec.c` retain this same source and license provenance.
 //! `regerror.c` is musl MIT; its fixed C-locale table is in `error.rs`. This
-//! private module is not selected from `static_c_abi.rs` yet; routing and
-//! public support qualification remain outside this checkpoint.
+//! private module is selected by `x86-owned-static-runtime` in
+//! `static_c_abi.rs`. The frozen default archive keeps its bounded provider;
+//! full owned runtime and public support qualification remain outstanding.
 
 use core::ffi::c_void;
 
