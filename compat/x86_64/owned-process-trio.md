@@ -46,12 +46,38 @@ redirection precede the first fork, then setsid precedes the second fork.
 Both parent branches use immediate exit; fork errors keep full fork's parent
 handler behavior.
 
-Run `./scripts/dev-x86_64.sh owned-process-trio`. The same C semantic probe
-runs against pinned musl and installed static, static-PIE, dynamic PIE, and
-dynamic non-PIE, including direct interpreter entry. The harness checks strong
+Run `./scripts/dev-x86_64.sh owned-process-trio` for the default disposable
+matrix. Its underlying runner accepts `[--static-sysroot STATIC_SYSROOT]
+[DYNAMIC_SYSROOT]` when a coordinator replays already-built products. It
+compiles one installed-driver workload object, then links those exact bytes to
+pinned musl, static/static-PIE, and dynamic PIE/non-PIE products, including
+normal kernel and direct-interpreter dynamic entry. The harness checks strong
 provider binding and retains normal driver link receipts. Its private chroots
 contain an actual `/dev/null` device and no foreign runtime. The dynamic
-qualification catalog also runs this leaf on its supplied product.
+qualification catalog also runs this leaf on its supplied dynamic product.
+
+With no paths, the runner builds both disposable products. A positional
+dynamic product preserves the dynamic-only replay and does not build or run a
+static product. `--static-sysroot` selects a physical checkout `.work` static
+product for the static/static-PIE pair; if it is the only supplied product, the
+runner still builds its disposable dynamic product so its installed driver can
+make the one shared object and run the dynamic matrix. Supplying both paths
+reuses both sealed products and invokes neither producer. Paths must be
+nonempty, cannot be parsed as options, and are canonicalized before their
+contained checkout `.work` targets are accepted. This is a bounded
+static-product replay seam, not a family receipt or a completion claim.
+
+Every static link explicitly requests a sealed receipt. Before any candidate
+process runs, `owned_posix_product_evidence.validate_link` validates each
+selected link: the complete selected product payload, one workload object, the
+output and receipt, selected CRT/runtime inputs, linker trace, ELF form, and
+the static no-DSO or dynamic no-foreign-import/application-DSO boundary. It
+retains all four identities when static modes are selected, or the two dynamic
+identities for the established dynamic-only replay, together with raw
+status/stdout/stderr files. For each of the existing `ordinary`, `errors`, and
+`redirect` scenarios, those raw artifacts are compared exactly to the
+pinned-musl artifacts; this preserves the existing semantic normalization
+rather than collapsing an error stream or process exit into the success marker.
 
 The probe covers invalid flags, raw clone failure and mask/lock rollback,
 parent/child ID slots, pidfd, successful errno preservation, main and worker
