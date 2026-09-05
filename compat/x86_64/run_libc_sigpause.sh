@@ -6,6 +6,9 @@
 # queue a blocked SIGUSR1 before the fixture enters the selected wait, so the
 # fixture itself needs no C process-control, timer, pthread, or signal-policy
 # export. This does not select a general signal framework or public x86 support.
+# The shared raw `syscall2` archive member also provides the separately qualified
+# `sigpending` leaf; section garbage collection keeps that member co-residence
+# from widening this candidate beyond its selected sigpause path.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -60,16 +63,60 @@ assert_fixture_tls_capacity() {
         fail "fixture TLS alignment is incompatible"
 }
 
-assert_named_syscall() {
+# Rust codegen may keep the selected raw leaves out of line. Prove each
+# sigpause-to-provider edge and the provider instruction, rather than
+# requiring implementation-detail inline copies.
+assert_selected_raw_syscall_edge() {
     local symbol="$1"
     local syscall_word="$2"
-    local disassembly="$work_dir/${symbol}-disassembly"
+    local raw_syscall_provider="$3"
+    local disassembly="$work_dir/${symbol}-${syscall_word}-syscall-disassembly"
+    local raw_syscall_addresses
+    local raw_syscall_address
+    local raw_syscall_symbols
+    local raw_syscall_symbol
+    local raw_syscall_disassembly
 
     objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
     grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|\\\$)" "$disassembly" ||
         fail "${symbol} lacks Linux syscall 0x${syscall_word}"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "${symbol} lacks its Linux syscall instruction"
+
+    raw_syscall_addresses="$(
+        nm -C --defined-only --format=posix "$candidate" |
+            awk -v provider="$raw_syscall_provider" '$1 == provider { print $3 }'
+    )"
+    [ "$(printf '%s\n' "$raw_syscall_addresses" | awk 'NF { count += 1 } END { print count }')" -eq 1 ] ||
+        fail "candidate does not select exactly one ${raw_syscall_provider} provider"
+    raw_syscall_address="$raw_syscall_addresses"
+    raw_syscall_symbols="$(
+        nm --defined-only --format=posix "$candidate" |
+            awk -v address="$raw_syscall_address" '$3 == address { print $1 }'
+    )"
+    [ "$(printf '%s\n' "$raw_syscall_symbols" | awk 'NF { count += 1 } END { print count }')" -eq 1 ] ||
+        fail "cannot resolve exactly one selected ${raw_syscall_provider} symbol"
+    raw_syscall_symbol="$raw_syscall_symbols"
+
+    if ! awk -v target="<${raw_syscall_symbol}>" '
+        $0 ~ /[[:space:]](call|jmp[a-z]*)[[:space:]]/ && index($0, target) { found = 1 }
+        END { exit !found }
+    ' "$disassembly"; then
+        fail "${symbol} does not call selected ${raw_syscall_provider}"
+    fi
+    raw_syscall_disassembly="$work_dir/${raw_syscall_symbol}-disassembly"
+    objdump -d --disassemble="$raw_syscall_symbol" "$candidate" >"$raw_syscall_disassembly"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$raw_syscall_disassembly" ||
+        fail "selected ${raw_syscall_provider} lacks its Linux syscall instruction"
+    if [ "$raw_syscall_provider" = "c::x86_64_static_c_abi::raw_syscall::syscall4" ]; then
+        grep -Fq '%r10' "$raw_syscall_disassembly" ||
+            fail "selected raw_syscall::syscall4 lacks fourth-argument r10 path"
+    fi
+}
+
+assert_sigpause_raw_syscalls() {
+    assert_selected_raw_syscall_edge sigpause e \
+        c::x86_64_static_c_abi::raw_syscall::syscall4
+    assert_selected_raw_syscall_edge sigpause 82 \
+        c::x86_64_static_c_abi::raw_syscall::syscall2
 }
 
 run_interrupted_wait() {
@@ -195,6 +242,7 @@ fi
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_SIGPAUSE_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -Wl,--gc-sections \
     compat/x86_64/libc_sigpause_probe.c compat/x86_64/libc_sigpause_start.S \
     "$archive" -o "$candidate"
 
@@ -237,12 +285,7 @@ if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
     fail "fixture start must not install a private FS base"
 fi
 
-assert_named_syscall sigpause e
-assert_named_syscall sigpause 82
-sigpause_disassembly="$work_dir/sigpause-register-disassembly"
-objdump -d --disassemble=sigpause "$candidate" >"$sigpause_disassembly"
-grep -Fq '%r10' "$sigpause_disassembly" ||
-    fail "sigpause lacks rt_sigprocmask fourth-argument r10 path"
+assert_sigpause_raw_syscalls
 
 run_interrupted_wait "$candidate" "freestanding-candidate"
 printf 'x86 static crabc-libc sigpause: PASS\n'

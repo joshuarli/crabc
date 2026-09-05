@@ -5988,6 +5988,46 @@ unsafe fn join_selected_worker_inner(
             runner,
         )
 
+    def test_siginterrupt_header_xopen800_tracks_the_x86_musl_profile(self) -> None:
+        header = (ROOT / "include" / "signal.h").read_text(encoding="utf-8")
+        header_runner = (
+            ROOT / "compat" / "x86_64" / "run_siginterrupt_header_abi.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "#if defined(_XOPEN_SOURCE) || defined(_BSD_SOURCE) || defined(_GNU_SOURCE)",
+            header,
+        )
+        self.assertIn(
+            'compile_visible "$language" xopen800 -D_XOPEN_SOURCE=800',
+            header_runner,
+        )
+        self.assertNotIn("assert_xopen800_header_divergence", header_runner)
+
+    def test_libc_siginterrupt_keeps_the_shared_raw_provider_section_closed(self) -> None:
+        static_root = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
+        ).read_text(encoding="utf-8")
+        siginterrupt = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "siginterrupt.rs"
+        ).read_text(encoding="utf-8")
+        artifact_runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_siginterrupt.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            '#[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "siginterrupt.rs")]',
+            static_root,
+        )
+        self.assertIn("raw_syscall::syscall4", siginterrupt)
+        self.assertIn("-Wl,--gc-sections", artifact_runner)
+        self.assertIn("sigismember sigprocmask sigpending sigsuspend", artifact_runner)
+        self.assertIn("assert_siginterrupt_raw_syscall", artifact_runner)
+        self.assertIn("c::x86_64_static_c_abi::raw_syscall::syscall4", artifact_runner)
+        self.assertIn("raw_syscall_addresses", artifact_runner)
+        self.assertIn("(call|jmp", artifact_runner)
+        self.assertNotIn("--whole-archive", artifact_runner)
+
     def test_libc_static_c_abi_signal_altstack_artifact_stays_bounded(
         self,
     ) -> None:
@@ -6020,6 +6060,7 @@ unsafe fn join_selected_worker_inner(
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "signal_altstack.rs"]', static_root)
+        self.assertIn('#[path = "syscall.rs"]\nmod raw_syscall;', static_root)
         for required in (
             "src/signal/sigaltstack.c",
             "struct PublicSignalStack",
@@ -6027,6 +6068,7 @@ unsafe fn join_selected_worker_inner(
             "offset_of!(PublicSignalStack, flags) == 8",
             "offset_of!(PublicSignalStack, size) == 16",
             "raw_syscall::SYS_SIGALTSTACK",
+            "raw_syscall::syscall2",
             "MINSIGSTKSZ: usize = 2_048",
             "requested.size < minimum",
             "requested.flags & SS_ONSTACK",
@@ -6068,7 +6110,12 @@ unsafe fn join_selected_worker_inner(
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
             "R_X86_64_TPOFF",
-            "assert_named_syscall sigaltstack 83",
+            "assert_sigaltstack_raw_syscall",
+            "c::x86_64_static_c_abi::raw_syscall::syscall2",
+            "raw_syscall_addresses",
+            "(call|jmp",
+            'awk -v target="<${raw_syscall_symbol}>"',
+            'objdump -d --disassemble="$raw_syscall_symbol"',
             "sysconf getauxval",
             "crabc_x86_64_signal_restorer",
         ):
@@ -6407,6 +6454,7 @@ unsafe fn join_selected_worker_inner(
             'pub extern "C" fn sigpause',
             "errno::set_errno",
             "c_status",
+            "neither general signal policy nor a cancellation point",
         ):
             self.assertIn(required, sigpause)
         for forbidden in (
@@ -6450,10 +6498,16 @@ unsafe fn join_selected_worker_inner(
             "static_c_abi_exports.txt",
             "-nostdlib -static",
             "-Wl,-e,_start",
+            "-Wl,--gc-sections",
             "R_X86_64_TPOFF",
-            "assert_named_syscall sigpause e",
-            "assert_named_syscall sigpause 82",
+            "assert_sigpause_raw_syscalls",
+            "c::x86_64_static_c_abi::raw_syscall::syscall4",
+            "c::x86_64_static_c_abi::raw_syscall::syscall2",
+            "raw_syscall_addresses",
+            "(call|jmp",
+            "selected raw_syscall::syscall4 lacks fourth-argument r10 path",
             "run_interrupted_wait",
+            "sigismember sigprocmask sigpending sigsuspend",
             "candidate unexpectedly pulls",
         ):
             self.assertIn(required, artifact_runner)

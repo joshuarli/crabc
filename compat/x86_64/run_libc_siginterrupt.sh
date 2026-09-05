@@ -4,7 +4,9 @@
 # One public XSI wrapper first runs through pinned musl 1.2.6, then through a
 # true -nostdlib -static candidate. It toggles only SA_RESTART on an existing
 # action; fixture-local raw queries are containment, not public sigaction or a
-# general signal runtime.
+# general signal runtime. Its raw-syscall provider shares an archive member
+# with the separately qualified `sigpending` leaf, so section garbage
+# collection keeps that member co-residence from widening this candidate.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -61,15 +63,46 @@ assert_fixture_tls_capacity() {
         fail "fixture TLS alignment is incompatible"
 }
 
-assert_named_syscall() {
-    local symbol="$1" syscall_word="$2"
-    local disassembly="$work_dir/${symbol}-disassembly"
+# Rust codegen may keep the selected raw leaf out of line. Prove the exact
+# siginterrupt-to-syscall4 edge and the provider's instruction rather than
+# requiring an implementation-detail inline copy.
+assert_siginterrupt_raw_syscall() {
+    local siginterrupt_disassembly="$work_dir/siginterrupt-syscall-disassembly"
+    local raw_syscall_addresses
+    local raw_syscall_address
+    local raw_syscall_symbols
+    local raw_syscall_symbol
+    local raw_syscall_disassembly
 
-    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|\\\$)" "$disassembly" ||
-        fail "${symbol} lacks Linux syscall 0x${syscall_word}"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "${symbol} lacks its Linux syscall instruction"
+    objdump -d --disassemble=siginterrupt "$candidate" >"$siginterrupt_disassembly"
+    grep -Eq "\\\$0xd(,|[[:space:]]|\\\$)" "$siginterrupt_disassembly" ||
+        fail "siginterrupt lacks Linux syscall 0xd"
+
+    raw_syscall_addresses="$(
+        nm -C --defined-only --format=posix "$candidate" |
+            awk '$1 == "c::x86_64_static_c_abi::raw_syscall::syscall4" { print $3 }'
+    )"
+    [ "$(printf '%s\n' "$raw_syscall_addresses" | awk 'NF { count += 1 } END { print count }')" -eq 1 ] ||
+        fail "candidate does not select exactly one raw_syscall::syscall4 provider"
+    raw_syscall_address="$raw_syscall_addresses"
+    raw_syscall_symbols="$(
+        nm --defined-only --format=posix "$candidate" |
+            awk -v address="$raw_syscall_address" '$3 == address { print $1 }'
+    )"
+    [ "$(printf '%s\n' "$raw_syscall_symbols" | awk 'NF { count += 1 } END { print count }')" -eq 1 ] ||
+        fail "cannot resolve exactly one selected raw_syscall::syscall4 symbol"
+    raw_syscall_symbol="$raw_syscall_symbols"
+
+    if ! awk -v target="<${raw_syscall_symbol}>" '
+        $0 ~ /[[:space:]](call|jmp[a-z]*)[[:space:]]/ && index($0, target) { found = 1 }
+        END { exit !found }
+    ' "$siginterrupt_disassembly"; then
+        fail "siginterrupt does not call the selected raw_syscall::syscall4 provider"
+    fi
+    raw_syscall_disassembly="$work_dir/${raw_syscall_symbol}-disassembly"
+    objdump -d --disassemble="$raw_syscall_symbol" "$candidate" >"$raw_syscall_disassembly"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$raw_syscall_disassembly" ||
+        fail "selected raw_syscall::syscall4 lacks its Linux syscall instruction"
 }
 
 require_native_linux_x86_64
@@ -142,7 +175,7 @@ fi
 "$ORACLE_CC" -std=c11 -D_XOPEN_SOURCE=700 -U_GNU_SOURCE \
     -DCRABC_SIGINTERRUPT_FREESTANDING -I"$ROOT_DIR/include" \
     -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
-    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
     compat/x86_64/libc_siginterrupt_probe.c \
     compat/x86_64/libc_siginterrupt_start.S "$archive" -o "$candidate"
 
@@ -192,7 +225,7 @@ if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
     fail "fixture start must not install a private FS base"
 fi
 
-assert_named_syscall siginterrupt d
+assert_siginterrupt_raw_syscall
 siginterrupt_disassembly="$work_dir/siginterrupt-disassembly"
 objdump -d --disassemble=siginterrupt "$candidate" >"$siginterrupt_disassembly"
 grep -Eq '0x10000000|0xebffffff|0xffffffffefffffff' \

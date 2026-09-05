@@ -3,10 +3,9 @@
 #
 # Pinned musl 1.2.6 is the source/feature-selection and C linkage oracle. This
 # compile-only matrix selects no signal action, signal set, wait, or runtime.
-# The current project header deliberately follows its recorded post-POSIX.1-2024
-# X/Open-800 legacy-XSI hiding rule, while musl 1.2.6 still exposes this name in
-# that profile. The explicit divergence probe below records that existing
-# header-policy boundary without changing it.
+# The x86 project header uses the same X/Open gate as musl, including positive
+# X/Open-800 visibility. Keep the paired C and C++ X/Open-800 declaration
+# proof here so a legacy-XSI rule from another target cannot hide this x86 API.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -75,40 +74,6 @@ reject_hidden() {
     done
 }
 
-assert_xopen800_header_divergence() {
-    local language
-
-    for language in c cpp; do
-        if [ "$language" = c ]; then
-            "$ORACLE_CC" -std=c11 -U_GNU_SOURCE -D_XOPEN_SOURCE=800 \
-                -DCRABC_EXPECT_SIGINTERRUPT -fsyntax-only \
-                "$ROOT_DIR/compat/x86_64/siginterrupt_header_abi_probe.c" ||
-                fail "oracle C X/Open-800 profile lost musl's declaration"
-            if "$ORACLE_CC" -std=c11 -U_GNU_SOURCE -D_XOPEN_SOURCE=800 \
-                -DCRABC_REQUIRE_SIGINTERRUPT_HIDDEN \
-                -Werror=implicit-function-declaration -I "$ROOT_DIR/include" \
-                -fsyntax-only \
-                "$ROOT_DIR/compat/x86_64/siginterrupt_header_abi_probe.c" \
-                >/dev/null 2>&1; then
-                fail "project C X/Open-800 profile lost legacy-XSI hiding"
-            fi
-        else
-            "$ORACLE_CC" -std=c++17 -x c++ -U_GNU_SOURCE \
-                -D_XOPEN_SOURCE=800 -DCRABC_EXPECT_SIGINTERRUPT \
-                -fsyntax-only \
-                "$ROOT_DIR/compat/x86_64/siginterrupt_header_abi_probe.cpp" ||
-                fail "oracle C++ X/Open-800 profile lost musl's declaration"
-            if "$ORACLE_CC" -std=c++17 -x c++ -U_GNU_SOURCE \
-                -D_XOPEN_SOURCE=800 -DCRABC_REQUIRE_SIGINTERRUPT_HIDDEN \
-                -I "$ROOT_DIR/include" -fsyntax-only \
-                "$ROOT_DIR/compat/x86_64/siginterrupt_header_abi_probe.cpp" \
-                >/dev/null 2>&1; then
-                fail "project C++ X/Open-800 profile lost legacy-XSI hiding"
-            fi
-        fi
-    done
-}
-
 require_native_linux_x86_64
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 command -v nm >/dev/null 2>&1 || fail "requires nm"
@@ -122,11 +87,11 @@ for language in c cpp; do
     reject_hidden "$language" strict -D__STRICT_ANSI__
     reject_hidden "$language" posix -D_POSIX_C_SOURCE=200809L
     compile_visible "$language" xopen700 -D_XOPEN_SOURCE=700
+    compile_visible "$language" xopen800 -D_XOPEN_SOURCE=800
     compile_visible "$language" gnu -D_GNU_SOURCE
     compile_visible "$language" bsd -D_BSD_SOURCE
     compile_visible "$language" default-source -D_DEFAULT_SOURCE
 done
-assert_xopen800_header_divergence
 
 if ! "$ORACLE_CC" -std=c11 -U_GNU_SOURCE -D_XOPEN_SOURCE=700 \
     -DCRABC_EXPECT_SIGINTERRUPT -I "$ROOT_DIR/include" -H -fsyntax-only \
