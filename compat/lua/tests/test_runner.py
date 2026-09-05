@@ -3,12 +3,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import io
 import os
+import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -100,10 +104,19 @@ class ElfAndDiagnosticTests(unittest.TestCase):
 
 class FixtureAndEnvironmentTests(unittest.TestCase):
     def test_fixture_contract_markers_are_present(self) -> None:
-        for name in ("header_probe.c", "crabc_probe.c", "crabc_fail.c", "exercise.lua"):
+        for name in ("header_probe.c", "crabc_probe.c", "crabc_fail.c", "static_preload.c", "exercise.lua"):
             self.assertTrue((RUNNER.FIXTURES / name).is_file(), name)
         source = (RUNNER.FIXTURES / "exercise.lua").read_text(encoding="utf-8")
-        for marker in ("require(\"crabc_probe\")", "crabc_missing", "crabc_fail", "maps-ready", "utf8", "io.popen"):
+        for marker in (
+            "require(\"crabc_probe\")",
+            "crabc_missing",
+            "crabc_fail",
+            "CRABC_LUA_DYNAMIC_MODULES",
+            "package.preload",
+            "maps-ready",
+            "utf8",
+            "io.popen",
+        ):
             self.assertIn(marker, source)
 
     def test_sanitized_environment_removes_runtime_path_overrides(self) -> None:
@@ -120,6 +133,160 @@ class FixtureAndEnvironmentTests(unittest.TestCase):
         self.assertNotIn("LUA_PATH", environment)
         self.assertNotIn("CRABC_LUA_ENV", environment)
         self.assertEqual(environment["LC_ALL"], "C")
+
+
+class NativeStaticContracts(unittest.TestCase):
+    """Executable host contracts for the native static lane's hard boundaries."""
+
+    scratch_root = RUNNER.ROOT / ".work" / "lua-runner-host-tests"
+
+    def setUp(self) -> None:
+        self.scratch_root.mkdir(parents=True, exist_ok=True)
+        self.temporary = Path(tempfile.mkdtemp(prefix="lua-", dir=self.scratch_root))
+        self.addCleanup(self.cleanup)
+
+    def cleanup(self) -> None:
+        if self.temporary.exists() and not self.temporary.is_symlink():
+            shutil.rmtree(self.temporary, ignore_errors=True)
+
+    def assert_stopped(self, pid: int, message: str) -> None:
+        status = Path(f"/proc/{pid}/stat")
+        for _ in range(100):
+            if not status.exists():
+                return
+            try:
+                state = status.read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0]
+            except (IndexError, OSError):
+                return
+            if state == "Z":
+                return
+            time.sleep(0.02)
+        self.fail(message)
+
+    def test_x86_static_defaults_cover_et_exec_and_static_pie(self) -> None:
+        parsed = RUNNER.parse_args(["--target", "x86_64-static"])
+        modes = RUNNER.selected_static_modes(parsed.mode)
+        self.assertEqual([mode.identifier for mode in modes], ["static-et-exec", "static-pie"])
+        self.assertEqual(parsed.report, RUNNER.DEFAULT_X86_STATIC_REPORT)
+        selected = RUNNER.parse_args(["--target", "x86_64-static", "--mode", "static"])
+        self.assertEqual([mode.identifier for mode in RUNNER.selected_static_modes(selected.mode)], ["static-et-exec"])
+
+    def test_x86_static_refuses_unbounded_worker_or_timeout_configuration(self) -> None:
+        for arguments in (
+            ["--target", "x86_64-static", "--jobs", "0"],
+            ["--target", "x86_64-static", "--jobs", "9"],
+            ["--target", "x86_64-static", "--timeout", "nan"],
+            ["--target", "x86_64-static", "--timeout", "301"],
+        ):
+            with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    RUNNER.parse_args(arguments)
+
+    def test_aarch64_timeout_contract_is_not_narrowed_by_x86_static_limits(self) -> None:
+        parsed = RUNNER.parse_args(["--target", "aarch64-dynamic", "--timeout", "301"])
+        self.assertEqual(parsed.timeout, 301.0)
+
+    def test_x86_dispatcher_rejects_arguments_before_starting_a_container(self) -> None:
+        result = subprocess.run(
+            ["bash", str(RUNNER.ROOT / "scripts/dev-x86_64.sh"), "lua-static-source-build", "unexpected"],
+            cwd=RUNNER.ROOT,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(b"lua-static-source-build takes no arguments", result.stderr)
+
+    def test_x86_work_root_rejects_external_and_symlinked_state(self) -> None:
+        external = RUNNER.ROOT.parent / "outside-lua-work-root"
+        with self.assertRaises(RUNNER.RunnerError):
+            RUNNER.native_work_root(external)
+        accepted = RUNNER.native_work_root(self.temporary / "accepted")
+        self.assertTrue(accepted.is_relative_to((RUNNER.ROOT / ".work").resolve()))
+        link = self.temporary / "escape"
+        os.symlink(external, link)
+        with self.assertRaises(RUNNER.RunnerError):
+            RUNNER.native_work_root(link / "child")
+        cache = accepted / "cache"
+        os.symlink("/dev/null", cache)
+        with self.assertRaises(RUNNER.RunnerError):
+            RUNNER.native_source_cache(accepted)
+
+    def test_static_elf_mode_and_dynamic_markers_are_rejected(self) -> None:
+        valid_header = "  Type:                              EXEC (Executable file)\n  Machine:                           Advanced Micro Devices X86-64\n"
+        RUNNER.validate_static_elf_facts(
+            header=valid_header,
+            program_headers="LOAD\n",
+            dynamic="There is no dynamic section in this file.\n",
+            relocations="There are no relocations in this file.\n",
+            mode=RUNNER.STATIC_ET_EXEC,
+            label="fixture",
+        )
+        with self.assertRaises(RUNNER.RunnerError):
+            RUNNER.validate_static_elf_facts(
+                header=valid_header,
+                program_headers="INTERP\n",
+                dynamic="There is no dynamic section in this file.\n",
+                relocations="There are no relocations in this file.\n",
+                mode=RUNNER.STATIC_ET_EXEC,
+                label="fixture",
+            )
+        with self.assertRaises(RUNNER.RunnerError):
+            RUNNER.validate_static_elf_facts(
+                header=valid_header,
+                program_headers="LOAD\n",
+                dynamic="0x0000000000000001 (NEEDED) Shared library: [libc.so]\n",
+                relocations="There are no relocations in this file.\n",
+                mode=RUNNER.STATIC_ET_EXEC,
+                label="fixture",
+            )
+
+    def test_static_execution_protocol_has_no_loader_path_and_selects_preloads(self) -> None:
+        fixture = self.temporary / "fixture"
+        fixture.mkdir()
+        script = self.temporary / "workload.lua"
+        script.write_text("unused", encoding="utf-8")
+        program = (
+            "import os, sys; "
+            "assert os.environ['CRABC_LUA_DYNAMIC_MODULES'] == '0'; "
+            "assert 'LD_LIBRARY_PATH' not in os.environ; "
+            "assert len(sys.argv) == 4; "
+            "print('static-preload-protocol-ok')"
+        )
+        result = RUNNER.run_static_lua(
+            [sys.executable, "-c", program],
+            script,
+            self.temporary,
+            fixture,
+            self.temporary / "state",
+            2.0,
+        )
+        self.assertEqual(result.status, 0, result.stderr.decode(errors="replace"))
+        self.assertEqual(result.stdout, b"static-preload-protocol-ok\n")
+
+    def test_timeout_and_clean_leader_exit_reap_owned_descendants(self) -> None:
+        timeout_program = (
+            "import subprocess, sys, time; "
+            "child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+            "print(child.pid, flush=True); time.sleep(60)"
+        )
+        timeout = RUNNER.command_record([sys.executable, "-c", timeout_program], timeout=0.2)
+        self.assertEqual(timeout["status"], "TIMEOUT")
+        timeout_stdout = timeout["stdout"]
+        assert isinstance(timeout_stdout, dict)
+        self.assert_stopped(int(str(timeout_stdout["text"]).strip()), "timeout left a descendant alive")
+
+        detached_program = (
+            "import subprocess, sys; "
+            "child=subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], "
+            "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); print(child.pid, flush=True)"
+        )
+        leak = RUNNER.command_record([sys.executable, "-c", detached_program], timeout=2.0)
+        self.assertEqual(leak["status"], "PROCESS_GROUP_LEAK")
+        leak_stdout = leak["stdout"]
+        assert isinstance(leak_stdout, dict)
+        self.assert_stopped(int(str(leak_stdout["text"]).strip()), "clean leader exit leaked a descendant")
 
 
 if __name__ == "__main__":

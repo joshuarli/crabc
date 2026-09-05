@@ -1,13 +1,15 @@
 --
 -- Deterministic Lua 5.4 source/bytecode witness for the crabc source-build gate.
 --
--- arg[1] is the directory containing crabc_probe.so and crabc_fail.so.  arg[2]
--- is a disposable directory created by the harness.  The harness supplies the
--- CRABC_LUA_ENV environment variable as documented in README.md.
+-- arg[1] is the dynamic-module directory in the AArch64 lane and the linked
+-- preload support directory in the native static lane.  arg[2] is a disposable
+-- directory created by the harness.  The harness supplies CRABC_LUA_ENV as
+-- documented in README.md.
 --
 
 local module_dir = assert(arg[1], "module directory argument is required")
 local root = assert(arg[2], "fixture directory argument is required")
+local dynamic_modules = os.getenv("CRABC_LUA_DYNAMIC_MODULES") ~= "0"
 package.cpath = module_dir .. "/?.so;" .. package.cpath
 
 local function check(condition, message)
@@ -16,7 +18,16 @@ local function check(condition, message)
     end
 end
 
--- The module is loaded through Lua's normal searcher and cached by require.
+-- The dynamic lane resolves this through Lua's normal DSO searcher.  The
+-- native static lane deliberately registers the exact same entry point in
+-- package.preload, which proves linked C-module functionality but does not
+-- claim dlopen or dynamic-loader coverage.
+if not dynamic_modules then
+    check(type(package.preload.crabc_probe) == "function",
+          "static crabc_probe preload is missing")
+    check(type(package.preload.crabc_fail) == "function",
+          "static crabc_fail preload is missing")
+end
 local probe = assert(require("crabc_probe"))
 local probe_again = assert(require("crabc_probe"))
 check(probe == probe_again, "require did not cache crabc_probe")
@@ -98,10 +109,14 @@ check(not failure_ok, "controlled failure module unexpectedly loaded")
 check(type(failure_error) == "string" and
           string.find(failure_error, "crabc_fail: intentional init failure", 1, true),
       "controlled failure error mismatch")
-local missing_ok, missing_error = pcall(require, "crabc_missing")
-check(not missing_ok and type(missing_error) == "string" and
-          string.find(missing_error, "luaopen_crabc_missing", 1, true),
-      "controlled missing-symbol error mismatch: " .. tostring(missing_error))
+if dynamic_modules then
+    -- This copy lacks luaopen_crabc_missing and is specifically a runtime-DSO
+    -- missing-symbol assertion.  Static mode has no corresponding DSO load.
+    local missing_ok, missing_error = pcall(require, "crabc_missing")
+    check(not missing_ok and type(missing_error) == "string" and
+              string.find(missing_error, "luaopen_crabc_missing", 1, true),
+          "controlled missing-symbol error mismatch: " .. tostring(missing_error))
+end
 
 assert(io.stdout:setvbuf("full", 1024))
 assert(io.stderr:setvbuf("full", 1024))

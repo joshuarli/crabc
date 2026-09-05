@@ -1,5 +1,7 @@
 /*
- * Small Lua 5.4 loadable-module witness for the Lua source-build gate.
+ * Small Lua 5.4 C-module witness for the Lua source-build gate. It is a
+ * loadable module in the dynamic lane and a linked package.preload entry in
+ * the native static lane.
  *
  * The module deliberately keeps its ABI surface narrow.  The file operation
  * uses a descriptor opened for the caller's directory and openat/unlinkat for
@@ -9,8 +11,8 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <lua.h>
-#include <lauxlib.h>
+#include "lua.h"
+#include "lauxlib.h"
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>

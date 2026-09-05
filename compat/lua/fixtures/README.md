@@ -36,3 +36,12 @@ Lua errors.  `crabc_fail.so` exports the expected init symbol and deliberately
 raises during module initialisation.  The harness copies `crabc_probe.so` to
 `crabc_missing.so`; the script loads that copy under its synthetic name, so its
 missing `luaopen_crabc_missing` symbol exercises Lua's missing-symbol path.
+
+The native x86 static lane does not produce or load these DSOs. It compiles
+`crabc_probe.c`, `crabc_fail.c`, and `static_preload.c` into each complete Lua
+program, then stages a private source-derived `linit.c` that registers the two
+existing `luaopen_*` functions in `package.preload`. The workload selects that
+mode with `CRABC_LUA_DYNAMIC_MODULES=0`: it still requires the probe and
+controlled-failure modules, but it does not claim DSO maps, `dlopen`, or a
+missing-DSO-symbol path. The `io.popen` child/pipe assertion remains required
+in both dynamic and static lanes.

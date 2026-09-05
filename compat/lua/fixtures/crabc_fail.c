@@ -1,7 +1,7 @@
-/* Controlled Lua module-initialisation failure for loader/error-path tests. */
+/* Controlled Lua module-initialisation failure for dynamic and linked-preload error paths. */
 
-#include <lua.h>
-#include <lauxlib.h>
+#include "lua.h"
+#include "lauxlib.h"
 
 int luaopen_crabc_fail(lua_State *state)
 {

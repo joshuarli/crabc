@@ -527,6 +527,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
   owned-static-sysroot  build twice and run the private installed x86 static pthread/TLS consumer
+  lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
   owned-dynamic-sysroot  inspect the legacy plan-only dynamic-product gate
   materialized-dynamic-sysroot  build and test the installed initial-graph shared runtime
   crt-object-bundle  stage and audit the private five-object x86 Rust CRT bundle
@@ -4844,6 +4845,22 @@ run_owned_static_sysroot_probe() {
     run_in_container bash /workspace/compat/x86_64/run_owned_static_sysroot.sh
 }
 
+run_lua_static_source_build_probe() {
+    run_in_container bash -ceu '
+        state=/workspace/.work/x86_64/lua-static-source-build
+        sysroot="$state/sysroot"
+        mkdir -p "$state"
+        python3 -B /workspace/scripts/build_x86_64_owned_sysroot.py --output "$sysroot"
+        python3 -B /workspace/compat/lua/run.py \
+            --target x86_64-static \
+            --sysroot "$sysroot" \
+            --work-root "$state/runs" \
+            --report /workspace/compat/reports/lua/x86_64-static-latest.json \
+            --jobs "${CRABC_X86_64_LUA_JOBS:-4}" \
+            --timeout "${CRABC_X86_64_LUA_TIMEOUT:-120}"
+    '
+}
+
 run_owned_dynamic_sysroot_probe() {
     run_in_container bash /workspace/compat/x86_64/run_owned_dynamic_sysroot.sh
 }
@@ -5473,6 +5490,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-static-sysroot) ;;
+    lua-static-source-build) ;;
     owned-dynamic-sysroot) ;;
     materialized-dynamic-sysroot) ;;
     crt-object-bundle) ;;
@@ -7467,6 +7485,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-static-sysroot takes no arguments"
         ensure_image
         run_owned_static_sysroot_probe
+        ;;
+    lua-static-source-build)
+        [ "$#" -eq 0 ] || fail "lua-static-source-build takes no arguments"
+        ensure_image
+        run_lua_static_source_build_probe
         ;;
     owned-dynamic-sysroot)
         [ "$#" -eq 0 ] || fail "owned-dynamic-sysroot takes no arguments"
