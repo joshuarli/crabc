@@ -50,16 +50,36 @@ class IoCancellationEvidenceTests(unittest.TestCase):
         paths = [self.source, self.header, self.witness]
         result = self.dependency_identity(paths)
         self.assertEqual(set(result), {str(path) for path in paths})
-        without_witness = self.dependency_identity([self.source, self.header])
-        self.assertNotIn(str(self.witness), without_witness)
         for extra in (self.root / "include/errno.h", self.source.with_name("other_local_header.h")):
             extra.parent.mkdir(parents=True, exist_ok=True)
             extra.write_text("/* disallowed dependency */\n")
             with self.subTest(extra=extra), self.assertRaises(evidence.EvidenceError):
                 self.dependency_identity(paths + [extra])
 
+    def test_each_probe_requires_exactly_its_declared_local_header_closure(self):
+        witness_free = {"owned_semaphore_wait_cancellation", "owned_entropy_cancellation"}
+        for probe in PROBES:
+            self.source = self.source.with_name(f"{probe}_probe.c")
+            self.source.write_text("/* fixture */\n")
+            paths = [self.source, self.header]
+            with self.subTest(probe=probe):
+                if probe in witness_free:
+                    self.assertNotIn(str(self.witness), self.dependency_identity(paths))
+                    with self.assertRaisesRegex(evidence.EvidenceError, "unowned header dependency"):
+                        self.dependency_identity(paths + [self.witness])
+                else:
+                    self.assertIn(str(self.witness), self.dependency_identity(paths + [self.witness]))
+                    with self.assertRaisesRegex(evidence.EvidenceError, "required local header absent"):
+                        self.dependency_identity(paths)
+
+    def test_unknown_fixture_cannot_acquire_a_local_header_contract(self):
+        self.source = self.source.with_name("other_probe.c")
+        self.source.write_text("/* unknown fixture */\n")
+        with self.assertRaisesRegex(evidence.EvidenceError, "unknown cancellation fixture"):
+            self.dependency_identity([self.source, self.header, self.witness])
+
     def test_missing_required_header_source_and_symlink_dependency_rejected(self):
-        for paths in ([self.source], [self.header]):
+        for paths in ([self.source, self.witness], [self.header, self.witness]):
             with self.assertRaises(evidence.EvidenceError):
                 self.dependency_identity(paths)
         alias = self.headers / "alias.h"
@@ -106,7 +126,7 @@ class IoCancellationEvidenceTests(unittest.TestCase):
     def test_escaped_installed_header_name_is_parsed_without_widening_scope(self):
         spaced = self.headers / "header with spaces.h"
         spaced.write_text("/* installed */\n")
-        self.assertIn(str(spaced), self.dependency_identity([self.source, self.header, spaced]))
+        self.assertIn(str(spaced), self.dependency_identity([self.source, self.header, self.witness, spaced]))
 
     def test_static_inspection_preserves_specialized_tls_and_relocation_guards(self):
         views = {
@@ -144,6 +164,10 @@ class IoCancellationEvidenceTests(unittest.TestCase):
         self.assertEqual(len(witness_probes), 8)
         self.assertNotIn("owned_semaphore_wait_cancellation", witness_probes)
         self.assertNotIn("owned_entropy_cancellation", witness_probes)
+        self.assertEqual(set(evidence.LOCAL_HEADERS_BY_SOURCE), {f"{probe}_probe.c" for probe in PROBES})
+        for probe in PROBES:
+            expected = (evidence.LOCAL_WITNESS,) if probe in witness_probes else ()
+            self.assertEqual(evidence.LOCAL_HEADERS_BY_SOURCE[f"{probe}_probe.c"], expected)
 
 
 class IoCancellationRunnerTests(unittest.TestCase):

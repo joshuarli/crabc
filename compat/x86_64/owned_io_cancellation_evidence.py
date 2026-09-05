@@ -23,6 +23,21 @@ from owned_posix_product_evidence import ProductEvidenceError, validate_link
 
 ROOT = Path(__file__).resolve().parents[2]
 LOCAL_WITNESS = "compat/x86_64/owned_cancellation_proc_witness.h"
+# The shell roster owns selection; this source-name contract owns the exact
+# required and allowed local header closure. Absence matters for the two
+# witness-free fixtures, so an unknown source must never inherit an allowance.
+LOCAL_HEADERS_BY_SOURCE = {
+    "owned_io_cancellation_probe.c": (LOCAL_WITNESS,),
+    "owned_descriptor_cancellation_probe.c": (LOCAL_WITNESS,),
+    "owned_socket_cancellation_probe.c": (LOCAL_WITNESS,),
+    "owned_sleep_wait_cancellation_probe.c": (LOCAL_WITNESS,),
+    "owned_open_lock_cancellation_probe.c": (LOCAL_WITNESS,),
+    "owned_semaphore_wait_cancellation_probe.c": (),
+    "owned_semaphore_cancellation_probe.c": (LOCAL_WITNESS,),
+    "owned_signal_wait_cancellation_probe.c": (LOCAL_WITNESS,),
+    "owned_entropy_cancellation_probe.c": (),
+    "owned_sysv_message_cancellation_probe.c": (LOCAL_WITNESS,),
+}
 COMPILE_FLAGS = ["-std=c11", "-fno-builtin", "-fno-stack-protector"]
 SCHEMA = "crabc.x86_64-owned-io-cancellation-compile/v1"
 
@@ -74,18 +89,22 @@ def dependency_identity(root: Path, product: Path, source: Path, text: str,
     """
     regular(source)
     require(source.parent == root / "compat/x86_64", "fixture source is outside its owner")
+    require(source.name in LOCAL_HEADERS_BY_SOURCE, f"unknown cancellation fixture: {source.name}")
     require(":" in text, "compiler dependency output lacks its target")
     tokens = shlex.split(text.replace("\\\n", " ").split(":", 1)[1])
     require(bool(tokens), "compiler dependency output is empty")
     headers = product / "usr/include"
     require(headers.is_dir() and headers.resolve() == headers, "installed header root is not physical")
-    allowed_local = {source, root / LOCAL_WITNESS}
+    required_local = {root / header for header in LOCAL_HEADERS_BY_SOURCE[source.name]}
+    allowed_local = {source, *required_local}
     paths = set()
     for token in tokens:
         path = regular(Path(token))
         require(path in allowed_local or path.is_relative_to(headers), f"unowned header dependency: {path}")
         paths.add(path)
     require(source in paths, "compiler dependency output omitted the fixture source")
+    for header in sorted(required_local):
+        require(header in paths, f"required local header absent: {header}")
     for header in required_headers:
         relative = Path(header)
         require(not relative.is_absolute() and ".." not in relative.parts,

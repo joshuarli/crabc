@@ -308,11 +308,15 @@ evidence creation. The dispatcher and legacy static runner remain unchanged.
 Each fixture's `.compile.json` records the installed driver and compiler,
 manifest, source, object, exact driver command, and a separate dependency-only
 preprocessing audit using the installed compiler policy and PIE flag ordering.
-The dependency audit permits installed headers and only the exact quoted
-`owned_cancellation_proc_witness.h` local dependency, used by eight fixtures;
-it admits no arbitrary checkout include directory. The other two fixtures
+The dependency audit permits installed headers and requires the exact quoted
+`owned_cancellation_proc_witness.h` local dependency for the eight fixtures
+that use it; it admits no arbitrary checkout include directory. The other two
+fixtures
 (`owned_semaphore_wait_cancellation` and `owned_entropy_cancellation`) need no
-local witness header. Source, object, driver, header, and raw dependency-trace
+local witness header and reject that dependency. The source-name contract in
+`owned_io_cancellation_evidence.py::LOCAL_HEADERS_BY_SOURCE` defines both required
+and allowed local headers and rejects unknown fixtures. Source, object, driver,
+header, and raw dependency-trace
 identities are rechecked after every fixture's links and executions. This
 preprocessing does not produce a second application object.
 
