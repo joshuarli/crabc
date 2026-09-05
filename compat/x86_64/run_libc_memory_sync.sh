@@ -137,9 +137,11 @@ else
     fail "pinned-musl memory-sync fixture exited ${status}"
 fi
 
+# The instruction judge requires inlining the raw syscall adapter into each
+# selected wrapper. One codegen unit makes that boundary deterministic.
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+    -C relocation-model=static -C code-model=small -C panic=abort -C codegen-units=1
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
@@ -151,13 +153,16 @@ done
 readelf --relocs --wide "$archive" >"$archive_relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS TPOFF relocation"
-if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|__syscall_cp|pthread_cancel|crabc_core|mimalloc|sha_crypt' \
+# The archive also contains the separately selected pthread implementation.
+# Cancellation exclusion belongs to the linked msync consumer below; a match
+# in another member or its debug relocations is not a dependency of msync.
+if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' \
     "$archive_relocations"; then
-    fail "archive selects dynamic TLS, cancellation, or an unowned dependency"
+    fail "archive selects dynamic TLS or an unowned dependency"
 fi
 
 "$ORACLE_CC" -std=c11 -DCRABC_MEMORY_SYNC_FREESTANDING \
-    -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
+    -I"$ROOT_DIR/include" -nostdlib -static -Wl,--gc-sections -fno-pie -no-pie -ffreestanding \
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_memory_sync_probe.c \
     compat/x86_64/libc_memory_sync_start.S "$archive" -o "$candidate"

@@ -225,9 +225,11 @@ else
     fail "pinned-musl fcntl status-control fixture exited ${status}"
 fi
 
+# The instruction judge requires inlining the raw syscall adapter into each
+# selected wrapper. One codegen unit makes that boundary deterministic.
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+    -C relocation-model=static -C code-model=small -C panic=abort -C codegen-units=1
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"
@@ -255,7 +257,7 @@ fi
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE \
     -DCRABC_FCNTL_STATUS_CONTROL_FREESTANDING -I"$ROOT_DIR/include" \
-    -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
+    -nostdlib -static -Wl,--gc-sections -fno-pie -no-pie -ffreestanding -fno-builtin \
     -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     compat/x86_64/libc_fcntl_status_control_probe.c \
     compat/x86_64/libc_fcntl_status_control_start.S "$archive" -o "$candidate"

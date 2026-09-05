@@ -139,9 +139,11 @@ else
     fail "pinned-musl descriptor-entry fixture exited ${status}"
 fi
 
+# The instruction judge requires inlining the raw syscall adapter into each
+# selected wrapper. One codegen unit makes that boundary deterministic.
 CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
-    -C relocation-model=static -C code-model=small -C panic=abort
+    -C relocation-model=static -C code-model=small -C panic=abort -C codegen-units=1
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 
 nm -A --defined-only "$archive" >"$archive_symbols"

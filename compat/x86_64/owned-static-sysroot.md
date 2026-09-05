@@ -270,6 +270,19 @@ do not check cancellation. Each controlled child is released and reaped even
 after the waiting worker is canceled. Other syscall cancellation points and
 dynamic initial-task/fork cancellation are separate work.
 
+`owned_open_lock_cancellation_probe.c` runs in those same TLS jobs with a
+runner-owned directory beneath `.work/`. Pending `open`, `openat`, and `creat`
+requests cancel before creating or truncating a file, while disabled requests
+retain mode selection and close-on-exec behavior. FIFO opens and a child-held
+POSIX record lock establish actual blocking cancellation boundaries. The owned
+`fcntl` dispatch now admits `F_SETLKW`; standalone archive selections retain
+their prior rejection. `F_GETLK`, `F_SETLK`, and descriptor/status commands
+remain non-canceling, including masked requests. Handled signals preserve the
+source's `EINTR`/`SA_RESTART` behavior for FIFO opens and blocking locks. The
+fixture also qualifies pending `msync` cancellation before kernel validation;
+it makes no file-durability claim. Every fixture child is released and reaped,
+and successful fixtures remove their scratch directory.
+
 Each POSIX job separately links `owned_spawn_probe.c`: spawn/spawnp file-action
 ordering, working-directory and PATH search, signal/process attributes, worker
 calls, and failure cleanup compare against pinned musl. The installed and

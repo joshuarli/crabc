@@ -12,7 +12,7 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
-readonly PROBE_NAMES=(owned_io_cancellation owned_descriptor_cancellation owned_socket_cancellation owned_sleep_wait_cancellation)
+readonly PROBE_NAMES=(owned_io_cancellation owned_descriptor_cancellation owned_socket_cancellation owned_sleep_wait_cancellation owned_open_lock_cancellation)
 
 fail() {
     printf 'ERROR: x86 owned I/O cancellation: %s\n' "$*" >&2
@@ -72,6 +72,7 @@ for probe_name in "${PROBE_NAMES[@]}"; do
     headers=(errno.h pthread.h stdio.h unistd.h bits/alltypes.h)
     case "$probe_name" in
         owned_io_cancellation) headers+=(ucontext.h sys/wait.h sys/uio.h) ;;
+        owned_open_lock_cancellation) headers+=(fcntl.h sys/stat.h sys/mman.h) ;;
         owned_socket_cancellation) headers+=(sys/socket.h sys/un.h sys/uio.h) ;;
         owned_sleep_wait_cancellation) headers+=(time.h threads.h sys/wait.h sys/resource.h) ;;
         owned_descriptor_cancellation) headers+=(sys/uio.h poll.h signal.h sys/select.h sys/epoll.h sys/eventfd.h sys/mman.h) ;;
@@ -82,7 +83,9 @@ for probe_name in "${PROBE_NAMES[@]}"; do
     done
     "$ORACLE_CC" -std=c11 -pthread -fno-builtin \
         -fno-stack-protector -I"$ROOT_DIR/include" "$PROBE" -o "$reference"
-    timeout 30 env -i "$reference" >"$reference_output" ||
+    reference_arguments=()
+    if [ "$probe_name" = owned_open_lock_cancellation ]; then reference_arguments=("$work_dir/$probe_name-state"); fi
+    timeout 30 env -i "$reference" "${reference_arguments[@]}" >"$reference_output" ||
         fail "pinned-musl $probe_name consumer failed"
     grep -qx "${probe_name//_/-}-ok" "$reference_output" || fail "$probe_name oracle completion missing"
     if [ "${1:-}" = --oracle-only ]; then cat "$reference_output"; fi
@@ -204,7 +207,9 @@ PY
         awk '$3 ~ /^R_X86_64_/ && $3 != "R_X86_64_RELATIVE" { exit 1 }' "$relocations" ||
             fail "$label candidate retains a non-relative relocation"
     fi
-    timeout 30 env -i "$candidate" >"$output" ||
+    local -a candidate_arguments=()
+    if [ "$probe_name" = owned_open_lock_cancellation ]; then candidate_arguments=("$mode_root/files"); fi
+    timeout 30 env -i "$candidate" "${candidate_arguments[@]}" >"$output" ||
         fail "$label installed cancellation consumer failed"
     grep -qx "${probe_name//_/-}-ok" "$output" || fail "$label completion missing"
     cmp -s "$reference_output" "$output" ||
@@ -235,4 +240,4 @@ for probe_name in "${PROBE_NAMES[@]}"; do
 done
 
 printf '%s\n' \
-    'x86 owned I/O cancellation: PASS (pinned musl + installed ET_EXEC/static-PIE scalar/positioned/vector I/O, close/sync, readiness/signal/event waits, sockets, sleep/child waits, cancellation states, FILE locks, fork inheritance)'
+    'x86 owned I/O cancellation: PASS (pinned musl + installed ET_EXEC/static-PIE scalar/positioned/vector I/O, close/sync, readiness/signal/event waits, sockets, sleep/child waits, open/record-lock/msync, cancellation states, FILE locks, fork inheritance)'

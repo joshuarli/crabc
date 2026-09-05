@@ -3,10 +3,11 @@
 //! This module owns the shared public `fcntl` assembly dispatch for two
 //! separate selected static artifacts: descriptor/status flags (`F_GETFD`,
 //! `F_SETFD`, `F_GETFL`, and `F_SETFL`) and the sibling nonblocking
-//! record-lock forms (`F_GETLK` and `F_SETLK`). It composes the raw Linux
-//! syscall register boundary with the selected initial-TLS C `errno`
-//! publisher. It is not generic C `fcntl`, duplication, blocking `F_SETLKW`
-//! cancellation, OFD locks, ownership/signalling control, leases, seals,
+//! record-lock forms (`F_GETLK` and `F_SETLK`). The owned runtime additionally
+//! admits the pointer-bearing blocking `F_SETLKW` cancellation point.
+//! It composes the Linux syscall register boundary with the selected C `errno`
+//! publisher. It is not generic C `fcntl`, duplication, OFD locks,
+//! ownership/signalling control, leases, seals,
 //! `lockf`, descriptor pathname policy, vector I/O, a filesystem capability,
 //! stdio, a general C/POSIX runtime, libc.so, CRT, thread lifecycle, dynamic
 //! TLS, loader, sysroot, allocator, or public x86 support.
@@ -20,17 +21,17 @@
 //! `F_SETFL` request, and uses a cancellation-point route only for
 //! `F_SETLKW`. The selected direct Linux-5.10 leaves retain the status-control
 //! route, `O_LARGEFILE` rule, and the sibling direct nonblocking record-lock
-//! pointer forms. They deliberately do not select the blocking
-//! lock/cancellation path, musl's `F_GETOWN` translation, or its historical
-//! `F_DUPFD_CLOEXEC` fallback.
+//! pointer forms. Only the owned-runtime composition admits the blocking
+//! lock/cancellation path. Neither selects musl's `F_GETOWN` translation or
+//! its historical `F_DUPFD_CLOEXEC` fallback.
 //!
 //! C `fcntl` is variadic: legal `F_GETFD` and `F_GETFL` calls have only its
 //! two fixed C words, so an ordinary three-argument Rust entry would have an
 //! invalid ABI for them. The public assembly shim therefore routes these two
 //! commands to a two-word helper that explicitly supplies Linux rdx=0,
 //! routes `F_SETFD`/`F_SETFL` to a three-word scalar helper, routes the two
-//! selected record commands to their pointer helper, and rejects every other
-//! command before touching rdx. SysV AMD64 places fd/cmd/the first variadic
+//! standalone record commands (plus owned-runtime `F_SETLKW`) to their
+//! pointer helper, and rejects every other command before touching rdx. SysV AMD64 places fd/cmd/the first variadic
 //! word in rdi/rsi/rdx, which is also Linux `fcntl`'s three-word register
 //! order.
 
@@ -49,11 +50,13 @@ const O_LARGEFILE: c_int = 0x8_000;
  * Keep the public entry in assembly. A C fcntl(fd, F_GETFD) call has no rdx
  * vararg word, while a Rust function with a fixed third parameter would
  * require one. The tail branches preserve the C caller's return address and
- * every argument register needed by the destination helper.
+ * every argument register needed by the destination helper. Give this shim
+ * its own executable section so selecting fcntl does not retain unrelated
+ * global-assembly entries from the same archive object.
  */
 core::arch::global_asm!(
     r#"
-    .text
+    .section .text.fcntl,"ax",@progbits
     .p2align 4
     .global fcntl
     .type fcntl,@function
@@ -70,11 +73,16 @@ fcntl:
     je {record_lock}
     cmp esi, 6
     je {record_lock}
+    .if {owned_blocking_lock}
+    cmp esi, 7
+    je {record_lock}
+    .endif
     jmp {unsupported}
     .size fcntl, .-fcntl
 
     .section .note.GNU-stack,"",@progbits
 "#,
+    owned_blocking_lock = const cfg!(feature = "x86-owned-static-runtime") as u8,
     no_argument = sym fcntl_no_argument,
     scalar = sym fcntl_scalar,
     record_lock = sym record_locks::fcntl_record_lock,

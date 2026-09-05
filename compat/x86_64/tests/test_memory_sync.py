@@ -21,7 +21,7 @@ ARTIFACT_RUNNER = ROOT / "compat" / "x86_64" / "run_libc_memory_sync.sh"
 
 
 class MemorySyncEvidenceTests(unittest.TestCase):
-    def test_leaf_records_the_musl_cancellation_difference_and_direct_syscall(self) -> None:
+    def test_leaf_records_owned_cancellation_and_standalone_raw_syscall(self) -> None:
         leaf = LEAF.read_text(encoding="utf-8")
         syscall = SYSCALL.read_text(encoding="utf-8")
 
@@ -29,9 +29,12 @@ class MemorySyncEvidenceTests(unittest.TestCase):
             "src/mman/msync.c",
             "src/thread/x86_64/syscall_cp.s",
             "syscall_cp(SYS_msync",
-            "no-cancellation direct",
+            "before kernel validation",
+            "standalone archive selections retain",
+            '#[cfg(feature = "x86-owned-static-runtime")]',
+            '#[cfg(not(feature = "x86-owned-static-runtime"))]',
+            "super::pthread_cancel::syscall_cp",
             "msync=26",
-            "full musl `msync` parity",
             "file-backed shared-map writeback",
             "raw_syscall::SYS_MSYNC",
             'extern "C" fn msync',

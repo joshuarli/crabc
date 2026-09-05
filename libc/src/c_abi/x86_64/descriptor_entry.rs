@@ -1,8 +1,8 @@
 //! Selected static Linux/x86-64 C descriptor-entry boundary.
 //!
 //! This leaf owns one coherent pathname-to-descriptor entry block: C `open`,
-//! `openat`, and `creat`. It composes only the raw Linux syscall register
-//! boundary and the selected initial-TLS C `errno` publisher. It is not public
+//! `openat`, and `creat`. It composes the Linux syscall register boundary, C
+//! `errno`, and the owned runtime's cancellation window. It is not public
 //! generic C `fcntl` command coverage, pathname normalization or policy, a filesystem capability,
 //! vector I/O, stdio, a general C/POSIX runtime, libc.so, CRT, pthread/TLS
 //! lifecycle, dynamic TLS, loader, sysroot, allocator, or public x86 support.
@@ -17,8 +17,8 @@
 //! Musl extracts the variadic mode only when `O_CREAT` is set or the complete
 //! `O_TMPFILE` mask is present, supplies zero otherwise, ORs `O_LARGEFILE`
 //! into its raw Linux request, and routes normal calls through `__syscall_cp`.
-//! This selected direct Linux-5.10 leaf retains the mode and flag algorithms,
-//! but deliberately omits pthread cancellation and cleanup. On x86-64, musl's
+//! The owned runtime preserves that cancellation point after mode selection;
+//! standalone archive selections retain raw syscalls. On x86-64, musl's
 //! `open` path uses open=2 and follows a successful `O_CLOEXEC` request with a
 //! private F_SETFD/FD_CLOEXEC syscall; retain that ignored-result fix-up
 //! without expanding the separately selected bounded C `fcntl` status-control
@@ -60,19 +60,34 @@ fn selected_mode(flags: c_int, mode: c_uint) -> i64 {
 /// `path` must point to a readable NUL-terminated pathname for the duration of
 /// the syscall, unless the caller deliberately invokes Linux's `EFAULT` path.
 /// The caller owns pathname lifetime, resolution races, descriptor lifetime,
-/// and the meaning of all raw Linux open flags. This direct leaf does not
-/// provide musl's pthread cancellation-point behavior.
+/// and the meaning of all raw Linux open flags. The owned runtime supplies
+/// musl's pthread cancellation point before creating a descriptor.
 #[no_mangle]
 pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: c_uint) -> c_int {
     // SAFETY: the caller owns the raw pathname contract. Linux x86-64 takes
     // the old open syscall's pathname/flags/mode words in rdi/rsi/rdx.
     let result = unsafe {
-        raw_syscall::syscall3(
-            raw_syscall::SYS_OPEN,
-            path as usize as i64,
-            i64::from(flags | O_LARGEFILE),
-            selected_mode(flags, mode),
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_OPEN,
+                path as usize as i64,
+                i64::from(flags | O_LARGEFILE),
+                selected_mode(flags, mode),
+                0,
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_OPEN,
+                path as usize as i64,
+                i64::from(flags | O_LARGEFILE),
+                selected_mode(flags, mode),
+            )
+        }
     };
 
     if result >= 0 && flags & O_CLOEXEC != 0 {
@@ -106,8 +121,8 @@ pub unsafe extern "C" fn open(path: *const c_char, flags: c_int, mode: c_uint) -
 /// `path` must point to a readable NUL-terminated pathname for the duration of
 /// the syscall, unless deliberately testing Linux's `EFAULT` path. The caller
 /// owns `directory_descriptor` lifetime, pathname resolution races, descriptor
-/// lifetime, and all raw Linux flag semantics. This direct leaf has no musl
-/// pthread cancellation-point behavior.
+/// lifetime, and all raw Linux flag semantics. The owned runtime supplies
+/// musl's pthread cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn openat(
     directory_descriptor: c_int,
@@ -118,13 +133,28 @@ pub unsafe extern "C" fn openat(
     // SAFETY: the caller owns the raw pathname/directory-descriptor contract;
     // syscall4 routes the final Linux mode word through r10.
     let result = unsafe {
-        raw_syscall::syscall4(
-            raw_syscall::SYS_OPENAT,
-            i64::from(directory_descriptor),
-            path as usize as i64,
-            i64::from(flags | O_LARGEFILE),
-            selected_mode(flags, mode),
-        )
+        #[cfg(feature = "x86-owned-static-runtime")]
+        {
+            super::pthread_cancel::syscall_cp(
+                raw_syscall::SYS_OPENAT,
+                i64::from(directory_descriptor),
+                path as usize as i64,
+                i64::from(flags | O_LARGEFILE),
+                selected_mode(flags, mode),
+                0,
+                0,
+            )
+        }
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
+        {
+            raw_syscall::syscall4(
+                raw_syscall::SYS_OPENAT,
+                i64::from(directory_descriptor),
+                path as usize as i64,
+                i64::from(flags | O_LARGEFILE),
+                selected_mode(flags, mode),
+            )
+        }
     };
     c_status(result)
 }
@@ -136,7 +166,7 @@ pub unsafe extern "C" fn openat(
 /// `path` must point to a readable NUL-terminated pathname for the duration of
 /// the syscall, unless deliberately testing Linux's `EFAULT` path. The caller
 /// owns pathname lifetime, resolution races, descriptor lifetime, and umask
-/// policy. This direct leaf has no musl pthread cancellation-point behavior.
+/// policy. The owned runtime supplies musl's pthread cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn creat(path: *const c_char, mode: c_uint) -> c_int {
     // SAFETY: this is the pinned musl `creat` mapping to `open` with a mode-
