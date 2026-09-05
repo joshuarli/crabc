@@ -1,5 +1,85 @@
 # Combined native x86-64 completion goal
 
+## Restart handoff — 2026-09-05
+
+The user requested a deliberate wind-down for a Codex restart. The combined
+goal is **not complete**. Resume from the retained work below, not a new plan
+or implementation from scratch. AArch64 remains paused; C mimalloc remains
+the production backend; x86 public promotion remains false.
+
+### Settled main and evidence
+
+Runtime baseline `6ff4c0d1` includes installed static/static-PIE wide and byte
+stdio, filesystem/IPC, spawn/wordexp, selected fork/exit and normal robust
+mutexes; dynamic PIE/non-PIE startup, runtime-new dependency graphs, retained
+close/scope, all-thread TLS growth, and constructor-exit repair. The FS+32
+cancellation-state handoff is installed, but syscall cancellation activation
+is **not** integrated. Allocator VM option retries and published-range commit
+are integrated; M2 remains partial.
+
+Retained root checks (logs under `.work/`):
+
+- `owned-static-restart-checkpoint.log`: `./scripts/dev-x86_64.sh
+  owned-static-sysroot` passed at `6ff4c0d1`: 84 binaries, 24 isolated jobs,
+  four workers, installed/extracted modes and two-build reproducibility.
+- `owned-wordexp-restart-checkpoint.log`: `libc-owned-wordexp` passed at that
+  revision, including private normal/missing/inaccessible/invalid shells and
+  parent-errno preservation against pinned musl.
+- `materialized-dynamic-nonpie-robust-integrated.log`: the dynamic product
+  gate passed at `e78c166e`, before the cancellation cache handoff: 43 loader,
+  16 driver/package and two CRT-mode tests, installed/extracted consumers,
+  41-module worker TLS, scope/rollback, constructor exit and reproducibility.
+- `allocator-unit-vm-retry-integrated.log`: allocator unit tests passed
+  938/938 after `b537d2a4`; no allocator source changed on main afterward.
+- `owned-providers-wordexp-host-integrated.log`: 59 focused Python tests
+  passed. An agent's separate unsharded accounting/parity run timed out after
+  95/96 tests; it is not a pass. Use the normal sharded runner when broadening.
+
+These are component/integration results, not final same-revision qualification.
+
+### Retained batches: review these first
+
+All paths below are relative to `.work/worktrees/`. Checkpoint commits are
+intentionally incomplete and must not be cherry-picked as finished features.
+
+| Worktree / branch | Commit | Restart action |
+| --- | --- | --- |
+| `allocator_m2_metadata` / `allocator/m2-native-metadata` | `ca601ad5` | Review/integrate incremental arena and OS metadata commitment. Its prerequisite `9b436f20` duplicates main's published-range commit `c9cd534f`; do not reapply that prerequisite or overwrite newer `os.rs`. Worker unit tests: 932 passed; bounded perf smoke passed. Full on-demand differential remains to run. |
+| `owned_dynamic_sysroot` / `x86/owned-dynamic-sysroot` | `79c536b1` | Review/integrate deferred PLT/GOT transaction. Cold combined gate passed: 46 loader, 18 boundary, two CRT tests, installed/extracted PIE/non-PIE and lazy cases. Evidence: `.work/x86_64/tmp/materialized-dynamic.YyaCVL` in this worktree. Preserve root constructor-exit/spawn calls when merging. |
+| `owned_pthread_lifecycle` / `x86/owned-pthread-lifecycle` | `257b9e74` | **Uncompiled checkpoint:** signal-target lock/lease scaffold in `pthread_create_join.rs`; fields still need initialization and lifecycle integration. |
+| `owned_stdio_engine` / `owned-stdio-closure` | `a4f0aefe` | **Uncompiled checkpoint:** public I/O cancellation, SIGCANCEL/PC-window assembly, explicit FILE-lock cleanup and regression. Depends on the preceding target-lifetime work; candidate stops at missing `with_selected_pthread_signal_target`. |
+| `provider_roster_accounting` / `x86/provider-roster-accounting` | `1ef6fa14` | **Test-only checkpoint:** scalar `fma/fmaf`, `hypot/hypotf`, `log1p/log1pf` raw-bit/fenv consumer. No leaf/generator/runner yet. Fix the test's overly broad `fmal` substring check before using it as a judge. Reuse existing pinned-musl generation/PIC and installed-driver machinery; binary80 is separate. |
+
+Important integration contracts:
+
+- Incremental metadata corrects a reproduced pinned-v3.5.0 OS-only on-demand
+  fault: never publish committed capacity before backing is accessible. Its
+  source evidence and intentional difference live in the batch's allocator
+  design/known-differences updates. Next VM work is a distinct huge allocation
+  owner in the **same** `ProcessArenaBacking` registry, not an ordinary
+  `Mapping` impersonation or invented capacity limit; preserve failed-page
+  ownership and source cleanup/startup order. `allocator_m1_native` is clean
+  at `b537d2a4` and has no additional huge implementation to recover.
+- Deferred GOT retry deliberately repairs pinned musl's write into sealed
+  RELRO (oracle SIGSEGV), not a parity claim. Review its permission rollback,
+  atomic pointer publication after all-thread TLS, and RO restoration before
+  callbacks. Complete search policy, dynamic fork/main-thread exit, and an
+  untested main-executable `dladdr` base remain follow-ons.
+- Cancellation target lookup must acquire a mapping lease under the registry
+  lock, release that lock, then use the per-target kill lock around pending/TID/
+  `tgkill`; exit and reclamation must retire TIDs and drain leases safely.
+  The callback needs `(tgid, tid, *const SelectedWorkerCancellation)`; main
+  needs persistent live/kill state. Publish FS+32 before SIG32 unmask. Preserve
+  inherited state across fork. Run orphaned explicit FILE-lock repair before
+  nonfinal FS-cache clearing. Ordinary FILE raw reads/writes are **not** musl
+  cancellation points; public `read/readv/write/writev` are. The checkpoint's
+  expanded musl probe passes, but candidate runtime tests have not run.
+
+Current-batch unfinished work is committed on its own branches, not promoted
+to main. Preserve unrelated historical dirty worktrees. No new work or test
+jobs should survive this wind-down. Resume independent allocator/runtime work
+under the current `orchestrate` skill, with integration owned by the root.
+
 ## Goal prompt
 
 > Implement `plan.md` to completion: fully complete both `x86-64.md` and the
@@ -170,6 +250,10 @@ blocker; that requires separate future AArch64 promotion and evidence.
    unrelated work, invoke hooks, or push. Run required clean-revision gates
    at milestone/integration checkpoints; rerun affected evidence after later
    code changes rather than inheriting an unrelated revision's pass.
+   Fold trivial documentation/comment fixes into the related implementation
+   or next coherent batch; reserve standalone docs commits for substantial
+   planning or contract changes. Do not rewrite settled history just to regroup
+   earlier small commits.
 6. Update concise architecture-qualified handoffs and machine-readable state
    with exact remaining conditions, commands, revision, report paths, and
    results. Do not inflate status files with per-leaf histories or count stale

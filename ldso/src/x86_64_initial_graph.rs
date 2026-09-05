@@ -78,6 +78,15 @@ mod x86_64_initial_worker_tls;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_runtime_tls_view.rs"]
 mod x86_64_runtime_tls_view;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_runtime_memory.rs"]
+mod x86_64_runtime_memory;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_runtime_lock.rs"]
+mod x86_64_runtime_lock;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_runtime_registry.rs"]
+mod x86_64_runtime_registry;
 #[cfg(crabc_general_initial_graph)]
 use x86_64_initial_graph_state::ObjectIdentity;
 #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
@@ -359,6 +368,12 @@ const MAX_RELR_BYTE_LEN: usize = MAX_RELR_ENTRIES * ELF64_RELR_SIZE;
 // (including the stack-canary slot) without claiming a full pthread TCB.
 const TLS_TCB_PREFIX_SIZE: usize = 64;
 const TLS_TCB_MODULE_SIZE_TABLE_OFFSET: usize = core::mem::size_of::<usize>() * 2;
+// The installed libc owns this signal-handler-safe opaque cancellation-state
+// pointer. Fresh main/worker allocations leave it zero; libc publishes before
+// callbacks/handler unmask and clears before state reclamation. The loader
+// never dereferences, copies from another thread, or rewrites it during growth.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+const TLS_TCB_LIBC_CANCELLATION_STATE_OFFSET: usize = 32;
 const TLS_DTV_WORDS: usize = MAX_OBJECTS + 1;
 const TLS_DTV_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
 const TLS_MODULE_SIZE_TABLE_BYTE_LEN: usize = TLS_DTV_WORDS * core::mem::size_of::<usize>();
@@ -781,7 +796,7 @@ struct Object {
     base: u64,
     phdr: *const u8,
     phnum: usize,
-    #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+    #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
     dynamic: *const u8,
     strtab: *const u8,
     strsz: usize,
@@ -826,6 +841,8 @@ struct Object {
     tls_align: usize,
     tls_offset_below_tp: usize,
     tls_module_id: usize,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    bind_now: bool,
     #[cfg(crabc_initial_exec_tls_graph)]
     static_tls: bool,
 }
@@ -834,7 +851,7 @@ const EMPTY_OBJECT: Object = Object {
     base: 0,
     phdr: core::ptr::null(),
     phnum: 0,
-    #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+    #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
     dynamic: core::ptr::null(),
     strtab: core::ptr::null(),
     strsz: 0,
@@ -874,6 +891,8 @@ const EMPTY_OBJECT: Object = Object {
     tls_align: 1,
     tls_offset_below_tp: 0,
     tls_module_id: 0,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    bind_now: false,
     #[cfg(crabc_initial_exec_tls_graph)]
     static_tls: false,
 };
@@ -1328,7 +1347,7 @@ unsafe fn parse_mapped(
         base,
         phdr,
         phnum,
-        #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn))]
+        #[cfg(any(crabc_fixed_graph_introspection, crabc_fixed_graph_dlfcn, feature = "x86_64-owned-dynamic-runtime"))]
         dynamic,
         mapped,
         relro_virtual_address,
@@ -1516,6 +1535,8 @@ unsafe fn parse_mapped(
             // General initial TLS assigns all modules retained placements;
             // the older fixed IE sibling keeps its one-leaf restriction.
             DT_FLAGS => {
+                #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+                { object.bind_now |= value & DF_BIND_NOW != 0; }
                 #[cfg(not(any(crabc_initial_exec_tls_graph, crabc_general_initial_tls_materialization_v1)))]
                 if value & DF_STATIC_TLS != 0 {
                     return None;
@@ -1529,6 +1550,10 @@ unsafe fn parse_mapped(
                 }
             }
             DT_FLAGS_1 if value & !(DF_1_NOW | DF_1_PIE) != 0 => return None,
+            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+            DT_FLAGS_1 => { object.bind_now |= value & DF_1_NOW != 0; }
+            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+            24 => { object.bind_now = true; } // DT_BIND_NOW has no value.
             // These imply relocation, finalization, hash, or initialization
             // semantics outside the closed fixture ABI.  Reject before any
             // corresponding pointer can be used.
@@ -2324,7 +2349,11 @@ pub struct TlsIndex {
 /// that module's recorded `PT_TLS.p_memsz`; it cannot establish that a
 /// non-null result is safe for a caller's eventual typed dereference. This
 /// private exported ELF symbol is not an installed or public x86 API.
-#[no_mangle]
+// Source-root tests run on the pinned harness libc's TCB. Its unwinder calls
+// its own resolver through dl_iterate_phdr; exporting this loader-only symbol
+// there would interpret the foreign FS+24 as a RuntimeTlsView during panic.
+// Production ELF keeps the exact ABI symbol; tests call this Rust item directly.
+#[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn __tls_get_addr(index: *const TlsIndex) -> *mut c_void {
     if index.is_null() {
         return core::ptr::null_mut();

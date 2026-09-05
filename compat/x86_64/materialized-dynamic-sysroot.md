@@ -1,10 +1,11 @@
-# Materialized initial-graph dynamic sysroot
+# Materialized dynamic sysroot component
 
 `scripts/build_x86_64_owned_dynamic_sysroot.py` produces a real native x86-64
 shared runtime. `run_materialized_dynamic_sysroot.sh` builds and executes
 ordinary C consumers through the installed `bin/crabc-cc-dynamic`, repeats
 through an extracted package, and compares two fresh builds byte for byte.
-This is an initial-graph component, not completion of `dynamic-product.toml`.
+It also executes retained runtime graphs and all-thread DTV growth. This is
+component evidence, not completion of `dynamic-product.toml`.
 Run it from the host with `./scripts/dev-x86_64.sh materialized-dynamic-sysroot`.
 
 ## One owner per runtime state
@@ -17,7 +18,11 @@ the opaque allocation token described in [initial-worker-tls.md](initial-worker-
 Neither linkage path clones those implementations. The static feature remains
 cfg-disjoint and its existing installed gate remains applicable unchanged.
 
-The executable contains owned `Scrt1.o` and `crabc-dynamic-attach.o`. The latter
+The executable contains owned `Scrt1.o` (PIE) or dynamic `crt1.o` (ET_EXEC),
+and `crabc-dynamic-attach.o`. Both entries compile the same authenticated
+dynamic startup source under linkage-specific relocation models. The default
+CRT builder still produces the original static `crt1.o`; only its explicit
+`--owned-dynamic-sysroot` mode selects dynamic `crt1.o`. The attachment object
 contains only the established loader/libc attachment owner. The 72-byte
 RuntimeV1 and 32-byte OwnedCrtHandoff are unchanged. The loader supplies the
 conventional x86 `rdx` finalizer, installs initial FS once, and retains the
@@ -30,16 +35,18 @@ Initial TLS is copied from relocated templates for every worker, including
 over-aligned modules, TBSS, errno and the accepted allocator's IE TLS. Live
 main-thread mutations are never the worker template. CLONE_SETTLS installs a
 worker's TP; release requires clear-child-TID and reader withdrawal. Runtime
-module admission and DTV generation replacement remain separate work.
+module admission and coherent DTV generations use the same loader allocation
+registry, as described in [runtime-dynamic-loader.md](runtime-dynamic-loader.md).
 
 ## Installed artifacts and purity
 
-The producer installs headers, `usr/lib/{Scrt1.o,crti.o,crtn.o,libc.so,
+The producer installs headers, `usr/lib/{crt1.o,Scrt1.o,crti.o,crtn.o,libc.so,
 crabc-dynamic-attach.o,libcrabc-builtins.a}`, the canonical
 `lib/ld-crabc-x86_64.so.1`, and its single relative `ld-musl-x86_64.so.1` alias.
-It does not install the current static-only `crt1.o` under a dynamic promise.
-The driver admits PIE and shared-object output; non-PIE dynamic entry remains
-unqualified. Applications name each DSO explicitly; SONAME, transitive NEEDED,
+The driver admits `--dynamic-pie`, `--dynamic-non-pie` and shared-object
+output; the executable modes select their actual owned dynamic entry. The
+non-PIE mode emits ET_EXEC with the same canonical interpreter, initial TLS
+and lifecycle handoff, without a static-TLS bootstrap. Applications name each DSO explicitly; SONAME, transitive NEEDED,
 imports and `/usr/lib` search ownership are checked before linkage.
 
 The final libc link consumes only classified Rust C ABI objects, the byte-
@@ -93,17 +100,19 @@ executable. No application memory callback may run in the shared-address-space
 child or during lock-held spawn stack setup; neither child nor parent uses an
 ambient target executable.
 
-The initial-component gate also runs 38 loader tests and 15 driver/package
+The component gate also runs 46 loader tests, 18 driver/package and two CRT-mode
 boundary tests. Two cold producer manifests and deterministic package bytes
 must match; the extracted driver must compile and execute the same consumer.
 These checks do not promote public support or the frozen AArch64 baseline.
 
-`run_general_dynamic_dlopen.sh INSTALLED_SYSROOT` is the next independent
+`run_general_dynamic_dlopen.sh INSTALLED_SYSROOT` is the independent
 ordinary regression, reusing the portable nested plugin fixtures without an
-initial dependency. It currently fails with application status 10: runtime
-module admission is absent, and that failure is not counted as a passing gate.
-Remaining product work includes dynamic non-PIE startup, general dlopen/dlsym,
-retained close/reopen semantics and process-exit destruction, worker DTV growth,
-loader concurrency/reentrancy, dynamic fork repair and main-thread pthread_exit
+initial dependency. Its nested plugin, 41-module worker TLS/lifecycle, scope
+and rollback consumers now run through installed and extracted products with
+pinned musl differentials for both PIE and non-PIE entry. Initial/runtime-loaded constructors that call exit
+must skip their own incomplete destructor, while completed objects finalize;
+`run_general_dynamic_constructor_exit.sh` checks both installed product arms.
+Remaining product work includes complete runtime search policy and broader
+introspection/order qualification, dynamic fork repair and main-thread pthread_exit
 composition, followed by the complete installed dynamic campaign. Musl's
 retained dlclose mappings, not physical unloading, are the parity target.

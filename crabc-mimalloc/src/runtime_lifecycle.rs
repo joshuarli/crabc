@@ -3718,6 +3718,16 @@ impl RuntimeProcessStorage {
         // application constructors. This static owner retains ticket zero for
         // the process lifetime, and no competing runtime lifecycle call can
         // pass the INITIALIZING state above.
+        #[cfg(not(miri))]
+        let owner = unsafe {
+            ProcessMainInitializationStorage::global()
+                .initialize_with_vm_options_from_source_environment(
+                    config,
+                    options,
+                    process_environment_pointer,
+                )
+        };
+        #[cfg(miri)]
         let owner = unsafe {
             ProcessMainInitializationStorage::global().initialize_with_vm_options(config, options)
         };
@@ -3763,8 +3773,10 @@ impl RuntimeProcessStorage {
 /// The static runtime starts after libc has installed the validated kernel
 /// environment vector and before constructors can call its selected mutation
 /// APIs. A foreign direct write still has C's ordinary caller-coordination
-/// obligation; an unavailable or overlong entry remains unresolved and makes
-/// this incomplete shadow lifecycle retain rather than manufacture defaults.
+/// obligation. An unavailable or overlong entry remains unresolved in the
+/// permanent process policy: its current source default is usable for that
+/// option read, and only that descriptor retries through this same raw reader
+/// on a later `mi_option_get`-shaped policy access.
 #[cfg(not(miri))]
 fn source_vm_options_from_process_environment() -> VmOptions {
     let mut options = VmOptions::uninitialized();

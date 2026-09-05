@@ -31,9 +31,12 @@ readonly -a CONSUMER_EVIDENCE_PATHS=(
     allocator-et-exec allocator-pie posix-et-exec posix-pie
     posix-et-exec/temp posix-pie/temp posix-et-exec/spawn posix-pie/spawn
     posix-et-exec/calendar posix-pie/calendar posix-et-exec/tzif posix-pie/tzif
+    posix-et-exec/filesystem posix-pie/filesystem
+    posix-et-exec/ipc posix-pie/ipc
     stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends
     stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie
     stdio-et-exec/wide stdio-pie/wide
+    stdio-et-exec/extensions stdio-pie/extensions
     printf-et-exec printf-pie printf-et-exec/float printf-pie/float
     printf-et-exec/scan printf-pie/scan
     printf-et-exec/wide printf-pie/wide
@@ -824,6 +827,17 @@ run_static_mode() {
             minimum_tls_alignment=1
             candidate_arguments=("$mode_root/spawn-state")
             ;;
+        filesystem)
+            probe=owned_static_filesystem_consumer.c
+            expected_output=''
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/directory")
+            ;;
+        ipc)
+            probe=owned_static_ipc_readiness_consumer.c
+            expected_output=''
+            minimum_tls_alignment=1
+            ;;
         calendar)
             probe=owned_calendar_probe.c
             minimum_tls_alignment=1
@@ -863,6 +877,12 @@ run_static_mode() {
             minimum_tls_alignment=1
             candidate_arguments=("$mode_root/wide-stream")
             [ -f "$printf_matrix_reference" ] || fail "${label} wide reference is missing"
+            ;;
+        stdio-extensions)
+            probe=owned_stdio_extensions_probe.c
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/extension-stream")
+            [ -f "$printf_matrix_reference" ] || fail "${label} extension reference is missing"
             ;;
         resolver)
             probe=libc_resolver_runtime_probe.c
@@ -905,6 +925,9 @@ run_static_mode() {
     mkdir "$mode_root"
     if [ "$consumer_kind" = resolver ]; then
         seed_resolver_fixture "$resolver_fixture"
+    elif [ "$consumer_kind" = filesystem ]; then
+        mkdir "$mode_root/directory" "$mode_root/directory/nested"
+        touch "$mode_root/directory/alpha" "$mode_root/directory/beta"
     fi
     (
         cd "$mode_root"
@@ -961,6 +984,12 @@ run_static_mode() {
         printf 'backend-exit\n' >"$mode_root/expected-backend-exit"
         cmp "$mode_root/expected-backend-exit" "$mode_root/backend-exit" ||
             fail "${label} did not flush its cookie stream at ordinary exit"
+    elif [ "$consumer_kind" = stdio-extensions ]; then
+        env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/extension-records" ||
+            fail "${label} extension candidate failed"
+        cmp "$printf_matrix_reference" "$mode_root/extension-records" ||
+            fail "${label} extension records differ from pinned musl"
+        [ ! -e "$mode_root/extension-stream" ] || fail "${label} retained its extension stream"
     elif [ "$consumer_kind" = wide-stdio ] || [ "$consumer_kind" = wide-format ]; then
         env -i "$candidate" "${candidate_arguments[@]}" >"$mode_root/wide-records" ||
             fail "${label} wide candidate failed"
@@ -1002,6 +1031,8 @@ run_static_mode() {
             "$label process streams" stdio-process
         run_static_mode "$installed_root" "$mode" "$mode_root/wide" \
             "$label wide streams" wide-stdio "$printf_matrix_reference.wide-stdio"
+        run_static_mode "$installed_root" "$mode" "$mode_root/extensions" \
+            "$label stream extensions" stdio-extensions "$printf_matrix_reference.extensions"
     fi
     if [ "$consumer_kind" = resolver ]; then
         assert_resolver_fixture_result "$resolver_fixture" "$label"
@@ -1037,6 +1068,10 @@ run_static_mode() {
             "$label temporary objects" temp-objects
         run_static_mode "$installed_root" "$mode" "$mode_root/spawn" \
             "$label process spawning" spawn
+        run_static_mode "$installed_root" "$mode" "$mode_root/filesystem" \
+            "$label filesystem clients" filesystem
+        run_static_mode "$installed_root" "$mode" "$mode_root/ipc" \
+            "$label local IPC/readiness" ipc
         run_static_mode "$installed_root" "$mode" "$mode_root/calendar" \
             "$label calendar" calendar "$printf_matrix_reference.calendar"
         run_static_mode "$installed_root" "$mode" "$mode_root/tzif" \
@@ -1513,6 +1548,31 @@ for wide_kind in stdio format; do
     [ ! -e "$header_consumer/wide-${wide_kind}-stream" ] ||
         fail "pinned-musl wide ${wide_kind} retained its temporary stream"
 done
+
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_stdio_extensions_probe.c" \
+    -o "$header_consumer/extensions-reference"
+env -i "$header_consumer/extensions-reference" "$header_consumer/extension-stream" \
+    >"$printf_matrix_reference.extensions" || fail "pinned-musl stream extensions failed"
+[ "$(wc -l <"$printf_matrix_reference.extensions")" -eq 14 ] ||
+    fail "pinned-musl stream extensions have an incomplete transcript"
+[ ! -e "$header_consumer/extension-stream" ] || fail "extension reference retained its stream"
+
+mkdir "$header_consumer/directory" "$header_consumer/directory/nested"
+touch "$header_consumer/directory/alpha" "$header_consumer/directory/beta"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_static_filesystem_consumer.c" \
+    -o "$header_consumer/filesystem-reference"
+timeout 30s env -i "$header_consumer/filesystem-reference" "$header_consumer/directory" \
+    >"$header_consumer/filesystem-reference-output" || fail "pinned-musl filesystem clients failed"
+[ ! -s "$header_consumer/filesystem-reference-output" ] || fail "filesystem reference emitted output"
+
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_static_ipc_readiness_consumer.c" \
+    -o "$header_consumer/ipc-reference"
+timeout 30s env -i "$header_consumer/ipc-reference" >"$header_consumer/ipc-reference-output" ||
+    fail "pinned-musl local IPC/readiness failed"
+[ ! -s "$header_consumer/ipc-reference-output" ] || fail "IPC reference emitted output"
 
 "$ORACLE_CC" -std=c11 -pthread -fno-builtin \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/libc_pthread_tls_aggregate_probe.c" \

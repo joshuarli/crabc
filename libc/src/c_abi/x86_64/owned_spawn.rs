@@ -42,6 +42,21 @@ struct SpawnArguments {
     search_path: bool, inherited_path: *const c_char, exec_errno: c_int,
 }
 
+/// Private completion stage for one owned spawn transaction.
+///
+/// A child-reported failure has crossed the CLOEXEC error pipe after clone.
+/// Some internal clients deliberately model that as an image which produced
+/// no output (rather than as the `posix_spawn` return convention), while a
+/// parent setup failure has no child/image boundary to model.  Keep this
+/// distinction below the public C ABI: `spawn` maps both failures back to the
+/// existing positive errno result for `posix_spawn` and current stdio users.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum SpawnOutcome {
+    Success,
+    ParentFailure(c_int),
+    ChildFailure(c_int),
+}
+
 unsafe extern "C" {
     fn pthread_setcancelstate(state: c_int, old: *mut c_int) -> c_int;
     fn __crabc_x86_pthread_clone(function: unsafe extern "C" fn(*mut c_void) -> c_int,
@@ -156,10 +171,10 @@ unsafe extern "C" fn child(pointer: *mut c_void) -> c_int {
     }
 }
 
-pub(super) unsafe fn spawn(pid: *mut c_int, path: *const c_char,
+pub(super) unsafe fn spawn_with_outcome(pid: *mut c_int, path: *const c_char,
     actions: *const PosixSpawnFileActions, attributes: *const PosixSpawnAttr,
     arguments: *const *const c_char, environment_pointer: *const *const c_char,
-    search_path: bool) -> c_int {
+    search_path: bool) -> SpawnOutcome {
     unsafe {
         let mut old_cancel = 0;
         let cancellation_changed = pthread_setcancelstate(1, &mut old_cancel) == 0;
@@ -167,7 +182,7 @@ pub(super) unsafe fn spawn(pid: *mut c_int, path: *const c_char,
         let masked = signal_mask(0, &u64::MAX, &mut old_mask);
         if masked < 0 {
             if cancellation_changed { pthread_setcancelstate(old_cancel, ptr::null_mut()); }
-            return -masked as c_int;
+            return SpawnOutcome::ParentFailure(-masked as c_int);
         }
         let attributes = if attributes.is_null() { core::mem::zeroed::<PosixSpawnAttr>() }
             else { attributes.read() };
@@ -179,7 +194,8 @@ pub(super) unsafe fn spawn(pid: *mut c_int, path: *const c_char,
             inherited_path: if search_path { environment::getenv(c"PATH".as_ptr()) } else { ptr::null() },
             exec_errno: 0 };
         let creation = ProcessGuard::acquire_blocked();
-        let mut result = sys::syscall2(293, args.pipe.as_mut_ptr() as i64, CLOEXEC);
+        let outcome;
+        let result = sys::syscall2(293, args.pipe.as_mut_ptr() as i64, CLOEXEC);
         if result == 0 {
             // The trampoline initializes its own stack words. Unused stack
             // storage needs no zeroing: compiler-lowered memset here could
@@ -191,27 +207,54 @@ pub(super) unsafe fn spawn(pid: *mut c_int, path: *const c_char,
             close(args.pipe[1]);
             drop(creation);
             if args.exec_errno != 0 { errno::set_errno(args.exec_errno); }
-            result = child_pid;
             if child_pid > 0 {
                 let mut error = 0i32;
                 let read = sys::syscall3(0, args.pipe[0] as i64, &mut error as *mut c_int as i64, 4);
                 if read == 4 {
                     let mut status = 0;
                     while sys::syscall4(61, child_pid, &mut status as *mut c_int as i64, 0, 0) == -4 {}
-                    result = -(error as i64);
+                    outcome = SpawnOutcome::ChildFailure(error);
                 } else {
                     if !pid.is_null() { pid.write(child_pid as c_int); }
-                    result = 0;
+                    outcome = SpawnOutcome::Success;
                 }
+            } else {
+                // Preserve the pre-existing wrapper's zero-result mapping;
+                // the private clone trampoline never returns zero to this
+                // parent path, while negative results remain setup failures.
+                outcome = if child_pid < 0 {
+                    SpawnOutcome::ParentFailure(-child_pid as c_int)
+                } else {
+                    SpawnOutcome::Success
+                };
             }
             close(args.pipe[0]);
         } else {
             drop(creation);
             errno::set_errno(-result as c_int); // source pipe2 error translation
+            outcome = SpawnOutcome::ParentFailure(-result as c_int);
         }
         signal_mask(2, &old_mask, ptr::null_mut());
         if cancellation_changed { pthread_setcancelstate(old_cancel, ptr::null_mut()); }
-        -result as c_int
+        outcome
+    }
+}
+
+/// Preserve the established internal/public `posix_spawn` error contract.
+///
+/// Callers that need to model a child image boundary use
+/// `spawn_with_outcome`; every existing C-facing caller retains this plain
+/// positive-errno interface.
+pub(super) unsafe fn spawn(pid: *mut c_int, path: *const c_char,
+    actions: *const PosixSpawnFileActions, attributes: *const PosixSpawnAttr,
+    arguments: *const *const c_char, environment_pointer: *const *const c_char,
+    search_path: bool) -> c_int {
+    match unsafe {
+        spawn_with_outcome(pid, path, actions, attributes, arguments,
+            environment_pointer, search_path)
+    } {
+        SpawnOutcome::Success => 0,
+        SpawnOutcome::ParentFailure(error) | SpawnOutcome::ChildFailure(error) => error,
     }
 }
 

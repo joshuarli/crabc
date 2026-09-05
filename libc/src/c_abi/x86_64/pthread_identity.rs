@@ -112,12 +112,15 @@ pub(super) unsafe fn clear_current_selected_cancellation_state() {
     unsafe { publish_current_selected_cancellation_state(core::ptr::null()) }
 }
 
-/// Load this task's opaque selected cancellation-state cache without a lock.
+/// Load an owned task's opaque selected cancellation-state cache without a
+/// lock.
 ///
-/// The SIGCANCEL handler and syscall-cancellation leaf use this immediate
-/// acquire load only after the owning TLS runtime established `%fs`. A null
-/// result means the task is foreign, has not reached selected callback entry,
-/// or has committed its selected cancellation state to retirement.
+/// The SIGCANCEL handler and syscall-cancellation leaf may use this immediate
+/// acquire load only after they have established that the current task uses an
+/// owned static or materialized-dynamic x86 TCB. A foreign `%fs` base need not
+/// reserve this word or leave it zero, so its value is not an identity or
+/// provenance test. Within an owned TCB, null means the task has not reached
+/// selected callback entry or has committed its selected state to retirement.
 #[inline(always)]
 pub(super) fn current_selected_cancellation_state() -> *const SelectedWorkerCancellation {
     let thread_pointer = current_thread_pointer();

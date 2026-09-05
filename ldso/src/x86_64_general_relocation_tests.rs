@@ -3,32 +3,32 @@ use super::*;
 use self::std::boxed::Box;
 use super::super::x86_64_initial_graph_state::{ObjectAdmission, ObjectIdentity};
 
-struct Image {
-    data: Box<[u64; 64]>,
+pub(super) struct Image {
+    pub(super) data: Box<[u64; 64]>,
     phdr: [u64; 7],
     symbols: [[u64; 3]; 5],
     relocations: [[u64; 3]; 4],
     count: usize,
 }
 impl Image {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             data: Box::new([0; 64]),
             phdr: [1 | (7 << 32), 0, 0x1000, 0, 512, 512, 4096],
             symbols: [[0; 3]; 5], relocations: [[0; 3]; 4], count: 0,
         }
     }
-    fn symbol(&mut self, index: usize, kind: u8, binding: u8, visibility: u8, section: u16, value: u64, size: u64) {
+    pub(super) fn symbol(&mut self, index: usize, kind: u8, binding: u8, visibility: u8, section: u16, value: u64, size: u64) {
         self.symbols[index] = [
             1 | ((kind as u64 | (binding as u64) << 4) << 32)
                 | ((visibility as u64) << 40) | ((section as u64) << 48), value, size,
         ];
     }
-    fn rela(&mut self, offset: u64, kind: u32, symbol: usize, addend: i64) {
+    pub(super) fn rela(&mut self, offset: u64, kind: u32, symbol: usize, addend: i64) {
         self.relocations[self.count] = [offset, kind as u64 | ((symbol as u64) << 32), addend as u64];
         self.count += 1;
     }
-    fn object(&self, mapped: bool) -> Object {
+    pub(super) fn object(&self, mapped: bool) -> Object {
         Object {
             base: self.data.as_ptr() as u64 - 0x1000,
             phdr: self.phdr.as_ptr().cast(), phnum: 1,
@@ -144,6 +144,12 @@ fn installed_runtime_function_imports_validate_shape_before_any_graph_write() {
         b"\0__crabc_x86_64_initial_tls_allocate\0".as_slice(),
         b"\0__crabc_x86_64_initial_tls_release\0".as_slice(),
         b"\0__crabc_x86_64_resolve_initial_tls\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_open\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_symbol\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_close\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_address\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_information\0".as_slice(),
+        b"\0__crabc_x86_64_runtime_iterate\0".as_slice(),
     ] {
         for (relocation, kind, binding, visibility, section, addend, admitted) in [
             (R_X86_64_GLOB_DAT, 2, 1, 0, 0, 0, true),

@@ -281,6 +281,18 @@ unsafe fn run_with_initial_tls(
         }
     };
 
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let runtime_registry = match unsafe {
+        super::x86_64_runtime_registry::PreparedInitialRegistry::prepare(
+            graph, objects, initializers.lifecycle.as_ref().unwrap())
+    } {
+        Some(registry) => registry,
+        None => {
+            rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::RuntimeRegistry);
+            return Err(b"runtime-registry\n");
+        }
+    };
+
     #[cfg(crabc_general_initial_lifecycle)]
     if state.attach_lifecycle(initializers.lifecycle.take().unwrap()).is_err() {
         rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::InitializerPreflight);
@@ -341,6 +353,8 @@ unsafe fn run_with_initial_tls(
     unsafe { state.commit(installed) };
     #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
     unsafe { state.commit_runtime_v1(installed) };
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    unsafe { runtime_registry.publish(); }
     // Publication made the TLS snapshot durable before the first dependency
     // constructor can observe it. The plan was fully preflighted above, so
     // this is the non-fallible post-publication callback phase.

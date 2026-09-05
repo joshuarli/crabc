@@ -73,7 +73,10 @@ use core::ffi::{c_int, c_void};
 use core::mem::{align_of, size_of};
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
-use super::{pthread_cancel, pthread_cond, pthread_identity, pthread_tsd, raw_syscall, static_tls};
+use super::{
+    pthread_cancel, pthread_cond, pthread_identity, pthread_mutex, pthread_tsd, raw_syscall,
+    static_tls,
+};
 
 const EAGAIN: c_int = 11;
 const EINTR: c_int = 4;
@@ -440,6 +443,11 @@ struct ThreadControl {
     // not in the Static Initial TLS v1 `%fs:0` self word. The mapping remains
     // live through the destructor phase and clear-child-tid handoff.
     tsd: pthread_tsd::SelectedTsdValues,
+    // Musl's current-thread robust-list record stays in the same private
+    // control mapping as this worker's cancellation/TSD state. It remains
+    // valid through selected exit's owner-death walk and the later
+    // clear-child-tid join/detached reclamation proof.
+    robust_list: pthread_mutex::SelectedRobustList,
     // The selected pthread-only condition cancellation point cannot expose a
     // stack waiter to a concurrent pthread_cancel caller. This durable node
     // stays inside the control mapping that already outlives task exit until
@@ -708,6 +716,23 @@ pub(super) unsafe fn pthread_fork_parent() {
 /// range; the static TLS/TSD owners separately adopt the caller's identity
 /// and values before this reset. Future child workers start a fresh list.
 pub(super) unsafe fn pthread_fork_child() {
+    let thread_pointer = pthread_identity::current_thread_pointer();
+    let inherited_worker_list = selected_worker_by_thread_pointer_locked(thread_pointer as usize)
+        .map(|control| {
+            // SAFETY: the copied registry lock keeps this inherited control
+            // mapped until this function clears the child list head.
+            unsafe { core::ptr::addr_of_mut!((*control).robust_list) }
+        });
+    if let Some(list) = inherited_worker_list {
+        // SAFETY: retain the fork caller's linked robust nodes in its still
+        // mapped control record, but force a fresh child kernel registration
+        // before its next process-shared robust transition.
+        unsafe { pthread_mutex::adopt_selected_initial_robust_list_after_fork(list) };
+    } else {
+        // SAFETY: a bootstrapped main keeps its process-lifetime list record;
+        // musl `_Fork` clears only copied registration/pending state.
+        unsafe { pthread_mutex::reset_selected_initial_robust_list_after_fork() };
+    }
     SELECTED_WORKER_REGISTRY_HEAD.store(0, Ordering::Release);
     #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
     SELECTED_INITIAL_THREAD_TASK_STATE.store(SelectedRuntimeTaskState::ACTIVE, Ordering::Release);
@@ -1222,6 +1247,34 @@ pub(super) fn current_selected_worker_tsd_values(
     Some(unsafe { core::ptr::addr_of!((*control).tsd) })
 }
 
+/// Return the current selected worker's task-local robust-list record.
+///
+/// The caller may use the raw record only during the current task's robust
+/// mutex transition. The same `%fs:0`, Linux-TID, and positive child-TID
+/// proof that guards selected TSD state prevents a copied worker TLS base
+/// from gaining a list pointer after task-ID reuse.
+pub(super) fn current_selected_worker_robust_list(
+) -> Option<*mut pthread_mutex::SelectedRobustList> {
+    let control = current_selected_worker_control()?;
+    // SAFETY: current-worker identity retains this control mapping until the
+    // task exits; robust mutex operations retain no pointer after their
+    // immediate link/unlink/owner-death transition.
+    Some(unsafe { core::ptr::addr_of_mut!((*control).robust_list) })
+}
+
+/// Return a Linux task ID only for the bootstrapped selected initial task or
+/// a fully validated selected worker.
+///
+/// The robust-mutex owner word carries this exact TID. Foreign tasks do not
+/// receive it merely by calling a public mutex entry, which keeps their
+/// caller-owned list links outside this selected lifecycle.
+pub(super) fn current_selected_runtime_thread_id() -> Option<c_int> {
+    if static_tls::is_initial_thread_pointer(pthread_identity::current_thread_pointer()) {
+        return current_linux_thread_id();
+    }
+    current_selected_worker_control().and_then(|_| current_linux_thread_id())
+}
+
 /// Clear one key in every still-registry-published selected worker.
 ///
 /// The TSD leaf calls this while holding its private metadata lock. This
@@ -1473,6 +1526,7 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
         // the helper leaves C11 state untouched.
         pthread_cancel::disable_current_selected_pthread_cancellation_for_exit();
         pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
+        pthread_mutex::mark_current_selected_robust_mutexes_owner_dead();
         publish_selected_worker_result(control, result);
     }
     #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
@@ -1673,6 +1727,7 @@ unsafe fn create_selected_worker_with_attributes(
                 control_mapping,
                 tls_block,
                 tsd: pthread_tsd::SelectedTsdValues::empty(),
+                robust_list: pthread_mutex::SelectedRobustList::empty(),
                 condition_waiter: pthread_cond::SelectedPthreadConditionWaiter::new(),
                 registry_previous: core::ptr::null_mut(),
                 registry_next: core::ptr::null_mut(),
@@ -1684,6 +1739,12 @@ unsafe fn create_selected_worker_with_attributes(
                 argument,
             },
         );
+        // The self-referential robust-list sentinel must be established only
+        // after this control has its final mapping address, before the child
+        // can observe `start_ready` or any C callback can acquire a mutex.
+        pthread_mutex::initialize_selected_robust_list(core::ptr::addr_of_mut!(
+            (*control).robust_list
+        ));
         (*control).start_ready.store(1, Ordering::Release);
     }
     publish_selected_worker(control);
@@ -1763,6 +1824,10 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
         // table. Destructors run before the musl-shaped list/last-thread
         // decision, so they may still use selected lifecycle operations.
         unsafe { pthread_tsd::run_selected_main_tsd_destructors() };
+        // SAFETY: robust owner death follows user cleanup/TSD destruction
+        // while this selected initial task still owns its linked list and all
+        // held caller mutexes remain live under the C pthread contract.
+        unsafe { pthread_mutex::mark_current_selected_robust_mutexes_owner_dead() };
         let mut saved_signal_mask = 0_u64;
         // SAFETY: match musl's block-before-thread-list-transition rule. A
         // signal handler cannot enter a competing selected lifecycle path
@@ -1800,6 +1865,7 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
                 pthread_cancel::run_current_selected_pthread_cleanup_handlers();
             }
             pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
+            pthread_mutex::mark_current_selected_robust_mutexes_owner_dead();
             publish_selected_worker_result(control, result);
         }
         #[cfg(not(feature = "x86-owned-dynamic-runtime"))]

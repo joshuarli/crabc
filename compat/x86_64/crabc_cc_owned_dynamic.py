@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sealed materialized initial-graph dynamic driver (not campaign completion).
+"""Sealed materialized dynamic driver (not campaign completion).
 
 The static driver's input/ELF/tool checks are reused verbatim from the installed
 package. This owner adds only dynamic linkage and explicit application DSOs.
@@ -27,7 +27,7 @@ import crabc_cc_static as shared
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 ALIASES = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
-REQUIRED = {"usr/lib/libc.so", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
+REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
             "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1"}
 
 
@@ -129,9 +129,9 @@ def dso_metadata(path: Path, temporary: Path) -> tuple[str, list[str]]:
     return path.name, needed
 
 
-def dynamic_symbols(path: Path, temporary: Path) -> tuple[set[str], set[str]]:
+def dynamic_symbols(path: Path, temporary: Path, *, object_symbols: bool = False) -> tuple[set[str], set[str]]:
     definitions, required = set(), set()
-    for line in run(["/usr/bin/readelf", "--dyn-syms", "-W", str(path)], temporary).splitlines():
+    for line in run(["/usr/bin/readelf", "--symbols" if object_symbols else "--dyn-syms", "-W", str(path)], temporary).splitlines():
         fields = line.split()
         if len(fields) < 8 or not fields[0].endswith(":"): continue
         kind, binding, visibility, section, name = fields[3:8]
@@ -140,7 +140,7 @@ def dynamic_symbols(path: Path, temporary: Path) -> tuple[set[str], set[str]]:
             raise shared.DriverError("symbol versions and IFUNC are not admitted by this initial product")
         if section == "UND":
             if binding == "GLOBAL": required.add(name)
-        elif visibility in ("DEFAULT", "PROTECTED"):
+        elif object_symbols or visibility in ("DEFAULT", "PROTECTED"):
             definitions.add(name)
     return definitions, required
 
@@ -148,14 +148,29 @@ def dynamic_symbols(path: Path, temporary: Path) -> tuple[set[str], set[str]]:
 def execute(root: Path, arguments: list[str]) -> None:
     validate(root)
     mode = None
+    binding = None
+    runtime_imports = set()
     dsos = []
     common = []
     index = 0
     while index < len(arguments):
         argument = arguments[index]
-        if argument in ("--dynamic-pie", "-pie", "--dynamic-shared-object", "-shared"):
+        if argument in ("--dynamic-pie", "-pie", "--dynamic-non-pie", "-no-pie", "--dynamic-shared-object", "-shared"):
             if mode is not None: raise shared.DriverError("select exactly one dynamic mode")
-            mode = "shared" if argument in ("-shared", "--dynamic-shared-object") else "pie"
+            mode = ("shared" if argument in ("-shared", "--dynamic-shared-object") else
+                    "exec" if argument in ("--dynamic-non-pie", "-no-pie") else "pie")
+        elif argument in ("--binding", "--runtime-import"):
+            index += 1
+            if index == len(arguments): raise shared.DriverError(f"missing {argument} value")
+            value = arguments[index]
+            if argument == "--binding":
+                if binding is not None or value not in ("now", "lazy"):
+                    raise shared.DriverError("select one binding: now or lazy")
+                binding = value
+            else:
+                if not re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", value) or value in runtime_imports:
+                    raise shared.DriverError("invalid or duplicate runtime import")
+                runtime_imports.add(value)
         elif argument == "--application-dso":
             index += 1
             if index == len(arguments): raise shared.DriverError("missing application DSO")
@@ -168,21 +183,28 @@ def execute(root: Path, arguments: list[str]) -> None:
         else:
             common.append(argument)
         index += 1
-    if mode is None: raise shared.DriverError("select --dynamic-pie or --dynamic-shared-object")
+    if mode is None: raise shared.DriverError("select --dynamic-pie, --dynamic-non-pie or --dynamic-shared-object")
+    binding = binding or "now"
+    if runtime_imports and (mode != "shared" or binding != "lazy"):
+        raise shared.DriverError("runtime imports require a lazy shared object")
     invocation = shared.parse_invocation(common)
+    if invocation.compile_only and (runtime_imports or binding != "now"):
+        raise shared.DriverError("compile-only accepts no binding/import contract")
     if invocation.compile_only and dsos: raise shared.DriverError("compile-only accepts no DSO")
     if invocation.link_receipt is not None:
         raise shared.DriverError("dynamic link receipt path is derived from -o")
     library = root / "usr/lib"
-    link = [shared.linker(), "-shared" if mode == "shared" else "-pie", "--hash-style=sysv",
-            "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+    link = [shared.linker(), *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), "--hash-style=sysv",
+            "-z", "relro", "-z", binding, "-z", "noexecstack", "-z", "text", *([] if runtime_imports else ["--no-undefined"]),
             "--allow-shlib-undefined", "--enable-new-dtags", "-rpath", "/usr/lib"]
-    if mode == "pie":
-        link += ["--dynamic-linker", INTERPRETER, str(library / "Scrt1.o"),
+    entry_object = "Scrt1.o" if mode == "pie" else "crt1.o"
+    if mode != "shared":
+        link += ["--dynamic-linker", INTERPRETER, str(library / entry_object),
                  str(library / "crabc-dynamic-attach.o")]
     if invocation.print_link_plan:
         if dsos: raise shared.DriverError("link plan accepts no application inputs")
-        print(json.dumps({"format": FORMAT, "mode": mode, "linker": link,
+        print(json.dumps({"format": FORMAT, "mode": mode, "binding": binding,
+                          "runtime_imports": sorted(runtime_imports), "linker": link,
                           "campaign_complete": False}, sort_keys=True))
         return
     output = (invocation.output or Path("a.out")).absolute()
@@ -200,7 +222,7 @@ def execute(root: Path, arguments: list[str]) -> None:
             obj = output if invocation.compile_only else temporary / f"source-{index}.o"
             run([shared.compiler(), "-nostdinc", "-isystem", str(root / "usr/include"),
                  "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
-                 *invocation.compiler_flags, "-fPIC" if mode == "shared" else "-fPIE",
+                 *invocation.compiler_flags, "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",
                  "-c", str(source), "-o", str(obj)], temporary)
             objects.append(obj)
         if invocation.compile_only:
@@ -222,13 +244,26 @@ def execute(root: Path, arguments: list[str]) -> None:
             requirements.update(required)
         if requirements - provided:
             raise shared.DriverError(f"application DSOs have unresolved runtime imports: {sorted(requirements - provided)}")
+        if runtime_imports:
+            # Removing --no-undefined is authorized only by an exact symbol
+            # contract, checked against all owned objects before linking. No
+            # incidental missing import or ambient provider is accepted.
+            # ELF x86 PIC objects name this linker-synthesized table anchor;
+            # it is not an import from a target runtime library.
+            object_provided, object_required = {*provided, "_GLOBAL_OFFSET_TABLE_"}, set()
+            for path in [*objects, library / "libcrabc-builtins.a"]:
+                definitions, required = dynamic_symbols(path, temporary, object_symbols=True)
+                object_provided.update(definitions)
+                if path in objects: object_required.update(required)
+            if object_required - object_provided != runtime_imports:
+                raise shared.DriverError(f"runtime imports differ from exact unresolved object symbols: {sorted(object_required - object_provided)}")
         if mode == "shared": link += ["-soname", output.name]
         link += [str(library / "crti.o"), *(str(path) for path in objects),
                  *(str(path) for path, _ in declared.values()), str(library / "libc.so"),
                  str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(output)]
         trace = run([*link[:-2], "--trace", *link[-2:]], temporary).splitlines()
         runtime = [library / name for name in ("crti.o", "libc.so", "crtn.o")]
-        if mode == "pie": runtime += [library / "Scrt1.o", library / "crabc-dynamic-attach.o"]
+        if mode != "shared": runtime += [library / entry_object, library / "crabc-dynamic-attach.o"]
         direct = [*runtime, *objects, *(path for path, _ in declared.values())]
         archive = library / "libcrabc-builtins.a"
         # LLD may not extract an archive member. Every other input must appear,
@@ -243,7 +278,12 @@ def execute(root: Path, arguments: list[str]) -> None:
                 raise shared.DriverError(f"unadmitted dynamic link trace input: {line}")
         if seen != {str(path) for path in direct}:
             raise shared.DriverError("dynamic link trace omitted an explicit input")
-        record = {"schema": 1, "format": FORMAT, "mode": mode,
+        if runtime_imports:
+            _, output_required = dynamic_symbols(output, temporary)
+            if output_required - provided != runtime_imports:
+                raise shared.DriverError("linked runtime imports differ from declared contract")
+        record = {"schema": 1, "format": FORMAT, "mode": mode, "binding": binding,
+                  "runtime_imports": sorted(runtime_imports),
                   "output_sha256": shared.sha256_file(output),
                   "manifest_sha256": shared.sha256_file(root / "share/crabc/manifest.json"),
                   "application_dsos": {name: shared.sha256_file(path) for name, (path, _) in declared.items()},

@@ -147,7 +147,11 @@ interrupted wait, and exec/pipe failure cleanup without leaked descriptors or
 zombies. Its child shell and scratch are private to each run.
 `owned_wide_stdio_probe.c` adds stream orientation and captured locale,
 multibyte decoding and pushback, callback locale restoration, worker isolation,
-and growing wide-memory streams with overflow/ownership checks. Syscall
+and growing wide-memory streams with overflow/ownership checks.
+`owned_stdio_extensions_probe.c` checks active buffer direction, borrowed
+read/line views, FILE-owned line allocation, flush/purge/error transitions,
+setbuf-family configuration, and unlocked compatibility entries against musl.
+All reuse the same FILE owner and receive separate installed link evidence. Syscall
 cancellation and allocator-wide fork recovery remain unqualified.
 
 `owned_static_printf_probe.c` additionally covers positional integer/string/
@@ -170,7 +174,7 @@ standard streams, forwarded va_lists, long strings, and allocated results.
 The digest-checked wide parser source and owned FILE callbacks are mapped in
 `owned_wide_format.rs`; there is no foreign FILE representation. Both wide
 probes run unchanged against pinned musl and all four installed product arms.
-The 24 bounded jobs now cover 72 installed binaries.
+The 24 bounded jobs now cover 84 installed binaries.
 
 Each TLS job also runs `owned_pthread_lifecycle_consumer.c` through a separate
 installed link: initialized attributes, private guarded and caller-owned
@@ -184,9 +188,12 @@ state; a worker becomes the child's adopted main thread. Logical task exit is
 serialized separately from kernel clear-child-TID: the final live task owns
 ordinary exit, including when the adopted main returns while a child worker
 remains alive. Controls remain owned until creator handoff and kernel
-clear-child-TID both complete. Explicit scheduling, asynchronous and arbitrary
-syscall cancellation, robust mutexes, allocator-wide fork recovery, and dynamic
-TLS lifetime remain open.
+clear-child-TID both complete. The same consumer proves normal robust-mutex
+owner death, `EOWNERDEAD` recovery with `pthread_mutex_consistent`,
+`ENOTRECOVERABLE` after an unrecovered unlock, and process-shared owner death
+across `fork`. Explicit scheduling, asynchronous and arbitrary syscall
+cancellation, recursive/error-checking/PI robust mutexes, allocator-wide fork
+recovery, and dynamic TLS lifetime remain open.
 
 Each POSIX job separately links `owned_spawn_probe.c`: spawn/spawnp file-action
 ordering, working-directory and PATH search, signal/process attributes, worker
@@ -202,6 +209,16 @@ file access, retain requested CLOEXEC/append flags, and restore templates on
 failure. The musl reference and both installed modes check permissions, invalid
 lengths, missing parents, and descriptor ownership after unlink. Every pathname
 is beneath that consumer's private directory; this is not a racy name-only API.
+
+`owned_static_filesystem_consumer.c` composes `scandir`, `ftw`, and `nftw`
+through installed allocation/directory/thread owners. Its private directory
+tree checks sorting, traversal, and musl's cancellation-disabled walk followed
+by restored-state delivery. It does not invent a cancellation guard for `scandir`.
+
+`owned_static_ipc_readiness_consumer.c` composes worker-owned Unix socketpairs
+and ephemeral loopback TCP endpoints with poll/epoll, scatter/gather I/O,
+half-close, and error cleanup. It uses no external service or fixed port and
+does not establish syscall cancellation behavior.
 
 Each POSIX job also links the calendar and TZif probes described in
 [`owned_calendar.md`](owned_calendar.md). Local conversion, normalization,

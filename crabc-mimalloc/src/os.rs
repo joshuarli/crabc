@@ -40,6 +40,7 @@
 //! only to construct a real kernel-compatible input for their local mapping
 //! fixture.
 
+use core::cell::UnsafeCell;
 use core::ffi::CStr;
 use core::fmt;
 use core::num::NonZeroUsize;
@@ -48,7 +49,9 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 
 use crabc_core::{Errno, Result};
 
-use crate::config::{ARENA_SLICE_SIZE, VmOption, VmOptionState, VmOptions};
+use crate::config::{
+    ARENA_SLICE_SIZE, VmOption, VmOptionEnvironmentReader, VmOptionState, VmOptions,
+};
 #[cfg(test)]
 use crate::config::VmOptionEnvironment;
 use crate::invariants;
@@ -361,8 +364,13 @@ impl MemoryConfig {
     }
 }
 
-/// A fully resolved VM option image cannot be manufactured from a partial
+/// An explicit, reader-free VM policy cannot be manufactured from a partial
 /// process-start observation.
+///
+/// The dedicated Unix process path retains its raw-environment reader and can
+/// instead mirror `mi_option_get`'s default-value-and-later-retry behavior.
+/// This error keeps the ordinary fixture and explicit-owner constructors from
+/// silently inventing that ambient source capability.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum VmPolicyConfigurationError {
     UnresolvedOption(VmOption),
@@ -385,15 +393,35 @@ pub(crate) enum ThpPolicyOutcome {
 /// Process-owned state for the source VM option, hint, large-page retry, and
 /// NUMA-count policy.
 ///
-/// This deliberately receives a completed [`VmOptions`] image instead of
-/// reading `environ`, creating random state, or allocating an owner itself.
-/// The eventual process initializer must retain one `VmPolicy` beside the
-/// source `MainSubprocess`; callers pass the already initialized
-/// [`TheapRandomImage`] when a source path requires randomization. The old
-/// fixed-default mapping APIs remain intact while that lifecycle wiring is
-/// being introduced.
+/// An explicit fixture policy receives a completed [`VmOptions`] image. The
+/// Unix process initializer may instead retain an incomplete image plus the
+/// raw source environment reader that initialized it: each unresolved
+/// descriptor returns its pinned current default for that call and retries on
+/// a later source option read. The policy itself creates neither an ambient
+/// environment reader nor random state; the process initializer retains that
+/// capability beside the source `MainSubprocess`. Callers pass the already
+/// initialized [`TheapRandomImage`] when a source path requires
+/// randomization. The old fixed-default mapping APIs remain intact while that
+/// lifecycle wiring is being introduced.
 pub(crate) struct VmPolicy {
-    options: VmOptions,
+    /// The fixed descriptor image is immutable after ordinary source startup.
+    /// A rare `_mi_getenv` failure leaves individual slots lazy-uninitialized,
+    /// in which case the retained process reader mutates only that slot under
+    /// `options_access` before returning its source default for the current
+    /// query.
+    options: UnsafeCell<VmOptions>,
+    /// Release-published only after every selected descriptor is terminal.
+    /// The normal source startup path reaches this state before any allocator
+    /// caller, keeping option reads a lock-free immutable snapshot.
+    options_resolved: AtomicBool,
+    /// Serializes the exceptional per-descriptor retry path. This is not an
+    /// allocator lock: it protects only the small copied option image while a
+    /// raw `environ` observation resolves one source descriptor.
+    options_access: AtomicBool,
+    /// Present only for the actual Unix process source path. Reader-free
+    /// fixture construction rejects unresolved slots instead of creating a
+    /// hidden ambient environment dependency.
+    option_environment: Option<VmOptionEnvironmentReader>,
     // Pinned `src/init.c` keeps this true until the process-load owner has
     // left the C-runtime-unsafe preloading interval.  Only that one owner may
     // clear it; VM and arena callers receive a read-only view through their
@@ -406,7 +434,59 @@ pub(crate) struct VmPolicy {
     numa_node_count: AtomicUsize,
 }
 
-/// One borrowed source subprocess and its resolved VM policy.
+// SAFETY: normal source startup resolves every descriptor before publication,
+// after which `options` is read immutably. If an environment primitive leaves
+// a descriptor unresolved, `options_access` serializes every mutation and its
+// corresponding current-value read; the constructor's raw-reader safety
+// contract supplies the external `environ` lifetime/mutation precondition.
+unsafe impl Sync for VmPolicy {}
+
+/// One serialized read or retry of [`VmPolicy`]'s copied source descriptor
+/// image. Dropping it always reopens the exceptional path, including if a
+/// test assertion panics while inspecting an option.
+struct VmPolicyOptionAccess<'policy> {
+    policy: &'policy VmPolicy,
+}
+
+impl<'policy> VmPolicyOptionAccess<'policy> {
+    /// Copies an image which became complete while this stale slow-path reader
+    /// waited for the retry gate.
+    ///
+    /// The caller must have observed `options_resolved` with Acquire while it
+    /// holds this gate. The final writer ends its exclusive projection before
+    /// that Release publication; subsequent fast-path readers have only
+    /// shared snapshots, so this raw copied read never creates a competing
+    /// mutable borrow.
+    #[inline]
+    fn resolved_snapshot(&self) -> VmOptions {
+        // SAFETY: the documented Acquire/Release transition proves the final
+        // mutation completed. The gate excludes an unresolved retry writer,
+        // while post-publication readers are shared copied snapshots.
+        unsafe { *self.policy.options.get() }
+    }
+
+    /// Projects the copied descriptor image only while it remains unresolved.
+    ///
+    /// Callers must recheck `options_resolved` after acquiring the gate and
+    /// before calling this method. A stale reader can otherwise wait while
+    /// the final writer publishes completion, then form an exclusive borrow
+    /// concurrently with the now-valid shared fast path.
+    #[inline]
+    fn unresolved_options(&mut self) -> &mut VmOptions {
+        // SAFETY: `VmPolicy::acquire_option_access` holds the one atomic
+        // mutation gate, and the required post-acquisition resolution check
+        // proves no resolved fast-path reader can exist yet.
+        unsafe { &mut *self.policy.options.get() }
+    }
+}
+
+impl Drop for VmPolicyOptionAccess<'_> {
+    fn drop(&mut self) {
+        self.policy.options_access.store(false, Ordering::Release);
+    }
+}
+
+/// One borrowed source subprocess and its source VM policy.
 ///
 /// This pair is deliberately non-owning: process initialization retains both
 /// address-stable owners, while map/commit/free callers must present the same
@@ -452,21 +532,60 @@ impl<'a> VmProcess<'a> {
 
 impl VmPolicy {
     /// Admits only source options whose lazy environment phase has completed.
+    ///
+    /// This reader-free constructor remains the only route for fixtures and
+    /// explicit callers. Use [`Self::new_with_source_environment`] only from
+    /// the process owner that has the pinned raw Unix environment capability.
     pub(crate) fn new(options: VmOptions) -> core::result::Result<Self, VmPolicyConfigurationError> {
         for option in VmOption::ALL {
             if options.state(option) == VmOptionState::Uninitialized {
                 return Err(VmPolicyConfigurationError::UnresolvedOption(option));
             }
         }
-        Ok(Self {
-            options,
+        Ok(Self::from_options(options, None))
+    }
+
+    /// Retains the source environment reader needed to retry lazy descriptors
+    /// after process initialization.
+    ///
+    /// Pinned `_mi_options_init` can leave one or more descriptors in
+    /// `MI_OPTION_UNINIT` when `_mi_getenv` is temporarily unavailable. A
+    /// later `mi_option_get` retries just that descriptor and returns its
+    /// current default even if the retry still cannot observe `environ`.
+    /// Keeping that behavior in the real process policy avoids turning an
+    /// unavailable canonical value into a terminal shadow-runtime failure.
+    ///
+    /// # Safety
+    ///
+    /// `environment_reader` must uphold [`VmOptionEnvironmentReader`]'s
+    /// validity and direct-environment mutation obligations for every later
+    /// policy option read. The caller must retain this policy for the same
+    /// process lifetime that owns the reader.
+    pub(crate) unsafe fn new_with_source_environment(
+        options: VmOptions,
+        environment_reader: VmOptionEnvironmentReader,
+    ) -> core::result::Result<Self, VmPolicyConfigurationError> {
+        Ok(Self::from_options(options, Some(environment_reader)))
+    }
+
+    #[inline]
+    fn from_options(
+        options: VmOptions,
+        option_environment: Option<VmOptionEnvironmentReader>,
+    ) -> Self {
+        let options_resolved = options.all_resolved();
+        Self {
+            options: UnsafeCell::new(options),
+            options_resolved: AtomicBool::new(options_resolved),
+            options_access: AtomicBool::new(false),
+            option_environment,
             preloading: AtomicBool::new(true),
             aligned_hint_base: AtomicUsize::new(0),
             huge_hint_start: AtomicUsize::new(0),
             large_page_try_ok: AtomicUsize::new(0),
             huge_one_gib_unavailable: AtomicBool::new(false),
             numa_node_count: AtomicUsize::new(0),
-        })
+        }
     }
 
     /// Starts a source-shaped resolved default policy for a caller which has
@@ -490,8 +609,33 @@ impl VmPolicy {
         }
     }
 
+    /// Returns a copied descriptor image for source-policy diagnostics.
+    ///
+    /// A partially initialized process image is observed under its retry gate;
+    /// once every descriptor is terminal this is an immutable lock-free copy.
     #[inline]
-    pub(crate) const fn options(&self) -> &VmOptions { &self.options }
+    pub(crate) fn options(&self) -> VmOptions {
+        if self.options_resolved.load(Ordering::Acquire) {
+            return self.resolved_options_snapshot();
+        }
+        self.options_after_unresolved_observation()
+    }
+
+    /// Completes a diagnostic snapshot after the caller initially observed an
+    /// unresolved image.
+    ///
+    /// A slow reader can wait behind the final retry writer. Recheck the
+    /// one-way completion flag after taking the gate, before making any
+    /// exclusive `UnsafeCell` projection, so that stale observation is only a
+    /// shared snapshot once the writer has published completion.
+    #[inline]
+    fn options_after_unresolved_observation(&self) -> VmOptions {
+        let mut access = self.acquire_option_access();
+        if self.options_resolved.load(Ordering::Acquire) {
+            return access.resolved_snapshot();
+        }
+        *access.unresolved_options()
+    }
 
     /// Ends the one-way source preloading interval.
     ///
@@ -516,22 +660,77 @@ impl VmPolicy {
     /// option API is generally thread-safe.
     #[inline]
     pub(crate) fn set_option(&mut self, option: VmOption, value: i64) {
-        self.options.set(option, value);
+        let options = self.options.get_mut();
+        options.set(option, value);
+        if options.all_resolved() {
+            self.options_resolved.store(true, Ordering::Release);
+        }
     }
 
     #[inline]
     fn option_enabled(&self, option: VmOption) -> bool {
-        self.options
-            .value(option)
-            .expect("VmPolicy accepts only resolved source options")
-            != 0
+        self.option_value(option) != 0
     }
 
     #[inline]
     fn option_value(&self, option: VmOption) -> i64 {
-        self.options
-            .value(option)
-            .expect("VmPolicy accepts only resolved source options")
+        if self.options_resolved.load(Ordering::Acquire) {
+            return self.resolved_options_snapshot().current_value(option);
+        }
+        self.option_value_after_unresolved_observation(option)
+    }
+
+    /// Completes a source option read after its initial incomplete-image
+    /// observation. See [`Self::options_after_unresolved_observation`] for
+    /// why the gate must recheck completion before it projects mutably.
+    #[inline]
+    fn option_value_after_unresolved_observation(&self, option: VmOption) -> i64 {
+        let mut access = self.acquire_option_access();
+        if self.options_resolved.load(Ordering::Acquire) {
+            return access.resolved_snapshot().current_value(option);
+        }
+        let (value, resolved) = {
+            let options = access.unresolved_options();
+            if options.state(option) == VmOptionState::Uninitialized {
+                if let Some(environment_reader) = self.option_environment {
+                    // SAFETY: `new_with_source_environment` retains the source
+                    // reader's raw-vector lifetime and mutation contract for the
+                    // whole policy lifetime. The retry gate serializes this exact
+                    // descriptor observation with every other policy query.
+                    unsafe {
+                        options.initialize_one_from_source_environment(option, environment_reader());
+                    }
+                }
+            }
+            (options.current_value(option), options.all_resolved())
+        };
+        // The exclusive projection ends with the inner scope before this
+        // Release publication makes lock-free shared snapshots permissible.
+        if resolved {
+            self.options_resolved.store(true, Ordering::Release);
+        }
+        value
+    }
+
+    /// Copies a terminal source descriptor image for the lock-free fast path.
+    #[inline]
+    fn resolved_options_snapshot(&self) -> VmOptions {
+        // SAFETY: every final mutation ends before the Release publication of
+        // `options_resolved`; this method is reached only through an Acquire
+        // observation of that one-way state. No shared-policy method mutates
+        // a completed image.
+        unsafe { *self.options.get() }
+    }
+
+    fn acquire_option_access(&self) -> VmPolicyOptionAccess<'_> {
+        while self
+            .options_access
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            core::hint::spin_loop();
+        }
+        VmPolicyOptionAccess { policy: self }
     }
 
     /// Mirrors the `mi_option_allow_thp` branch in `_mi_prim_mem_init`.
@@ -4129,6 +4328,28 @@ mod tests {
     use super::*;
     use crabc_core::Errno;
 
+    static VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK: std::sync::Mutex<()> =
+        std::sync::Mutex::new(());
+    static VM_POLICY_SOURCE_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+    unsafe fn vm_policy_source_environment_for_test() -> *const *const core::ffi::c_char {
+        // The test lock holds the selected vector stable for every option
+        // observation. This is the same borrowed-vector shape as the native
+        // reader, without changing this test process's real environment.
+        VM_POLICY_SOURCE_ENVIRONMENT
+            .load(Ordering::Acquire)
+            .cast_const()
+    }
+
+    struct VmPolicySourceEnvironmentReset;
+
+    impl Drop for VmPolicySourceEnvironmentReset {
+        fn drop(&mut self) {
+            VM_POLICY_SOURCE_ENVIRONMENT.store(core::ptr::null_mut(), Ordering::Release);
+        }
+    }
+
     fn current_startup() -> StartupInput {
         let raw_page_size = crabc_core::param::auxv_value(crabc_core::param::AT_PAGESZ)
             .expect("the Linux test process must expose AT_PAGESZ");
@@ -4437,6 +4658,173 @@ mod tests {
             int_max.numa_node_count_with_raw(|| 5),
             5,
             "the source rejects INT_MAX itself as an explicit option and probes the primitive"
+        );
+    }
+
+    #[test]
+    fn process_vm_policy_retries_only_unavailable_source_environment_descriptors() {
+        let _serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("the isolated raw-environment reader test lock is not poisoned");
+        let _reset = VmPolicySourceEnvironmentReset;
+
+        const NAME: &[u8] = b"mimalloc_allow_large_os_pages=";
+        let mut overlong = [0u8; NAME.len() + 66];
+        overlong[..NAME.len()].copy_from_slice(NAME);
+        overlong[NAME.len()..NAME.len() + 65].fill(b'1');
+        let initial_environment: [*const core::ffi::c_char; 2] = [
+            overlong.as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(
+            initial_environment.as_ptr().cast_mut(),
+            Ordering::Release,
+        );
+
+        let mut options = VmOptions::uninitialized();
+        // SAFETY: the locked test owns a null-terminated stable vector and
+        // all selected C strings through this initial source observation.
+        unsafe { options.initialize_from_source_environment(initial_environment.as_ptr()) };
+        assert_eq!(
+            options.state(VmOption::AllowLargeOsPages),
+            VmOptionState::Uninitialized,
+            "a 65-byte canonical value is the source unavailable result"
+        );
+        assert_eq!(
+            options.state(VmOption::PurgeDelay),
+            VmOptionState::Defaulted,
+            "the initially absent descriptor must stay terminal across retry"
+        );
+
+        // SAFETY: the serialized test reader returns the selected stable
+        // environment vector for every policy option read below.
+        let policy = unsafe {
+            VmPolicy::new_with_source_environment(options, vm_policy_source_environment_for_test)
+        }
+        .expect("the real source policy retains unresolved raw-environment descriptors");
+        assert!(
+            !policy.allow_large_os_pages(),
+            "an unavailable source read returns its pinned default for this call"
+        );
+        assert_eq!(
+            policy.options().state(VmOption::AllowLargeOsPages),
+            VmOptionState::Uninitialized,
+            "a repeated unavailable canonical value remains lazy"
+        );
+
+        let retry_environment: [*const core::ffi::c_char; 3] = [
+            b"mimalloc_allow_large_os_pages=1\0".as_ptr().cast(),
+            b"mimalloc_purge_delay=7\0".as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(
+            retry_environment.as_ptr().cast_mut(),
+            Ordering::Release,
+        );
+
+        assert_eq!(
+            policy.purge_delay_milliseconds(),
+            1_000,
+            "a descriptor defaulted by the first source read must not observe a later environment mutation"
+        );
+        assert!(
+            policy.allow_large_os_pages(),
+            "only the unavailable canonical descriptor retries through the retained source reader"
+        );
+        let final_options = policy.options();
+        assert!(final_options.all_resolved());
+        assert_eq!(
+            final_options.value(VmOption::AllowLargeOsPages),
+            Some(1),
+        );
+        assert_eq!(final_options.value(VmOption::PurgeDelay), Some(1_000));
+    }
+
+    #[test]
+    fn process_vm_policy_serializes_concurrent_source_descriptor_retry() {
+        let _serial = VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK
+            .lock()
+            .expect("the isolated raw-environment reader test lock is not poisoned");
+        let _reset = VmPolicySourceEnvironmentReset;
+
+        const NAME: &[u8] = b"mimalloc_allow_large_os_pages=";
+        let mut overlong = [0u8; NAME.len() + 66];
+        overlong[..NAME.len()].copy_from_slice(NAME);
+        overlong[NAME.len()..NAME.len() + 65].fill(b'1');
+        let unavailable_environment: [*const core::ffi::c_char; 2] = [
+            overlong.as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(
+            unavailable_environment.as_ptr().cast_mut(),
+            Ordering::Release,
+        );
+
+        let mut options = VmOptions::uninitialized();
+        // SAFETY: the test lock retains this null-terminated source vector.
+        unsafe { options.initialize_from_source_environment(unavailable_environment.as_ptr()) };
+        assert_eq!(
+            options.state(VmOption::AllowLargeOsPages),
+            VmOptionState::Uninitialized
+        );
+        // SAFETY: every concurrent policy read below observes the selected
+        // stable vector while the test lock remains held.
+        let policy = unsafe {
+            VmPolicy::new_with_source_environment(options, vm_policy_source_environment_for_test)
+        }
+        .expect("the source policy retains its lazy descriptor");
+
+        let retry_environment: [*const core::ffi::c_char; 2] = [
+            b"mimalloc_allow_large_os_pages=1\0".as_ptr().cast(),
+            core::ptr::null(),
+        ];
+        VM_POLICY_SOURCE_ENVIRONMENT.store(
+            retry_environment.as_ptr().cast_mut(),
+            Ordering::Release,
+        );
+        std::thread::scope(|scope| {
+            let readers = [
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+                scope.spawn(|| policy.allow_large_os_pages()),
+            ];
+            for reader in readers {
+                assert!(
+                    reader.join().expect("the source-policy reader does not panic"),
+                    "each reader observes the one terminal source retry"
+                );
+            }
+        });
+        assert!(
+            policy.options().all_resolved(),
+            "the serialized retry publishes a complete immutable option image"
+        );
+    }
+
+    #[test]
+    fn stale_source_option_read_rechecks_completion_before_exclusive_projection() {
+        let policy = VmPolicy::defaults_for_test();
+        // SAFETY: this exact policy has Release-published its complete image,
+        // so an ordinary fast-path reader may retain this shared snapshot.
+        // Keep it live while manually driving the slow branch which a caller
+        // reached after an earlier false completion observation. Under Miri,
+        // the former stale path's `&mut` projection would overlap this reader.
+        let established_reader = unsafe { &*policy.options.get() };
+        assert!(established_reader.all_resolved());
+
+        let stale_snapshot = policy.options_after_unresolved_observation();
+        let stale_value =
+            policy.option_value_after_unresolved_observation(VmOption::AllowLargeOsPages);
+        assert_eq!(stale_snapshot, *established_reader);
+        assert_eq!(
+            stale_value,
+            established_reader.current_value(VmOption::AllowLargeOsPages),
+            "a stale source-option reader must remain a shared terminal snapshot"
         );
     }
 

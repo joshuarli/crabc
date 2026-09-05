@@ -15,8 +15,8 @@
 //!   musl's process-shared self-synchronized destruction rendezvous.
 //! - `src/thread/pthread_barrier_wait.c::pthread_barrier_wait` retains musl's
 //!   separate process-private stack-instance and process-shared count paths.
-//! - `src/thread/vmlock.c` supplies the private process-local vmlock used only
-//!   by that process-shared destruction rendezvous.
+//! - `src/thread/vmlock.c` supplies the one private process-local vmlock
+//!   shared with selected robust-mutex pending/list lifetime transitions.
 //!
 //! The companion `pthread_barrierattr_pshared` module continues to own the
 //! existing set/get pair. Together these modules select the complete public
@@ -33,7 +33,7 @@ compile_error!("the x86 pthread barrier leaf requires little-endian Linux/x86-64
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::{align_of, offset_of, size_of};
 
-use super::{atomic, raw_syscall};
+use super::{atomic, pthread_vmlock, raw_syscall};
 
 const EINVAL: c_int = 22;
 const BARRIER_WORD_COUNT: usize = 8;
@@ -100,13 +100,6 @@ const _: () = {
     assert!(offset_of!(PrivateBarrierInstance, waiters) == 8);
     assert!(offset_of!(PrivateBarrierInstance, finished) == 12);
 };
-
-/// Musl's `vmlock[2]` remains process-local: its first word counts active
-/// process-shared barrier exit paths and its second word tracks waiters.
-///
-/// Raw atomic helpers are the only accesses, so this C-shaped static storage
-/// never creates a Rust reference while another thread may modify it.
-static mut VMLOCK: [c_int; 2] = [0; 2];
 
 /// Return one public barrier word without manufacturing a Rust reference to
 /// concurrent caller-owned storage.
@@ -178,19 +171,6 @@ unsafe fn instance_waiters_word(instance: *mut PrivateBarrierInstance) -> *mut c
 unsafe fn instance_finished_word(instance: *mut PrivateBarrierInstance) -> *mut c_int {
     // SAFETY: `finished` is an aligned raw atomic word in the live record.
     unsafe { core::ptr::addr_of_mut!((*instance).finished) }
-}
-
-/// Return a raw word of musl's process-local `vmlock[2]` record.
-///
-/// # Safety
-///
-/// `index` must be zero or one and callers must use compatible raw atomics.
-#[inline(always)]
-unsafe fn vmlock_word(index: usize) -> *mut c_int {
-    debug_assert!(index < 2);
-    // SAFETY: a raw address avoids borrowing mutable static storage; the
-    // selected protocol performs every concurrent access atomically.
-    unsafe { core::ptr::addr_of_mut!(VMLOCK).cast::<c_int>().add(index) }
 }
 
 /// Store a raw atomic word with a release edge.
@@ -307,49 +287,6 @@ unsafe fn wake(word: *mut c_int, count: c_int, is_private: bool) {
     };
 }
 
-/// Retain musl `src/thread/vmlock.c::__vm_wait` for shared-barrier destroy.
-unsafe fn vmlock_wait() {
-    // SAFETY: both words are the process-local static vmlock record.
-    let lock = unsafe { vmlock_word(0) };
-    // SAFETY: both words are the process-local static vmlock record.
-    let waiters = unsafe { vmlock_word(1) };
-    loop {
-        // SAFETY: the lock word is live raw atomic storage.
-        let observed = unsafe { atomic::x86_64_load_acquire_i32(lock) };
-        if observed == 0 {
-            return;
-        }
-        // SAFETY: both static vmlock words remain live through the wait.
-        unsafe { wait_while(lock, waiters, observed, true) };
-    }
-}
-
-/// Retain musl `src/thread/vmlock.c::__vm_lock`.
-#[inline(always)]
-unsafe fn vmlock_lock() {
-    // SAFETY: word zero is the process-local atomic vmlock count.
-    let lock = unsafe { vmlock_word(0) };
-    // SAFETY: every concurrent vmlock count access uses this atomic protocol.
-    unsafe { atomic::x86_64_fetch_add_acqrel_i32(lock, 1) };
-}
-
-/// Retain musl `src/thread/vmlock.c::__vm_unlock`.
-#[inline(always)]
-unsafe fn vmlock_unlock() {
-    // SAFETY: both words belong to the static process-local vmlock record.
-    let lock = unsafe { vmlock_word(0) };
-    // SAFETY: both words belong to the static process-local vmlock record.
-    let waiters = unsafe { vmlock_word(1) };
-    // SAFETY: raw vmlock count decrement is paired with [`vmlock_lock`].
-    if unsafe { atomic::x86_64_fetch_sub_acqrel_i32(lock, 1) } == 1
-        // SAFETY: the static waiter hint remains live.
-        && unsafe { atomic::x86_64_load_relaxed_i32(waiters) } != 0
-    {
-        // SAFETY: the vmlock word remains live through the wake.
-        unsafe { wake(lock, -1, true) };
-    }
-}
-
 /// Release the private barrier object lock and wake one private contender.
 ///
 /// # Safety
@@ -438,7 +375,7 @@ unsafe fn shared_barrier_wait(barrier: *mut PublicPthreadBarrier) -> c_int {
 
     // SAFETY: source vmlock brackets the exit count so destroy can wait for
     // all shared participants after the object lock becomes quiescent.
-    unsafe { vmlock_lock() };
+    unsafe { pthread_vmlock::lock() };
     // SAFETY: each participant decrements the exit phase exactly once.
     if unsafe { atomic::x86_64_fetch_sub_acqrel_i32(count, 1) }
         == 1i32.wrapping_sub(limit)
@@ -487,7 +424,7 @@ unsafe fn shared_barrier_wait(barrier: *mut PublicPthreadBarrier) -> c_int {
         unsafe { wake(lock, 1, false) };
     }
     // SAFETY: completes this source-defined vmlock bracket.
-    unsafe { vmlock_unlock() };
+    unsafe { pthread_vmlock::unlock() };
 
     result
 }
@@ -596,7 +533,7 @@ pub unsafe extern "C" fn pthread_barrier_destroy(barrier: *mut c_void) -> c_int 
             }
         }
         // SAFETY: waits for all source shared-exit vmlock holders in this process.
-        unsafe { vmlock_wait() };
+        unsafe { pthread_vmlock::wait() };
     }
     0
 }

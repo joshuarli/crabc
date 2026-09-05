@@ -134,6 +134,87 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(process_streams <= providers["x86-owned-static-runtime"])
         self.assertFalse(process_streams & deferred)
 
+    def test_owned_wide_and_stdio_extension_names_are_planned_owned_static_not_deferred(self) -> None:
+        """Route the composed wide/FILE source surface without claiming the family closed."""
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        owned_wide_streams = {
+            "fgetwc",
+            "fgetwc_unlocked",
+            "fgetws",
+            "fgetws_unlocked",
+            "fputwc",
+            "fputwc_unlocked",
+            "fputws",
+            "fputws_unlocked",
+            "fwide",
+            "getwc",
+            "getwc_unlocked",
+            "getwchar",
+            "getwchar_unlocked",
+            "putwc",
+            "putwc_unlocked",
+            "putwchar",
+            "putwchar_unlocked",
+            "ungetwc",
+        }
+        owned_wide_format = {
+            "fwprintf",
+            "fwscanf",
+            "swprintf",
+            "swscanf",
+            "vfwprintf",
+            "vfwscanf",
+            "vswprintf",
+            "vswscanf",
+            "vwprintf",
+            "vwscanf",
+            "wprintf",
+            "wscanf",
+        }
+        owned_stdio_extensions = {
+            "__fpending",
+            "__fpurge",
+            "__freadahead",
+            "__freadptr",
+            "__freadptrinc",
+            "__fwriting",
+            "_flushlbf",
+            "fgetln",
+            "gets",
+            "getw",
+            "putw",
+            "setbuf",
+            "setbuffer",
+            "setlinebuf",
+            "clearerr_unlocked",
+            "fflush_unlocked",
+            "fgets_unlocked",
+            "fputs_unlocked",
+        }
+        owned_stream_surface = owned_wide_streams | owned_wide_format | owned_stdio_extensions | {
+            "open_wmemstream"
+        }
+
+        self.assertEqual(len(owned_stream_surface), 49)
+        self.assertTrue(owned_stream_surface <= providers["x86-owned-static-runtime"])
+        self.assertFalse(owned_stream_surface & deferred)
+        self.assertFalse(
+            {"feof_unlocked", "ferror_unlocked", "fileno_unlocked"} & providers["x86-owned-static-runtime"]
+        )
+        self.assertTrue(
+            {"feof_unlocked", "ferror_unlocked", "fileno_unlocked"}
+            <= set(report["primary_disposition"]["default_static"]["members"])
+        )
+
     def test_statx_is_a_planned_provider_after_its_header_declaration_closes(self) -> None:
         contract = DISPOSITION.load_contract()
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
