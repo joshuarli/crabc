@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import contextlib
 import importlib.util
 import io
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -182,9 +184,16 @@ class NativeStaticContracts(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     RUNNER.parse_args(arguments)
 
-    def test_aarch64_timeout_contract_is_not_narrowed_by_x86_static_limits(self) -> None:
-        parsed = RUNNER.parse_args(["--target", "aarch64-dynamic", "--timeout", "301"])
-        self.assertEqual(parsed.timeout, 301.0)
+    def test_timeout_limit_applies_to_both_runner_targets(self) -> None:
+        for target in ("aarch64-dynamic", "x86_64-static"):
+            for timeout in ("nan", "inf", "-inf", "0", "301"):
+                with self.subTest(target=target, timeout=timeout), contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):
+                        RUNNER.parse_args(["--target", target, "--timeout", timeout])
+            self.assertEqual(
+                RUNNER.parse_args(["--target", target, "--timeout", "300"]).timeout,
+                300.0,
+            )
 
     def test_x86_dispatcher_rejects_arguments_before_starting_a_container(self) -> None:
         result = subprocess.run(
@@ -197,6 +206,48 @@ class NativeStaticContracts(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 2)
         self.assertIn(b"lua-static-source-build takes no arguments", result.stderr)
+
+    def test_x86_dispatcher_expands_bounded_knobs_into_the_container_argv(self) -> None:
+        binaries = self.temporary / "bin"
+        binaries.mkdir()
+        captured = self.temporary / "docker-run.argv"
+        docker = binaries / "docker"
+        docker.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = image ] && [ \"$2\" = inspect ]; then\n"
+            "  for argument in \"$@\"; do\n"
+            "    if [ \"$argument\" = --format ]; then printf '%s\\n' linux/amd64; exit 0; fi\n"
+            "  done\n"
+            "  exit 0\n"
+            "fi\n"
+            "if [ \"$1\" = run ]; then printf '%s\\n' \"$@\" >\"$CAPTURED_DOCKER_ARGV\"; exit 0; fi\n"
+            "exit 99\n",
+            encoding="utf-8",
+        )
+        docker.chmod(0o755)
+        environment = dict(os.environ)
+        environment.update(
+            {
+                "PATH": f"{binaries}:/usr/bin:/bin",
+                "CAPTURED_DOCKER_ARGV": str(captured),
+                "CRABC_X86_64_LUA_JOBS": "3",
+                "CRABC_X86_64_LUA_TIMEOUT": "7",
+            }
+        )
+        result = subprocess.run(
+            ["bash", str(RUNNER.ROOT / "scripts/dev-x86_64.sh"), "lua-static-source-build"],
+            cwd=RUNNER.ROOT,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode(errors="replace"))
+        arguments = captured.read_text(encoding="utf-8").splitlines()
+        self.assertIn("/workspace/compat/lua/run_x86_static_dispatch.py", arguments)
+        self.assertEqual(arguments[arguments.index("--jobs") + 1], "3")
+        self.assertEqual(arguments[arguments.index("--timeout") + 1], "7")
 
     def test_x86_work_root_rejects_external_and_symlinked_state(self) -> None:
         external = RUNNER.ROOT.parent / "outside-lua-work-root"
@@ -264,6 +315,43 @@ class NativeStaticContracts(unittest.TestCase):
         )
         self.assertEqual(result.status, 0, result.stderr.decode(errors="replace"))
         self.assertEqual(result.stdout, b"static-preload-protocol-ok\n")
+
+    def test_core_limit_is_inherited_without_preexec_child_setup(self) -> None:
+        RUNNER.disable_core_dump_inheritance()
+        program = (
+            "import resource; "
+            "print(resource.getrlimit(resource.RLIMIT_CORE)[0])"
+        )
+        result = RUNNER.command_record([sys.executable, "-c", program], timeout=2.0)
+        self.assertEqual(result["status"], 0)
+        stdout = result["stdout"]
+        assert isinstance(stdout, dict)
+        self.assertEqual(stdout["text"], "0\n")
+
+    def test_threaded_command_launch_uses_no_preexec_callback(self) -> None:
+        observed: list[dict[str, object]] = []
+        lock = threading.Lock()
+        original = RUNNER.subprocess.Popen
+
+        def capture(*arguments: object, **keywords: object) -> subprocess.Popen[bytes]:
+            with lock:
+                observed.append(dict(keywords))
+            return original(*arguments, **keywords)
+
+        RUNNER.subprocess.Popen = capture
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                records = list(
+                    executor.map(
+                        lambda _: RUNNER.command_record([sys.executable, "-c", "print('threaded-ok')"], timeout=2.0),
+                        range(4),
+                    )
+                )
+        finally:
+            RUNNER.subprocess.Popen = original
+        self.assertEqual([record["status"] for record in records], [0, 0, 0, 0])
+        self.assertEqual(len(observed), 4)
+        self.assertTrue(all("preexec_fn" not in keywords for keywords in observed))
 
     def test_timeout_and_clean_leader_exit_reap_owned_descendants(self) -> None:
         timeout_program = (

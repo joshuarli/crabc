@@ -154,10 +154,20 @@ def stream_record(data: bytes) -> dict[str, object]:
     }
 
 
-def suppress_core_dumps() -> None:
-    """Keep a failing target process from emitting a core into shared state."""
+def disable_core_dump_inheritance() -> None:
+    """Set the runner's inherited no-core policy before it creates workers.
 
-    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    ``preexec_fn`` is unsafe once the bounded compile executor has threads:
+    a child can deadlock between fork and exec while another thread owns a
+    runtime lock. Setting this process-wide limit once is inherited by every
+    later child without executing Python in a forked worker.
+    """
+
+    try:
+        _, hard = resource.getrlimit(resource.RLIMIT_CORE)
+        resource.setrlimit(resource.RLIMIT_CORE, (0, hard))
+    except (OSError, ValueError) as error:
+        raise RunnerError("cannot disable core dumps for Lua runner children") from error
 
 
 def owned_group_has_live_members(process_group: int) -> bool:
@@ -233,7 +243,6 @@ def command_record(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
-            preexec_fn=suppress_core_dumps,
         )
         stdout, stderr = process.communicate(timeout=timeout)
         if owned_group_has_live_members(process.pid):
@@ -718,9 +727,6 @@ def run_lua(
             "CRABC_LUA_DYNAMIC_MODULES": "1",
         }
     )
-    def disable_core_dump() -> None:
-        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-
     try:
         process = subprocess.Popen(
             [*command, str(script), str(module_directory), str(fixture_dir)],
@@ -729,7 +735,6 @@ def run_lua(
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            preexec_fn=disable_core_dump,
             close_fds=True,
             start_new_session=True,
         )
@@ -1874,7 +1879,6 @@ def run_static_lua(
             stderr=subprocess.PIPE,
             close_fds=True,
             start_new_session=True,
-            preexec_fn=suppress_core_dumps,
         )
     except OSError as error:
         return ProcessResult(f"EXEC_ERROR:{error.errno or 'unknown'}", b"", str(error).encode())
@@ -2041,6 +2045,132 @@ def run_x86_static(args: argparse.Namespace) -> dict[str, object]:
     return report
 
 
+def allocate_x86_static_dispatch_state(parent: Path = DEFAULT_X86_STATIC_WORK_ROOT) -> Path:
+    """Allocate one physical private producer/qualification root below ``.work``."""
+
+    parent = native_work_root(parent)
+    state = Path(tempfile.mkdtemp(prefix="run-", dir=parent))
+    state = require_physical_directory(state, "native Lua static dispatcher invocation root")
+    try:
+        state.relative_to(parent)
+    except ValueError as error:
+        raise RunnerError("native Lua static dispatcher invocation root escaped its parent") from error
+    return state
+
+
+def publish_x86_static_dispatch_report(
+    report: Path, latest_report: Path = DEFAULT_X86_STATIC_REPORT
+) -> Path:
+    """Atomically replace a latest report from a passing private report."""
+
+    report = require_physical_regular_file(report, "native Lua static dispatcher report")
+    latest_report = Path(os.path.abspath(latest_report))
+    parent = latest_report.parent
+    reject_symlinked_components(parent, "native Lua static report directory")
+    parent.mkdir(parents=True, exist_ok=True)
+    parent = require_physical_directory(parent, "native Lua static report directory")
+    latest = parent / latest_report.name
+    if os.path.lexists(latest) and latest.is_symlink():
+        raise RunnerError(f"native Lua static latest report is a symlink: {latest}")
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=".x86_64-static-latest.", dir=parent, delete=False
+        ) as stream:
+            temporary = Path(stream.name)
+            stream.write(report.read_bytes())
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(latest)
+    except OSError as error:
+        raise RunnerError("cannot publish native Lua static latest report") from error
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+    return require_physical_regular_file(latest, "native Lua static published latest report")
+
+
+def run_x86_static_dispatch(
+    *,
+    jobs: int,
+    timeout: float,
+    state_parent: Path = DEFAULT_X86_STATIC_WORK_ROOT,
+    latest_report: Path = DEFAULT_X86_STATIC_REPORT,
+    builder: Path | None = None,
+    static_runner: Any | None = None,
+) -> tuple[dict[str, object], Path, Path | None]:
+    """Materialize and qualify one isolated installed x86 Lua static product.
+
+    The producer is the only subprocess here. The Lua qualification runs in
+    this process so its bounded compile children remain owned by the runner's
+    existing process-group cleanup rather than escaping through a second
+    dispatcher process group.
+    """
+
+    if jobs < 1 or jobs > MAX_JOBS:
+        raise RunnerError(f"native Lua static dispatcher jobs must be from 1 through {MAX_JOBS}")
+    if not math.isfinite(timeout) or timeout <= 0 or timeout > 300:
+        raise RunnerError("native Lua static dispatcher timeout must be > 0 and <= 300")
+    latest_report = Path(os.path.abspath(latest_report))
+    disable_core_dump_inheritance()
+    state = allocate_x86_static_dispatch_state(state_parent)
+    report_path = state / "report.json"
+    sysroot = state / "sysroot"
+    dispatcher: dict[str, object] = {
+        "state_root": str(state),
+        "authoritative_report": str(report_path),
+        "producer": None,
+        "latest_report": str(latest_report),
+        "latest_report_publication": "only after a passing private report",
+    }
+    try:
+        selected_builder = require_physical_regular_file(
+            builder if builder is not None else ROOT / "scripts/build_x86_64_owned_sysroot.py",
+            "native Lua static sysroot builder",
+        )
+        producer = command_record(
+            [sys.executable, "-B", str(selected_builder), "--output", str(sysroot)],
+            cwd=ROOT,
+            environment=static_environment(state / "producer"),
+            timeout=timeout,
+        )
+        dispatcher["producer"] = producer
+        require_success(producer, "native Lua static sysroot producer")
+        require_physical_directory(sysroot, "native Lua static produced sysroot")
+        inner_args = argparse.Namespace(
+            manifest=MANIFEST,
+            sysroot=sysroot,
+            target="x86_64-static",
+            mode=None,
+            work_root=state / "runs",
+            jobs=jobs,
+            report=report_path,
+            offline=False,
+            timeout=timeout,
+        )
+        execute = run_x86_static if static_runner is None else static_runner
+        report = execute(inner_args)
+        if not isinstance(report, dict):
+            raise RunnerError("native Lua static dispatcher runner returned no report object")
+    except RunnerError as error:
+        report = {
+            "schema_version": 2,
+            "runner": "crabc-lua-native-x86-static-source-build",
+            "result": "fail",
+            "passed": False,
+            "error": str(error),
+        }
+    report["dispatcher"] = dispatcher
+    write_json_atomic(report_path, report)
+    if report.get("passed") is not True or report.get("result") != "pass":
+        return report, report_path, None
+    try:
+        latest = publish_x86_static_dispatch_report(report_path, latest_report)
+    except RunnerError as error:
+        raise RunnerError(f"{error}; retained authoritative report: {report_path}") from error
+    return report, report_path, latest
+
+
 def run_aarch64_dynamic(args: argparse.Namespace) -> dict[str, object]:
     require_native_aarch64()
     manifest = load_manifest(args.manifest)
@@ -2108,9 +2238,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--offline", action="store_true")
     parser.add_argument("--timeout", type=float, default=60.0)
     args = parser.parse_args(argv)
+    if not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 300:
+        parser.error("--timeout must be > 0 and <= 300")
     if args.target == "x86_64-static":
-        if not math.isfinite(args.timeout) or args.timeout <= 0 or args.timeout > 300:
-            parser.error("--timeout must be > 0 and <= 300")
         if args.jobs < 1 or args.jobs > MAX_JOBS:
             parser.error(f"--jobs must be an integer from 1 through {MAX_JOBS}")
     if args.target == "aarch64-dynamic" and args.mode:
@@ -2123,6 +2253,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def run(args: argparse.Namespace) -> dict[str, object]:
+    disable_core_dump_inheritance()
     if args.target == "x86_64-static":
         return run_x86_static(args)
     return run_aarch64_dynamic(args)

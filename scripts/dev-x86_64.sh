@@ -4846,19 +4846,11 @@ run_owned_static_sysroot_probe() {
 }
 
 run_lua_static_source_build_probe() {
-    run_in_container bash -ceu '
-        state=/workspace/.work/x86_64/lua-static-source-build
-        sysroot="$state/sysroot"
-        mkdir -p "$state"
-        python3 -B /workspace/scripts/build_x86_64_owned_sysroot.py --output "$sysroot"
-        python3 -B /workspace/compat/lua/run.py \
-            --target x86_64-static \
-            --sysroot "$sysroot" \
-            --work-root "$state/runs" \
-            --report /workspace/compat/reports/lua/x86_64-static-latest.json \
-            --jobs "${CRABC_X86_64_LUA_JOBS:-4}" \
-            --timeout "${CRABC_X86_64_LUA_TIMEOUT:-120}"
-    '
+    # Expand the bounded knobs into this exact child argv rather than relying
+    # on Docker's optional host-environment forwarding semantics.
+    run_in_container python3 -B /workspace/compat/lua/run_x86_static_dispatch.py \
+        --jobs "${CRABC_X86_64_LUA_JOBS:-4}" \
+        --timeout "${CRABC_X86_64_LUA_TIMEOUT:-120}"
 }
 
 run_owned_dynamic_sysroot_probe() {

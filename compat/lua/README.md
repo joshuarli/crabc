@@ -20,10 +20,12 @@ python3 -m unittest discover -s compat/lua/tests -p 'test_*.py'
 ```
 
 The AArch64 command builds `target/crabc-sysroot/` first. The x86 command
-materializes its sealed static sysroot first and retains its cache, private
-source extraction, build state, and report beneath `.work/x86_64/`. Both
-offline paths require a verified Lua archive cache entry; neither downloads on
-a cache miss.
+materializes its sealed static sysroot first. Every x86 dispatcher invocation
+gets a distinct physical `.work/x86_64/lua-static-source-build/run-*` root
+with its own producer logs, sysroot, source extraction/cache, build state, and
+authoritative report. The conventional latest x86 report is atomically replaced
+only after that invocation passes. Both offline paths require a verified Lua
+archive cache entry; neither downloads on a cache miss.
 
 ## Candidate boundary
 
