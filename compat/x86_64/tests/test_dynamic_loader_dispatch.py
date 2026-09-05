@@ -34,6 +34,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
             docker.chmod(0o755)
             for command, needs_mount in (
                 ("materialized-dynamic-sysroot", True),
+                ("owned-dynamic-sysroot", True),
                 ("libc-owned-wordexp", False),
                 ("crt-object-bundle", False),
                 ("qualification-manifest", False),
@@ -77,7 +78,9 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-2:], [
-                            "bash", "/workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh",
+                            "bash", ("/workspace/compat/x86_64/run_owned_dynamic_sysroot.sh"
+                                     if command == "owned-dynamic-sysroot" else
+                                     "/workspace/compat/x86_64/run_materialized_dynamic_sysroot.sh"),
                         ])
 
 

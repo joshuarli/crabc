@@ -538,7 +538,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   lua-static-source-build  build installed x86 static Lua source/bytecode ET_EXEC/static-PIE qualification
   lua-dynamic-source-build  qualify pinned Lua through installed/extracted x86 dynamic sysroots
   libc-owned-wordexp  run the installed x86 wordexp/wordfree ET_EXEC/static-PIE gate
-  owned-dynamic-sysroot  inspect the legacy plan-only dynamic-product gate
+  owned-dynamic-sysroot  qualify both clean dynamic builds and extracted runtime
   owned-dynamic-pthread-exit  test installed dynamic main and last pthread exit
   owned-dynamic-fork  test installed loader, TLS and pthread fork transactions
   materialized-dynamic-sysroot  build and test the installed initial-graph shared runtime
@@ -4943,7 +4943,7 @@ run_libc_owned_wordexp_probe() {
 }
 
 run_owned_dynamic_sysroot_probe() {
-    run_in_container bash /workspace/compat/x86_64/run_owned_dynamic_sysroot.sh
+    run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_dynamic_sysroot.sh
 }
 
 run_crt_object_bundle_probe() {

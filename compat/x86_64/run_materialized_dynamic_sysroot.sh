@@ -44,15 +44,7 @@ check_non_pie() {
     timeout 20 chroot "$execution_root" /non-pie >"$work/$name.stdout"
     cmp "$work/expected.stdout" "$work/$name.stdout"
 }
-python3 -B -m unittest discover -s "$ROOT/compat/x86_64" -p test_owned_dynamic_driver.py
-python3 -B -m unittest discover -s "$ROOT/crt/tests" -p test_x86_64_dynamic_modes.py
-rustc --edition=2021 --test --cfg crabc_general_initial_graph \
-    --cfg crabc_general_initial_tls_materialization_v1 --cfg crabc_general_loader_libc_tls_runtime_v1 \
-    --cfg crabc_general_initial_lifecycle --cfg crabc_dynamic_main_thread_runtime_v1 \
-    --cfg 'feature="x86_64-owned-dynamic-runtime"' \
-    "$ROOT/ldso/src/x86_64_general_initial_tls_runtime_v1_source_root.rs" -o "$work/loader-tests"
-"$work/loader-tests"
-bash "$ROOT/compat/x86_64/run_musl_oracle.sh"
+python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" prepare --work "$work"
 /usr/local/bin/crabc-x86_64-musl-gcc -fPIC -shared "$ROOT/compat/x86_64/owned_dynamic_dependency.c" \
     -Wl,-soname,liboracle-dependency.so -o "$work/liboracle-dependency.so"
 /usr/local/bin/crabc-x86_64-musl-gcc -fPIE -pie "$ROOT/compat/x86_64/owned_dynamic_consumer.c" \
@@ -88,22 +80,20 @@ check_basic_product() {
 }
 
 check_runtime_suites() {
-    local product="$1"
-    bash "$ROOT/compat/x86_64/run_general_dynamic_elf_scope.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_general_dynamic_cycle.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_general_dynamic_cli.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_general_dynamic_constructor_exit.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_signal.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_general_dynamic_pthread_exit.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_general_dynamic_fork.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_owned_pthread_getattr.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_owned_pthread_join_cancel.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_owned_pthread_cond_cancel.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_owned_dynamic_io_cancellation.sh" "$product"
-    CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_dlopen.sh" "$product"
-    bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$product"
-    CRABC_GENERAL_DYNAMIC_ENTRY_MODE=--dynamic-non-pie bash "$ROOT/compat/x86_64/run_general_dynamic_lazy.sh" "$product"
+    local label="$1" cases case_name
+    # The qualification catalog owns the complete leaf/mode roster. Capture its
+    # exit status before the loop so discovery failures cannot omit coverage.
+    cases="$(python3 -B - "$ROOT" <<'PYTHON'
+import sys
+sys.path.insert(0, sys.argv[1] + '/compat/x86_64')
+from owned_dynamic_qualification import CASES
+print('\n'.join(CASES))
+PYTHON
+)"
+    while IFS= read -r case_name; do
+        python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" run \
+            --work "$work" --product "$label" --case "$case_name"
+    done <<<"$cases"
 }
 
 python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" --output "$work/installed"
@@ -116,7 +106,8 @@ python3 -B "$ROOT/compat/x86_64/owned_dynamic_package.py" extract "$work/runtime
 printf 'installed dynamic: allocation errno stdio threads\nordinary exit\n' >"$work/expected.stdout"
 for label in installed second extracted; do
     check_basic_product "$work/$label" "$label"
-    check_runtime_suites "$work/$label"
+    check_runtime_suites "$label"
     printf 'materialized dynamic product: PASS (%s)\n' "$label"
 done
+python3 -B "$ROOT/compat/x86_64/owned_dynamic_qualification.py" finish --work "$work"
 printf 'materialized dynamic sysroot: PASS (two clean builds and extracted initial/runtime graphs); evidence: %s\n' "$work"
