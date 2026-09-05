@@ -487,6 +487,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "strftime",
                 "stime",
                 "strftime_l",
+                "strptime",
                 "swprintf",
                 "swscanf",
                 "symlinkat",

@@ -339,6 +339,7 @@
           "stime",
           "strftime",
           "strftime_l",
+          "strptime",
           "swapoff",
           "swapon",
           "swprintf",
@@ -1665,7 +1666,6 @@
         "srandom",
         "strfmon",
         "strfmon_l",
-        "strptime",
         "swapcontext",
         "ulckpwdf",
         "updwtmp",
@@ -417437,7 +417437,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "07b6954e303b7d18c8b2bea315cb2d530604ea17d0b5ca0dd360a350ef78d94c",
+    "parity_ledger_sha256": "feb86d9fba3dda05288b65b12ad51bc9d4bc45458962f46560616a3710504f26",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -436247,9 +436247,9 @@
       "macro": 5202
     },
     "callable_provider_counts": {
-      "declared_unverified_feature_archives": 257,
+      "declared_unverified_feature_archives": 258,
       "default_static": 1122,
-      "unprovided": 68,
+      "unprovided": 67,
       "verified_feature_archives": 78
     },
     "candidate_external_callable_count": 1525,
