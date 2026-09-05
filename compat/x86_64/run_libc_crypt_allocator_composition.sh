@@ -81,6 +81,9 @@ candidate_relocations="$work_dir/candidate-relocations"
 candidate_disassembly="$work_dir/candidate-disassembly"
 crypt_relocations="$work_dir/crypt-member-relocations"
 wrapper_elf_symbols="$work_dir/wrapper-symbols"
+crypt_undefined_symbols="$work_dir/crypt-undefined-symbols"
+backend_symbols="$work_dir/backend-symbols"
+selected_provider_symbols="$work_dir/selected-provider-symbols"
 combined_feature_log="$work_dir/combined-feature.log"
 
 cd "$ROOT_DIR"
@@ -159,8 +162,9 @@ readelf --relocs --wide "$selected_crypt_member" >"$crypt_relocations"
 # fixture directly exercises the paired free and aligned_alloc/free routes
 # through the same selected wrapper, without claiming optimized-away Rust
 # relocation sites as an executable fact.
+nm --undefined-only "$selected_crypt_member" >"$crypt_undefined_symbols"
 for symbol in malloc; do
-    nm --undefined-only "$selected_crypt_member" | grep -Eq "[[:space:]]${symbol}$" \
+    grep -Eq "[[:space:]]${symbol}$" "$crypt_undefined_symbols" \
         || fail "selected crypt object does not request $symbol"
     grep -Eq "(^|[[:space:]])${symbol}([[:space:]]|$|@)" "$crypt_relocations" \
         || fail "selected crypt object has no relocation for $symbol"
@@ -173,15 +177,18 @@ for symbol in aligned_alloc free; do
         "allocator wrapper"
 done
 assert_elf_function_binding "$wrapper_elf_symbols" malloc WEAK "allocator wrapper"
+# With pipefail, `nm | grep -q` is not a sound presence check: grep may exit
+# after its first match, then make a still-writing nm fail with SIGPIPE. Drain
+# each symbol table into a file before matching it.
+nm -g --defined-only "$selected_member_dir/${backend_members[0]}" >"$backend_symbols"
 for symbol in mi_malloc_aligned mi_zalloc mi_realloc_aligned mi_free; do
-    nm -g --defined-only "$selected_member_dir/${backend_members[0]}" |
-        grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" \
+    grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$backend_symbols" \
         || fail "selected backend lacks $symbol"
 done
+nm -g --defined-only "$selected_member_dir/${allocator_members[0]}" \
+    "$selected_member_dir/${backend_members[0]}" >"$selected_provider_symbols"
 for symbol in malloc_usable_size __crabc_x86_allocator_observability_v1; do
-    if nm -g --defined-only "$selected_member_dir/${allocator_members[0]}" \
-        "$selected_member_dir/${backend_members[0]}" |
-        grep -Eq "[[:space:]][TW][[:space:]]${symbol}$"; then
+    if grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$selected_provider_symbols"; then
         fail "selected provider leaked separate allocator-observability symbol $symbol"
     fi
 done
