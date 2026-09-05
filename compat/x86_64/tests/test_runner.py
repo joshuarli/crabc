@@ -29540,7 +29540,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "FUTEX_WAKE",
             "futex_privilege",
             "trywait_raw",
-            "signal-action restart",
+            "non-restarting-handler flag",
+            "standalone six-function archive retains",
         ):
             self.assertIn(required, implementation)
         for symbol in (
@@ -29553,15 +29554,20 @@ class X86_64CoreRunnerTests(unittest.TestCase):
         ):
             self.assertIn(f"fn {symbol}(", implementation)
         for forbidden in (
-            "fn sem_timedwait(",
             "fn sem_open(",
             "fn sem_close(",
             "fn sem_unlink(",
             "crabc_core",
             "crabc_mimalloc",
-            "pthread_",
         ):
             self.assertNotIn(forbidden, implementation)
+
+        self.assertIn(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[no_mangle]\n'
+            'pub unsafe extern "C" fn sem_timedwait(',
+            implementation,
+        )
 
         for header_probe in (header_c_probe, header_cxx_probe):
             for required in (
