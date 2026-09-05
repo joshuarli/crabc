@@ -17,6 +17,7 @@
 #include <regex.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 static int execute(const char *pattern, int cflags, const char *text,
     size_t nmatch, const regmatch_t *expected)
@@ -52,24 +53,39 @@ static int expect_no_match(const char *pattern, int cflags, const char *text,
     return result == REG_NOMATCH ? 0 : 2 + result;
 }
 
+/* Isolate the table terminator source regression from matching work.  musl's
+ * `"\0Unknown error"` has an implicit final literal NUL; the Rust table must
+ * retain both the empty separator and that final terminator. */
+static int check_unknown_error_terminator(void)
+{
+    char unknown[14];
+    char bounded_unknown[1];
+    if (regerror(-1, 0, unknown, sizeof unknown) != 14) return 1;
+    if (unknown[0] != 'U' || unknown[12] != 'r' || unknown[13]) return 2;
+    if (regerror(INT_MAX, 0, bounded_unknown, sizeof bounded_unknown) != 14) return 3;
+    if (bounded_unknown[0]) return 4;
+    return 0;
+}
+
 static int check_error_table(void)
 {
     char whole[64];
     char small[4];
-    char unknown[14];
-    char bounded_unknown[1];
     if (regerror(REG_EBRACK, 0, whole, sizeof whole) != 12) return 1;
     if (whole[0] != 'M' || whole[9] != ']' || whole[10] != '\'' || whole[11]) return 2;
     if (regerror(REG_EBRACK, 0, small, sizeof small) != 12) return 3;
     if (small[0] != 'M' || small[1] != 'i' || small[2] != 's' || small[3]) return 4;
-    /* The empty separator before this source table's final string selects
-     * Unknown error for both a negative and a too-large error code.  The
-     * exact-size and one-byte forms prove its final NUL and snprintf bound. */
-    if (regerror(-1, 0, unknown, sizeof unknown) != 14) return 5;
-    if (unknown[0] != 'U' || unknown[12] != 'r' || unknown[13]) return 6;
-    if (regerror(INT_MAX, 0, bounded_unknown, sizeof bounded_unknown) != 14) return 7;
-    if (bounded_unknown[0]) return 8;
+    if (check_unknown_error_terminator()) return 5;
     return 0;
+}
+
+/* Keep zero-length backreference progress separate from the aggregate
+ * semantic suite so a timeout identifies the source retry/visited-state edge
+ * directly, rather than a later unrelated check. */
+static int check_empty_backreference(void)
+{
+    static const regmatch_t expected[] = {{0, 0}, {0, 0}};
+    return execute("\\(a*\\)\\1", 0, "", 2, expected);
 }
 
 static int semantic_suite(void)
@@ -81,7 +97,6 @@ static int semantic_suite(void)
     static const regmatch_t negated[] = {{2, 4}};
     static const regmatch_t icase[] = {{0, 1}};
     static const regmatch_t backref[] = {{1, 3}, {1, 2}};
-    static const regmatch_t empty_backref[] = {{0, 0}, {0, 0}};
     static const regmatch_t multibyte[] = {{1, 5}};
     int result;
 
@@ -92,7 +107,7 @@ static int semantic_suite(void)
     if ((result = execute("[^[:digit:]]+", REG_EXTENDED, "10xy2", 1, negated))) return 170 + result;
     if ((result = execute("[a]", REG_EXTENDED | REG_ICASE, "A", 1, icase))) return 210 + result;
     if ((result = execute("\\(a\\)\\1", 0, "zaa", 2, backref))) return 250 + result;
-    if ((result = execute("\\(a*\\)\\1", 0, "", 2, empty_backref))) return 290 + result;
+    if ((result = check_empty_backreference())) return 290 + result;
     if ((result = execute("é+", REG_EXTENDED, "zééx", 1, multibyte))) return 330 + result;
     if ((result = expect_no_match("^a$", REG_EXTENDED, "a\nx", 0))) return 370 + result;
     if ((result = expect_no_match("^a", REG_EXTENDED, "a", REG_NOTBOL))) return 390 + result;
@@ -263,19 +278,32 @@ int crabc_x86_64_owned_regex_execution_probe(void)
     /* Locale setup may initialize process-wide locale state before the exact
      * allocation ledger starts; the regex calls below are the measured edge. */
     if (!setlocale(LC_CTYPE, "C.UTF-8")) return 1;
+#if defined(CRABC_OWNED_REGEX_EMPTY_BACKREFERENCE_ONLY)
+    reset_allocator(-1);
+    result = check_empty_backreference();
+    return result ? result : !all_released();
+#elif defined(CRABC_OWNED_REGEX_REGERROR_TABLE_ONLY)
+    return check_unknown_error_terminator();
+#else
     reset_allocator(-1);
     result = semantic_suite();
     if (result || !all_released()) return result ? result : 2;
     if ((result = execution_allocation_case("([a-z]|[[:digit:]])+", REG_EXTENDED, "a9b"))) return 20 + result;
     if ((result = execution_allocation_case("\\(a\\)\\1", 0, "aa"))) return 200 + result;
     return 0;
+#endif
 }
 
 #else
 
-int main(void)
+int main(int argc, char *argv[])
 {
     if (!setlocale(LC_CTYPE, "C.UTF-8")) return 1;
+    if (argc == 2 && !strcmp(argv[1], "--empty-backreference"))
+        return check_empty_backreference();
+    if (argc == 2 && !strcmp(argv[1], "--regerror-table"))
+        return check_unknown_error_terminator();
+    if (argc != 1) return 64;
     return semantic_suite();
 }
 

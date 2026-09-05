@@ -29,12 +29,41 @@ case "${CRABC_WORK_DIR:-$ROOT_DIR/.work/x86_64}" in
 esac
 mkdir -p "$work_root"
 work_dir="$(mktemp -d "$work_root/owned-regex-execution.XXXXXX")"
-trap 'rm -rf -- "$work_dir"' EXIT
+completed=false
+cleanup() {
+    if [ "$completed" = true ]; then
+        rm -rf -- "$work_dir"
+    else
+        printf 'retained execution diagnostics: %s\n' "$work_dir" >&2
+    fi
+}
+trap cleanup EXIT
 source_root="$work_dir/source"
 target_dir="$work_dir/target"
 reference="$work_dir/musl-execution"
 candidate="$work_dir/candidate-execution"
+candidate_empty="$work_dir/candidate-empty-backreference"
+candidate_regerror="$work_dir/candidate-regerror-table"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
+
+# Keep the two prior failure-prone source paths in independent processes with
+# their own stdout, stderr, and exit-status records.  This makes a timeout or
+# terminator regression attributable without weakening the aggregate suite.
+run_timeboxed() {
+    local name="$1"
+    shift
+    local status
+    set +e
+    timeout 5 "$@" >"$work_dir/${name}.stdout" 2>"$work_dir/${name}.stderr"
+    status=$?
+    set -e
+    printf '%s\n' "$status" >"$work_dir/${name}.status"
+    if [ "$status" -ne 0 ]; then
+        cat "$work_dir/${name}.stdout" >&2
+        cat "$work_dir/${name}.stderr" >&2
+        fail "${name} failed with status ${status}"
+    fi
+}
 
 # Keep this registration experiment isolated even when other x86 owners are
 # active in their own worktrees.
@@ -61,7 +90,9 @@ cmp -s "$SOURCE_STATIC_C_ABI" "$ROOT_DIR/libc/src/c_abi/x86_64/static_c_abi.rs" 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin -fno-stack-protector \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_regex_execution_probe.c" \
     -o "$reference"
-timeout 20 "$reference" || fail "pinned-musl execution fixture failed with status $?"
+run_timeboxed oracle-empty-backreference "$reference" --empty-backreference
+run_timeboxed oracle-regerror-table "$reference" --regerror-table
+run_timeboxed oracle-all "$reference"
 
 (
     cd "$source_root"
@@ -76,6 +107,18 @@ timeout 20 "$reference" || fail "pinned-musl execution fixture failed with statu
     -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
     "$ROOT_DIR/compat/x86_64/owned_regex_execution_probe.c" \
     "$ROOT_DIR/compat/x86_64/owned_regex_execution_start.S" "$archive" -o "$candidate"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_OWNED_REGEX_EXECUTION_FREESTANDING \
+    -DCRABC_OWNED_REGEX_EMPTY_BACKREFERENCE_ONLY -I"$ROOT_DIR/include" \
+    -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
+    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    "$ROOT_DIR/compat/x86_64/owned_regex_execution_probe.c" \
+    "$ROOT_DIR/compat/x86_64/owned_regex_execution_start.S" "$archive" -o "$candidate_empty"
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_OWNED_REGEX_EXECUTION_FREESTANDING \
+    -DCRABC_OWNED_REGEX_REGERROR_TABLE_ONLY -I"$ROOT_DIR/include" \
+    -nostdlib -static -fno-pie -no-pie -ffreestanding -fno-builtin \
+    -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    "$ROOT_DIR/compat/x86_64/owned_regex_execution_probe.c" \
+    "$ROOT_DIR/compat/x86_64/owned_regex_execution_start.S" "$archive" -o "$candidate_regerror"
 readelf --symbols --wide "$candidate" >"$work_dir/symbols"
 readelf --program-headers --wide "$candidate" >"$work_dir/headers"
 readelf --dynamic --wide "$candidate" >"$work_dir/dynamic" || true
@@ -90,5 +133,8 @@ fi
 if grep -Eq 'Requesting program interpreter|INTERP|NEEDED' "$work_dir/headers" "$work_dir/dynamic"; then
     fail "candidate is dynamic"
 fi
-timeout 5 "$candidate" || fail "owned execution fixture failed with status $?"
+run_timeboxed candidate-empty-backreference "$candidate_empty"
+run_timeboxed candidate-regerror-table "$candidate_regerror"
+run_timeboxed candidate-all "$candidate"
+completed=true
 printf 'x86 owned regex execution checkpoint: PASS\n'
