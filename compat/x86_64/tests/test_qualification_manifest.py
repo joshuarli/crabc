@@ -172,19 +172,18 @@ class QualificationManifestTests(unittest.TestCase):
                 with self.assertRaisesRegex(qualification.QualificationManifestError, message):
                     qualification.validate_contract(document)
 
-    def test_completed_gate_requires_matching_case_and_receipt_hashes(self) -> None:
+    def test_ready_gate_requires_matching_case_hash(self) -> None:
         document = self.document()
         chain = document["promotion_chain"]
         assert isinstance(chain, list)
         gate = chain[0]
         assert isinstance(gate, dict)
-        gate["state"] = "complete"
+        gate["state"] = "ready"
         gate["case_manifest"] = {"path": "compat/x86_64/qualification_posix_abi.json", "sha256": "0" * 64}
-        gate["receipt"] = {"path": "compat/x86_64/qualification_posix_abi.json", "sha256": "0" * 64}
         with self.assertRaisesRegex(qualification.QualificationManifestError, "case manifest hash"):
             qualification.validate_contract(document)
 
-    def test_completed_chain_binds_native_case_and_receipt_provenance(self) -> None:
+    def test_ready_chain_binds_cases_without_claiming_execution(self) -> None:
         document = self.document()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -201,13 +200,10 @@ class QualificationManifestTests(unittest.TestCase):
             assert isinstance(chain, list)
             for index, gate in enumerate(chain):
                 assert isinstance(gate, dict)
-                gate["state"] = "complete"
+                gate["state"] = "ready"
                 case_relative = f"compat/x86_64/cases/{index}.json"
-                receipt_relative = f"compat/x86_64/receipts/{index}.json"
                 case_path = root / case_relative
-                receipt_path = root / receipt_relative
                 case_path.parent.mkdir(parents=True, exist_ok=True)
-                receipt_path.parent.mkdir(parents=True, exist_ok=True)
                 case = {
                     "schema": qualification.CASE_SCHEMA,
                     "gate": gate["id"],
@@ -226,37 +222,22 @@ class QualificationManifestTests(unittest.TestCase):
                 }
                 case_path.write_text(json.dumps(case), encoding="utf-8")
                 case_hash = hashlib.sha256(case_path.read_bytes()).hexdigest()
-                receipt = {
-                    "schema": qualification.RECEIPT_SCHEMA,
-                    "gate": gate["id"],
-                    "target": qualification.TARGET,
-                    "case_manifest_sha256": case_hash,
-                    "case_count": 1,
-                    "outcome": "passed",
-                    "oracle": gate["oracle"],
-                    "provenance": gate["provenance"],
-                    "purity": gate["purity"],
-                    "isolation": gate["isolation"],
-                }
-                receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
                 gate["case_manifest"] = {"path": case_relative, "sha256": case_hash}
-                gate["receipt"] = {
-                    "path": receipt_relative,
-                    "sha256": hashlib.sha256(receipt_path.read_bytes()).hexdigest(),
-                }
             with patch.object(qualification, "ROOT", root), patch.object(
                 qualification, "CONTRACT_PATH", contract_path
             ):
                 report = qualification.validate_contract(document)
-                self.assertTrue(report["promotion_ready"])
-                self.assertEqual(report["completed_gate_count"], len(qualification.CHAIN))
+                self.assertFalse(report["promotion_ready"])
+                self.assertEqual(report["completed_gate_count"], 0)
+                self.assertEqual(report["ready_gate_count"], len(qualification.CHAIN))
+                self.assertEqual(report["runnable_prefix"], list(qualification.CHAIN))
 
-                first_receipt = root / chain[0]["receipt"]["path"]
-                receipt = json.loads(first_receipt.read_text(encoding="utf-8"))
-                receipt["target"] = {**qualification.TARGET, "machine": "aarch64"}
-                first_receipt.write_text(json.dumps(receipt), encoding="utf-8")
-                chain[0]["receipt"]["sha256"] = hashlib.sha256(first_receipt.read_bytes()).hexdigest()
-                with self.assertRaisesRegex(qualification.QualificationManifestError, "receipt target"):
+                first_case = root / chain[0]["case_manifest"]["path"]
+                case = json.loads(first_case.read_text(encoding="utf-8"))
+                case["target"] = {**qualification.TARGET, "machine": "aarch64"}
+                first_case.write_text(json.dumps(case), encoding="utf-8")
+                chain[0]["case_manifest"]["sha256"] = hashlib.sha256(first_case.read_bytes()).hexdigest()
+                with self.assertRaisesRegex(qualification.QualificationManifestError, "case manifest target"):
                     qualification.validate_contract(document)
 
     def test_runner_rechecks_pinned_case_runner_bytes_before_popen(self) -> None:

@@ -1,6 +1,6 @@
 {
   "completed_gate_count": 0,
-  "contract_sha256": "9ce1f0c3b6ec27fbbf022c3d771042b0c5124b6d6353638966bb270272bc4e59",
+  "contract_sha256": "d4455515c13bacf2e7383a32ac47f5a6e32cd050185fb87d97c171ec6b69e6b3",
   "execution": {
     "dispatcher_command": [
       "./scripts/dev-x86_64.sh",
@@ -39,6 +39,7 @@
   ],
   "promotion_chain": [
     {
+      "depends_on": [],
       "id": "compat.abi-differential",
       "isolation": "clean-native-linux-x86_64-worktree-and-scrubbed-environment",
       "oracle": "pinned-musl-1.2.6-and-frozen-linux-amd64-abi",
@@ -48,6 +49,9 @@
       "timeout_seconds": 7200
     },
     {
+      "depends_on": [
+        "compat.abi-differential"
+      ],
       "id": "compat.posix-process",
       "isolation": "clean-native-linux-x86_64-worktree-and-scrubbed-environment",
       "oracle": "pinned-musl-1.2.6-and-linux-5.10-process-abi",
@@ -57,6 +61,10 @@
       "timeout_seconds": 7200
     },
     {
+      "depends_on": [
+        "compat.abi-differential",
+        "compat.posix-process"
+      ],
       "id": "compat.resolver-network",
       "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-controlled-network",
       "oracle": "pinned-musl-1.2.6-and-controlled-linux-resolver-network",
@@ -66,6 +74,11 @@
       "timeout_seconds": 7200
     },
     {
+      "depends_on": [
+        "compat.abi-differential",
+        "compat.posix-process",
+        "compat.resolver-network"
+      ],
       "id": "compat.loader-corpus",
       "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-materialized-sysroot",
       "oracle": "pinned-musl-1.2.6-and-frozen-loader-corpus",
@@ -75,6 +88,12 @@
       "timeout_seconds": 7200
     },
     {
+      "depends_on": [
+        "compat.abi-differential",
+        "compat.posix-process",
+        "compat.resolver-network",
+        "compat.loader-corpus"
+      ],
       "id": "consumer.rust-std-lto",
       "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-materialized-sysroot",
       "oracle": "frozen-aarch64-rust-std-lto-consumer-contract",
@@ -84,6 +103,13 @@
       "timeout_seconds": 7200
     },
     {
+      "depends_on": [
+        "compat.abi-differential",
+        "compat.posix-process",
+        "compat.resolver-network",
+        "compat.loader-corpus",
+        "consumer.rust-std-lto"
+      ],
       "id": "consumer.source-build",
       "isolation": "clean-native-linux-x86_64-worktree-scrubbed-environment-and-materialized-sysroot",
       "oracle": "frozen-aarch64-selected-source-consumers-and-pinned-musl-1.2.6",
@@ -93,6 +119,14 @@
       "timeout_seconds": 7200
     },
     {
+      "depends_on": [
+        "compat.abi-differential",
+        "compat.posix-process",
+        "compat.resolver-network",
+        "compat.loader-corpus",
+        "consumer.rust-std-lto",
+        "consumer.source-build"
+      ],
       "id": "capability.accounting",
       "isolation": "clean-native-linux-x86_64-worktree-and-scrubbed-environment",
       "oracle": "immutable-aarch64-frozen-baseline-and-current-x86-ledger",
@@ -102,6 +136,15 @@
       "timeout_seconds": 1800
     },
     {
+      "depends_on": [
+        "compat.abi-differential",
+        "compat.posix-process",
+        "compat.resolver-network",
+        "compat.loader-corpus",
+        "consumer.rust-std-lto",
+        "consumer.source-build",
+        "capability.accounting"
+      ],
       "id": "performance.release",
       "isolation": "controlled-native-linux-x86_64-host-clean-worktree-and-scrubbed-environment",
       "oracle": "project-performance-contract-and-pinned-musl-1.2.6-comparison-lane",
@@ -112,7 +155,9 @@
     }
   ],
   "promotion_ready": false,
-  "schema": "crabc.x86_64-qualification-manifest/v1",
+  "ready_gate_count": 0,
+  "runnable_prefix": [],
+  "schema": "crabc.x86_64-qualification-manifest/v2",
   "target": {
     "endianness": "little",
     "machine": "x86_64",

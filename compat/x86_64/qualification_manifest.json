@@ -1,5 +1,5 @@
 {
-  "schema": "crabc.x86_64-qualification-manifest/v1",
+  "schema": "crabc.x86_64-qualification-manifest/v2",
   "id": "x86_64-native-qualification",
   "target": {
     "triple": "x86_64-unknown-linux-musl",

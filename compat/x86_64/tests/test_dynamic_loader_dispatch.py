@@ -38,6 +38,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("libc-owned-wordexp", False),
                 ("crt-object-bundle", False),
                 ("qualification-manifest", False),
+                ("qualification-manifest-prefix", False),
                 ("owned-dynamic-io-cancellation", False),
                 ("owned-system-cancellation", False),
             ):
@@ -49,8 +50,10 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         DISPATCH_CAPTURE=str(capture),
                         CRABC_X86_64_WORK_DIR=str(work / "state"),
                     )
+                    selected_command = (["qualification-manifest", "--through", "compat.abi-differential"]
+                        if command == "qualification-manifest-prefix" else [command])
                     result = subprocess.run(
-                        ["bash", str(ROOT / "scripts/dev-x86_64.sh"), command],
+                        ["bash", str(ROOT / "scripts/dev-x86_64.sh"), *selected_command],
                         cwd=ROOT, env=environment, capture_output=True, text=True,
                     )
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -75,6 +78,12 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                             "python3", "/workspace/compat/x86_64/run_qualification_manifest.py",
                         ])
                         self.assertIn("CRABC_WORK_DIR=/workspace/.work/x86_64", invocations[0])
+                    if command == "qualification-manifest-prefix":
+                        self.assertEqual(len(invocations), 1)
+                        self.assertEqual(invocations[0][-4:], [
+                            "python3", "/workspace/compat/x86_64/run_qualification_manifest.py",
+                            "--through", "compat.abi-differential",
+                        ])
                     if needs_mount:
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])

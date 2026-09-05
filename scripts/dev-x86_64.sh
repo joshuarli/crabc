@@ -7617,9 +7617,16 @@ case "$command" in
         run_in_container bash /workspace/compat/x86_64/run_owned_pthread_lifecycle.sh
         ;;
     qualification-manifest)
-        [ "$#" -eq 0 ] || fail "qualification-manifest takes no arguments"
+        if [ "$#" -ne 0 ]; then
+            [ "$#" -eq 2 ] && [ "$1" = --through ] ||
+                fail "qualification-manifest accepts only --through GATE"
+            case "$2" in
+                compat.abi-differential|compat.posix-process|compat.resolver-network|compat.loader-corpus|consumer.rust-std-lto|consumer.source-build|capability.accounting|performance.release) ;;
+                *) fail "qualification-manifest has an unknown prefix endpoint" ;;
+            esac
+        fi
         ensure_image
-        run_in_container python3 /workspace/compat/x86_64/run_qualification_manifest.py
+        run_in_container python3 /workspace/compat/x86_64/run_qualification_manifest.py "$@"
         ;;
     owned-static-sysroot)
         [ "$#" -eq 0 ] || fail "owned-static-sysroot takes no arguments"

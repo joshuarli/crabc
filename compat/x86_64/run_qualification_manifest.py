@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Execute only fully pinned x86 qualification evidence, in promotion order.
+"""Execute an explicitly selected, non-promoting ordered qualification prefix.
 
-The runner refuses a planned gate before invoking any child.  It cannot turn a
-private admission artifact, a mutable case manifest, or an unpinned receipt
-into promotion evidence.
+Ready declarations pin case manifests and runner bytes. A prefix always starts
+at the first gate and includes every predecessor; later planned gates do not
+block it. Case execution alone is not a source/tool/runtime/artifact-bound
+qualification receipt, so the default full-qualification entry stays closed.
 """
 
 from __future__ import annotations
@@ -34,9 +35,9 @@ def controlled_environment() -> dict[str, str]:
     """Return the one scrubbed environment allowed for qualification cases.
 
     A qualification case has to invoke the checked repository runner named in
-    its immutable manifest.  Inheriting ``PATH``, Python import settings, or
+    its pinned manifest.  Inheriting ``PATH``, Python import settings, or
     shell startup hooks would let a caller replace that interpreter boundary
-    after the case and receipt have been pinned.  Start from an allowlist
+    after the case has been pinned.  Start from an allowlist
     instead of attempting to blacklist every ambient build/runtime variable.
     """
     return {
@@ -59,7 +60,7 @@ def require_native_linux_x86_64() -> None:
 
 
 def require_pinned_native_execution() -> None:
-    """Refuse to execute receipts outside the pinned dispatcher environment."""
+    """Refuse to execute cases outside the pinned dispatcher environment."""
     require_native_linux_x86_64()
     expected_work = manifest.EXECUTION_CONTRACT["work_directory"]
     expected_temporary = manifest.EXECUTION_CONTRACT["temporary_directory"]
@@ -85,13 +86,7 @@ def load_case_manifest(gate: Mapping[str, object]) -> dict[str, Any]:
     case_path = ROOT / path
     expected_hash = gate.get("case_manifest_sha256")
     if not isinstance(expected_hash, str) or manifest.sha256_file(case_path) != expected_hash:
-        raise QualificationRunError(f"{gate['id']} case manifest changed after receipt validation")
-    receipt_path = gate.get("receipt")
-    receipt_hash = gate.get("receipt_sha256")
-    if not isinstance(receipt_path, str) or not isinstance(receipt_hash, str):
-        raise QualificationRunError(f"{gate['id']} has no pinned receipt")
-    if manifest.sha256_file(ROOT / receipt_path) != receipt_hash:
-        raise QualificationRunError(f"{gate['id']} receipt changed after receipt validation")
+        raise QualificationRunError(f"{gate['id']} case manifest changed after declaration validation")
     return manifest.load_json(case_path, f"{gate['id']} case manifest")
 
 
@@ -156,33 +151,61 @@ def run_case(gate: Mapping[str, object], case: Mapping[str, Any]) -> None:
         raise
 
 
+def select_promotion_prefix(report: Mapping[str, object], through: str) -> list[Mapping[str, object]]:
+    """Select exactly the first N gates, with no skipped or imported dependency.
+
+    All predecessors execute again in this invocation. A ready gate after a
+    planned predecessor cannot be selected independently or inherit a private
+    admission result as its missing dependency.
+    """
+    if through not in manifest.CHAIN:
+        raise QualificationRunError(f"unknown qualification prefix endpoint: {through}")
+    gates = report.get("promotion_chain")
+    if not isinstance(gates, list) or tuple(gate.get("id") for gate in gates) != manifest.CHAIN:
+        raise QualificationRunError("qualification prefix gate roster or order drifted")
+    selected = gates[:manifest.CHAIN.index(through) + 1]
+    blocked = [str(gate["id"]) for gate in selected if gate.get("state") != "ready"]
+    if blocked:
+        raise QualificationRunError("qualification prefix has planned dependencies: " + ", ".join(blocked))
+    return selected
+
+
 def incomplete_payload(report: Mapping[str, object]) -> str:
-    return json.dumps({"target": manifest.TARGET["triple"], "promotion_ready": False, "incomplete_gates": report["incomplete_gates"], "private_admission": [row["id"] for row in report["private_admission"]], "reason": "private admission is non-promoting and every promotion gate requires pinned immutable case-manifest and receipt hashes"}, indent=2, sort_keys=True)
+    return json.dumps({"target": manifest.TARGET["triple"], "promotion_ready": False, "incomplete_gates": report["incomplete_gates"], "private_admission": [row["id"] for row in report["private_admission"]], "runnable_prefix": report["runnable_prefix"], "reason": "private admission and ready declarations are not completion; source/tool/runtime/artifact-bound execution receipts remain required"}, indent=2, sort_keys=True)
 
 
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-contract", action="store_true", help="validate planning and pins without native execution")
+    parser.add_argument("--through", choices=manifest.CHAIN, help="execute the ready prefix through this gate without a qualification claim")
     parsed = parser.parse_args(arguments)
+    if parsed.check_contract and parsed.through:
+        parser.error("--check-contract and --through are separate operations")
     report = manifest.load_contract()
     # The checked-in generated projection is a second immutable handoff point:
     # a caller cannot execute a source contract while ignoring stale generated
     # state consumed by a future campaign integration.
     manifest.write_or_check(manifest.GENERATED_PATH, report, check=True)
     if parsed.check_contract:
-        print(f"x86 qualification manifest contract: PASS ({len(report['promotion_chain'])} ordered gates; {len(report['incomplete_gates'])} planned; non-promoting private admission)")
+        print(f"x86 qualification manifest contract: PASS ({len(report['promotion_chain'])} ordered gates; {report['ready_gate_count']} ready; no execution-completion claim)")
         return 0
-    if report["incomplete_gates"]:
+    if parsed.through is None:
         print(incomplete_payload(report), file=sys.stderr)
         return 1
+    selected = select_promotion_prefix(report, parsed.through)
+    # Validate every selected case manifest and runner before any case starts.
+    # Immediate pre-Popen checks remain in run_case as well.
+    cases = [(gate, load_case_manifest(gate)) for gate in selected]
+    for gate, case_manifest in cases:
+        for case in case_manifest["cases"]:
+            verify_case_runner(gate, case)
     require_pinned_native_execution()
-    for gate in report["promotion_chain"]:
-        case_manifest = load_case_manifest(gate)
+    for gate, case_manifest in cases:
         for case in case_manifest["cases"]:
             assert isinstance(case, Mapping)
             run_case(gate, case)
-        print(f"x86 qualification: {gate['id']}: PASS")
-    print("x86 qualification: PASS (all immutable promotion receipts and native cases)")
+        print(f"x86 qualification prefix execution: {gate['id']}: PASS (non-promoting)")
+    print(f"x86 qualification prefix execution: PASS (through {parsed.through}; execution receipts and final chain qualification remain required)")
     return 0
 
 

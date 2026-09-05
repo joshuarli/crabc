@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Validate and materialize the closed, non-promoting x86 qualification plan.
+"""Validate executable x86 qualification declarations without claiming results.
 
-This contract has two deliberately separate surfaces.  ``private_admission``
-contains useful private artifacts and is never promotion evidence.  The eight
-entries in ``promotion_chain`` are the only promotable qualification gates.
-They remain planned until a gate pins both an immutable case manifest and an
-immutable receipt produced for that exact case-manifest hash.
+``private_admission`` remains non-promoting. The eight ordered qualification
+entries are planned or ready to execute; readiness pins cases and runners,
+not a pre-existing success receipt. Actual qualification requires subsequent
+source/tool/runtime/artifact-bound execution receipts outside tracked source.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "qualification_manifest.json"
 GENERATED_PATH = ROOT / "compat" / "x86_64" / "generated" / "qualification_manifest.json"
-SCHEMA = "crabc.x86_64-qualification-manifest/v1"
+SCHEMA = "crabc.x86_64-qualification-manifest/v2"
 CASE_SCHEMA = "crabc.x86_64-qualification-case-manifest/v1"
 RECEIPT_SCHEMA = "crabc.x86_64-qualification-receipt/v1"
 TARGET = {
@@ -124,7 +123,7 @@ REQUIRED_GATE_FIELDS = {
     "isolation",
     "timeout_seconds",
 }
-COMPLETED_GATE_FIELDS = REQUIRED_GATE_FIELDS | {"case_manifest", "receipt"}
+READY_GATE_FIELDS = REQUIRED_GATE_FIELDS | {"case_manifest"}
 
 
 class QualificationManifestError(ValueError):
@@ -214,19 +213,13 @@ def validate_private_admission(value: object) -> list[dict[str, object]]:
     return result
 
 
-def validate_completed_evidence(gate: Mapping[str, object], location: str) -> dict[str, object]:
+def validate_ready_cases(gate: Mapping[str, object], location: str) -> dict[str, object]:
     case_reference = gate["case_manifest"]
-    receipt_reference = gate["receipt"]
     require(isinstance(case_reference, Mapping), f"{location}.case_manifest must be an object")
-    require(isinstance(receipt_reference, Mapping), f"{location}.receipt must be an object")
     exact_keys(case_reference, {"path", "sha256"}, f"{location}.case_manifest")
-    exact_keys(receipt_reference, {"path", "sha256"}, f"{location}.receipt")
     case_path, case_file = repository_file(case_reference.get("path"), f"{location}.case_manifest.path")
-    receipt_path, receipt_file = repository_file(receipt_reference.get("path"), f"{location}.receipt.path")
     case_hash = nonempty_string(case_reference.get("sha256"), f"{location}.case_manifest.sha256")
-    receipt_hash = nonempty_string(receipt_reference.get("sha256"), f"{location}.receipt.sha256")
     require(sha256_file(case_file) == case_hash, f"{location} case manifest hash does not match immutable bytes")
-    require(sha256_file(receipt_file) == receipt_hash, f"{location} receipt hash does not match immutable bytes")
     case = load_json(case_file, f"{location} case manifest")
     exact_keys(case, {"schema", "gate", "target", "oracle", "provenance", "purity", "isolation", "cases"}, f"{location} case manifest")
     require(case.get("schema") == CASE_SCHEMA, f"{location} case manifest schema drifted")
@@ -263,17 +256,7 @@ def validate_completed_evidence(gate: Mapping[str, object], location: str) -> di
         nonempty_string(item.get("expected_stdout_line"), f"{location} case manifest cases[{case_index}].expected_stdout_line")
         timeout = positive_timeout(item.get("timeout_seconds"), f"{location} case manifest cases[{case_index}].timeout_seconds")
         require(timeout <= gate["timeout_seconds"], f"{location} case manifest case timeout exceeds its gate timeout")
-    receipt = load_json(receipt_file, f"{location} receipt")
-    exact_keys(receipt, {"schema", "gate", "target", "case_manifest_sha256", "case_count", "outcome", "oracle", "provenance", "purity", "isolation"}, f"{location} receipt")
-    require(receipt.get("schema") == RECEIPT_SCHEMA, f"{location} receipt schema drifted")
-    require(receipt.get("gate") == gate["id"], f"{location} receipt names the wrong gate")
-    require(receipt.get("target") == TARGET, f"{location} receipt target is not native x86_64 musl")
-    require(receipt.get("case_manifest_sha256") == case_hash, f"{location} receipt was not produced for the pinned case manifest")
-    require(receipt.get("case_count") == len(cases), f"{location} receipt case count drifted")
-    require(receipt.get("outcome") == "passed", f"{location} receipt does not record a passing outcome")
-    for field in ("oracle", "provenance", "purity", "isolation"):
-        require(receipt.get(field) == gate[field], f"{location} receipt {field} drifted")
-    return {"case_manifest": case_path, "case_manifest_sha256": case_hash, "receipt": receipt_path, "receipt_sha256": receipt_hash, "case_count": len(cases)}
+    return {"case_manifest": case_path, "case_manifest_sha256": case_hash, "case_count": len(cases)}
 
 
 def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
@@ -294,7 +277,9 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
     require(isinstance(gates, list) and len(gates) == len(CHAIN), "qualification promotion chain roster drifted")
     normalized: list[dict[str, object]] = []
     incomplete: list[str] = []
-    completed = 0
+    ready_count = 0
+    runnable_prefix: list[str] = []
+    prefix_open = True
     for index, gate in enumerate(gates):
         location = f"promotion_chain[{index}]"
         require(isinstance(gate, Mapping), f"{location} must be an object")
@@ -302,8 +287,8 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
         expected_oracle, expected_provenance, expected_purity, expected_isolation, expected_timeout = GATE_CONTRACTS[index]
         state = gate.get("state")
         require(gate.get("id") == identifier, "qualification promotion chain order drifted")
-        require(state in {"planned", "complete"}, f"{location}.state is invalid")
-        exact_keys(gate, REQUIRED_GATE_FIELDS if state == "planned" else COMPLETED_GATE_FIELDS, location)
+        require(state in {"planned", "ready"}, f"{location}.state must be planned or ready; declarations cannot claim completion")
+        exact_keys(gate, REQUIRED_GATE_FIELDS if state == "planned" else READY_GATE_FIELDS, location)
         fields = {field: nonempty_string(gate.get(field), f"{location}.{field}") for field in ("oracle", "provenance", "purity", "isolation")}
         timeout = positive_timeout(gate.get("timeout_seconds"), f"{location}.timeout_seconds")
         require(
@@ -312,14 +297,18 @@ def validate_contract(document: Mapping[str, object]) -> dict[str, object]:
             f"{location} oracle, provenance, purity, isolation, or timeout contract drifted",
         )
         row: dict[str, object] = {"id": identifier, "state": state, **fields, "timeout_seconds": timeout}
+        row["depends_on"] = list(CHAIN[:index])
+        incomplete.append(identifier)
         if state == "planned":
-            incomplete.append(identifier)
+            prefix_open = False
         else:
-            row.update(validate_completed_evidence(gate, location))
-            completed += 1
+            row.update(validate_ready_cases(gate, location))
+            ready_count += 1
+            if prefix_open:
+                runnable_prefix.append(identifier)
         normalized.append(row)
     require(not set(item["id"] for item in admission) & set(CHAIN), "private admission cannot be a promotion gate")
-    return {"schema": SCHEMA, "contract_sha256": sha256_file(CONTRACT_PATH), "target": TARGET, "policy": dict(policy), "execution": dict(EXECUTION_CONTRACT), "private_admission": admission, "promotion_chain": normalized, "completed_gate_count": completed, "incomplete_gates": incomplete, "promotion_ready": not incomplete}
+    return {"schema": SCHEMA, "contract_sha256": sha256_file(CONTRACT_PATH), "target": TARGET, "policy": dict(policy), "execution": dict(EXECUTION_CONTRACT), "private_admission": admission, "promotion_chain": normalized, "completed_gate_count": 0, "ready_gate_count": ready_count, "runnable_prefix": runnable_prefix, "incomplete_gates": incomplete, "promotion_ready": False}
 
 
 def load_contract(path: Path = CONTRACT_PATH) -> dict[str, object]:
