@@ -78,6 +78,41 @@ Traversal, absolute names, duplicate entries, unexpected links and replacement
 of an existing output are rejected. Package extraction never follows archive
 links. All build, extraction and private-chroot state stays under `.work`.
 
+### Source-local application inputs
+
+The installed `bin/crabc-cc-dynamic` has three deliberately narrow source-build
+inputs in addition to its ordinary C11/debug/optimization flags.
+
+`--application-quote-include-dir DIR` may occur more than once. Each directory
+must be a physical caller-owned directory outside the installed product, with
+no symlink in its path. The driver passes it only as GCC `-iquote`, so it can
+resolve an upstream source's `#include "local.h"`. It does not alter the fixed
+installed `-isystem usr/include` authority for `#include <...>` headers, and
+ordinary `-I`, `-isystem`, `-include`, and related target-header injection
+remain rejected.
+
+`-frounding-math` is the one admitted positive floating-point translation
+flag. It may occur once and is passed unchanged to the installed helper's
+selected compiler for every source in that invocation. This supports source
+oracles whose runtime-rounding checks require GCC to preserve dynamic rounding;
+it does not authorize arbitrary `-f` controls.
+
+`-rdynamic` may occur once on an executable dynamic link only. The driver
+turns it into the fixed LLD `--export-dynamic` option, which permits a
+`dlopen(0)` consumer to resolve executable definitions. Shared-object and
+compile-only invocations reject it. The ordinary POSIX link validator retains
+its exact conventional command contract; a workload using this additional
+export contract must validate its own bounded receipt rather than loosening
+that general validator.
+
+`run_owned_dynamic_driver_source_inputs.sh [DYNAMIC_SYSROOT]` is the focused
+native boundary proof. It uses a counterfeit local `stdio.h` beside a quoted
+application header, confirms that the installed angle-header tree still wins,
+runs the resulting dynamic-rounding object against pinned musl, and executes
+an exported-main `dlopen(0)` consumer through a copied owned product. With no
+argument it materializes a private development product; the libc-test leaf
+itself always requires a supplied product.
+
 ## Evidence and limits
 
 The native gate checks the installed and extracted real PIE plus GD-TLS DSO:
