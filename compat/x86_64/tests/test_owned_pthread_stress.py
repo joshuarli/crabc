@@ -1,6 +1,8 @@
 """Owned stress evidence rejects incomplete, normalized, or mutated results."""
 import json
 import os
+import signal
+import time
 from pathlib import Path
 import subprocess
 import sys
@@ -92,6 +94,54 @@ class OwnedPthreadStressTests(unittest.TestCase):
             self.assertEqual(status.read_text().rsplit(")", 1)[1].split()[0], "Z")
         self.assertEqual((self.work / "timeout.stdout").read_bytes(), observation.stdout)
 
+    def test_interrupted_supervisor_reaps_group_and_retains_actual_status(self):
+        for ignore_term in (False, True):
+            with self.subTest(ignore_term=ignore_term):
+                prefix = self.work / ("interrupted-kill" if ignore_term else "interrupted-term")
+                ready = Path(str(prefix) + ".ready")
+                term_setup = "signal.signal(signal.SIGTERM, signal.SIG_IGN);" if ignore_term else ""
+                grandchild_code = "import signal,time;" + term_setup + "time.sleep(30)"
+                child_code = ("import os,signal,subprocess,sys,time; from pathlib import Path;" + term_setup
+                    + "child=subprocess.Popen([sys.executable,'-c'," + repr(grandchild_code) + "]);"
+                    + "os.write(1,b'partial\\x00\\xff');os.write(2,b'error\\x00');"
+                    + "Path(" + repr(str(ready)) + ").write_text(str(os.getpid())+' '+str(child.pid));time.sleep(30)")
+                supervisor_code = ("import sys;from pathlib import Path;sys.path.insert(0,"
+                    + repr(str(ROOT / "compat/x86_64")) + ");import owned_pthread_stress as stress;"
+                    + "stress.observe([sys.executable,'-c'," + repr(child_code) + "],Path("
+                    + repr(str(self.work)) + "),Path(" + repr(str(prefix)) + "),20)")
+                supervisor = subprocess.Popen([sys.executable, "-B", "-c", supervisor_code],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                pids = []
+                try:
+                    deadline = time.monotonic() + 5
+                    while not ready.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(ready.exists(), "child did not announce its process group")
+                    pids = list(map(int, ready.read_text().split()))
+                    # Both children inherit the ignored disposition from their parent.
+                    supervisor.send_signal(signal.SIGINT)
+                    _, error = supervisor.communicate(timeout=6)
+                    self.assertIn(b"KeyboardInterrupt", error)
+                    record = json.loads(Path(str(prefix) + ".status.json").read_text())
+                    self.assertEqual(record["status"], -signal.SIGKILL if ignore_term else -signal.SIGTERM)
+                    self.assertEqual(record["returncode"], record["status"])
+                    self.assertEqual(Path(str(prefix) + ".stdout").read_bytes(), b"partial\x00\xff")
+                    self.assertEqual(Path(str(prefix) + ".stderr").read_bytes(), b"error\x00")
+                    for pid in pids:
+                        stat = Path(f"/proc/{pid}/stat")
+                        if stat.exists():
+                            self.assertEqual(stat.read_text().rsplit(")", 1)[1].split()[0], "Z")
+                    self.assertFalse(Path(f"/proc/{pids[0]}").exists(), "direct child was not reaped")
+                finally:
+                    if pids:
+                        try:
+                            os.killpg(pids[0], signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    if supervisor.poll() is None:
+                        supervisor.kill()
+                    supervisor.communicate()
+
     def test_matrix_requires_every_iteration_and_every_selected_cell(self):
         good = stress.Observation(0, b"pthread stress ok\n", b"")
         cells = stress.cells(include_static=True)
@@ -118,6 +168,28 @@ class OwnedPthreadStressTests(unittest.TestCase):
         source.write_bytes(b"changed source binary")
         with self.assertRaisesRegex(stress.EvidenceError, "identity changed"):
             stress.audit_identities(records)
+
+    def test_header_audit_records_exact_environment_and_compiler_identity(self):
+        product = self.work / "product"
+        include = product / "usr/include"
+        include.mkdir(parents=True)
+        headers = [include / name for name in ("pthread.h", "stdio.h", "signal.h", "unistd.h")]
+        for path in headers:
+            path.write_text("/* installed */")
+        compiler = self.work / "compiler"
+        compiler.write_bytes(b"pinned compiler bytes")
+        source = self.work / "source.c"
+        source.write_bytes(b"int main(void) { return 0; }")
+        dependencies = ("source.o: " + " ".join(map(str, [source, *headers])) + "\n").encode()
+        environment = stress.compiler_contract.clean_environment()
+        with patch.object(stress, "SOURCE", source), patch.object(stress.compiler_contract, "compiler", return_value=str(compiler)), \
+             patch.object(stress.subprocess, "check_output", side_effect=[dependencies, b"preprocessed bytes"]) as execution:
+            record, _ = stress.header_audit(product, self.work)
+        self.assertEqual(record["environment"], environment)
+        self.assertEqual(record["compiler"], {"path": str(compiler), **stress.identities([compiler])[str(compiler)]})
+        for invocation in execution.call_args_list:
+            self.assertEqual(invocation.kwargs["env"], environment)
+            self.assertEqual(invocation.args[0][0], str(compiler))
 
     def test_final_raw_audit_rejects_changed_stream_or_status(self):
         prefix = self.work / "raw"

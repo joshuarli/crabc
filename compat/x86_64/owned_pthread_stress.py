@@ -132,20 +132,45 @@ def summarize(records, iterations, include_static):
             "observation_count": iterations * len(expected), "cell_roster": list(expected), "iterations": result}
 
 
+def signal_group(child, signum):
+    try:
+        os.killpg(child.pid, signum)
+    except ProcessLookupError:
+        pass
+
+
 def observe(argv, cwd, prefix, timeout):
+    """Retain actual child termination before propagating a supervisor interruption."""
     command = list(map(str, argv))
     child = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    stdout, stderr, status = b"", b"", None
     try:
-        stdout, stderr = child.communicate(timeout=timeout)
+        try:
+            stdout, stderr = child.communicate(timeout=timeout)
+            status = child.returncode
+        except subprocess.TimeoutExpired:
+            signal_group(child, signal.SIGKILL)
+            stdout, stderr = child.communicate()
+            status = "TIMEOUT"
+    except BaseException:
+        # Keep the original interruption, but first retire the private group and
+        # reap the direct child. communicate retains bytes read before SIGINT.
+        signal_group(child, signal.SIGTERM)
+        try:
+            stdout, stderr = child.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            signal_group(child, signal.SIGKILL)
+            stdout, stderr = child.communicate()
+        else:
+            # A descendant may have closed the streams but stayed in the group.
+            signal_group(child, signal.SIGKILL)
         status = child.returncode
-    except subprocess.TimeoutExpired:
-        os.killpg(child.pid, signal.SIGKILL)
-        stdout, stderr = child.communicate()
-        status = "TIMEOUT"
-    Path(str(prefix) + ".stdout").write_bytes(stdout)
-    Path(str(prefix) + ".stderr").write_bytes(stderr)
-    write_json(str(prefix) + ".status.json", {"command": command, "cwd": str(cwd), "timeout_seconds": timeout,
-               "pid": child.pid, "process_group": child.pid, "status": status})
+        raise
+    finally:
+        Path(str(prefix) + ".stdout").write_bytes(stdout)
+        Path(str(prefix) + ".stderr").write_bytes(stderr)
+        write_json(str(prefix) + ".status.json", {"command": command, "cwd": str(cwd), "timeout_seconds": timeout,
+                   "pid": child.pid, "process_group": child.pid, "status": status, "returncode": child.returncode})
     return Observation(status, stdout, stderr)
 
 
@@ -163,7 +188,8 @@ def header_audit(product, work):
     base = [compiler, "-nostdinc", "-isystem", str(product / "usr/include"), "-ffreestanding",
             "-fno-builtin", "-fstack-protector-strong", *FLAGS, "-fPIE"]
     commands = {"dependencies": [*base, "-M", str(SOURCE)], "preprocessor": [*base, "-E", str(SOURCE)]}
-    outputs = {name: subprocess.check_output(argv, cwd=ROOT, env=compiler_contract.clean_environment()) for name, argv in commands.items()}
+    environment = compiler_contract.clean_environment()
+    outputs = {name: subprocess.check_output(argv, cwd=ROOT, env=environment) for name, argv in commands.items()}
     headers = {}
     for name in outputs["dependencies"].decode().replace("\\\n", " ").split(":", 1)[1].split():
         path = Path(name).resolve(strict=True)
@@ -175,7 +201,8 @@ def header_audit(product, work):
     for name in ("pthread.h", "stdio.h", "signal.h", "unistd.h"):
         if "usr/include/" + name not in headers:
             raise EvidenceError(f"missing installed header: {name}")
-    return {"commands": commands, "headers": headers,
+    return {"commands": commands, "environment": environment,
+            "compiler": {"path": compiler, **identities([Path(compiler)])[compiler]}, "headers": headers,
             "outputs": {name: hashlib.sha256(value).hexdigest() for name, value in outputs.items()}}, outputs
 
 
@@ -199,7 +226,8 @@ def run(arguments):
     print(f"pthread-stress evidence: {work}", flush=True)
     workload = work / "workload.o"
     compile_argv = [product / "bin/crabc-cc-dynamic", "--dynamic-pie", *FLAGS, "-c", SOURCE, "-o", workload]
-    provenance = [SOURCE, Path(__file__), HERE / "run_owned_pthread_stress.sh", ROOT / "compat/pthread-stress/run.py",
+    provenance = [SOURCE, Path(__file__), HERE / "run_owned_pthread_stress.sh",
+                  Path(product_evidence.__file__), Path(compiler_contract.__file__), ROOT / "compat/pthread-stress/run.py",
                   ROOT / "compat/pthread-stress/README.md", product / "bin/crabc-cc-dynamic",
                   product / "share/crabc/crabc_cc_static.py", product / "share/crabc/manifest.json",
                   Path(compiler_contract.compiler()), ORACLE, Path("/opt/musl-1.2.6/lib/libc.a"),
@@ -212,6 +240,7 @@ def run(arguments):
     for name, data in header_outputs.items():
         (work / (name + (".d" if name == "dependencies" else ".i"))).write_bytes(data)
     write_json(work / "compile.json", {"command": list(map(str, compile_argv)), "inputs": inputs,
+               "compiler_environment": header_record["environment"], "compiler": header_record["compiler"],
                "header_audit": header_record, "object_sha256": digest(workload)})
     oracle_argv = [ORACLE, "-static", "-fno-pie", "-no-pie", "-pthread", workload, "-o", work / "oracle"]
     command(oracle_argv, work / "oracle-link")

@@ -34,12 +34,18 @@ static-PIE, dynamic PIE kernel/direct, and dynamic non-PIE kernel/direct.
 
 `owned_pthread_stress.py` preserves each process's raw status, stdout, and stderr,
 starts a fresh process group for every cell, and kills the group on timeout.
+An interrupted supervisor sends SIGTERM, waits at most three seconds, then
+forces SIGKILL if needed and reaps its child. It retains partial raw streams and
+the actual child return code before propagating the interruption; a timeout
+retains both the `TIMEOUT` classification and the actual return code.
 No stream normalization or source-failure exception is applied. Passing requires
 every cell to exit zero, print exactly `pthread stress ok\n`, and leave stderr
 empty. Equal failed observations are failures.
 
 The evidence directory retains `compile.json` with the actual installed-driver
-command, source/tool/oracle identities, installed-header dependency roster,
+command, the exact clean compiler environment and compiler identity,
+source/tool/oracle identities (including the local product validator and compiler
+contract helpers), installed-header dependency roster,
 preprocessor hashes, and object hash. The shared `owned_posix_product_evidence`
 validator checks each owned link before execution and again afterward. The
 `consumed.json` identities bind source binaries, executed copies, the copied
