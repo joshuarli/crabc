@@ -150,6 +150,25 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(process_streams <= providers["x86-owned-static-runtime"])
         self.assertFalse(process_streams & deferred)
 
+    def test_error_reporting_names_are_planned_owned_static_not_deferred(self) -> None:
+        """Keep perror and the err(3) family beneath the selected aggregate."""
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        providers = {
+            row["id"]: set(row["members"])
+            for row in report["primary_disposition"]["declared_unverified_feature_archives"]
+        }
+        deferred = {
+            member
+            for row in report["primary_disposition"]["deferred_owner_groups"]
+            for member in row["members"]
+        }
+        error_reporting = {
+            "err", "errx", "perror", "verr", "verrx", "vwarn", "vwarnx", "warn", "warnx",
+        }
+
+        self.assertTrue(error_reporting <= providers["x86-owned-static-runtime"])
+        self.assertFalse(error_reporting & deferred)
+
     def test_owned_wide_and_stdio_extension_names_are_planned_owned_static_not_deferred(self) -> None:
         """Route the composed wide/FILE source surface without claiming the family closed."""
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

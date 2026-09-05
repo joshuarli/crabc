@@ -554,6 +554,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-syslog  qualify owned C syslog delivery and state against musl
   owned-process-trio   qualify installed clone/vfork/daemon semantics against musl
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
+  owned-error-reporting  qualify owned perror and err(3) reporting against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-scheduling test installed pthread scheduling/default attributes
   owned-fcntl  test installed descriptor-control commands and variadic ABI
@@ -5623,6 +5624,7 @@ case "$command" in
     owned-assert|owned-linux-control|owned-filesystem-mechanisms) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
+    owned-error-reporting) ;;
     owned-io-cancellation) ;;
     owned-resolver-network) ;;
     owned-dynamic-io-cancellation) ;;
@@ -7684,6 +7686,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-filesystem-mechanisms takes no arguments"
         ensure_image
         run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_filesystem_mechanisms.sh
+        ;;
+    owned-error-reporting)
+        [ "$#" -eq 0 ] || fail "owned-error-reporting takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_error_reporting.sh
         ;;
     owned-io-cancellation)
         ensure_image

@@ -58,6 +58,7 @@ CASES = {
     "pthread-spin": ("run_owned_pthread_spin.sh", None),
     "process-trio": ("run_owned_process_trio.sh", None),
     "filesystem-mechanisms": ("run_owned_filesystem_mechanisms.sh", None),
+    "error-reporting": ("run_owned_error_reporting.sh", None),
 }
 MATERIALIZATION_PROFILE = "retained dlclose mappings; default NOW with declared lazy imports; runtime GD growth; new runtime IE rejected"
 MATERIALIZATION_QUALIFICATION = "separate live three-product receipt and review required"

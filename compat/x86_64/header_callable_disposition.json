@@ -1,9 +1,9 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "9f2c3dab60f9ce84f89400f00e9868ccd0475ea8b9c56455b1ea96c88c40321f",
+    "callable_inventory_sha256": "d266c6467edc4172bd4fc845dc55c978f8b36647afb69773f86c3e9164c0581f",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "33f05bf822937f518b35ee644aa724366a63cd44ae9496d890b0d251f8751f92",
+    "parity_ledger_sha256": "2f6dfc6466743918494f6da006a7be35077ecf83e1e6792948c1d45d7a9ca2e9",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "missing_reference_declaration_groups": [],
@@ -39,6 +39,8 @@
           "ctime",
           "ctime_r",
           "dprintf",
+          "err",
+          "errx",
           "fallocate",
           "fchmodat",
           "fchown",
@@ -101,6 +103,7 @@
           "open_memstream",
           "open_wmemstream",
           "pclose",
+          "perror",
           "popen",
           "posix_spawn",
           "posix_spawnp",
@@ -137,12 +140,18 @@
           "ungetwc",
           "vasprintf",
           "vdprintf",
+          "verr",
+          "verrx",
           "vfwprintf",
           "vfwscanf",
           "vswprintf",
           "vswscanf",
+          "vwarn",
+          "vwarnx",
           "vwprintf",
           "vwscanf",
+          "warn",
+          "warnx",
           "wprintf",
           "wscanf"
         ]
@@ -1457,8 +1466,6 @@
           "endusershell",
           "endutent",
           "endutxent",
-          "err",
-          "errx",
           "fgetgrent",
           "fgetpwent",
           "fgetspent",
@@ -1488,7 +1495,6 @@
           "herror",
           "initgroups",
           "lckpwdf",
-          "perror",
           "putgrent",
           "putpwent",
           "putspent",
@@ -1506,13 +1512,7 @@
           "updwtmp",
           "updwtmpx",
           "utmpname",
-          "utmpxname",
-          "verr",
-          "verrx",
-          "vwarn",
-          "vwarnx",
-          "warn",
-          "warnx"
+          "utmpxname"
         ],
         "provider_target": "future selected C ABI providers in libc.c-abi-compat",
         "resolution": "planned-provider",
@@ -1794,13 +1794,13 @@
   },
   "summary": {
     "candidate_external_callable_count": 1525,
-    "declared_unverified_feature_callable_count": 131,
+    "declared_unverified_feature_callable_count": 140,
     "default_static_callable_count": 1122,
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
       "oracle-declared-no-provider": 7,
-      "planned-provider": 185
+      "planned-provider": 176
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,
@@ -1811,7 +1811,7 @@
     "primary_disposition_exact_coverage": true,
     "undispositioned_candidate_callable_count": 0,
     "undispositioned_missing_reference_name_count": 0,
-    "unprovided_callable_count": 194,
+    "unprovided_callable_count": 185,
     "verified_feature_callable_count": 78
   },
   "target": "x86_64-unknown-linux-musl",

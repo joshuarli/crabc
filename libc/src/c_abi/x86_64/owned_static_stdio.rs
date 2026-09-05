@@ -53,6 +53,8 @@ mod owned_stdio_process;
 mod owned_signal_reporting;
 #[path = "owned_stdio_extensions.rs"]
 mod owned_stdio_extensions;
+#[path = "owned_error_reporting.rs"]
+mod owned_error_reporting;
 use owned_stdio_backends::Backend;
 
 const BUFSIZ: usize = 1024;
