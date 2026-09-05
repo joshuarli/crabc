@@ -1,5 +1,9 @@
+#define _GNU_SOURCE
+#include <dlfcn.h>
 #include <errno.h>
+#include <link.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +14,29 @@ extern int dynamic_dependency_worker(void);
 extern char **environ;
 static _Thread_local int local_value = 31;
 static int *main_errno;
+
+/* dladdr reports the first mapped page, including the kernel-owned executable.
+   Its mapping is not owned by the loader's rollback/unmap registry. */
+static int main_mapping_base(struct dl_phdr_info *object, size_t size, void *data)
+{
+    (void)size;
+    Dl_info *info = data;
+    uintptr_t address = (uintptr_t)main_mapping_base;
+    uintptr_t first = UINTPTR_MAX;
+    int contains_address = 0;
+    for (size_t index = 0; index < object->dlpi_phnum; ++index) {
+        const ElfW(Phdr) *header = &object->dlpi_phdr[index];
+        uintptr_t start = object->dlpi_addr + header->p_vaddr;
+        if (header->p_type != PT_LOAD) continue;
+        if (header->p_vaddr < first) first = header->p_vaddr;
+        if (address >= start && address - start < header->p_memsz)
+            contains_address = 1;
+    }
+    if (!contains_address) return 0;
+    uintptr_t page_size = (uintptr_t)sysconf(_SC_PAGESIZE);
+    return (uintptr_t)info->dli_fbase == object->dlpi_addr
+        + first - first % page_size ? 1 : 2;
+}
 
 static void *worker(void *argument)
 {
@@ -33,6 +60,9 @@ static void normal_exit(void)
 
 int main(void)
 {
+    Dl_info info = {0};
+    if (!dladdr((void *)main_mapping_base, &info)
+        || dl_iterate_phdr(main_mapping_base, &info) != 1) return 73;
     main_errno = __errno_location();
     /* Constructors have already run and may call errno-setting functions.
        Worker TLS below must still begin with its independent zero template. */

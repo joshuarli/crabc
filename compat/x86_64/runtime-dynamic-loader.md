@@ -146,6 +146,13 @@ physical enumeration still follows canonical discovery order, while symbol
 scope is breadth-first; broader initial-graph introspection/order parity needs
 its own differential before qualification.
 
+`dladdr` derives the first mapped page from the admitted PT_LOAD records,
+matching musl's `kernel_mapped_dso` and `dladdr`. This differs from the ELF
+load bias for non-PIE executables and from the loader's rollback span for the
+kernel-owned main image. The installed consumer checks main-image results
+against program-header geometry in PIE and non-PIE modes; neither path grants
+the loader an unmap right over the executable.
+
 ## Deferred GOT/PLT admission and RELRO safety correction
 
 `x86_64_deferred_relocations.rs` implements pinned musl's

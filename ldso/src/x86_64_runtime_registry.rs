@@ -798,6 +798,17 @@ unsafe extern "C" fn runtime_address_info(address: usize, output: *mut AddressIn
     let registry = unsafe { &*REGISTRY.0.get() };
     let Some(node) = (unsafe { address_owner(registry, address) }) else { return 0; };
     let Some(object) = (unsafe { (*node).object() }) else { return 0; };
+    // Musl's kernel_mapped_dso/dladdr reports the first mapped page, not
+    // the load bias (which is zero for ET_EXEC). Derive it from admitted
+    // PT_LOAD records: the rollback span is empty for the kernel-owned main.
+    let mut first_load = u64::MAX;
+    for index in 0..object.phnum {
+        let header = unsafe { object.phdr.add(index * 56) };
+        if unsafe { read_u32(header) } == PT_LOAD {
+            first_load = first_load.min(unsafe { read_u64(header.add(16)) });
+        }
+    }
+    let Some(mapping_base) = object.base.checked_add(align_down(first_load)) else { return 0; };
     let mut best = 0usize;
     let mut best_symbol = core::ptr::null();
     for index in 0..object.symcount {
@@ -824,7 +835,7 @@ unsafe extern "C" fn runtime_address_info(address: usize, output: *mut AddressIn
         else { best = 0; }
     }
     unsafe { core::ptr::write(output, AddressInfo { name: (*node).name.as_ptr(),
-        base: object.map_span_start as *mut c_void, symbol_name: name, symbol_address: best as *mut c_void }); }
+        base: mapping_base as *mut c_void, symbol_name: name, symbol_address: best as *mut c_void }); }
     1
 }
 
