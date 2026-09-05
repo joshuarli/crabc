@@ -78,9 +78,21 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                          "crabc-dynamic-attach.o", "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o")),
                 })
             for case, (script, mode) in qualification.CASES.items():
-                artifact = self.put(f"leaf-artifacts/{product}-{case}/consumer", b"actual leaf artifact")
+                leaf = (f"qualification-scratch/{product}/classic-netdb/owned-classic-netdb.fixture"
+                        if case == "classic-netdb" else f"leaf-artifacts/{product}-{case}")
+                artifact = self.put(f"{leaf}/consumer", b"actual leaf artifact")
                 log = self.put(f"qualification-cases/{product}/{case}.log", f"ordinary differential passed; evidence: {artifact.parent}\n".encode())
+                isolation = {}
+                if case == "classic-netdb":
+                    self.put(f"{leaf}/network-isolation.json", {
+                        "interfaces": ["lo"], "loopback_up": True,
+                        "isolation": "user-net-namespace", "network_namespace": "net:[2]",
+                        "parent_network_namespace": "net:[1]", "user_namespace": "user:[3]",
+                    })
+                    isolation["isolation_command"] = qualification.case_command(self.work, product, case)
+                    isolation["isolation_temporary"] = str(artifact.parent.parent)
                 self.put(f"qualification-cases/{product}/{case}.json", {
+                    **isolation,
                     "schema": qualification.SCHEMA, "product": product, "case": case, "script": script,
                     "entry_mode": mode, "source_sha256": self.source, "manifest_sha256": self.manifest,
                     "log": qualification.relative(log), "log_sha256": qualification.digest(log), "exit_status": 0,
@@ -121,6 +133,56 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(json.dumps(value, sort_keys=True).encode() if isinstance(value, dict) else value)
         return path
+
+    def test_classic_netdb_case_alone_has_explicit_user_and_network_namespace(self):
+        command = qualification.case_command(self.work, "installed", "classic-netdb")
+        self.assertEqual(command, ["unshare", "--user", "--map-root-user", "--net", "python3", "-B",
+            str(self.root / "compat/x86_64/classic_netdb_namespace.py"),
+            str(self.root / "compat/x86_64/run_owned_classic_netdb.sh"), str(self.work / "installed")])
+        self.assertEqual(qualification.case_command(self.work, "installed", "cycle"),
+            ["bash", str(self.root / "compat/x86_64/run_general_dynamic_cycle.sh"), str(self.work / "installed")])
+
+    def test_classic_netdb_scratch_is_fresh_and_preserves_shared_tmpdir(self):
+        shared = self.work / "shared-temporary"
+        shared.mkdir(mode=0o750)
+        destination = self.work / "fresh-case"
+        destination.mkdir()
+        environment = {"TMPDIR": str(shared)}
+        original = shared.stat()
+        temporary = qualification.classic_namespace_environment(destination, "installed", environment)
+        self.assertEqual(temporary, destination / "qualification-scratch/installed/classic-netdb")
+        self.assertEqual(environment["TMPDIR"], str(temporary))
+        self.assertEqual(temporary.stat().st_uid, os.geteuid())
+        self.assertEqual(stat.S_IMODE(temporary.parent.stat().st_mode) & 0o777, 0o755)
+        self.assertEqual(stat.S_IMODE(temporary.stat().st_mode) & 0o777, 0o700)
+        self.assertEqual((shared.stat().st_uid, shared.stat().st_mode), (original.st_uid, original.st_mode))
+        with self.assertRaises(FileExistsError):
+            qualification.classic_namespace_environment(destination, "installed", environment)
+
+    def test_classic_netdb_receipt_rejects_a_different_temporary_directory(self):
+        record = qualification.read(self.work / "qualification-cases/installed/classic-netdb.json")
+        record["isolation_temporary"] = str(self.work / "ambient-temp")
+        with self.assertRaisesRegex(qualification.QualificationError, "stale or mismatched"):
+            qualification.validate_case(record, "installed", "classic-netdb", self.source, self.manifest)
+
+    def test_classic_netdb_receipt_rejects_missing_isolation_prefix(self):
+        record = qualification.read(self.work / "qualification-cases/installed/classic-netdb.json")
+        record["isolation_command"] = record["isolation_command"][4:]
+        with self.assertRaisesRegex(qualification.QualificationError, "stale or mismatched"):
+            qualification.validate_case(record, "installed", "classic-netdb", self.source, self.manifest)
+
+    def test_classic_netdb_resealed_receipt_rejects_ambient_network_or_down_loopback(self):
+        path = self.work / "qualification-scratch/installed/classic-netdb/owned-classic-netdb.fixture/network-isolation.json"
+        original = qualification.read(path)
+        record = qualification.read(self.work / "qualification-cases/installed/classic-netdb.json")
+        log = self.root / record["log"]
+        for field, value in (("interfaces", ["lo", "eth0"]), ("loopback_up", False),
+                             ("network_namespace", "net:[1]"), ("isolation", "docker-network-none")):
+            with self.subTest(field=field):
+                path.write_text(json.dumps({**original, field: value}))
+                record["artifacts"] = qualification.artifact_snapshot(log, str(self.root))
+                with self.assertRaisesRegex(qualification.QualificationError, "isolated live loopback"):
+                    qualification.validate_case(record, "installed", "classic-netdb", self.source, self.manifest)
 
     def test_materialization_binds_payload_source_and_contracts_without_publication(self):
         product = self.work / "installed"

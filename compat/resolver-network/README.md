@@ -74,6 +74,13 @@ Run the two phases through the pinned dispatcher:
 ./scripts/dev-x86_64.sh owned-resolver-network
 ```
 
+The separate [owned classic netdb slice](../x86_64/owned-classic-netdb.md)
+reuses this DNS fixture for installed host/service APIs and the owned modern
+lookup backends. Its additional named records cover PTR and mixed-family
+error precedence without changing this workload's existing records. DNS
+transport cancellation and cancellation-driven descriptor cleanup remain an
+explicit resolver-family closure obligation for both owned paths.
+
 ## Subcases
 
 The stdout contract is fixed and is listed in `run.py` as

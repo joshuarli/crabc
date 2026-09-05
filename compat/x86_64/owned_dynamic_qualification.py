@@ -69,6 +69,7 @@ CASES = {
     "pty": ("run_owned_pty.sh", None),
     "passwd": ("run_owned_passwd.sh", None),
     "pattern": ("run_owned_pattern.sh", None),
+    "classic-netdb": ("run_owned_classic_netdb.sh", None),
 }
 MATERIALIZATION_PROFILE = "retained dlclose mappings; default NOW with declared lazy imports; runtime GD growth; new runtime IE rejected"
 MATERIALIZATION_QUALIFICATION = "separate live three-product receipt and review required"
@@ -340,6 +341,44 @@ def artifact_snapshot(log: Path, source_mount: str) -> dict:
     return result
 
 
+def case_command(work: Path, product: str, case: str, source_mount: str | None = None) -> list[str]:
+    mount = Path(source_mount) if source_mount is not None else ROOT
+    script, _ = CASES[case]
+    leaf = ["bash", str(mount / "compat/x86_64" / script), str(mount / work.relative_to(ROOT) / product)]
+    if case != "classic-netdb":
+        return leaf
+    return ["unshare", "--user", "--map-root-user", "--net", "python3", "-B",
+            str(mount / "compat/x86_64/classic_netdb_namespace.py"), *leaf[1:]]
+
+
+def classic_namespace_environment(work: Path, product: str, environment: dict[str, str]) -> Path:
+    # Namespace root cannot override permissions on an outer-user-namespace
+    # host-owned TMPDIR. Create only this case's scratch before unshare, owned
+    # by the invoking container uid; preserve the shared directory and modes.
+    temporary = evidence_path(work / "qualification-scratch" / product / "classic-netdb")
+    temporary.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    temporary.mkdir(mode=0o700)
+    environment["TMPDIR"] = str(temporary)
+    environment["CRABC_CLASSIC_NETDB_PARENT_NETNS"] = os.readlink("/proc/self/ns/net")
+    return temporary
+
+
+def validate_classic_isolation(log: Path, source_mount: str, temporary: Path) -> None:
+    directories = leaf_evidence_directories(log, source_mount)
+    require(len(directories) == 1 and next(iter(directories)).parent == temporary,
+            "classic netdb evidence escaped its exact namespace temporary directory")
+    proofs = [read(directory / "network-isolation.json") for directory in directories
+              if (directory / "network-isolation.json").is_file()]
+    require(len(proofs) == 1, "classic netdb requires one retained namespace proof")
+    proof = proofs[0]
+    require(proof.get("interfaces") == ["lo"] and proof.get("loopback_up") is True
+            and proof.get("isolation") == "user-net-namespace"
+            and isinstance(proof.get("parent_network_namespace"), str)
+            and isinstance(proof.get("network_namespace"), str)
+            and proof["network_namespace"] != proof["parent_network_namespace"],
+            "classic netdb namespace proof does not establish isolated live loopback")
+
+
 def run_case(work: Path, product: str, case: str) -> None:
     require(product in PRODUCTS and case in CASES, "unknown product or coverage case")
     work = evidence_path(work)
@@ -355,17 +394,28 @@ def run_case(work: Path, product: str, case: str) -> None:
     destination = work / "qualification-cases" / product
     destination.mkdir(parents=True, exist_ok=True)
     log = destination / (case + ".log")
-    command = ["bash", str(ROOT / "compat/x86_64" / script), str(work / product)]
+    command = case_command(work, product, case)
+    if case == "classic-netdb":
+        temporary = classic_namespace_environment(work, product, environment)
     with log.open("xb") as output:
         completed = subprocess.run(command, cwd=ROOT, env=environment, stdout=output, stderr=subprocess.STDOUT)
     print(log.read_text(errors="replace"), end="", flush=True)
-    for directory in leaf_evidence_directories(log, str(ROOT)):
-        make_retained_evidence_readable(directory)
+    if case == "classic-netdb":
+        make_retained_evidence_readable(temporary)
+    else:
+        for directory in leaf_evidence_directories(log, str(ROOT)):
+            make_retained_evidence_readable(directory)
     require(completed.returncode == 0, f"coverage case failed: {product}/{case}; {log}")
     require_live_oracle(work, oracle)
     require(source_digest() == source and product_identity(work / product) == manifest,
             "source or installed product changed during coverage case")
+    isolation = {}
+    if case == "classic-netdb":
+        validate_classic_isolation(log, str(ROOT), temporary)
+        isolation["isolation_command"] = command
+        isolation["isolation_temporary"] = str(temporary)
     write_new(destination / (case + ".json"), {
+        **isolation,
         "schema": SCHEMA, "product": product, "case": case, "script": script,
         "entry_mode": mode, "source_sha256": source, "manifest_sha256": manifest,
         "log": relative(log), "log_sha256": digest(log), "exit_status": 0,
@@ -378,11 +428,18 @@ def validate_case(record: dict, product: str, case: str, source: str, manifest: 
     expected = {"schema": SCHEMA, "product": product, "case": case, "script": script,
                 "entry_mode": mode, "source_sha256": source, "manifest_sha256": manifest,
                 "exit_status": 0}
+    if case == "classic-netdb":
+        work = (ROOT / record.get("log", "")).parents[2]
+        expected["isolation_command"] = case_command(work, product, case, record.get("source_mount"))
+        temporary = work / "qualification-scratch" / product / "classic-netdb"
+        expected["isolation_temporary"] = str(Path(record["source_mount"]) / temporary.relative_to(ROOT))
     require(set(record) == set(expected) | {"log", "log_sha256", "source_mount", "artifacts"}, "coverage record fields drifted")
     require(all(record.get(key) == value for key, value in expected.items()), "stale or mismatched coverage record")
     log = evidence_path(ROOT / record["log"])
     require(digest(log) == record["log_sha256"], "coverage log hash mismatch")
     require(artifact_snapshot(log, record["source_mount"]) == record["artifacts"], "leaf artifact evidence changed")
+    if case == "classic-netdb":
+        validate_classic_isolation(log, record["source_mount"], temporary)
 
 
 def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:

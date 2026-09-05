@@ -889,6 +889,12 @@ mod h_errno;
 #[cfg(feature = "x86-resolver-runtime")]
 #[path = "resolver_runtime.rs"]
 mod resolver_runtime;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_netdb_lookup.rs"]
+mod owned_netdb_lookup;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_classic_netdb.rs"]
+mod owned_classic_netdb;
 #[cfg(not(feature = "x86-resolver-runtime"))]
 #[path = "res_init.rs"]
 mod res_init;

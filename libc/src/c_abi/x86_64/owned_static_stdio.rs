@@ -235,7 +235,11 @@ pub(crate) struct StreamGuard(*mut StandardStream, bool);
 impl StreamGuard {
     /// Caller supplies a live FILE; the guard serializes all state access.
     pub(crate) unsafe fn acquire(stream: *mut StandardStream) -> Self {
-        let acquired = unsafe { lock_internal(stream) };
+        // musl __fopen_rb_ca assigns lock=-1 to its exclusively borrowed
+        // stack FILE. This sentinel is never set on a public stream.
+        let private_reader = !stream.is_null()
+            && unsafe { (*stream).owner.load(Ordering::Relaxed) == -1 };
+        let acquired = !private_reader && unsafe { lock_internal(stream) };
         Self(stream, acquired)
     }
 }
@@ -1794,4 +1798,33 @@ pub unsafe extern "C" fn setvbuf(stream: *mut StandardStream, buffer: *mut c_cha
         (*stream).direction = BufferDirection::Neutral;
         0
     }
+}
+
+/// Runs a conventional database reader with musl's allocation-free,
+/// non-canceling `__fopen_rb_ca`/`__fclose_ca` lifetime. The source FILE stays
+/// in this stack frame: initialize its self-referential buffer only after its
+/// final placement, and never register it in the process stream list.
+///
+/// # Safety
+/// `path` must be a readable NUL-terminated pathname. `capacity` is usable
+/// capacity (musl's supplied buffer length minus UNGET) and must not exceed
+/// BUFSIZ. The callback may use the FILE only during this call and
+/// must not retain its pointer, move it, or close it through public fclose.
+pub(super) unsafe fn with_readonly_file<R>(
+    path: *const c_char,
+    capacity: usize,
+    read: impl FnOnce(*mut StandardStream) -> R,
+) -> Result<R, c_int> {
+    debug_assert!(capacity <= BUFSIZ);
+    let fd = unsafe { c_status(raw_syscall::syscall4(257, -100, path as i64, 0x80000, 0)) };
+    if fd < 0 { return Err(unsafe { *errno::__errno_location() }); }
+    // musl redundantly sets FD_CLOEXEC after open and ignores its result.
+    unsafe { raw_syscall::syscall3(72, fd as i64, 2, 1); }
+    let mut stream = StandardStream::new(fd, F_PERM | F_NOWR, capacity);
+    stream.owner.store(-1, Ordering::Relaxed);
+    let pointer = ptr::addr_of_mut!(stream);
+    unsafe { initialize_buffer(pointer); }
+    let result = read(pointer);
+    unsafe { c_status(raw_syscall::syscall1(3, fd as i64)); }
+    Ok(result)
 }

@@ -52,6 +52,18 @@ RECORDS: dict[tuple[str, int], tuple[str, bytes | None]] = {
     ("searchhost.search.test.", 1): ("answer", socket.inet_aton("198.51.100.17")),
     ("nxdomain.example.test.", 1): ("nxdomain", None),
     ("nodata.example.test.", 1): ("nodata", None),
+    ("42.100.51.198.in-addr.arpa.", 12): ("answer", b"\x07reverse\x07example\x04test\x00"),
+    ("2.4.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.", 12): ("answer", b"\x08reverse6\x07example\x04test\x00"),
+    ("stop.search.test.", 1): ("nodata", None),
+    ("stop.", 1): ("answer", socket.inet_aton("192.0.2.90")),
+    ("bare.", 1): ("answer", socket.inet_aton("192.0.2.91")),
+    ("plain.test.search.test.", 1): ("answer", socket.inet_aton("192.0.2.92")),
+    ("servfail.example.test.", 1): ("servfail", None),
+    ("mixed-nx.example.test.", 28): ("timeout", None),
+    ("mixed-timeout.example.test.", 1): ("timeout", None),
+    ("mixed-search.search.test.", 28): ("timeout", None),
+    ("mixed-search.", 1): ("answer", socket.inet_aton("192.0.2.93")),
+    ("mixed-search.", 28): ("nodata", None),
 }
 
 
@@ -163,6 +175,8 @@ def encode_answer(
     if behavior == "nxdomain":
         flags = 0x8183  # response, recursion available, NXDOMAIN
         return struct.pack("!HHHHHH", identifier, flags, 1, 0, 0, 0) + question_bytes
+    if behavior == "servfail":
+        return struct.pack("!HHHHHH", identifier, 0x8182, 1, 0, 0, 0) + question_bytes
     if behavior == "nodata":
         flags = 0x8180  # response, recursion available, NOERROR/NODATA
         return struct.pack("!HHHHHH", identifier, flags, 1, 0, 0, 0) + question_bytes
@@ -235,6 +249,8 @@ class LoopbackDnsServer:
         self, packet: bytes, name: str, qtype: int, identifier: int, transport: str
     ) -> list[bytes]:
         behavior, _ = RECORDS.get((name, qtype), ("nxdomain", None))
+        if behavior == "timeout":
+            return []
         valid = encode_answer(
             packet, identifier, name, qtype, complete=behavior == "tc-sequence" and transport == "tcp"
         )

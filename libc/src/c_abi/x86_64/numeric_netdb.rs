@@ -512,6 +512,7 @@ unsafe fn write_decimal(output: *mut c_char, capacity: usize, value: u16) -> c_i
 }
 
 /// Render numeric socket address/service values without reverse DNS or services.
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[no_mangle]
 pub unsafe extern "C" fn getnameinfo(
     address: *const CabiSockaddr,
@@ -600,4 +601,14 @@ pub unsafe extern "C" fn gai_strerror(error: c_int) -> *const c_char {
         _ => EAI_UNKNOWN_TEXT.as_ptr(),
     }
     .cast()
+}
+
+/// Sets the scope on an owned IPv6 result while preserving this module's
+/// private page-per-node allocation and freeaddrinfo lifetime.
+/// # Safety
+/// node must be a live IPv6 node just returned by append_node, before it is
+/// published to the caller.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn set_owned_scope(node: *mut CabiAddrInfo, scope: u32) {
+    unsafe { (*((*node).address.cast::<CabiSockaddrIn6>())).scope_id = scope; }
 }

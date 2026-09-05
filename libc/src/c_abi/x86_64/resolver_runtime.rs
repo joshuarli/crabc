@@ -1211,6 +1211,7 @@ unsafe fn join_domain(name: *const c_char, suffix: *const c_char, output: &mut [
 
 /// Resolve numeric, `/etc/hosts`, then configured A/AAAA DNS names into the
 /// C-owned `addrinfo` pages released by `freeaddrinfo`.
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[no_mangle]
 pub unsafe extern "C" fn getaddrinfo(
     name: *const c_char,

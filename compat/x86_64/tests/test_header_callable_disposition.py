@@ -85,6 +85,19 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertFalse(summary["header_declaration_parity_complete"])
         self.assertFalse(summary["final_provider_archive_closure_complete"])
 
+    def test_classic_netdb_names_have_the_planned_owned_static_provider(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        names = {"gethostbyaddr", "gethostbyaddr_r", "gethostbyname", "gethostbyname2",
+                 "gethostbyname2_r", "gethostbyname_r", "gethostent", "getnetbyaddr",
+                 "getnetbyname", "getnetent", "getservbyname", "getservbyname_r",
+                 "getservbyport", "getservbyport_r", "herror"}
+        providers = {row["id"]: set(row["members"])
+                     for row in report["primary_disposition"]["declared_unverified_feature_archives"]}
+        deferred = {name for row in report["primary_disposition"]["deferred_owner_groups"]
+                    for name in row["members"]}
+        self.assertTrue(names <= providers["x86-owned-static-runtime"])
+        self.assertFalse(names & deferred)
+
     def test_inverse_trig_names_are_planned_owned_static_not_deferred(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         providers = {

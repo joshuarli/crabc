@@ -64,16 +64,6 @@ source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inve
 members = ["pthread_mutexattr_getprioceiling", "pthread_mutexattr_setprioceiling"]
 
 [[deferred_owner_group]]
-id = "x86-cabi-resolver-netdb-classic-v1"
-semantic_family = "libc.resolver"
-linkage_owner_family = "libc.c-abi-compat"
-linkage_owner_obligation = "final-callable-provider-archive-closure"
-resolution = "planned-provider"
-provider_target = "future selected C ABI providers in libc.resolver"
-source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["gethostbyaddr", "gethostbyaddr_r", "gethostbyname", "gethostbyname2", "gethostbyname2_r", "gethostbyname_r", "gethostent", "getnetbyaddr", "getnetbyname", "getnetent", "getservbyname", "getservbyname_r", "getservbyport", "getservbyport_r"]
-
-[[deferred_owner_group]]
 id = "x86-cabi-posix-runtime-missing-v1"
 semantic_family = "libc.posix-runtime"
 linkage_owner_family = "libc.c-abi-compat"
@@ -91,7 +81,7 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "planned-provider"
 provider_target = "future selected C ABI providers in libc.c-abi-compat"
 source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["_Fork", "addmntent", "cuserid", "endmntent", "endspent", "endusershell", "endutent", "endutxent", "fgetspent", "getmntent", "getmntent_r", "getspent", "getspnam", "getspnam_r", "getusershell", "getutent", "getutid", "getutline", "getutxent", "getutxid", "getutxline", "herror", "lckpwdf", "putspent", "pututline", "pututxline", "setmntent", "setspent", "setusershell", "setutent", "setutxent", "ulckpwdf", "updwtmp", "updwtmpx", "utmpname", "utmpxname"]
+members = ["_Fork", "addmntent", "cuserid", "endmntent", "endspent", "endusershell", "endutent", "endutxent", "fgetspent", "getmntent", "getmntent_r", "getspent", "getspnam", "getspnam_r", "getusershell", "getutent", "getutid", "getutline", "getutxent", "getutxid", "getutxline", "lckpwdf", "putspent", "pututline", "pututxline", "setmntent", "setspent", "setusershell", "setutent", "setutxent", "ulckpwdf", "updwtmp", "updwtmpx", "utmpname", "utmpxname"]
 
 [[deferred_owner_group]]
 id = "x86-header-callable-builtin-v1"

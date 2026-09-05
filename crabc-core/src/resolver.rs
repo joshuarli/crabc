@@ -889,6 +889,41 @@ pub fn exchange(
     query_id: u16,
     answer: &mut [u8],
 ) -> Result<usize> {
+    exchange_impl(config, query, query_id, answer, false).map_err(|error| match error {
+        ExchangeError::Setup(errno) | ExchangeError::Transport(errno) => errno,
+    })
+}
+
+/// Distinguishes a local socket-creation failure from a failed DNS exchange.
+/// The C netdb owner needs the original local errno for `EAI_SYSTEM`, while
+/// the existing native [`exchange`] contract collapses exhausted attempts.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExchangeError {
+    /// A UDP socket could not be created for the selected nameserver.
+    Setup(crate::Errno),
+    /// Invalid input or exhausted bounded transport attempts.
+    Transport(crate::Errno),
+}
+
+/// Performs [`exchange`] while preserving the first socket creation error.
+/// A socket creation failure returns immediately; packet failures retain
+/// the ordinary bounded retry/failover contract. No probe socket is opened.
+pub fn exchange_with_setup_error(
+    config: &ExchangeConfig,
+    query: &[u8],
+    query_id: u16,
+    answer: &mut [u8],
+) -> core::result::Result<usize, ExchangeError> {
+    exchange_impl(config, query, query_id, answer, true)
+}
+
+fn exchange_impl(
+    config: &ExchangeConfig,
+    query: &[u8],
+    query_id: u16,
+    answer: &mut [u8],
+    preserve_setup_error: bool,
+) -> core::result::Result<usize, ExchangeError> {
     if config.nameserver_count == 0
         || config.nameserver_count > MAX_NAMESERVERS
         || config.timeout_ms == 0
@@ -898,7 +933,7 @@ pub fn exchange(
         || u16::from_be_bytes([query[0], query[1]]) != query_id
         || one_question_end(query).is_err()
     {
-        return Err(invalid());
+        return Err(ExchangeError::Transport(invalid()));
     }
     let mut attempt = 0u8;
     while attempt < config.attempts {
@@ -925,6 +960,7 @@ pub fn exchange(
                 0,
             ) {
                 Ok(fd) => fd,
+                Err(error) if preserve_setup_error => return Err(ExchangeError::Setup(error)),
                 Err(_) => {
                     index += 1;
                     continue;
@@ -963,5 +999,5 @@ pub fn exchange(
         }
         attempt = attempt.saturating_add(1);
     }
-    Err(crate::Errno::TIMEDOUT)
+    Err(ExchangeError::Transport(crate::Errno::TIMEDOUT))
 }

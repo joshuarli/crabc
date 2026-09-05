@@ -544,6 +544,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
   owned-resolver-network  compare owned products with musl in isolated loopback DNS fixtures
+  owned-classic-netdb [DYNAMIC_SYSROOT]  compare installed host/service C APIs in isolated loopback DNS fixtures
   owned-dynamic-io-cancellation  qualify shared-runtime cancellation through kernel and direct entry
 
   owned-system-cancellation  qualify isolated system/pclose cancellation and child wait ownership
@@ -4970,6 +4971,19 @@ run_lua_static_source_build_probe() {
         --timeout "${CRABC_X86_64_LUA_TIMEOUT:-120}"
 }
 
+run_owned_classic_netdb_probe() {
+    if [ "$#" -eq 1 ]; then
+        run_in_resolver_network_container bash /workspace/compat/x86_64/run_owned_classic_netdb.sh "$1"
+        return
+    fi
+    prepare_work_dir
+    local state container_state
+    state="$(mktemp -d "$TMP_DIR/owned-classic-netdb.XXXXXX")"
+    container_state="/workspace/.work/x86_64/tmp/${state##*/}"
+    run_in_container bash /workspace/compat/x86_64/run_owned_classic_netdb.sh --prepare "$container_state"
+    run_in_resolver_network_container bash /workspace/compat/x86_64/run_owned_classic_netdb.sh --prepared "$container_state"
+}
+
 run_owned_resolver_network_probe() {
     prepare_work_dir
     local state container_state
@@ -5635,7 +5649,7 @@ case "$command" in
     owned-syslog) ;;
     owned-error-reporting) ;;
     owned-io-cancellation) ;;
-    owned-resolver-network) ;;
+    owned-resolver-network|owned-classic-netdb) ;;
     owned-dynamic-io-cancellation) ;;
     owned-posix-timers|owned-pthread-scheduling|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
@@ -7635,6 +7649,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-crt1-static-tls takes no arguments"
         ensure_image
         run_libc_crt1_static_tls_probe
+        ;;
+    owned-classic-netdb)
+        [ "$#" -le 1 ] || fail "owned-classic-netdb takes at most one dynamic sysroot"
+        ensure_image
+        run_owned_classic_netdb_probe "$@"
         ;;
     owned-resolver-network)
         [ "$#" -eq 0 ] || fail "owned-resolver-network takes no arguments"

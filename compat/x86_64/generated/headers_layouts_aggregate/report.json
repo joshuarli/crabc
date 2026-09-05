@@ -435,8 +435,8 @@
   ],
   "downstream_provider_archive_obligations": {
     "archive_extraction_is_header_completion_requirement": false,
-    "deferred_callable_count": 91,
-    "deferred_owner_group_count": 8,
+    "deferred_callable_count": 76,
+    "deferred_owner_group_count": 7,
     "final_provider_archive_closure_available": true,
     "final_provider_archive_closure_complete": false,
     "linkage_owner_family": "libc.c-abi-compat",
@@ -618,7 +618,7 @@
       "id": "callable-visibility",
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1",
-      "sha256": "8c9061cdaad1c86ec6d59d8a14ac85bd322fbafa21ae26907dc31c37f462ee37",
+      "sha256": "6e4b3e723e6d90b2305b4682017071a9d653ba99ed961c53a12971862628f982",
       "summary": {
         "candidate_only_callable_count": 0,
         "candidate_public_header_count": 191,
@@ -725,16 +725,16 @@
       "id": "callable-disposition",
       "path": "compat/x86_64/header_callable_disposition.json",
       "schema": "crabc.x86_64-header-callable-disposition-report/v1",
-      "sha256": "baa24559c931a6564890da7916e24faa6719a6f1745b913fccbf340738648d8b",
+      "sha256": "dfe90aecc96b13fe80522d399941a506f5f38ba73dab4cb63bd5a261603d85a7",
       "summary": {
         "candidate_external_callable_count": 1525,
-        "declared_unverified_feature_callable_count": 234,
+        "declared_unverified_feature_callable_count": 249,
         "default_static_callable_count": 1122,
         "deferred_resolution_counts": {
           "compiler-builtin": 1,
           "consumer-supplied": 1,
           "oracle-declared-no-provider": 7,
-          "planned-provider": 82
+          "planned-provider": 67
         },
         "final_provider_archive_closure_complete": false,
         "header_declaration_parity_complete": false,
@@ -745,7 +745,7 @@
         "primary_disposition_exact_coverage": true,
         "undispositioned_candidate_callable_count": 0,
         "undispositioned_missing_reference_name_count": 0,
-        "unprovided_callable_count": 91,
+        "unprovided_callable_count": 76,
         "verified_feature_callable_count": 78
       },
       "table": "callable_disposition"
@@ -811,7 +811,7 @@
     },
     {
       "path": "compat/x86_64/parity.toml",
-      "sha256": "2185a578584eda95c93cab3f80fcf8c2998b8b1b6fc51276c535cd898e314bd6"
+      "sha256": "623eda4e9766acf44c7f08b2525ce503ef1ab8ea60c24a35b56a01eaec0478ee"
     },
     {
       "path": "compat/x86_64/public_headers.txt",
@@ -823,11 +823,11 @@
     },
     {
       "path": "compat/x86_64/header_callable_inventory.json",
-      "sha256": "8ae449e729673017844da38117c042cd28930722b963ee617843f75d28899f78"
+      "sha256": "6f273c632b9324beeb8c39db5f3dfd39ad806bcd5f2d47b9e30a65468deee80f"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.toml",
-      "sha256": "85db2514249096540eb3f7fc3e284ade35f84eb6130fc2faa85706a65cbcafcd"
+      "sha256": "bd2d843ba86dca689cec16a2b3732eeb156edcd35dffb7117492283be5731e4e"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.py",
@@ -863,7 +863,7 @@
     },
     {
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
-      "sha256": "8c9061cdaad1c86ec6d59d8a14ac85bd322fbafa21ae26907dc31c37f462ee37"
+      "sha256": "6e4b3e723e6d90b2305b4682017071a9d653ba99ed961c53a12971862628f982"
     },
     {
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
@@ -875,7 +875,7 @@
     },
     {
       "path": "compat/x86_64/header_callable_disposition.json",
-      "sha256": "baa24559c931a6564890da7916e24faa6719a6f1745b913fccbf340738648d8b"
+      "sha256": "dfe90aecc96b13fe80522d399941a506f5f38ba73dab4cb63bd5a261603d85a7"
     },
     {
       "path": "compat/x86_64/headers_layouts_aggregate.py",
@@ -911,7 +911,7 @@
     },
     {
       "path": "compat/x86_64/run_header_callable_provider_linkage_audit.sh",
-      "sha256": "cc21c0acfbd9860079b7bde6251c538f7f62d3f4d335713ab2b359f4372c088a"
+      "sha256": "f875124dbefde2eb7a08e771c3a0edf192e856d44602b4c12f72c766e8b799fb"
     },
     {
       "path": "compat/x86_64/run_selected_header_install_projection.sh",

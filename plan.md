@@ -2,16 +2,18 @@
 
 ## Paused handoff — 2026-09-05
 
-Work resumed on 2026-09-05. The expanded 28-case dynamic gate passed at
-`6876a064`: both clean builds and extraction, 84 case receipts, identical
+Work resumed on 2026-09-05. The expanded 40-case dynamic gate passed at
+`d0d3877a`: both clean builds and extraction, 120 case receipts, identical
 product manifests. Host validation and explicit local publication passed for
-`.work/x86_64/tmp/materialized-dynamic.J9rIjb/qualification.json`; log
-`.work/x86_64/owned-dynamic-expanded-integrated-v2.log`. Subsequent source
-changes invalidate that selection. The filesystem mechanism case extends
-the catalog to 29; requalification of that expanded catalog remains required.
-These component results do not close the planned families or promotion chain.
-The paused narrative below records the preceding boundary, not a renewed
-instruction to stop.
+`.work/x86_64/tmp/materialized-dynamic.7Vh9IW/qualification.json`; log
+`.work/x86_64/owned-dynamic-integrated-batch.log`. The same revision passed the
+native header provider audit and standalone group, message-queue, legacy-time,
+filename-pattern, and GNU thread-join matrices, including both static modes.
+The classic-netdb case extends the catalog to 41; its integration requires
+fresh qualification. Subsequent source changes invalidate the earlier
+selection. These component results do not close the planned runtime families
+or promotion chain. The paused narrative below records the preceding boundary,
+not a renewed instruction to stop.
 
 The user requested winding down the current work, letting the active tasks
 finish and commit, and leaving this handoff. Resume only when asked. The
@@ -66,8 +68,10 @@ acceptance criteria below and in the two execution plans remain unchanged.
   execution. All eight promotion gates are still planned; ready declarations
   and execution markers cannot qualify the full chain. Remaining work is in
   `compat/x86_64/qualification-prefix-execution.md`.
-- Header aggregate: final worker result and integration are being recorded
-  before this handoff is committed.
+- Header aggregate: `66881393` integrated the completed native declaration
+  foundation after all 69 aggregate runners and 1,337 installed-header checks
+  passed. `libc.headers-layouts` is `foundation-verified`; callable provider
+  and runtime-family closure remain separate obligations.
 
 ### Evidence retained at the wind-down boundary
 
@@ -106,16 +110,16 @@ These are component measurements, not final same-revision qualification.
 4. Complete remaining pthread mutex implementations and family evidence.
    The Linux pinned Rust `std::Condvar` uses futexes; its Unix pthread fallback
    is not evidence that Linux Rust-std uses this condition implementation.
-5. Continue POSIX family completion from actual current providers. Existing
-   `owned_spawn_probe.c` has extensive static evidence, but no equivalent
-   installed dynamic semantic matrix yet (the current dynamic base covers
-   spawn interposition only). `clone`, `daemon`, `vfork` and several frozen
-   kernel-admin providers remain gaps. Audit preserved feature work before
-   duplicating it; simple Unix syscall wrappers do not authorize a policy
-   framework, and the framework non-goal does not itself waive required APIs.
-   `process.signal` is already selected-private; historical prose calling it
-   missing is stale. Its legacy aggregate also needs checkout-local scratch
-   before execution. Do not confuse private selection with family completion.
+5. Continue POSIX family completion from actual current providers. Installed
+   static and dynamic matrices now cover spawn semantics, `clone`, `daemon`,
+   `vfork`, signal helpers, and the owned Linux-control mechanisms. Close the
+   family through its complete selected capability roster, realistic shared
+   runtime behavior, and native differential/OS/signal-process/libc-test gates.
+   Private leaf selection and component passes do not replace that aggregate.
+   Preserve the current calling-task credential-setter contract until an
+   all-thread transaction is implemented and qualified. Resolver cancellation
+   cleanup and malformed-record parser ordering remain explicit obligations in
+   `compat/x86_64/owned-classic-netdb.md` for the later resolver family.
 6. Continue allocator M2–M11 and Rust-std only after resolving the existing
    automatic tool-review restrictions described below. Requalify installed
    products after native Rust allocator promotion. All 223 capabilities,

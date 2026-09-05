@@ -26,8 +26,9 @@ owners:
 
 ## Current integration frontier
 
-1. Runtime: complete dependency-ready components through ordinary installed
-   applications, then qualify their families. The frozen 223-capability/
+1. Runtime: close `libc.posix-runtime` through a complete family aggregate
+   using the installed components; the header declaration foundation is now
+   `foundation-verified`. The frozen 223-capability/
    26-family baseline validates; current accounting does not imply full parity.
    Wide stdio, scalar math, signal transactions, semaphore cancellation, and
    loader search/direct-interpreter entry compose in installed products.

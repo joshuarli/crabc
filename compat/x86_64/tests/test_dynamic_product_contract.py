@@ -110,6 +110,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "pty",
                 "passwd",
                 "pattern",
+                "classic-netdb",
             ],
         )
         self.assertEqual(report["status"], "implemented-unqualified")

@@ -338,3 +338,28 @@ fn x86_64_all_nameserver_failures_are_bounded() {
     );
     worker.join().expect("silent fixture completed");
 }
+
+#[test]
+fn x86_64_socket_setup_failure_is_distinct_from_exhausted_dns_attempts() {
+    const CHILD: &str = "CRABC_RESOLVER_SETUP_FAILURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "x86_64_socket_setup_failure_is_distinct_from_exhausted_dns_attempts"])
+            .env(CHILD, "1")
+            .status().unwrap();
+        assert!(status.success());
+        return;
+    }
+    let mut query = [0u8; 128];
+    let length = encode_query(b"setup.test", TYPE_A, 19, &mut query).unwrap();
+    let mut answer = [0u8; 128];
+    let config = one_server_config(53);
+    let mut limit = crabc_core::process::getrlimit_raw(7).unwrap();
+    limit.rlim_cur = 0;
+    crabc_core::process::setrlimit_raw(7, &limit).unwrap();
+    assert_eq!(
+        crabc_core::resolver::exchange_with_setup_error(&config, &query[..length], 19, &mut answer),
+        Err(crabc_core::resolver::ExchangeError::Setup(Errno::MFILE))
+    );
+    assert_eq!(exchange(&config, &query[..length], 19, &mut answer), Err(Errno::TIMEDOUT));
+}
