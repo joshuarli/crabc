@@ -936,6 +936,10 @@ mod owned_static_realpath;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_static_abort.rs"]
 mod owned_static_abort;
+
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_assert.rs"]
+mod owned_assert;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_process_lock.rs"]
 mod owned_process_lock;

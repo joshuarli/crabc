@@ -48,6 +48,7 @@ CASES = {
     "system-cancellation": ("run_owned_system_cancellation.sh", None),
     "spawn": ("run_owned_dynamic_spawn.sh", None),
     "linux-control": ("run_owned_linux_control.sh", None),
+    "assert": ("run_owned_assert.sh", None),
 }
 MATERIALIZATION_PROFILE = "retained dlclose mappings; default NOW with declared lazy imports; runtime GD growth; new runtime IE rejected"
 MATERIALIZATION_QUALIFICATION = "separate live three-product receipt and review required"

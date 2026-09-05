@@ -43,6 +43,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("owned-system-cancellation", False),
                 ("owned-dynamic-spawn", False),
                 ("owned-linux-control", False),
+                ("owned-assert", False),
             ):
                 with self.subTest(command=command):
                     capture = work / f"{command}.jsonl"
@@ -68,7 +69,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertNotIn("--pid=host", arguments)
                         self.assertNotIn("--userns=host", arguments)
                         self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", arguments)
-                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control"):
+                    if command in ("owned-dynamic-io-cancellation", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-assert"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-2:], [
