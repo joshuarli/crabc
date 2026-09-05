@@ -73,6 +73,21 @@ class X86ParityLedgerTests(unittest.TestCase):
             )
         )
 
+    def verified_artifact(
+        self, family: dict[str, object], identifier: str
+    ) -> dict[str, object]:
+        """Find one leaf without coupling its test to siblings' progress count."""
+
+        artifacts = family["verified_artifact"]
+        assert isinstance(artifacts, list)
+        matching = [
+            artifact
+            for artifact in artifacts
+            if isinstance(artifact, dict) and artifact.get("id") == identifier
+        ]
+        self.assertEqual(len(matching), 1, f"expected one verified artifact: {identifier}")
+        return matching[0]
+
     @staticmethod
     def verified_records(data: dict[str, object]) -> dict[str, dict[str, object]]:
         records: dict[str, dict[str, object]] = {}
@@ -2056,26 +2071,15 @@ class X86ParityLedgerTests(unittest.TestCase):
             {"./scripts/dev-x86_64.sh libc-stack-chk-fail"},
         )
 
-        changed = self.data()
-        changed_artifacts = self.family(changed, "libc.c-abi-compat")[
-            "verified_artifact"
-        ]
-        assert isinstance(changed_artifacts, list)
-        changed_artifact = next(
-            entry
-            for entry in changed_artifacts
-            if entry["id"] == "static-c-stack-check-failure"
+        runner = (ROOT / "compat" / "x86_64" / "run_libc_stack_chk_fail.sh").read_text(
+            encoding="utf-8"
         )
-        changed_artifact["native_evidence"][0]["scope"] = (
-            changed_artifact["native_evidence"][0]["scope"].replace(
-                "guard storage/initializer", "guard behavior"
-            )
-        )
-        with self.assertRaisesRegex(
-            ledger.LedgerError,
-            "evidence must retain its private negative boundary",
+        for phrase in (
+            "for unselected in __stack_chk_guard __init_ssp abort raise _Exit exit dlopen dlsym",
+            "candidate accidentally selects ${unselected}",
+            "__stack_chk_fail does not retain musl x86 hlt termination",
         ):
-            ledger.validate_ledger(changed)
+            self.assert_source_contains(runner, phrase, "run_libc_stack_chk_fail.sh")
 
     def test_ldso_target_root_admission_is_a_planned_private_artifact(self) -> None:
         data = self.data()
@@ -6501,13 +6505,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
-        artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 46
-        artifact = next(
-            entry
-            for entry in artifacts
-            if isinstance(entry, dict)
-            and entry["id"] == "static-c-stdio-fixed-percent-scan"
+        artifact = self.verified_artifact(
+            text_math, "static-c-stdio-fixed-percent-scan"
         )
         self.assertNotIn("capabilities", artifact)
         for owner in (
@@ -6574,13 +6573,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
-        artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 46
-        artifact = next(
-            entry
-            for entry in artifacts
-            if isinstance(entry, dict)
-            and entry["id"] == "static-c-stdio-fixed-format-whitespace-scan"
+        artifact = self.verified_artifact(
+            text_math, "static-c-stdio-fixed-format-whitespace-scan"
         )
         self.assertNotIn("capabilities", artifact)
         for owner in (
@@ -6652,13 +6646,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
-        artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 46
-        artifact = next(
-            entry
-            for entry in artifacts
-            if isinstance(entry, dict)
-            and entry["id"] == "static-c-stdio-fixed-literal-scan"
+        artifact = self.verified_artifact(
+            text_math, "static-c-stdio-fixed-literal-scan"
         )
         self.assertNotIn("capabilities", artifact)
         for owner in (
@@ -6730,13 +6719,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
-        artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 46
-        artifact = next(
-            entry
-            for entry in artifacts
-            if isinstance(entry, dict)
-            and entry["id"] == "static-c-stdio-fixed-empty-format-scan"
+        artifact = self.verified_artifact(
+            text_math, "static-c-stdio-fixed-empty-format-scan"
         )
         self.assertNotIn("capabilities", artifact)
         for owner in (
@@ -6810,13 +6794,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
-        artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 46
-        artifact = next(
-            entry
-            for entry in artifacts
-            if isinstance(entry, dict)
-            and entry["id"] == "static-c-stdio-fixed-suppressed-character-scan"
+        artifact = self.verified_artifact(
+            text_math, "static-c-stdio-fixed-suppressed-character-scan"
         )
         self.assertNotIn("capabilities", artifact)
         for owner in (
@@ -6899,13 +6878,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
-        artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 46
-        artifact = next(
-            entry
-            for entry in artifacts
-            if isinstance(entry, dict)
-            and entry["id"] == "static-c-stdio-fixed-suppressed-string-scan"
+        artifact = self.verified_artifact(
+            text_math, "static-c-stdio-fixed-suppressed-string-scan"
         )
         self.assertNotIn("capabilities", artifact)
         for owner in (
@@ -6989,13 +6963,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
-        artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 46
-        artifact = next(
-            entry
-            for entry in artifacts
-            if isinstance(entry, dict)
-            and entry["id"] == "static-c-stdio-fixed-suppressed-scanset-scan"
+        artifact = self.verified_artifact(
+            text_math, "static-c-stdio-fixed-suppressed-scanset-scan"
         )
         self.assertNotIn("capabilities", artifact)
         for owner in (
@@ -7078,13 +7047,8 @@ class X86ParityLedgerTests(unittest.TestCase):
         data = self.data()
         text_math = self.family(data, "libc.text-math-locale-stdio")
         self.assertEqual(text_math["status"], "planned")
-        artifacts = text_math["verified_artifact"]
-        assert isinstance(artifacts, list) and len(artifacts) == 46
-        artifact = next(
-            entry
-            for entry in artifacts
-            if isinstance(entry, dict)
-            and entry["id"] == "static-c-stdio-fixed-suppressed-count-scan"
+        artifact = self.verified_artifact(
+            text_math, "static-c-stdio-fixed-suppressed-count-scan"
         )
         self.assertNotIn("capabilities", artifact)
         for owner in (
@@ -17133,11 +17097,20 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for entry in normal_return_oracles
             )
         )
-        static_exports = (
-            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
-        ).read_text(encoding="utf-8").splitlines()
+        static_exports = self.static_c_abi_exports()
         self.assertIn("__membarrier_init", static_exports)
-        self.assertNotIn("membarrier", static_exports)
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_pthread_create_join_tls.sh"
+        ).read_text(encoding="utf-8")
+        for phrase in (
+            "assert_pthread_create_weak_membarrier_owner",
+            "for unselected in clone __clone",
+            "pthread_mutex_timedlock pthread_mutex_consistent",
+            "archive accidentally exports unselected ${unselected}",
+        ):
+            self.assert_source_contains(
+                runner, phrase, "run_libc_pthread_create_join_tls.sh"
+            )
         self.assertIn("pthread_exit", explicit_exit["description"])
         self.assertIn("fixed private 64-slot registry", explicit_exit["description"])
         self.assertIn("Linux gettid", explicit_exit["description"])
@@ -25557,9 +25530,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "arch/x86_64/syscall_arch.h",
         ):
             self.assertIn(source, mapping["role"])
-        static_exports = (
-            ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt"
-        ).read_text(encoding="utf-8").splitlines()
+        static_exports = self.static_c_abi_exports()
         for symbol in ("semget", "semop", "semtimedop", "semctl"):
             self.assertIn(symbol, static_exports)
         prerequisites = artifact["x86_abi_prerequisites"]
@@ -26567,16 +26538,16 @@ class X86ParityLedgerTests(unittest.TestCase):
             "truncate",
         ):
             self.assertIn(symbol, static_exports)
-        for symbol in (
-            "chroot",
-            "fchmodat",
-            "realpath",
-            "renameat",
-            "scandir",
-            "symlinkat",
-            "unlinkat",
+        runner = (
+            ROOT / "compat" / "x86_64" / "run_libc_pathname_lifecycle.sh"
+        ).read_text(encoding="utf-8")
+        for phrase in (
+            "for unselected in chroot realpath renameat symlinkat",
+            "fchmodat scandir malloc free",
+            "archive accidentally exports unselected $unselected",
+            "candidate unexpectedly pulls independently selected renameat2",
         ):
-            self.assertNotIn(symbol, static_exports)
+            self.assert_source_contains(runner, phrase, "run_libc_pathname_lifecycle.sh")
 
         prerequisites = artifact["x86_abi_prerequisites"]
         assert isinstance(prerequisites, list)
@@ -31915,10 +31886,14 @@ class X86ParityLedgerTests(unittest.TestCase):
                 for prerequisite in prerequisites
             )
         )
-        self.assertIn("sys/fsuid.h", artifact["x86_header_prerequisites"][0])
-        self.assertIn("bits/alltypes.h", artifact["x86_header_prerequisites"][0])
-        self.assertNotIn("sys/types.h", artifact["x86_header_prerequisites"][0])
-        self.assertIn("SYS_setfsuid=122", artifact["x86_header_prerequisites"][0])
+        header_prerequisites = artifact["x86_header_prerequisites"][0]
+        for phrase in (
+            "sys/fsuid.h",
+            "bits/alltypes.h",
+            "rejecting a sys/types.h umbrella leak",
+            "SYS_setfsuid=122",
+        ):
+            self.assertIn(phrase, header_prerequisites)
         self.assertIn(
             "libc/src/c_abi/x86_64/setfsuid.rs", family["source_owners"]
         )
