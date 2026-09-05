@@ -418,6 +418,9 @@ mod signal_execution;
 mod signal_pause;
 #[path = "signal_altstack.rs"]
 mod signal_altstack;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "pthread_signal.rs"]
+mod pthread_signal;
 #[path = "pthread_identity.rs"]
 mod pthread_identity;
 #[path = "pthread_create_join.rs"]

@@ -975,8 +975,8 @@ pub(super) fn request_selected_pthread_cancellation(thread: *mut c_void) -> bool
 /// Lookup pins the mapping under the registry lock, then drops that lock before
 /// acquiring the target kill lock. The callback may update pending state and
 /// issue raw `tgkill`; it must not retain the cancellation pointer, invoke user
-/// code, or enter another lifecycle transaction. `None` rejects an unknown or
-/// C11 handle; `Some(0)` accepts an already retired target without invoking the
+/// code, or enter another lifecycle transaction. `None` rejects an unknown
+/// handle; `Some(0)` accepts an already retired target without invoking the
 /// callback. A target that has not entered its trampoline uses the kernel's
 /// parent-written child TID until the worker publishes its identity.
 ///
@@ -1004,8 +1004,7 @@ pub(super) unsafe fn with_selected_pthread_signal_target(
         return Some(result);
     }
     lock_selected_worker_registry();
-    let control = selected_worker_by_thread_pointer_locked(thread as usize)
-        .filter(|control| unsafe { matches!((**control).start, SelectedWorkerStart::Pthread(_)) });
+    let control = selected_worker_by_thread_pointer_locked(thread as usize);
     if let Some(control) = control {
         unsafe { (*control).signal_target_leases.fetch_add(1, Ordering::AcqRel) };
     }

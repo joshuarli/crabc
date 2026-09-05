@@ -820,6 +820,11 @@ run_static_mode() {
             expected_output="$(cat "$printf_matrix_reference")"
             minimum_tls_alignment=1
             ;;
+        pthread-signal)
+            probe=owned_pthread_signal_probe.c
+            expected_output=''
+            minimum_tls_alignment=1
+            ;;
         pthread-lifecycle)
             probe=owned_pthread_lifecycle_consumer.c
             expected_output=''
@@ -1080,6 +1085,8 @@ run_static_mode() {
         # the installed CRT, not the legacy fixture's private startup object.
         run_static_mode "$installed_root" "$mode" "$mode_root/pthread" \
             "$label pthread composition" pthread
+        run_static_mode "$installed_root" "$mode" "$mode_root/pthread-signal" \
+            "$label pthread signal delivery" pthread-signal
         run_static_mode "$installed_root" "$mode" "$mode_root/lifecycle" \
             "$label pthread lifecycle" pthread-lifecycle
         run_static_mode "$installed_root" "$mode" "$mode_root/cancellation" \
@@ -1431,6 +1438,13 @@ reference_output="$(env -i "$header_consumer/reference")" || fail "pinned-musl r
 reference_output="$(env -i "$header_consumer/pthread-lifecycle-reference")" ||
     fail "pinned-musl pthread lifecycle reference failed"
 [ -z "$reference_output" ] || fail "pinned-musl pthread lifecycle reference emitted output"
+
+"$ORACLE_CC" -std=c11 -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_pthread_signal_probe.c" \
+    -o "$header_consumer/pthread-signal-reference"
+reference_output="$(env -i "$header_consumer/pthread-signal-reference")" ||
+    fail "pinned-musl pthread signal reference failed"
+[ -z "$reference_output" ] || fail "pinned-musl pthread signal reference emitted output"
 
 "$ORACLE_CC" -std=c11 -pthread -fno-builtin \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_io_cancellation_probe.c" \

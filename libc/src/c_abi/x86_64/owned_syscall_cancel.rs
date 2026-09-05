@@ -11,6 +11,7 @@
 use core::{ffi::{c_int, c_void}, sync::atomic::{AtomicBool, Ordering}};
 use super::{current_pthread_slot, PTHREAD_CANCEL_DISABLE, PTHREAD_CANCEL_ENABLE};
 use super::super::{raw_syscall, signal_foundation};
+use super::super::pthread_signal::AllSignals;
 
 // musl pthread_impl.h reserves 32 for timers and 33 for cancellation.
 const SIGCANCEL: c_int = 33;
@@ -146,23 +147,6 @@ pub(super) unsafe fn initialize() -> Result<(), c_int> {
     if result < 0 { return Err((-result) as c_int); }
     HANDLER_INSTALLED.store(true,Ordering::Release);
     Ok(())
-}
-
-// pthread_kill.c blocks all requester signals across target kill exclusion.
-// The guard owns only that calling-thread mask, never the registry/kill lock.
-struct AllSignals(u64);
-impl AllSignals {
-    unsafe fn block() -> Result<Self, c_int> {
-        let all = u64::MAX;
-        let mut previous = 0;
-        let result = unsafe { raw_syscall::syscall4(14,0,(&all as *const u64) as i64,(&mut previous as *mut u64) as i64,8) };
-        if result < 0 { Err((-result) as c_int) } else { Ok(Self(previous)) }
-    }
-}
-impl Drop for AllSignals {
-    fn drop(&mut self) {
-        unsafe { raw_syscall::syscall4(14,2,(&self.0 as *const u64) as i64,0,8); }
-    }
 }
 
 pub(super) unsafe fn request(thread: *mut c_void) -> c_int {
