@@ -134,7 +134,7 @@ class OwnedCredentialsProfileTests(unittest.TestCase):
             "--static-sysroot)",
             "[ \"$static_was_supplied\" -eq 0 ] || usage",
             "[ \"$dynamic_was_supplied\" -eq 0 ] || usage",
-            "case \"$2\" in --*) usage ;; esac",
+            "case \"$2\" in -*) usage ;; esac",
             "credentials profile {name} product must be a checkout .work directory",
             "elif [ \"$dynamic_was_supplied\" -eq 0 ]; then",
             'static_product="$provided_static"',

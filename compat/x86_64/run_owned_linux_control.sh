@@ -28,12 +28,12 @@ while [ "$#" -gt 0 ]; do
             [ "$#" -ge 2 ] || usage
             [ "$static_was_supplied" -eq 0 ] || usage
             [ -n "$2" ] || usage
-            case "$2" in --*) usage ;; esac
+            case "$2" in -*) usage ;; esac
             provided_static="$2"
             static_was_supplied=1
             shift 2
             ;;
-        --*)
+        -*)
             usage
             ;;
         *)

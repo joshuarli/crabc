@@ -21,13 +21,13 @@ while [ "$#" -gt 0 ]; do
             [ "$#" -ge 2 ] || usage
             [ -n "$2" ] || usage
             case "$2" in
-                --*) usage ;;
+                -*) usage ;;
             esac
             [ -z "$provided_static" ] || usage
             provided_static="$2"
             shift 2
             ;;
-        --*)
+        -*)
             usage
             ;;
         *)
