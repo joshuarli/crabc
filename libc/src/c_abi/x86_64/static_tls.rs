@@ -25,7 +25,7 @@ compile_error!("x86 Static Initial TLS v1 requires little-endian Linux/x86-64");
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
-use super::raw_syscall;
+use super::{pthread_identity, raw_syscall};
 
 const AT_NULL: usize = 0;
 const AT_PHDR: usize = 3;
@@ -251,6 +251,44 @@ pub(super) fn is_initial_thread_pointer(thread_pointer: *mut u8) -> bool {
         && current_thread_id <= i64::from(c_int::MAX)
         && current_thread_id as c_int
             == STATIC_INITIAL_TLS_MAIN_THREAD_ID.load(Ordering::Acquire)
+}
+
+/// Adopt the calling selected static thread as the post-fork child main task.
+///
+/// Linux preserves the caller's `%fs` base but assigns a new TID. A fork from
+/// the original initial thread therefore needs only its TID refreshed; a fork
+/// from one selected worker needs both identity words changed so its inherited
+/// Static Initial TLS image becomes the child process's main TLS identity.
+/// This updates no template, mapping, or loader state. The sibling TSD owner
+/// copies a worker's values before this identity change and resets its private
+/// lock; dynamic TLS remains loader-owned and intentionally does not use this.
+pub(super) fn adopt_current_thread_after_fork() -> bool {
+    if !is_ready() {
+        return false;
+    }
+    let thread_pointer = pthread_identity::current_thread_pointer();
+    if thread_pointer.is_null() {
+        return false;
+    }
+    let current_thread_id = unsafe { raw_syscall::syscall0(raw_syscall::SYS_GETTID) };
+    if current_thread_id <= 0 || current_thread_id > i64::from(c_int::MAX) {
+        return false;
+    }
+    STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.store(thread_pointer as usize, Ordering::Release);
+    STATIC_INITIAL_TLS_MAIN_THREAD_ID.store(current_thread_id as c_int, Ordering::Release);
+    true
+}
+
+/// Whether this `%fs` pointer is the pre-fork inherited initial identity.
+///
+/// The fork child uses this narrow pointer-only observation before it updates
+/// the TID/TP pair, solely to decide whether its existing main TSD table is
+/// already the calling task's table. It is not a general selected-thread
+/// predicate; normal access must use [`is_initial_thread_pointer`].
+pub(super) fn is_inherited_initial_thread_pointer(thread_pointer: *mut u8) -> bool {
+    is_ready()
+        && !thread_pointer.is_null()
+        && thread_pointer as usize == STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.load(Ordering::Acquire)
 }
 
 /// Materialize one independent child copy of the retained final-image TLS.

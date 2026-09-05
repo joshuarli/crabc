@@ -10,10 +10,11 @@
 //!   Linux thread clone flags and the `EAGAIN` translation for allocation or
 //!   clone failure.
 //! - `src/thread/pthread_create.c::__pthread_exit` supplies the selected
-//!   cleanup-before-TSD-destructor-before-result ordering. The separate
-//!   deferred cancellation leaf owns only active selected-worker cleanup
-//!   records and explicit `pthread_testcancel`; signal, robust-list,
-//!   thread-list, and last-thread paths remain explicitly unselected.
+//!   cleanup-before-TSD-destructor-before-result ordering, selected list
+//!   transitions, initial-thread `pthread_exit`, and the last-thread ordinary
+//!   exit decision. The separate deferred cancellation leaf owns only active
+//!   selected-worker cleanup records and explicit `pthread_testcancel`;
+//!   signal, robust-list, and implicit cancellation remain unselected.
 //! - `src/thread/x86_64/clone.s::__clone` supplies the seven-argument SysV
 //!   entry layout, `clone=56` register shuffle, aligned child-stack callback,
 //!   and `exit=60` tail. The assembly below is a lexical private-symbol rename
@@ -50,13 +51,13 @@
 //! TLS/control mappings only after `CLONE_CHILD_CLEARTID` has cleared the
 //! child TID. This follows the existing AArch64 runtime's safe external
 //! reaping shape; it is not a claim of general detached-thread reclamation or
-//! full pthread parity. The leaf intentionally does **not** provide main-thread
-//! `pthread_exit` behavior, signal-driven or implicit-point cancellation, general
-//! keys/TSD, synchronization objects, dynamic TLS/DTV, loader TLS, signal-mask
-//! coordination, thread lists, fork/atfork, scheduler application, GNU default
-//! attributes, affinity attributes, live-thread inspection, or general pthread
-//! semantics. It leaves caller `errno` untouched because pthread APIs
-//! report errors as positive return values. Each selected worker carries its
+//! full pthread parity. It provides the selected static initial-thread
+//! `pthread_exit` and static fork child-list/TLS/TSD reset paths, but not
+//! signal-driven or implicit-point cancellation, robust lists, dynamic TLS/DTV,
+//! loader TLS, scheduler application, GNU default attributes, affinity
+//! attributes, live-thread inspection, or general pthread semantics. It
+//! leaves caller `errno` untouched because pthread APIs report errors as
+//! positive return values. Each selected worker carries its
 //! own private mapped list node; creation is limited by actual mapping/TLS
 //! allocation, not an artifact-local numeric registry ceiling.
 
@@ -393,6 +394,12 @@ static SELECTED_WORKER_REGISTRY_HEAD: AtomicUsize = AtomicUsize::new(0);
 // deadlock here.
 static SELECTED_WORKER_REGISTRY_LOCK: AtomicU8 = AtomicU8::new(0);
 
+// The bootstrapped static thread is not backed by a worker control mapping,
+// but it still participates in musl's last-thread decision. This bit changes
+// only when that initial task calls pthread_exit; ordinary `exit` remains the
+// separate whole-process CRT path.
+static SELECTED_INITIAL_THREAD_EXITED: AtomicU8 = AtomicU8::new(0);
+
 const _: () = {
     assert!(size_of::<AtomicI32>() == size_of::<c_int>());
     assert!(align_of::<AtomicI32>() == align_of::<c_int>());
@@ -508,6 +515,68 @@ fn unlock_selected_worker_registry() {
     SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
 }
 
+#[inline]
+fn current_is_selected_initial_thread() -> bool {
+    static_tls::is_initial_thread_pointer(pthread_identity::current_thread_pointer())
+}
+
+/// Mark the selected initial task exited and report whether a worker remains.
+///
+/// The list lock makes the initial-task state and every other linked worker's
+/// `child_tid`/creator-handoff state one coherent last-thread observation. A
+/// control with pending creator handoff is treated as live even while its
+/// child-TID still has the pre-clone zero representation.
+fn selected_initial_thread_has_live_worker_after_exit() -> bool {
+    lock_selected_worker_registry();
+    SELECTED_INITIAL_THREAD_EXITED.store(1, Ordering::Release);
+    let mut control = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) as *mut ThreadControl;
+    let mut live = false;
+    while !control.is_null() {
+        // SAFETY: the list lock retains this control mapping during the
+        // handoff/TID observation. A positive TID is a live task; a pending
+        // creator may become one immediately after clone and is conservative.
+        if unsafe { (*control).creator_handoff_pending.load(Ordering::Acquire) } != 0
+            || unsafe { (*control).child_tid.load(Ordering::Acquire) } > 0
+        {
+            live = true;
+            break;
+        }
+        control = unsafe { (*control).registry_next };
+    }
+    unlock_selected_worker_registry();
+    live
+}
+
+/// Whether this exiting selected worker is the final live runtime task.
+///
+/// It is meaningful only after the initial task has taken `pthread_exit`.
+/// Finished-but-unjoined controls have a zero child-TID and do not keep the
+/// process alive; a linked creator with pending handoff does.
+fn selected_worker_is_last_live_runtime_task(control: *mut ThreadControl) -> bool {
+    lock_selected_worker_registry();
+    if SELECTED_INITIAL_THREAD_EXITED.load(Ordering::Acquire) == 0 {
+        unlock_selected_worker_registry();
+        return false;
+    }
+    let mut cursor = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) as *mut ThreadControl;
+    let mut another_live_worker = false;
+    while !cursor.is_null() {
+        if cursor != control
+            // SAFETY: list membership keeps this control live while the
+            // transition observes its creator/TID state under the same lock.
+            && (unsafe { (*cursor).creator_handoff_pending.load(Ordering::Acquire) } != 0
+                || unsafe { (*cursor).child_tid.load(Ordering::Acquire) } > 0)
+        {
+            another_live_worker = true;
+            break;
+        }
+        // SAFETY: cursor remains linked/mapped through this locked traversal.
+        cursor = unsafe { (*cursor).registry_next };
+    }
+    unlock_selected_worker_registry();
+    !another_live_worker
+}
+
 /// Whether any selected worker control remains linked.
 ///
 /// The current atfork boundary consumes this as a conservative admission
@@ -519,6 +588,53 @@ pub(super) fn has_live_selected_workers() -> bool {
     let live = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) != 0;
     unlock_selected_worker_registry();
     live
+}
+
+/// Lock the selected worker list for one raw-fork transaction.
+///
+/// The caller must pair this with exactly one parent or child completion. The
+/// lock serializes list publication/withdrawal with the fork snapshot, but is
+/// never held across user callbacks, allocation, clone, join wait, or any
+/// operation other than the one raw fork syscall.
+pub(super) fn pthread_fork_prepare() {
+    lock_selected_worker_registry();
+}
+
+/// Release the parent-side selected-worker fork transaction.
+pub(super) unsafe fn pthread_fork_parent() {
+    unlock_selected_worker_registry();
+}
+
+/// Re-root selected worker state in the post-fork child.
+///
+/// The child retains only its calling task. Every inherited selected worker
+/// control represents either a vanished sibling or (when the caller was a
+/// worker) the now-main task whose active mapping must not be reclaimed. Make
+/// all old handles unreachable without unmapping any inherited live stack/TLS
+/// range; the static TLS/TSD owners separately adopt the caller's identity
+/// and values before this reset. Future child workers start a fresh list.
+pub(super) unsafe fn pthread_fork_child() {
+    SELECTED_WORKER_REGISTRY_HEAD.store(0, Ordering::Release);
+    SELECTED_INITIAL_THREAD_EXITED.store(0, Ordering::Release);
+    SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
+}
+
+/// Return an inherited worker's TSD table during a child fork reset.
+///
+/// This intentionally omits normal Linux-TID/child-TID validation: fork gave
+/// the sole child task a new TID, and the caller holds the copied list lock
+/// until it has copied this table into child-main state and unlinked every old
+/// worker control.
+pub(super) fn current_selected_worker_tsd_values_after_fork(
+    thread_pointer: *mut u8,
+) -> Option<*const pthread_tsd::SelectedTsdValues> {
+    if thread_pointer.is_null() {
+        return None;
+    }
+    let control = selected_worker_by_thread_pointer_locked(thread_pointer as usize)?;
+    // SAFETY: the fork coordinator owns the list lock, and this linked control
+    // remains mapped until it clears the head in `pthread_fork_child`.
+    Some(unsafe { core::ptr::addr_of!((*control).tsd) })
 }
 
 /// Link a fully initialized selected control before the child can run.
@@ -846,6 +962,16 @@ fn current_selected_worker_control() -> Option<*mut ThreadControl> {
     current
 }
 
+/// Whether the current task is one selected worker that may enter fork.
+///
+/// This preserves the normal `%fs:0`/Linux-TID/live-child-TID identity check;
+/// it is not a general thread admission query. The fork coordinator rechecks
+/// and locks the list before raw fork, then uses its separate post-fork helper
+/// because Linux assigns the child caller a new TID.
+pub(super) fn is_current_selected_worker() -> bool {
+    current_selected_worker_control().is_some()
+}
+
 /// Return the current selected pthread worker's embedded cancellation state.
 pub(super) fn current_selected_pthread_worker_cancellation(
 ) -> Option<*const pthread_cancel::SelectedWorkerCancellation> {
@@ -1092,12 +1218,30 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // the child owns the callback invocation and parent only reads result
     // after `finished` is published and the child has exited.
     let result = unsafe { (*control).start.invoke((*control).argument) };
+    if current_is_selected_initial_thread() {
+        // This callback called fork and became the static child main task.
+        // Its inherited worker control was intentionally unlinked in the
+        // child, so a normal trampoline return must use ordinary process exit
+        // rather than the parent worker's raw SYS_exit assembly tail.
+        // SAFETY: the fork child copied this worker's values into the static
+        // main table before adopting its TLS identity, so that table—not the
+        // now-unlinked inherited control—owns the final destructor phase.
+        unsafe { pthread_tsd::run_selected_main_tsd_destructors() };
+        unsafe { super::static_startup::exit(0) }
+    }
     // SAFETY: this current worker owns its control/TSD mapping until the
     // assembly tail calls SYS_exit. Destructors must finish before its result
     // becomes join-observable.
     unsafe {
         pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
         publish_selected_worker_result(control, result);
+    }
+    if selected_worker_is_last_live_runtime_task(control) {
+        // SAFETY: the initial selected task already called pthread_exit and
+        // this is the last live worker under the registry transition. Match
+        // musl's last-thread route through ordinary process exit so atexit and
+        // owned stdio finalization run before exit_group.
+        unsafe { super::static_startup::exit(0) }
     }
     0
 }
@@ -1352,6 +1496,20 @@ unsafe fn create_selected_worker_with_attributes(
 /// result must remain valid until its joining caller consumes it.
 #[inline(always)]
 unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
+    if current_is_selected_initial_thread() {
+        // SAFETY: this is the static bootstrapped task's process-lifetime TSD
+        // table. Destructors run before the musl-shaped list/last-thread
+        // decision, so they may still use selected lifecycle operations.
+        unsafe { pthread_tsd::run_selected_main_tsd_destructors() };
+        if !selected_initial_thread_has_live_worker_after_exit() {
+            // SAFETY: no selected worker remains after the locked observation,
+            // so pthread_exit on the initial task is ordinary process exit.
+            unsafe { super::static_startup::exit(0) }
+        }
+        // SAFETY: another selected worker remains. End only this initial task;
+        // the final worker takes the ordinary process-exit path above.
+        unsafe { exit_selected_linux_task() }
+    }
     if let Some(control) = current_selected_worker_control() {
         // SAFETY: the matched current selected worker remains live until this
         // path invokes SYS_exit. Preserve musl's cleanup-before-TSD-before-
@@ -1369,6 +1527,12 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             }
             pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
             publish_selected_worker_result(control, result);
+        }
+        if selected_worker_is_last_live_runtime_task(control) {
+            // SAFETY: after result/TSD publication, this final selected worker
+            // owns the ordinary process-exit transition for an initial task
+            // that previously left through pthread_exit.
+            unsafe { super::static_startup::exit(0) }
         }
     }
     // SAFETY: Linux SYS_exit terminates precisely the calling task and does

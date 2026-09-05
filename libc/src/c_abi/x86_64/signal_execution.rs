@@ -87,8 +87,13 @@ const _: () = {
     assert!(core::mem::offset_of!(QueuedSigInfo, value) == 24);
 };
 
+/// Block musl's application-signal set for one private runtime transaction.
+///
+/// This is shared only by selected lifecycle owners which pair it with
+/// [`restore_application_signals`] on every parent/child/error path. It is not
+/// a public signal-mask API or cancellation policy.
 #[inline(always)]
-unsafe fn block_application_signals(saved_mask: *mut u64) {
+pub(super) unsafe fn block_application_signals(saved_mask: *mut u64) {
     let application_mask = APPLICATION_SIGNAL_MASK;
     // SAFETY: both local pointers cover precisely the one x86 kernel signal
     // word. Match musl `__block_app_sigs`: errors are intentionally ignored
@@ -104,8 +109,9 @@ unsafe fn block_application_signals(saved_mask: *mut u64) {
     };
 }
 
+/// Restore the saved kernel mask from [`block_application_signals`].
 #[inline(always)]
-unsafe fn restore_signals(saved_mask: *const u64) {
+pub(super) unsafe fn restore_application_signals(saved_mask: *const u64) {
     // SAFETY: `saved_mask` is the one kernel word returned by the paired
     // block transition. Match musl `__restore_sigs` and deliberately ignore
     // a kernel failure for this valid local restoration request.
@@ -183,7 +189,7 @@ pub extern "C" fn raise(signal: c_int) -> c_int {
     };
     // SAFETY: restore the exact pre-transaction kernel mask before publishing
     // the delivery syscall result, matching musl's ordering.
-    unsafe { restore_signals(&saved_mask) };
+    unsafe { restore_application_signals(&saved_mask) };
     c_status(result)
 }
 
@@ -222,7 +228,7 @@ pub extern "C" fn sigqueue(process_id: c_int, signal: c_int, value: SigValue) ->
     };
     // SAFETY: restore the exact pre-transaction kernel mask before publishing
     // the queue result, matching musl's ordering.
-    unsafe { restore_signals(&saved_mask) };
+    unsafe { restore_application_signals(&saved_mask) };
     c_status(result)
 }
 

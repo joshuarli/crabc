@@ -1,14 +1,12 @@
 //! Private static Linux/x86-64 `pthread_atfork` and `fork` composition.
 //!
-//! This leaf admits one deliberately narrow process transition: a
-//! single-threaded Static Initial TLS v1 caller may register up to 32 ordinary
-//! `pthread_atfork` triples, then call `fork`.  Prepare hooks run in reverse
-//! registration order while the fixed registry lock is held; parent and child
-//! hooks run in registration order and release that lock after the raw Linux
-//! fork result. A failed fork follows musl's parent path, so it still runs the
-//! parent hooks before publishing the raw Linux error through the selected
-//! initial-TLS `errno` slot. The child may then use the already-selected,
-//! bounded ordinary-exit callback block; this leaf does not widen that block.
+//! This leaf admits one bounded static process transition: the bootstrapped
+//! task or one selected Static Initial TLS v1 worker may register up to 32
+//! ordinary `pthread_atfork` triples, then call `fork`. Prepare hooks run in
+//! reverse registration order before the internal signal/list transaction;
+//! parent and child hooks run forward after that transaction has restored a
+//! callable state. A failed fork follows musl's parent path, so it still runs
+//! parent hooks before publishing the raw Linux error through selected TLS.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
@@ -19,19 +17,14 @@
 //!   handler transition, including the parent-handler route on raw failure.
 //!
 //! Musl grows an allocated handler list and coordinates all of its complete
-//! pthread runtime around fork. This static archive deliberately owns neither
-//! facility. Its 32-record no-allocation registry reports `ENOMEM` once full.
-//! `fork` fails closed with `EAGAIN` before it runs any hook if the selected
-//! worker registry is nonempty; the caller must additionally ensure that no
-//! foreign thread or concurrent runtime state exists. No callback may recurse
-//! into `fork`, `pthread_atfork`, `exit`, `atexit`, or `__funcs_on_exit`, and
-//! callbacks must return normally without relying on signals, allocator, TSD,
-//! cancellation, mutex/condition, once, dynamic-TLS, loader, CRT, or process-
-//! exit state. In particular, callbacks must not create, join, or detach a
-//! selected worker after `fork` has completed its worker-free admission check.
-//! Concurrent selected-worker lifecycle calls are likewise caller-excluded.
-//! This is a private static artifact, not a general fork, atfork, process-exit,
-//! or pthread runtime.
+//! pthread runtime around fork. This static archive deliberately retains only
+//! its no-allocation 32-record callback table, application-signal block/restore
+//! pair, and selected worker-list/TSD/TLS child reset. It reports `ENOMEM` once
+//! the callback table is full. Foreign threads, dynamic/loader TLS, AIO,
+//! allocator state, and arbitrary application locks remain excluded. No user
+//! callback may recurse into `fork`, `pthread_atfork`, `exit`, `atexit`, or
+//! `__funcs_on_exit`; callbacks must return normally. This is a static runtime
+//! composition boundary, not general pthread or dynamic fork completion.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("x86 pthread-atfork leaf requires little-endian Linux/x86-64");
@@ -39,7 +32,10 @@ compile_error!("x86 pthread-atfork leaf requires little-endian Linux/x86-64");
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use super::c_status;
+use super::{
+    c_status, immediate_termination, pthread_create_join, pthread_identity, pthread_tsd,
+    signal_execution, static_tls,
+};
 
 const ATFORK_CAPACITY: usize = 32;
 const ENOMEM: c_int = 12;
@@ -225,26 +221,58 @@ pub unsafe extern "C" fn pthread_atfork(
     0
 }
 
-/// Fork the selected single-threaded static process through Linux `fork=57`.
+/// Fork one selected static task through Linux `fork=57`.
 ///
-/// A live selected pthread/C11 worker is rejected before prepare callbacks
-/// run, preventing this leaf from copying its private worker state into a
-/// child. The caller must still ensure that no foreign thread or unselected
-/// concurrent runtime state exists. Registered callbacks execute with the
-/// fixed registry lock held: prepare callbacks run newest first, then the
-/// resulting parent or child callbacks run oldest first. A raw Linux error
-/// runs parent callbacks before this wrapper writes the selected initial-TLS
-/// `errno` and returns `-1`. Concurrent selected-worker creation, join, and
-/// detach are outside this check; the single-threaded caller must exclude them.
+/// Registered user callbacks run newest-first before internal locks. The
+/// paired internal transaction then blocks application signals, holds the
+/// selected worker list across the raw fork, and in a child transfers the
+/// calling worker's TSD/TLS identity into child-main state before dropping all
+/// inherited worker handles. The parent retains its untouched list. A raw
+/// Linux error follows the same parent completion path before this wrapper
+/// writes selected `errno` and returns `-1`.
+///
+/// This static-only slice admits the bootstrapped initial task or one selected
+/// worker. Foreign threads, dynamic/loader TLS, AIO, allocator, and the
+/// owned stdio/timezone/process-lock transitions remain separately composed;
+/// no public claim is made for those owners until their exact fork triplets
+/// are present in this transaction.
 #[no_mangle]
 pub unsafe extern "C" fn fork() -> c_int {
-    if super::pthread_create_join::has_live_selected_workers() {
+    let thread_pointer = pthread_identity::current_thread_pointer();
+    if !static_tls::is_initial_thread_pointer(thread_pointer)
+        && !pthread_create_join::is_current_selected_worker()
+    {
         return c_status(-EAGAIN);
     }
     unsafe { __fork_handler(-1) };
+    let mut saved_signal_mask = 0_u64;
+    // SAFETY: this private fork transaction restores the exact one-word mask
+    // on every parent, child, and raw-error completion path below.
+    unsafe { signal_execution::block_application_signals(&mut saved_signal_mask) };
+    pthread_create_join::pthread_fork_prepare();
     // SAFETY: this private leaf owns the fixed zero-argument Linux x86-64
-    // `fork=57` transition and its no-live-worker admission requirement.
+    // `fork=57` transition while the selected worker list cannot mutate.
     let result = unsafe { raw_selected_fork() };
+    if result == 0 {
+        // SAFETY: the copied list lock retains the inherited caller control
+        // while this first child-only TSD transfer runs. It also clears the
+        // copied TSD lock, whose parent owner cannot exist in this child.
+        if !unsafe { pthread_tsd::adopt_current_values_after_fork() }
+            || !static_tls::adopt_current_thread_after_fork()
+        {
+            immediate_termination::_Exit(127)
+        }
+        // SAFETY: the child now has its caller's main TSD/TLS identity. Drop
+        // inherited worker handles and the copied list lock before callbacks.
+        unsafe { pthread_create_join::pthread_fork_child() };
+    } else {
+        // SAFETY: this completes the parent side of the exact list-lock pair
+        // on both a successful parent return and a raw fork failure.
+        unsafe { pthread_create_join::pthread_fork_parent() };
+    }
+    // SAFETY: this restores the caller's saved application mask after all
+    // child or parent internal state has reached a callable form.
+    unsafe { signal_execution::restore_application_signals(&saved_signal_mask) };
     unsafe { __fork_handler(if result == 0 { 1 } else { 0 }) };
     c_status(result)
 }

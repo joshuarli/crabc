@@ -64,6 +64,7 @@ static _Alignas(4096) unsigned char crabc_caller_stack[CRABC_PRIVATE_STACK_SIZE]
 static pthread_key_t crabc_teardown_key;
 static volatile int crabc_atfork_count;
 static volatile int crabc_atfork_order[2];
+static int crabc_main_exit_pipe = -1;
 
 static void spin_pause(void)
 {
@@ -431,6 +432,97 @@ static int run_detached_attr_and_c11_reaper(void)
     return 0;
 }
 
+static void main_pthread_exit_atexit(void)
+{
+    static const unsigned char marker = 'E';
+
+    if (crabc_main_exit_pipe < 0 ||
+        write(crabc_main_exit_pipe, &marker, sizeof(marker)) != sizeof(marker))
+        _Exit(97);
+}
+
+/*
+ * pthread_exit on the bootstrapped thread must use ordinary exit when it is
+ * already the last task: its registered atexit callback runs before
+ * exit_group. A raw SYS_exit would close this pipe without the marker.
+ */
+static int run_main_thread_pthread_exit(void)
+{
+    int pipefd[2];
+    pid_t child;
+    int status;
+    unsigned char marker = 0;
+
+    if (pipe(pipefd) != 0)
+        return 1;
+    child = fork();
+    if (child == 0) {
+        (void)close(pipefd[0]);
+        crabc_main_exit_pipe = pipefd[1];
+        if (atexit(main_pthread_exit_atexit) != 0)
+            _Exit(96);
+        pthread_exit(0);
+        _Exit(95);
+    }
+    (void)close(pipefd[1]);
+    if (child < 0 || read(pipefd[0], &marker, sizeof(marker)) != sizeof(marker) ||
+        marker != 'E' || close(pipefd[0]) != 0 || waitpid(child, &status, 0) != child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        return 2;
+    return 0;
+}
+
+struct live_fork_round {
+    volatile int ready;
+    volatile int release;
+};
+
+static void *live_fork_worker(void *opaque)
+{
+    struct live_fork_round *round = opaque;
+
+    __atomic_store_n(&round->ready, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&round->release, __ATOMIC_ACQUIRE) == 0)
+        spin_pause();
+    return 0;
+}
+
+/*
+ * A selected worker remains live across this main-thread fork. The child must
+ * drop inherited worker handles, refresh the copied static TLS main identity,
+ * and still admit selected main TSD key operations under its new Linux TID.
+ */
+static int run_fork_with_live_selected_worker(void)
+{
+    pthread_attr_t attributes;
+    struct live_fork_round round = { .ready = 0, .release = 0 };
+    pthread_t worker;
+    pid_t child;
+    int status;
+
+    if (pthread_attr_init(&attributes) != 0 ||
+        pthread_attr_setstacksize(&attributes, 8 * PTHREAD_STACK_MIN) != 0 ||
+        pthread_create(&worker, &attributes, live_fork_worker, &round) != 0 ||
+        wait_for_nonzero(&round.ready) != 0)
+        return 1;
+    child = fork();
+    if (child == 0) {
+        pthread_key_t key;
+
+        if (pthread_key_create(&key, 0) != 0 ||
+            pthread_setspecific(key, &round) != 0 ||
+            pthread_getspecific(key) != &round || pthread_key_delete(key) != 0)
+            _Exit(94);
+        _Exit(0);
+    }
+    __atomic_store_n(&round.release, 1, __ATOMIC_RELEASE);
+    if (child < 0 || pthread_join(worker, 0) != 0 ||
+        pthread_attr_destroy(&attributes) != 0 || waitpid(child, &status, 0) != child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        return 2;
+    return 0;
+}
+
 static int run_atfork_after_worker_teardown(void)
 {
     pid_t child;
@@ -461,6 +553,8 @@ int main(void)
     const int detached_handoff = run_parallel_detached_creator_handoff();
     const int attrs = run_attr_and_cancellation();
     const int detached = run_detached_attr_and_c11_reaper();
+    const int main_exit = run_main_thread_pthread_exit();
+    const int live_fork = run_fork_with_live_selected_worker();
     const int atfork = run_atfork_after_worker_teardown();
 
     if (capacity != 0)
@@ -471,7 +565,11 @@ int main(void)
         return 20 + attrs;
     if (detached != 0)
         return 30 + detached;
+    if (main_exit != 0)
+        return 40 + main_exit;
+    if (live_fork != 0)
+        return 50 + live_fork;
     if (atfork != 0)
-        return 40 + atfork;
+        return 60 + atfork;
     return 0;
 }

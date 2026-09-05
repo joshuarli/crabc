@@ -406,6 +406,57 @@ pub(super) unsafe fn run_selected_worker_tsd_destructors(values: *const Selected
         .store(TSD_TEAR_DOWN_COMPLETE, Ordering::Release);
 }
 
+/// Run the bootstrapped initial thread's selected TSD destructor phase.
+///
+/// `pthread_exit` uses this before it either performs ordinary last-thread
+/// process exit or leaves a remaining selected worker to become that last
+/// thread. The static main table is process-lifetime storage, so unlike a
+/// worker control mapping it needs no join/reaper lifetime proof.
+pub(super) unsafe fn run_selected_main_tsd_destructors() {
+    // SAFETY: the process-main table is the one static selected-main value
+    // table and this wrapper exposes it only to the selected main exit path.
+    unsafe { run_selected_worker_tsd_destructors(core::ptr::addr_of!(MAIN_SELECTED_TSD_VALUES)) }
+}
+
+/// Preserve the calling selected thread's TSD values in a post-fork child.
+///
+/// Before the static TLS owner adopts the child caller as its new main task,
+/// the inherited pointer either names the existing main table or one linked
+/// worker control. Copy the latter into the child main table, then clear the
+/// copied metadata lock: every non-caller thread vanished at fork, so no
+/// parent lock owner can exist in the child. Key allocation metadata remains
+/// process-copied exactly as it was at the fork boundary.
+pub(super) unsafe fn adopt_current_values_after_fork() -> bool {
+    let thread_pointer = pthread_identity::current_thread_pointer();
+    if static_tls::is_inherited_initial_thread_pointer(thread_pointer) {
+        SELECTED_TSD_LOCK.store(0, Ordering::Release);
+        return true;
+    }
+    let Some(source) = pthread_create_join::current_selected_worker_tsd_values_after_fork(
+        thread_pointer,
+    ) else {
+        return false;
+    };
+    // SAFETY: the fork coordinator still holds the copied worker-list lock,
+    // so the source control remains mapped. The child has one task, making
+    // these atomic snapshots the complete caller-owned TSD state to retain.
+    let source = unsafe { &*source };
+    for index in 0..PTHREAD_KEYS_MAX {
+        MAIN_SELECTED_TSD_VALUES.values[index].store(
+            source.values[index].load(Ordering::Acquire),
+            Ordering::Relaxed,
+        );
+    }
+    MAIN_SELECTED_TSD_VALUES
+        .used
+        .store(source.used.load(Ordering::Acquire), Ordering::Relaxed);
+    MAIN_SELECTED_TSD_VALUES
+        .teardown
+        .store(source.teardown.load(Ordering::Acquire), Ordering::Relaxed);
+    SELECTED_TSD_LOCK.store(0, Ordering::Release);
+    true
+}
+
 /// Create one selected C11 TSS key.
 ///
 /// C11 collapses every pthread-style failure to `thrd_error`.
