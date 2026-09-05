@@ -171,10 +171,13 @@ handoffs, typed C11 results, cleanup/TSD teardown at both explicit and blocked
 private-condition deferred cancellation points, and atfork order after worker
 teardown. The condition regression proves the cancellation path repairs its
 waiter and relocks the mutex before cleanup unlocks it. Controls remain owned
-until both creator handoff and kernel clear-child-TID complete. This does not
-qualify explicit scheduling, asynchronous or arbitrary-syscall cancellation,
-robust mutexes, general fork recovery, or dynamic TLS lifetime; those remain
-lifecycle-owner work.
+until both creator handoff and kernel clear-child-TID complete. The same
+consumer proves normal robust-mutex owner death, `EOWNERDEAD` recovery with
+`pthread_mutex_consistent`, `ENOTRECOVERABLE` after an unrecovered unlock, and
+process-shared owner death across `fork`. This does not qualify explicit
+scheduling, asynchronous or arbitrary-syscall cancellation, recursive/error-
+checking/PI robust mutexes, general fork recovery, or dynamic TLS lifetime;
+those remain lifecycle-owner work.
 
 Each POSIX job includes `owned_temp_objects_probe.c`, separately linked through
 the installed driver. The five `mkstemp`/`mkostemp`/`mkstemps`/`mkostemps`/

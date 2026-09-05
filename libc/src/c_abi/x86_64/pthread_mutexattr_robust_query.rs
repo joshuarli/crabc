@@ -13,10 +13,11 @@
 //! state-machine, synchronization, cancellation, or thread lifecycle
 //! behavior. In particular, it does not select `pthread_mutexattr_setrobust`:
 //! musl's setter probes and caches kernel robust-list support, which is outside
-//! this direct record-query boundary. The adjacent selected normal-mutex
-//! artifact continues to reject every non-null attribute rather than consume a
-//! record queried here. A raw robust bit is not robust-mutex operation, general
-//! pthread support, or public x86 support.
+//! this direct record-query boundary. The adjacent selected robust-mutex
+//! artifact separately performs that capability probe and consumes its
+//! admitted normal/robust attribute records; this query does not do so. A raw
+//! robust bit is not robust-mutex operation, general pthread support, or
+//! public x86 support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread mutex-attribute robust-query leaf requires little-endian Linux/x86-64");

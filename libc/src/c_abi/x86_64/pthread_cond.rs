@@ -661,8 +661,11 @@ pub unsafe extern "C" fn pthread_cond_destroy(condition: *mut c_void) -> c_int {
 ///
 /// `condition` and `mutex` must designate live aligned selected public x86
 /// objects. The caller owns object lifetimes, predicate discipline, signal and
-/// cancellation policy, and quiescent destruction. This direct static leaf is
-/// not a cancellation point and does not accept non-normal mutex state.
+/// cancellation policy, and quiescent destruction. This shared private body
+/// does not itself make C11 waits or arbitrary callers cancellable; the public
+/// pthread wrapper selects its one deferred-cancellation route only for a
+/// validated selected pthread worker. It does not accept non-normal mutex
+/// state.
 #[inline(always)]
 pub(super) unsafe fn wait_selected_private_cond(
     condition: *mut c_void,
@@ -768,9 +771,10 @@ pub(super) unsafe fn wait_selected_private_cond(
     };
 
     if old_state == WAITER_WAITING {
-        // This path is retained from musl's lifetime protocol even though the
-        // selected untimed/no-cancellation boundary normally reaches it only
-        // through an exceptional caller/runtime event.
+        // A selected deferred cancellation wake can reach this still-WAITING
+        // branch before a signal consumes the barrier. Retain musl's list
+        // removal protocol so that cancellation first withdraws the waiter,
+        // then relocks the mutex before its cleanup chain runs.
         // SAFETY: serialize removal with a signaler that might have observed
         // this node entering LEAVING.
         unsafe { private_lock(condition_lock) };
@@ -870,8 +874,11 @@ pub(super) unsafe fn wait_selected_private_cond(
 ///
 /// `condition` and `mutex` must designate live aligned selected public x86
 /// objects. The caller owns their lifetimes, predicate discipline, signal and
-/// cancellation policy, and quiescent destruction. This direct static leaf is
-/// not a cancellation point and does not accept non-normal mutex state.
+/// cancellation policy, and quiescent destruction. For a validated selected
+/// pthread worker, this is the one admitted deferred cancellation point: it
+/// removes or consumes the waiter, relocks the normal mutex, then transfers
+/// to the selected cleanup/TSD exit path. C11 and foreign callers retain the
+/// non-cancellation private route. It does not accept non-normal mutex state.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_wait(
     condition: *mut c_void,

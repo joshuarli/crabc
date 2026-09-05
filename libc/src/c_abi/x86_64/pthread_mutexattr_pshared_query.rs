@@ -13,11 +13,12 @@
 //! state-machine, synchronization, cancellation, or thread lifecycle
 //! behavior. In particular, it does not select `pthread_mutexattr_setpshared`:
 //! the getter is evidence for a caller-owned record word only, not a record
-//! construction or validation contract. The adjacent selected normal-mutex
-//! artifact continues to reject every non-null attribute rather than consume a
-//! record queried here. A raw process-sharing bit is not process-shared mutex
-//! operation, a cross-process capability claim, general pthread support, or
-//! public x86 support.
+//! construction or validation contract. The adjacent selected robust-mutex
+//! artifact separately consumes its explicitly admitted normal/robust
+//! attribute records; this query does not widen that state-machine boundary.
+//! A raw process-sharing bit is not process-shared mutex operation, a
+//! cross-process capability claim, general pthread support, or public x86
+//! support.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread mutex-attribute pshared-query leaf requires little-endian Linux/x86-64");
