@@ -56,9 +56,9 @@
 //! coordination, thread lists, fork/atfork, scheduler application, GNU default
 //! attributes, affinity attributes, live-thread inspection, or general pthread
 //! semantics. It leaves caller `errno` untouched because pthread APIs
-//! report errors as positive return values. At most 64 selected workers may be
-//! live concurrently; exhausting this artifact-local admission registry
-//! returns `EAGAIN` rather than constructing broader lifecycle state.
+//! report errors as positive return values. Each selected worker carries its
+//! own private mapped list node; creation is limited by actual mapping/TLS
+//! allocation, not an artifact-local numeric registry ceiling.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread create/join leaf requires little-endian Linux/x86-64");
@@ -323,6 +323,13 @@ struct ThreadControl {
     // the record visible with this release flag before clone. The child first
     // acquires it, rather than treating clone as a Rust memory-ordering edge.
     start_ready: AtomicU8,
+    // A linked detached record begins with a zero child-TID before clone has
+    // installed the kernel clear-child-tid ownership. It therefore remains
+    // reaper-ineligible until the parent has completed the clone result and
+    // published the opaque handle to its caller. This closes both the
+    // pre-clone `Detached + child_tid == 0` ambiguity and a fast child's exit
+    // before the creating caller receives its handle.
+    creator_handoff_pending: AtomicU8,
     // A joiner or detacher makes the sole state transition out of Joinable
     // while the registry lock still proves this control mapping is live.
     // Detached workers retain their live registry entry until a later
@@ -699,7 +706,10 @@ fn claim_finished_detached_selected_worker() -> Option<*mut ThreadControl> {
             (*control).lifecycle.load(Ordering::Acquire)
                 == SelectedWorkerLifecycleState::Detached.encode()
         };
-        if detached && unsafe { (*control).child_tid.load(Ordering::Acquire) } == 0 {
+        if detached
+            && unsafe { (*control).creator_handoff_pending.load(Ordering::Acquire) } == 0
+            && unsafe { (*control).child_tid.load(Ordering::Acquire) } == 0
+        {
             let claimed_reclamation = unsafe {
                 (*control).lifecycle.compare_exchange(
                     SelectedWorkerLifecycleState::Detached.encode(),
@@ -712,7 +722,8 @@ fn claim_finished_detached_selected_worker() -> Option<*mut ThreadControl> {
                 // `CLONE_CHILD_CLEARTID` cannot restore a nonzero TID. Keep a
                 // second observation adjacent to withdrawal so a future clone
                 // change cannot free a stack still used by its child.
-                if unsafe { (*control).child_tid.load(Ordering::Acquire) } == 0
+                if unsafe { (*control).creator_handoff_pending.load(Ordering::Acquire) } == 0
+                    && unsafe { (*control).child_tid.load(Ordering::Acquire) } == 0
                     && release_selected_worker_locked(control)
                 {
                     unsafe { (*control).registry_retired.store(1, Ordering::Release) };
@@ -1226,6 +1237,7 @@ unsafe fn create_selected_worker_with_attributes(
             ThreadControl {
                 child_tid: AtomicI32::new(0),
                 start_ready: AtomicU8::new(0),
+                creator_handoff_pending: AtomicU8::new(1),
                 lifecycle: AtomicU8::new(
                     if attributes.detached {
                         SelectedWorkerLifecycleState::Detached
@@ -1299,7 +1311,15 @@ unsafe fn create_selected_worker_with_attributes(
     // musl this TP is the opaque pthread_t returned by pthread_self, and the
     // C header's pthread_equal macro therefore requires it to be the same
     // creator-visible handle rather than this private control-record address.
+    // Write it before opening detached reaping: a fast child may already have
+    // reached the kernel clear-child-tid edge, but no concurrent reaper may
+    // withdraw its list node until this complete creator handoff is visible.
     unsafe { core::ptr::write(thread, tls_block.thread_pointer().cast()) };
+    unsafe {
+        (*control)
+            .creator_handoff_pending
+            .store(0, Ordering::Release)
+    };
     0
 }
 

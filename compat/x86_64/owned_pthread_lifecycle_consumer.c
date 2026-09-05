@@ -36,6 +36,8 @@ enum {
     CRABC_PRIVATE_STACK_SIZE = 64 * 1024,
     CRABC_DETACHED_ROUNDS = 65,
     CRABC_CONCURRENT_WORKERS = 96,
+    CRABC_PARALLEL_DETACHED_CREATORS = 8,
+    CRABC_PARALLEL_DETACHED_ROUNDS = 48,
     CRABC_CANCELED_SENTINEL = 0x56a71c2d,
 };
 
@@ -74,6 +76,18 @@ static int wait_for_nonzero(const volatile int *value)
 
     for (spin = 0; spin != CRABC_WAIT_LIMIT; ++spin) {
         if (__atomic_load_n(value, __ATOMIC_ACQUIRE) != 0)
+            return 0;
+        spin_pause();
+    }
+    return -1;
+}
+
+static int wait_for_at_least(const volatile int *value, int expected)
+{
+    unsigned int spin;
+
+    for (spin = 0; spin != CRABC_WAIT_LIMIT; ++spin) {
+        if (__atomic_load_n(value, __ATOMIC_ACQUIRE) >= expected)
             return 0;
         spin_pause();
     }
@@ -218,6 +232,106 @@ static int run_concurrent_lifecycle_capacity(void)
     return pthread_attr_destroy(&attributes) == 0 ? 0 : 5;
 }
 
+struct parallel_detached_creators {
+    const pthread_attr_t *detached_attributes;
+    volatile int ready;
+    volatile int release;
+    volatile int failure;
+};
+
+static void *fast_detached_worker(void *opaque)
+{
+    (void)opaque;
+    return 0;
+}
+
+static void *parallel_detached_creator(void *opaque)
+{
+    struct parallel_detached_creators *round = opaque;
+    unsigned int index;
+
+    __atomic_fetch_add(&round->ready, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&round->release, __ATOMIC_ACQUIRE) == 0)
+        spin_pause();
+    for (index = 0; index != CRABC_PARALLEL_DETACHED_ROUNDS; ++index) {
+        pthread_t child;
+
+        if (pthread_create(&child, round->detached_attributes,
+                fast_detached_worker, 0) != 0) {
+            __atomic_store_n(&round->failure, 1, __ATOMIC_RELEASE);
+            return 0;
+        }
+    }
+    return 0;
+}
+
+/*
+ * Drive a detached reaper concurrently with creators. In particular, a fast
+ * detached child may reach clear-child-tid before its creating parent has
+ * returned from pthread_create, while a different creator begins the next
+ * reaper pass. The ownership boundary must not treat a merely linked
+ * pre-clone/incomplete-handoff control (whose child-TID is still zero) as an
+ * exited child and unmap it.
+ */
+static int run_parallel_detached_creator_handoff(void)
+{
+    pthread_attr_t detached_attributes;
+    pthread_attr_t creator_attributes;
+    pthread_t creators[CRABC_PARALLEL_DETACHED_CREATORS];
+    struct parallel_detached_creators round = {
+        .detached_attributes = &detached_attributes,
+        .ready = 0,
+        .release = 0,
+        .failure = 0,
+    };
+    pthread_t final_reaper;
+    unsigned int index;
+
+    if (pthread_attr_init(&detached_attributes) != 0 ||
+        pthread_attr_setdetachstate(&detached_attributes,
+            PTHREAD_CREATE_DETACHED) != 0 ||
+        pthread_attr_setstacksize(&detached_attributes,
+            8 * PTHREAD_STACK_MIN) != 0 ||
+        pthread_attr_init(&creator_attributes) != 0 ||
+        pthread_attr_setstacksize(&creator_attributes,
+            8 * PTHREAD_STACK_MIN) != 0)
+        return 1;
+    for (index = 0; index != CRABC_PARALLEL_DETACHED_CREATORS; ++index) {
+        if (pthread_create(&creators[index], &creator_attributes,
+                parallel_detached_creator, &round) != 0) {
+            while (index != 0) {
+                --index;
+                __atomic_store_n(&round.release, 1, __ATOMIC_RELEASE);
+                (void)pthread_join(creators[index], 0);
+            }
+            (void)pthread_attr_destroy(&creator_attributes);
+            (void)pthread_attr_destroy(&detached_attributes);
+            return 2;
+        }
+    }
+    if (wait_for_at_least(&round.ready, CRABC_PARALLEL_DETACHED_CREATORS) != 0) {
+        __atomic_store_n(&round.release, 1, __ATOMIC_RELEASE);
+        for (index = 0; index != CRABC_PARALLEL_DETACHED_CREATORS; ++index)
+            (void)pthread_join(creators[index], 0);
+        (void)pthread_attr_destroy(&creator_attributes);
+        (void)pthread_attr_destroy(&detached_attributes);
+        return 3;
+    }
+    __atomic_store_n(&round.release, 1, __ATOMIC_RELEASE);
+    for (index = 0; index != CRABC_PARALLEL_DETACHED_CREATORS; ++index) {
+        if (pthread_join(creators[index], 0) != 0)
+            return 4;
+    }
+    if (__atomic_load_n(&round.failure, __ATOMIC_ACQUIRE) != 0 ||
+        pthread_create(&final_reaper, 0, fast_detached_worker, 0) != 0 ||
+        pthread_join(final_reaper, 0) != 0)
+        return 5;
+    if (pthread_attr_destroy(&creator_attributes) != 0 ||
+        pthread_attr_destroy(&detached_attributes) != 0)
+        return 6;
+    return 0;
+}
+
 static int c11_worker(void *opaque)
 {
     const int value = *(const int *)opaque;
@@ -341,17 +455,20 @@ static int run_atfork_after_worker_teardown(void)
 int main(void)
 {
     const int capacity = run_concurrent_lifecycle_capacity();
+    const int detached_handoff = run_parallel_detached_creator_handoff();
     const int attrs = run_attr_and_cancellation();
     const int detached = run_detached_attr_and_c11_reaper();
     const int atfork = run_atfork_after_worker_teardown();
 
     if (capacity != 0)
         return 5 + capacity;
+    if (detached_handoff != 0)
+        return 10 + detached_handoff;
     if (attrs != 0)
-        return 10 + attrs;
+        return 20 + attrs;
     if (detached != 0)
-        return 20 + detached;
+        return 30 + detached;
     if (atfork != 0)
-        return 30 + atfork;
+        return 40 + atfork;
     return 0;
 }
