@@ -137,9 +137,11 @@ const _: () = {
 /// this selected signal-free seam lets another worker change the target's
 /// futex barrier directly. Keeping just this selected waiter in the already
 /// live worker control mapping gives that request a stable lifetime through
-/// the list-removal and join/detach handoff. A worker can be blocked in at
-/// most one condition wait, and C11 workers deliberately keep the normal
-/// stack waiter because they have no pthread cancellation state.
+/// the list-removal and join/detach handoff. Its withdrawal is serialized with
+/// the cancellation lookup/lease handoff and drains earlier wakes before the
+/// same storage can be initialized for another wait. A worker can be blocked
+/// in at most one condition wait, and C11 workers deliberately keep the
+/// normal stack waiter because they have no pthread cancellation state.
 pub(super) struct SelectedPthreadConditionWaiter {
     waiter: UnsafeCell<Waiter>,
 }
@@ -751,7 +753,7 @@ pub(super) unsafe fn wait_selected_private_cond(
     // SAFETY: the stack waiter and its barrier remain live through this loop.
     unsafe { wait_private_while(waiter_barrier_word(node), PRIVATE_CONTENDED) };
     if saved_cancellation.is_some() {
-        pthread_cancel::deactivate_current_selected_pthread_condition_waiter(
+        pthread_create_join::withdraw_current_selected_pthread_condition_waiter(
             unsafe { waiter_barrier_word(node) },
         );
     }

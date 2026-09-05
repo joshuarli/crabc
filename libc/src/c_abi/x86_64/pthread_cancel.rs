@@ -22,9 +22,11 @@
 //! paired selected private `pthread_cond_wait` point. The latter uses the
 //! worker control mapping's durable waiter barrier: a request changes that
 //! barrier before waking it, so no wake can be lost between publication and
-//! futex sleep. The condition leaf repairs its waiter list, relocks the
-//! mutex, and only then asks this leaf to deliver cancellation and drain the
-//! user cleanup chain. It installs no cancellation signal handler and does
+//! futex sleep. Withdrawal takes the same registry lock as cancellation's
+//! lookup-and-lease handoff and drains every older wake before that mapping is
+//! reset for another wait. The condition leaf repairs its waiter list, relocks
+//! the mutex, and only then asks this leaf to deliver cancellation and drain
+//! the user cleanup chain. It installs no cancellation signal handler and does
 //! not interrupt arbitrary blocking syscalls. A request for asynchronous
 //! cancellation fails with `ENOTSUP` without changing state. C11 workers,
 //! foreign threads, stale handles, and unsupported state records fail closed.
@@ -84,7 +86,9 @@ pub(super) struct SelectedWorkerCancellation {
     // mapping, rather than automatic storage, only while it is an implicit
     // cancellation point. Its barrier stays mapped through join/detach
     // reclamation, so a canceller that validated this control under the
-    // registry lock can change the barrier without a stack-lifetime race.
+    // registry lock can change the barrier without a stack-lifetime race. The
+    // matching withdrawal closes further leases under that same lock and
+    // drains all earlier leases before this storage is reused.
     active_condition_barrier: AtomicUsize,
 }
 
@@ -190,21 +194,21 @@ pub(super) fn activate_current_selected_pthread_condition_waiter(barrier: *mut c
     }
 }
 
-/// Stop exposing the current selected condition waiter's barrier.
+/// Withdraw one selected condition waiter's barrier under the worker-registry
+/// lock.
 ///
-/// A concurrent canceller may have loaded the old pointer before this swap,
-/// but it still names the worker control mapping and is harmless after the
-/// condition leaf owns the completed list/barrier transition.
-pub(super) fn deactivate_current_selected_pthread_condition_waiter(barrier: *mut c_int) {
-    let Some(slot) = current_pthread_slot() else {
-        return;
-    };
-    let _ = slot.active_condition_barrier.compare_exchange(
-        barrier as usize,
-        0,
-        Ordering::AcqRel,
-        Ordering::Acquire,
-    );
+/// The create/join owner serializes this compare-exchange with target lookup,
+/// barrier load, and lease increment in `pthread_cancel`. It then drains every
+/// pre-withdrawal lease before the worker can reuse this control-mapped waiter
+/// for another condition wait.
+pub(super) fn withdraw_selected_pthread_condition_waiter(
+    state: &SelectedWorkerCancellation,
+    barrier: *mut c_int,
+) -> bool {
+    state
+        .active_condition_barrier
+        .swap(0, Ordering::AcqRel)
+        == barrier as usize
 }
 
 /// Restore the cancellation state saved at a selected condition point.

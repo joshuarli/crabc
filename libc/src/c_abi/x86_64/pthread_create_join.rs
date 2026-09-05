@@ -786,9 +786,12 @@ fn selected_worker_by_thread_pointer_locked(thread_pointer: usize) -> Option<*mu
 
 /// Mark one live selected pthread worker for deferred cancellation.
 ///
-/// The registry lock covers handle validation and the pending-bit update. No
-/// signal is sent: this artifact observes a request only through the target's
-/// explicit `pthread_testcancel` call.
+/// The registry lock covers handle validation, pending-bit update, active
+/// condition-barrier lookup, and any wake-lease increment. The paired
+/// condition waiter withdraws its barrier under this same lock and drains all
+/// pre-withdrawal leases before it resets that mapped storage. No signal is
+/// sent: this artifact observes a request at explicit `pthread_testcancel` or
+/// the one selected private condition point.
 pub(super) fn request_selected_pthread_cancellation(thread: *mut c_void) -> bool {
     if thread.is_null() {
         return false;
@@ -1077,7 +1080,21 @@ fn current_selected_worker_control() -> Option<*mut ThreadControl> {
         return None;
     }
     lock_selected_worker_registry();
-    let current = selected_worker_by_thread_pointer_locked(thread_pointer).filter(|control| {
+    let current = current_selected_worker_control_locked(thread_pointer, thread_id);
+    unlock_selected_worker_registry();
+    current
+}
+
+/// Resolve one current selected control while the caller owns the registry.
+///
+/// Keeping the `%fs:0`/Linux-TID/positive-child-TID proof in this helper lets
+/// a condition waiter withdraw its published barrier in the same critical
+/// section as a canceller's target lookup and wake-lease increment.
+fn current_selected_worker_control_locked(
+    thread_pointer: usize,
+    thread_id: c_int,
+) -> Option<*mut ThreadControl> {
+    selected_worker_by_thread_pointer_locked(thread_pointer).filter(|control| {
         // SAFETY: lock-protected membership makes this identity observation
         // valid; the positive child-TID retains the current mapping after the
         // lock is released.
@@ -1085,9 +1102,7 @@ fn current_selected_worker_control() -> Option<*mut ThreadControl> {
             (**control).worker_tid.load(Ordering::Acquire) == thread_id
                 && (**control).child_tid.load(Ordering::Acquire) == thread_id
         }
-    });
-    unlock_selected_worker_registry();
-    current
+    })
 }
 
 /// Whether the current task is one selected worker that may enter fork.
@@ -1122,6 +1137,55 @@ pub(super) fn current_selected_pthread_condition_waiter(
     let control = current_selected_worker_control()?;
     matches!(unsafe { (*control).start }, SelectedWorkerStart::Pthread(_))
         .then(|| unsafe { core::ptr::addr_of!((*control).condition_waiter) })
+}
+
+/// Withdraw and drain the current selected pthread condition waiter's wake
+/// leases before its control-mapped storage can be initialized for another
+/// wait.
+///
+/// `pthread_cancel` takes the same registry lock around its active-barrier
+/// load and lease increment. Once this function clears publication under that
+/// lock, no new stale-barrier lease can begin; only then is it safe to wait
+/// outside the lock for all earlier cancellers to finish their CAS/wake.
+pub(super) fn withdraw_current_selected_pthread_condition_waiter(barrier: *mut c_int) {
+    let thread_pointer = pthread_identity::current_thread_pointer() as usize;
+    let Some(thread_id) = current_linux_thread_id() else {
+        return;
+    };
+    if thread_pointer == 0 {
+        return;
+    }
+
+    lock_selected_worker_registry();
+    let control = current_selected_worker_control_locked(thread_pointer, thread_id).filter(|control| {
+        // SAFETY: the registry lock keeps this matching control mapped for
+        // its start-mode observation and atomic active-barrier withdrawal.
+        unsafe { matches!((**control).start, SelectedWorkerStart::Pthread(_)) }
+    });
+    let withdrew = control
+        .map(|control| {
+            // SAFETY: the control remains linked and mapped under the held
+            // registry lock. This is serialized with every cancellation
+            // target lookup, active-barrier load, and lease increment.
+            unsafe {
+                pthread_cancel::withdraw_selected_pthread_condition_waiter(
+                    &(*control).cancellation,
+                    barrier,
+                )
+            }
+        })
+        .unwrap_or(false);
+    unlock_selected_worker_registry();
+
+    if let Some(control) = control {
+        // SAFETY: withdrawal closed new leases before the lock release; every
+        // earlier lease retains this control mapping until its wake completes.
+        // Draining outside the registry lock lets those cancellers complete
+        // their post-lock syscall/decrement without lock inversion.
+        unsafe { wait_for_cancellation_wake_leases(control) };
+        let _ = withdrew;
+        debug_assert!(withdrew, "current selected condition waiter lost its active barrier");
+    }
 }
 
 /// Return the current selected worker's bounded TSD table.
