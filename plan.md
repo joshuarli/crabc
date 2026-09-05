@@ -1,106 +1,134 @@
 # Combined native x86-64 completion goal
 
-## Active integration — 2026-09-05
+## Paused handoff — 2026-09-05
 
-The combined goal is **not complete**. AArch64 remains paused, C mimalloc
-remains the production backend, and x86 public promotion remains false.
-Continue the current product, qualification, and allocator work; do not
-restart completed leaf implementations or treat private evidence as closure.
+The user requested winding down the current work, letting the active tasks
+finish and commit, and leaving this handoff. Resume only when asked. The
+combined goal is **not complete**: AArch64 remains paused, C mimalloc remains
+the production backend, and public x86 promotion remains false. The detailed
+acceptance criteria below and in the two execution plans remain unchanged.
 
-### Integrated runtime components
+### Integrated state
 
-- Loader: canonical-path-bound application receipts, initial/runtime musl
-  search and preloads, ORIGIN/AT_SECURE, pure TBSS, coherent all-thread DTV
-  growth, deferred GOT/PLT transactions, rollback/RELRO restoration, retained
-  close, and kernel-main `dladdr` mapping identity. Direct interpreter entry
-  preserves executable role independently of mapping ownership. Its listing
-  retains the first admission name even after a later short-name inode alias.
-  Initial dependency cycles now follow musl constructor order. Installed ELF
-  weak/protected/hidden scope and both interpreter-alias entry paths have
-  direct differential evidence.
-- Thread/process lifecycle: target mapping leases and kill locks, main/last
-  thread exit, pthread/C11 signal handles, live stack/guard/detach attributes,
-  and dynamic fork with graph/callback locking, child TID registration and
-  surviving TLS/TSD/robust/canary state. Join cancellation restores the target
-  claim before user cleanup. Main/worker condition cancellation repairs its
-  waiter list and reacquires the mutex before cleanup. Join/condition blocked
-  probes observe actual kernel futex waits through an inherited proc descriptor.
-- Syscall cancellation: descriptor/vector/positioned I/O, readiness, sockets,
-  sleep/child waits, open/record locks, memory sync, unnamed semaphores, signal
-  waits, entropy and SysV messages. Shared fixture selection now qualifies
-  static and dynamic products separately. `getentropy` preserves its source
-  suppression window; ordinary FILE backends, `pclose`, `wait3/wait4`, empty
-  `sendmmsg`, and nonblocking fcntl retain source non-CP behavior. SIGCANCEL is
-  **33**, timer signal is 32; FS+32 publication and target leases precede signal
-  delivery. `system` uses the public cancelable child wait while `pclose`
-  preserves its raw wait; contained musl/owned protocol fixtures distinguish
-  enabled, disabled and masked cancellation and verify child ownership.
-- Scalar and binary80 math completion probes, owned `pthread_sigmask`,
-  child-contained `chroot`, and positive 65-live-thread pthread/C11 registry
-  growth are integrated. The default export roster includes the three
-  previously omitted, already implemented robust-mutex exports.
-- Lua source build: static and dynamic source/bytecode graphs execute through
-  owned products. `lua-dynamic-source-build` admits versioned application DSOs,
-  validates receipt/link/ELF/runtime identity, compares pinned-musl outcomes,
-  and repeats through an extracted package. Failure and artifact-drift tests
-  prevent publishing a successful latest report.
+- Loader/runtime: musl search/preloads and ORIGIN/AT_SECURE, direct interpreter
+  entry, initial dependency cycles and constructor order, retained close,
+  deferred GOT/PLT transactions, rollback/RELRO, kernel-main `dladdr`, all-thread
+  DTV growth and runtime GD TLS, ELF visibility/scope and interpreter aliases.
+  Preserve these implementations; do not restart the historical leaf queue.
+- Pthread/process: mapping leases and target kill locks, main/last-thread exit,
+  live attributes, dynamic fork/TLS/TSD/robust state, positive 65-live-thread
+  pthread/C11 growth, and cancellation-safe join/condition ownership. Syscall
+  cancellation covers I/O, sockets/readiness, sleep/waits, open/record locks,
+  memory sync, semaphores, signal waits, entropy and SysV messages. SIGCANCEL
+  is **33**; timer signal is 32. Ordinary FILE backends, `pclose`, `wait3/wait4`,
+  empty `sendmmsg` and nonblocking fcntl retain source non-CP behavior.
+- `e3624732` fixes `system` through its source-required public child wait;
+  `pclose` keeps the raw wait. `e815c66f` adds timed/clock-selected and shared
+  condition transactions, C11 timed status, a typed mutex relock seam,
+  normal/shared mutex futex keys, and robust relock error precedence.
+  Recursive/error-checking/PI mutexes and timed locking remain implementation
+  work. The frozen archive is separate from the expanded owned runtime.
+- `44f1684b` repairs the legacy condition evidence check: follow exact owned
+  atomic helpers and raw syscall edges instead of requiring incidental
+  inlining in public symbols. It changes evidence, not runtime algorithms.
+- Resolver: `fce59ece` plus `f7015780` qualifies the same unchanged workload
+  object through installed **and extracted** static/dynamic products, with
+  local configuration files and Docker network isolation. `90bf7896` separates
+  verified native evidence from family completion; `9bed2fd3` records the
+  executed resolver command while both owning families remain planned.
+- Dynamic product qualification: `84ece346`, `836e59b9`, `9bed2fd3` and
+  `b1120fa5` wire the canonical gate to preparation, exact case receipts and
+  final validation. Both clean builds and the extracted package execute all
+  **17** catalog cases. Building remains unqualified; a fresh complete receipt
+  is `qualified-pending-review`, followed by explicit local publication.
+  Publication replaces only an atomic selection pointer; old receipts remain
+  unchanged. Stale source becomes unqualified. Oracle bytes/manifests and
+  actual artifacts are retained; evidence becomes host-readable after runtime
+  permission tests finish, without following symlink targets.
+- `dbc4bfa4` replaces claim-only qualification completion with v2 `planned`/
+  `ready` declarations and ordered `qualification-manifest --through GATE`
+  execution. All eight promotion gates are still planned; ready declarations
+  and execution markers cannot qualify the full chain. Remaining work is in
+  `compat/x86_64/qualification-prefix-execution.md`.
+- Header aggregate: final worker result and integration are being recorded
+  before this handoff is committed.
 
-### Current evidence and boundaries
-
-- The latest three-product dynamic run at the `550bb254` runtime plus the
-  `906e6d6c` harness change passes 51 loader, 22 driver and two CRT tests, then
-  the same complete then-current suite through both clean builds and the
-  extracted package. Log: `.work/x86_64/three-dynamic-products-integrated.log`;
-  product: `.work/x86_64/tmp/materialized-dynamic.uyzJLv`. This corrects the old
-  second-build comparison without execution. Subsequent join-witness,
-  condition-wait and dynamic I/O composition changes need the next combined
-  run; historical output must not be relabeled as current qualification.
-- Shared-runtime I/O cancellation at `88fcc133` passes all 40 ordinary/direct
-  PIE/non-PIE fixture runs against pinned musl. Log:
-  `.work/x86_64/dynamic-cancellation-integrated.log`; product:
-  `.work/x86_64/tmp/owned-dynamic-io-cancellation.gft0iz`. Root runner/dispatcher
-  checks pass 303 tests. Individual cancellation slices also pass the static
-  56-test/24-job installed/extracted/reproducibility gate. Successful static
-  scratch products are cleaned; retain their logs.
-- `system`/`pclose` cancellation at `e3624732` passes both static modes and
-  dynamic PIE/non-PIE through kernel and direct interpreter entry, including
-  supervisor cleanup after success, injected failure and timeout. Log:
-  `.work/x86_64/system-cancellation-integrated.log`; product:
-  `.work/x86_64/tmp/owned-system-cancellation.8Vba55`.
-- Dynamic Lua passes installed/extracted source execution and artifact
-  reproducibility: `.work/x86_64/lua-dynamic-source-integrated.log`, report
-  `.work/x86_64/lua-dynamic-source-build/run-0t1zwhlc/report.json`.
-- `5a48b06f` integrates typed process-registry huge backing, durable failed-page
-  cleanup, exact retry/statistics ownership and huge-before-regular startup.
-  `allocator-huge-reservation` passes 69 C differential values and ten tests;
-  log `.work/x86_64/allocator-huge-reservation-integrated.log`. The worker also
-  passed 956 allocator unit tests, quick evidence and performance smoke.
-  Native M2 remains partial. Simulated primitives do not replace native huge
-  page success; this host has zero configured/free 1-GiB pages and one NUMA node.
+### Evidence retained at the wind-down boundary
 
 These are component measurements, not final same-revision qualification.
 
-### Remaining work and ownership
-
-All new worktrees and mutable state stay beneath checkout `.work`. Preserve
-historical dirty worktrees; no uncommitted checkpoint is a completed feature.
-
-| Worktree | Current task |
+| Evidence | Result and location |
 | --- | --- |
-| `owned_dynamic_sysroot` | Replace impossible planned-only RuntimeV1/product predicates with current source/manifest-bound materialization and fresh per-case receipts. Building alone must not qualify a product; historical foundations and full-family/public promotion remain separate. Root owns the three-product runner and final integration. |
-| `owned_pthread_lifecycle` | Timed/clock-selected and process-shared condition waits with their source-required mutex dependencies. Legacy condition machine-code evidence is repaired in `44f1684b`, with exact owned-helper/syscall edges and its native gate passing. |
-| `owned_stdio_engine` | `system` child-wait cancellation is integrated and qualified as a component. Complete independently runnable qualification prefixes and source/tool/runtime-bound execution receipts; preserve the full ordered final qualification chain. |
-| `header_declaration_parity` | Generic matrices pass; complete the native aggregate/provider audit and qualify the header family only when its executable predicates pass. |
-| `native_resolver_network` | Installed/extracted 12-entry resolver differential is implemented in `fce59ece`, with separate ordinary build and network-isolated execution. Rerun canonically after pending source integrations: the first root attempt correctly rejected a concurrent source change during dynamic preparation. Audit remaining resolver family predicates against current providers. |
-| `qualification_execution_boundary` | Pinned execution boundary is integrated as `255ec048`; source/tool/runtime-bound completed receipts and independently runnable qualification prefixes still need completion. Private five-case admission remains private. |
-| `rust_std_unwinder` | Automatic tool review paused the task. Initial provider `d3ca0e79` and unfinished producer/driver/metadata changes remain isolated and unqualified; resolve the restriction before resuming. |
-| `allocator_m2_metadata` | Automatic tool review paused quiescent arena-destruction ownership work. Preserve partial uncommitted snapshot/destruction files and resolve the restriction before resuming. |
+| Canonical resolver matrix at `836e59b9` | PASS: one musl reference plus 12 candidate entries, installed/extracted payload identity and expected DNS transitions. Log `.work/x86_64/resolver-extracted-stable.log`; products `.work/x86_64/tmp/owned-resolver-network.KIdHdB/products`; execution `execution/run-1i7isxml/report.json` beneath that run root. The earlier `beihDc` attempt rejected a concurrent source edit during preparation and is not a pass. |
+| Canonical system/pclose cancellation | PASS: static ET_EXEC/static PIE and dynamic PIE/non-PIE kernel/direct entry, including contained supervisor failure/timeout cleanup. Log `.work/x86_64/system-cancellation-integrated.log`; product `.work/x86_64/tmp/owned-system-cancellation.8Vba55`. |
+| Timed/shared condition component | Worker commit `f5368833`, integrated as `e815c66f`: all 41 scenarios pass against musl and all four installed modes. Worker log `.work/worktrees/owned_pthread_lifecycle/.work/cond-timed-identity-final.log`; product beneath that worktree at `.work/x86_64/tmp/owned-pthread-cond-timed.VgnQF2`. Its earlier aggregate `materialized-dynamic.1WJeci` predates the final identity/error-precedence refinements; use the final focused run for those refinements. |
+| Last complete old dynamic matrix | PASS at the `550bb254` runtime plus `906e6d6c` harness: 51 loader, 22 driver, two CRT tests and all then-current cases on both clean builds/extraction. Log `.work/x86_64/three-dynamic-products-integrated.log`; product `.work/x86_64/tmp/materialized-dynamic.uyzJLv`. It predates later cancellation/condition additions and the receipt protocol; do not publish it as current evidence. |
+| Shared-runtime I/O cancellation | PASS: 40 ordinary/direct PIE/non-PIE runs at `88fcc133`. Log `.work/x86_64/dynamic-cancellation-integrated.log`; product `.work/x86_64/tmp/owned-dynamic-io-cancellation.gft0iz`. |
+| Lua | Dynamic installed/extracted source execution and reproducibility PASS: `.work/x86_64/lua-dynamic-source-integrated.log`, report `.work/x86_64/lua-dynamic-source-build/run-0t1zwhlc/report.json`. Static source/bytecode qualification is also integrated. |
+| Allocator huge reservation | `5a48b06f`: 69 C differential values and ten tests PASS; `.work/x86_64/allocator-huge-reservation-integrated.log`. Worker also passed 956 allocator unit tests, quick evidence and performance smoke. Native M2 remains partial; simulated primitives do not replace native huge-page success. |
 
-The user approved the unwind configuration and delegated dependency selection
-on 2026-09-05. `AGENTS.md` and `SCOPE.md` retain scope/audit/qualification rules
-without dependency approval round trips. The concrete record is
-`docs/design/x86-rust-unwinder-proposal.md`; libgcc, dummy unwind symbols and
-reduced Rust-std fixtures cannot replace the required behavior.
+### Resume sequence and remaining boundaries
+
+1. Read this handoff, `STATUS.md`, `x86-64.md`, `native-mimalloc.md`, and the
+   current campaign/ledger before selecting work. Keep source stable during
+   builds: the dynamic producer hashes **all nonignored source content and
+   modes**, so even a concurrent documentation merge rejects a run.
+2. Run `./scripts/dev-x86_64.sh owned-dynamic-sysroot` from a clean committed
+   checkout. The new 17-case, three-product qualification path has not yet had
+   its first full native run after all these integrations. Review its generated
+   `qualification.json`, then use
+   `python3 -B compat/x86_64/owned_dynamic_qualification.py publish --receipt PATH`
+   to select that exact ignored receipt. Later source edits invalidate the
+   selection. This does not close prerequisite families or promote x86.
+3. Finish ordered qualification receipt production and validation as specified
+   in `compat/x86_64/qualification-prefix-execution.md`: clean revision/content,
+   real tools/runtime/artifacts, retained logs/results, fixed pinned Rust paths
+   in the scrubbed environment, and retained same-object ABI evidence. Register
+   and run real dependency-ready family prefixes. The current first promotion
+   gate correctly rejects execution while planned; the private five-case
+   admission remains separate and non-promoting.
+4. Complete remaining pthread mutex implementations and family evidence.
+   The Linux pinned Rust `std::Condvar` uses futexes; its Unix pthread fallback
+   is not evidence that Linux Rust-std uses this condition implementation.
+5. Continue POSIX family completion from actual current providers. Existing
+   `owned_spawn_probe.c` has extensive static evidence, but no equivalent
+   installed dynamic semantic matrix yet (the current dynamic base covers
+   spawn interposition only). `clone`, `daemon`, `vfork` and several frozen
+   kernel-admin providers remain gaps. Audit preserved feature work before
+   duplicating it; simple Unix syscall wrappers do not authorize a policy
+   framework, and the framework non-goal does not itself waive required APIs.
+   `process.signal` is already selected-private; historical prose calling it
+   missing is stale. Its legacy aggregate also needs checkout-local scratch
+   before execution. Do not confuse private selection with family completion.
+6. Continue allocator M2–M11 and Rust-std only after resolving the existing
+   automatic tool-review restrictions described below. Requalify installed
+   products after native Rust allocator promotion. All 223 capabilities,
+   26 families, full product/corpus/performance gates and both plans' final
+   predicates must hold at one final source revision.
+
+### Preserved work and external restrictions
+
+All new worktrees, scratch and generated state belong beneath checkout `.work`.
+Do not remove historical dirty worktrees or move their contents while resuming.
+Completed current worker slices are integrated into main; no new task should be
+inferred from their old branch names. Useful source/evidence worktrees are
+`owned_dynamic_sysroot`, `owned_pthread_lifecycle`, `owned_stdio_engine`,
+`header_declaration_parity`, `native_resolver_network` and `cond_private_evidence`.
+
+Automatic tool review rejected work in `rust_std_unwinder` and
+`allocator_m2_metadata`; these tasks were stopped, not retried through another
+agent or route. Preserve the unwinder's initial provider `d3ca0e79` and its
+unfinished producer/driver/metadata files, and the allocator's uncommitted
+snapshot/arena-destruction ownership files. Neither is qualified or integrated
+as completed work. The user approved the unwind configuration and delegated
+dependency selection; the design record is
+`docs/design/x86-rust-unwinder-proposal.md`. Approval of that design does not
+resolve the tool restriction. Dummy unwind symbols, libgcc or reduced Rust-std
+fixtures cannot replace the required behavior.
+
+The host had zero configured/free 1-GiB huge pages and one NUMA node at the last
+inspection. No host huge-page configuration was changed; native huge success
+and multi-node qualification remain distinct from simulation.
 
 ## Goal prompt
 

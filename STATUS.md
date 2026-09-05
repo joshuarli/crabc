@@ -2,6 +2,9 @@
 
 ## Active program
 
+The current session is paused at the user’s request. Resume from the committed
+wind-down handoff in [`plan.md`](plan.md). The combined goal remains incomplete.
+
 Implement [`plan.md`](plan.md): native Linux/x86-64 runtime parity and native
 x86-64 mimalloc, in parallel where dependencies permit. AArch64 implementation
 and qualification are paused. Public support remains Linux/AArch64 until the
@@ -28,8 +31,10 @@ owners:
    26-family baseline validates; current accounting does not imply full parity.
    Wide stdio, scalar math, signal transactions, semaphore cancellation, and
    loader search/direct-interpreter entry compose in installed products.
-   Timed/shared synchronization, header-family closure, resolver differential
-   evidence, and product publication are active component work. Do not restart an export-by-export queue.
+   Timed/shared conditions and installed/extracted resolver differential
+   evidence are integrated. Remaining mutex implementations, family closure,
+   fresh dynamic product publication and ordered qualification receipts remain
+   open. Do not restart an export-by-export queue.
 2. Allocator: use the contained `compat/allocator/run-x86_64.sh` launcher,
    then complete native x86 M2 qualification. Imported
    AArch64 milestone passes do not count as x86 passes.
