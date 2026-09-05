@@ -586,7 +586,7 @@ mod issetugid;
 #[cfg(feature = "x86-legacy-des-compat")]
 #[path = "legacy_des_compat.rs"]
 mod legacy_des_compat;
-#[cfg(feature = "x86-legacy-misc")]
+#[cfg(all(feature = "x86-legacy-misc", not(feature = "x86-owned-static-runtime")))]
 #[path = "legacy_misc.rs"]
 mod legacy_misc;
 #[path = "secure_environment.rs"]
@@ -724,6 +724,9 @@ mod owned_mount_table;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_syslog.rs"]
 mod owned_syslog;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_fmtmsg.rs"]
+mod owned_fmtmsg;
 #[path = "time_observation.rs"]
 mod time_observation;
 #[path = "nanosleep.rs"]

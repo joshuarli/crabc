@@ -570,6 +570,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-regex [DYNAMIC_SYSROOT]  compare installed TRE regex behavior with musl
   owned-wcsftime [DYNAMIC_SYSROOT]  compare installed wide calendar formatting with musl
   owned-strfmon [DYNAMIC_SYSROOT]  compare installed monetary formatting with musl
+  owned-fmtmsg [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed fmtmsg and cancellation semantics
   owned-process-trio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed clone/vfork/daemon semantics against musl
   owned-process-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed residual POSIX process control
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
@@ -5911,7 +5912,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-crypt-runtime) ;;
     owned-system-cancellation) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-process-trio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-regex|owned-strfmon) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -6078,7 +6079,7 @@ case "$command" in
         prepare_owned_posix_native_arguments "$@"
         set -- "${POSIX_NATIVE_ARGUMENTS[@]}"
         ;;
-    owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-process-trio|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation)
+    owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-process-trio|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation)
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
@@ -7968,6 +7969,10 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-atfork-registry takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_atfork_registry.sh
+        ;;
+    owned-fmtmsg)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_fmtmsg.sh "$@"
         ;;
     owned-process-trio)
         ensure_image
