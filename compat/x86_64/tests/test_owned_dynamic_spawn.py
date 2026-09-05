@@ -9,6 +9,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/x86_64/run_owned_dynamic_spawn.sh"
+DOCUMENT = ROOT / "compat/x86_64/dynamic-product-qualification.md"
 
 
 class OwnedDynamicSpawnTests(unittest.TestCase):
@@ -87,7 +88,7 @@ class OwnedDynamicSpawnTests(unittest.TestCase):
     def test_static_is_opt_in_and_all_links_use_the_one_object_and_shared_validator(self):
         runner = RUNNER.read_text()
         self.assertNotIn("build_x86_64_owned_sysroot.py", runner)
-        self.assertEqual(runner.count('-c "$probe" -o "$work/workload.o"'), 1)
+        self.assertEqual(runner.count("subprocess.run(actual_command,"), 1)
         self.assertIn('-DCRABC_SPAWN_EXECUTABLE="/consumer"', runner)
         for required in (
             'if [ -n "$provided_static" ]; then',
@@ -98,6 +99,42 @@ class OwnedDynamicSpawnTests(unittest.TestCase):
             'for mode in pie non-pie', 'for entry in kernel direct',
         ):
             self.assertIn(required, runner)
+
+    def test_compile_receipt_binds_the_installed_driver_headers_and_immutable_object(self):
+        runner = RUNNER.read_text()
+        document = DOCUMENT.read_text()
+
+        for required in (
+            "compile.json", "workload.d", "actual_command", "dependency_audit_command",
+            "installed_driver", "installed_helper", "compiler", "clean_environment",
+            "import crabc_cc_static as compiler_contract", "compiler_contract.compiler()",
+            "compiler_contract.clean_environment()", "CRABC_SPAWN_EXECUTABLE",
+            "'-nostdinc'", "'-isystem'", "'-ffreestanding'",
+            "'-fstack-protector-strong'", "'-fPIE'", "required_headers",
+            "spawn.h", "sys/resource.h", "pthread.h", "object_sha256",
+            "assert_compile_receipt", "workload changed after compilation",
+            "installed header changed after compilation",
+        ):
+            self.assertIn(required, runner)
+        self.assertNotIn('"/usr/bin/gcc"', runner)
+        self.assertLess(
+            runner.index("actual_command = [str(driver), '--dynamic-pie'"),
+            runner.index('"$oracle_cc" -static'),
+        )
+        self.assertLess(
+            runner.rindex("dependency_audit_command = [str(compiler),"),
+            runner.index('"$oracle_cc" -static'),
+        )
+        self.assertLess(
+            runner.index("assert_compile_receipt\n\"$oracle_cc\""),
+            runner.index('"$oracle_cc" -static'),
+        )
+        self.assertGreaterEqual(runner.count("assert_compile_receipt"), 7)
+        for required in (
+            "`compile.json`", "installed shared compiler helper", "exact `/consumer` compile command",
+            "records every installed header", "before and after every oracle, static, and",
+        ):
+            self.assertIn(required, document)
 
 
 if __name__ == "__main__":

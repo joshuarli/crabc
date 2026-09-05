@@ -68,7 +68,16 @@ direct-interpreter parent entry. `owned_spawn_probe.c` uses the explicit
 `/proc/self/exe` path. The workload checks attributes, signal masks/defaults,
 sessions, ordered file actions and descriptor collisions, directory actions,
 PATH search, worker spawn, denied syscalls, descriptor exhaustion and rollback.
-`run_owned_dynamic_spawn.sh` retains the object, link receipts, ELF inspections,
+`run_owned_dynamic_spawn.sh` retains `compile.json` and `workload.d` alongside
+the one installed-driver object. The compile receipt binds the source, installed
+dynamic driver, installed shared compiler helper, helper-selected compiler,
+clean environment, and exact `/consumer` compile command. Its dependency-only
+audit repeats the installed dynamic driver's C11/freestanding/stack-protector
+and PIE translation flags through that helper, records every installed header
+hash, and requires the spawn, signal, process, descriptor, resource, and
+pthread source headers. The object, compile inputs, dependency output, and
+installed headers are checked before and after every oracle, static, and
+dynamic link. The runner also retains link receipts, ELF inspections,
 shared-validator link identities, and raw stdout/stderr/exit status for every
 entry. Each candidate's three raw results are compared to the oracle; a
 nonzero timeout/chroot status is retained before failing. The qualification
