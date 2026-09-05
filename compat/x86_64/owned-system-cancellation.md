@@ -26,13 +26,15 @@ musl, static/static-PIE, and dynamic PIE/non-PIE. The latter runs through both
 kernel and direct interpreter entry, while the fixed child continues to enter
 through its owned interpreter.
 
-Each static link requests a static receipt. The runner's local two-role audit
-binds the selected consumer or child object to its source receipt, the current
-product manifest, runtime inputs, trace, ELF form, and static receipt. The
-dynamic audit makes the corresponding dynamic receipt and trace checks without
-using the single-workload shared validator. `musl-links.json` binds the same
-two object identities to the pinned musl outputs. Every normal, injected
-failure, and timeout run retains and compares raw stdout, stderr, and status.
+Each static link requests a static receipt. The runner's aggregate audit keeps
+the consumer and child source, local-header, installed-header, and object
+identities separate. Each link then calls
+`owned_posix_product_evidence.validate_link` with its one selected canonical
+object, output, receipt, and linkage mode. That shared validator binds the
+current product, runtime inputs, trace, receipt, and ELF form without treating
+the two roles as one application object. `musl-links.json` binds the same two
+object identities to the pinned musl outputs. Every normal, injected failure,
+and timeout run retains and compares raw stdout, stderr, and status.
 
 The runner accepts
 `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`. With no products it
