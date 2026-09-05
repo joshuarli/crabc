@@ -962,6 +962,12 @@ mod sysv_message_shared_memory;
 #[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), path = "fixed_graph_dlfcn.rs")]
 mod fixed_graph_dlfcn;
 
+// The installed-product builders pair this cfg with the C define that
+// suppresses mimalloc's compiler callbacks, then verify both artifact halves.
+#[cfg(crabc_owned_mimalloc_lifecycle)]
+#[path = "allocator_mimalloc_lifecycle.rs"]
+mod allocator_mimalloc_lifecycle;
+
 // The allocator is opt-in until the complete x86 runtime can own its bundled
 // backend and lifecycle. Its C contract is shared verbatim with AArch64; only
 // the target-local errno accessor differs.

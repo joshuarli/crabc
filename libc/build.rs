@@ -3,6 +3,8 @@ fn main() {
     // unavailable-record trampoline, rather than carrying a dynamic-loader
     // weak import into a closed ET_EXEC image.
     println!("cargo::rustc-check-cfg=cfg(crabc_owned_static_sysroot)");
+    // Only installed-product builders select the paired C/Rust lifecycle.
+    println!("cargo::rustc-check-cfg=cfg(crabc_owned_mimalloc_lifecycle)");
     // Rust's cdylib linker otherwise adds the platform crt startup objects.
     // Their linker-generated global `_init`/`_fini` symbols override the
     // musl ABI's weak exports.  libc has no crt entry point of its own, so

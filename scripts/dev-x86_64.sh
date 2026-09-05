@@ -573,6 +573,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-credentials-profile [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify the selected credential-setter profile against musl
   owned-error-reporting  qualify owned perror and err(3) reporting against musl
   owned-stdio-allocator-interposition  qualify dynamic FILE allocation ownership against musl
+  owned-mimalloc-startup-errno  qualify allocator lifecycle errno preservation against musl
+  owned-signal-handler-fork  qualify early worker signal delivery and fork against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-signal [--static-sysroot STATIC_SYSROOT] DYNAMIC_SYSROOT  test installed pthread signal delivery and task retirement
   owned-posix-timers [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX timer lifecycle and callback TLS reset
@@ -5867,7 +5869,7 @@ case "$command" in
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
-    owned-error-reporting|owned-stdio-allocator-interposition) ;;
+    owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork) ;;
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation) ;;
     owned-dynamic-io-cancellation) ;;
@@ -8057,6 +8059,16 @@ PY
         [ "$#" -eq 0 ] || fail "owned-stdio-allocator-interposition takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_stdio_allocator_interposition.sh
+        ;;
+    owned-mimalloc-startup-errno)
+        [ "$#" -eq 0 ] || fail "owned-mimalloc-startup-errno takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_mimalloc_startup_errno.sh
+        ;;
+    owned-signal-handler-fork)
+        [ "$#" -eq 0 ] || fail "owned-signal-handler-fork takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_signal_handler_fork.sh
         ;;
     owned-io-cancellation)
         ensure_image

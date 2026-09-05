@@ -54,7 +54,11 @@ the shared full I/O cancellation roster, and the separate `system()`
 cancellation protocol, the contained C `syslog` state/delivery matrix, and
 private/shared pthread spin-lock publication, owned Linux-control and
 kernel-residual mechanisms, filesystem mechanisms, the `perror`/`err(3)`
-reporting matrix, and the C filename-pattern matrix.
+reporting matrix, and the C filename-pattern matrix. The catalog also requires
+held-live pthread CPU-clock targets, public FILE allocator interposition,
+allocator lifecycle errno preservation, and fork from an application signal
+delivered at worker startup. These regression cases run the supplied product;
+their standalone self-build results cannot replace a product's case receipt.
 The runtime-loading leaf also
 runs search policy, all-thread GD TLS growth, initial IE, new-runtime-IE
 rejection, retained scope/lifecycle and rollback differentials. Both clean

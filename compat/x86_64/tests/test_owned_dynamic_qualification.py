@@ -391,6 +391,20 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         with self.assertRaisesRegex(qualification.QualificationError, "coverage cases"):
             qualification.collect(self.work)
 
+    def test_each_product_requires_allocator_lifecycle_interposition_and_cpuclock_regressions(self):
+        for product in qualification.PRODUCTS:
+            for case in ("mimalloc-startup-errno", "stdio-allocator-interposition", "pthread-cpuclock", "signal-handler-fork"):
+                with self.subTest(product=product, case=case):
+                    path = self.work / "qualification-cases" / product / (case + ".json")
+                    self.assertTrue(path.is_file(), "required regression has no product receipt")
+                    original = path.read_bytes()
+                    path.unlink()
+                    try:
+                        with self.assertRaisesRegex(qualification.QualificationError, "coverage cases"):
+                            qualification.collect(self.work)
+                    finally:
+                        path.write_bytes(original)
+
     def test_coverage_rejects_stale_source_wrong_product_and_missing_mode(self):
         path = self.work / "qualification-cases/installed/dlopen-non-pie.json"
         original = qualification.read(path)
