@@ -49,7 +49,8 @@ weak/protected/hidden scope and interpreter aliases, PIE/non-PIE runtime
 loading and deferred binding, constructor exit, pthread signals and exit,
 fork repair, stack attributes, join cancellation, condition-wait cancellation,
 the shared full I/O cancellation roster, and the separate `system()`
-cancellation protocol. The runtime-loading leaf also
+cancellation protocol, plus the contained C `syslog` state/delivery matrix.
+The runtime-loading leaf also
 runs search policy, all-thread GD TLS growth, initial IE, new-runtime-IE
 rejection, retained scope/lifecycle and rollback differentials. Both clean
 builds and the extracted package must run the complete same roster; neither

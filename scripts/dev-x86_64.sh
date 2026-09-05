@@ -550,6 +550,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-dynamic-spawn  qualify installed dynamic spawn semantics against musl
   owned-assert  test installed C assertion diagnostics and termination
   owned-linux-control  test owned Linux C mechanisms and kernel error translation
+  owned-syslog  qualify owned C syslog delivery and state against musl
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-atfork-registry  test installed resource-sized atfork callback ordering
@@ -5612,6 +5613,7 @@ case "$command" in
     owned-system-cancellation) ;;
     owned-dynamic-spawn|owned-atfork-registry) ;;
     owned-assert|owned-linux-control) ;;
+    owned-syslog) ;;
     owned-io-cancellation) ;;
     owned-resolver-network) ;;
     owned-dynamic-io-cancellation) ;;
@@ -7648,6 +7650,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "owned-linux-control takes no arguments"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_linux_control.sh
+        ;;
+    owned-syslog)
+        [ "$#" -eq 0 ] || fail "owned-syslog takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_syslog.sh
         ;;
     owned-io-cancellation)
         ensure_image

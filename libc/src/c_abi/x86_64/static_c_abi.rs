@@ -652,6 +652,12 @@ mod owned_calendar;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_strftime.rs"]
 mod owned_strftime;
+// The process-global C logger shares the owned descriptor, calendar, printf,
+// cancellation, and fork owners.  Keep it off the frozen selected archive;
+// the installed dynamic profile inherits this owned-static leaf roster.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_syslog.rs"]
+mod owned_syslog;
 #[path = "time_observation.rs"]
 mod time_observation;
 #[path = "nanosleep.rs"]

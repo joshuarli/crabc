@@ -99,6 +99,18 @@ fn c_locale() -> Locale {
     core::ptr::addr_of_mut!(C_LOCALE_OBJECT).cast()
 }
 
+/// Return the immutable `C` locale token for one libc-internal formatting
+/// operation.
+///
+/// Musl's `syslog.c` explicitly uses `strftime_l(..., C_LOCALE)` so its wire
+/// timestamp is independent of the caller's thread locale.  Keep that
+/// selection private to target-owned runtime code: it neither widens the
+/// public locale-object API nor hands out another user-visible token.
+#[inline]
+pub(super) fn fixed_c_locale() -> Locale {
+    c_locale()
+}
+
 #[inline]
 fn utf8_locale() -> Locale {
     core::ptr::addr_of_mut!(UTF8_LOCALE_OBJECT).cast()

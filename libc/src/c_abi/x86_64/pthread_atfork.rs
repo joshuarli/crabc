@@ -29,7 +29,7 @@
 //! allocation failure returns `ENOMEM` without changing the list. The private
 //! table still reports `ENOMEM` at 32 records. Both forms retain the selected
 //! application-signal block/restore pair and TSD/worker-list/TLS child reset;
-//! owned products add the stdio/timezone and inner process-creation locks.
+//! owned products add the stdio/syslog/timezone and inner process-creation locks.
 //! The owned dynamic adapter adds the loader's graph/callback transaction and
 //! surviving TLS-root adoption around those same libc owners. Foreign threads,
 //! AIO, allocator-wide fork state, and arbitrary application locks remain
@@ -345,8 +345,9 @@ pub unsafe extern "C" fn pthread_atfork(
 ///
 /// The caller is the owned initial task or one selected worker. The dynamic
 /// adapter first retains graph/callback ownership, then both linkage modes
-/// follow musl's key -> stdio -> timezone -> thread-list -> process-creation
-/// order. Parent/error completion releases that ownership before user hooks.
+/// follow musl's key -> stdio -> syslog -> timezone -> thread-list ->
+/// process-creation order. Parent/error completion releases that ownership
+/// before user hooks.
 /// The child keeps its FS image, adopts TSD/cleanup/robust/main-task state and
 /// then lets the loader re-root TLS/constructor ownership before any hook.
 #[no_mangle]
@@ -379,6 +380,7 @@ pub unsafe extern "C" fn fork() -> c_int {
     #[cfg(feature = "x86-owned-static-runtime")]
     unsafe {
         super::stdio_standard::pthread_fork_prepare();
+        super::owned_syslog::pthread_fork_prepare();
         super::owned_timezone::pthread_fork_prepare();
     }
     pthread_create_join::pthread_fork_prepare();
@@ -424,6 +426,7 @@ pub unsafe extern "C" fn fork() -> c_int {
         #[cfg(feature = "x86-owned-static-runtime")]
         unsafe {
             super::stdio_standard::pthread_fork_child();
+            super::owned_syslog::pthread_fork_child();
             super::owned_timezone::pthread_fork_child();
         }
     } else {
@@ -442,6 +445,7 @@ pub unsafe extern "C" fn fork() -> c_int {
         #[cfg(feature = "x86-owned-static-runtime")]
         unsafe {
             super::stdio_standard::pthread_fork_parent();
+            super::owned_syslog::pthread_fork_parent();
             super::owned_timezone::pthread_fork_parent();
         }
         // SAFETY: this is the matching outer key-metadata completion after
