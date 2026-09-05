@@ -193,6 +193,10 @@ unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) ->
         offsets = 0;
     }
 
+    // Pinned musl's child-only exec/dup branch cannot write the parent's
+    // errno. Save it before the private pipe/spawn transaction so that its
+    // missing-sentinel WRDE_SYNTAX result retains that observable boundary.
+    let errno_before_spawn = unsafe { errno::get_errno() };
     let mut pipes = [-1_i32; 2];
     // SAFETY: `pipes` is writable private two-int storage.
     let pipe_result = unsafe {
@@ -246,6 +250,7 @@ unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) ->
             unsafe {
                 close(pipes[0]);
                 close(pipes[1]);
+                errno::set_errno(errno_before_spawn);
             }
             return WRDE_SYNTAX;
         }

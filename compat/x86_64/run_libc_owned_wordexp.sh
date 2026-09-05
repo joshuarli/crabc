@@ -66,7 +66,7 @@ esac
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H "$PROBE" \
 	>/dev/null 2>"$trace"
-for header in wordexp.h stdio.h stdlib.h string.h features.h bits/alltypes.h; do
+for header in errno.h wordexp.h stdio.h stdlib.h string.h features.h bits/alltypes.h; do
 	grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
 		fail "fixture did not use project $header"
 done

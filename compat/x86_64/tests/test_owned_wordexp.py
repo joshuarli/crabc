@@ -23,7 +23,8 @@ class OwnedWordexpContracts(unittest.TestCase):
             "WRDE_DOOFFS | WRDE_APPEND", "WRDE_REUSE", "WRDE_NOCMD",
             "WRDE_CMDSUB", "WRDE_BADCHAR", "WRDE_SYNTAX", "WRDE_UNDEF",
             "check_freed", "--shell-unavailable", "unavailable_shell_case",
-            "owned-wordexp: PASS", "owned-wordexp-shell-unavailable: PASS",
+            "errno = ERANGE", "errno != ERANGE", "owned-wordexp: PASS",
+            "owned-wordexp-shell-unavailable: PASS",
         ):
             self.assertIn(boundary, source)
 
@@ -46,6 +47,7 @@ class OwnedWordexpContracts(unittest.TestCase):
         self.assertIn("spawn_with_outcome", module)
         self.assertIn("SpawnOutcome::ChildFailure", module)
         self.assertIn("return WRDE_SYNTAX", module)
+        self.assertIn("errno_before_spawn", module)
         self.assertIn("pub(super) enum SpawnOutcome", spawn)
         self.assertIn("ParentFailure", spawn)
         self.assertIn("ChildFailure", spawn)

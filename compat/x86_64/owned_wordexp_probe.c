@@ -19,6 +19,7 @@
 #endif
 
 #include <stddef.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -179,10 +180,15 @@ static int unavailable_shell_case(void)
 {
     wordexp_t words = { 0 };
 
+    /* The child owns its exec errno. Musl's parent returns the missing-stream
+     * syntax result without publishing that child-only value. */
+    errno = ERANGE;
     if (wordexp("literal", &words, 0) != WRDE_SYNTAX)
         return 1;
     if (words.we_wordc != 0 || words.we_wordv != NULL)
         return 2;
+    if (errno != ERANGE)
+        return 3;
     wordfree(&words);
     return 0;
 }
