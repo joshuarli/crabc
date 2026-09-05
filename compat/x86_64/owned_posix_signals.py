@@ -123,6 +123,10 @@ def validate_contract(contract):
     return contract
 
 
+class ArgumentError(ValueError):
+    """Malformed replay invocation, distinct from product/runtime failure."""
+
+
 def parse_arguments(arguments):
     """Select optional installed products before any mutable evidence exists."""
     usage = "usage: run_owned_posix_signals.sh [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]"
@@ -130,11 +134,11 @@ def parse_arguments(arguments):
     static = None
     if remaining and remaining[0] == "--static-sysroot":
         if len(remaining) < 2 or not remaining[1] or remaining[1].startswith("-"):
-            raise ValueError(usage)
+            raise ArgumentError(usage)
         static = remaining[1]
         remaining = remaining[2:]
     if len(remaining) > 1 or any(not argument or argument.startswith("-") for argument in remaining):
-        raise ValueError(usage)
+        raise ArgumentError(usage)
     return static, remaining[0] if remaining else None
 
 
@@ -219,6 +223,9 @@ def run(arguments):
 if __name__ == "__main__":
     try:
         run(sys.argv[1:])
+    except ArgumentError as error:
+        print(f"owned POSIX signals: {error}", file=sys.stderr)
+        raise SystemExit(2)
     except (ValueError, OSError, subprocess.CalledProcessError, product_evidence.ProductEvidenceError) as error:
         print(f"owned POSIX signals: {error}", file=sys.stderr)
         raise SystemExit(1)

@@ -3,6 +3,8 @@ from copy import deepcopy
 import json
 from pathlib import Path
 import sys
+import subprocess
+import os
 import tempfile
 import tomllib
 import unittest
@@ -78,6 +80,24 @@ class OwnedPosixSignalsTests(unittest.TestCase):
                         signals.run(args)
                     output.assert_not_called()
                     command.assert_not_called()
+
+    def test_invalid_cli_arguments_exit_two_without_creating_evidence(self):
+        with tempfile.TemporaryDirectory(dir=self.scratch) as directory:
+            environment = dict(os.environ, TMPDIR=directory, PYTHONDONTWRITEBYTECODE="1")
+            for arguments in ([""], ["--static-sysroot"], ["--static-sysroot", "--other"],
+                              ["--static-sysroot", "a", "--static-sysroot", "b"], ["a", "b"]):
+                with self.subTest(arguments=arguments):
+                    result = subprocess.run(["bash", str(signals.HERE / "run_owned_posix_signals.sh"), *arguments],
+                                            env=environment, capture_output=True, text=True, check=False)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("usage:", result.stderr)
+                    self.assertEqual(list(Path(directory).iterdir()), [])
+            result = subprocess.run(["bash", str(signals.HERE / "run_owned_posix_signals.sh"), directory],
+                                    env=environment, capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_argument_modes_and_invalid_paths_fail_before_output(self):
         self.assertEqual(signals.parse_arguments([]), (None, None))
