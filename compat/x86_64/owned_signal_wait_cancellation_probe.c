@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <sys/syscall.h>
 #include <time.h>
+#include "owned_cancellation_proc_witness.h"
 
 /* musl 1.2.6 src/signal/{sigtimedwait,sigwaitinfo,sigwait}.c:
  * all three spellings reach the same cancellation-point syscall; raw EINTR
@@ -58,7 +59,7 @@ static int in_signal_wait(struct wait_state *s) {
         if (tid) {
             char path[96], line[256];
             snprintf(path,sizeof path,"/proc/self/task/%d/syscall",tid);
-            int fd=open(path,O_RDONLY|O_CLOEXEC);
+            int fd=owned_cancellation_open_proc(path);
             if (fd>=0) {
                 ssize_t count=read(fd,line,sizeof line-1); close(fd);
                 if (count>0) {

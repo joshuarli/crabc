@@ -11,6 +11,7 @@
 #include <sys/wait.h>
 #include <sys/syscall.h>
 #include <time.h>
+#include "owned_cancellation_proc_witness.h"
 
 /* musl 1.2.6 src/ipc/{msgsnd,msgrcv}.c put the direct Linux syscalls
  * inside syscall_cp, without queue removal or message rollback cleanup.
@@ -57,7 +58,7 @@ static int in_message_wait(struct message_state *s) {
         int tid=atomic_load(&s->tid);
         if (tid) {
             char path[96], line[256]; snprintf(path,sizeof path,"/proc/self/task/%d/syscall",tid);
-            int fd=open(path,O_RDONLY|O_CLOEXEC);
+            int fd=owned_cancellation_open_proc(path);
             if (fd>=0) {
                 ssize_t count=read(fd,line,sizeof line-1); close(fd);
                 if (count>0) {

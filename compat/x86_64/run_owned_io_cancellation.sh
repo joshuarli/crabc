@@ -12,7 +12,7 @@ set -euo pipefail
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
-readonly PROBE_NAMES=(owned_io_cancellation owned_descriptor_cancellation owned_socket_cancellation owned_sleep_wait_cancellation owned_open_lock_cancellation owned_semaphore_wait_cancellation owned_semaphore_cancellation owned_signal_wait_cancellation owned_entropy_cancellation owned_sysv_message_cancellation)
+source "$ROOT_DIR/compat/x86_64/owned_io_cancellation_fixtures.sh"
 
 fail() {
     printf 'ERROR: x86 owned I/O cancellation: %s\n' "$*" >&2
@@ -33,7 +33,7 @@ for tool in cmp grep mkdir mktemp objdump python3 readelf realpath timeout; do
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 [ -f "$BUILDER" ] || fail "missing installed static sysroot builder"
-for probe_name in "${PROBE_NAMES[@]}"; do
+for probe_name in "${OWNED_IO_CANCELLATION_PROBES[@]}"; do
     [ -f "$ROOT_DIR/compat/x86_64/${probe_name}_probe.c" ] || fail "missing $probe_name consumer"
 done
 [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ] || fail "requires repository-local TMPDIR"
@@ -62,34 +62,21 @@ trap cleanup EXIT
 
 sysroot="$work_dir/owned-static-sysroot"
 cd "$ROOT_DIR"
-for probe_name in "${PROBE_NAMES[@]}"; do
+for probe_name in "${OWNED_IO_CANCELLATION_PROBES[@]}"; do
     PROBE="$ROOT_DIR/compat/x86_64/${probe_name}_probe.c"
     reference="$work_dir/$probe_name-musl"
     reference_output="$work_dir/$probe_name-musl-output"
     header_trace="$work_dir/$probe_name-header-trace"
     "$ORACLE_CC" -std=c11 -I"$ROOT_DIR/include" -E -H "$PROBE" \
         >/dev/null 2>"$header_trace"
-    headers=(errno.h pthread.h stdio.h unistd.h bits/alltypes.h)
-    case "$probe_name" in
-        owned_io_cancellation) headers+=(ucontext.h sys/wait.h sys/uio.h) ;;
-        owned_open_lock_cancellation) headers+=(fcntl.h sys/stat.h sys/mman.h) ;;
-        owned_semaphore_wait_cancellation) headers+=(semaphore.h) ;;
-        owned_semaphore_cancellation) headers+=(semaphore.h sys/mman.h) ;;
-        owned_signal_wait_cancellation) headers+=(signal.h time.h) ;;
-        owned_entropy_cancellation) headers+=(sys/random.h sys/mman.h) ;;
-        owned_sysv_message_cancellation) headers+=(sys/msg.h sys/ipc.h sys/wait.h) ;;
-        owned_socket_cancellation) headers+=(sys/socket.h sys/un.h sys/uio.h) ;;
-        owned_sleep_wait_cancellation) headers+=(time.h threads.h sys/wait.h sys/resource.h) ;;
-        owned_descriptor_cancellation) headers+=(sys/uio.h poll.h signal.h sys/select.h sys/epoll.h sys/eventfd.h sys/mman.h) ;;
-    esac
+    mapfile -t headers < <(owned_io_cancellation_headers "$probe_name")
     for header in "${headers[@]}"; do
         grep -Fq "$ROOT_DIR/include/$header" "$header_trace" ||
             fail "$probe_name consumer did not use project $header"
     done
     "$ORACLE_CC" -std=c11 -pthread -fno-builtin \
         -fno-stack-protector -I"$ROOT_DIR/include" "$PROBE" -o "$reference"
-    reference_arguments=()
-    if [ "$probe_name" = owned_open_lock_cancellation ]; then reference_arguments=("$work_dir/$probe_name-state"); fi
+    mapfile -t reference_arguments < <(owned_io_cancellation_arguments "$probe_name" "$work_dir/$probe_name-state")
     timeout 30 env -i "$reference" "${reference_arguments[@]}" >"$reference_output" ||
         fail "pinned-musl $probe_name consumer failed"
     grep -qx "${probe_name//_/-}-ok" "$reference_output" || fail "$probe_name oracle completion missing"
@@ -213,7 +200,7 @@ PY
             fail "$label candidate retains a non-relative relocation"
     fi
     local -a candidate_arguments=()
-    if [ "$probe_name" = owned_open_lock_cancellation ]; then candidate_arguments=("$mode_root/files"); fi
+    mapfile -t candidate_arguments < <(owned_io_cancellation_arguments "$probe_name" "$mode_root/files")
     timeout 30 env -i "$candidate" "${candidate_arguments[@]}" >"$output" ||
         fail "$label installed cancellation consumer failed"
     grep -qx "${probe_name//_/-}-ok" "$output" || fail "$label completion missing"
@@ -237,7 +224,7 @@ run_installed_mode() {
     audit_receipt_and_elf "$mode" "$label" "$mode_root"
 }
 
-for probe_name in "${PROBE_NAMES[@]}"; do
+for probe_name in "${OWNED_IO_CANCELLATION_PROBES[@]}"; do
     PROBE="$ROOT_DIR/compat/x86_64/${probe_name}_probe.c"
     reference_output="$work_dir/$probe_name-musl-output"
     run_installed_mode -static et-exec

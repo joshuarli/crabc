@@ -13,6 +13,7 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <time.h>
+#include "owned_cancellation_proc_witness.h"
 
 /* musl 1.2.6 src/thread/sem_{init,getvalue,trywait,wait,timedwait,post}.c,
  * __timedwait.c, and src/signal/sigaction.c define this contract. */
@@ -66,7 +67,7 @@ static int in_futex(struct wait_state *s) {
         if (tid) {
             char path[96], line[256];
             snprintf(path,sizeof path,"/proc/self/task/%d/syscall",tid);
-            int fd=open(path,O_RDONLY|O_CLOEXEC);
+            int fd=owned_cancellation_open_proc(path);
             if (fd>=0) {
                 ssize_t count=read(fd,line,sizeof line-1); close(fd);
                 if (count>0) {

@@ -231,8 +231,8 @@ interposition and non-PIE startup for each product; `check_runtime_suites`
 runs the same leaf roster for all three. The integrated gate passed at the
 `550bb254` runtime plus this harness change; log
 `.work/x86_64/three-dynamic-products-integrated.log`, retained product
-`.work/x86_64/tmp/materialized-dynamic.uyzJLv`. Dedicated dynamic cancellation
-composition and current publication receipts remain separate work.
+`.work/x86_64/tmp/materialized-dynamic.uyzJLv`. This measurement predates the dedicated
+dynamic cancellation composition and current publication receipts.
 
 Installed and extracted products run `run_owned_pthread_cond_cancel.sh` for
 main and worker pending/blocked condition cancellation, cleanup with the mutex
@@ -240,3 +240,27 @@ reacquired, condition reuse, disabled/MASKED states, and consumed-signal
 suppression. Blocked checks read the exact futex syscall through an inherited
 read-only `/proc` descriptor; private chroots require no additional proc mount.
 The same fixture runs unchanged against pinned musl 1.2.6.
+
+`run_owned_dynamic_io_cancellation.sh INSTALLED_SYSROOT` runs the shared
+`owned_io_cancellation_fixtures.sh` roster through the actual installed
+`libc.so`, loader-owned initial TCB, and dynamic worker TLS/clone lifecycle.
+Each ordinary fixture is linked by the sealed dynamic driver as PIE and
+non-PIE and run through both kernel PT_INTERP startup and direct interpreter
+entry. The exact stdout must equal pinned musl. This covers scalar, vector,
+and positioned I/O, readiness and signal waits, sockets, sleep and child waits,
+open and blocking record locks, memory sync, unnamed semaphores, entropy,
+System V messages, FILE lock cleanup, main/worker cancellation, and fork
+inheritance. The common roster shares test selection, header requirements,
+and scratch arguments; static and dynamic evidence remain separate runs.
+
+The runner verifies each persistent application object and link input against
+its receipt, the product manifest and output hashes, ELF mode, canonical
+interpreter, and sole `DT_NEEDED` dependency on owned `libc.so`. Both runtime
+artifacts remain free of external runtime dependencies and text relocations.
+Only copied owned artifacts and test scratch inhabit its private execution
+root. `run_pthread_wait_witness.py` supplies a read-only `/proc` directory
+descriptor through `CRABC_TEST_PROC_FD`; `owned_cancellation_proc_witness.h`
+uses it for the existing exact blocked-syscall observations. No proc mount,
+new mount authority, host shell, or ambient loader is needed. Without a
+supplied descriptor, ordinary static runs retain their existing proc path.
+The optional no-argument runner invocation first builds a fresh dynamic product.

@@ -260,7 +260,16 @@ positioned-write mutation and close's masked-state bypass. It observes workers
 blocked in `poll`, `ppoll`, `select`, `pselect`, `pause`, `sigsuspend`,
 `epoll_wait`, `epoll_pwait`, `eventfd_read`, and `eventfd_write`, then verifies
 cancellation cleanup and restoration of the temporary signal mask. `fclose`
-remains non-canceling even with a pending request. The focused command is
+remains non-canceling even with a pending request.
+
+The static and dynamic cancellation runners share only the explicit fixture
+roster, project-header requirements, and scratch arguments in
+`owned_io_cancellation_fixtures.sh`. Each product retains its own link and
+execution proof. `owned_cancellation_proc_witness.h` preserves ordinary static
+proc access and accepts an inherited read-only proc descriptor for contained
+dynamic runs; the expected syscall and blocking resource remain fixture-owned.
+
+The focused command is
 `./scripts/dev-x86_64.sh owned-io-cancellation`; the aggregate remains the
 installed/extracted product judge.
 

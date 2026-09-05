@@ -14,6 +14,7 @@
 #include <sys/syscall.h>
 #include <sys/uio.h>
 #include <time.h>
+#include "owned_cancellation_proc_witness.h"
 
 /* Pinned musl 1.2.6 src/network/{connect,accept,accept4,send*,recv*}.c:
  * socket calls cancel at their source syscall, after message preparation.
@@ -116,7 +117,7 @@ static int wait_in_syscall(struct socket_state *s, long expected) {
         if (tid) {
             char path[96], line[256];
             snprintf(path,sizeof path,"/proc/self/task/%d/syscall",tid);
-            int fd=open(path,O_RDONLY|O_CLOEXEC);
+            int fd=owned_cancellation_open_proc(path);
             if (fd>=0) {
                 ssize_t count=read(fd,line,sizeof line-1); close(fd);
                 if (count>0) {

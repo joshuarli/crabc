@@ -12,6 +12,7 @@
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <time.h>
+#include "owned_cancellation_proc_witness.h"
 
 /* Pinned musl 1.2.6 src/fcntl/{open,openat,creat,fcntl}.c and
  * src/mman/msync.c: F_SETLKW alone cancels among the selected fcntl commands.
@@ -86,7 +87,7 @@ static int wait_in_syscall(struct state *s, long expected) {
         if (tid) {
             char path[96], line[256];
             snprintf(path,sizeof path,"/proc/self/task/%d/syscall",tid);
-            int fd=open(path,O_RDONLY|O_CLOEXEC);
+            int fd=owned_cancellation_open_proc(path);
             if (fd>=0) {
                 ssize_t count=read(fd,line,sizeof line-1); close(fd);
                 if (count>0) {

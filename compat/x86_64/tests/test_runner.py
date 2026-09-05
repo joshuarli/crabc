@@ -2099,7 +2099,8 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             expected_groups[:static_sysroot_index]
             + (
                 "owned-io-cancellation",
-                "owned-pthread-getattr|owned-pthread-join-cancel",
+                "owned-dynamic-io-cancellation",
+                "owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel",
                 "owned-pthread-lifecycle",
                 "qualification-manifest",
             )
@@ -7605,9 +7606,9 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "ENOTSUP",
             "source SIGCANCEL",
             "Public read/readv/write/writev are cancellation points",
-            "other syscall cancellation points remain separate routing",
+            "Other syscall cancellation points remain separate routing",
             "C11 cancellation, foreign tasks and stale handles",
-            "No full pthread-family claim follows.",
+            "no full pthread-family claim follows.",
         ):
             self.assertIn(required, cancellation)
         for forbidden in (
@@ -10622,7 +10623,7 @@ class X86_64CoreRunnerTests(unittest.TestCase):
             "pthread_mutex::unlock_selected_normal_mutex",
             "pthread_mutex::lock_selected_normal_mutex",
             "never writes C errno",
-            "support. A selected pthread worker additionally admits deferred",
+            "Owned static/dynamic main tasks and pthread workers admit deferred",
         ):
             self.assertIn(required, pthread_cond)
         condition_exports = set(

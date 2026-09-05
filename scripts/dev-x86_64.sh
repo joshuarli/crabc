@@ -527,6 +527,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-static-tls-v1  run the static x86 crabc-libc initial TLS template slice
   libc-crt-static-tls  run the real x86 rcrt1-to-libc static TLS composition slice
   libc-crt1-static-tls  run the real x86 crt1.o ET_EXEC-to-libc static TLS composition slice
+  owned-dynamic-io-cancellation  qualify shared-runtime cancellation through kernel and direct entry
   owned-io-cancellation  qualify installed syscall cancellation and FILE cleanup
   owned-pthread-getattr  test installed live pthread stack and guard metadata
   owned-pthread-join-cancel  test installed join cancellation and target reclamation
@@ -5535,6 +5536,7 @@ case "$command" in
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
     owned-io-cancellation) ;;
+    owned-dynamic-io-cancellation) ;;
     owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel) ;;
     owned-pthread-lifecycle) ;;
     qualification-manifest) ;;
@@ -7533,6 +7535,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "libc-crt1-static-tls takes no arguments"
         ensure_image
         run_libc_crt1_static_tls_probe
+        ;;
+    owned-dynamic-io-cancellation)
+        [ "$#" -eq 0 ] || fail "owned-dynamic-io-cancellation takes no arguments"
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_dynamic_io_cancellation.sh
         ;;
     owned-io-cancellation)
         ensure_image

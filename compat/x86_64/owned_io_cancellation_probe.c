@@ -13,6 +13,7 @@
 #include <time.h>
 #include <stddef.h>
 #include <ucontext.h>
+#include "owned_cancellation_proc_witness.h"
 
 _Static_assert(offsetof(ucontext_t,uc_mcontext.gregs[REG_RIP])==168,
     "owned SIGCANCEL PC window requires the pinned x86 ucontext RIP slot");
@@ -84,7 +85,7 @@ static int wait_in_syscall(struct operation_state *s, long expected) {
         if (tid) {
             char path[96], line[256];
             snprintf(path,sizeof path,"/proc/self/task/%d/syscall",tid);
-            int fd=open(path,O_RDONLY|O_CLOEXEC);
+            int fd=owned_cancellation_open_proc(path);
             if (fd>=0) {
                 ssize_t count=read(fd,line,sizeof line-1); close(fd);
                 if (count>0) {

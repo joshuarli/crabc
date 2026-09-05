@@ -37,6 +37,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("libc-owned-wordexp", False),
                 ("crt-object-bundle", False),
                 ("qualification-manifest", False),
+                ("owned-dynamic-io-cancellation", False),
             ):
                 with self.subTest(command=command):
                     capture = work / f"{command}.jsonl"
@@ -60,6 +61,12 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertNotIn("--pid=host", arguments)
                         self.assertNotIn("--userns=host", arguments)
                         self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", arguments)
+                    if command == "owned-dynamic-io-cancellation":
+                        self.assertEqual(len(invocations), 1)
+                        self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
+                        self.assertEqual(invocations[0][-2:], [
+                            "bash", "/workspace/compat/x86_64/run_owned_dynamic_io_cancellation.sh",
+                        ])
                     if command == "qualification-manifest":
                         self.assertEqual(len(invocations), 1)
                         self.assertEqual(invocations[0][-2:], [
