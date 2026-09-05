@@ -26,23 +26,35 @@ dynamic non-PIE drivers. Dynamic runs use both kernel interpreter resolution
 and direct `/lib/ld-crabc-x86_64.so.1` entry. Archive, final static, and shared
 ELF tables must each contain one strong global/default provider for every
 selected spelling. Static links retain sealed-driver receipts; dynamic links
-retain ordinary driver receipts; each receipt hash, ELF mode, interpreter, and
-runtime dependency boundary is checked.
+retain ordinary driver receipts. The receipt audit validates each static or
+dynamic product's complete manifest payload before trusting it, binds the
+single workload object and hash, exact selected runtime records and linker
+trace, output, mode, and ELF boundary, and rejects application DSOs or runtime
+imports. A supplied extracted dynamic product receives that full payload check
+before the runner creates mutable evidence.
 
 The workload proves arbitrary stat-version aliases and ordinary kernel errors;
 directory end/cursor behavior, C-byte and version comparison, selector-owned
-`scandir` allocation and failure output; basic `ftw`/`nftw` callback traversal,
-abort, zero-descriptor-limit behavior, and deferred cancellation after
-restoring the source cancellation state. It checks malformed and absent-name
-legacy temporary paths, `tmpnam` buffer ownership, `tempnam` allocation and
-length rejection, and the inherited `lchmod` symlink result.
+`scandir` allocation and failure output; valid-directory-fd relative
+`__fxstatat` and `AT_SYMLINK_NOFOLLOW`; and a deterministic four-node
+`ftw`/`nftw` callback transcript. The traversal oracle permits the two raw
+root-sibling orders exposed by `readdir`, while requiring pre-order root,
+parent-before-descendant, complete subtree-before-next-sibling, callback kind,
+and `nftw` level invariants. It also proves abort, zero-descriptor-limit
+behavior, and deferred cancellation after restoring the source cancellation
+state. It checks malformed and absent-name legacy temporary paths, `tmpnam`
+buffer ownership, `tempnam` allocation and length rejection, and the inherited
+`lchmod` symlink result.
 
 File handles run only inside each disposable chroot. The fixture creates one
-regular file below `/work`, then accepts the actual filesystem's supported,
-unsupported, or permission-limited result. A successful handle is validated
-against the reopened file when authority permits it; null-pointer and invalid
-descriptor paths retain direct syscall error outcomes. The workload never
-uses a returned temporary pathname or file handle to mutate a host path.
+regular file below `/work` and uses a readable pathname plus caller-owned,
+non-null variable-sized storage on every call. A successful handle is
+validated against the reopened file when authority permits it. The matched
+oracle/product transcript retains each raw return and `errno` for the source,
+missing-path, and invalid-directory-fd calls, and for actual-handle reopen
+calls when a handle exists; filesystem support or authority therefore cannot
+mask a difference. The workload never uses a returned temporary pathname or
+file handle to mutate a host path.
 
 `posix-filesystem` is a required owned dynamic qualification case for installed,
 second-clean, and extracted products. Its inclusion records source-bound

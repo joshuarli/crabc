@@ -22,8 +22,8 @@ them; this router should explain ownership, not duplicate command contracts.
   neither POSIX-family completion nor public support.
 - [Owned POSIX filesystem composition](../compat/x86_64/owned-posix-filesystem.md)
   — source-mapped stat, directory, traversal, temporary-name, and file-handle
-  providers across owned products; neither POSIX-family completion nor public
-  support.
+  providers with manifest-bound one-object receipt evidence across owned
+  products; neither POSIX-family completion nor public support.
 - [Owned Linux/filesystem/terminal mechanism evidence](../compat/x86_64/owned-unix-mechanisms.md)
   — source-mapped installed Unix C ABI slice across owned products;
   neither POSIX-family completion nor public support.

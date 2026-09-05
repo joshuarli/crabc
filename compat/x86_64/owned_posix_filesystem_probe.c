@@ -72,15 +72,23 @@ static int aliases_case(void)
 {
     static const char regular[] = "/work/aliases-file";
     static const char link[] = "/work/aliases-link";
+    static const char relative_directory[] = "/work/aliases-dir";
     struct stat metadata;
     int descriptor;
+    int directory_descriptor;
 
     CHECK(ensure_directory("/work") == 0);
     CHECK(write_file(regular, "aliases") == 0);
     unlink(link);
     CHECK(symlink("aliases-file", link) == 0);
+    CHECK(ensure_directory(relative_directory) == 0);
+    CHECK(write_file("/work/aliases-dir/relative", "relative") == 0);
+    unlink("/work/aliases-dir/relative-link");
+    CHECK(symlink("relative", "/work/aliases-dir/relative-link") == 0);
     descriptor = open(regular, O_RDONLY);
     CHECK(descriptor >= 0);
+    directory_descriptor = open(relative_directory, O_RDONLY | O_DIRECTORY);
+    CHECK(directory_descriptor >= 0);
 
     /* Different arbitrary historical selector values take the same current
      * Linux stat ABI. Successful calls retain the unrelated errno sentinel. */
@@ -99,11 +107,21 @@ static int aliases_case(void)
     errno = E2BIG;
     CHECK(__fxstatat(77, AT_FDCWD, regular, &metadata, 0) == 0 &&
           S_ISREG(metadata.st_mode) && errno == E2BIG);
+    /* The historical alias must pass a real directory fd and relative
+     * pathname through ordinary `fstatat`, including no-follow semantics. */
+    errno = E2BIG;
+    CHECK(__fxstatat(-7, directory_descriptor, "relative", &metadata, 0) == 0 &&
+          S_ISREG(metadata.st_mode) && metadata.st_size == 8 && errno == E2BIG);
+    errno = E2BIG;
+    CHECK(__fxstatat(4096, directory_descriptor, "relative-link", &metadata,
+                    AT_SYMLINK_NOFOLLOW) == 0 && S_ISLNK(metadata.st_mode) &&
+          errno == E2BIG);
     CHECK_ERR(__xstat(4, "/work/aliases-missing", &metadata), ENOENT);
     CHECK_ERR(__fxstat(4, -1, &metadata), EBADF);
     CHECK_ERR(__fxstatat(4, -1, "relative-missing", &metadata, 0), EBADF);
     CHECK_ERR(__fxstatat(4, AT_FDCWD, regular, &metadata, 0x40000000), EINVAL);
     CHECK(close(descriptor) == 0);
+    CHECK(close(directory_descriptor) == 0);
     puts("aliases ok");
     return 0;
 }
@@ -194,33 +212,111 @@ static int directory_case(void)
 }
 
 static int traversal_callback_failure;
-static int ftw_callback_count;
-static int nftw_callback_count;
-static int nftw_maximum_level;
+
+/* `walk` calls a directory callback before recursing through that directory's
+ * raw `readdir` order. The filesystem may choose either root sibling first,
+ * but a chosen directory's descendant must complete before its next sibling.
+ * Keep a bounded callback transcript so this workload proves that source
+ * invariant instead of treating an arbitrary callback count as a traversal
+ * contract. */
+#define TRAVERSAL_RECORD_CAPACITY 8
+#define TRAVERSAL_PATH_CAPACITY 64
+
+struct traversal_record {
+    char path[TRAVERSAL_PATH_CAPACITY];
+    int kind;
+    int level;
+};
+
+static struct traversal_record ftw_records[TRAVERSAL_RECORD_CAPACITY];
+static struct traversal_record nftw_records[TRAVERSAL_RECORD_CAPACITY];
+static int ftw_record_count;
+static int nftw_record_count;
+
+static int record_traversal(struct traversal_record *records, int *count,
+                            const char *path, int kind, int level)
+{
+    size_t length;
+
+    if (*count >= TRAVERSAL_RECORD_CAPACITY)
+        return -1;
+    length = strlen(path);
+    if (length >= sizeof(records[*count].path))
+        return -1;
+    memcpy(records[*count].path, path, length + 1);
+    records[*count].kind = kind;
+    records[*count].level = level;
+    ++*count;
+    return 0;
+}
+
+static int record_position(const struct traversal_record *records, int count,
+                           const char *path, int kind, int level)
+{
+    int index;
+
+    for (index = 0; index < count; ++index) {
+        if (strcmp(records[index].path, path) == 0 && records[index].kind == kind &&
+            (level < 0 || records[index].level == level))
+            return index;
+    }
+    return -1;
+}
+
+static int validate_preorder_transcript(const struct traversal_record *records, int count,
+                                        int has_levels)
+{
+    int root;
+    int subdirectory;
+    int leaf;
+    int root_file;
+
+    /* The deterministic fixture has exactly four nodes. Its two legal raw
+     * directory orders are root/sub/leaf/root-file and
+     * root/root-file/sub/leaf. Neither the directory API nor musl sorts them. */
+    if (count != 4)
+        return -1;
+    root = record_position(records, count, "/work/traversal", FTW_D, has_levels ? 0 : -1);
+    subdirectory = record_position(records, count, "/work/traversal/sub", FTW_D,
+                                   has_levels ? 1 : -1);
+    leaf = record_position(records, count, "/work/traversal/sub/leaf", FTW_F,
+                           has_levels ? 2 : -1);
+    root_file = record_position(records, count, "/work/traversal/root", FTW_F,
+                                has_levels ? 1 : -1);
+    if (root != 0 || subdirectory < 0 || leaf < 0 || root_file < 0 ||
+        subdirectory >= leaf)
+        return -1;
+    if (subdirectory < root_file)
+        return leaf < root_file ? 0 : -1;
+    return root_file < subdirectory ? 0 : -1;
+}
 
 static int ftw_visit(const char *path, const struct stat *metadata, int kind)
 {
-    (void)path;
     if (metadata == NULL || (kind != FTW_D && kind != FTW_F)) {
         traversal_callback_failure = 1;
         return 91;
     }
-    ++ftw_callback_count;
+    if (record_traversal(ftw_records, &ftw_record_count, path, kind, -1) != 0) {
+        traversal_callback_failure = 1;
+        return 91;
+    }
     return 0;
 }
 
 static int nftw_visit(const char *path, const struct stat *metadata, int kind,
                       struct FTW *walk)
 {
-    (void)path;
     if (metadata == NULL || walk == NULL || walk->level < 0 ||
         (kind != FTW_D && kind != FTW_F)) {
         traversal_callback_failure = 1;
         return 92;
     }
-    if (walk->level > nftw_maximum_level)
-        nftw_maximum_level = walk->level;
-    ++nftw_callback_count;
+    if (record_traversal(nftw_records, &nftw_record_count, path, kind,
+                         walk->level) != 0) {
+        traversal_callback_failure = 1;
+        return 92;
+    }
     return 0;
 }
 
@@ -295,32 +391,34 @@ static int traversal_case(void)
     CHECK(write_file("/work/traversal/sub/leaf", "leaf") == 0);
 
     traversal_callback_failure = 0;
-    ftw_callback_count = 0;
+    memset(ftw_records, 0, sizeof(ftw_records));
+    ftw_record_count = 0;
     errno = E2BIG;
     CHECK(ftw("/work/traversal", ftw_visit, 2) == 0 && errno == E2BIG);
-    CHECK(traversal_callback_failure == 0 && ftw_callback_count >= 3);
+    CHECK(traversal_callback_failure == 0 &&
+          validate_preorder_transcript(ftw_records, ftw_record_count, 0) == 0);
 
     traversal_callback_failure = 0;
-    nftw_callback_count = 0;
-    nftw_maximum_level = 0;
+    memset(nftw_records, 0, sizeof(nftw_records));
+    nftw_record_count = 0;
     errno = E2BIG;
     CHECK(nftw("/work/traversal", nftw_visit, 2, FTW_PHYS) == 0 && errno == E2BIG);
-    CHECK(traversal_callback_failure == 0 && nftw_callback_count >= 4 &&
-          nftw_maximum_level >= 2);
+    CHECK(traversal_callback_failure == 0 &&
+          validate_preorder_transcript(nftw_records, nftw_record_count, 1) == 0);
 
     errno = E2BIG;
     CHECK(ftw("/work/traversal", stop_ftw_visit, 1) == 37 && errno == E2BIG);
     errno = E2BIG;
     CHECK(nftw("/work/traversal", stop_nftw_visit, 1, FTW_PHYS) == 37 && errno == E2BIG);
 
-    ftw_callback_count = 0;
+    ftw_record_count = 0;
     errno = E2BIG;
     CHECK(ftw("/work/traversal-missing", ftw_visit, 0) == 0 && errno == E2BIG &&
-          ftw_callback_count == 0);
-    nftw_callback_count = 0;
+          ftw_record_count == 0);
+    nftw_record_count = 0;
     errno = E2BIG;
     CHECK(nftw("/work/traversal-missing", nftw_visit, 0, FTW_PHYS) == 0 && errno == E2BIG &&
-          nftw_callback_count == 0);
+          nftw_record_count == 0);
 
     atomic_store(&cancellation_ready, 0);
     atomic_store(&cancellation_release, 0);
@@ -390,26 +488,34 @@ static int temporary_case(void)
     return 0;
 }
 
-static int acceptable_unsupported(int error)
-{
-    return error == EOPNOTSUPP || error == ENOSYS || error == EPERM || error == EOVERFLOW;
-}
-
-static int acceptable_pointer_error(int error)
-{
-    return error == EBADF || error == EFAULT || error == EOPNOTSUPP ||
-           error == ENOSYS || error == EPERM;
-}
-
 static int handles_case(void)
 {
     struct {
         struct file_handle header;
         unsigned char bytes[MAX_HANDLE_SZ];
     } storage;
+    struct {
+        struct file_handle header;
+        unsigned char bytes[MAX_HANDLE_SZ];
+    } missing_storage;
+    struct {
+        struct file_handle header;
+        unsigned char bytes[MAX_HANDLE_SZ];
+    } invalid_descriptor_storage;
     int mount_id = 0;
+    int missing_mount_id = 0;
+    int invalid_descriptor_mount_id = 0;
     int mount_descriptor = -1;
-    int result;
+    int name_result;
+    int name_errno;
+    int missing_result;
+    int missing_errno;
+    int invalid_descriptor_result;
+    int invalid_descriptor_errno;
+    int open_result = -2;
+    int open_errno = -2;
+    int invalid_open_result = -2;
+    int invalid_open_errno = -2;
     struct stat expected;
     struct stat reopened;
 
@@ -419,43 +525,61 @@ static int handles_case(void)
     CHECK(chdir("/work/handles") == 0);
     memset(&storage, 0, sizeof(storage));
     storage.header.handle_bytes = MAX_HANDLE_SZ;
+    memset(&missing_storage, 0, sizeof(missing_storage));
+    missing_storage.header.handle_bytes = MAX_HANDLE_SZ;
+    memset(&invalid_descriptor_storage, 0, sizeof(invalid_descriptor_storage));
+    invalid_descriptor_storage.header.handle_bytes = MAX_HANDLE_SZ;
 
     errno = E2BIG;
-    result = name_to_handle_at(AT_FDCWD, "source", &storage.header, &mount_id, 0);
-    if (result == 0) {
+    name_result = name_to_handle_at(AT_FDCWD, "source", &storage.header, &mount_id, 0);
+    name_errno = errno;
+    CHECK(name_result == 0 || name_result == -1);
+    errno = E2BIG;
+    missing_result = name_to_handle_at(AT_FDCWD, "missing", &missing_storage.header,
+                                        &missing_mount_id, 0);
+    missing_errno = errno;
+    CHECK(missing_result == -1);
+    errno = E2BIG;
+    invalid_descriptor_result = name_to_handle_at(-1, "source",
+                                                    &invalid_descriptor_storage.header,
+                                                    &invalid_descriptor_mount_id, 0);
+    invalid_descriptor_errno = errno;
+    CHECK(invalid_descriptor_result == -1);
+
+    if (name_result == 0) {
         CHECK(mount_id > 0 && storage.header.handle_bytes > 0 &&
               storage.header.handle_bytes <= MAX_HANDLE_SZ && storage.header.handle_type > 0);
-        CHECK_ERR(name_to_handle_at(-1, "source", &storage.header, &mount_id, 0), EBADF);
         mount_descriptor = open(".", O_PATH | O_DIRECTORY);
         CHECK(mount_descriptor >= 0);
         errno = E2BIG;
-        result = open_by_handle_at(mount_descriptor, &storage.header, O_RDONLY);
-        if (result >= 0) {
-            CHECK(fstat(result, &reopened) == 0 && stat("source", &expected) == 0 &&
+        open_result = open_by_handle_at(mount_descriptor, &storage.header, O_RDONLY);
+        open_errno = errno;
+        if (open_result >= 0) {
+            CHECK(fstat(open_result, &reopened) == 0 && stat("source", &expected) == 0 &&
                   reopened.st_dev == expected.st_dev && reopened.st_ino == expected.st_ino);
-            CHECK(close(result) == 0);
-            puts("handles supported");
+            CHECK(close(open_result) == 0);
         } else {
-            CHECK(errno == EPERM || errno == EACCES || errno == EBADF || errno == EFAULT);
-            puts("handles permission-limited");
+            CHECK(open_result == -1);
         }
+        /* This is an actual kernel-produced handle with a deliberately bad
+         * mount descriptor. The transcript preserves the raw negative result
+         * and errno instead of compressing it into an "unsupported" bucket. */
+        errno = E2BIG;
+        invalid_open_result = open_by_handle_at(-1, &storage.header, O_RDONLY);
+        invalid_open_errno = errno;
+        CHECK(invalid_open_result == -1);
         CHECK(close(mount_descriptor) == 0);
-    } else {
-        CHECK(acceptable_unsupported(errno));
-        puts("handles unavailable");
     }
 
-    /* The raw syscall wrapper never turns caller pointer/descriptor errors
-     * into a policy layer. On filesystems without handles, their supported
-     * error happens first and remains an allowed observed outcome. */
-    errno = 0;
-    CHECK(name_to_handle_at(AT_FDCWD, NULL, &storage.header, &mount_id, 0) == -1 &&
-          acceptable_pointer_error(errno));
-    errno = 0;
-    CHECK(name_to_handle_at(AT_FDCWD, "source", NULL, &mount_id, 0) == -1 &&
-          acceptable_pointer_error(errno));
-    errno = 0;
-    CHECK(open_by_handle_at(-1, NULL, O_RDONLY) == -1 && acceptable_pointer_error(errno));
+    /* Every call uses the valid non-null pathname and caller-owned storage
+     * required by `file_handles.rs`. The stdout comparison is deliberately
+     * exact: filesystem support and authority can vary, but it cannot hide a
+     * different raw syscall return or errno between the oracle and product. */
+    printf("handles raw name=%d errno=%d missing=%d errno=%d bad-dirfd=%d errno=%d "
+           "open=%d errno=%d bad-open=%d errno=%d\n",
+           name_result, name_errno, missing_result, missing_errno,
+           invalid_descriptor_result, invalid_descriptor_errno,
+           open_result, open_errno, invalid_open_result, invalid_open_errno);
     CHECK(chdir("/") == 0);
     return 0;
 }

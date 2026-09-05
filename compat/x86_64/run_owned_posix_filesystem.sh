@@ -6,10 +6,11 @@ ulimit -c 0
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_posix_filesystem_probe.c"
+readonly AUDITOR="$ROOT/compat/x86_64/owned_posix_filesystem_audit.py"
 readonly cases=(aliases directory traversal temporary handles)
 # The traversal transcript proves deferred cancellation ends as PTHREAD_CANCELED
-# after the callback gate releases; a filesystem without native handles reports
-# the explicit, comparable "handles unavailable" outcome.
+# after the callback gate releases; file-handle stdout preserves each raw
+# return/errno so filesystem support cannot compress a product difference.
 
 [ "$#" -le 1 ] || {
     printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -38,6 +39,12 @@ if product_argument:
     if not product.is_dir() or not product.is_relative_to(root / ".work"):
         raise SystemExit("owned POSIX filesystem product must be a checkout .work directory")
 PY
+
+if [ -n "$provided_dynamic" ]; then
+    # Qualification may replay an extracted product. Validate every regular
+    # payload hash and the canonical loader alias before allocating evidence.
+    python3 -B "$AUDITOR" validate-dynamic-product "$provided_dynamic"
+fi
 
 readonly work="$(mktemp -d "$TMPDIR/owned-posix-filesystem.XXXXXX")"
 chmod a+rx "$work"
@@ -78,38 +85,29 @@ PYTHON
 }
 
 audit_consumer() {
-    local family="$1" mode="$2" candidate="$3" receipt="$4"
+    local family="$1" mode="$2" candidate="$3" receipt="$4" product="$5" object="$6"
+
+    if [ "$family" = static ]; then
+        python3 -B "$AUDITOR" audit-static "$product" "$mode" "$object" "$candidate" "$receipt"
+    else
+        python3 -B "$AUDITOR" audit-dynamic "$product" "$mode" "$object" "$candidate" "$receipt"
+    fi
 
     readelf -hW "$candidate" >"$candidate.header"
     readelf -lW "$candidate" >"$candidate.segments"
     readelf -dW "$candidate" >"$candidate.dynamic"
-    python3 -B - "$family" "$mode" "$candidate" "$receipt" <<'PY'
-import hashlib
-import json
+    python3 -B - "$family" "$mode" "$candidate" <<'PY'
 import re
 import sys
 from pathlib import Path
 
-family, mode, candidate_text, receipt_text = sys.argv[1:]
+family, mode, candidate_text = sys.argv[1:]
 candidate = Path(candidate_text)
-receipt = json.loads(Path(receipt_text).read_text(encoding="utf-8"))
 
 def require(value, message):
     if not value:
         raise SystemExit("owned POSIX filesystem artifact: " + message)
 
-expected_format = (
-    "crabc-x86-64-owned-dynamic-sysroot-v1"
-    if family == "dynamic" else "crabc-x86-64-sealed-static-driver-v1"
-)
-require(receipt.get("schema") == 1 and receipt.get("format") == expected_format,
-        "sealed driver receipt")
-output_hash = (
-    receipt.get("output_sha256")
-    if family == "dynamic" else receipt.get("output", {}).get("sha256")
-)
-require(output_hash == hashlib.sha256(candidate.read_bytes()).hexdigest(),
-        "output receipt hash")
 header = Path(str(candidate) + ".header").read_text(encoding="utf-8")
 require("Advanced Micro Devices X86-64" in header, "machine")
 expected_type = "DYN" if mode in ("pie", "static-pie") else "EXEC"
@@ -147,6 +145,7 @@ if [ -z "$provided_dynamic" ]; then
     provided_dynamic="$work/dynamic-sysroot"
 fi
 readonly installed="$provided_dynamic"
+python3 -B "$AUDITOR" validate-dynamic-product "$installed"
 step=compile-installed-object
 "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$PROBE" -o "$work/workload.o"
@@ -169,6 +168,7 @@ if [ -z "${1:-}" ]; then
     step=build-static
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
         --output "$work/static-sysroot" >"$work/static-build.json"
+    python3 -B "$AUDITOR" validate-static-product "$work/static-sysroot"
     assert_posix_filesystem_symbols "$work/static-sysroot/usr/lib/libc.a" --syms \
         "$work/static-archive-symbols.txt"
     for mode in static static-pie; do
@@ -180,7 +180,7 @@ if [ -z "${1:-}" ]; then
             "$work/static-sysroot/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$receipt")" \
                 "$work/workload.o" -o "$candidate"
         )
-        audit_consumer static "$mode" "$candidate" "$receipt"
+        audit_consumer static "$mode" "$candidate" "$receipt" "$work/static-sysroot" "$work/workload.o"
         assert_posix_filesystem_symbols "$candidate" --syms "$candidate-symbols.txt"
         root="$work/static-$mode-root"
         mkdir -p "$root/tmp"
@@ -200,7 +200,7 @@ for mode in pie non-pie; do
     candidate="$work/dynamic-$mode"
     step="link-dynamic-$mode"
     "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$candidate"
-    audit_consumer dynamic "$mode" "$candidate" "$candidate.crabc-link.json"
+    audit_consumer dynamic "$mode" "$candidate" "$candidate.crabc-link.json" "$installed" "$work/workload.o"
     root="$work/dynamic-$mode-root"
     cp -a "$installed/." "$root/"
     cp "$candidate" "$root/consumer"
@@ -219,4 +219,4 @@ for mode in pie non-pie; do
     printf 'owned POSIX filesystem dynamic %s: PASS\n' "$mode"
 done
 
-printf 'owned POSIX filesystem: PASS (same installed object, pinned musl, stat compatibility aliases, directory streams/comparators/allocation, ftw/nftw cancellation, racy legacy temporary names, contained file-handle outcomes, strong provider/receipt ELF audit, static/static-PIE and dynamic PIE/non-PIE kernel/direct chroots); evidence: %s\n' "$work"
+printf 'owned POSIX filesystem: PASS (same installed object, pinned musl, stat compatibility aliases, directory streams/comparators/allocation, ftw/nftw transcript/cancellation, racy legacy temporary names, exact raw file-handle outcomes, manifest-bound provider/receipt/link-trace ELF audit, static/static-PIE and dynamic PIE/non-PIE kernel/direct chroots); evidence: %s\n' "$work"

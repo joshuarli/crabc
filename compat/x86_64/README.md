@@ -222,10 +222,11 @@ VM-lifetime seam, same-object matrix, and remaining scope.
 `./scripts/dev-x86_64.sh owned-posix-filesystem` links one installed-driver
 object through pinned musl, owned static/static-PIE, and dynamic PIE/non-PIE
 kernel/direct entries. It covers historical stat aliases, directory and
-traversal callbacks with deferred cancellation, legacy temporary-name
-contracts, contained file-handle outcomes, and inherited `lchmod` behavior.
-The [component contract](owned-posix-filesystem.md) records the source map,
-strong-provider and receipt audit, and required dynamic qualification case.
+traversal transcript invariants with deferred cancellation, legacy
+temporary-name contracts, exact raw file-handle outcomes, and inherited
+`lchmod` behavior. The [component contract](owned-posix-filesystem.md) records
+the full manifest/payload and one-object receipt/link-trace audit alongside the
+source map, strong-provider audit, and required dynamic qualification case.
 
 ## Owned Linux/filesystem/terminal mechanisms
 
