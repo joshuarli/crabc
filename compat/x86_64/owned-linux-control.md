@@ -23,6 +23,23 @@ dynamic parents additionally run through direct interpreter entry. Each arm
 executes in its own chroot. The dynamic qualification catalog repeats the
 workload for both clean products and the extracted package.
 
+`run_owned_linux_control.sh` accepts `[--static-sysroot STATIC_SYSROOT]
+[DYNAMIC_SYSROOT]`. Its no-argument path builds both disposable products; a
+dynamic positional product preserves the existing dynamic-only replay and
+skips the static pair. A supplied static product runs static/static-PIE, and a
+static-only run builds the disposable dynamic product that compiles the single
+installed-driver object and runs the dynamic entries. Supplying both physical
+checkout `.work` products invokes neither producer. The paths must be nonempty,
+the static path cannot parse as an option, and each is canonicalized before the
+shared link validator checks its product manifest and receipt.
+
+The runner retains `compile.json` for its installed-header dependency audit,
+the common validator's exact identities for static, static-PIE, PIE and
+non-PIE links, and raw stdout, stderr and process-status files for the musl,
+static, static-PIE, dynamic PIE kernel/direct and dynamic non-PIE kernel/direct
+arms. The focused replay does not supply a family receipt or claim
+`system.kernel-admin` completion.
+
 `owned_linux_control_probe.c` compares invalid/nonexistent-target calls with
 their exact raw Linux errors, then checks capability reads/version queries,
 self process-memory transfers, and a traced child. The child proves negative
