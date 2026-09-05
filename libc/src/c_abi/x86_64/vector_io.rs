@@ -53,11 +53,16 @@ const _: [(); 8] = [(); core::mem::align_of::<IoVec>()];
 /// `iov` and every iovec Linux may examine must remain valid and writable for
 /// the syscall duration. The caller owns descriptor lifetime, aggregate
 /// buffer bounds, shared-offset synchronization, and all signal policy.
+/// Owned-runtime selection includes musl's syscall cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn readv(file_descriptor: c_int, iov: *const IoVec, iovcnt: c_int) -> isize {
     // SAFETY: the caller owns the complete raw vector-I/O contract. Linux
     // validates the iovec count and each memory range without a libc-side
     // prevalidation pass.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe { super::pthread_cancel::syscall_cp(raw_syscall::SYS_READV,
+        file_descriptor as i64, iov as i64, iovcnt as i64, 0, 0, 0) };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_READV,
@@ -76,9 +81,14 @@ pub unsafe extern "C" fn readv(file_descriptor: c_int, iov: *const IoVec, iovcnt
 /// `iov` and every iovec Linux may examine must remain valid and readable for
 /// the syscall duration. The caller owns descriptor lifetime, aggregate
 /// buffer bounds, shared-offset synchronization, and SIGPIPE policy.
+/// Owned-runtime selection includes musl's syscall cancellation point.
 #[no_mangle]
 pub unsafe extern "C" fn writev(file_descriptor: c_int, iov: *const IoVec, iovcnt: c_int) -> isize {
     // SAFETY: the caller owns the complete raw vector-I/O contract.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe { super::pthread_cancel::syscall_cp(raw_syscall::SYS_WRITEV,
+        file_descriptor as i64, iov as i64, iovcnt as i64, 0, 0, 0) };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_WRITEV,

@@ -136,8 +136,8 @@ pub extern "C" fn close(file_descriptor: c_int) -> c_int {
 ///
 /// If Linux examines the buffer, `buffer` must designate `count` writable
 /// bytes for the syscall's duration. The caller owns descriptor lifetime and
-/// concurrent offset policy. This direct static leaf does not provide musl's
-/// pthread cancellation-point behavior.
+/// concurrent offset policy. The owned runtime uses musl's cancellation-point
+/// syscall; the older private direct-static fixture retains raw syscall behavior.
 #[no_mangle]
 pub unsafe extern "C" fn read(
     file_descriptor: c_int,
@@ -145,6 +145,10 @@ pub unsafe extern "C" fn read(
     count: usize,
 ) -> isize {
     // SAFETY: the caller supplies the complete raw Linux read buffer contract.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe { super::pthread_cancel::syscall_cp(raw_syscall::SYS_READ,
+        file_descriptor as i64, buffer as i64, count as i64, 0, 0, 0) };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_READ,
@@ -162,8 +166,8 @@ pub unsafe extern "C" fn read(
 ///
 /// If Linux examines the buffer, `buffer` must designate `count` readable
 /// bytes for the syscall's duration. The caller owns descriptor lifetime,
-/// shared-offset synchronization, and SIGPIPE policy. This direct static leaf
-/// does not provide musl's pthread cancellation-point behavior.
+/// shared-offset synchronization, and SIGPIPE policy. The owned runtime uses
+/// musl's cancellation-point syscall; the older private fixture remains raw.
 #[no_mangle]
 pub unsafe extern "C" fn write(
     file_descriptor: c_int,
@@ -172,6 +176,10 @@ pub unsafe extern "C" fn write(
 ) -> isize {
     // SAFETY: the caller supplies the complete raw Linux write buffer
     // contract, including signal/descriptor policy.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let result = unsafe { super::pthread_cancel::syscall_cp(raw_syscall::SYS_WRITE,
+        file_descriptor as i64, buffer as i64, count as i64, 0, 0, 0) };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe {
         raw_syscall::syscall3(
             raw_syscall::SYS_WRITE,
