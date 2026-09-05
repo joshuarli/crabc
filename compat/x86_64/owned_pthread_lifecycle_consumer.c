@@ -38,6 +38,7 @@ enum {
     CRABC_CONCURRENT_WORKERS = 96,
     CRABC_PARALLEL_DETACHED_CREATORS = 8,
     CRABC_PARALLEL_DETACHED_ROUNDS = 48,
+    CRABC_SIMULTANEOUS_LAST_EXIT_WORKERS = 8,
     CRABC_CANCELED_SENTINEL = 0x56a71c2d,
 };
 
@@ -363,6 +364,8 @@ static int run_attr_and_cancellation(void)
     pthread_attr_t attributes;
     pthread_t thread;
     void *result = 0;
+    size_t default_stack_size = 0;
+    size_t default_guard_size = 0;
     const struct sched_param inherited_scheduler = { .sched_priority = 17 };
     struct custom_stack_round custom = { .failure = 0 };
     struct cancellation_round cancellation = {
@@ -371,6 +374,16 @@ static int run_attr_and_cancellation(void)
         .destructor_seen = 0,
         .failure = 0,
     };
+
+    /* Pinned musl's initialized and null-attribute creation defaults are a
+     * 128 KiB stack and 8 KiB guard. The owned installed runtime must not
+     * retain the legacy fixture's 1 MiB/no-guard private policy. */
+    if (pthread_attr_init(&attributes) != 0 ||
+        pthread_attr_getstacksize(&attributes, &default_stack_size) != 0 ||
+        pthread_attr_getguardsize(&attributes, &default_guard_size) != 0 ||
+        default_stack_size != 128 * 1024 || default_guard_size != 8 * 1024 ||
+        pthread_attr_destroy(&attributes) != 0)
+        return 1;
 
     if (pthread_attr_init(&attributes) != 0 ||
         pthread_attr_setstack(&attributes, crabc_caller_stack,
@@ -384,7 +397,7 @@ static int run_attr_and_cancellation(void)
         pthread_join(thread, &result) != 0 || result != &custom ||
         __atomic_load_n(&custom.failure, __ATOMIC_ACQUIRE) != 0 ||
         pthread_attr_destroy(&attributes) != 0)
-        return 1;
+        return 2;
 
     if (pthread_attr_init(&attributes) != 0 ||
         pthread_attr_setstacksize(&attributes, 8 * PTHREAD_STACK_MIN) != 0 ||
@@ -399,7 +412,7 @@ static int run_attr_and_cancellation(void)
         __atomic_load_n(&cancellation.failure, __ATOMIC_ACQUIRE) != 0 ||
         pthread_key_delete(crabc_teardown_key) != 0 ||
         pthread_attr_destroy(&attributes) != 0)
-        return 2;
+        return 3;
     return 0;
 }
 
@@ -467,6 +480,89 @@ static int run_main_thread_pthread_exit(void)
     (void)close(pipefd[1]);
     if (child < 0 || read(pipefd[0], &marker, sizeof(marker)) != sizeof(marker) ||
         marker != 'E' || close(pipefd[0]) != 0 || waitpid(child, &status, 0) != child ||
+        !WIFEXITED(status) || WEXITSTATUS(status) != 0)
+        return 2;
+    return 0;
+}
+
+struct simultaneous_last_exit_round {
+    volatile int ready;
+    volatile int release;
+    volatile int exiting;
+};
+
+static int crabc_last_exit_pipe = -1;
+
+static void last_thread_exit_atexit(void)
+{
+    static const unsigned char marker = 'L';
+
+    if (crabc_last_exit_pipe < 0 ||
+        write(crabc_last_exit_pipe, &marker, sizeof(marker)) != sizeof(marker))
+        _Exit(93);
+}
+
+static void *simultaneous_last_exit_worker(void *opaque)
+{
+    struct simultaneous_last_exit_round *round = opaque;
+
+    __atomic_fetch_add(&round->ready, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&round->release, __ATOMIC_ACQUIRE) == 0)
+        spin_pause();
+    /* All workers cross the callback-return/selected-exit boundary together.
+     * Once the main task enters pthread_exit, every worker must serialize its
+     * logical exit publication with its siblings; kernel child-TID snapshots
+     * alone let multiple final candidates take SYS_exit. */
+    __atomic_fetch_add(&round->exiting, 1, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&round->exiting, __ATOMIC_ACQUIRE) !=
+        CRABC_SIMULTANEOUS_LAST_EXIT_WORKERS)
+        spin_pause();
+    return 0;
+}
+
+/*
+ * Commit the main task and eight worker callbacks to pthread_exit together.
+ * The parent sees the one atexit marker only if exactly one logical final task
+ * takes ordinary process exit. A raw SYS_exit in every worker closes the pipe
+ * without this marker, which isolates the task-list race independently of
+ * join/reaper ownership.
+ */
+static int run_simultaneous_last_thread_exit(void)
+{
+    int pipefd[2];
+    pthread_t workers[CRABC_SIMULTANEOUS_LAST_EXIT_WORKERS];
+    struct simultaneous_last_exit_round round = {
+        .ready = 0,
+        .release = 0,
+        .exiting = 0,
+    };
+    pid_t child;
+    int status;
+    unsigned char marker = 0;
+    unsigned int index;
+
+    if (pipe(pipefd) != 0)
+        return 1;
+    child = fork();
+    if (child == 0) {
+        (void)close(pipefd[0]);
+        crabc_last_exit_pipe = pipefd[1];
+        for (index = 0; index != CRABC_SIMULTANEOUS_LAST_EXIT_WORKERS; ++index) {
+            if (pthread_create(&workers[index], 0,
+                    simultaneous_last_exit_worker, &round) != 0)
+                _Exit(92);
+        }
+        if (wait_for_at_least(&round.ready,
+                CRABC_SIMULTANEOUS_LAST_EXIT_WORKERS) != 0 ||
+            atexit(last_thread_exit_atexit) != 0)
+            _Exit(91);
+        __atomic_store_n(&round.release, 1, __ATOMIC_RELEASE);
+        pthread_exit(0);
+        _Exit(90);
+    }
+    (void)close(pipefd[1]);
+    if (child < 0 || read(pipefd[0], &marker, sizeof(marker)) != sizeof(marker) ||
+        marker != 'L' || close(pipefd[0]) != 0 || waitpid(child, &status, 0) != child ||
         !WIFEXITED(status) || WEXITSTATUS(status) != 0)
         return 2;
     return 0;
@@ -554,6 +650,7 @@ int main(void)
     const int attrs = run_attr_and_cancellation();
     const int detached = run_detached_attr_and_c11_reaper();
     const int main_exit = run_main_thread_pthread_exit();
+    const int simultaneous_last_exit = run_simultaneous_last_thread_exit();
     const int live_fork = run_fork_with_live_selected_worker();
     const int atfork = run_atfork_after_worker_teardown();
 
@@ -567,6 +664,8 @@ int main(void)
         return 30 + detached;
     if (main_exit != 0)
         return 40 + main_exit;
+    if (simultaneous_last_exit != 0)
+        return 45 + simultaneous_last_exit;
     if (live_fork != 0)
         return 50 + live_fork;
     if (atfork != 0)

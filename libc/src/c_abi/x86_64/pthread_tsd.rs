@@ -145,6 +145,29 @@ fn unlock_selected_tsd() {
     SELECTED_TSD_LOCK.store(0, Ordering::Release);
 }
 
+/// Begin the selected TSD portion of a static fork transaction.
+///
+/// This precedes the selected worker-list lock, preserving the established
+/// TSD -> worker-registry order used by key deletion. It prevents a raw fork
+/// from copying half of `pthread_key_create` or `pthread_key_delete` metadata
+/// while the child is about to adopt the calling task's TSD table.
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+pub(super) fn pthread_fork_prepare() {
+    lock_selected_tsd();
+}
+
+/// Complete the original-parent (or raw-error) side of the selected TSD fork
+/// transaction.
+///
+/// # Safety
+///
+/// The caller must hold the matching [`pthread_fork_prepare`] lock and must
+/// not have completed this transaction already.
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+pub(super) unsafe fn pthread_fork_parent() {
+    unlock_selected_tsd();
+}
+
 #[inline]
 fn key_index(key: c_uint) -> Option<usize> {
     let index = key as usize;
@@ -426,9 +449,13 @@ pub(super) unsafe fn run_selected_main_tsd_destructors() {
 /// copied metadata lock: every non-caller thread vanished at fork, so no
 /// parent lock owner can exist in the child. Key allocation metadata remains
 /// process-copied exactly as it was at the fork boundary.
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 pub(super) unsafe fn adopt_current_values_after_fork() -> bool {
     let thread_pointer = pthread_identity::current_thread_pointer();
     if static_tls::is_inherited_initial_thread_pointer(thread_pointer) {
+        // The child inherited the metadata lock from its sole surviving task.
+        // No sibling can finish a concurrent key transition after fork, so
+        // clear it only after the stable pointer identity observation.
         SELECTED_TSD_LOCK.store(0, Ordering::Release);
         return true;
     }
@@ -437,9 +464,10 @@ pub(super) unsafe fn adopt_current_values_after_fork() -> bool {
     ) else {
         return false;
     };
-    // SAFETY: the fork coordinator still holds the copied worker-list lock,
-    // so the source control remains mapped. The child has one task, making
-    // these atomic snapshots the complete caller-owned TSD state to retain.
+    // SAFETY: the fork coordinator still holds both the copied TSD metadata
+    // lock and worker-list lock. The source control remains mapped and no
+    // sibling can be midway through key allocation/deletion, so these atomic
+    // snapshots are the complete caller-owned TSD state to retain.
     let source = unsafe { &*source };
     for index in 0..PTHREAD_KEYS_MAX {
         MAIN_SELECTED_TSD_VALUES.values[index].store(

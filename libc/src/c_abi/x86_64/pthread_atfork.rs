@@ -32,8 +32,10 @@ compile_error!("x86 pthread-atfork leaf requires little-endian Linux/x86-64");
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+use super::c_status;
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 use super::{
-    c_status, immediate_termination, pthread_create_join, pthread_identity, pthread_tsd,
+    immediate_termination, pthread_create_join, pthread_identity, pthread_tsd,
     signal_execution, static_tls,
 };
 
@@ -76,6 +78,7 @@ static mut ATFORK_REGISTRATIONS: [AtforkRegistration; ATFORK_CAPACITY] =
 /// this exact instruction. Keeping the syscall adjacent to that state change
 /// prevents the process-transition proof from depending on generic raw-
 /// syscall wrapper inlining after lifecycle composition changes elsewhere.
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 #[inline(always)]
 unsafe fn raw_selected_fork() -> i64 {
     let result: i64;
@@ -232,12 +235,23 @@ pub unsafe extern "C" fn pthread_atfork(
 /// writes selected `errno` and returns `-1`.
 ///
 /// This static-only slice admits the bootstrapped initial task or one selected
-/// worker. Foreign threads, dynamic/loader TLS, AIO, allocator, and the
-/// owned stdio/timezone/process-lock transitions remain separately composed;
-/// no public claim is made for those owners until their exact fork triplets
-/// are present in this transaction.
+/// worker. Its inner transaction follows pinned musl's key -> stdio ->
+/// timezone -> thread-list -> process-creation lock order, with the process
+/// lock released/reset first after raw fork. Dynamic/loader TLS remains an
+/// explicit rejection until the loader owns a matching prepare/child repair
+/// hook; it must not inherit the static TLS identity reset.
 #[no_mangle]
 pub unsafe extern "C" fn fork() -> c_int {
+    #[cfg(feature = "x86-owned-dynamic-runtime")]
+    {
+        // The general loader has not yet frozen/re-rooted its opaque TLS/DTV
+        // token registry in a fork child. Reject rather than copying a stale
+        // dynamic main identity or applying static-only repair to it.
+        return c_status(-EAGAIN);
+    }
+
+    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+    {
     let thread_pointer = pthread_identity::current_thread_pointer();
     if !static_tls::is_initial_thread_pointer(thread_pointer)
         && !pthread_create_join::is_current_selected_worker()
@@ -249,7 +263,23 @@ pub unsafe extern "C" fn fork() -> c_int {
     // SAFETY: this private fork transaction restores the exact one-word mask
     // on every parent, child, and raw-error completion path below.
     unsafe { signal_execution::block_application_signals(&mut saved_signal_mask) };
+    // Musl's private pthread-key owner precedes the thread-list lock. Holding
+    // it through raw fork makes the copied key metadata and caller values one
+    // coherent child snapshot rather than clearing an inherited partial lock.
+    pthread_tsd::pthread_fork_prepare();
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe {
+        super::stdio_standard::pthread_fork_prepare();
+        super::owned_timezone::pthread_fork_prepare();
+    }
     pthread_create_join::pthread_fork_prepare();
+    #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe {
+        // The shared abort/process-creation lock is musl's inner `_Fork`
+        // transaction. It follows every outer registry/thread-list lock and
+        // contains no user callback or CLONE_VM spawn child.
+        super::owned_process_lock::pthread_fork_prepare();
+    }
     // SAFETY: this private leaf owns the fixed zero-argument Linux x86-64
     // `fork=57` transition while the selected worker list cannot mutate.
     let result = unsafe { raw_selected_fork() };
@@ -265,14 +295,37 @@ pub unsafe extern "C" fn fork() -> c_int {
         // SAFETY: the child now has its caller's main TSD/TLS identity. Drop
         // inherited worker handles and the copied list lock before callbacks.
         unsafe { pthread_create_join::pthread_fork_child() };
+        #[cfg(feature = "x86-owned-static-runtime")]
+        unsafe {
+            super::stdio_standard::pthread_fork_child();
+            super::owned_timezone::pthread_fork_child();
+            // Reset the innermost copied process lock only after all child
+            // state still protected by it has reached its one-task form.
+            super::owned_process_lock::pthread_fork_child();
+        }
     } else {
+        #[cfg(feature = "x86-owned-static-runtime")]
+        unsafe {
+            // A raw error follows the parent completion path. Complete the
+            // inner lock before any outer registry or user callback sees it.
+            super::owned_process_lock::pthread_fork_parent();
+        }
         // SAFETY: this completes the parent side of the exact list-lock pair
         // on both a successful parent return and a raw fork failure.
         unsafe { pthread_create_join::pthread_fork_parent() };
+        #[cfg(feature = "x86-owned-static-runtime")]
+        unsafe {
+            super::stdio_standard::pthread_fork_parent();
+            super::owned_timezone::pthread_fork_parent();
+        }
+        // SAFETY: this is the matching outer key-metadata completion after
+        // every parent-side raw fork result.
+        unsafe { pthread_tsd::pthread_fork_parent() };
     }
     // SAFETY: this restores the caller's saved application mask after all
     // child or parent internal state has reached a callable form.
     unsafe { signal_execution::restore_application_signals(&saved_signal_mask) };
     unsafe { __fork_handler(if result == 0 { 1 } else { 0 }) };
     c_status(result)
+    }
 }

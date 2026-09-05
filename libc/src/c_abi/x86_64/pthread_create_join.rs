@@ -292,6 +292,34 @@ enum SelectedWorkerLifecycleState {
     DetachedReclaiming,
 }
 
+/// One task's membership in the private last-thread transition.
+///
+/// This is deliberately distinct from [`SelectedWorkerLifecycleState`]: the
+/// latter chooses join/detach ownership for a control mapping, whereas this
+/// state commits a running task to `pthread_exit`.  Keeping both task-state
+/// publications under the list lock gives exactly one final selected task the
+/// ordinary process-exit route while all earlier tasks use `SYS_exit`.
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SelectedRuntimeTaskState {
+    Active,
+    ExitCommitted,
+}
+
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+impl SelectedRuntimeTaskState {
+    const ACTIVE: u8 = 0;
+    const EXIT_COMMITTED: u8 = 1;
+
+    #[inline]
+    const fn encode(self) -> u8 {
+        match self {
+            Self::Active => Self::ACTIVE,
+            Self::ExitCommitted => Self::EXIT_COMMITTED,
+        }
+    }
+}
+
 impl SelectedWorkerLifecycleState {
     const JOINABLE: u8 = 0;
     const JOIN_CLAIMED: u8 = 1;
@@ -331,6 +359,14 @@ struct ThreadControl {
     // pre-clone `Detached + child_tid == 0` ambiguity and a fast child's exit
     // before the creating caller receives its handle.
     creator_handoff_pending: AtomicU8,
+    // This is the worker's logical task-list state, not its join/detach
+    // ownership. A worker marks ExitCommitted while the registry lock is
+    // held, after cleanup/TSD/result publication but before it reaches
+    // SYS_exit. The one transition that observes no other Active task owns
+    // ordinary process exit. Dynamic main/last-thread exit remains loader
+    // work, so it has no corresponding local task state.
+    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+    task_state: AtomicU8,
     // A joiner or detacher makes the sole state transition out of Joinable
     // while the registry lock still proves this control mapping is live.
     // Detached workers retain their live registry entry until a later
@@ -395,10 +431,11 @@ static SELECTED_WORKER_REGISTRY_HEAD: AtomicUsize = AtomicUsize::new(0);
 static SELECTED_WORKER_REGISTRY_LOCK: AtomicU8 = AtomicU8::new(0);
 
 // The bootstrapped static thread is not backed by a worker control mapping,
-// but it still participates in musl's last-thread decision. This bit changes
-// only when that initial task calls pthread_exit; ordinary `exit` remains the
-// separate whole-process CRT path.
-static SELECTED_INITIAL_THREAD_EXITED: AtomicU8 = AtomicU8::new(0);
+// but it still participates in the same locked last-thread transition. This
+// remains static-only: dynamic main-thread exit must stay loader-owned.
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+static SELECTED_INITIAL_THREAD_TASK_STATE: AtomicU8 =
+    AtomicU8::new(SelectedRuntimeTaskState::ACTIVE);
 
 const _: () = {
     assert!(size_of::<AtomicI32>() == size_of::<c_int>());
@@ -515,66 +552,86 @@ fn unlock_selected_worker_registry() {
     SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
 }
 
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
 #[inline]
 fn current_is_selected_initial_thread() -> bool {
     static_tls::is_initial_thread_pointer(pthread_identity::current_thread_pointer())
 }
 
-/// Mark the selected initial task exited and report whether a worker remains.
+/// Mark the selected initial task committed to exit and report whether it is
+/// the unique final task.
 ///
-/// The list lock makes the initial-task state and every other linked worker's
-/// `child_tid`/creator-handoff state one coherent last-thread observation. A
-/// control with pending creator handoff is treated as live even while its
-/// child-TID still has the pre-clone zero representation.
-fn selected_initial_thread_has_live_worker_after_exit() -> bool {
+/// Kernel `child_tid` values cannot make this decision: two workers can both
+/// see the other's still-positive TID and each take `SYS_exit`. The logical
+/// task-state store and the following scan occur under one list lock, so only
+/// the transition that commits the final Active task returns true.
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+fn selected_initial_thread_is_final_runtime_task() -> bool {
     lock_selected_worker_registry();
-    SELECTED_INITIAL_THREAD_EXITED.store(1, Ordering::Release);
+    SELECTED_INITIAL_THREAD_TASK_STATE.store(
+        SelectedRuntimeTaskState::EXIT_COMMITTED,
+        Ordering::Release,
+    );
     let mut control = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) as *mut ThreadControl;
-    let mut live = false;
+    let mut another_active_task = false;
     while !control.is_null() {
-        // SAFETY: the list lock retains this control mapping during the
-        // handoff/TID observation. A positive TID is a live task; a pending
-        // creator may become one immediately after clone and is conservative.
-        if unsafe { (*control).creator_handoff_pending.load(Ordering::Acquire) } != 0
-            || unsafe { (*control).child_tid.load(Ordering::Acquire) } > 0
+        // SAFETY: the list lock retains this control mapping through the
+        // task-state observation. A linked pre-clone control begins Active,
+        // so a creating selected worker cannot be lost from this decision.
+        if unsafe { (*control).task_state.load(Ordering::Acquire) }
+            == SelectedRuntimeTaskState::ACTIVE
         {
-            live = true;
+            another_active_task = true;
             break;
         }
         control = unsafe { (*control).registry_next };
     }
     unlock_selected_worker_registry();
-    live
+    !another_active_task
 }
 
-/// Whether this exiting selected worker is the final live runtime task.
+/// Commit one selected worker to exit and report whether it is the unique
+/// final task.
 ///
-/// It is meaningful only after the initial task has taken `pthread_exit`.
-/// Finished-but-unjoined controls have a zero child-TID and do not keep the
-/// process alive; a linked creator with pending handoff does.
-fn selected_worker_is_last_live_runtime_task(control: *mut ThreadControl) -> bool {
+/// The commit follows user cleanup, selected TSD destructors, and result
+/// publication. It is therefore the selected analogue of musl's locked
+/// thread-list unlink point, but keeps the control mapped for join/detach
+/// reclamation. Once committed, a task cannot be counted as another thread's
+/// live sibling even if Linux has not yet cleared its child-TID word.
+#[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+fn selected_worker_is_final_runtime_task(control: *mut ThreadControl) -> bool {
     lock_selected_worker_registry();
-    if SELECTED_INITIAL_THREAD_EXITED.load(Ordering::Acquire) == 0 {
+    // SAFETY: current-worker identity retains this linked control mapping
+    // until its calling task invokes SYS_exit.
+    unsafe {
+        (*control).task_state.store(
+            SelectedRuntimeTaskState::EXIT_COMMITTED,
+            Ordering::Release,
+        )
+    };
+    if SELECTED_INITIAL_THREAD_TASK_STATE.load(Ordering::Acquire)
+        == SelectedRuntimeTaskState::ACTIVE
+    {
         unlock_selected_worker_registry();
         return false;
     }
     let mut cursor = SELECTED_WORKER_REGISTRY_HEAD.load(Ordering::Acquire) as *mut ThreadControl;
-    let mut another_live_worker = false;
+    let mut another_active_task = false;
     while !cursor.is_null() {
         if cursor != control
             // SAFETY: list membership keeps this control live while the
-            // transition observes its creator/TID state under the same lock.
-            && (unsafe { (*cursor).creator_handoff_pending.load(Ordering::Acquire) } != 0
-                || unsafe { (*cursor).child_tid.load(Ordering::Acquire) } > 0)
+            // transition observes its logical task state under the same lock.
+            && unsafe { (*cursor).task_state.load(Ordering::Acquire) }
+                == SelectedRuntimeTaskState::ACTIVE
         {
-            another_live_worker = true;
+            another_active_task = true;
             break;
         }
         // SAFETY: cursor remains linked/mapped through this locked traversal.
         cursor = unsafe { (*cursor).registry_next };
     }
     unlock_selected_worker_registry();
-    !another_live_worker
+    !another_active_task
 }
 
 /// Whether any selected worker control remains linked.
@@ -615,7 +672,8 @@ pub(super) unsafe fn pthread_fork_parent() {
 /// and values before this reset. Future child workers start a fresh list.
 pub(super) unsafe fn pthread_fork_child() {
     SELECTED_WORKER_REGISTRY_HEAD.store(0, Ordering::Release);
-    SELECTED_INITIAL_THREAD_EXITED.store(0, Ordering::Release);
+    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+    SELECTED_INITIAL_THREAD_TASK_STATE.store(SelectedRuntimeTaskState::ACTIVE, Ordering::Release);
     SELECTED_WORKER_REGISTRY_LOCK.store(0, Ordering::Release);
 }
 
@@ -1218,6 +1276,7 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
     // the child owns the callback invocation and parent only reads result
     // after `finished` is published and the child has exited.
     let result = unsafe { (*control).start.invoke((*control).argument) };
+    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
     if current_is_selected_initial_thread() {
         // This callback called fork and became the static child main task.
         // Its inherited worker control was intentionally unlinked in the
@@ -1236,7 +1295,8 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
         pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
         publish_selected_worker_result(control, result);
     }
-    if selected_worker_is_last_live_runtime_task(control) {
+    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+    if selected_worker_is_final_runtime_task(control) {
         // SAFETY: the initial selected task already called pthread_exit and
         // this is the last live worker under the registry transition. Match
         // musl's last-thread route through ordinary process exit so atexit and
@@ -1397,6 +1457,8 @@ unsafe fn create_selected_worker_with_attributes(
                 child_tid: AtomicI32::new(0),
                 start_ready: AtomicU8::new(0),
                 creator_handoff_pending: AtomicU8::new(1),
+                #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+                task_state: AtomicU8::new(SelectedRuntimeTaskState::ACTIVE),
                 lifecycle: AtomicU8::new(
                     if attributes.detached {
                         SelectedWorkerLifecycleState::Detached
@@ -1496,12 +1558,13 @@ unsafe fn create_selected_worker_with_attributes(
 /// result must remain valid until its joining caller consumes it.
 #[inline(always)]
 unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
+    #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
     if current_is_selected_initial_thread() {
         // SAFETY: this is the static bootstrapped task's process-lifetime TSD
         // table. Destructors run before the musl-shaped list/last-thread
         // decision, so they may still use selected lifecycle operations.
         unsafe { pthread_tsd::run_selected_main_tsd_destructors() };
-        if !selected_initial_thread_has_live_worker_after_exit() {
+        if selected_initial_thread_is_final_runtime_task() {
             // SAFETY: no selected worker remains after the locked observation,
             // so pthread_exit on the initial task is ordinary process exit.
             unsafe { super::static_startup::exit(0) }
@@ -1528,7 +1591,8 @@ unsafe fn exit_selected_worker(result: SelectedWorkerResult) -> ! {
             pthread_tsd::run_selected_worker_tsd_destructors(core::ptr::addr_of!((*control).tsd));
             publish_selected_worker_result(control, result);
         }
-        if selected_worker_is_last_live_runtime_task(control) {
+        #[cfg(not(feature = "x86-owned-dynamic-runtime"))]
+        if selected_worker_is_final_runtime_task(control) {
             // SAFETY: after result/TSD publication, this final selected worker
             // owns the ordinary process-exit transition for an initial task
             // that previously left through pthread_exit.
