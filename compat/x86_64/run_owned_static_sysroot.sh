@@ -25,6 +25,17 @@ readonly CONSUMER_MATRIX="$ROOT_DIR/compat/x86_64/owned_static_consumer_matrix.p
 readonly CONSUMER_MATRIX_DEFAULT_WORKERS=4
 readonly CONSUMER_MATRIX_MAX_WORKERS=8
 readonly CONSUMER_MATRIX_TIMEOUT_SECONDS=300
+readonly -a CONSUMER_EVIDENCE_PATHS=(
+    static-et-exec static-pie
+    static-et-exec/pthread static-pie/pthread static-et-exec/lifecycle static-pie/lifecycle
+    allocator-et-exec allocator-pie posix-et-exec posix-pie
+    posix-et-exec/temp posix-pie/temp posix-et-exec/spawn posix-pie/spawn
+    posix-et-exec/calendar posix-pie/calendar posix-et-exec/tzif posix-pie/tzif
+    stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends
+    stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie
+    printf-et-exec printf-pie printf-et-exec/float printf-pie/float
+    printf-et-exec/scan printf-pie/scan
+)
 readonly ELF64_PROGRAM_HEADER_SIZE=56
 readonly ELF64_PROGRAM_HEADER_COUNT_OFFSET=56
 readonly ELF64_PROGRAM_HEADER_OFFSET=32
@@ -805,6 +816,12 @@ run_static_mode() {
             minimum_tls_alignment=1
             candidate_arguments=("$mode_root")
             ;;
+        spawn)
+            probe=owned_spawn_probe.c
+            expected_output=owned-spawn-ok
+            minimum_tls_alignment=1
+            candidate_arguments=("$mode_root/spawn-state")
+            ;;
         calendar)
             probe=owned_calendar_probe.c
             minimum_tls_alignment=1
@@ -996,6 +1013,8 @@ run_static_mode() {
     if [ "$consumer_kind" = posix ]; then
         run_static_mode "$installed_root" "$mode" "$mode_root/temp" \
             "$label temporary objects" temp-objects
+        run_static_mode "$installed_root" "$mode" "$mode_root/spawn" \
+            "$label process spawning" spawn
         run_static_mode "$installed_root" "$mode" "$mode_root/calendar" \
             "$label calendar" calendar "$printf_matrix_reference.calendar"
         run_static_mode "$installed_root" "$mode" "$mode_root/tzif" \
@@ -1122,7 +1141,7 @@ compare_consumer_matrix_runs() {
     # the serial/parallel comparison an additional determinism check rather
     # than just a timing report, while both passes reuse the same cold-built
     # primary and extracted trees.
-    for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread static-et-exec/lifecycle static-pie/lifecycle allocator-et-exec allocator-pie posix-et-exec posix-pie posix-et-exec/temp posix-pie/temp posix-et-exec/calendar posix-pie/calendar posix-et-exec/tzif posix-pie/tzif stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
+    for mode_root in "${CONSUMER_EVIDENCE_PATHS[@]}"; do
         cmp "$serial_primary/$mode_root/candidate.sha256" \
             "$parallel_primary/$mode_root/candidate.sha256" ||
             fail "${mode_root} primary output differs between serial and parallel consumers"
@@ -1354,6 +1373,14 @@ reference_output="$(env -i "$header_consumer/temp-reference" "$header_consumer")
     fail "pinned-musl temporary-object output drifted: $reference_output"
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
+    -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_spawn_probe.c" \
+    -o "$header_consumer/spawn-reference"
+reference_output="$(env -i "$header_consumer/spawn-reference" "$header_consumer/spawn-state")" ||
+    fail "pinned-musl spawn reference failed"
+[ "$reference_output" = owned-spawn-ok ] ||
+    fail "pinned-musl spawn output drifted: $reference_output"
+
+"$ORACLE_CC" -std=c11 -D_GNU_SOURCE -pthread -fno-builtin \
     -I"$ROOT_DIR/include" "$ROOT_DIR/compat/x86_64/owned_calendar_probe.c" \
     -o "$header_consumer/calendar-reference"
 env -i "$header_consumer/calendar-reference" "$header_consumer/zone.tzif" \
@@ -1537,7 +1564,7 @@ if [ "$consumer_benchmark" = 1 ]; then
         "$primary_consumer" "$extracted_consumer" \
         "$work_dir/consumer-matrix-serial-logs" "$work_dir/consumer-matrix-logs"
 fi
-for mode_root in static-et-exec static-pie static-et-exec/pthread static-pie/pthread static-et-exec/lifecycle static-pie/lifecycle allocator-et-exec allocator-pie posix-et-exec posix-pie posix-et-exec/temp posix-pie/temp posix-et-exec/calendar posix-pie/calendar posix-et-exec/tzif posix-pie/tzif stdio-et-exec stdio-pie stdio-et-exec/backends stdio-pie/backends stdio-et-exec/process stdio-pie/process resolver-et-exec resolver-pie printf-et-exec printf-pie printf-et-exec/float printf-pie/float printf-et-exec/scan printf-pie/scan; do
+for mode_root in "${CONSUMER_EVIDENCE_PATHS[@]}"; do
     cmp "$primary_consumer/$mode_root/candidate.sha256" \
         "$extracted_consumer/$mode_root/candidate.sha256" ||
         fail "${mode_root} output differs after deterministic package extraction"

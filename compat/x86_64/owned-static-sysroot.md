@@ -106,8 +106,9 @@ CRT in both modes and the extracted package. Two workers compose errno isolation
 mutex/condition handoff, rwlock exclusion, once publication, and clear-before-call
 TSD destructors before join. This reuses the existing differential body without
 its private startup object. The separate lifecycle consumer below covers
-attributes, C11 adapters, and explicit deferred cancellation; full fork repair
-and dynamic TLS remain separate qualification boundaries.
+attributes, C11 adapters, explicit deferred cancellation, and selected-runtime
+fork repair. Allocator-wide fork recovery and dynamic TLS remain separate
+qualification boundaries.
 
 The existing `libc_allocator_basic_runtime_v1_probe.c` also runs through both
 installed modes and the extracted package: allocation/reallocation/alignment
@@ -143,8 +144,8 @@ ordinary exit. `owned_stdio_process_probe.c` separately exercises `popen`,
 `pclose`, and `system`: read/write streams, prior-process descriptor closure,
 CLOEXEC and same-descriptor dup2, worker-thread spawn, signal status/restoration,
 interrupted wait, and exec/pipe failure cleanup without leaked descriptors or
-zombies. Its child shell and scratch are private to each run. Public spawn,
-wide streams, syscall cancellation, and fork-lock recovery remain unqualified.
+zombies. Its child shell and scratch are private to each run. Wide streams,
+syscall cancellation, and allocator-wide fork recovery remain unqualified.
 
 `owned_static_printf_probe.c` additionally covers positional integer/string/
 count/pointer/errno/hex-float formatting and FILE, descriptor, allocated, and
@@ -161,16 +162,26 @@ scansets, widths, suppression, positional arguments, integer and binary32/64/80
 conversion, errno, fenv, and stream lookahead/EOF/error state. Allocation checks
 exercise `%m` growth, cleanup, partial failure, and ENOMEM; each process owns
 its scratch and restores its resource limit. Wide formatting/scanning remains
-explicitly unsupported. The 24 bounded jobs now cover 60 installed binaries.
+explicitly unsupported. The 24 bounded jobs now cover 64 installed binaries.
 
 Each TLS job also runs `owned_pthread_lifecycle_consumer.c` through a separate
 installed link: initialized attributes, private guarded and caller-owned
 stacks, 96 simultaneously live workers, concurrent detached creator/reaper
-handoffs, typed C11 results, deferred cancellation cleanup/TSD, and atfork order
-after worker teardown. Controls remain owned until both creator handoff and
-kernel clear-child-TID complete. This does not qualify
-explicit scheduling, implicit cancellation points, general fork recovery,
-main-thread exit, or dynamic TLS lifetime; those remain lifecycle-owner work.
+handoffs, typed C11 results, deferred cancellation cleanup/TSD, and atfork order.
+Fork repairs the selected pthread/TSD, stdio, timezone, and shared process-lock
+state; a worker becomes the child's adopted main thread. Logical task exit is
+serialized separately from kernel clear-child-TID: the final live task owns
+ordinary exit, including when the adopted main returns while a child worker
+remains alive. Controls remain owned until creator handoff and kernel
+clear-child-TID both complete. Explicit scheduling, implicit cancellation
+points, allocator-wide fork recovery, and dynamic TLS lifetime remain open.
+
+Each POSIX job separately links `owned_spawn_probe.c`: spawn/spawnp file-action
+ordering, working-directory and PATH search, signal/process attributes, worker
+calls, and failure cleanup compare against pinned musl. The installed and
+extracted binaries own their scratch paths and receive the same sealed-link
+and ELF checks. This qualifies the selected spawn boundary, not dynamic fork
+or implicit cancellation.
 
 Each POSIX job includes `owned_temp_objects_probe.c`, separately linked through
 the installed driver. The five `mkstemp`/`mkostemp`/`mkstemps`/`mkostemps`/

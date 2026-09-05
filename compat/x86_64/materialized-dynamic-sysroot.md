@@ -86,7 +86,14 @@ cover 1025 RELA writes, 600 RELR entries, size overflow and a late overlapping
 destination rejected before any graph write. Legacy private roots retain their
 bounded admission. Allocation failure aborts the uncommitted initial graph.
 
-The initial-component gate also runs 33 loader tests and 15 driver/package
+The gate also runs an ordinary ELF memory-interposition consumer through both
+installed and extracted drivers. The application exports `memcpy`/`memset`,
+then calls `posix_spawnp` with a missing PATH component before an owned child
+executable. No application memory callback may run in the shared-address-space
+child or during lock-held spawn stack setup; neither child nor parent uses an
+ambient target executable.
+
+The initial-component gate also runs 38 loader tests and 15 driver/package
 boundary tests. Two cold producer manifests and deterministic package bytes
 must match; the extracted driver must compile and execute the same consumer.
 These checks do not promote public support or the frozen AArch64 baseline.
