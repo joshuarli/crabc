@@ -36,6 +36,9 @@ from typing import Any, Mapping, Sequence
 ROOT = Path(__file__).resolve().parents[2]
 TARGET = "x86_64-unknown-linux-musl"
 REPORT = ROOT / "compat/reports/allocator/x86_64/lifecycle-concurrency.json"
+RUNTIME_FIRST_ARENA_REPORT = (
+    ROOT / "compat/reports/allocator/x86_64/lifecycle-runtime-process-policy-first-arena.json"
+)
 LOCKFILE = ROOT / "Cargo.lock"
 
 TEST_RESULT = re.compile(
@@ -596,30 +599,130 @@ def run_evidence(report_path: Path = REPORT) -> dict[str, Any]:
     return report
 
 
+def runtime_first_arena_lane() -> TestLane:
+    """Return the only lifecycle lane allowed to publish focused evidence."""
+
+    for lane in TEST_LANES:
+        if lane.identifier == "runtime-process-policy-first-arena":
+            return lane
+    raise EvidenceError("runtime first-arena lifecycle lane is not configured")
+
+
+def run_runtime_first_arena_policy_evidence(report_path: Path) -> dict[str, Any]:
+    """Publish the one policy-bound runtime witness without a campaign claim."""
+
+    provenance = require_native_x86_64()
+    cargo = require_tool("cargo")
+    rustc = require_tool("rustc")
+    toolchain = toolchain_record(cargo, rustc)
+    before_lockfile = sha256_file(LOCKFILE)
+    lane = runtime_first_arena_lane()
+
+    with tempfile.TemporaryDirectory(prefix="crabc-mimalloc-x86_64-runtime-first-arena-") as temporary:
+        target_dir = Path(temporary) / "target"
+        result = run_lane(cargo, lane, target_dir)
+
+    after_lockfile = sha256_file(LOCKFILE)
+    if after_lockfile != before_lockfile:
+        raise EvidenceError("Cargo.lock changed despite the required --locked command")
+
+    report: dict[str, Any] = {
+        "format": 1,
+        "kind": "mimalloc-x86_64-runtime-first-arena-policy-evidence",
+        "profile": "linux-x86_64-private-engine-runtime-first-arena-policy-witness",
+        "status": "passed",
+        "target": {
+            "architecture": "x86_64",
+            "endianness": "little",
+            "rust_target": TARGET,
+            "system": "linux",
+        },
+        "native_execution_provenance": provenance,
+        "toolchain": toolchain,
+        "cargo": {
+            "lockfile": {"path": relative(LOCKFILE), "sha256": before_lockfile},
+            "locked": True,
+            "target_dir": {
+                "isolated": True,
+                "retained": False,
+                "value": "<isolated-temporary-target-dir>",
+            },
+        },
+        "lane": result,
+        "scope": {
+            "boundary": "one process-isolated private first-arena runtime witness only",
+            "public_runtime_support": False,
+            "claim": "focused runtime first-arena policy witness",
+        },
+        "exclusions": list(EXCLUSIONS),
+    }
+    required = {
+        "cargo",
+        "exclusions",
+        "format",
+        "kind",
+        "lane",
+        "native_execution_provenance",
+        "profile",
+        "scope",
+        "status",
+        "target",
+        "toolchain",
+    }
+    if set(report) != required:
+        raise EvidenceError("runtime first-arena report schema drifted")
+    if report["lane"] != result or result["id"] != lane.identifier:
+        raise EvidenceError("runtime first-arena report lane drifted")
+    if result["observed"]["passed"] != lane.expected_pass_count:
+        raise EvidenceError("runtime first-arena report pass count drifted")
+    atomic_write_json(report_path, report)
+    return report
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--report",
         type=Path,
-        default=REPORT,
-        help="write the bounded evidence report here (default: %(default)s)",
+        default=None,
+        help="write the selected evidence report here",
+    )
+    parser.add_argument(
+        "--only-runtime-first-arena-policy",
+        action="store_true",
+        help="record the fixed first-arena witness without claiming the full campaign",
     )
     return parser.parse_args()
 
 
 def main() -> int:
     arguments = parse_arguments()
+    focused = arguments.only_runtime_first_arena_policy
+    report_path = arguments.report or (
+        RUNTIME_FIRST_ARENA_REPORT if focused else REPORT
+    )
     try:
-        report = run_evidence(arguments.report)
+        report = (
+            run_runtime_first_arena_policy_evidence(report_path)
+            if focused
+            else run_evidence(report_path)
+        )
     except EvidenceError as error:
         print(f"allocator x86-64 lifecycle/concurrency foundation: FAIL: {error}", file=sys.stderr)
         return 1
-    summary = report["summary"]
-    print(
-        "allocator x86-64 lifecycle/concurrency foundation: PASS "
-        f"({summary['observed_pass_count']} bounded tests across {summary['lane_count']} lanes; "
-        f"report: {relative(arguments.report)})"
-    )
+    if focused:
+        observed = report["lane"]["observed"]["passed"]
+        print(
+            "allocator x86-64 runtime first-arena policy witness: PASS "
+            f"({observed} bounded test; report: {relative(report_path)})"
+        )
+    else:
+        summary = report["summary"]
+        print(
+            "allocator x86-64 lifecycle/concurrency foundation: PASS "
+            f"({summary['observed_pass_count']} bounded tests across {summary['lane_count']} lanes; "
+            f"report: {relative(report_path)})"
+        )
     return 0
 
 

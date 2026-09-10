@@ -25,7 +25,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator --quick
   allocator-m1
   allocator-m2
-  allocator-tls | allocator-lifecycle | allocator-init-recursion | allocator-fault
+  allocator-tls | allocator-lifecycle [--only runtime-process-policy-first-arena] | allocator-init-recursion | allocator-fault
   allocator-release-evidence | allocator-api-coverage | allocator-cmake-modes
   allocator-header-modes | allocator-static-modes
   allocator-remote-free | allocator-live-owner-full-medium-remote-release | allocator-live-owner-full-medium-one-remote-unfull-reuse | allocator-direct-remote | allocator-mapped-reclaim | allocator-mapped-adoption
@@ -348,9 +348,18 @@ case "$command" in
         run_in_container python3 compat/allocator/tls-codegen/run-x86_64.py
         ;;
     allocator-lifecycle)
-        [ "$#" -eq 0 ] || fail "allocator-lifecycle takes no arguments"
+        if [ "$#" -ne 0 ]; then
+            [ "$#" -eq 2 ] && [ "$1" = "--only" ] \
+                && [ "$2" = "runtime-process-policy-first-arena" ] \
+                || fail "allocator-lifecycle accepts only --only runtime-process-policy-first-arena"
+        fi
         ensure_image
-        run_in_container python3 compat/allocator/x86_64_lifecycle_evidence.py
+        if [ "$#" -eq 0 ]; then
+            run_in_container python3 compat/allocator/x86_64_lifecycle_evidence.py
+        else
+            run_in_container python3 compat/allocator/x86_64_lifecycle_evidence.py \
+                --only-runtime-first-arena-policy
+        fi
         ;;
     allocator-init-recursion)
         [ "$#" -eq 0 ] || fail "allocator-init-recursion takes no arguments"

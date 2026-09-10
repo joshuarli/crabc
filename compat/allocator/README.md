@@ -1898,13 +1898,24 @@ The separate bounded lifecycle/concurrency judge is also native x86-only:
 ./compat/allocator/run-x86_64.sh allocator-lifecycle
 ```
 
-It records nine named private Rust lanes (13 selected tests, including five
+It records ten named private Rust lanes (14 selected tests, including five
 finite Loom head-protocol models) in
 `compat/reports/allocator/x86_64/lifecycle-concurrency.json`. It is evidence
 for only those listed compiler-TLS, private-key, and remote-head transitions;
 it is not general process/thread lifecycle, client routing,
 abandonment/adoption, pthread callback, general fault-injection or misuse
 parity, or whole-allocator stress evidence.
+
+After a change to the process-isolated first-arena witness, its fixed selector
+can record only that witness without turning a partial run into a lifecycle
+campaign claim:
+
+```sh
+./compat/allocator/run-x86_64.sh allocator-lifecycle --only runtime-process-policy-first-arena
+```
+
+That writes `lifecycle-runtime-process-policy-first-arena.json` beside the
+full report and claims only the policy-bound first-arena route.
 
 One lane is a Rust-only bounded dynamic post-exit route: a source worker
 tears down dynamic TLS, cached-root, Theap/TLD, and key state before returning
