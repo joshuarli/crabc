@@ -1,0 +1,53 @@
+# Installed numeric and clock/calendar composition
+
+`run_owned_numeric_calendar.sh` is a bounded installed-product behavior
+component for `numeric.parse-float-locale` and `time.clock-calendar`. It
+translates one C11 object through the selected dynamic product's installed
+headers, then links those unchanged object bytes with pinned musl and the
+selected owned products. It is not a private archive fixture.
+
+`libc/src/c_abi/x86_64/float_parse.rs` and `float_parse_locale.rs` retain the
+pinned musl 1.2.6 narrow, locale-wrapper, and wide conversion sources.
+`clock_gettime.rs`, `time_observation.rs`, `owned_timezone.rs`,
+`owned_calendar.rs`, `owned_strftime.rs`, and `owned_strptime.rs` retain the
+selected clock and civil-time source owners from the same pin.
+
+The numeric half fixes the admitted locale names to `C` and `C.UTF-8`. It
+checks exact representable decimal and hexadecimal values, end pointers, stale
+`errno` after success, one range error, the selected ignored-locale `strtod_l`
+boundary without changing the current thread locale, and narrow
+`strtof`/`strtod`/`strtold` with `wcstof`/`wcstod`/`wcstold`. Long double
+comparisons are semantic; the object never inspects ABI padding.
+
+The time half observes normalized realtime and monotonic records without
+recording an exact wall-clock value. It uses only explicit POSIX `TZ` strings:
+`UTC0` checks a leap-year civil-date normalization and a
+`strftime`→`strptime`→`mktime` round trip, while a fixed `EST5EDT` rule checks
+winter and summer local conversions, offsets, names, and DST flags. It never
+sets a clock or reads host zoneinfo files.
+
+The runner retains one pinned-musl static ET_EXEC link using
+`-static -fno-pie -no-pie`, static ET_EXEC and static PIE when a static product
+is supplied, and dynamic PIE/non-PIE through both kernel and direct owned
+loader entry. Every successful run has retained exact argv, stdout, stderr,
+and zero status. It traces installed headers, seals the probe, runner, tool
+roster, selected manifests and trees before and after execution, keeps the one
+object identity, validates every product link receipt, and records/audits each
+copied dynamic execution payload before and after both entries.
+
+Run it in the pinned native environment:
+
+```sh
+./scripts/dev-x86_64.sh owned-numeric-calendar \
+  --static-sysroot .work/x86_64/static-product \
+  .work/x86_64/dynamic-product
+```
+
+Its interface is `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`. With
+supplied products it never builds replacements. With neither argument it
+builds disposable products below checkout-local `.work`. Inputs must be
+physical directories below that tree.
+
+This receipt is evidence for these two finite components only. It does not
+close the text/math/locale/stdio family, alter a disposition, claim broad math
+or arbitrary locale parity, or claim promotion or public x86 support.
