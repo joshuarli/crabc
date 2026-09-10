@@ -5,17 +5,14 @@
 //! Conventional files use the owned stack FILE adapter. DNS framing and
 //! bounded transport remain in crabc-core; there is no libc resolver-state
 //! cache and these helpers never mutate h_errno. Source destination policy
-//! remains scalar. The native transport sends family queries sequentially
-//! instead of musl's parallel msend, retaining the established bounded core
-//! transport contract and independent response validation. Owned C resolver
-//! calls use `owned_resolver_transport::exchange_question_matched`: its pinned C cleanup record
-//! retires the one live descriptor, and its send, receive, and poll syscall
-//! windows are deferred cancellation points that retain source MASKED-to-DISABLE
-//! and final-errno behavior. Native Rust callers retain the raw core exchange
-//! contract. The remaining resolver-family boundary is the deliberate
-//! sequential transport/profile and other unqualified resolver behavior; this
-//! module does not claim full source parity or public family closure. The
-//! native C lookup path has its own ordered answer callback below: it follows musl's
+//! remains scalar. Selected x86 C calls use the private one/two-request
+//! `owned_resolver_batch`, whose pinned cleanup cells retire UDP and TCP
+//! descriptors and whose cancellation points retain musl MASKED-to-DISABLE
+//! and final-errno behavior. Its source-shaped total retry clock is confined
+//! to this C ABI boundary; native Rust callers retain the strict core exchange
+//! contract. The remaining resolver-family boundary is unqualified resolver
+//! behavior outside this selected batch; this module does not claim family
+//! closure. The native C lookup path has its own ordered answer callback below: it follows musl's
 //! `__dns_parse` and `dns_parse_callback` stop boundary without changing the
 //! shared `DnsResponse` or transport contract.
 use core::{ffi::{c_char, c_int}, ptr};
@@ -205,36 +202,55 @@ pub(super) unsafe fn query(config: &Config, name: &[u8], kind: u16, answer: &mut
     let id = (time[1] + time[1]/65536) as u16;
     let mut wire = [0u8;280];
     let length = resolver::encode_query(name, kind, id, &mut wire).map_err(|_| 0)?;
-    let outcome = unsafe { super::owned_resolver_transport::exchange_question_matched(&config.exchange, &wire[..length], id, answer) };
+    let request = super::owned_resolver_batch::BatchRequest::new(&wire[..length], id, answer);
+    let batch_config = super::owned_resolver_batch::CResolverBatchConfig::from_c_resolver(&config.exchange);
+    let outcome = unsafe { super::owned_resolver_batch::exchange(&batch_config, super::owned_resolver_batch::BatchRequests::one(request)) };
     let result = match outcome.result {
-        Ok(reply) => Ok((reply.len(),id)),
+        Ok(reply) if reply.length(0).is_some_and(|length| length != 0) => Ok((reply.length(0).unwrap(),id)),
+        Ok(_) => Err(-3),
         Err(ExchangeError::Setup(error)) => { unsafe { errno::set_errno(error.raw()) }; Err(-11) }
         Err(ExchangeError::Transport(_)) => Err(-3),
     };
-    if let Some(error) = outcome.masked_errno { unsafe { errno::set_errno(error); } }
+    if let Some(error) = outcome.last_errno { unsafe { errno::set_errno(error); } }
     result
 }
 
 unsafe fn dns(out: &mut [Address;MAX_ADDRS], canon: &mut [u8;256], name: &[u8], family: c_int, conf: &Config) -> c_int {
-    let mut replies = [[0u8;4800];2]; let mut lengths = [0;2]; let mut ids = [0;2]; let mut kinds = [0;2]; let mut errors = [0;2]; let mut nq = 0;
+    let mut replies = [[0u8;4800];2]; let mut lengths = [0;2]; let mut ids = [0;2]; let mut kinds = [0;2]; let mut wires = [[0u8;280];2]; let mut wire_lengths = [0;2]; let mut nq = 0;
+    let mut time = [0i64;2];
+    unsafe { c_status(raw_syscall::syscall2(228, 0, time.as_mut_ptr() as i64)); }
+    let initial_id = (time[1] + time[1]/65536) as u16;
     for (excluded, kind) in [(10,1), (2,28)] {
         if family == excluded { continue; }
         kinds[nq] = kind;
-        match unsafe { query(conf, name, kind, &mut replies[nq]) } {
-            Ok((n,id)) => { lengths[nq] = n; ids[nq] = id; },
-            // Socket setup is the msend operation's system failure, whereas
-            // an unanswered individual query belongs to its family slot.
-            Err(-11) => return -11,
-            Err(0) => return 0,
-            Err(error) => errors[nq] = error,
-        }
+        let id = initial_id.wrapping_add(nq as u16);
+        let length = match resolver::encode_query(name, kind, id, &mut wires[nq]) { Ok(length) => length, Err(_) => return 0 };
+        ids[nq] = id; wire_lengths[nq] = length;
         nq += 1;
     }
+    let batch_config = super::owned_resolver_batch::CResolverBatchConfig::from_c_resolver(&conf.exchange);
+    let outcome = if nq == 1 {
+        let request = super::owned_resolver_batch::BatchRequest::new(&wires[0][..wire_lengths[0]], ids[0], &mut replies[0]);
+        unsafe { super::owned_resolver_batch::exchange(&batch_config, super::owned_resolver_batch::BatchRequests::one(request)) }
+    } else {
+        let (first, second) = replies.split_at_mut(1);
+        let requests = super::owned_resolver_batch::BatchRequests::two(
+            super::owned_resolver_batch::BatchRequest::new(&wires[0][..wire_lengths[0]], ids[0], &mut first[0]),
+            super::owned_resolver_batch::BatchRequest::new(&wires[1][..wire_lengths[1]], ids[1], &mut second[0]),
+        );
+        unsafe { super::owned_resolver_batch::exchange(&batch_config, requests) }
+    };
+    match outcome.result {
+        Ok(receipt) => for index in 0..nq { lengths[index] = receipt.length(index).unwrap_or(0); },
+        Err(ExchangeError::Setup(error)) => { unsafe { errno::set_errno(error.raw()) }; return -11; }
+        Err(ExchangeError::Transport(_)) => return -3,
+    }
+    if let Some(error) = outcome.last_errno { unsafe { errno::set_errno(error); } }
     // musl inspects A before AAAA after collecting both outcomes. An earlier
     // NXDOMAIN therefore wins over a later timeout and permits search to
     // continue; the opposite order retains TRY_AGAIN.
     for i in 0..nq {
-        if errors[i] != 0 || lengths[i] < 4 { return -3; }
+        if lengths[i] < 4 { return -3; }
         match replies[i][3] & 15 { 0 => (), 2 => return -3, 3 => return 0, _ => return -4 }
     }
     let mut count = 0;

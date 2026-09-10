@@ -180,10 +180,10 @@ continuation closes any acquired descriptor, then uses the existing deadline
 poll with an ignored `-1` descriptor. This is the real CP corresponding to
 musl's outer poll with TCP fd `-1` and UDP events zero. The typed native policy
 remains an immediate failed attempt. It neither fabricates a successful I/O
-result nor introduces a second DNS scheduler. Musl's parallel nameserver and
-family scheduler remains distinct from the established configured sequential
-core transport. Failed TCP acquisition's ordinary errno details likewise remain
-separate; the next real MASKED CP still establishes the required ECANCELED.
+result nor changes the strict core transport. The selected C batch separately
+owns musl's one/two-query parallel scheduler. Failed TCP acquisition's ordinary
+errno details likewise remain separate; the next real MASKED CP still
+establishes the required ECANCELED.
 
 `owned_resolver_tcp_transition_probe.c` provides a separate oracle-only
 instrumented link. It wraps musl's socket option/connect/sendmsg references to

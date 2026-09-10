@@ -15,7 +15,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 CASES = ('host-numeric', 'host-local', 'host-buffers', 'host-many', 'host-dns',
-         'dns-record-order', 'dns-record-prefix', 'search-precedence', 'mixed-family', 'reverse-local', 'reverse-dns', 'services',
+         'dns-record-order', 'dns-record-prefix', 'dns-batch', 'search-precedence', 'mixed-family', 'reverse-local', 'reverse-dns', 'services',
          'service-buffers', 'open-errors', 'read-errors', 'access-errors',
          'socket-error', 'fcntl-error', 'empty-reporting', 'addrinfo', 'threads-fork', 'allocation')
 PROVIDERS = {'gethostbyaddr', 'gethostbyaddr_r', 'gethostbyname', 'gethostbyname2',
@@ -98,6 +98,7 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
     (root / 'etc').mkdir()
     shutil.copy2(work / 'oracle', root / 'oracle')
     observations = {}
+    association_differences = []
     outcomes = []
     audits = {"source_sha256": source_sha256, "workload": fixture.artifact_record(source),
               "object": fixture.artifact_record(obj), "artifacts": {}}
@@ -114,7 +115,15 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
                 raise RuntimeError(f'{label}/{case} exited {status}: {stderr.decode(errors="replace")}')
             if label == 'oracle': observations[case] = (stdout, stderr)
             elif observations[case] != (stdout, stderr):
-                raise RuntimeError(f'raw musl comparison differs: {label}/{case}')
+                # musl associates this selected C reply by ID alone.  The
+                # source-bounded batch deliberately also requires an exact
+                # echoed question, so its correct follow-up answer is a
+                # recorded project boundary rather than a false equivalence.
+                if case == 'dns-batch' and stderr == observations[case][1] and stdout == b'wrong-association=198.51.100.50\nclassic netdb scenario passed\n':
+                    association_differences.append({'entry': label, 'case': case,
+                                                    'musl': '203.0.113.50', 'owned': '198.51.100.50'})
+                else:
+                    raise RuntimeError(f'raw musl comparison differs: {label}/{case}')
     try:
         execute('oracle', ['/oracle'])
         if static is not None:
@@ -163,15 +172,42 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
                                    ('prefix-additional.example.test.', 1, 'udp'),
                                    ('prefix-empty.example.test.', 1, 'udp'),
                                    ('prefix-tcp.example.test.', 1, 'tcp'),
+                                   ('batch.example.test.', 1, 'udp'),
+                                   ('batch.example.test.', 28, 'udp'),
+                                   ('batch-mixed.example.test.', 1, 'udp'),
+                                   ('batch-mixed.example.test.', 1, 'tcp'),
+                                   ('batch-mixed.example.test.', 28, 'udp'),
+                                   ('wrong-association.example.test.', 1, 'udp'),
+                                   ('refused.example.test.', 1, 'udp'),
                                    ('47.100.51.198.in-addr.arpa.', 12, 'udp')):
         count = sum(event.get('name') == name and event.get('qtype') == qtype and event.get('transport') == transport for event in events)
         if count < arms: raise RuntimeError(f'incomplete DNS event evidence: {name}/{transport}: {count} < {arms}')
+    for role in ('valid', 'drop', 'fallback'):
+        for qtype in (1, 28):
+            count = sum(event.get('role') == role and event.get('name') == 'batch.example.test.'
+                        and event.get('qtype') == qtype and event.get('transport') == 'udp' for event in events)
+            if count < arms:
+                raise RuntimeError(f'incomplete DNS batch fanout evidence: {role}/{qtype}: {count} < {arms}')
+        for qtype in (1, 28):
+            count = sum(event.get('role') == role and event.get('name') == 'batch-retry.example.test.'
+                        and event.get('qtype') == qtype and event.get('transport') == 'udp' for event in events)
+            if count < arms * 2:
+                raise RuntimeError(f'incomplete DNS batch retry evidence: {role}/{qtype}: {count} < {arms * 2}')
+    servfail = sum(event.get('name') == 'servfail.example.test.' and event.get('transport') == 'udp'
+                   and event.get('action') == 'servfail' for event in events)
+    # The recorded musl source schedule sends the three configured endpoints,
+    # then consumes one immediate SERVFAIL resend before the next poll; the
+    # bounded `2*nqueries` counter prevents another retry round here.
+    if servfail != arms * 4:
+        raise RuntimeError(f'unbounded or incomplete SERVFAIL retry evidence: {servfail} != {arms * 4}')
     expected = arms * len(CASES)
     if len(outcomes) != expected or any(row['exit_status'] != 0 for row in outcomes):
         raise RuntimeError('incomplete classic netdb execution matrix')
     if source_digest() != source_sha256 or fixture.artifact_record(obj) != audits['object']:
         raise RuntimeError('classic netdb source or shared application object changed during execution')
     (work / 'artifact-audits.json').write_text(json.dumps(audits, indent=2, sort_keys=True) + '\n')
+    (work / 'exact-question-association-differences.json').write_text(
+        json.dumps(association_differences, indent=2, sort_keys=True) + '\n')
     print(f'owned classic netdb: PASS ({len(CASES)} scenarios, same installed object, {arms} musl/owned entry arms); evidence: {work}', flush=True)
 
 

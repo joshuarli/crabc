@@ -64,6 +64,29 @@ RECORDS: dict[tuple[str, int], tuple[str, bytes | None]] = {
     ("mixed-search.search.test.", 28): ("timeout", None),
     ("mixed-search.", 1): ("answer", socket.inet_aton("192.0.2.93")),
     ("mixed-search.", 28): ("nodata", None),
+    # The A answer remains withheld until the same UDP client has also sent
+    # AAAA.  Musl's `name_from_dns` emits both questions through one
+    # `__res_msend_rc` round; a sequential family transport reaches its
+    # per-server timeout before it can send AAAA.
+    ("batch.example.test.", 1): ("batch-a-hold", socket.inet_aton("198.51.100.48")),
+    ("batch.example.test.", 28): (
+        "batch-aaaa-release",
+        socket.inet_pton(socket.AF_INET6, "2001:db8::48"),
+    ),
+    # The A datagram exceeds the selected 4800-byte C reply slot without TC.
+    # A bounded copied prefix must still prove association before TCP, while
+    # the AAAA response remains ordinary UDP in the same two-query batch.
+    ("batch-mixed.example.test.", 1): ("batch-msgtrunc", socket.inet_aton("198.51.100.49")),
+    ("batch-mixed.example.test.", 28): ("answer", socket.inet_pton(socket.AF_INET6, "2001:db8::49")),
+    # The first same-ID reply mutates its echoed question and RDATA.  The
+    # following valid reply is a positive control for the project exact-echo
+    # association boundary, rather than merely an ID check.
+    ("wrong-association.example.test.", 1): ("wrong-association", socket.inet_aton("198.51.100.50")),
+    # All endpoints drop each selected family once, then answer the source
+    # elapsed-loop retransmission under `attempts:2`.
+    ("batch-retry.example.test.", 1): ("batch-retry", socket.inet_aton("198.51.100.51")),
+    ("batch-retry.example.test.", 28): ("batch-retry", socket.inet_pton(socket.AF_INET6, "2001:db8::51")),
+    ("refused.example.test.", 1): ("refused-fallback", socket.inet_aton("198.51.100.52")),
     ("order-after.example.test.", 1): ("callback-order-after", None),
     ("order-before.example.test.", 1): ("callback-order-before", None),
     ("order-empty.example.test.", 1): ("callback-order-empty", None),
@@ -312,6 +335,8 @@ class LoopbackDnsServer:
         self.events_lock = threading.Lock()
         self.sockets: list[socket.socket] = []
         self.endpoints: dict[str, dict[str, object]] = {}
+        self.held_batch_a: dict[tuple[str, tuple[str, int]], tuple[bytes, int, str, int]] = {}
+        self.batch_retries: dict[tuple[str, tuple[str, int], str, int], int] = {}
 
     def _record(self, event: dict[str, object]) -> None:
         with self.events_lock:
@@ -349,7 +374,7 @@ class LoopbackDnsServer:
         print(json.dumps(ready, sort_keys=True), flush=True)
 
     def _response_packets(
-        self, packet: bytes, name: str, qtype: int, identifier: int, transport: str
+        self, packet: bytes, name: str, qtype: int, identifier: int, transport: str, role: str
     ) -> list[bytes]:
         behavior, _ = RECORDS.get((name, qtype), ("nxdomain", None))
         if behavior == "timeout":
@@ -364,7 +389,53 @@ class LoopbackDnsServer:
             # matching the request ID.  No sleeps or randomness are involved.
             wrong = encode_answer(packet, (identifier + 1) & 0xFFFF, name, qtype)
             return [b"\x00\x01\x80", wrong, valid]
+        if behavior == "wrong-association":
+            wrong = bytearray(valid)
+            # DNS class is part of the exact echoed question.  Its changed
+            # RDATA makes acceptance observable if a transport validates ID
+            # alone and ignores the later source-associated response.
+            question = question_section(packet)
+            wrong[12 + len(question) - 1] = 2
+            wrong[-4:] = socket.inet_aton("203.0.113.50")
+            return [bytes(wrong), valid]
+        if behavior == "batch-msgtrunc" and transport == "udp":
+            return [valid + b"\0" * 5000]
+        if behavior == "refused-fallback" and role == "valid":
+            return [struct.pack("!HHHHHH", identifier, 0x8185, 1, 0, 0, 0) + question_section(packet)]
         return [valid]
+
+    def _batch_packets(
+        self, role: str, peer: tuple[str, int], packet: bytes, identifier: int,
+        name: str, qtype: int,
+    ) -> list[bytes] | None:
+        """Hold A until AAAA proves both family questions share one UDP round."""
+        if name != "batch.example.test." or qtype not in (1, 28):
+            return None
+        key = (role, peer)
+        if qtype == 1:
+            self.held_batch_a[key] = (packet, identifier, name, qtype)
+            return []
+        held = self.held_batch_a.pop(key, None)
+        if held is None:
+            return []
+        held_packet, held_identifier, held_name, held_type = held
+        return [
+            encode_answer(held_packet, held_identifier, held_name, held_type),
+            encode_answer(packet, identifier, name, qtype),
+        ]
+
+    def _retry_packets(
+        self, role: str, peer: tuple[str, int], packet: bytes, identifier: int,
+        name: str, qtype: int,
+    ) -> list[bytes] | None:
+        if name != "batch-retry.example.test." or qtype not in (1, 28):
+            return None
+        key = (role, peer, name, qtype)
+        count = self.batch_retries.get(key, 0)
+        self.batch_retries[key] = count + 1
+        if count == 0:
+            return []
+        return [encode_answer(packet, identifier, name, qtype)]
 
     def _handle_datagram(self, sock: socket.socket, role: str, family: str) -> None:
         try:
@@ -383,7 +454,28 @@ class LoopbackDnsServer:
             "name": name,
             "qtype": qtype,
             "qclass": qclass,
+            "identifier": identifier,
         }
+        batch = self._batch_packets(role, peer, packet, identifier, name, qtype)
+        if batch is not None:
+            event["action"] = "batch-held-a" if qtype == 1 else "batch-release"
+            self._record(event)
+            for response in batch:
+                try:
+                    sock.sendto(response, peer)
+                except OSError:
+                    return
+            return
+        retry = self._retry_packets(role, peer, packet, identifier, name, qtype)
+        if retry is not None:
+            event["action"] = "batch-retry-hold" if not retry else "batch-retry-answer"
+            self._record(event)
+            for response in retry:
+                try:
+                    sock.sendto(response, peer)
+                except OSError:
+                    return
+            return
         if drops_query(role, name):
             event["action"] = "drop"
             if role == "valid":
@@ -393,7 +485,7 @@ class LoopbackDnsServer:
         behavior, _ = RECORDS.get((name, qtype), ("nxdomain", None))
         event["action"] = behavior
         self._record(event)
-        for response in self._response_packets(packet, name, qtype, identifier, "udp"):
+        for response in self._response_packets(packet, name, qtype, identifier, "udp", role):
             try:
                 sock.sendto(response, peer)
             except OSError:
@@ -430,7 +522,7 @@ class LoopbackDnsServer:
             behavior, _ = RECORDS.get((name, qtype), ("nxdomain", None))
             event["action"] = "answer" if behavior == "tc-sequence" else behavior
             self._record(event)
-            for response in self._response_packets(packet, name, qtype, identifier, "tcp"):
+            for response in self._response_packets(packet, name, qtype, identifier, "tcp", role):
                 connection.sendall(struct.pack("!H", len(response)) + response)
         except OSError:
             return

@@ -16,12 +16,13 @@ from owned_classic_netdb import checked, fixture_module, physical
 from owned_dynamic_qualification import source_digest
 
 ROOT = Path(__file__).resolve().parents[2]
-APIS = ('query', 'send', 'classic', 'modern', 'reverse')
+APIS = ('query', 'send', 'classic', 'modern', 'modern-dual', 'reverse')
 SCENARIOS = ('udp', 'tcp', 'pending', 'disabled', 'masked',
              'masked-udp', 'masked-tcp', 'disabled-udp', 'disabled-tcp',
              'masked-udp-to-tcp', 'setup-pending', 'kernel-canceled',
              'masked-tcp-socket-failure', 'normal-udp', 'normal-tcp',
-             'retry-udp', 'retry-cancel-udp', 'reuse-cancel-udp')
+             'retry-udp', 'retry-cancel-udp', 'reuse-cancel-udp',
+             'normal-dual-mixed-tcp', 'masked-dual-mixed-tcp')
 # Preserve raw observations. Only these ordinary, non-consumed-cancellation
 # errno differences are outside this slice; lifecycle and success still match.
 ORDINARY_ERRNO_DIFFERENCES = frozenset(('disabled', 'disabled-udp', 'disabled-tcp',

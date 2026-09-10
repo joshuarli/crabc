@@ -120,6 +120,30 @@ class OwnedNetdbRecordOrderTests(unittest.TestCase):
         self.assertEqual([(kind, len(value)) for kind, value in records], [(5, 20), (1, 4)])
         self.assertEqual(tail, b"\xc0")
 
+    def test_selected_batch_keeps_bounded_prefix_before_msg_trunc_tcp_and_exact_echo(self):
+        server = server_module()
+        mixed = query("batch-mixed.example.test.", 1)
+        packets = server.LoopbackDnsServer(None)._response_packets(
+            mixed, "batch-mixed.example.test.", 1, 0x5411, "udp", "valid",
+        )
+        self.assertEqual(len(packets), 1)
+        self.assertGreater(len(packets[0]), 4800)
+        self.assertEqual(packets[0][2] & 2, 0)
+        self.assertEqual(packets[0][0:2], mixed[0:2])
+        self.assertEqual(packets[0][12:12 + len(server.question_section(mixed))],
+                         server.question_section(mixed))
+        wrong = query("wrong-association.example.test.", 1)
+        packets = server.LoopbackDnsServer(None)._response_packets(
+            wrong, "wrong-association.example.test.", 1, 0x5411, "udp", "valid",
+        )
+        self.assertEqual(len(packets), 2)
+        question = server.question_section(wrong)
+        self.assertEqual(packets[0][0:2], wrong[0:2])
+        self.assertNotEqual(packets[0][12:12 + len(question)], question)
+        self.assertEqual(packets[1][12:12 + len(question)], question)
+        self.assertEqual(packets[0][-4:], b"\xcb\x00\x71\x32")
+        self.assertEqual(packets[1][-4:], b"\xc6\x33\x64\x32")
+
 
 if __name__ == "__main__":
     unittest.main()

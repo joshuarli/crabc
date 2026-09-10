@@ -848,10 +848,14 @@ pub unsafe extern "C" fn __res_send(
     let query_id = u16::from_be_bytes([query[0], query[1]]);
     #[cfg(feature = "x86-owned-static-runtime")]
     let (result, masked_errno) = {
-        let outcome = unsafe { super::owned_resolver_transport::exchange_question_matched(&config, query, query_id, answer) };
-        (outcome.result.map(|reply| reply.len()).map_err(|error| match error {
-            resolver::ExchangeError::Setup(errno) | resolver::ExchangeError::Transport(errno) => errno,
-        }), outcome.masked_errno)
+        let request = super::owned_resolver_batch::BatchRequest::new(query, query_id, answer);
+        let batch_config = super::owned_resolver_batch::CResolverBatchConfig::from_c_resolver(&config);
+        let outcome = unsafe { super::owned_resolver_batch::exchange(&batch_config, super::owned_resolver_batch::BatchRequests::one(request)) };
+        (outcome.result.and_then(|receipt| receipt.length(0).filter(|length| *length != 0)
+            .ok_or(resolver::ExchangeError::Transport(crabc_core::Errno::TIMEDOUT)))
+            .map_err(|error| match error {
+                resolver::ExchangeError::Setup(errno) | resolver::ExchangeError::Transport(errno) => errno,
+            }), outcome.last_errno)
     };
     #[cfg(not(feature = "x86-owned-static-runtime"))]
     let (result, masked_errno) = (resolver::exchange(&config, query, query_id, answer), None::<c_int>);
@@ -862,8 +866,9 @@ pub unsafe extern "C" fn __res_send(
             -1
         }
     };
-    // Consumed MASKED cancellation has a source errno lifecycle of its own;
-    // synthetic transport exhaustion must not overwrite its last syscall error.
+    // Raw source syscalls do not publish errno themselves at this Rust ABI
+    // boundary; preserve the batch's actual final syscall residue after any
+    // synthetic resolver status mapping.
     if let Some(error) = masked_errno { unsafe { set_errno(error); } }
     result
 }

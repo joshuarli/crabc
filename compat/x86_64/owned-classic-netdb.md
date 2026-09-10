@@ -75,10 +75,10 @@ registers a stream or allocates, and closes the descriptor on normal return.
 The redundant raw F_SETFD operation ignores both its result and errno; close
 uses the source's errno-publishing syscall path.
 
-Two established transport/ownership adaptations remain explicit. DNS framing,
-query encoding, bounded retry/failover and TCP fallback use the shared
-`crabc-core::resolver` transport. Family queries run sequentially rather than
-musl's parallel msend; their outcomes retain source interpretation order.
+The strict native transport remains separate. Selected x86 C resolver callers
+use a private one/two-slot `res_msend_rc` batch with musl's total elapsed retry
+clock, all-server UDP broadcast, TCP fallback, descriptor cleanup, and source
+callback interpretation order.
 The existing `DnsResponse::rdata_at` interface and ordinary native
 `exchange` retain complete-record validation for their existing callers. The
 owned x86 C paths instead receive an opaque `QuestionMatchedReply`: it proves
@@ -103,12 +103,10 @@ direct `res_send`/`res_query`, all from the same installed-header object. The
 no-callback case retains the received NOERROR/ANCOUNT=1 packet for the raw
 calls while lookup returns source NO_DATA/EAI_NODATA. It also retains
 CNAME-before/after, no-address and 48-address-cap cases. UDP
-datagrams marked `MSG_TRUNC` or exceeding the receive buffer are still ignored;
-only DNS TC starts TCP, and the TCP length-prefixed frame must remain
-physically complete. The unselected non-owned resolver-runtime lookup remains
-on the strict core path by its `x86-owned-static-runtime` cfg boundary. The
-sequential family transport and other resolver behavior remain unqualified;
-this does not claim resolver-family closure.
+datagrams marked `MSG_TRUNC` start TCP only after the selected batch validates
+their bounded copied prefix; TCP frames must remain physically complete. The
+unselected non-owned resolver-runtime lookup remains on the strict core path.
+Other resolver behavior remains unqualified; this does not claim family closure.
 The owned adapter distinguishes local socket-creation errno from exhausted
 transport attempts without creating probe sockets. Existing native
 `exchange` keeps its prior timeout behavior. Owned C callers now use the

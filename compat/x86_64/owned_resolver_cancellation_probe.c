@@ -51,6 +51,9 @@ static void query(void) {
     } else if(!strcmp(api,"modern")) {
         struct addrinfo hints={.ai_family=AF_INET,.ai_socktype=SOCK_STREAM},*result=0;
         successful=!getaddrinfo("cancel.example.test",0,&hints,&result) && result!=0;if(result) freeaddrinfo(result);
+    } else if(!strcmp(api,"modern-dual")) {
+        struct addrinfo hints={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM},*result=0;
+        successful=!getaddrinfo("cancel.example.test",0,&hints,&result) && result!=0;if(result) freeaddrinfo(result);
     } else if(!strcmp(api,"reverse")) {
         struct sockaddr_in address={.sin_family=AF_INET};char name[256];
         CHECK(inet_pton(AF_INET,"198.51.100.23",&address.sin_addr)==1);
@@ -105,15 +108,16 @@ static void read_exact(int fd,unsigned char *p,size_t n) {
 static size_t dns_answer(unsigned char *packet,size_t length) {
     CHECK(length>=12 && length+40<512);
     unsigned kind=((unsigned)packet[length-4]<<8)|packet[length-3];
-    CHECK(kind==1 || kind==12);
+    CHECK(kind==1 || kind==12 || kind==28);
     packet[2]=0x81;packet[3]=0x80;packet[6]=0;packet[7]=1;
     const unsigned char record[]={0xc0,0x0c,0,0,0,1,0,0,0,30,0,0};
     memcpy(packet+length,record,sizeof record);packet[length+3]=(unsigned char)kind;
     const unsigned char address[]={198,51,100,23};
+    const unsigned char address6[]={32,1,13,184,0,0,0,0,0,0,0,0,0,0,0,23};
     const unsigned char name[]={8,'r','e','s','o','l','v','e','d',7,'e','x','a','m','p','l','e',4,'t','e','s','t',0};
-    size_t amount=kind==1?sizeof address:sizeof name;
+    size_t amount=kind==1?sizeof address:kind==28?sizeof address6:sizeof name;
     packet[length+11]=(unsigned char)amount;
-    memcpy(packet+length+sizeof record,kind==1?address:name,amount);
+    memcpy(packet+length+sizeof record,kind==1?address:kind==28?address6:name,amount);
     return length+sizeof record+amount;
 }
 static void witness_blocked_wait(void) {
@@ -140,7 +144,7 @@ int main(int argc,char **argv) {
     reuse_case=!strcmp(scenario,"reuse-cancel-udp");
     initial_state=!strncmp(scenario,"masked",6)?PTHREAD_CANCEL_MASKED:
                   !strncmp(scenario,"disabled",8)?PTHREAD_CANCEL_DISABLE:PTHREAD_CANCEL_ENABLE;
-    cancel_before_tcp=!strcmp(scenario,"masked-udp-to-tcp") || !strcmp(scenario,"masked-tcp-socket-failure");
+    cancel_before_tcp=!strcmp(scenario,"masked-udp-to-tcp") || !strcmp(scenario,"masked-tcp-socket-failure") || !strcmp(scenario,"masked-dual-mixed-tcp");
     socket_failure=!strcmp(scenario,"setup-pending")?1:!strcmp(scenario,"masked-tcp-socket-failure")?2:0;
     kernel_canceled=!strcmp(scenario,"kernel-canceled");
     if(kernel_canceled) initial_state=PTHREAD_CANCEL_MASKED;
@@ -155,32 +159,38 @@ int main(int argc,char **argv) {
     baseline=descriptor_count();CHECK(baseline>=6);
     pthread_t thread;CHECK(!pthread_create(&thread,0,worker,0));
     if(uses_server) {
-        unsigned char packet[512];struct sockaddr_in peer;socklen_t size=sizeof peer;
-        ssize_t n=recvfrom(udp,packet,sizeof packet,0,(void *)&peer,&size);CHECK(n>=12);
+        unsigned char packet[2][512];struct sockaddr_in peer[2];socklen_t size[2];ssize_t n[2];
+        int packets=!strcmp(api,"modern-dual")?2:1;
+        for(int i=0;i<packets;i++) { size[i]=sizeof peer[i];n[i]=recvfrom(udp,packet[i],sizeof packet[i],0,(void *)&peer[i],&size[i]);CHECK(n[i]>=12); }
         if(reuse_case) {
-            size_t length=dns_answer(packet,(size_t)n);
-            CHECK(sendto(udp,packet,length,0,(void *)&peer,size)==(ssize_t)length);
+            for(int i=0;i<packets;i++) { size_t length=dns_answer(packet[i],(size_t)n[i]);CHECK(sendto(udp,packet[i],length,0,(void *)&peer[i],size[i])==(ssize_t)length); }
+            for(int i=0;i<packets;i++) { size[i]=sizeof peer[i];n[i]=recvfrom(udp,packet[i],sizeof packet[i],0,(void *)&peer[i],&size[i]);CHECK(n[i]>=12); }
         }
         if(retry_case || reuse_case) {
-            size=sizeof peer;n=recvfrom(udp,packet,sizeof packet,0,(void *)&peer,&size);CHECK(n>=12);
+            if(!reuse_case) for(int i=0;i<packets;i++) { size[i]=sizeof peer[i];n[i]=recvfrom(udp,packet[i],sizeof packet[i],0,(void *)&peer[i],&size[i]);CHECK(n[i]>=12); }
         }
         if(cancel_before_tcp) { witness_blocked_wait();CHECK(!pthread_cancel(thread)); }
         if(tcp_case) {
-            packet[2]|=0x82;packet[3]|=0x80;
-            CHECK(sendto(udp,packet,(size_t)n,0,(void *)&peer,size)==n);
+            packet[0][2]|=0x82;packet[0][3]|=0x80;
+            CHECK(sendto(udp,packet[0],(size_t)n[0],0,(void *)&peer[0],size[0])==n[0]);
+            /* The paired AAAA remains UDP while the first A slot follows TCP. */
+            for(int i=1;i<packets;i++) { size_t length=dns_answer(packet[i],(size_t)n[i]);CHECK(sendto(udp,packet[i],length,0,(void *)&peer[i],size[i])==(ssize_t)length); }
             if(!socket_failure) {
                 accepted=accept(tcp,0,0);CHECK(accepted>=0);atomic_store(&extra_fds,1);
                 unsigned char length[2];read_exact(accepted,length,2);
-                unsigned amount=((unsigned)length[0]<<8)|length[1];CHECK(amount<=sizeof packet);
-                read_exact(accepted,packet,amount);n=amount;
+                unsigned amount=((unsigned)length[0]<<8)|length[1];CHECK(amount<=sizeof packet[0]);
+                read_exact(accepted,packet[0],amount);n[0]=amount;
             }
         }
         if(normal_case) {
-            size_t length=dns_answer(packet,(size_t)n);
+            size_t length=dns_answer(packet[0],(size_t)n[0]);
             if(tcp_case) {
                 unsigned char prefix[]={(unsigned char)(length>>8),(unsigned char)length};
-                CHECK(write(accepted,prefix,2)==2);CHECK(write(accepted,packet,length)==(ssize_t)length);
-            } else CHECK(sendto(udp,packet,length,0,(void *)&peer,size)==(ssize_t)length);
+                CHECK(write(accepted,prefix,2)==2);CHECK(write(accepted,packet[0],length)==(ssize_t)length);
+            } else {
+                CHECK(sendto(udp,packet[0],length,0,(void *)&peer[0],size[0])==(ssize_t)length);
+                for(int i=1;i<packets;i++) { length=dns_answer(packet[i],(size_t)n[i]);CHECK(sendto(udp,packet[i],length,0,(void *)&peer[i],size[i])==(ssize_t)length); }
+            }
         } else if(!cancel_before_tcp) { witness_blocked_wait();CHECK(!pthread_cancel(thread)); }
     }
     void *joined=0;CHECK(!pthread_join(thread,&joined));
@@ -195,7 +205,11 @@ int main(int argc,char **argv) {
     else {
         int expected=kernel_canceled?PTHREAD_CANCEL_MASKED:socket_failure==1 || normal_case?PTHREAD_CANCEL_ENABLE:PTHREAD_CANCEL_DISABLE;
         CHECK(joined==(void *)42 && returned && !cleanup_count && !leaked && state_after==expected);
-        CHECK(transmitted==(!uses_server && initial_state==PTHREAD_CANCEL_DISABLE));
+        /* In musl's two-query batch, a MASKED cancellation consumed by the
+           first UDP send changes the actual state to DISABLE; the second
+           source slot can then transmit. */
+        int expected_transmitted=!uses_server && (initial_state==PTHREAD_CANCEL_DISABLE || !kernel_canceled && !strcmp(api,"modern-dual") && initial_state==PTHREAD_CANCEL_MASKED);
+        CHECK(transmitted==expected_transmitted);
         if(initial_state==PTHREAD_CANCEL_MASKED && !kernel_canceled) CHECK(result_errno==ECANCELED);
         if(socket_failure==1) CHECK(result_errno==EMFILE);
         CHECK(successful==normal_case);

@@ -196,6 +196,54 @@ static void dns_record_prefix(void) {
     CHECK(inet_pton(AF_INET,"198.51.100.47",&sa.sin_addr)==1);
     CHECK(!getnameinfo((void*)&sa,sizeof sa,node,sizeof node,0,0,NI_NAMEREQD)&&!strcmp(node,"physical.example.test"));
 }
+static void dns_batch(void) {
+    struct addrinfo hint={.ai_family=AF_UNSPEC,.ai_socktype=SOCK_STREAM},*result=0;
+    CHECK(!getaddrinfo("batch.example.test","80",&hint,&result)&&result);
+    int v4=0,v6=0;
+    for(struct addrinfo *p=result;p;p=p->ai_next) {
+        if(p->ai_family==AF_INET) {
+            CHECK(((struct sockaddr_in *)p->ai_addr)->sin_addr.s_addr==inet_addr("198.51.100.48"));v4++;
+        } else if(p->ai_family==AF_INET6) {
+            unsigned char expected[16];CHECK(inet_pton(AF_INET6,"2001:db8::48",expected)==1);
+            CHECK(!memcmp(&((struct sockaddr_in6 *)p->ai_addr)->sin6_addr,expected,16));v6++;
+        } else CHECK(0);
+    }
+    CHECK(v4==1&&v6==1);freeaddrinfo(result);
+    /* A UDP frame longer than this C reply slot has no TC bit.  The selected
+       source batch must validate its copied question prefix, start TCP for A,
+       and still retain the same-round AAAA UDP answer. */
+    result=0;CHECK(!getaddrinfo("batch-mixed.example.test","80",&hint,&result)&&result);v4=v6=0;
+    for(struct addrinfo *p=result;p;p=p->ai_next) {
+        if(p->ai_family==AF_INET) {
+            CHECK(((struct sockaddr_in *)p->ai_addr)->sin_addr.s_addr==inet_addr("198.51.100.49"));v4++;
+        } else if(p->ai_family==AF_INET6) {
+            unsigned char expected[16];CHECK(inet_pton(AF_INET6,"2001:db8::49",expected)==1);
+            CHECK(!memcmp(&((struct sockaddr_in6 *)p->ai_addr)->sin6_addr,expected,16));v6++;
+        } else CHECK(0);
+    }
+    CHECK(v4==1&&v6==1);freeaddrinfo(result);
+    /* A same-ID response with a changed question is not an associated reply. */
+    struct hostent h,*r;char b[2048];int error=97;
+    CHECK(!gethostbyname_r("wrong-association.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    char association[INET_ADDRSTRLEN];
+    CHECK(inet_ntop(AF_INET,h.h_addr_list[0],association,sizeof association));
+    printf("wrong-association=%s\n",association);CHECK(!h.h_addr_list[1]);
+    /* REFUSED is ignored while the configured fallback's positive response is
+       still eligible in this round. */
+    error=97;CHECK(!gethostbyname_r("refused.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    address(&h,0,AF_INET,"198.51.100.52");CHECK(!h.h_addr_list[1]);
+    /* The first all-server A/AAAA broadcast deliberately receives nothing;
+       source's integer retry scheduler broadcasts both unresolved slots again. */
+    const char retry_conf[]="nameserver 127.0.0.1\nnameserver 127.0.0.2\nnameserver 127.0.0.3\noptions ndots:1 timeout:1 attempts:2\n";
+    file("/etc/resolv.conf",retry_conf,sizeof retry_conf-1);
+    result=0;CHECK(!getaddrinfo("batch-retry.example.test","80",&hint,&result)&&result);v4=v6=0;
+    for(struct addrinfo *p=result;p;p=p->ai_next) {
+        if(p->ai_family==AF_INET) { CHECK(((struct sockaddr_in *)p->ai_addr)->sin_addr.s_addr==inet_addr("198.51.100.51"));v4++; }
+        else if(p->ai_family==AF_INET6) { unsigned char expected[16];CHECK(inet_pton(AF_INET6,"2001:db8::51",expected)==1);CHECK(!memcmp(&((struct sockaddr_in6 *)p->ai_addr)->sin6_addr,expected,16));v6++; }
+        else CHECK(0);
+    }
+    CHECK(v4==1&&v6==1);freeaddrinfo(result);
+}
 static void search_precedence(void) {
     struct hostent h,*r;char b[2048];int error=97;
     CHECK(!gethostbyname_r("stop",&h,b,sizeof b,&r,&error)&&!r&&error==NO_DATA);
@@ -335,7 +383,7 @@ static void allocation_failure(void) {
 }
 int main(int argc,char **argv) {
     CHECK(argc==2);setup();const char *s=argv[1];
-    if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"dns-record-prefix"))dns_record_prefix();else if(!strcmp(s,"search-precedence"))search_precedence();
+    if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"dns-record-prefix"))dns_record_prefix();else if(!strcmp(s,"dns-batch"))dns_batch();else if(!strcmp(s,"search-precedence"))search_precedence();
     else if(!strcmp(s,"mixed-family"))mixed_family_precedence();else if(!strcmp(s,"reverse-local"))reverse_local();else if(!strcmp(s,"reverse-dns"))reverse_dns();else if(!strcmp(s,"services"))services();else if(!strcmp(s,"service-buffers"))service_buffers();else if(!strcmp(s,"empty-reporting"))empty_and_reporting();else if(!strcmp(s,"addrinfo"))addrinfo();else if(!strcmp(s,"threads-fork"))threads_and_fork();else if(!strcmp(s,"allocation"))allocation_failure();else if(!strcmp(s,"socket-error"))socket_error();else if(!strcmp(s,"fcntl-error"))fcntl_error();else io_errors(s);
     puts("classic netdb scenario passed");return 0;
 }
