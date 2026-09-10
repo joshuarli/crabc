@@ -70,6 +70,9 @@ mod owned;
 pub(crate) use owned::{ArenaPageCommitError, ProcessArenaBacking, ProcessArenaInstallFailure,
     HugeArenaReserveError, HugeArenaCleanupError, StartupArenaReservationOutcomes};
 
+#[cfg(test)]
+pub(crate) use owned::m2_external_callback_trace;
+
 // Fixed `src/options.c` defaults for the frozen v3.5.0 profile. This remains
 // an arena-local delay because the one-thread slice has no source subprocess
 // global-expiry owner or registry iteration policy yet.
@@ -1028,6 +1031,25 @@ impl CommitHook {
     pub(crate) const fn new(function: CommitFunction, argument: *mut c_void) -> Self {
         Self { function, argument }
     }
+
+    /// Invokes the exact source callback retained by a process-lived owner.
+    ///
+    /// # Safety
+    ///
+    /// The owner that formed this hook proves that the callback, user argument,
+    /// and requested range remain valid for this invocation. A purge caller
+    /// supplies a null zero pointer. A metadata commit also supplies null;
+    /// a page-claim commit supplies a writable output.
+    #[inline]
+    pub(crate) unsafe fn invoke(
+        self,
+        commit: bool,
+        start: *mut u8,
+        size: usize,
+        is_zero: *mut bool,
+    ) -> bool {
+        unsafe { (self.function)(commit, start, size, is_zero, self.argument) }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1180,8 +1202,58 @@ unsafe fn manage_in_place(
     numa_node: i32,
     exclusive: bool,
     commit_hook: Option<CommitHook>,
-    mut memory: MemoryId,
+    memory: MemoryId,
 ) -> Result<ManagedExternalRegion, ManageArenaError> {
+    unsafe {
+        manage_in_place_with_publisher(
+            registry,
+            start,
+            size,
+            page_size,
+            initially_committed,
+            numa_node,
+            exclusive,
+            commit_hook,
+            memory,
+            |arena| {
+                if registry.insert(arena) {
+                    Ok(())
+                } else {
+                    Err(ManageArenaError::RegistryFull)
+                }
+            },
+        )
+    }
+}
+
+/// Initializes each in-place arena before its caller publishes it.
+///
+/// The source callback can reenter the process arena owner while metadata is
+/// being made accessible. Keeping callback-bearing preparation separate from
+/// registry insertion lets that owner release its reserve lock for the
+/// callback and reacquire it only for the source publication transition.
+///
+/// # Safety
+///
+/// The caller upholds the normal in-place range and memory provenance contract.
+/// The publisher must either make exactly one arena registry-visible, or return
+/// without exposing it. Once it returns success, the arena is permanent.
+#[allow(clippy::too_many_arguments)]
+pub(super) unsafe fn manage_in_place_with_publisher<F>(
+    registry: &ArenaRegistry,
+    start: *mut u8,
+    size: usize,
+    page_size: PageSize,
+    initially_committed: bool,
+    numa_node: i32,
+    exclusive: bool,
+    commit_hook: Option<CommitHook>,
+    mut memory: MemoryId,
+    mut publish: F,
+) -> Result<ManagedExternalRegion, ManageArenaError>
+where
+    F: FnMut(*mut Arena) -> Result<(), ManageArenaError>,
+{
     let plan = ExternalArenaPlan::from_address(start as usize, size)
         .ok_or(ManageArenaError::InvalidRegion)?;
     let aligned_start = unsafe { start.add(plan.prefix_bytes()) };
@@ -1196,7 +1268,7 @@ unsafe fn manage_in_place(
         let arena_size = invariants::size_of_slices(split.slice_count())
             .ok_or(ManageArenaError::InvalidRegion)?;
         let initialized = unsafe {
-            initialize_arena_in_place(
+            prepare_arena_in_place(
                 registry,
                 arena_start,
                 arena_size,
@@ -1213,6 +1285,17 @@ unsafe fn manage_in_place(
         };
         match initialized {
             Ok(arena) => {
+                if let Err(error) = publish(arena) {
+                    if parent.is_null() {
+                        return Err(error);
+                    }
+                    unsafe { (*parent).total_size = managed_size };
+                    return Ok(ManagedExternalRegion {
+                        arena_id: parent_id,
+                        total_size: plan.total_size(),
+                        managed_size,
+                    });
+                }
                 if parent.is_null() {
                     parent = arena;
                     parent_id = unsafe { ArenaId::from_arena(arena) }
@@ -1705,7 +1788,7 @@ fn arena_slice_range_is_usable(arena: &Arena, slice_index: usize, slice_count: u
 }
 
 #[allow(clippy::too_many_arguments)]
-unsafe fn initialize_arena_in_place(
+unsafe fn prepare_arena_in_place(
     registry: &ArenaRegistry,
     start: *mut u8,
     region_size: usize,
@@ -1877,11 +1960,7 @@ unsafe fn initialize_arena_in_place(
             .ok_or(ManageArenaError::BitmapInitialization)?;
     }
 
-    if unsafe { registry.insert(arena) } {
-        Ok(arena)
-    } else {
-        Err(ManageArenaError::RegistryFull)
-    }
+    Ok(arena)
 }
 
 /// Lifetime-bound inspection of an initialized in-place arena.
@@ -2190,7 +2269,13 @@ impl<'arena> ArenaView<'arena> {
             if already_committed < slice_count {
                 let mut commit_zero = false;
                 let committed_now = if let Some(owner) = owner {
-                    owner.commit(start.as_ptr(), size.get(), already_committed * ARENA_SLICE_SIZE)
+                    let outcome = owner.commit_with_outcome(
+                        start.as_ptr(),
+                        size.get(),
+                        already_committed * ARENA_SLICE_SIZE,
+                    );
+                    commit_zero = outcome.is_zero();
+                    outcome.succeeded()
                 } else if let Some(commit_function) = arena.commit_function {
                     unsafe {
                         commit_function(true, start.as_ptr(), size.get(), &mut commit_zero,

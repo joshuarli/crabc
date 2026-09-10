@@ -16,11 +16,12 @@
 use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::mem::MaybeUninit;
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use crabc_core::Errno;
 
-use super::{ArenaId, ArenaRegistry, ArenaReservationPlan, ArenaSearch, ArenaSliceClaim, CommitHook, ManageArenaError, ManagedExternalRegion};
+use super::{ArenaId, ArenaRegistry, ArenaReservationPlan, ArenaSearch, ArenaSliceClaim, CommitHook, ExternalArenaPlan, ManageArenaError, ManagedExternalRegion};
 use crate::config::{ARENA_ALIGNMENT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, MAX_ARENAS};
 use crate::lock::PrivateLock;
 use crate::os::{MapAccess, Mapping, MemoryConfig, NormalOsAllocation, HugeOsAllocation, VmProcess};
@@ -74,41 +75,240 @@ impl ArenaAllocationSlot {
     }
 }
 
+/// Result of one owner-bound source arena commit request.
+///
+/// The bool returned by a custom C callback has two different meanings. This
+/// type keeps the commit success and zero observation together so a callback
+/// cannot make an arena claim succeed while losing its source zero result.
+#[derive(Clone, Copy)]
+pub(super) struct ArenaCommitOutcome {
+    committed: bool,
+    is_zero: bool,
+}
+
+impl ArenaCommitOutcome {
+    const fn failed() -> Self { Self { committed: false, is_zero: false } }
+    const fn committed(is_zero: bool) -> Self { Self { committed: true, is_zero } }
+    pub(super) const fn succeeded(self) -> bool { self.committed }
+    pub(super) const fn is_zero(self) -> bool { self.is_zero }
+}
+
+/// One externally managed range and its source callback.
+///
+/// It retains no terminal mapping operation: pinned mi_manage_memory keeps
+/// external-memory release with its caller. The callback is instead a
+/// process-lived transition capability for this exact range.
+///
+/// # Safety
+///
+/// Construction proves that the range, callback function, and user argument
+/// remain live and exclusive throughout installation and while the owning
+/// ProcessArenaBacking has any published arena. The callback must accept
+/// contained raw spans. Metadata commit and purge pass a null zero output;
+/// page-claim commit passes a writable output. Every true commit result,
+/// including metadata commit with a null output, makes the complete requested
+/// span accessible before this owner writes its headers or bitmaps. It
+/// synchronizes any state shared with concurrent or reentrant calls.
+#[must_use = "an external callback lease must be installed or recovered"]
+pub(crate) struct ProcessExternalArenaLease {
+    base: NonNull<u8>,
+    size: usize,
+    memory: MemoryId,
+    callback: CommitHook,
+}
+
+impl ProcessExternalArenaLease {
+    /// Forms the process-lived external ownership and transition capability.
+    ///
+    /// # Safety
+    ///
+    /// `base..base + size`, `callback`, and its argument remain live and
+    /// exclusive until every arena published from this lease is permanently
+    /// quiescent. The callback accepts contained raw spans and synchronizes
+    /// concurrent as well as reentrant calls. A metadata `commit=true` call
+    /// may pass a null `is_zero`; a later claim commit passes a writable
+    /// output. Every true commit result makes the complete requested span
+    /// accessible, including a metadata call with a null output. A non-null
+    /// output and the initial flags supplied here truthfully describe those
+    /// accessible bytes.
+    pub(crate) unsafe fn new(
+        base: *mut u8,
+        size: usize,
+        initially_committed: bool,
+        is_pinned: bool,
+        initially_zero: bool,
+        callback: CommitHook,
+    ) -> Option<Self> {
+        let base = NonNull::new(base)?;
+        Some(Self {
+            memory: MemoryId::external(
+                base.as_ptr(),
+                size,
+                initially_committed,
+                is_pinned,
+                initially_zero,
+            ),
+            base,
+            size,
+            callback,
+        })
+    }
+
+    #[inline]
+    fn base(&self) -> *mut u8 { self.base.as_ptr() }
+
+    #[inline]
+    fn size(&self) -> usize { self.size }
+
+    #[inline]
+    fn memory(&self) -> MemoryId { self.memory }
+
+    /// A preparation attempt wrote source headers and bitmaps before its
+    /// first publication failed. The caller still owns the range, but a retry
+    /// cannot claim that its metadata image remains zero.
+    fn invalidate_zero_after_prepare(&mut self) {
+        self.memory = MemoryId::external(
+            self.base(),
+            self.size,
+            self.memory.initially_committed(),
+            self.memory.is_pinned(),
+            false,
+        );
+    }
+
+    #[inline]
+    fn contains(&self, start: *mut u8, size: usize) -> bool {
+        let Some(offset) = (start as usize).checked_sub(self.base.as_ptr() as usize) else {
+            return false;
+        };
+        offset.checked_add(size).is_some_and(|end| end <= self.size)
+    }
+
+    #[inline]
+    unsafe fn commit(&self, start: *mut u8, size: usize) -> ArenaCommitOutcome {
+        if !self.contains(start, size) {
+            return ArenaCommitOutcome::failed();
+        }
+        let mut is_zero = false;
+        let committed = unsafe { self.callback.invoke(true, start, size, &mut is_zero) };
+        ArenaCommitOutcome { committed, is_zero: committed && is_zero }
+    }
+
+    #[inline]
+    unsafe fn purge(&self, start: *mut u8, size: usize) -> Option<bool> {
+        self.contains(start, size)
+            .then(|| unsafe { self.callback.invoke(false, start, size, core::ptr::null_mut()) })
+    }
+}
+
 pub(super) struct OwnedArenaAllocation {
-    allocation: ArenaOsAllocation,
+    allocation: ArenaBacking,
     memory: MemoryId,
     pub(super) process: VmProcess<'static>,
     pub(super) config: MemoryConfig,
     release_error: Option<Errno>,
 }
 
-/// The registry retains huge primitive ranges as their distinct consuming
-/// owner. A huge allocation is never exposed through the regular VM API.
-enum ArenaOsAllocation {
+/// The registry retains exactly one source backing owner for every published
+/// arena. Regular mapping and huge allocation remain consuming OS owners;
+/// external memory carries only its process-lived callback lease and never an
+/// unmap capability.
+enum ArenaBacking {
     Regular(Mapping),
     Huge(HugeOsAllocation<'static>),
+    External(ProcessExternalArenaLease),
 }
 
-impl ArenaOsAllocation {
+impl ArenaBacking {
     fn base(&self) -> Result<*mut u8, Errno> {
-        match self { Self::Regular(mapping) => mapping.base(),
-            Self::Huge(allocation) => Ok(allocation.base().as_ptr()) }
+        match self {
+            Self::Regular(mapping) => mapping.base(),
+            Self::Huge(allocation) => Ok(allocation.base().as_ptr()),
+            Self::External(lease) => Ok(lease.base()),
+        }
     }
+
     fn length(&self) -> Result<usize, Errno> {
-        match self { Self::Regular(mapping) => mapping.length(),
-            Self::Huge(allocation) => Ok(allocation.size()) }
+        match self {
+            Self::Regular(mapping) => mapping.length(),
+            Self::Huge(allocation) => Ok(allocation.size()),
+            Self::External(lease) => Ok(lease.size()),
+        }
     }
+
     fn regular(&self) -> Option<&Mapping> {
-        match self { Self::Regular(mapping) => Some(mapping), Self::Huge(_) => None }
+        match self {
+            Self::Regular(mapping) => Some(mapping),
+            Self::Huge(_) | Self::External(_) => None,
+        }
+    }
+
+    fn external(&self) -> Option<&ProcessExternalArenaLease> {
+        match self {
+            Self::External(lease) => Some(lease),
+            Self::Regular(_) | Self::Huge(_) => None,
+        }
     }
 }
 
 impl OwnedArenaAllocation {
-    pub(super) fn commit(&self, start: *mut u8, size: usize, already_committed: usize) -> bool {
-        let Ok(base) = self.allocation.base() else { return false; };
-        let Some(offset) = (start as usize).checked_sub(base as usize) else { return false; };
-        self.allocation.regular().is_some_and(|mapping|
-            mapping.commit_for_process(self.process, offset, size, already_committed).is_ok())
+    pub(super) fn commit(
+        &self,
+        start: *mut u8,
+        size: usize,
+        already_committed: usize,
+    ) -> bool {
+        self.commit_with_outcome(start, size, already_committed).succeeded()
+    }
+
+    pub(super) fn commit_with_outcome(
+        &self,
+        start: *mut u8,
+        size: usize,
+        already_committed: usize,
+    ) -> ArenaCommitOutcome {
+        let Ok(base) = self.allocation.base() else {
+            return ArenaCommitOutcome::failed();
+        };
+        let Some(offset) = (start as usize).checked_sub(base as usize) else {
+            return ArenaCommitOutcome::failed();
+        };
+        let Ok(length) = self.allocation.length() else {
+            return ArenaCommitOutcome::failed();
+        };
+        if offset.checked_add(size).is_none_or(|end| end > length) {
+            return ArenaCommitOutcome::failed();
+        }
+        match &self.allocation {
+            ArenaBacking::Regular(mapping) => {
+                if mapping
+                    .commit_for_process(self.process, offset, size, already_committed)
+                    .is_ok()
+                {
+                    ArenaCommitOutcome::committed(false)
+                } else {
+                    ArenaCommitOutcome::failed()
+                }
+            }
+            ArenaBacking::Huge(_) => ArenaCommitOutcome::failed(),
+            ArenaBacking::External(lease) => unsafe { lease.commit(start, size) },
+        }
+    }
+
+    #[inline]
+    pub(super) fn has_external_callback(&self) -> bool {
+        self.allocation.external().is_some()
+    }
+
+    #[inline]
+    pub(super) fn invoke_external_purge(
+        &self,
+        start: *mut u8,
+        size: usize,
+    ) -> Option<bool> {
+        self.allocation
+            .external()
+            .and_then(|lease| unsafe { lease.purge(start, size) })
     }
 }
 
@@ -214,22 +414,39 @@ impl ProcessArenaBacking {
         &self, process: VmProcess<'_>, config: MemoryConfig,
     ) -> Result<bool, Errno> {
         let _guard = self.reserve_lock.lock()?;
+        Ok(self.binding_matches_locked(process, config))
+    }
+
+    /// Checks every stable owner while reserve_lock excludes mutation.
+    ///
+    /// An INITIALIZING external slot is already address-stable before its
+    /// metadata callback runs. Reentrant setup may verify its fixed process
+    /// pair and configuration, but ordinary arena lookup still refuses that
+    /// state until the registry insertion publishes it.
+    fn binding_matches_locked(&self, process: VmProcess<'_>, config: MemoryConfig) -> bool {
         let registered = self.registry.subprocess();
-        if !registered.is_null() && registered != process.subprocess().as_ptr() { return Ok(false); }
+        if !registered.is_null() && registered != process.subprocess().as_ptr() {
+            return false;
+        }
         for slot in &self.slots {
             match slot.state.load(Ordering::Acquire) {
                 EMPTY => continue,
-                PUBLISHED | RETAINED => {}
-                _ => return Ok(false),
+                INITIALIZING | PUBLISHED | RETAINED => {}
+                _ => return false,
             }
-            // SAFETY: these initialized final states are immutable, and the
-            // reserve lock additionally excludes unpublished transitions.
-            let Some(owner) = (unsafe { slot.initialized() }) else { return Ok(false); };
+            // SAFETY: reserve_lock keeps the INITIALIZING owner stable, and
+            // published or retained owners are immutable for process lifetime.
+            let Some(owner) = (unsafe { slot.initialized() }) else {
+                return false;
+            };
             if !core::ptr::eq(owner.process.policy(), process.policy())
                 || !core::ptr::eq(owner.process.subprocess(), process.subprocess())
-                || owner.config != config { return Ok(false); }
+                || owner.config != config
+            {
+                return false;
+            }
         }
-        Ok(true)
+        true
     }
 
     /// Claims from existing process-owned arenas with source commitment and
@@ -294,11 +511,162 @@ impl ProcessArenaBacking {
         managed_size: usize, mapping: Mapping, memory: MemoryId, numa_node: i32, exclusive: bool,
     ) -> Result<ManagedExternalRegion, ProcessArenaInstallFailure> {
         let result = unsafe { self.install_owned_allocation_locked(process, config, managed_size,
-            ArenaOsAllocation::Regular(mapping), memory, numa_node, exclusive) };
+            ArenaBacking::Regular(mapping), memory, numa_node, exclusive) };
         result.map_err(|(error, allocation)| {
-            let ArenaOsAllocation::Regular(mapping) = allocation else { unreachable!() };
+            let ArenaBacking::Regular(mapping) = allocation else { unreachable!() };
             ProcessArenaInstallFailure { error, mapping, memory, process }
         })
+    }
+
+    /// Installs caller-managed external memory with its source callback.
+    ///
+    /// The returned arena retains only the callback lease. It never obtains an
+    /// unmap operation for external bytes. The reserve lock protects binding,
+    /// stable-slot reservation, registry insertion, and first publication, but
+    /// is deliberately released before every callback from metadata setup.
+    ///
+    /// # Safety
+    ///
+    /// The lease proves the external range and callback remain process-lived.
+    /// This owner is the sole registry for process; its configuration is fixed
+    /// after the first publication. No registry destruction or overlapping
+    /// external owner may run while the published range is live.
+    pub(crate) unsafe fn install_owned_external_callback_arena(
+        &'static self,
+        process: VmProcess<'static>,
+        config: MemoryConfig,
+        managed_size: usize,
+        lease: ProcessExternalArenaLease,
+        numa_node: i32,
+        exclusive: bool,
+    ) -> Result<ManagedExternalRegion, ProcessExternalArenaInstallFailure> {
+        let start = lease.base();
+        let size = lease.size();
+        let memory = lease.memory();
+        let hook = lease.callback;
+        let guard = match self.reserve_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                return Err(ProcessExternalArenaInstallFailure::Returned {
+                    error: ManageArenaError::RegistryFull,
+                    lease,
+                });
+            }
+        };
+        if !self.binding_matches_locked(process, config) {
+            return Err(ProcessExternalArenaInstallFailure::Returned {
+                error: ManageArenaError::InvalidRegion,
+                lease,
+            });
+        }
+        if self.registry.count() == 0 {
+            // SAFETY: reserve_lock excludes every competing external prepare
+            // and publication until the immutable process identity is bound.
+            if !unsafe {
+                self.registry
+                    .bind_subprocess_before_publication(process.subprocess().as_ptr())
+            } {
+                return Err(ProcessExternalArenaInstallFailure::Returned {
+                    error: ManageArenaError::InvalidRegion,
+                    lease,
+                });
+            }
+        } else if !self.registry.is_bound_to_subprocess(process.subprocess().as_ptr()) {
+            return Err(ProcessExternalArenaInstallFailure::Returned {
+                error: ManageArenaError::InvalidRegion,
+                lease,
+            });
+        }
+        if memory.kind() != MemoryKind::External
+            || memory.os_memory().is_none_or(|stored| stored.base != start || stored.size != size)
+            || managed_size != size
+            || ExternalArenaPlan::from_address(start as usize, size).is_none()
+        {
+            return Err(ProcessExternalArenaInstallFailure::Returned {
+                error: ManageArenaError::InvalidRegion,
+                lease,
+            });
+        }
+        let Some(slot) = self
+            .slots
+            .iter()
+            .find(|slot| slot.state.load(Ordering::Relaxed) == EMPTY)
+        else {
+            return Err(ProcessExternalArenaInstallFailure::Returned {
+                error: ManageArenaError::RegistryFull,
+                lease,
+            });
+        };
+        unsafe {
+            (*slot.value.get()).write(OwnedArenaAllocation {
+                allocation: ArenaBacking::External(lease),
+                memory,
+                process,
+                config,
+                release_error: None,
+            });
+        }
+        slot.state.store(INITIALIZING, Ordering::Release);
+        drop(guard);
+
+        let numa_node = if numa_node < 0 && process.policy().arena_is_numa_local() {
+            process.current_numa_node() as i32
+        } else { numa_node };
+        let result = unsafe {
+            super::manage_in_place_with_publisher(
+                &self.registry,
+                start,
+                managed_size,
+                config.page_size(),
+                memory.initially_committed(),
+                numa_node,
+                exclusive,
+                Some(hook),
+                memory,
+                |arena| {
+                    let _guard = self
+                        .reserve_lock
+                        .lock()
+                        .map_err(|_| ManageArenaError::RegistryFull)?;
+                    if !self.registry.is_bound_to_subprocess(process.subprocess().as_ptr()) {
+                        return Err(ManageArenaError::InvalidRegion);
+                    }
+                    if self.registry.insert(arena) {
+                        // The first inserted arena publishes this immutable
+                        // whole-range lease before a later subarena callback
+                        // can reenter and allocate through the parent.
+                        slot.state.store(PUBLISHED, Ordering::Release);
+                        Ok(())
+                    } else {
+                        Err(ManageArenaError::RegistryFull)
+                    }
+                },
+            )
+        };
+        match result {
+            Ok(managed) => Ok(managed),
+            Err(error) => {
+                let guard = match self.reserve_lock.lock() {
+                    Ok(guard) => guard,
+                    Err(_) => {
+                        slot.state.store(RETAINED, Ordering::Release);
+                        return Err(ProcessExternalArenaInstallFailure::Retained { error });
+                    }
+                };
+                if slot.state.load(Ordering::Acquire) != INITIALIZING {
+                    drop(guard);
+                    return Err(ProcessExternalArenaInstallFailure::Retained { error });
+                }
+                slot.state.store(EMPTY, Ordering::Release);
+                let owner = unsafe { (*slot.value.get()).assume_init_read() };
+                let ArenaBacking::External(mut lease) = owner.allocation else {
+                    unreachable!();
+                };
+                lease.invalidate_zero_after_prepare();
+                drop(guard);
+                Err(ProcessExternalArenaInstallFailure::Returned { error, lease })
+            }
+        }
     }
 
     /// Installs the exact contiguous huge-primitive prefix in the same arena
@@ -326,9 +694,9 @@ impl ProcessArenaBacking {
         let size = allocation.size();
         let memory = allocation.memory_id();
         unsafe { self.install_owned_allocation_locked(process, config, size,
-            ArenaOsAllocation::Huge(allocation), memory, numa_node, exclusive) }
+            ArenaBacking::Huge(allocation), memory, numa_node, exclusive) }
             .map_err(|(error, owner)| {
-                let ArenaOsAllocation::Huge(allocation) = owner else { unreachable!() };
+                let ArenaBacking::Huge(allocation) = owner else { unreachable!() };
                 ProcessHugeArenaInstallFailure { error, allocation }
             })
     }
@@ -336,9 +704,9 @@ impl ProcessArenaBacking {
     /// Caller holds reserve_lock until slot publication or complete rollback.
     unsafe fn install_owned_allocation_locked(
         &'static self, process: VmProcess<'static>, config: MemoryConfig,
-        managed_size: usize, allocation: ArenaOsAllocation, memory: MemoryId,
+        managed_size: usize, allocation: ArenaBacking, memory: MemoryId,
         numa_node: i32, exclusive: bool,
-    ) -> Result<ManagedExternalRegion, (ManageArenaError, ArenaOsAllocation)> {
+    ) -> Result<ManagedExternalRegion, (ManageArenaError, ArenaBacking)> {
         let fail = |error, allocation| (error, allocation);
         let start = match allocation.base() {
             Ok(start) => start,
@@ -350,12 +718,14 @@ impl ProcessArenaBacking {
         };
         let exact = memory.os_memory().is_some_and(|os| os.base == start && os.size == size);
         let valid_kind = match &allocation {
-            ArenaOsAllocation::Regular(mapping) => memory.kind() == MemoryKind::Os
+            ArenaBacking::Regular(mapping) => memory.kind() == MemoryKind::Os
                 && memory.is_pinned() == mapping.is_large()
                 && memory.initially_zero() == mapping.initially_zero()
                 && memory.initially_committed() == mapping.initially_committed(),
-            ArenaOsAllocation::Huge(_) => memory.kind() == MemoryKind::OsHuge
+            ArenaBacking::Huge(_) => memory.kind() == MemoryKind::OsHuge
                 && memory.is_pinned() && memory.initially_committed() && managed_size == size,
+            ArenaBacking::External(lease) => memory.kind() == MemoryKind::External
+                && lease.base() == start && lease.size() == size,
         };
         if !exact || !valid_kind || managed_size < ARENA_MIN_SIZE
             || managed_size > size || (start as usize) % ARENA_ALIGNMENT != 0 {
@@ -567,10 +937,40 @@ impl ProcessArenaBacking {
             }
         };
         unsafe { (*slot.value.get()).write(OwnedArenaAllocation {
-            allocation: ArenaOsAllocation::Regular(mapping), memory, process, config, release_error: Some(error),
+            allocation: ArenaBacking::Regular(mapping), memory, process, config, release_error: Some(error),
         }); }
         slot.state.store(RETAINED, Ordering::Release);
         None
+    }
+}
+
+/// A callback-backed external installation either returns its complete lease
+/// before first publication or retains it terminally when the finalization
+/// lock could not establish that no registry entry escaped. A returned lease
+/// conservatively loses its zero-image claim if preparation ran.
+#[must_use = "external installation failure retains or returns the callback lease"]
+pub(crate) enum ProcessExternalArenaInstallFailure {
+    Returned {
+        error: ManageArenaError,
+        lease: ProcessExternalArenaLease,
+    },
+    Retained {
+        error: ManageArenaError,
+    },
+}
+
+impl ProcessExternalArenaInstallFailure {
+    pub(crate) const fn error(&self) -> ManageArenaError {
+        match self {
+            Self::Returned { error, .. } | Self::Retained { error } => *error,
+        }
+    }
+
+    pub(crate) fn into_returned_lease(self) -> Option<ProcessExternalArenaLease> {
+        match self {
+            Self::Returned { lease, .. } => Some(lease),
+            Self::Retained { .. } => None,
+        }
     }
 }
 
@@ -683,6 +1083,684 @@ mod tests {
             numa_node: -1, requested, allow_pinned: false }
     }
 
+    struct ExternalCallbackTrace {
+        commits: core::sync::atomic::AtomicUsize,
+        purges: core::sync::atomic::AtomicUsize,
+        last_start: core::sync::atomic::AtomicUsize,
+        last_size: core::sync::atomic::AtomicUsize,
+        commit_zero_output: core::sync::atomic::AtomicBool,
+        commit_zero_is_non_null: core::sync::atomic::AtomicBool,
+        commit_success: core::sync::atomic::AtomicBool,
+        purge_needs_recommit: core::sync::atomic::AtomicBool,
+        purge_zero_is_null: core::sync::atomic::AtomicBool,
+    }
+
+    impl ExternalCallbackTrace {
+        fn new() -> Self {
+            Self {
+                commits: core::sync::atomic::AtomicUsize::new(0),
+                purges: core::sync::atomic::AtomicUsize::new(0),
+                last_start: core::sync::atomic::AtomicUsize::new(0),
+                last_size: core::sync::atomic::AtomicUsize::new(0),
+                commit_zero_output: core::sync::atomic::AtomicBool::new(false),
+                commit_zero_is_non_null: core::sync::atomic::AtomicBool::new(false),
+                commit_success: core::sync::atomic::AtomicBool::new(true),
+                purge_needs_recommit: core::sync::atomic::AtomicBool::new(false),
+                purge_zero_is_null: core::sync::atomic::AtomicBool::new(false),
+            }
+        }
+
+        fn clear_observation(&self) {
+            self.commits.store(0, Ordering::Release);
+            self.purges.store(0, Ordering::Release);
+            self.last_start.store(0, Ordering::Release);
+            self.last_size.store(0, Ordering::Release);
+            self.commit_zero_is_non_null.store(false, Ordering::Release);
+            self.purge_zero_is_null.store(false, Ordering::Release);
+        }
+    }
+
+    unsafe extern "C" fn external_transition_callback(
+        commit: bool,
+        start: *mut u8,
+        size: usize,
+        is_zero: *mut bool,
+        argument: *mut c_void,
+    ) -> bool {
+        let Some(trace) = (unsafe { argument.cast::<ExternalCallbackTrace>().as_ref() }) else {
+            return false;
+        };
+        trace.last_start.store(start as usize, Ordering::Release);
+        trace.last_size.store(size, Ordering::Release);
+        if commit {
+            trace.commits.fetch_add(1, Ordering::AcqRel);
+            trace.commit_zero_is_non_null.store(!is_zero.is_null(), Ordering::Release);
+            if !is_zero.is_null() {
+                unsafe {
+                    is_zero.write(trace.commit_zero_output.load(Ordering::Acquire));
+                }
+            }
+            trace.commit_success.load(Ordering::Acquire)
+        } else {
+            trace.purges.fetch_add(1, Ordering::AcqRel);
+            trace.purge_zero_is_null.store(is_zero.is_null(), Ordering::Release);
+            trace.purge_needs_recommit.load(Ordering::Acquire)
+        }
+    }
+
+    /// Maps writable test storage and deliberately transfers only an external
+    /// callback lease to the arena owner. The backing mapping and trace are
+    /// leaked with the test's process-lived registry, matching the external
+    /// caller's lifetime obligation without giving that owner unmap authority.
+    fn external_lease(
+        process: VmProcess<'static>,
+        size: usize,
+        initially_committed: bool,
+        initially_zero: bool,
+        trace: &'static ExternalCallbackTrace,
+    ) -> (ProcessExternalArenaLease, *mut u8) {
+        let base = external_storage(process, size);
+        let lease = unsafe {
+            ProcessExternalArenaLease::new(
+                base,
+                size,
+                initially_committed,
+                false,
+                initially_zero,
+                CommitHook::new(
+                    external_transition_callback,
+                    core::ptr::from_ref(trace).cast_mut().cast(),
+                ),
+            )
+        }
+        .unwrap();
+        (lease, base)
+    }
+
+    fn install_external(
+        backing: &'static ProcessArenaBacking,
+        process: VmProcess<'static>,
+        size: usize,
+        lease: ProcessExternalArenaLease,
+    ) -> ManagedExternalRegion {
+        unsafe {
+            backing.install_owned_external_callback_arena(
+                process,
+                config(),
+                size,
+                lease,
+                -1,
+                false,
+            )
+        }
+        .unwrap_or_else(|failure| panic!("external arena installation: {:?}", failure.error()))
+    }
+
+    fn external_storage(process: VmProcess<'static>, size: usize) -> *mut u8 {
+        let (mapping, _) = NormalOsAllocation::allocate_aligned_base_for_process(
+            process,
+            config(),
+            size,
+            ARENA_ALIGNMENT,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .unwrap()
+        .into_mapping_and_memory();
+        let base = mapping.base().unwrap();
+        core::mem::forget(mapping);
+        base
+    }
+
+    struct ReentrantExternalInstall {
+        backing: &'static ProcessArenaBacking,
+        process: VmProcess<'static>,
+        inner_lease: UnsafeCell<Option<ProcessExternalArenaLease>>,
+        callback_calls: core::sync::atomic::AtomicUsize,
+        binding_matches: core::sync::atomic::AtomicBool,
+        inner_arena: core::sync::atomic::AtomicUsize,
+    }
+
+    // The source callback contract serializes this test fixture's one mutable
+    // lease transfer. The callback reenters only on its first synchronous
+    // metadata commit, after the outer installer released reserve_lock.
+    unsafe impl Sync for ReentrantExternalInstall {}
+
+    unsafe extern "C" fn reentrant_external_callback(
+        commit: bool,
+        _start: *mut u8,
+        _size: usize,
+        is_zero: *mut bool,
+        argument: *mut c_void,
+    ) -> bool {
+        let Some(state) = (unsafe { argument.cast::<ReentrantExternalInstall>().as_ref() }) else {
+            return false;
+        };
+        if commit && state.callback_calls.fetch_add(1, Ordering::AcqRel) == 0 {
+            state.binding_matches.store(
+                state
+                    .backing
+                    .matches_existing_process_binding(state.process, config())
+                    .unwrap_or(false),
+                Ordering::Release,
+            );
+            let lease = unsafe { (&mut *state.inner_lease.get()).take() }
+                .expect("the reentrant callback has one inner external lease");
+            let managed = unsafe {
+                state.backing.install_owned_external_callback_arena(
+                    state.process,
+                    config(),
+                    ARENA_MIN_SIZE,
+                    lease,
+                    -1,
+                    false,
+                )
+            }
+            .unwrap_or_else(|failure| {
+                panic!("the callback reentry owns its returned lease: {:?}", failure.error())
+            });
+            state
+                .inner_arena
+                .store(managed.arena_id().as_ptr() as usize, Ordering::Release);
+        }
+        if !is_zero.is_null() {
+            unsafe { is_zero.write(false) };
+        }
+        true
+    }
+
+    /// One address-free source-callback lifecycle record for the pinned-C
+    /// differential. This reaches the process-lived typed owner rather than
+    /// the legacy raw `Arena.commit_function` test seam.
+    pub(crate) fn m2_external_callback_trace(fault_guard: &fault::Guard) -> [usize; 10] {
+        let process = purge_process(0, false);
+        let external_backing = backing();
+        let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        trace.commit_zero_output.store(true, Ordering::Release);
+        let (lease, _) = external_lease(process, ARENA_MIN_SIZE, false, false, trace);
+        let id = install_external(external_backing, process, ARENA_MIN_SIZE, lease).arena_id();
+        let managed_external_owner = unsafe { ArenaView::from_ptr(id.as_ptr()) }
+            .is_some_and(|view| view.arena().memid.kind() == MemoryKind::External);
+        trace.clear_observation();
+        let claim = unsafe {
+            external_backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true)
+        }
+        .expect("the external trace obtains one typed committed claim");
+        let commit_zero_propagated = claim.memory_id().initially_zero()
+            && trace.commits.load(Ordering::Acquire) == 1
+            && trace.commit_zero_is_non_null.load(Ordering::Acquire)
+            && trace.last_start.load(Ordering::Acquire) == claim.start() as usize
+            && trace.last_size.load(Ordering::Acquire) == 2 * ARENA_SLICE_SIZE;
+
+        trace.purge_needs_recommit.store(true, Ordering::Release);
+        trace.clear_observation();
+        fault_guard.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        let before = process.subprocess().vm_statistics().snapshot();
+        let claim_start = claim.start() as usize;
+        let claim_slice = claim.slice_index();
+        let released = claim.release();
+        let after = process.subprocess().vm_statistics().snapshot();
+        let no_normal_advice = fault_guard.observed() == 0;
+        fault_guard.set(fault::Plan::disabled());
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }
+            .expect("the published external arena remains inspectable");
+        let purge_raw_span_and_statistics = released
+            && trace.purges.load(Ordering::Acquire) == 1
+            && trace.purge_zero_is_null.load(Ordering::Acquire)
+            && trace.last_start.load(Ordering::Acquire) == claim_start
+            && trace.last_size.load(Ordering::Acquire) == 2 * ARENA_SLICE_SIZE
+            && after.purge_calls == before.purge_calls + 1
+            && after.purged == before.purged + (2 * ARENA_SLICE_SIZE) as i64;
+        let purge_true_clears_commit = unsafe { view.slices_committed() }
+            .and_then(|bitmap| bitmap.is_clear_range(claim_slice, 2)) == Some(true);
+        trace.clear_observation();
+        let recommit = unsafe {
+            external_backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true)
+        }
+        .expect("the callback's needs-recommit result clears the typed bitmap");
+        let recommit_reinvokes_callback = recommit.slice_index() == claim_slice
+            && trace.commits.load(Ordering::Acquire) == 1
+            && trace.last_start.load(Ordering::Acquire) == recommit.start() as usize
+            && trace.last_size.load(Ordering::Acquire) == 2 * ARENA_SLICE_SIZE;
+
+        let false_process = purge_process(0, false);
+        let false_backing = backing();
+        let false_trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        let (lease, _) = external_lease(false_process, ARENA_MIN_SIZE, false, false, false_trace);
+        let false_id = install_external(false_backing, false_process, ARENA_MIN_SIZE, lease).arena_id();
+        let false_claim = unsafe {
+            false_backing.try_find_free(search(false_id), 2, ARENA_SLICE_SIZE, false)
+        }
+        .expect("the callback-false trace obtains a source range");
+        let false_slice = false_claim.slice_index();
+        externally_commit_range(false_backing, false_id, &false_claim, 2);
+        false_trace.purge_needs_recommit.store(false, Ordering::Release);
+        false_trace.clear_observation();
+        let false_released = false_claim.release();
+        let false_view = unsafe { ArenaView::from_ptr(false_id.as_ptr()) }.unwrap();
+        let purge_false_preserves_commit = false_released
+            && false_trace.purges.load(Ordering::Acquire) == 1
+            && unsafe { false_view.slices_committed() }
+                .and_then(|bitmap| bitmap.is_set_range(false_slice, 2)) == Some(true);
+
+        let mixed_process = purge_process(0, false);
+        let mixed_backing = backing();
+        let mixed_trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        let (lease, _) = external_lease(mixed_process, ARENA_MIN_SIZE, false, false, mixed_trace);
+        let mixed_id = install_external(mixed_backing, mixed_process, ARENA_MIN_SIZE, lease).arena_id();
+        let mixed_claim = unsafe {
+            mixed_backing.try_find_free(search(mixed_id), 2, ARENA_SLICE_SIZE, false)
+        }
+        .expect("the mixed callback trace obtains a source range");
+        let mixed_slice = mixed_claim.slice_index();
+        externally_commit_range(mixed_backing, mixed_id, &mixed_claim, 1);
+        mixed_trace.purge_needs_recommit.store(false, Ordering::Release);
+        mixed_trace.clear_observation();
+        let mixed_released = mixed_claim.release();
+        let mixed_view = unsafe { ArenaView::from_ptr(mixed_id.as_ptr()) }.unwrap();
+        let purge_mixed_clears_commit = mixed_released
+            && mixed_trace.purges.load(Ordering::Acquire) == 1
+            && unsafe { mixed_view.slices_committed() }
+                .and_then(|bitmap| bitmap.is_clear_range(mixed_slice, 2)) == Some(true);
+
+        let negative_process = purge_process(-1, false);
+        let negative_backing = backing();
+        let negative_trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        let (lease, _) = external_lease(
+            negative_process,
+            ARENA_MIN_SIZE,
+            true,
+            false,
+            negative_trace,
+        );
+        let negative_id = install_external(
+            negative_backing,
+            negative_process,
+            ARENA_MIN_SIZE,
+            lease,
+        )
+        .arena_id();
+        let negative_claim = unsafe {
+            negative_backing.try_find_free(search(negative_id), 2, ARENA_SLICE_SIZE, false)
+        }
+        .expect("the negative-delay trace obtains a fully committed claim");
+        negative_trace.clear_observation();
+        fault_guard.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        let negative_before = negative_process.subprocess().vm_statistics().snapshot();
+        let negative_released = negative_claim.release();
+        let negative_after = negative_process.subprocess().vm_statistics().snapshot();
+        let negative_delay_skips_callback_and_statistics = negative_released
+            && negative_trace.purges.load(Ordering::Acquire) == 0
+            && negative_after == negative_before
+            && fault_guard.observed() == 0;
+        fault_guard.set(fault::Plan::disabled());
+
+        [
+            usize::from(managed_external_owner),
+            usize::from(commit_zero_propagated),
+            usize::from(purge_raw_span_and_statistics),
+            usize::from(purge_true_clears_commit),
+            usize::from(recommit_reinvokes_callback),
+            usize::from(purge_false_preserves_commit),
+            usize::from(purge_mixed_clears_commit),
+            usize::from(negative_delay_skips_callback_and_statistics),
+            usize::from(no_normal_advice),
+            usize::from(external_backing.registry().count() == 1
+                && false_backing.registry().count() == 1
+                && mixed_backing.registry().count() == 1
+                && negative_backing.registry().count() == 1),
+        ]
+    }
+
+    #[test]
+    fn external_metadata_callback_reenters_after_stable_slot_reservation_without_borrowing_it() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let process = process();
+        let backing = backing();
+        let inner_trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        let (inner_lease, _) = external_lease(process, ARENA_MIN_SIZE, true, false, inner_trace);
+        let outer_base = external_storage(process, ARENA_MIN_SIZE);
+        let state = Box::leak(Box::new(ReentrantExternalInstall {
+            backing,
+            process,
+            inner_lease: UnsafeCell::new(Some(inner_lease)),
+            callback_calls: core::sync::atomic::AtomicUsize::new(0),
+            binding_matches: core::sync::atomic::AtomicBool::new(false),
+            inner_arena: core::sync::atomic::AtomicUsize::new(0),
+        }));
+        let outer_lease = unsafe {
+            ProcessExternalArenaLease::new(
+                outer_base,
+                ARENA_MIN_SIZE,
+                false,
+                false,
+                false,
+                CommitHook::new(
+                    reentrant_external_callback,
+                    core::ptr::from_ref(state).cast_mut().cast(),
+                ),
+            )
+        }
+        .unwrap();
+        let outer = install_external(backing, process, ARENA_MIN_SIZE, outer_lease).arena_id();
+        assert_eq!(state.callback_calls.load(Ordering::Acquire), 1);
+        assert!(state.binding_matches.load(Ordering::Acquire),
+            "the reentrant validator may inspect its stable initializing owner under the lock");
+        let inner = state.inner_arena.load(Ordering::Acquire) as *mut Arena;
+        assert!(!inner.is_null());
+        assert_eq!(backing.registry().count(), 2);
+        assert!(unsafe { backing.allocation_for_arena(&*outer.as_ptr()) }.is_some());
+        assert!(unsafe { backing.allocation_for_arena(&*inner) }.is_some());
+        assert!(backing.slots.iter().all(|slot|
+            slot.state.load(Ordering::Acquire) != INITIALIZING));
+    }
+
+    #[test]
+    fn external_publication_rejection_returns_lease_and_late_partial_management_retains_full_owner() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let process = process();
+        let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+
+        let rejected = backing();
+        let regular = install(rejected, process, MapAccess::Committed);
+        for entry in &rejected.registry.arenas {
+            entry.store(regular.as_ptr(), Ordering::Relaxed);
+        }
+        rejected.registry.count.store(MAX_ARENAS, Ordering::Relaxed);
+        let (lease, base) = external_lease(process, ARENA_MIN_SIZE, true, false, trace);
+        let failure = match unsafe {
+            rejected.install_owned_external_callback_arena(
+                process,
+                config(),
+                ARENA_MIN_SIZE,
+                lease,
+                -1,
+                false,
+            )
+        } {
+            Ok(_) => panic!("a full registry rejects before this owner publishes"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error(), ManageArenaError::RegistryFull);
+        let lease = failure.into_returned_lease().expect("the rejected first arena returns its lease");
+        assert_eq!(lease.base(), base);
+        assert!(rejected.slots.iter().skip(1).all(|slot| slot.state.load(Ordering::Acquire) == EMPTY));
+
+        let partial = backing();
+        let regular = install(partial, process, MapAccess::Committed);
+        for entry in &partial.registry.arenas[..MAX_ARENAS - 1] {
+            entry.store(regular.as_ptr(), Ordering::Relaxed);
+        }
+        partial.registry.count.store(MAX_ARENAS - 1, Ordering::Relaxed);
+        let size = 17 * crate::config::GIB;
+        let (lease, base) = external_lease(process, size, true, false, trace);
+        let managed = install_external(partial, process, size, lease);
+        assert!(!managed.is_complete());
+        assert_eq!(managed.managed_size(), ARENA_MAX_SIZE);
+        let owner = unsafe { partial.allocation_for_arena(&*managed.arena_id().as_ptr()) }.unwrap();
+        let ArenaBacking::External(lease) = &owner.allocation else {
+            panic!("partial external management retains its external lease");
+        };
+        assert_eq!(lease.base(), base);
+        assert_eq!(lease.size(), size,
+            "a later registry failure cannot discard the external suffix owner");
+    }
+
+    #[test]
+    fn external_publication_rejection_invalidates_zero_before_returned_lease_retry() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let process = process();
+        let rejected = backing();
+        let regular = install(rejected, process, MapAccess::Committed);
+        for entry in &rejected.registry.arenas {
+            entry.store(regular.as_ptr(), Ordering::Relaxed);
+        }
+        rejected.registry.count.store(MAX_ARENAS, Ordering::Relaxed);
+        let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        let (lease, _) = external_lease(process, ARENA_MIN_SIZE, true, true, trace);
+        let failure = unsafe {
+            rejected.install_owned_external_callback_arena(
+                process,
+                config(),
+                ARENA_MIN_SIZE,
+                lease,
+                -1,
+                false,
+            )
+        }
+        .expect_err("full source registry rejects only after external metadata preparation");
+        assert_eq!(failure.error(), ManageArenaError::RegistryFull);
+        let lease = failure.into_returned_lease()
+            .expect("the unpublished external range stays with its caller");
+        assert!(!lease.memory().initially_zero(),
+            "written arena headers make a returned initially-zero lease conservative");
+
+        let retry = backing();
+        let managed = install_external(retry, process, ARENA_MIN_SIZE, lease);
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }
+            .expect("the retry publishes a fresh arena image");
+        let arena = view.arena();
+        assert!(!arena.memid.initially_zero(),
+            "retry clears the source metadata image before rebuilding its bitmaps");
+        assert!(unsafe { retry.try_find_free(search(managed.arena_id()), 2, ARENA_SLICE_SIZE, false) }
+            .is_some(), "retry rebuilds the expected free bitmap from the cleared image");
+    }
+
+    #[test]
+    fn external_callback_commit_zero_and_prepublication_failure_return_the_typed_lease() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let process = process();
+        let backing = backing();
+        let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        trace.commit_success.store(false, Ordering::Release);
+        let (lease, base) = external_lease(process, ARENA_MIN_SIZE, false, false, trace);
+        let failure = match unsafe {
+            backing.install_owned_external_callback_arena(
+                process,
+                config(),
+                ARENA_MIN_SIZE,
+                lease,
+                -1,
+                false,
+            )
+        } {
+            Ok(_) => panic!("a metadata callback failure must precede publication"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error(), ManageArenaError::CommitFailed);
+        assert_eq!(backing.registry().count(), 0);
+        assert!(backing.slots.iter().all(|slot| slot.state.load(Ordering::Acquire) == EMPTY));
+        assert!(trace.commits.load(Ordering::Acquire) >= 1);
+        let lease = failure
+            .into_returned_lease()
+            .expect("the unpublished callback lease returns to its caller");
+        assert_eq!(lease.base(), base);
+
+        trace.commit_success.store(true, Ordering::Release);
+        trace.commit_zero_output.store(true, Ordering::Release);
+        install_external(backing, process, ARENA_MIN_SIZE, lease);
+        trace.clear_observation();
+        let claim = unsafe {
+            backing.try_find_free(search(ArenaId::none()), 2, ARENA_SLICE_SIZE, true)
+        }
+        .expect("the typed external owner commits a claimed source range");
+        assert_eq!(trace.commits.load(Ordering::Acquire), 1);
+        assert_eq!(trace.last_start.load(Ordering::Acquire), claim.start() as usize);
+        assert_eq!(trace.last_size.load(Ordering::Acquire), 2 * ARENA_SLICE_SIZE);
+        assert!(claim.memory_id().initially_zero(),
+            "the callback's commit=true zero result reaches the arena claim");
+
+        trace.commit_success.store(false, Ordering::Release);
+        trace.clear_observation();
+        assert!(unsafe {
+            backing.try_find_free(search(ArenaId::none()), 2, ARENA_SLICE_SIZE, true)
+        }
+        .is_none());
+        let failed_start = trace.last_start.load(Ordering::Acquire);
+        assert_ne!(failed_start, 0);
+        assert_eq!(trace.commits.load(Ordering::Acquire), 1);
+        trace.commit_success.store(true, Ordering::Release);
+        trace.clear_observation();
+        let retry = unsafe {
+            backing.try_find_free(search(ArenaId::none()), 2, ARENA_SLICE_SIZE, true)
+        }
+        .expect("a failed typed commit restores the exact free range");
+        assert_eq!(retry.start() as usize, failed_start);
+        assert_eq!(trace.commits.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn external_callback_owner_keeps_the_source_alignment_prefix_numa_and_null_metadata_zero() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::ArenaIsNumaLocal, 1);
+        let process = process_with_options(options);
+        let backing = backing();
+        let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        let page = config().page_size().bytes();
+        let storage = external_storage(process, 2 * ARENA_ALIGNMENT + page);
+        let raw_base = unsafe { storage.add(page) };
+        let prefix = (ARENA_ALIGNMENT - (raw_base as usize % ARENA_ALIGNMENT)) % ARENA_ALIGNMENT;
+        assert_ne!(prefix, 0, "the fixture passes the source an unaligned external base");
+        // `mi_manage_os_memory_ex2` rejects a nonzero prefix unless the
+        // remaining source span is at least one arena-alignment unit, before
+        // its later minimum-arena calculation.
+        let raw_size = prefix + ARENA_ALIGNMENT;
+        let lease = unsafe {
+            ProcessExternalArenaLease::new(
+                raw_base,
+                raw_size,
+                false,
+                false,
+                false,
+                CommitHook::new(
+                    external_transition_callback,
+                    core::ptr::from_ref(trace).cast_mut().cast(),
+                ),
+            )
+        }
+        .expect("the external source span is non-null");
+        let plan = ExternalArenaPlan::from_address(raw_base as usize, raw_size)
+            .unwrap_or_else(|| panic!(
+                "the source aligns this prefix into one full arena: base={:#x}, prefix={}, size={}, alignment={}, minimum={}",
+                raw_base as usize, prefix, raw_size, ARENA_ALIGNMENT, ARENA_MIN_SIZE,
+            ));
+        let managed = unsafe {
+            backing.install_owned_external_callback_arena(
+                process,
+                config(),
+                raw_size,
+                lease,
+                -1,
+                false,
+            )
+        }
+        .unwrap_or_else(|failure| {
+            panic!("an unaligned external range follows mi_manage_memory's prefix plan: {:?}",
+                failure.error())
+        });
+        let view = unsafe { ArenaView::from_ptr(managed.arena_id().as_ptr()) }
+            .expect("the aligned parent arena is published");
+        let arena = view.arena();
+        assert_eq!(arena.start as usize, plan.aligned_address());
+        assert_eq!(managed.total_size(), plan.total_size());
+        assert_eq!(arena.memid.os_memory().unwrap().base, raw_base);
+        assert_eq!(arena.memid.os_memory().unwrap().size, raw_size);
+        assert_eq!(arena.numa_node, process.current_numa_node() as i32);
+        assert!(trace.commits.load(Ordering::Acquire) >= 1);
+        assert!(!trace.commit_zero_is_non_null.load(Ordering::Acquire),
+            "source metadata commit supplies a null zero result pointer");
+    }
+
+    fn externally_commit_range(
+        backing: &'static ProcessArenaBacking,
+        id: ArenaId,
+        claim: &ArenaSliceClaim<'_>,
+        committed_slices: usize,
+    ) {
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+        let owner = unsafe { backing.allocation_for_arena(view.arena()) }.unwrap();
+        assert!(owner
+            .commit_with_outcome(claim.start(), committed_slices * ARENA_SLICE_SIZE, 0)
+            .succeeded());
+        unsafe { view.slices_committed() }
+            .unwrap()
+            .set_range(claim.slice_index(), committed_slices)
+            .unwrap();
+    }
+
+    #[test]
+    fn external_callback_purge_uses_raw_span_and_tracks_all_true_and_mixed_recommit_bits() {
+        let _fault = fault::install(fault::Plan::disabled());
+        for (committed_slices, needs_recommit) in [(2usize, false), (2, true), (1, false)] {
+            let process = purge_process(0, false);
+            let backing = backing();
+            let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+            // Keep the arena's full bitmap initially clear. Its setup callback
+            // commits only metadata; the selected free span then records the
+            // exact all-true or mixed bitmap state below.
+            let (lease, _) = external_lease(process, ARENA_MIN_SIZE, false, false, trace);
+            let id = install_external(backing, process, ARENA_MIN_SIZE, lease).arena_id();
+            let claim = unsafe {
+                backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, false)
+            }
+            .unwrap();
+            let start = claim.slice_index();
+            externally_commit_range(backing, id, &claim, committed_slices);
+            trace.purge_needs_recommit.store(needs_recommit, Ordering::Release);
+            trace.clear_observation();
+            let before = process.subprocess().vm_statistics().snapshot();
+            assert!(claim.release());
+            let after = process.subprocess().vm_statistics().snapshot();
+            assert_eq!(trace.purges.load(Ordering::Acquire), 1);
+            assert!(trace.purge_zero_is_null.load(Ordering::Acquire));
+            assert_eq!(trace.last_size.load(Ordering::Acquire), 2 * ARENA_SLICE_SIZE);
+            assert_eq!(after.purge_calls, before.purge_calls + 1);
+            assert_eq!(after.purged, before.purged + (2 * ARENA_SLICE_SIZE) as i64);
+            let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }.unwrap();
+            let committed = unsafe { view.slices_committed() }
+                .unwrap()
+                .popcount_range(start, 2)
+                .unwrap();
+            let must_clear = needs_recommit || committed_slices != 2;
+            assert_eq!(committed, if must_clear { 0 } else { 2 });
+
+            trace.clear_observation();
+            let retry = unsafe {
+                backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, true)
+            }
+            .unwrap();
+            assert_eq!(retry.slice_index(), start);
+            assert_eq!(trace.commits.load(Ordering::Acquire), usize::from(must_clear));
+            if must_clear {
+                assert_eq!(trace.last_start.load(Ordering::Acquire), retry.start() as usize);
+                assert_eq!(trace.last_size.load(Ordering::Acquire), 2 * ARENA_SLICE_SIZE);
+            }
+        }
+    }
+
+    #[test]
+    fn external_callback_negative_delay_skips_callback_and_statistics_before_normal_policy() {
+        let _fault = fault::install(fault::Plan::disabled());
+        let process = purge_process(-1, false);
+        let backing = backing();
+        let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        let (lease, _) = external_lease(process, ARENA_MIN_SIZE, true, false, trace);
+        let id = install_external(backing, process, ARENA_MIN_SIZE, lease).arena_id();
+        let claim = unsafe {
+            backing.try_find_free(search(id), 2, ARENA_SLICE_SIZE, false)
+        }
+        .unwrap();
+        externally_commit_range(backing, id, &claim, 2);
+        trace.clear_observation();
+        let before = process.subprocess().vm_statistics().snapshot();
+        assert!(claim.release());
+        assert_eq!(trace.purges.load(Ordering::Acquire), 0);
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), before);
+    }
+
     #[test]
     fn huge_backing_shares_the_regular_registry_and_preserves_multi_arena_provenance() {
         let _fault = fault::install(fault::Plan::disabled());
@@ -747,7 +1825,7 @@ mod tests {
         let parent = unsafe { &*managed.arena_id().as_ptr() };
         assert_eq!(parent.total_size, ARENA_MAX_SIZE);
         let owner = unsafe { backing.allocation_for_arena(parent) }.unwrap();
-        let ArenaOsAllocation::Huge(allocation) = &owner.allocation else { panic!("huge owner"); };
+        let ArenaBacking::Huge(allocation) = &owner.allocation else { panic!("huge owner"); };
         assert_eq!(allocation.base(), base);
         assert_eq!(allocation.page_count(), 17, "unpublished suffix remains owned");
         assert_eq!(allocation.memory_id().os_memory().unwrap().size, 17 * crate::config::GIB);
@@ -1253,3 +2331,6 @@ mod tests {
         assert_eq!(index, 20);
     }
 }
+
+#[cfg(test)]
+pub(crate) use tests::m2_external_callback_trace;

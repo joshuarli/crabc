@@ -528,6 +528,27 @@ impl<'a> VmProcess<'a> {
     /// authority: only the process initialization owner may end that state.
     #[inline]
     pub(crate) fn is_preloading(self) -> bool { self.policy.is_preloading() }
+
+    /// Runs the custom callback arm of the source purge policy.
+    ///
+    /// This boundary deliberately accepts an already validated arena span. The
+    /// callback receives that raw span unchanged: source checks only negative
+    /// purge delay before advancing purge statistics and invoking it. Ordinary
+    /// mapping normalization, reset/decommit choice, preloading, allow-reset,
+    /// and decommit statistic size belong to the mutually exclusive
+    /// no-callback branch.
+    #[inline]
+    pub(crate) fn purge_with_callback(
+        self,
+        size: usize,
+        callback: impl FnOnce() -> Option<bool>,
+    ) -> Option<bool> {
+        if self.policy.purge_delay_milliseconds() < 0 {
+            return Some(false);
+        }
+        self.subprocess.vm_statistics().purge(size);
+        callback()
+    }
 }
 
 impl VmPolicy {
@@ -7723,6 +7744,7 @@ mod tests {
         // full-range capture is complete now; release it before the separate
         // policy witness takes the same serial source-fault boundary.
         drop(failed_release_unmap_ranges);
+        let external_callback_trace = crate::arena::m2_external_callback_trace(&fault);
         drop(fault);
         let policy_trace = crate::process_arena::m2_vm_policy_first_arena_trace();
 
@@ -7870,6 +7892,16 @@ mod tests {
             u8::from(failed_release_retry_source_counters_reapply)
         );
         emit!("m2.vm.release.retry.real_munmap_success", 1);
+        emit!("m2.vm.external.callback.managed_typed_owner", external_callback_trace[0]);
+        emit!("m2.vm.external.callback.commit_zero_propagated", external_callback_trace[1]);
+        emit!("m2.vm.external.callback.purge_raw_span_null_zero_and_statistics", external_callback_trace[2]);
+        emit!("m2.vm.external.callback.purge_true_clears_commit", external_callback_trace[3]);
+        emit!("m2.vm.external.callback.recommit_reinvokes_callback", external_callback_trace[4]);
+        emit!("m2.vm.external.callback.purge_false_preserves_commit", external_callback_trace[5]);
+        emit!("m2.vm.external.callback.purge_mixed_clears_commit", external_callback_trace[6]);
+        emit!("m2.vm.external.callback.negative_delay_skips_callback_and_statistics", external_callback_trace[7]);
+        emit!("m2.vm.external.callback.no_normal_advice", external_callback_trace[8]);
+        emit!("m2.vm.external.callback.one_published_owner_per_registry", external_callback_trace[9]);
         emit!("m2.vm.numa.count_at_least_one", u8::from(numa_count >= 1));
         emit!("m2.vm.numa.current_lt_count", u8::from(numa_current < numa_count));
         emit!(

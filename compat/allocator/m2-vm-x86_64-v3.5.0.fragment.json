@@ -242,6 +242,40 @@
           "process-policy-first-arena-retained-cleanup-statistics",
           "process-policy-ticket-zero-live-random"
         ]
+      },
+      {
+        "id": "arena-external-callback-manage",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 1676,
+          "end_line": 1884,
+          "sha256": "9d2632800cde84ccd0fb702f4b5e7db15c5b94a056aca57d592c41105cb94eeb"
+        },
+        "required_definitions": [
+          "static mi_arena_t* mi_arena_initialize",
+          "static bool mi_manage_os_memory_ex2",
+          "bool mi_manage_memory"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential"
+        ]
+      },
+      {
+        "id": "arena-external-callback-purge",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 2257,
+          "end_line": 2282,
+          "sha256": "a1023a8302a3aebf431876baa41fea3ee0809cb0b82276e6482de8134f712ff8"
+        },
+        "required_definitions": [
+          "static bool mi_arena_purge",
+          "_mi_os_purge_ex",
+          "mi_bitmap_clearN"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential"
+        ]
       }
     ],
     "branch_matrix": [
@@ -374,7 +408,7 @@
       {
         "id": "os-range-transition-policy-and-failure-owners",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, and retry/error ownership. The selected native record drives one process-paired regular mapping through every normal no-callback Linux purge decision/range cell: preloading, negative/zero/positive purge delay, purge_decommits, allow_reset, and empty/conservatively normalized/contained ranges, plus MADV_FREE-to-MADV_DONTNEED fallback and imported primitive errors.",
+        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, and retry/error ownership; and src/arena.c:1676-1884,2257-2282 external-memory initialization, callback-bearing arena commit, and committed-bitmap purge disposition. The selected native record drives one process-paired regular mapping through every normal no-callback Linux purge decision/range cell: preloading, negative/zero/positive purge delay, purge_decommits, allow_reset, and empty/conservatively normalized/contained ranges, plus MADV_FREE-to-MADV_DONTNEED fallback and imported primitive errors. It separately drives one source mi_manage_memory external range through metadata callback preparation, a commit=true zero result, and mi_arena_purge callback results true, false, and mixed-commit false over raw spans.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -387,6 +421,18 @@
             "start_line": 493,
             "end_line": 498,
             "sha256": "840c37a72fe41be0dfbcb547f2a8d1d483725606cc87f109915d6cc0ed587b22"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 1676,
+            "end_line": 1884,
+            "sha256": "9d2632800cde84ccd0fb702f4b5e7db15c5b94a056aca57d592c41105cb94eeb"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 2257,
+            "end_line": 2282,
+            "sha256": "a1023a8302a3aebf431876baa41fea3ee0809cb0b82276e6482de8134f712ff8"
           }
         ],
         "evidence_check_ids": [
@@ -397,7 +443,7 @@
           "native-protection-owner-and-retry"
         ],
         "missing_conditions": [
-          "Custom arena commit callback ownership; purge routing outside the finite normal no-callback decision/range matrix; all allocator/arena partial-range callers; MI_DEBUG/MI_SECURE behavior; and pinned-C failure/retry differential coverage beyond the selected process-paired commit/decommit/reset/purge/protect/unprotect and normal-offset full-MemoryId release records."
+          "Custom callback routing outside the selected process-lived external mi_manage_memory owner, direct _mi_os_commit page-extension callers, all allocator/arena partial-range callers, MI_DEBUG/MI_SECURE behavior, and pinned-C failure/retry differential coverage beyond the selected process-paired commit/decommit/reset/purge/protect/unprotect and normal-offset full-MemoryId release records."
         ]
       },
       {
@@ -569,9 +615,9 @@
       },
       {
         "id": "vm-range-failure-statistics-and-caller-ownership",
-        "source_scope": "src/os.c:240-712 and normal allocator/arena callers: statistics events, custom commit callbacks, aligned-overmap cleanup, commit/decommit/purge/protect/reset/release errors, and every retained Rust owner receiver.",
+        "source_scope": "src/os.c:240-712 and normal allocator/arena callers: statistics events, custom commit callbacks beyond the selected process-lived external mi_manage_memory owner, aligned-overmap cleanup, commit/decommit/purge/protect/reset/release errors, and every retained Rust owner receiver.",
         "required_evidence": [
-          "typed subprocess statistics-event and callback owners",
+          "typed subprocess statistics-event and callback owners beyond the selected external process-lived lease",
           "pinned-C native fault differential covering each failure/retry branch and every caller transfer"
         ]
       }
@@ -721,7 +767,7 @@
       "Complete the aligned-overmap substrate beyond the selected direct/prefix/suffix retained-map owners and one first-arena high-hint fallback: every receiving allocator caller, callback/counter/error path, and native cleanup failure/retry differential remains required.",
       "Complete random aligned-hint policy, virtual-address eligibility, secure/debug default-Theap random state, ambient source options and diagnostics, Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success and retry-state behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
-      "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes; the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, and first-arena adjustment restoration do not establish those broader source contracts."
+      "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, and one process-lived external mi_manage_memory callback owner with bounded commit/purge results."
     ]
   }
 }

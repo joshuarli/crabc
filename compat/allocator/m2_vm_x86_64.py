@@ -5,7 +5,8 @@ This module owns neither milestone aggregation nor source-map promotion.  It
 checks the target-local fragment's complete source-policy matrix, compiles a
 fresh direct-include C oracle from the pinned archive, and compares its fixed
 process-paired regular-VM lifecycle, normal no-callback purge decision/range
-matrix, source commit/decommit/reset/purge/protection fault records, offset
+matrix, one process-lived external callback arena commit/purge receiver, source
+commit/decommit/reset/purge/protection fault records, offset
 prefix-decommit and release failure/retry records, and one child-isolated
 source-option first-arena record with one already-built Rust exact test. The C
 faults wrap only unchanged Unix imports: `mprotect`, `madvise`, `munmap`, and
@@ -212,6 +213,16 @@ TRACE_KEYS = (
     "m2.vm.release.retry.full_memid_base_and_size",
     "m2.vm.release.retry.source_counters_reapply",
     "m2.vm.release.retry.real_munmap_success",
+    "m2.vm.external.callback.managed_typed_owner",
+    "m2.vm.external.callback.commit_zero_propagated",
+    "m2.vm.external.callback.purge_raw_span_null_zero_and_statistics",
+    "m2.vm.external.callback.purge_true_clears_commit",
+    "m2.vm.external.callback.recommit_reinvokes_callback",
+    "m2.vm.external.callback.purge_false_preserves_commit",
+    "m2.vm.external.callback.purge_mixed_clears_commit",
+    "m2.vm.external.callback.negative_delay_skips_callback_and_statistics",
+    "m2.vm.external.callback.no_normal_advice",
+    "m2.vm.external.callback.one_published_owner_per_registry",
     "m2.vm.numa.count_at_least_one",
     "m2.vm.numa.current_lt_count",
     "m2.vm.policy.source_options_applied",

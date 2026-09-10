@@ -198,8 +198,18 @@ fn purge_claimed(view: &ArenaView<'_>, owner: &OwnedArenaAllocation,
     let offset = (address as usize).checked_sub(owner.allocation.base().ok()? as usize)?;
     let size = count.checked_mul(ARENA_SLICE_SIZE)?;
     let stat_size = transition.already_set().checked_mul(ARENA_SLICE_SIZE)?;
-    let needs_recommit = owner.allocation.regular()?.purge_for_process(owner.process, offset, size,
-        all_committed, stat_size).unwrap_or(false);
+    let needs_recommit = if owner.has_external_callback() {
+        // Pinned src/os.c calls a custom callback before every ordinary
+        // no-callback choice. Its raw arena span has already been formed from
+        // the claimed source slices; do not page-normalize or invoke any
+        // mapping advice here.
+        owner.process.purge_with_callback(size, || {
+            owner.invoke_external_purge(address, size)
+        })?
+    } else {
+        owner.allocation.regular()?.purge_for_process(owner.process, offset, size,
+            all_committed, stat_size).unwrap_or(false)
+    };
     if needs_recommit || !all_committed { committed.clear_range(start, count)?; }
     Some(needs_recommit)
 }

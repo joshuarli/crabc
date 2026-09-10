@@ -198,6 +198,184 @@ static int64_t current_purge_calls(const mi_subproc_t* subproc) {
   return subproc->stats.purge_calls.total;
 }
 
+/* This direct source receiver deliberately uses `mi_manage_memory` rather
+ * than an adapter. It exercises the same external callback through source
+ * arena initialization, `mi_arena_try_alloc_at`, and `mi_arena_purge`; raw
+ * addresses stay inside the oracle and only exact ownership relations leave
+ * as trace booleans. The external caller retains the mmap range, matching
+ * source MI_MEM_EXTERNAL's no-unmap authority. */
+typedef struct external_callback_record_s {
+  size_t commit_calls;
+  size_t purge_calls;
+  void* last_start;
+  size_t last_size;
+  bool commit_zero_nonnull;
+  bool purge_zero_null;
+  bool commit_zero;
+  bool needs_recommit;
+} external_callback_record_t;
+
+typedef struct external_callback_result_s {
+  bool managed_external_owner;
+  bool commit_zero_propagated;
+  bool purge_raw_span_null_zero_and_statistics;
+  bool purge_true_clears_commit;
+  bool recommit_reinvokes_callback;
+  bool purge_false_preserves_commit;
+  bool purge_mixed_clears_commit;
+  bool negative_delay_skips_callback_and_statistics;
+  bool no_normal_advice;
+  bool one_published_owner_per_registry;
+} external_callback_result_t;
+
+static bool external_arena_callback(
+    bool commit, void* start, size_t size, bool* is_zero, void* argument) {
+  external_callback_record_t* const record = (external_callback_record_t*)argument;
+  if (record == NULL) return false;
+  record->last_start = start;
+  record->last_size = size;
+  if (commit) {
+    record->commit_calls++;
+    record->commit_zero_nonnull = (is_zero != NULL);
+    if (is_zero != NULL) *is_zero = record->commit_zero;
+    return true;
+  }
+  record->purge_calls++;
+  record->purge_zero_null = (is_zero == NULL);
+  return record->needs_recommit;
+}
+
+static external_callback_result_t capture_external_callback_arena(
+    mi_subproc_t* subproc) {
+  external_callback_result_t result = {0};
+  const size_t size = MI_ARENA_MIN_SIZE;
+  const size_t alignment = MI_ARENA_ALIGNMENT;
+  const size_t raw_size = size + alignment;
+  void* const raw = mmap(NULL, raw_size, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (raw == MAP_FAILED) return result;
+  void* const base = (void*)(((uintptr_t)raw + alignment - 1) & ~(alignment - 1));
+  const long prior_delay = mi_option_get(mi_option_purge_delay);
+  const long prior_purge_decommits = mi_option_get(mi_option_purge_decommits);
+  const bool prior_preloading = os_preloading;
+  external_callback_record_t record = {0};
+  mi_arena_id_t arena_id = _mi_arena_id_none();
+
+  /* Preloading and purge_decommits would choose normal policy only without a
+   * callback. `_mi_os_purge_ex` must instead call us before either branch. */
+  mi_option_set(mi_option_purge_delay, 0);
+  mi_option_set(mi_option_purge_decommits, 1);
+  os_preloading = true;
+  const bool managed = mi_manage_memory(
+      base, size, false /* committed */, false /* pinned */, false /* zero */,
+      -1, false, external_arena_callback, &record, &arena_id);
+  mi_arena_t* const arena = _mi_arena_from_id(arena_id);
+  result.managed_external_owner = managed && arena != NULL
+      && arena->memid.memkind == MI_MEM_EXTERNAL
+      && arena->memid.mem.os.base == base
+      && arena->memid.mem.os.size == size;
+  if (!result.managed_external_owner) goto restore;
+
+  record.commit_calls = 0;
+  record.purge_calls = 0;
+  record.commit_zero_nonnull = false;
+  record.commit_zero = true;
+  mi_memid_t first_id = _mi_memid_none();
+  void* const first = mi_arena_try_alloc_at(arena, 2, true, 0, &first_id);
+  const size_t first_index = first_id.mem.arena.slice_index;
+  result.commit_zero_propagated = first != NULL
+      && first_id.initially_zero
+      && record.commit_calls == 1
+      && record.commit_zero_nonnull
+      && record.last_start == first
+      && record.last_size == 2 * MI_ARENA_SLICE_SIZE;
+  if (!result.commit_zero_propagated) goto restore;
+
+  record.purge_calls = 0;
+  record.needs_recommit = true;
+  captured_transition_madvise_calls = 0;
+  capture_transition_madvise = true;
+  const int64_t purge_calls_before = current_purge_calls(subproc);
+  const int64_t purged_before = current_purged(subproc);
+  const bool needs_recommit = mi_arena_purge(arena, first_index, 2);
+  const int64_t purge_calls_after = current_purge_calls(subproc);
+  const int64_t purged_after = current_purged(subproc);
+  capture_transition_madvise = false;
+  result.purge_raw_span_null_zero_and_statistics = needs_recommit
+      && record.purge_calls == 1
+      && record.purge_zero_null
+      && record.last_start == first
+      && record.last_size == 2 * MI_ARENA_SLICE_SIZE
+      && purge_calls_after == purge_calls_before + 1
+      && purged_after == purged_before + (int64_t)(2 * MI_ARENA_SLICE_SIZE);
+  result.purge_true_clears_commit = mi_bitmap_is_clearN(arena->slices_committed, first_index, 2);
+  result.no_normal_advice = (captured_transition_madvise_calls == 0);
+  if (!result.purge_raw_span_null_zero_and_statistics
+      || !result.purge_true_clears_commit || !result.no_normal_advice) goto restore;
+
+  /* The source free bitmap is normally restored by `_mi_arenas_free` after
+   * `mi_arena_purge`; model that already-owned release edge here so the next
+   * direct source allocator call reaches the same now-clear commit bitmap. */
+  mi_bbitmap_setN(arena->slices_free, first_index, 2);
+  record.commit_calls = 0;
+  mi_memid_t recommit_id = _mi_memid_none();
+  void* const recommit = mi_arena_try_alloc_at(arena, 2, true, 0, &recommit_id);
+  result.recommit_reinvokes_callback = recommit == first
+      && record.commit_calls == 1
+      && record.last_start == recommit
+      && record.last_size == 2 * MI_ARENA_SLICE_SIZE;
+  if (!result.recommit_reinvokes_callback) goto restore;
+
+  record.purge_calls = 0;
+  record.needs_recommit = false;
+  const bool false_recommit = mi_arena_purge(
+      arena, recommit_id.mem.arena.slice_index, 2);
+  result.purge_false_preserves_commit = !false_recommit
+      && record.purge_calls == 1
+      && mi_bitmap_is_setN(arena->slices_committed, recommit_id.mem.arena.slice_index, 2);
+  if (!result.purge_false_preserves_commit) goto restore;
+
+  mi_bbitmap_setN(arena->slices_free, recommit_id.mem.arena.slice_index, 2);
+  /* The previous callback-false source result intentionally retained both
+   * commit bits. Form the independent mixed precondition explicitly before
+   * the direct partial callback commit below. */
+  mi_bitmap_clearN(arena->slices_committed, recommit_id.mem.arena.slice_index, 2);
+  mi_memid_t mixed_id = _mi_memid_none();
+  void* const mixed = mi_arena_try_alloc_at(arena, 2, false, 0, &mixed_id);
+  if (mixed == NULL) goto restore;
+  /* Make exactly one bit committed before the source purge's set/count
+   * observation. This is its own bitmap transition, not an invented policy. */
+  if (!mi_arena_commit(subproc, arena, mixed, MI_ARENA_SLICE_SIZE, NULL, 0)) goto restore;
+  mi_bitmap_setN(arena->slices_committed, mixed_id.mem.arena.slice_index, 1, NULL);
+  record.purge_calls = 0;
+  record.needs_recommit = false;
+  const bool mixed_recommit = mi_arena_purge(
+      arena, mixed_id.mem.arena.slice_index, 2);
+  result.purge_mixed_clears_commit = !mixed_recommit
+      && record.purge_calls == 1
+      && mi_bitmap_is_clearN(arena->slices_committed, mixed_id.mem.arena.slice_index, 2);
+  if (!result.purge_mixed_clears_commit) goto restore;
+
+  record.purge_calls = 0;
+  mi_option_set(mi_option_purge_delay, -1);
+  const int64_t negative_calls_before = current_purge_calls(subproc);
+  const int64_t negative_purged_before = current_purged(subproc);
+  const bool negative_recommit = mi_arena_purge(
+      arena, mixed_id.mem.arena.slice_index, 2);
+  result.negative_delay_skips_callback_and_statistics = !negative_recommit
+      && record.purge_calls == 0
+      && current_purge_calls(subproc) == negative_calls_before
+      && current_purged(subproc) == negative_purged_before;
+  result.one_published_owner_per_registry = (mi_arenas_get_count(subproc) >= 1);
+
+restore:
+  capture_transition_madvise = false;
+  mi_option_set(mi_option_purge_delay, prior_delay);
+  mi_option_set(mi_option_purge_decommits, prior_purge_decommits);
+  os_preloading = prior_preloading;
+  return result;
+}
+
 /* This is the full normal Linux no-callback `_mi_os_purge_ex` choice matrix:
  * the exact private `os_preloading` state, negative/zero/positive delay,
  * purge_decommits, allow_reset, and source conservative range normalization.
@@ -435,18 +613,16 @@ static bool capture_policy_child(policy_child_record_t* record) {
 int main(void) {
   policy_child_record_t policy_record = {0};
   if (!capture_policy_child(&policy_record)) return 8;
-  /* Keep the source's real startup ordering but suppress prim.c's automatic
-   * constructor in the producer build.  `_mi_os_*` updates its subprocess
-   * statistics even at MI_STAT=0, so it needs the real initialized owner. */
-  _mi_detect_cpu_features();
+  /* The direct external callback receiver requires the same complete source
+   * process and main-theap owner as `mi_manage_memory`, rather than only the
+   * low-level OS statistics image used by the fixed primitive records. */
   _mi_options_init();
   /* Select the source `allow_thp=0` option before the exact `_mi_os_init`
    * call. This executable is its own native evidence process, so its
    * process-local `PR_SET_THP_DISABLE` transition cannot alter the runner. */
   mi_option_set(mi_option_allow_thp, 0);
-  _mi_stats_init();
-  _mi_os_init();
-  mi_subproc_t* const subproc = _mi_subproc_main_init();
+  mi_process_init();
+  mi_subproc_t* const subproc = _mi_subproc_main();
   if (subproc == NULL) return 10;
 
   const size_t page = _mi_os_page_size();
@@ -748,6 +924,21 @@ int main(void) {
   }
   capture_release_munmap = false;
 
+  const external_callback_result_t external_callback =
+      capture_external_callback_arena(subproc);
+  if (!external_callback.managed_external_owner
+      || !external_callback.commit_zero_propagated
+      || !external_callback.purge_raw_span_null_zero_and_statistics
+      || !external_callback.purge_true_clears_commit
+      || !external_callback.recommit_reinvokes_callback
+      || !external_callback.purge_false_preserves_commit
+      || !external_callback.purge_mixed_clears_commit
+      || !external_callback.negative_delay_skips_callback_and_statistics
+      || !external_callback.no_normal_advice
+      || !external_callback.one_published_owner_per_registry) {
+    return 37;
+  }
+
   const int numa_count = _mi_os_numa_node_count();
   const int numa_current = _mi_os_numa_node();
   if (numa_count < 1 || numa_current < 0 || numa_current >= numa_count) return 30;
@@ -833,6 +1024,22 @@ int main(void) {
   U("m2.vm.release.retry.source_counters_reapply", reserved_after_retry == reserved_after_failure - (int64_t)failed_release_id.mem.os.size
       && committed_after_retry == committed_after_failure - (int64_t)failed_release_commit_size);
   U("m2.vm.release.retry.real_munmap_success", last_real_munmap_result == 0);
+  U("m2.vm.external.callback.managed_typed_owner", external_callback.managed_external_owner);
+  U("m2.vm.external.callback.commit_zero_propagated", external_callback.commit_zero_propagated);
+  U("m2.vm.external.callback.purge_raw_span_null_zero_and_statistics",
+      external_callback.purge_raw_span_null_zero_and_statistics);
+  U("m2.vm.external.callback.purge_true_clears_commit", external_callback.purge_true_clears_commit);
+  U("m2.vm.external.callback.recommit_reinvokes_callback",
+      external_callback.recommit_reinvokes_callback);
+  U("m2.vm.external.callback.purge_false_preserves_commit",
+      external_callback.purge_false_preserves_commit);
+  U("m2.vm.external.callback.purge_mixed_clears_commit",
+      external_callback.purge_mixed_clears_commit);
+  U("m2.vm.external.callback.negative_delay_skips_callback_and_statistics",
+      external_callback.negative_delay_skips_callback_and_statistics);
+  U("m2.vm.external.callback.no_normal_advice", external_callback.no_normal_advice);
+  U("m2.vm.external.callback.one_published_owner_per_registry",
+      external_callback.one_published_owner_per_registry);
   U("m2.vm.numa.count_at_least_one", numa_count >= 1);
   U("m2.vm.numa.current_lt_count", numa_current < numa_count);
   U("m2.vm.policy.source_options_applied", policy_record.source_options_applied);
