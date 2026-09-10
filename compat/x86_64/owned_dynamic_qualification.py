@@ -81,6 +81,7 @@ CASES = {
     "passwd": ("run_owned_passwd.sh", None),
     "account-files": ("run_owned_account_files.sh", None),
     "utmpx": ("run_owned_utmpx.sh", None),
+    "locale": ("run_owned_locale.sh", None),
     "pattern": ("run_owned_pattern.sh", None),
     "regex": ("run_owned_regex.sh", None),
     "wide-calendar": ("run_owned_wcsftime.sh", None),

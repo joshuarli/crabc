@@ -122,6 +122,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "passwd",
                 "account-files",
                 "utmpx",
+                "locale",
                 "pattern",
                 "regex",
                 "wide-calendar",

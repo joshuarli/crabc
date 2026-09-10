@@ -12980,7 +12980,10 @@ aarch64_gates = ["libc-test", "differential", "os-test"]
 source_owners = ["libc/src/c_abi.rs", "libc/src/random_exports.rs", "crabc-core/src/fenv.rs", "include"]
 x86_abi_prerequisites = ["x86 fenv_t and long-double ABI", "x87/MXCSR ownership", "varargs and FILE/locale object ABI where selected"]
 x86_header_prerequisites = ["fenv.h, math.h, stdio.h, locale.h, wchar.h, string.h, and stdlib.h selected contracts."]
-native_evidence = [{ state = "required", command = "Define native x86 C fenv, text, locale, math, stdio, and random gates", scope = "Rust facade fenv evidence does not establish the C fenv_t or C library ABI." }]
+native_evidence = [
+  { state = "verified", command = "./scripts/dev-x86_64.sh owned-locale", scope = "One installed-header object checks fixed C/POSIX/C.UTF-8 locale state, two pthread locales with independent errno and caller-owned UTF-8 conversion state, and UTF iconv pointer/error progress against pinned musl and owned static/static-PIE plus dynamic PIE/non-PIE kernel/direct entry. Supplied products retain links, object identity, execution payload audits and before/after seals. This bounded component covers locale.core, text.wide-multibyte and text.iconv behavior without declaring capability or family completion; every dynamic product must replay it through the canonical qualification catalog." },
+  { state = "required", command = "Define the complete native x86 text, locale, math, stdio, and random family aggregate", scope = "Installed component and Rust facade fenv evidence do not establish complete C text/math/stdio behavior or the family contract." },
+]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6", role = "C/POSIX and musl-compatible behavior oracle." }]
 capabilities = [
   "numeric.parse-float-locale",
