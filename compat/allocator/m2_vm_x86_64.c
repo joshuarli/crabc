@@ -136,21 +136,29 @@ static bool write_all(int descriptor, const void* buffer, size_t length) {
   size_t written = 0;
   while (written < length) {
     const ssize_t result = write(descriptor, bytes + written, length - written);
-    if (result <= 0) return false;
+    if (result < 0) {
+      if (errno == EINTR) continue;
+      return false;
+    }
+    if (result == 0) return false;
     written += (size_t)result;
   }
   return true;
 }
 
-static bool read_all(int descriptor, void* buffer, size_t length) {
+static size_t read_all(int descriptor, void* buffer, size_t length) {
   uint8_t* bytes = buffer;
   size_t read_count = 0;
   while (read_count < length) {
     const ssize_t result = read(descriptor, bytes + read_count, length - read_count);
-    if (result <= 0) return false;
+    if (result < 0) {
+      if (errno == EINTR) continue;
+      break;
+    }
+    if (result == 0) break;
     read_count += (size_t)result;
   }
-  return true;
+  return read_count;
 }
 
 static int run_policy_child(int record_descriptor) {
@@ -221,11 +229,36 @@ static bool capture_policy_child(policy_child_record_t* record) {
     _exit(result);
   }
   close(descriptors[1]);
-  const bool read_record = read_all(descriptors[0], record, sizeof(*record));
+  const size_t record_bytes = read_all(descriptors[0], record, sizeof(*record));
   close(descriptors[0]);
   int status = 0;
-  const pid_t waited = waitpid(child, &status, 0);
-  return read_record && waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  pid_t waited;
+  do {
+    waited = waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+
+  const int wait_error = waited < 0 ? errno : 0;
+  const bool child_exited = waited == child && WIFEXITED(status);
+  const int child_exit_status = child_exited ? WEXITSTATUS(status) : -1;
+  const bool child_signaled = waited == child && WIFSIGNALED(status);
+  const int child_signal = child_signaled ? WTERMSIG(status) : 0;
+  const bool captured = record_bytes == sizeof(*record) && child_exited
+      && child_exit_status == 0;
+  if (!captured) {
+    fprintf(stderr,
+            "policy child capture failed: record_bytes=%zu expected_bytes=%zu "
+            "waited=%ld expected_pid=%ld wait_errno=%d exited=%d exit_status=%d "
+            "signaled=%d signal=%d options=%d arena_size=%zu committed=%d "
+            "large_high=%d large_null=%d regular_hint=%d thp=%d\n",
+            record_bytes, sizeof(*record), (long)waited, (long)child, wait_error,
+            child_exited, child_exit_status, child_signaled, child_signal,
+            record->source_options_applied, record->first_arena_size,
+            record->first_arena_initially_committed, record->large_high_hint_failed,
+            record->large_null_hint_retry_failed,
+            record->regular_hinted_map_after_large_fallback,
+            record->thp_advice_failure_ignored);
+  }
+  return captured;
 }
 
 int main(void) {
