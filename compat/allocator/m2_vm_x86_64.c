@@ -1,9 +1,10 @@
 /* Native x86-64 M2 VM-primitives oracle.
  *
- * This intentionally includes the fixed v3.5.0 `src/os.c`, `src/arena.c`, and
- * `src/init.c` into the probe so their private configuration, OS-allocation,
- * first arena-reserve, and preloading-state bodies are observed directly. The
- * Python producer omits those three ordinary source objects from the link
+ * This intentionally includes the fixed v3.5.0 `src/os.c`, `src/arena.c`,
+ * `src/init.c`, and `src/page.c` into the probe so their private configuration,
+ * OS-allocation, first arena-reserve, preloading-state, and direct
+ * page-extension bodies are observed directly. The Python producer omits those
+ * four ordinary source objects from the link
  * list. It records address-free fixed-profile facts for the regular lifecycle
  * and one bounded, child-only source-option/first-arena policy record. It
  * does not qualify ambient retries, huge-page success/placement, diagnostics,
@@ -27,11 +28,12 @@
 #include <mimalloc/prim.h>
 
 /* Resolved through `-I <pinned-source>/src`; keep each private source body
- * singular by omitting `src/os.c`, `src/arena.c`, and `src/init.c` from the
- * ordinary C source list. */
+ * singular by omitting `src/os.c`, `src/arena.c`, `src/init.c`, and
+ * `src/page.c` from the ordinary C source list. */
 #include "os.c"
 #include "arena.c"
 #include "init.c"
+#include "page.c"
 
 /* The producer links with `--wrap=munmap`.  This controlled one-shot seam
  * reaches the unchanged pinned `_mi_prim_free` call inside `src/prim/unix/prim.c`;
@@ -51,6 +53,14 @@ static bool fail_next_madvise_free_einval = false;
 static bool capture_transition_mprotect = false;
 static size_t captured_transition_mprotect_calls = 0;
 static int captured_transition_protections[4];
+/* The selected `mi_page_extend_free` source body owns this separate record.
+ * It captures the raw direct `_mi_os_commit` primitive and never substitutes
+ * the page-extension algorithm or reuses a callback count from page setup. */
+static bool capture_page_extension_mprotect = false;
+static size_t captured_page_extension_mprotect_calls = 0;
+static void* captured_page_extension_mprotect_addresses[2];
+static size_t captured_page_extension_mprotect_lengths[2];
+static int captured_page_extension_mprotect_protections[2];
 static bool capture_transition_madvise = false;
 static size_t captured_transition_madvise_calls = 0;
 static int captured_transition_advices[4];
@@ -137,6 +147,14 @@ int __wrap_mprotect(void* address, size_t length, int protection) {
   if (capture_transition_mprotect && captured_transition_mprotect_calls < 4) {
     captured_transition_protections[captured_transition_mprotect_calls] = protection;
     captured_transition_mprotect_calls++;
+  }
+  if (capture_page_extension_mprotect
+      && captured_page_extension_mprotect_calls < 2) {
+    const size_t index = captured_page_extension_mprotect_calls;
+    captured_page_extension_mprotect_addresses[index] = address;
+    captured_page_extension_mprotect_lengths[index] = length;
+    captured_page_extension_mprotect_protections[index] = protection;
+    captured_page_extension_mprotect_calls++;
   }
   if (fail_next_mprotect) {
     fail_next_mprotect = false;
@@ -226,7 +244,14 @@ typedef struct external_callback_result_s {
   bool negative_delay_skips_callback_and_statistics;
   bool no_normal_advice;
   bool one_published_owner_per_registry;
+  bool page_extension_direct_commit_fault_bypasses_callback;
+  bool page_extension_failure_preserves_unpublished_state;
+  bool page_extension_retry_commits_without_callback;
 } external_callback_result_t;
+
+static bool capture_external_page_extension(
+    mi_subproc_t* _subproc, external_callback_record_t* record,
+    external_callback_result_t* result);
 
 static bool external_arena_callback(
     bool commit, void* start, size_t size, bool* is_zero, void* argument) {
@@ -367,6 +392,7 @@ static external_callback_result_t capture_external_callback_arena(
       && current_purge_calls(subproc) == negative_calls_before
       && current_purged(subproc) == negative_purged_before;
   result.one_published_owner_per_registry = (mi_arenas_get_count(subproc) >= 1);
+  if (!capture_external_page_extension(subproc, &record, &result)) goto restore;
 
 restore:
   capture_transition_madvise = false;
@@ -374,6 +400,112 @@ restore:
   mi_option_set(mi_option_purge_decommits, prior_purge_decommits);
   os_preloading = prior_preloading;
   return result;
+}
+
+
+/* This source-page receiver uses a public exclusive external heap to obtain
+ * a live on-demand page, exhausts only that page's current free list, then
+ * invokes the unchanged static `mi_page_extend_free` body included above.
+ * A public allocation may validly select a fresh page after extension failure,
+ * so the fault phase records the source function itself. The success phase
+ * returns to an ordinary allocation from that same refilled page. */
+static bool capture_external_page_extension(
+    mi_subproc_t* _subproc, external_callback_record_t* record,
+    external_callback_result_t* result) {
+  const size_t size = MI_ARENA_MIN_SIZE;
+  const size_t alignment = MI_ARENA_ALIGNMENT;
+  const size_t raw_size = size + alignment;
+  void* const raw = mmap(NULL, raw_size, PROT_READ | PROT_WRITE,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (raw == MAP_FAILED) return false;
+  void* const base = (void*)(((uintptr_t)raw + alignment - 1) & ~(alignment - 1));
+  const long prior_on_demand = mi_option_get(mi_option_page_commit_on_demand);
+  mi_arena_id_t arena_id = _mi_arena_id_none();
+  mi_option_set(mi_option_page_commit_on_demand, 1);
+  const bool managed = mi_manage_memory(
+      base, size, false /* committed */, false /* pinned */, false /* zero */,
+      -1, false, external_arena_callback, record, &arena_id);
+  mi_heap_t* const heap = managed ? mi_heap_new_in_arena(arena_id) : NULL;
+  const size_t request = MI_SMALL_MAX_OBJ_SIZE + 1;
+  void* const first = (heap == NULL ? NULL : mi_heap_malloc(heap, request));
+  mi_page_t* const page = (first == NULL ? NULL : _mi_ptr_page(first));
+  if (page == NULL || page->memid.memkind != MI_MEM_ARENA
+      || page->memid.mem.arena.arena != _mi_arena_from_id(arena_id)
+      || mi_page_slice_committed(page) == 0 || page->capacity >= page->reserved) {
+    mi_option_set(mi_option_page_commit_on_demand, prior_on_demand);
+    return false;
+  }
+
+  /* Initial page metadata and prefix commitment legitimately used the callback.
+   * Only the following source extension record is required to bypass it. */
+  record->commit_calls = 0;
+  mi_theap_t* const page_theap = mi_page_theap(page);
+  bool reached_direct_commit = false;
+  bool complete = false;
+  for (size_t attempt = 0; attempt < 32 && !complete; attempt++) {
+    while (page->free != NULL) {
+      void* const block = mi_heap_malloc(heap, request);
+      if (block == NULL || _mi_ptr_page(block) != page) {
+        mi_option_set(mi_option_page_commit_on_demand, prior_on_demand);
+        return false;
+      }
+    }
+    if (page->capacity >= page->reserved) break;
+    const uint16_t capacity_before = page->capacity;
+    const uint16_t prefix_before = page->slice_pcommitted;
+    const void* const direct_address = mi_page_slice_start(page)
+        + mi_page_slice_committed(page);
+    captured_page_extension_mprotect_calls = 0;
+    capture_page_extension_mprotect = true;
+    fail_next_mprotect = true;
+    const bool extended = mi_page_extend_free(page_theap, page);
+    capture_page_extension_mprotect = false;
+    if (captured_page_extension_mprotect_calls == 0) {
+      if (!extended || !fail_next_mprotect) {
+        mi_option_set(mi_option_page_commit_on_demand, prior_on_demand);
+        return false;
+      }
+      fail_next_mprotect = false;
+      continue;
+    }
+    reached_direct_commit = true;
+    const bool fault_consumed = !fail_next_mprotect;
+    const bool failure_unchanged = !extended && page->free == NULL
+        && page->capacity == capacity_before && page->slice_pcommitted == prefix_before;
+    const bool direct_primitive = captured_page_extension_mprotect_calls == 1
+        && captured_page_extension_mprotect_addresses[0] == direct_address
+        && captured_page_extension_mprotect_lengths[0] != 0
+        && captured_page_extension_mprotect_protections[0] == (PROT_READ | PROT_WRITE);
+    const size_t direct_length = captured_page_extension_mprotect_lengths[0];
+    result->page_extension_direct_commit_fault_bypasses_callback = fault_consumed
+        && direct_primitive && record->commit_calls == 0;
+    result->page_extension_failure_preserves_unpublished_state = failure_unchanged;
+    if (!result->page_extension_direct_commit_fault_bypasses_callback
+        || !result->page_extension_failure_preserves_unpublished_state) {
+      mi_option_set(mi_option_page_commit_on_demand, prior_on_demand);
+      return false;
+    }
+
+    captured_page_extension_mprotect_calls = 0;
+    capture_page_extension_mprotect = true;
+    const bool retried = mi_page_extend_free(page_theap, page);
+    capture_page_extension_mprotect = false;
+    void* const ordinary = retried && page->free != NULL
+        ? mi_heap_malloc(heap, request) : NULL;
+    const bool ordinary_after_retry = ordinary != NULL && _mi_ptr_page(ordinary) == page;
+    result->page_extension_retry_commits_without_callback = ordinary_after_retry
+        && page->capacity > capacity_before && page->slice_pcommitted > prefix_before
+        && captured_page_extension_mprotect_calls == 1
+        && captured_page_extension_mprotect_addresses[0] == direct_address
+        && captured_page_extension_mprotect_lengths[0] == direct_length
+        && captured_page_extension_mprotect_protections[0] == (PROT_READ | PROT_WRITE)
+        && record->commit_calls == 0;
+    complete = result->page_extension_retry_commits_without_callback;
+  }
+  capture_page_extension_mprotect = false;
+  fail_next_mprotect = false;
+  mi_option_set(mi_option_page_commit_on_demand, prior_on_demand);
+  return reached_direct_commit && complete;
 }
 
 /* This is the full normal Linux no-callback `_mi_os_purge_ex` choice matrix:
@@ -935,7 +1067,10 @@ int main(void) {
       || !external_callback.purge_mixed_clears_commit
       || !external_callback.negative_delay_skips_callback_and_statistics
       || !external_callback.no_normal_advice
-      || !external_callback.one_published_owner_per_registry) {
+      || !external_callback.one_published_owner_per_registry
+      || !external_callback.page_extension_direct_commit_fault_bypasses_callback
+      || !external_callback.page_extension_failure_preserves_unpublished_state
+      || !external_callback.page_extension_retry_commits_without_callback) {
     return 37;
   }
 
@@ -1040,6 +1175,12 @@ int main(void) {
   U("m2.vm.external.callback.no_normal_advice", external_callback.no_normal_advice);
   U("m2.vm.external.callback.one_published_owner_per_registry",
       external_callback.one_published_owner_per_registry);
+  U("m2.vm.external.page_extension.direct_commit_fault_bypasses_callback",
+      external_callback.page_extension_direct_commit_fault_bypasses_callback);
+  U("m2.vm.external.page_extension.failure_preserves_unpublished_state",
+      external_callback.page_extension_failure_preserves_unpublished_state);
+  U("m2.vm.external.page_extension.retry_commits_without_callback",
+      external_callback.page_extension_retry_commits_without_callback);
   U("m2.vm.numa.count_at_least_one", numa_count >= 1);
   U("m2.vm.numa.current_lt_count", numa_current < numa_count);
   U("m2.vm.policy.source_options_applied", policy_record.source_options_applied);

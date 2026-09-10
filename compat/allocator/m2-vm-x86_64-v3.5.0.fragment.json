@@ -21,6 +21,7 @@
       "src/arena.c",
       "src/init.c",
       "src/os.c",
+      "src/page.c",
       "src/prim/prim.c",
       "src/prim/unix/prim.c"
     ],
@@ -276,6 +277,43 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential"
         ]
+      },
+      {
+        "id": "arena-on-demand-page-first-prefix",
+        "source_anchor": {
+          "member": "src/arena.c",
+          "start_line": 951,
+          "end_line": 1125,
+          "sha256": "8ec6a8606dd324ff1c60e5475656818e9e0bdb57f99831069247f14d94796800"
+        },
+        "required_definitions": [
+          "static mi_page_t* mi_arenas_page_alloc_fresh",
+          "mi_arena_commit",
+          "page->slice_pcommitted"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "normal-page-extension-direct-commit-failure-and-retry"
+        ]
+      },
+      {
+        "id": "page-on-demand-direct-extension",
+        "source_anchor": {
+          "member": "src/page.c",
+          "start_line": 630,
+          "end_line": 705,
+          "sha256": "f9612bbacb8bcb02c497f683661e19999c07007134f5b620f2ac5dd7c9c45c3d"
+        },
+        "required_definitions": [
+          "static bool mi_page_extend_free",
+          "_mi_os_commit",
+          "page->slice_pcommitted",
+          "page->capacity"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "normal-page-extension-direct-commit-failure-and-retry"
+        ]
       }
     ],
     "branch_matrix": [
@@ -408,7 +446,7 @@
       {
         "id": "os-range-transition-policy-and-failure-owners",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, and retry/error ownership; and src/arena.c:1676-1884,2257-2282 external-memory initialization, callback-bearing arena commit, and committed-bitmap purge disposition. The selected native record drives one process-paired regular mapping through every normal no-callback Linux purge decision/range cell: preloading, negative/zero/positive purge delay, purge_decommits, allow_reset, and empty/conservatively normalized/contained ranges, plus MADV_FREE-to-MADV_DONTNEED fallback and imported primitive errors. It separately drives one source mi_manage_memory external range through metadata callback preparation, a commit=true zero result, and mi_arena_purge callback results true, false, and mixed-commit false over raw spans.",
+        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, and retry/error ownership; src/arena.c:951-1125 initial on-demand page-prefix callback commitment and 1676-1884,2257-2282 external-memory initialization, callback-bearing arena commit, and committed-bitmap purge disposition; and src/page.c:630-705 direct on-demand page extension before free-list/capacity publication. The selected native record drives one process-paired regular mapping through every normal no-callback Linux purge decision/range cell: preloading, negative/zero/positive purge delay, purge_decommits, allow_reset, and empty/conservatively normalized/contained ranges, plus MADV_FREE-to-MADV_DONTNEED fallback and imported primitive errors. It separately drives one source mi_manage_memory external range through metadata callback preparation, a commit=true zero result, and mi_arena_purge callback results true, false, and mixed-commit false over raw spans, then reaches an actual exclusive-heap on-demand page and executes the unchanged direct `mi_page_extend_free` fault/retry receiver.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -433,6 +471,18 @@
             "start_line": 2257,
             "end_line": 2282,
             "sha256": "a1023a8302a3aebf431876baa41fea3ee0809cb0b82276e6482de8134f712ff8"
+          },
+          {
+            "member": "src/arena.c",
+            "start_line": 951,
+            "end_line": 1125,
+            "sha256": "8ec6a8606dd324ff1c60e5475656818e9e0bdb57f99831069247f14d94796800"
+          },
+          {
+            "member": "src/page.c",
+            "start_line": 630,
+            "end_line": 705,
+            "sha256": "f9612bbacb8bcb02c497f683661e19999c07007134f5b620f2ac5dd7c9c45c3d"
           }
         ],
         "evidence_check_ids": [
@@ -440,10 +490,11 @@
           "reset-advice-retry-snapshot",
           "normal-no-callback-purge-policy-range-matrix",
           "linux-os-reuse-contained-range-noop",
-          "native-protection-owner-and-retry"
+          "native-protection-owner-and-retry",
+          "normal-page-extension-direct-commit-failure-and-retry"
         ],
         "missing_conditions": [
-          "Custom callback routing outside the selected process-lived external mi_manage_memory owner, direct _mi_os_commit page-extension callers, all allocator/arena partial-range callers, MI_DEBUG/MI_SECURE behavior, and pinned-C failure/retry differential coverage beyond the selected process-paired commit/decommit/reset/purge/protect/unprotect and normal-offset full-MemoryId release records."
+          "Custom callback routing outside the selected process-lived external mi_manage_memory owner, direct _mi_os_commit page-extension callers beyond the selected external and ordinary regular receivers, all allocator/arena partial-range callers, MI_DEBUG/MI_SECURE behavior, and pinned-C failure/retry differential coverage beyond the selected process-paired commit/decommit/reset/purge/protect/unprotect, page-extension, and normal-offset full-MemoryId release records."
         ]
       },
       {
@@ -534,7 +585,7 @@
       {
         "id": "unix-commit-decommit-reset-reuse-and-protect",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global MADV_FREE-to-MADV_DONTNEED fallback, and reuse semantics. The selected native record faults the unchanged imported mprotect/madvise calls around one regular process-owned mapping and an offset-prefix advice receiver.",
+        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global MADV_FREE-to-MADV_DONTNEED fallback, and reuse semantics. The selected native record faults the unchanged imported mprotect/madvise calls around one regular process-owned mapping, an offset-prefix advice receiver, and the direct source `mi_page_extend_free` external-page commit receiver.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -549,10 +600,11 @@
           "process-offset-prefix-decommit-advisory-owner",
           "normal-no-callback-purge-policy-range-matrix",
           "linux-os-reuse-contained-range-noop",
-          "native-protection-owner-and-retry"
+          "native-protection-owner-and-retry",
+          "normal-page-extension-direct-commit-failure-and-retry"
         ],
         "missing_conditions": [
-          "The selected release-profile record covers fixed one-page mprotect/madvise failures and retries, one MADV_FREE EINVAL fallback, normal no-callback purge policy/ranges, and one process-owned offset-prefix advisory success/failure, but does not qualify MI_DEBUG/MI_SECURE decommit policy, EAGAIN/fallback state across every caller, source warning diagnostics, or every retained failure owner."
+          "The selected release-profile record covers fixed one-page mprotect/madvise failures and retries, one MADV_FREE EINVAL fallback, normal no-callback purge policy/ranges, one process-owned offset-prefix advisory success/failure, and one direct external on-demand page-extension fault/retry, but does not qualify MI_DEBUG/MI_SECURE decommit policy, EAGAIN/fallback state across every caller, source warning diagnostics, or every retained failure owner."
         ]
       },
       {
@@ -760,14 +812,20 @@
         "kind": "rust-unit",
         "target": "os::tests::native_protection_failures_preserve_mapping_owner_and_retry",
         "expected_passed_test_count": 1
+      },
+      {
+        "id": "normal-page-extension-direct-commit-failure-and-retry",
+        "kind": "rust-unit",
+        "target": "main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse",
+        "expected_passed_test_count": 1
       }
     ],
     "remaining_conditions": [
-      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, and one child-isolated 128-MiB first-arena large-page fallback, including pinned-C failure ownership and retry evidence for every source branch.",
+      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, and one child-isolated 128-MiB first-arena large-page fallback, including pinned-C failure ownership and retry evidence for every source branch.",
       "Complete the aligned-overmap substrate beyond the selected direct/prefix/suffix retained-map owners and one first-arena high-hint fallback: every receiving allocator caller, callback/counter/error path, and native cleanup failure/retry differential remains required.",
       "Complete random aligned-hint policy, virtual-address eligibility, secure/debug default-Theap random state, ambient source options and diagnostics, Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success and retry-state behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
-      "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, and one process-lived external mi_manage_memory callback owner with bounded commit/purge results."
+      "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers."
     ]
   }
 }

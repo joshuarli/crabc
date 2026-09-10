@@ -5,8 +5,9 @@ This module owns neither milestone aggregation nor source-map promotion.  It
 checks the target-local fragment's complete source-policy matrix, compiles a
 fresh direct-include C oracle from the pinned archive, and compares its fixed
 process-paired regular-VM lifecycle, normal no-callback purge decision/range
-matrix, one process-lived external callback arena commit/purge receiver, source
-commit/decommit/reset/purge/protection fault records, offset
+matrix, one process-lived external callback arena commit/purge receiver and
+its direct source-page extension receiver, source commit/decommit/reset/purge/
+protection fault records, offset
 prefix-decommit and release failure/retry records, and one child-isolated
 source-option first-arena record with one already-built Rust exact test. The C
 faults wrap only unchanged Unix imports: `mprotect`, `madvise`, `munmap`, and
@@ -30,7 +31,7 @@ SCHEMA = "crabc-mimalloc-x86_64-m2-component-evidence"
 TRACE_BEGIN = "CRABC_MI_M2_VM_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_M2_VM_TRACE_END"
 EXPECTED_RUST_TEST_COUNT = 1
-EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-and-child-policy-arena-fault"
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-external-page-extension-and-child-policy-arena-fault"
 
 CHECKS = (
     (
@@ -148,6 +149,11 @@ CHECKS = (
         "rust-unit",
         "os::tests::native_protection_failures_preserve_mapping_owner_and_retry",
     ),
+    (
+        "normal-page-extension-direct-commit-failure-and-retry",
+        "rust-unit",
+        "main_heap_page::tests::ordinary_reserved_medium_on_demand_commit_before_reuse",
+    ),
 )
 CHECK_IDS = tuple(check[0] for check in CHECKS)
 TRACE_CHECK_ID = CHECKS[0][0]
@@ -223,6 +229,9 @@ TRACE_KEYS = (
     "m2.vm.external.callback.negative_delay_skips_callback_and_statistics",
     "m2.vm.external.callback.no_normal_advice",
     "m2.vm.external.callback.one_published_owner_per_registry",
+    "m2.vm.external.page_extension.direct_commit_fault_bypasses_callback",
+    "m2.vm.external.page_extension.failure_preserves_unpublished_state",
+    "m2.vm.external.page_extension.retry_commits_without_callback",
     "m2.vm.numa.count_at_least_one",
     "m2.vm.numa.current_lt_count",
     "m2.vm.policy.source_options_applied",
@@ -279,6 +288,7 @@ SOURCE_UNITS = (
     "src/arena.c",
     "src/init.c",
     "src/os.c",
+    "src/page.c",
     "src/prim/prim.c",
     "src/prim/unix/prim.c",
 )

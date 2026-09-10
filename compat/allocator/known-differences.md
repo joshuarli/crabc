@@ -1839,7 +1839,7 @@ transfer capability.
   prefix while the private `Mapping` is still retained, and only then publishes
   `Page::slice_pcommitted`, free-list links, and capacity. After `PageMap`
   publication, a later extension uses only
-  `Mapping::commit_published_for_process` for its exclusive old-to-new prefix;
+  `VmProcess::commit_direct_page_area` for its exclusive old-to-new prefix;
   terminal OS release removes exactly `slice_pcommitted * page_size` from
   committed accounting. A failed initial or later commit publishes no new
   capacity/prefix and follows the ordinary source fresh retry rather than

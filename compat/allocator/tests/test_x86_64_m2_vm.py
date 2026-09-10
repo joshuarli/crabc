@@ -72,6 +72,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                     "src/arena.c",
                     "src/init.c",
                     "src/os.c",
+                    "src/page.c",
                     "src/prim/prim.c",
                     "src/prim/unix/prim.c",
                 ))
@@ -183,6 +184,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "m2.vm.offset.prefix_decommit.failure_attempt_consumed_and_full_owner",
             "m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
             "m2.vm.reserved.unprotect.failure_returns_false_and_one_source_attempt",
+            "m2.vm.external.page_extension.direct_commit_fault_bypasses_callback",
+            "m2.vm.external.page_extension.failure_preserves_unpublished_state",
+            "m2.vm.external.page_extension.retry_commits_without_callback",
         ):
             with self.subTest(key=key):
                 self.assertIn(key, producer.TRACE_KEYS)
@@ -197,8 +201,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm = summary["components"][0]
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
-        self.assertEqual(len(vm["checks"]), 23)
-        self.assertEqual(len(vm["bounded_source_definitions"]), 12)
+        self.assertEqual(len(vm["checks"]), 24)
+        self.assertEqual(len(vm["bounded_source_definitions"]), 14)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
             for definition in vm["bounded_source_definitions"]
@@ -337,6 +341,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
         direct_init_source["c_command"].append("/pinned/src/init.c")
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, direct_init_source)
+
+        direct_page_source = self.vm_evidence(summary)
+        direct_page_source["c_command"].append("/pinned/src/page.c")
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, direct_page_source)
 
 
 if __name__ == "__main__":

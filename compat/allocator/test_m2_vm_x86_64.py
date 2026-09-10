@@ -81,7 +81,7 @@ class NativeM2VmFragmentTests(unittest.TestCase):
     def test_checked_fragment_preserves_the_complete_branch_matrix(self) -> None:
         loaded = load_fragment(self.write_fragment(self.fragment))
         self.assertEqual(loaded["component"]["completion_status"], "partial")
-        self.assertEqual(len(loaded["component"]["checks"]), 23)
+        self.assertEqual(len(loaded["component"]["checks"]), 24)
         self.assertEqual(len(loaded["component"]["branch_matrix"]), 14)
 
     def test_deleting_or_reclassifying_a_required_open_branch_fails(self) -> None:

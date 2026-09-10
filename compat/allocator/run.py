@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "4f20734353c687e3071992003f58b3467690b329fd6e6b39671352da967c2b22"
+M2_X86_64_VM_FRAGMENT_DIGEST = "25d02d62561d94a30bd349aed7570836a7f25e7ce17f7356c50c930f6aea59ab"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -1536,12 +1536,13 @@ M1_RAW_PRIMITIVE_ORACLE_SOURCES = tuple(
 )
 
 # The native M2 VM fixture directly includes the pinned source OS, first-arena,
-# and process-preloading bodies. Keep the ordinary raw source closure otherwise
-# complete and singular: a separately linked `os.c`, `arena.c`, or `init.c`
-# would let an unrelated translation unit replace the private source route the
-# trace claims to run.
+# process-preloading, and page-extension bodies. Keep the ordinary raw source
+# closure otherwise complete and singular: a separately linked `os.c`,
+# `arena.c`, `init.c`, or `page.c` would let an unrelated translation unit
+# replace the private source route the trace claims to run.
 M2_X86_64_VM_C_ORACLE_SOURCES = tuple(
-    item for item in M1_RAW_PRIMITIVE_ORACLE_SOURCES if item not in {"src/arena.c", "src/init.c"}
+    item for item in M1_RAW_PRIMITIVE_ORACLE_SOURCES
+    if item not in {"src/arena.c", "src/init.c", "src/page.c"}
 )
 
 # Both compiler-TLS readers include the pinned `src/threadlocal.c` directly
@@ -12385,9 +12386,10 @@ def _m2_x86_64_vm_test_program_is_bound(test_program: object) -> bool:
 def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
     """Require the direct-source C oracle's one complete positional command.
 
-    The M2 fixture directly includes pinned `src/os.c` and `src/arena.c`, so
-    its ordinary source input list must omit both while retaining the complete
-    raw primitive closure. Every position is fixed apart from the resolved
+    The M2 fixture directly includes pinned `src/os.c`, `src/arena.c`,
+    `src/init.c`, and `src/page.c`, so its ordinary source input list must
+    omit all four while retaining the complete raw primitive closure. Every
+    position is fixed apart from the resolved
     compiler, the extracted-source root, the checkout fixture root, and the
     runner-owned output root. This rejects injected preprocessor, object,
     archive, and linker inputs before a trace can masquerade as the selected
@@ -12494,8 +12496,8 @@ def _m2_x86_64_vm_check_records(
 ) -> list[dict[str, Any]]:
     """Turn the real fixed-profile C/Rust VM differential into its one receipt.
 
-    The other twenty VM receipts are emitted by the aggregate's exact source
-    test batch.  This validator binds the differential to the immutable
+    The other twenty-three VM receipts are emitted by the aggregate's exact
+    source test batch. This validator binds the differential to the immutable
     fragment, all pinned-C branch anchors, and the component's explicit open
     frontier so a trace count alone can never stand in for VM qualification.
     """

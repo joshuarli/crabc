@@ -36150,9 +36150,8 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
                 // this engine exclusively owns the transition until prefix
                 // state and free-list capacity publish below.
                 let outcome = unsafe {
-                    crate::os::Mapping::commit_published_for_process(
-                        process,
-                        config,
+                    process.commit_direct_page_area(
+                        config.page_size(),
                         address,
                         plan.commit_size,
                     )

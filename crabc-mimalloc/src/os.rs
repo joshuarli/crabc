@@ -549,6 +549,51 @@ impl<'a> VmProcess<'a> {
         self.subprocess.vm_statistics().purge(size);
         callback()
     }
+
+    /// Commits one source-owned direct page area through `_mi_os_commit`.
+    ///
+    /// This is deliberately a process operation rather than a [`Mapping`]
+    /// method. `mi_page_extend_free` may extend an externally supplied arena
+    /// page after its first prefix used `mi_arena_commit`; source then calls
+    /// `_mi_os_commit` directly and does not possess a Rust mapping owner.
+    /// As in `_mi_os_commit_ex`, the commit-call counter precedes liberal
+    /// floor/ceil page coverage, while committed bytes use the requested span
+    /// and increase only after the raw protection transition succeeds.
+    ///
+    /// # Safety
+    ///
+    /// `address..address + length` is one live, exclusively owned page-area
+    /// transition. Its whole covering base-page range must remain within one
+    /// live reservation until this call returns; no Rust reference or alias
+    /// that can observe the transition may exist. That reservation may be an
+    /// externally supplied, page-aligned owned span which this process did
+    /// not create or account as an OS [`Mapping`]. This operation creates no
+    /// release token and grants no unmap authority.
+    pub(crate) unsafe fn commit_direct_page_area(
+        self,
+        page_size: PageSize,
+        address: *mut u8,
+        length: usize,
+    ) -> Result<Option<CommitOutcome>> {
+        // `_mi_os_commit_ex` increments the named counter before it asks
+        // `mi_os_page_align_areax` whether the source span has any pages.
+        let statistics = self.subprocess.vm_statistics();
+        statistics.commit_call();
+        let Some((address, normalized_length)) =
+            covering_direct_page_area_range(page_size, address, length)?
+        else {
+            return Ok(None);
+        };
+        fault_before(FaultPoint::Commit)?;
+        // SAFETY: the caller's unsafe contract proves that this source-style
+        // covering range stays in its live reservation and is uniquely
+        // transitioning from reserved to accessible bytes.
+        unsafe {
+            crabc_core::mm::mprotect_raw(address, normalized_length, PROT_READ | PROT_WRITE)
+        }?;
+        statistics.committed_increase(length);
+        Ok(Some(CommitOutcome::NotKnownZero))
+    }
 }
 
 impl VmPolicy {
@@ -2136,52 +2181,6 @@ impl Mapping {
             stats.reserve_decrease(length);
         }
         result
-    }
-
-    /// Commits one published reserved range through its original process pair.
-    ///
-    /// This is the post-publication counterpart of [`Self::commit_for_process`].
-    /// Pinned `_mi_os_commit_ex` records `commit_calls` before liberal page
-    /// normalization, and increases `committed` by the caller's requested
-    /// span—not the possibly wider primitive range—only after the normalized
-    /// commit succeeds. Keeping that sequence at this raw boundary lets a
-    /// page owner commit a newly published prefix without reconstructing a
-    /// second `Mapping` capability.
-    ///
-    /// # Safety
-    ///
-    /// `address..address + length` must be a live subrange of one reserved
-    /// mapping originally accounted by `process`. The caller must exclusively
-    /// own the source new-prefix transition and prove that its covering
-    /// page-aligned range remains in that same mapping. No Rust reference or
-    /// aliased mapping capability may observe the bytes during this raw
-    /// protection change. The original published release token remains the
-    /// sole release authority; this method creates neither a release token nor
-    /// a second mapping owner.
-    pub(crate) unsafe fn commit_published_for_process(
-        process: VmProcess<'_>,
-        config: MemoryConfig,
-        address: *mut u8,
-        length: usize,
-    ) -> Result<Option<CommitOutcome>> {
-        // `_mi_os_commit_ex` increments the named counter before it asks
-        // `mi_os_page_align_areax` whether the source span has any pages.
-        let statistics = process.subprocess.vm_statistics();
-        statistics.commit_call();
-        let Some((address, normalized_length)) =
-            covering_unowned_page_range(config.page_size(), address, length)?
-        else {
-            return Ok(None);
-        };
-        fault_before(FaultPoint::Commit)?;
-        // SAFETY: the caller's unsafe contract proves that this source-style
-        // covering range stays in its live reserved mapping and is uniquely
-        // transitioning from reserved to accessible bytes.
-        unsafe {
-            crabc_core::mm::mprotect_raw(address, normalized_length, PROT_READ | PROT_WRITE)
-        }?;
-        statistics.committed_increase(length);
-        Ok(Some(CommitOutcome::NotKnownZero))
     }
 
     /// Returns whether the original anonymous mapping was zero initialized.
@@ -4039,15 +4038,14 @@ enum PageAlignment {
     Contained,
 }
 
-/// Selects every base page touched by one non-owning external span.
+/// Selects every base page touched by one direct source page area.
 ///
 /// Unlike [`Mapping::page_range`], this cannot prove the input is within a
-/// particular `Mapping` value because publication moved that capability to an
-/// external owner. The unsafe caller of
-/// [`Mapping::commit_published_for_process`] supplies the containment and
-/// unique-transition proof; this helper only preserves `_mi_os_commit_ex`'s
-/// liberal source page normalization.
-fn covering_unowned_page_range(
+/// particular mapping: an external arena's caller retains terminal release
+/// ownership. [`VmProcess::commit_direct_page_area`] requires its caller to
+/// prove containment and unique transition; this helper only preserves
+/// `_mi_os_commit_ex`'s liberal source page normalization.
+fn covering_direct_page_area_range(
     page_size: PageSize,
     address: *mut u8,
     length: usize,
@@ -5990,9 +5988,8 @@ mod tests {
         // its covering page range remains within that reservation.
         assert_eq!(
             unsafe {
-                Mapping::commit_published_for_process(
-                    process,
-                    config,
+                process.commit_direct_page_area(
+                    config.page_size(),
                     base.wrapping_add(page / 2),
                     page,
                 )
@@ -6023,7 +6020,7 @@ mod tests {
         // SAFETY: the live token remains exclusively owned; zero length is the
         // source's normalized empty commit branch.
         assert_eq!(
-            unsafe { Mapping::commit_published_for_process(process, config, empty_base, 0) },
+            unsafe { process.commit_direct_page_area(config.page_size(), empty_base, 0) },
             Ok(None),
         );
         let after_empty = subprocess.vm_statistics().snapshot();
@@ -6048,7 +6045,7 @@ mod tests {
         // SAFETY: this token names a still-reserved page and no alias can
         // observe the failed source transition.
         assert_eq!(
-            unsafe { Mapping::commit_published_for_process(process, config, failed_base, page) },
+            unsafe { process.commit_direct_page_area(config.page_size(), failed_base, page) },
             Err(Errno::NOMEM),
         );
         let after_failure = subprocess.vm_statistics().snapshot();
@@ -7902,6 +7899,18 @@ mod tests {
         emit!("m2.vm.external.callback.negative_delay_skips_callback_and_statistics", external_callback_trace[7]);
         emit!("m2.vm.external.callback.no_normal_advice", external_callback_trace[8]);
         emit!("m2.vm.external.callback.one_published_owner_per_registry", external_callback_trace[9]);
+        emit!(
+            "m2.vm.external.page_extension.direct_commit_fault_bypasses_callback",
+            external_callback_trace[10]
+        );
+        emit!(
+            "m2.vm.external.page_extension.failure_preserves_unpublished_state",
+            external_callback_trace[11]
+        );
+        emit!(
+            "m2.vm.external.page_extension.retry_commits_without_callback",
+            external_callback_trace[12]
+        );
         emit!("m2.vm.numa.count_at_least_one", u8::from(numa_count >= 1));
         emit!("m2.vm.numa.current_lt_count", u8::from(numa_current < numa_count));
         emit!(

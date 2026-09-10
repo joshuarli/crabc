@@ -392,7 +392,8 @@ pub(crate) struct PublishedOsAlignedPage {
 /// reconstructing its terminal mapping-release capability. The page engine
 /// uses it only while it exclusively owns a live page's next prefix
 /// transition, then passes the derived subrange to
-/// `Mapping::commit_published_for_process`.
+/// `VmProcess::commit_direct_page_area` without reconstructing a second
+/// mapping release capability.
 #[derive(Clone, Copy)]
 pub(crate) struct PublishedOnDemandOsPageArea {
     slice_start: NonNull<u8>,

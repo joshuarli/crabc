@@ -24,7 +24,7 @@ use crabc_core::Errno;
 use super::{ArenaId, ArenaRegistry, ArenaReservationPlan, ArenaSearch, ArenaSliceClaim, CommitHook, ExternalArenaPlan, ManageArenaError, ManagedExternalRegion};
 use crate::config::{ARENA_ALIGNMENT, ARENA_MAX_SIZE, ARENA_MIN_SIZE, MAX_ARENAS};
 use crate::lock::PrivateLock;
-use crate::os::{MapAccess, Mapping, MemoryConfig, NormalOsAllocation, HugeOsAllocation, VmProcess};
+use crate::os::{MapAccess, Mapping, MemoryConfig, NormalOsAllocation, HugeOsAllocation, PageSize, VmProcess};
 use crate::types::{Arena, MemoryId, MemoryKind};
 
 #[path = "arena_purge.rs"]
@@ -184,6 +184,32 @@ impl ProcessExternalArenaLease {
         offset.checked_add(size).is_some_and(|end| end <= self.size)
     }
 
+    /// Proves the complete liberal `_mi_os_commit` coverage remains in this
+    /// caller-owned external lease. The request itself belongs to one arena
+    /// page area, while source floor/ceil normalization may cover its first
+    /// or last base page too.
+    fn contains_covering_page_area(&self, page_size: PageSize, start: *mut u8, size: usize) -> bool {
+        if start.is_null() || size == 0 {
+            return false;
+        }
+        let start_address = start.addr();
+        let Some(end_address) = start_address.checked_add(size) else {
+            return false;
+        };
+        let page_size = page_size.bytes();
+        let Some(covering_start) = crate::invariants::align_down(start_address, page_size) else {
+            return false;
+        };
+        let Some(covering_end) = crate::invariants::align_up(end_address, page_size) else {
+            return false;
+        };
+        let base = self.base() as usize;
+        let Some(lease_end) = base.checked_add(self.size) else {
+            return false;
+        };
+        covering_start >= base && covering_end >= covering_start && covering_end <= lease_end
+    }
+
     #[inline]
     unsafe fn commit(&self, start: *mut u8, size: usize) -> ArenaCommitOutcome {
         if !self.contains(start, size) {
@@ -295,6 +321,51 @@ impl OwnedArenaAllocation {
         }
     }
 
+    /// Performs the direct `_mi_os_commit` edge used only after an on-demand
+    /// page's callback-backed first prefix. This must remain separate from
+    /// [`Self::commit_with_outcome`]: source `mi_page_extend_free` has no
+    /// `arena->commit_fun` call on this later extension.
+    ///
+    /// # Safety
+    ///
+    /// `start..start + size` is the caller's exclusive live page-prefix
+    /// transition. For an external backing, its complete covering base-page
+    /// range is validated against the process-lived lease before the raw
+    /// process commitment runs.
+    unsafe fn commit_direct_page_area(
+        &self,
+        start: *mut u8,
+        size: usize,
+    ) -> Result<(), ArenaPageCommitError> {
+        let invalid = ArenaPageCommitError::InvalidPageArea;
+        let base = self.allocation.base().map_err(|_| invalid)?;
+        let offset = (start as usize).checked_sub(base as usize).ok_or(invalid)?;
+        let length = self.allocation.length().map_err(|_| invalid)?;
+        if offset.checked_add(size).is_none_or(|end| end > length) {
+            return Err(invalid);
+        }
+        match &self.allocation {
+            ArenaBacking::Regular(mapping) => mapping
+                .commit_for_process(self.process, offset, size, 0)
+                .map(|_| ())
+                .map_err(ArenaPageCommitError::Mapping),
+            ArenaBacking::External(lease) => {
+                if !lease.contains_covering_page_area(self.config.page_size(), start, size) {
+                    return Err(invalid);
+                }
+                // SAFETY: the outer page owner exclusively owns the direct
+                // prefix; the lease check above proves full source covering
+                // range containment without acquiring unmap authority.
+                unsafe { self.process.commit_direct_page_area(self.config.page_size(), start, size) }
+                    .map(|_| ())
+                    .map_err(ArenaPageCommitError::Mapping)
+            }
+            // Pinned huge arenas are initially committed and pinned. An
+            // on-demand `mi_page_extend_free` cannot reach this owner.
+            ArenaBacking::Huge(_) => Err(invalid),
+        }
+    }
+
     #[inline]
     pub(super) fn has_external_callback(&self) -> bool {
         self.allocation.external().is_some()
@@ -373,11 +444,11 @@ impl ProcessArenaBacking {
             .ok_or(invalid)?;
         if size == 0 || offset.checked_add(size).is_none_or(|end| end > span) { return Err(invalid); }
         let start = view.slice_start(arena_memory.slice_index as usize).ok_or(invalid)?;
-        let mapping_offset = (start as usize).checked_sub(owner.allocation.base().map_err(|_| invalid)? as usize)
-            .and_then(|base| base.checked_add(offset)).ok_or(invalid)?;
-        owner.allocation.regular().ok_or(invalid)?.commit_for_process(owner.process, mapping_offset, size, 0)
-            .map_err(ArenaPageCommitError::Mapping)?;
-        Ok(())
+        let page_area = (start as usize).checked_add(offset).ok_or(invalid)? as *mut u8;
+        // SAFETY: the exact arena MemoryId/span validation above identifies
+        // one live claimed page area; its caller holds the unique prefix
+        // transition until successful commitment publishes page capacity.
+        unsafe { owner.commit_direct_page_area(page_area, size) }
     }
 
     /// Reconciles `mi_arenas_page_free_prim`'s on-demand prefix before the
@@ -1273,7 +1344,7 @@ mod tests {
     /// One address-free source-callback lifecycle record for the pinned-C
     /// differential. This reaches the process-lived typed owner rather than
     /// the legacy raw `Arena.commit_function` test seam.
-    pub(crate) fn m2_external_callback_trace(fault_guard: &fault::Guard) -> [usize; 10] {
+    pub(crate) fn m2_external_callback_trace(fault_guard: &fault::Guard) -> [usize; 13] {
         let process = purge_process(0, false);
         let external_backing = backing();
         let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
@@ -1395,6 +1466,7 @@ mod tests {
             && negative_after == negative_before
             && fault_guard.observed() == 0;
         fault_guard.set(fault::Plan::disabled());
+        let direct_page_extension = m2_external_page_extension_trace(fault_guard);
 
         [
             usize::from(managed_external_owner),
@@ -1410,6 +1482,9 @@ mod tests {
                 && false_backing.registry().count() == 1
                 && mixed_backing.registry().count() == 1
                 && negative_backing.registry().count() == 1),
+            direct_page_extension[0],
+            direct_page_extension[1],
+            direct_page_extension[2],
         ]
     }
 
@@ -1608,6 +1683,78 @@ mod tests {
         .expect("a failed typed commit restores the exact free range");
         assert_eq!(retry.start() as usize, failed_start);
         assert_eq!(trace.commits.load(Ordering::Acquire), 1);
+    }
+
+    /// One address-free direct `_mi_os_commit` record for the external owner.
+    /// It remains distinct from callback-backed initial page claims: source
+    /// `mi_page_extend_free` validates and commits the later prefix directly.
+    fn m2_external_page_extension_trace(fault: &fault::Guard) -> [usize; 4] {
+        let process = process();
+        let backing = backing();
+        let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        let (lease, _) = external_lease(process, ARENA_MIN_SIZE, false, false, trace);
+        let id = install_external(backing, process, ARENA_MIN_SIZE, lease).arena_id();
+        let claim = unsafe {
+            backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, false)
+        }
+        .expect("the external arena supplies one uncommitted page-area span");
+        let memory = claim.memory_id();
+        let page = config().page_size().bytes();
+        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }
+            .expect("the external arena remains published for its page extension");
+        let committed = unsafe { view.slices_committed() }
+            .expect("the source complete-slice bitmap remains inspectable");
+        assert_eq!(committed.is_clear_range(claim.slice_index(), 1), Some(true));
+
+        // `mi_page_extend_free` calls `_mi_os_commit` directly: it must not
+        // reenter the external `mi_arena_commit` callback after the initial
+        // page prefix has been established.
+        trace.clear_observation();
+        let before = process.subprocess().vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        let failure = unsafe { backing.commit_page_area(memory, 0, page) };
+        let failed = process.subprocess().vm_statistics().snapshot();
+        let failure_consumes_direct_fault_without_callback = failure
+            == Err(ArenaPageCommitError::Mapping(Errno::NOMEM))
+            && failed.commit_calls == before.commit_calls + 1
+            && failed.committed_current == before.committed_current
+            && fault.observed() == 1
+            && trace.commits.load(Ordering::Acquire) == 0;
+        let failure_preserves_unpublished_page_area =
+            committed.is_clear_range(claim.slice_index(), 1) == Some(true);
+
+        fault.set(fault::Plan::disabled());
+        let retry = unsafe { backing.commit_page_area(memory, 0, page) };
+        let retried = process.subprocess().vm_statistics().snapshot();
+        let retry_commits_directly_without_callback = retry.is_ok()
+            && retried.commit_calls == before.commit_calls + 2
+            && retried.committed_current == before.committed_current + page as i64
+            && trace.commits.load(Ordering::Acquire) == 0;
+        let partial_commit_leaves_complete_slice_bitmap =
+            committed.is_clear_range(claim.slice_index(), 1) == Some(true);
+
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        let before_invalid = process.subprocess().vm_statistics().snapshot();
+        let invalid = unsafe { backing.commit_page_area(memory, ARENA_SLICE_SIZE, page) };
+        let invalid_area_rejected_before_commit = invalid == Err(ArenaPageCommitError::InvalidPageArea)
+            && process.subprocess().vm_statistics().snapshot() == before_invalid
+            && fault.observed() == 0
+            && trace.commits.load(Ordering::Acquire) == 0;
+        fault.set(fault::Plan::disabled());
+        let released = claim.release();
+        [
+            usize::from(failure_consumes_direct_fault_without_callback),
+            usize::from(failure_preserves_unpublished_page_area),
+            usize::from(retry_commits_directly_without_callback
+                && partial_commit_leaves_complete_slice_bitmap),
+            usize::from(invalid_area_rejected_before_commit && released),
+        ]
+    }
+
+    #[test]
+    fn external_page_extension_bypasses_callback_and_retries_the_direct_process_commit() {
+        let fault = fault::install(fault::Plan::disabled());
+        assert_eq!(m2_external_page_extension_trace(&fault), [1; 4]);
     }
 
     #[test]
