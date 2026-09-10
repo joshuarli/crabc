@@ -124,6 +124,29 @@ static void host_dns(void) {
     CHECK(!gethostbyname_r("nxdomain.example.test",&h,b,0,&r,&error)&&!r&&error==HOST_NOT_FOUND);
     CHECK(!gethostbyname_r("nodata.example.test",&h,b,0,&r,&error)&&!r&&error==NO_DATA);
 }
+static void dns_record_order(void) {
+    struct hostent h,*r;char b[4096];int error=97;
+    /* musl keeps the first A and the default canonical spelling: its callback
+       stops at the complete-but-five-byte selected A before the late CNAME. */
+    CHECK(!gethostbyname_r("order-after.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    CHECK(!strcmp(h.h_name,"order-after.example.test"));address(&h,0,AF_INET,"198.51.100.46");CHECK(!h.h_addr_list[1]);
+    /* A CNAME handled before the malformed selected A remains the canonical
+       spelling; the later CNAME is beyond the source callback's stop point. */
+    CHECK(!gethostbyname_r("order-before.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    CHECK(!strcmp(h.h_name,"early.example.test"));address(&h,0,AF_INET,"198.51.100.46");CHECK(!h.h_addr_list[1]);
+    /* A malformed selected A before every address stops with NO_DATA. */
+    CHECK(!gethostbyname_r("order-empty.example.test",&h,b,0,&r,&error)&&!r&&error==NO_DATA);
+    /* The callback processes CNAME before its MAXADDRS guard: the 49th bad A
+       is ignored after the cap, while the following CNAME still replaces canon. */
+    error=97;
+    CHECK(!gethostbyname_r("order-cap.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    unsigned count=0;while(h.h_addr_list[count])count++;CHECK(count==48&&!strcmp(h.h_name,"cap.example.test"));
+    address(&h,0,AF_INET,"192.0.2.1");address(&h,47,AF_INET,"192.0.2.48");
+    /* The same selected-RDLENGTH stop applies to AAAA's required 16 bytes. */
+    error=97;
+    CHECK(!gethostbyname2_r("order-aaaa.example.test",AF_INET6,&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    CHECK(!strcmp(h.h_name,"order-aaaa.example.test"));address(&h,0,AF_INET6,"2001:db8::46");CHECK(!h.h_addr_list[1]);
+}
 static void search_precedence(void) {
     struct hostent h,*r;char b[2048];int error=97;
     CHECK(!gethostbyname_r("stop",&h,b,sizeof b,&r,&error)&&!r&&error==NO_DATA);
@@ -263,7 +286,7 @@ static void allocation_failure(void) {
 }
 int main(int argc,char **argv) {
     CHECK(argc==2);setup();const char *s=argv[1];
-    if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"search-precedence"))search_precedence();
+    if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"search-precedence"))search_precedence();
     else if(!strcmp(s,"mixed-family"))mixed_family_precedence();else if(!strcmp(s,"reverse-local"))reverse_local();else if(!strcmp(s,"reverse-dns"))reverse_dns();else if(!strcmp(s,"services"))services();else if(!strcmp(s,"service-buffers"))service_buffers();else if(!strcmp(s,"empty-reporting"))empty_and_reporting();else if(!strcmp(s,"addrinfo"))addrinfo();else if(!strcmp(s,"threads-fork"))threads_and_fork();else if(!strcmp(s,"allocation"))allocation_failure();else if(!strcmp(s,"socket-error"))socket_error();else if(!strcmp(s,"fcntl-error"))fcntl_error();else io_errors(s);
     puts("classic netdb scenario passed");return 0;
 }

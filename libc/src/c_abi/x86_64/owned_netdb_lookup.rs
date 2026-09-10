@@ -11,9 +11,10 @@
 //! is not a deferred C cancellation point and has no C cancellation cleanup
 //! registration. An owned cancellation/descriptor cleanup adapter remains a
 //! resolver-family closure obligation. Only the source sorting and address
-//! configuration cancellation masks are preserved by this slice. Typed
-//! rdata_at extraction groups address records and CNAMEs; musl callback
-//! interleaving after malformed address RDLENGTH is not qualified here.
+//! configuration cancellation masks are preserved by this slice. The native
+//! C lookup path has its own ordered answer callback below: it follows musl's
+//! `__dns_parse` and `dns_parse_callback` stop boundary without changing the
+//! shared `DnsResponse` or transport contract.
 use core::{ffi::{c_char, c_int}, ptr};
 use super::{c_status, errno, inet_address, integer_parse, interface_discovery,
     locale_multibyte, pthread_cancel, raw_syscall, stdio_standard};
@@ -235,20 +236,67 @@ unsafe fn dns(out: &mut [Address;MAX_ADDRS], canon: &mut [u8;256], name: &[u8], 
     }
     let mut count = 0;
     for i in (0..nq).rev() {
-        let Ok(response) = DnsResponse::parse(&replies[i][..lengths[i]], name, kinds[i], ids[i]) else { continue; };
-        let mut ordinal = 0;
-        while count < MAX_ADDRS {
-            let mut address = Address::EMPTY;
-            let Ok(Some(n)) = response.rdata_at(kinds[i], ordinal, &mut address.bytes) else { break; };
-            if n != if kinds[i] == 1 { 4 } else { 16 } { break; }
-            address.family = if kinds[i] == 1 { 2 } else { 10 }; out[count] = address; count += 1; ordinal += 1;
-        }
-        let mut ordinal = 0; let mut cname = [0u8;256];
-        while let Ok(Some(n)) = response.rdata_at(5, ordinal, &mut cname) {
-            if valid_hostname(&cname[..n]) { copy_name(canon, &cname[..n]); } ordinal += 1;
+        let packet = &replies[i][..lengths[i]];
+        if DnsResponse::parse(packet, name, kinds[i], ids[i]).is_ok() {
+            source_ordered_answers(packet, kinds[i], out, &mut count, canon);
         }
     }
     if count > 0 { count as c_int } else { -5 }
+}
+
+/// Process one response in the exact source callback order.
+///
+/// This is the bounded x86 C-ABI translation of musl 1.2.6 release commit
+/// `9fa28ece75d8a2191de7c5bb53bed224c5947417` (MIT):
+/// `src/network/dns_parse.c::__dns_parse` walks questions then answer RRs;
+/// `src/network/lookup_name.c::dns_parse_callback` handles CNAME before the
+/// address cap and selected A/AAAA length check.  A bad selected address
+/// length stops this scan after already completed callbacks, so later CNAMEs
+/// cannot overwrite the retained canonical name.  `DnsResponse::parse` above
+/// keeps the existing shared response/question gate.  The transport continues
+/// to reject a physically incomplete late RR before this private callback path.
+fn source_ordered_answers(
+    packet: &[u8], selected_type: u16, out: &mut [Address; MAX_ADDRS],
+    count: &mut usize, canon: &mut [u8; 256],
+) {
+    if packet.len() < 12 || packet[3] & 15 != 0 { return; }
+    let end = packet.len();
+    let mut cursor = 12usize;
+    let mut questions = u16::from_be_bytes([packet[4], packet[5]]);
+    let mut answers = u16::from_be_bytes([packet[6], packet[7]]);
+    while questions != 0 {
+        while cursor < end && packet[cursor].wrapping_sub(1) < 127 { cursor += 1; }
+        if cursor > end - 6 { return; }
+        cursor += 5 + usize::from(packet[cursor] != 0);
+        questions -= 1;
+    }
+    while answers != 0 {
+        while cursor < end && packet[cursor].wrapping_sub(1) < 127 { cursor += 1; }
+        if cursor > end - 12 { return; }
+        cursor += 1 + usize::from(packet[cursor] != 0);
+        let length = u16::from_be_bytes([packet[cursor + 8], packet[cursor + 9]]) as usize;
+        if length + 10 > end - cursor { return; }
+        let rrtype = packet[cursor + 1];
+        let data = cursor + 10;
+        if rrtype == 5 {
+            let mut cname = [0u8; 256];
+            let expanded = unsafe { super::dn_expand::__dn_expand(
+                packet.as_ptr(), packet.as_ptr().wrapping_add(end),
+                packet.as_ptr().wrapping_add(data), cname.as_mut_ptr().cast(), cname.len() as c_int,
+            ) };
+            let name = line_bytes(&cname);
+            if expanded > 0 && valid_hostname(name) { copy_name(canon, name); }
+        } else if *count < MAX_ADDRS && rrtype as u16 == selected_type {
+            let expected = if selected_type == 1 { 4 } else { 16 };
+            if length != expected { return; }
+            let mut address = Address::for_family(if selected_type == 1 { 2 } else { 10 });
+            address.bytes[..length].copy_from_slice(&packet[data..data + length]);
+            out[*count] = address;
+            *count += 1;
+        }
+        cursor += 10 + length;
+        answers -= 1;
+    }
 }
 
 unsafe fn dns_search(out: &mut [Address;MAX_ADDRS], canon: &mut [u8;256], name: &[u8], family: c_int) -> c_int {

@@ -64,6 +64,11 @@ RECORDS: dict[tuple[str, int], tuple[str, bytes | None]] = {
     ("mixed-search.search.test.", 28): ("timeout", None),
     ("mixed-search.", 1): ("answer", socket.inet_aton("192.0.2.93")),
     ("mixed-search.", 28): ("nodata", None),
+    ("order-after.example.test.", 1): ("callback-order-after", None),
+    ("order-before.example.test.", 1): ("callback-order-before", None),
+    ("order-empty.example.test.", 1): ("callback-order-empty", None),
+    ("order-cap.example.test.", 1): ("callback-order-cap", None),
+    ("order-aaaa.example.test.", 28): ("callback-order-after", None),
 }
 
 
@@ -166,6 +171,44 @@ def question_section(packet: bytes) -> bytes:
     return packet[12 : offset + 4]
 
 
+def answer_record(qtype: int, value: bytes) -> bytes:
+    """Encode one answer owned by the fixture's original-question pointer."""
+    return b"\xc0\x0c" + struct.pack("!HHIH", qtype, 1, 60, len(value)) + value
+
+
+def callback_order_answer(
+    question_bytes: bytes, identifier: int, behavior: str, qtype: int
+) -> bytes:
+    """Emit complete RRs that exercise musl's ordered DNS callback boundary.
+
+    The selected malformed A/AAAA record has a complete five/seventeen-byte
+    RDATA body.  It therefore passes the shared transport's framing contract
+    and reaches the owned lookup parser, where musl's callback rejects only
+    the selected address length and stops before later records.
+    """
+    cname = lambda label: bytes([len(label)]) + label + b"\x07example\x04test\x00"
+    valid = (socket.inet_aton("198.51.100.46") if qtype == 1
+             else socket.inet_pton(socket.AF_INET6, "2001:db8::46"))
+    malformed = valid + b"\xff"
+    if behavior == "callback-order-after":
+        answers = [answer_record(qtype, valid), answer_record(qtype, malformed),
+                   answer_record(5, cname(b"late"))]
+    elif behavior == "callback-order-before":
+        answers = [answer_record(5, cname(b"early")), answer_record(qtype, valid),
+                   answer_record(qtype, malformed), answer_record(5, cname(b"late"))]
+    elif behavior == "callback-order-empty":
+        answers = [answer_record(qtype, malformed), answer_record(qtype, valid),
+                   answer_record(5, cname(b"late"))]
+    elif behavior == "callback-order-cap":
+        answers = [answer_record(qtype, bytes((192, 0, 2, index))) for index in range(1, 49)]
+        answers.extend((answer_record(qtype, b"\x01\x02\x03\x04\xff"),
+                        answer_record(5, cname(b"cap"))))
+    else:
+        raise ValueError(f"unknown callback-order behavior: {behavior}")
+    return (struct.pack("!HHHHHH", identifier, 0x8180, 1, len(answers), 0, 0)
+            + question_bytes + b"".join(answers))
+
+
 def encode_answer(
     question: bytes, identifier: int, name: str, qtype: int, complete: bool = False
 ) -> bytes:
@@ -185,6 +228,8 @@ def encode_answer(
         # TCP.  TCP callers use the complete answer below.
         flags = 0x8380  # response, recursion available, truncation, NOERROR
         return struct.pack("!HHHHHH", identifier, flags, 1, 0, 0, 0) + question_bytes
+    if behavior.startswith("callback-order-"):
+        return callback_order_answer(question_bytes, identifier, behavior, qtype)
     if value is None:
         raise ValueError("answer record has no value")
     flags = 0x8180

@@ -26,6 +26,7 @@ archive SHA-256 is
 | --- | --- |
 | `src/network/lookup_ipliteral.c`: `__lookup_ipliteral` | `owned_netdb_lookup.rs::numeric` and existing inet/interface/integer owners |
 | `src/network/lookup_name.c`: null, numeric, hosts, DNS/search backends and destination policy | `owned_netdb_lookup.rs::{names,hosts,dns,dns_search,sort_addresses}` |
+| `src/network/dns_parse.c`: `__dns_parse`; `src/network/lookup_name.c`: `dns_parse_callback` | `owned_netdb_lookup.rs::source_ordered_answers` for structurally complete x86 C lookup responses |
 | `src/network/lookup_serv.c`: `__lookup_serv` | `owned_netdb_lookup.rs::services` |
 | `src/network/resolvconf.c`: `__get_resolv_conf` | `owned_netdb_lookup.rs::configuration` |
 | `src/stdio/{__fopen_rb_ca,__fclose_ca}.c` | `owned_static_stdio.rs::with_readonly_file`, existing non-canceling FILE reader |
@@ -79,11 +80,17 @@ query encoding, bounded retry/failover and TCP fallback use the shared
 `crabc-core::resolver` transport. Family queries run sequentially rather than
 musl's parallel msend; their outcomes retain source interpretation order.
 The existing `DnsResponse::rdata_at` interface extracts address records by
-type and then CNAME records. Normal CNAME/address behavior and malformed
-transport framing are proved, but musl's callback interleaving after a
-malformed address RDLENGTH is not qualified: the source can stop parsing
-before a later CNAME, whereas grouped extraction can still inspect it. This
-exact parser-order gap remains a resolver-family qualification obligation.
+type and then CNAME records for its existing callers. The owned x86 C lookup
+path instead performs the source's ordered answer callback after that shared
+response/question gate. It handles CNAME before the address cap, retains
+completed address and canonical callbacks when a selected A/AAAA has a
+complete but wrong RDLENGTH, and stops before later records exactly as musl
+does. The contained differential sends valid-prefix A and AAAA records, a
+wrong-length selected address, CNAME-before/after variations, no-address and
+48-address-cap cases through the same installed-header object. A physically
+incomplete later RR remains rejected by the established shared transport
+before this private callback runs; that framing difference is explicit
+resolver-family work, not an assertion of source callback equivalence.
 The owned adapter distinguishes local socket-creation errno from exhausted
 transport attempts without creating probe sockets. Existing native
 `exchange` keeps its prior timeout behavior. Owned C callers now use the
@@ -101,14 +108,15 @@ Run `./scripts/dev-x86_64.sh owned-classic-netdb [DYNAMIC_SYSROOT]`. Without an
 argument, pinned product preparation precedes network isolation. One ordinary
 installed-header application object links to pinned musl and owned static,
 static-PIE, dynamic PIE and dynamic non-PIE; both dynamic artifacts run through
-kernel and direct interpreter entry. Twenty cases run in disposable private
+kernel and direct interpreter entry. Twenty-one cases run in disposable private
 chroots with fixture-owned `/etc`, in a loopback-only network namespace. They
-cover numeric/local/DNS lookup, buffer bounds, large host records, search and
-mixed-family failure precedence, reverse files/PTR, services and pointer
-identity, file/read/access/socket/fcntl errors, empty providers and herror,
-modern addrinfo behavior, `_r` concurrency, fork owner isolation and heap
-exhaustion. Every process exit, raw stdout/stderr comparison, ELF provider,
-DNS event and ordinary installed-driver receipt is retained. Standalone
+cover numeric/local/DNS lookup, ordered DNS callback records, buffer bounds,
+large host records, search and mixed-family failure precedence, reverse
+files/PTR, services and pointer identity, file/read/access/socket/fcntl
+errors, empty providers and herror, modern addrinfo behavior, `_r` concurrency,
+fork owner isolation and heap exhaustion. Every process exit, raw stdout/stderr
+comparison, ELF provider, DNS event and ordinary installed-driver receipt is
+retained. Standalone
 execution requires Docker network-none plus SYS_CHROOT.
 
 The `classic-netdb` dynamic qualification case accepts a supplied installed,
