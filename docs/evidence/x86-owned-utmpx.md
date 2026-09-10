@@ -1,12 +1,12 @@
-# Owned fixed-profile utmpx stubs
+# Owned fixed-profile utmpx compatibility
 
-The native owned runtime has a private six-entry utmpx compatibility leaf in
+The native owned runtime has a private complete `utmpx.c` compatibility leaf in
 `libc/src/c_abi/x86_64/owned_utmpx.rs`. It is selected only when the x86 root
 registers that module under `x86-owned-static-runtime`; the owned dynamic
 product inherits the same owner. This is C ABI compatibility machinery for
 musl's deliberately inert utmpx profile. It does not open files, retain a
-cursor, own records, allocate memory, publish errno, or import the paused
-AArch64 database implementation.
+cursor, own records, allocate memory, or import the paused AArch64 database
+implementation.
 
 ## Source and ownership
 
@@ -20,52 +20,62 @@ owns the MIT license provenance.
 | Musl source | Owned Rust target |
 | --- | --- |
 | `src/legacy/utmpx.c::endutxent` | `owned_utmpx::endutxent` |
+| `src/legacy/utmpx.c::setutxent` | `owned_utmpx::setutxent` |
 | `src/legacy/utmpx.c::getutxent` | `owned_utmpx::getutxent` |
 | `src/legacy/utmpx.c::getutxid` | `owned_utmpx::getutxid` |
 | `src/legacy/utmpx.c::getutxline` | `owned_utmpx::getutxline` |
 | `src/legacy/utmpx.c::pututxline` | `owned_utmpx::pututxline` |
-| `src/legacy/utmpx.c::setutxent` | `owned_utmpx::setutxent` |
+| `src/legacy/utmpx.c::updwtmpx` | `owned_utmpx::updwtmpx` |
+| `src/legacy/utmpx.c::weak_alias(..., endutent)` | assembler alias of `endutxent` |
+| `src/legacy/utmpx.c::weak_alias(..., setutent)` | assembler alias of `setutxent` |
+| `src/legacy/utmpx.c::weak_alias(..., getutent)` | assembler alias of `getutxent` |
+| `src/legacy/utmpx.c::weak_alias(..., getutid)` | assembler alias of `getutxid` |
+| `src/legacy/utmpx.c::weak_alias(..., getutline)` | assembler alias of `getutxline` |
+| `src/legacy/utmpx.c::weak_alias(..., pututline)` | assembler alias of `pututxline` |
+| `src/legacy/utmpx.c::weak_alias(..., updwtmp)` | assembler alias of `updwtmpx` |
+| `src/legacy/utmpx.c::weak_alias(__utmpxname, utmpname)` | weak provider alias |
+| `src/legacy/utmpx.c::weak_alias(__utmpxname, utmpxname)` | assembler alias of `utmpname` |
 
-The two cursor controls are empty functions. `getutxent`, `getutxid`,
-`getutxline`, and `pututxline` return a null `struct utmpx *`. Query and
-record pointers are intentionally ignored, and all six entries leave the
-caller's errno unchanged. The Rust owner uses an ABI-equivalent opaque pointer
-type so it cannot imply a record layout or database state.
-
-The slice deliberately excludes `endutent`, `getutent`, `getutid`,
-`getutline`, `pututline`, `setutent`, `updwtmp`, `updwtmpx`, `utmpname`, and
-`utmpxname`; those aliases and file/database operations are outside this
-bounded owner.
+The seven strong entries are inert: cursor controls and `updwtmpx` return
+without work, while the four record operations return a null `struct utmpx *`.
+All pointer arguments are ignored, including null and unreadable values, so
+these entries leave errno and caller records unchanged. The seven traditional
+utmp names and both database-name names are weak ELF aliases with the same
+addresses as their musl providers. `utmpname` and `utmpxname` return `-1` and
+set errno to `ENOTSUP`; their ignored path is never read. The source's internal
+`__utmpxname` is not exported.
 
 ## Focused evidence
 
-`compat/x86_64/run_owned_utmpx.sh [DYNAMIC_SYSROOT]` is the focused runner.
-The normal dispatcher registration is owned by the x86 integration root. The
-runner first compiles C11 and C++17 witnesses from
-`owned_utmpx_header_abi_probe.c` and `owned_utmpx_header_abi_probe.cpp` against
-both the pinned musl headers and the installed project header. Their typed
-function pointers prove all six declarations and their C++ references retain
-unmangled C linkage.
+`compat/x86_64/run_owned_utmpx.sh [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`
+is the focused runner. It rejects empty or ambiguous product arguments before
+creating evidence, validates every supplied or freshly built product payload,
+and compiles C11 and C++17 witnesses against both pinned musl headers and the
+installed project headers. The witnesses use typed pointers for all seven
+strong and nine weak declarations and retain unmangled C linkage.
 
-It then compiles `owned_utmpx_probe.c` exactly once through the installed
-dynamic driver. That unchanged object links against the pinned static musl
-oracle and the owned static, static-PIE, dynamic PIE, and dynamic non-PIE
-products. Each dynamic executable runs once through its kernel-selected
-interpreter and once through the direct `/lib/ld-crabc-x86_64.so.1` entry, for
-six owned executions plus the musl oracle. The runner checks the six-symbol
-set as one artifact boundary rather than creating per-symbol gates.
+The runner compiles `owned_utmpx_probe.c` exactly once through the installed
+dynamic driver. An installed-header dependency audit records the driver,
+manifest, source, object, and every header dependency. The unchanged object is
+linked against the pinned static musl oracle and each selected owned product:
+static and static-PIE when a static product is available, and dynamic PIE and
+non-PIE through both kernel dispatch and the direct loader. Dynamic-only input
+therefore reports only its supplied dynamic modes. Every owned link carries a
+sealed receipt validated before execution, and raw stdout, stderr, and process
+status are retained alongside the exact symbol multiplicity checks for the
+archive, shared library, and final executables.
 
-The probe seeds errno with `EDOM`, verifies null results for all four record
-operations, verifies that a caller-owned `struct utmpx` remains byte-for-byte
-unchanged, and checks that both cursor controls also preserve errno. A second
-`pututxline` call starts with errno zero and records musl's deliberately
-observed zero result. Every candidate stdout and stderr stream must match
-musl. The initial regression is
-the same installed-header object failing to link against the unregistered
-owned products with six undefined utmpx symbols.
+The probe checks same-address identity for all nine weak aliases. It calls each
+strong and weak spelling with ordinary, null, and protected ignored inputs,
+checks byte-for-byte preservation of caller records and errno, verifies both
+name entries return `-1` with `ENOTSUP`, and retains the observed musl
+`pututxline` call with errno initially zero. Every candidate stream must match
+the pinned musl stream. The original preimplementation RED remains recorded at
+`.work/x86_64/tmp/owned-utmpx.DSceUc`, where the installed-header workload
+failed to link on the six original utmpx names; the expanded source-file slice
+also covers the remaining aliases captured by the final provider checks.
 
-`compat/x86_64/tests/test_owned_utmpx.py` covers the runner's argument and
-physical evidence-directory boundaries without building a product. This
-evidence proves only the six inert entries; it does not claim a utmp database,
-login accounting, broader legacy aliases, runtime-family closure, or public
-x86 support.
+`compat/x86_64/tests/test_owned_utmpx.py` covers argument ambiguity, product
+containment, and the physical evidence-directory boundary without building a
+product. This evidence does not claim a utmp database, login accounting,
+runtime-family closure, or public x86 support.

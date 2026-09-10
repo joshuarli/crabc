@@ -29,7 +29,7 @@ class OwnedUtmpxTests(unittest.TestCase):
             self.assertEqual(result.stdout, "")
             self.assertEqual(
                 result.stderr,
-                f"usage: {RUNNER} [DYNAMIC_SYSROOT]\n",
+                f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n",
             )
 
     def test_product_outside_checkout_work_is_rejected_before_evidence_creation(self) -> None:
@@ -39,7 +39,7 @@ class OwnedUtmpxTests(unittest.TestCase):
             result = self.invoke((str(ROOT),), temporary)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(
-                "owned utmpx dynamic sysroot must be a physical checkout .work directory",
+                "owned-utmpx dynamic product must be a checkout .work directory",
                 result.stderr,
             )
             self.assertEqual(result.stdout, "")
@@ -56,11 +56,28 @@ class OwnedUtmpxTests(unittest.TestCase):
             result = self.invoke((), str(alias))
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(
-                "owned utmpx TMPDIR must be a physical checkout .work directory",
+                "owned-utmpx TMPDIR must be a physical checkout .work directory",
                 result.stderr,
             )
             self.assertEqual(result.stdout, "")
             self.assertEqual(list(real.iterdir()), [])
+
+    def test_same_static_and_dynamic_product_is_ambiguous_before_evidence_creation(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="utmpx-same-product.", dir=scratch) as product:
+            product_path = Path(product)
+            with tempfile.TemporaryDirectory(prefix="utmpx-parser.", dir=scratch) as temporary:
+                result = self.invoke(
+                    ("--static-sysroot", str(product_path), str(product_path)), temporary
+                )
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertEqual(
+                    result.stderr,
+                    f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n",
+                )
+                self.assertEqual(list(Path(temporary).iterdir()), [])
 
 
 if __name__ == "__main__":

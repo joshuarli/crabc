@@ -1,40 +1,125 @@
 #!/usr/bin/env bash
-# Same installed-header utmpx object through pinned musl and owned x86 entries.
+# Complete installed-header utmpx behavior against pinned musl 1.2.6.
+#
+# One C object compiled through the installed dynamic driver is linked by the
+# pinned musl oracle and every selected owned product mode. Probe output
+# retains raw stdout, stderr, and process status before its
+# exact stream comparison is accepted.
 set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly PROBE="$ROOT/compat/x86_64/owned_utmpx_probe.c"
-readonly HEADER_C="$ROOT/compat/x86_64/owned_utmpx_header_abi_probe.c"
-readonly HEADER_CXX="$ROOT/compat/x86_64/owned_utmpx_header_abi_probe.cpp"
+readonly oracle_cc=/usr/local/bin/crabc-x86_64-musl-gcc
+readonly probe="$ROOT/compat/x86_64/owned_utmpx_probe.c"
+readonly header_c="$ROOT/compat/x86_64/owned_utmpx_header_abi_probe.c"
+readonly header_cxx="$ROOT/compat/x86_64/owned_utmpx_header_abi_probe.cpp"
+readonly interpreter=/lib/ld-crabc-x86_64.so.1
+declare -a link_identity_records=()
 
-[ "$#" -le 1 ] || {
-    printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
+usage() {
+    printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
 }
-provided_dynamic="${1:-}"
-if [ -n "$provided_dynamic" ]; then
+
+fail() {
+    printf 'owned utmpx: %s\n' "$*" >&2
+    exit 1
+}
+
+provided_static=''
+provided_dynamic=''
+static_was_supplied=0
+dynamic_was_supplied=0
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --static-sysroot)
+            [ "$#" -ge 2 ] || usage
+            [ "$static_was_supplied" -eq 0 ] || usage
+            [ -n "$2" ] || usage
+            case "$2" in -*) usage ;; esac
+            provided_static="$2"
+            static_was_supplied=1
+            shift 2
+            ;;
+        -*|'')
+            usage
+            ;;
+        *)
+            [ "$dynamic_was_supplied" -eq 0 ] || usage
+            provided_dynamic="$1"
+            dynamic_was_supplied=1
+            shift
+            ;;
+    esac
+done
+if [ "$static_was_supplied" -eq 1 ]; then
+    provided_static="$(realpath "$provided_static")"
+fi
+if [ "$dynamic_was_supplied" -eq 1 ]; then
     provided_dynamic="$(realpath "$provided_dynamic")"
 fi
+if [ "$static_was_supplied" -eq 1 ] && [ "$dynamic_was_supplied" -eq 1 ] &&
+        [ "$provided_static" = "$provided_dynamic" ]; then
+    usage
+fi
 
-python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_dynamic" <<'PY'
+# Supplied paths must name contained physical products before this runner makes
+# its disposable evidence directory. The shared validator below separately
+# checks each product payload again while binding every output receipt.
+python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_static" "$provided_dynamic" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve()
+temporary = Path(sys.argv[2])
+static_product = Path(sys.argv[3]) if sys.argv[3] else None
+dynamic_product = Path(sys.argv[4]) if sys.argv[4] else None
+if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / '.work'):
+    raise SystemExit('owned-utmpx TMPDIR must be a physical checkout .work directory')
+for product, name in ((static_product, 'static'), (dynamic_product, 'dynamic')):
+    if product and (not product.is_dir() or product.resolve() != product or not product.is_relative_to(root / '.work')):
+        raise SystemExit(f'owned-utmpx {name} product must be a checkout .work directory')
+PY
+
+validate_product_payload() {
+    local product="$1" family="$2"
+
+    python3 -B - "$ROOT" "$product" "$family" <<'PY'
 from pathlib import Path
 import sys
 
 root = Path(sys.argv[1])
-temporary = Path(sys.argv[2])
-product = Path(sys.argv[3]) if sys.argv[3] else None
-if not temporary.is_dir() or temporary.resolve() != temporary or not temporary.is_relative_to(root / '.work'):
-    raise SystemExit('owned utmpx TMPDIR must be a physical checkout .work directory')
-if product and (not product.is_dir() or product.resolve() != product or not product.is_relative_to(root / '.work')):
-    raise SystemExit('owned utmpx dynamic sysroot must be a physical checkout .work directory')
+product = Path(sys.argv[2])
+family = sys.argv[3]
+sys.path.insert(0, str(root / 'compat/x86_64'))
+from owned_posix_product_evidence import (
+    ProductEvidenceError,
+    _validate_dynamic_product,
+    _validate_static_product,
+)
+
+try:
+    if family == 'static':
+        _validate_static_product(product)
+    elif family == 'dynamic':
+        _validate_dynamic_product(product)
+    else:
+        raise SystemExit(f'owned-utmpx has an unknown product family: {family}')
+except ProductEvidenceError as error:
+    raise SystemExit(f'owned-utmpx {family} product payload is invalid: {error}') from error
 PY
+}
+
+if [ "$static_was_supplied" -eq 1 ]; then
+    validate_product_payload "$provided_static" static
+fi
+if [ "$dynamic_was_supplied" -eq 1 ]; then
+    validate_product_payload "$provided_dynamic" dynamic
+fi
 
 readonly work="$(mktemp -d "$TMPDIR/owned-utmpx.XXXXXX")"
 chmod a+rx "$work"
 printf 'owned utmpx evidence: %s\n' "$work"
-mkdir -p "$work/root"
 
 compile_header_witnesses() {
     local tree="$1" include_root="$2"
@@ -44,30 +129,29 @@ compile_header_witnesses() {
     local cxx_object="$work/$tree-header-cxx.o"
     if [ -n "$include_root" ]; then include_args=(-I "$include_root"); fi
 
-    "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -fno-builtin "${include_args[@]}" \
-        -H -c "$HEADER_C" -o "$c_object" >/dev/null 2>"$trace"
+    "$oracle_cc" -std=c11 -D_GNU_SOURCE -fno-builtin "${include_args[@]}" \
+        -H -c "$header_c" -o "$c_object" >/dev/null 2>"$trace"
     if [ "$tree" = project ]; then
         grep -Fq "$ROOT/include/utmpx.h" "$trace" || {
             printf 'owned utmpx header witness did not use project utmpx.h\n' >&2
             return 1
         }
     fi
-    "$ORACLE_CC" -x c++ -std=c++17 -D_GNU_SOURCE -fno-builtin -nostdinc++ \
-        "${include_args[@]}" -c "$HEADER_CXX" -o "$cxx_object"
+    "$oracle_cc" -x c++ -std=c++17 -D_GNU_SOURCE -fno-builtin -nostdinc++ \
+        "${include_args[@]}" -c "$header_cxx" -o "$cxx_object"
     python3 -B - "$c_object" "$cxx_object" <<'PY'
 from pathlib import Path
 import subprocess
 import sys
 
 expected = {
-    'endutxent', 'getutxent', 'getutxid', 'getutxline', 'pututxline',
-    'setutxent',
+    'endutxent', 'setutxent', 'getutxent', 'getutxid', 'getutxline',
+    'pututxline', 'updwtmpx', 'endutent', 'setutent', 'getutent',
+    'getutid', 'getutline', 'pututline', 'updwtmp', 'utmpname', 'utmpxname',
 }
 for filename in sys.argv[1:]:
     lines = subprocess.check_output(['nm', '--undefined-only', filename], text=True)
-    names = {
-        line.split()[-1] for line in lines.splitlines() if line.split()
-    } & expected
+    names = {line.split()[-1] for line in lines.splitlines() if line.split()} & expected
     if names != expected:
         raise SystemExit(f'{filename}: header witness references {sorted(names)!r}')
 PY
@@ -75,97 +159,366 @@ PY
 
 compile_header_witnesses oracle ""
 compile_header_witnesses project "$ROOT/include"
-sha256sum "$HEADER_C" "$HEADER_CXX" "$work"/*-header-*.o >"$work/header-input.sha256"
+sha256sum "$header_c" "$header_cxx" "$work"/*-header-*.o >"$work/header-input.sha256"
 
-build_static=0
-if [ -z "$provided_dynamic" ]; then
-    build_static=1
-    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
-        --output "$work/static-sysroot" >"$work/static-build.json"
-    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
-        --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
-    provided_dynamic="$work/dynamic-sysroot"
-fi
+run_capture() {
+    local output="$1" status
+    shift
 
-# Compile this C object once through the installed driver. Every musl, static,
-# and dynamic final link below consumes the unchanged object bytes.
-"$provided_dynamic/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-    -c "$PROBE" -o "$work/workload.o"
-sha256sum "$PROBE" "$work/workload.o" >"$work/input.sha256"
-
-assert_symbol_set() {
-    local artifact="$1" selector="$2" report="$3"
-    if [ "$selector" = nm ]; then
-        nm -g --defined-only "$artifact" >"$report"
+    if timeout 20 env -i PATH="$PATH" "$@" >"$output" 2>"${output%.stdout}.stderr"; then
+        status=0
     else
-        readelf --dyn-syms --wide "$artifact" >"$report"
+        status=$?
     fi
-    python3 -B - "$report" "$selector" <<'PY'
+    printf '%s\n' "$status" >"${output%.stdout}.status"
+    [ "$status" -eq 0 ] || fail "expected success, got ${status}: $*"
+}
+
+compare_oracle() {
+    local label="$1" scenario="$2"
+
+    cmp "$work/oracle-$scenario.stdout" "$work/$label-$scenario.stdout" ||
+        fail "stdout differs from pinned musl for ${label}/${scenario}"
+    cmp "$work/oracle-$scenario.stderr" "$work/$label-$scenario.stderr" ||
+        fail "stderr differs from pinned musl for ${label}/${scenario}"
+    cmp "$work/oracle-$scenario.status" "$work/$label-$scenario.status" ||
+        fail "status differs from pinned musl for ${label}/${scenario}"
+}
+
+prepare_root() {
+    local root="$1"
+
+    mkdir -p "$root/state" "$root/dev"
+    [ -e "$root/dev/null" ] || mknod "$root/dev/null" c 1 3
+}
+
+assert_archive_symbols() {
+    local archive="$1" symbols="$2"
+    nm -g --defined-only "$archive" >"$symbols"
+    python3 -B - "$symbols" <<'PY'
+from collections import Counter
+from pathlib import Path
+import sys
+
+strong = {
+    'endutxent', 'setutxent', 'getutxent', 'getutxid', 'getutxline',
+    'pututxline', 'updwtmpx',
+}
+weak = {
+    'endutent', 'setutent', 'getutent', 'getutid', 'getutline',
+    'pututline', 'updwtmp', 'utmpname', 'utmpxname',
+}
+strong_seen = Counter()
+weak_seen = Counter()
+text = Path(sys.argv[1]).read_text()
+for line in text.splitlines():
+    fields = line.split()
+    if len(fields) != 3:
+        continue
+    _, binding, name = fields
+    if name in strong and binding == 'T':
+        strong_seen[name] += 1
+    if name in weak and binding == 'W':
+        weak_seen[name] += 1
+if strong_seen != Counter({name: 1 for name in strong}):
+    raise SystemExit(f'archive strong providers mismatch: {strong_seen!r}')
+if weak_seen != Counter({name: 1 for name in weak}):
+    raise SystemExit(f'archive weak aliases mismatch: {weak_seen!r}')
+if '__utmpxname' in text:
+    raise SystemExit('archive leaked musl internal __utmpxname')
+PY
+}
+
+assert_shared_symbols() {
+    local library="$1" symbols="$2"
+    readelf --dyn-syms --wide "$library" >"$symbols"
+    python3 -B - "$symbols" <<'PY'
+from collections import Counter
+from pathlib import Path
+import sys
+
+strong = {
+    'endutxent', 'setutxent', 'getutxent', 'getutxid', 'getutxline',
+    'pututxline', 'updwtmpx',
+}
+weak = {
+    'endutent', 'setutent', 'getutent', 'getutid', 'getutline',
+    'pututline', 'updwtmp', 'utmpname', 'utmpxname',
+}
+strong_seen = Counter()
+weak_seen = Counter()
+text = Path(sys.argv[1]).read_text()
+for line in text.splitlines():
+    fields = line.split()
+    if len(fields) < 8:
+        continue
+    kind, binding, visibility, index, name = fields[3:8]
+    if kind != 'FUNC' or visibility != 'DEFAULT' or index == 'UND':
+        continue
+    if name in strong and binding == 'GLOBAL':
+        strong_seen[name] += 1
+    if name in weak and binding == 'WEAK':
+        weak_seen[name] += 1
+if strong_seen != Counter({name: 1 for name in strong}):
+    raise SystemExit(f'shared strong providers mismatch: {strong_seen!r}')
+if weak_seen != Counter({name: 1 for name in weak}):
+    raise SystemExit(f'shared weak aliases mismatch: {weak_seen!r}')
+if '__utmpxname' in text:
+    raise SystemExit('shared library leaked musl internal __utmpxname')
+PY
+}
+
+assert_executable_symbols() {
+    local executable="$1" symbols="$2"
+    nm -g --defined-only "$executable" >"$symbols"
+    python3 -B - "$symbols" <<'PY'
+from collections import Counter
 from pathlib import Path
 import sys
 
 expected = {
-    'endutxent', 'getutxent', 'getutxid', 'getutxline', 'pututxline',
-    'setutxent',
+    'endutxent', 'setutxent', 'getutxent', 'getutxid', 'getutxline',
+    'pututxline', 'updwtmpx', 'endutent', 'setutent', 'getutent',
+    'getutid', 'getutline', 'pututline', 'updwtmp', 'utmpname', 'utmpxname',
 }
-lines = Path(sys.argv[1]).read_text().splitlines()
-selector = sys.argv[2]
-if selector == 'nm':
-    names = {
-        fields[2] for fields in (line.split() for line in lines)
-        if len(fields) == 3 and fields[1] == 'T' and fields[2] in expected
-    }
-else:
-    names = {
-        fields[7] for fields in (line.split() for line in lines)
-        if len(fields) == 8
-        and fields[3:6] == ['FUNC', 'GLOBAL', 'DEFAULT']
-        and fields[6] != 'UND' and fields[7] in expected
-    }
-if names != expected:
-    raise SystemExit(f'{selector} symbol set mismatch: {sorted(names)!r}')
+seen = Counter()
+for line in Path(sys.argv[1]).read_text().splitlines():
+    fields = line.split()
+    if len(fields) == 3 and fields[2] in expected and fields[1] in {'T', 'W'}:
+        seen[fields[2]] += 1
+if seen != Counter({name: 1 for name in expected}):
+    raise SystemExit(f'executable provider multiplicity mismatch: {seen!r}')
 PY
 }
 
-run_probe() {
-    timeout 30 env -i PATH="$PATH" chroot "$work/root" "$@"
+# The common validator owns both receipt schemas. Persisting its return value
+# retains the exact product, workload, output, and receipt identities used for
+# each executable; it also proves the static no-DSO boundary and the dynamic
+# no-foreign-import/application-DSO boundary before a process executes.
+validate_sealed_link() {
+    local product="$1" workload="$2" executable="$3" receipt="$4" linkage="$5"
+    local identity="$work/$linkage.link-identity.json"
+
+    python3 -B - "$ROOT" "$product" "$workload" "$executable" "$receipt" \
+        "$linkage" >"$identity" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / 'compat/x86_64'))
+from owned_posix_product_evidence import ProductEvidenceError
+from owned_posix_product_evidence import validate_link
+
+try:
+    identity = validate_link(
+        Path(sys.argv[2]), Path(sys.argv[3]), Path(sys.argv[4]), Path(sys.argv[5]), sys.argv[6]
+    )
+except ProductEvidenceError as error:
+    raise SystemExit(f'owned-utmpx sealed link evidence: {error}') from error
+json.dump(identity, sys.stdout, indent=2, sort_keys=True)
+sys.stdout.write('\n')
+PY
+    link_identity_records+=("$linkage:$identity")
 }
 
-compare() {
-    local label="$1"
-    shift
-    run_probe "$@" >"$work/$label.stdout" 2>"$work/$label.stderr"
-    cmp "$work/oracle.stdout" "$work/$label.stdout"
-    cmp "$work/oracle.stderr" "$work/$label.stderr"
+retain_link_identities() {
+    python3 -B - "$work/link-identities.json" "$@" -- "${link_identity_records[@]}" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+expected_fields = {
+    'linkage', 'product', 'product_format', 'product_manifest_sha256',
+    'workload_sha256', 'executable_sha256', 'receipt_sha256',
+}
+separator = sys.argv.index('--')
+expected_linkages = set(sys.argv[2:separator])
+if not expected_linkages:
+    raise SystemExit('retained owned-utmpx link identities have no expected modes')
+records = {}
+for item in sys.argv[separator + 1:]:
+    linkage, raw_path = item.split(':', 1)
+    if linkage in records:
+        raise SystemExit(f'duplicate retained link identity: {linkage}')
+    try:
+        identity = json.loads(Path(raw_path).read_text(encoding='utf-8'))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise SystemExit(f'retained {linkage} link identity is unreadable: {error}') from error
+    if not isinstance(identity, dict) or set(identity) != expected_fields:
+        raise SystemExit(f'retained {linkage} link identity fields drifted')
+    if identity['linkage'] != linkage:
+        raise SystemExit(f'retained {linkage} link identity linkage drifted')
+    records[linkage] = identity
+if set(records) != expected_linkages:
+    raise SystemExit('retained owned-utmpx link identities omit a product mode')
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {
+            'schema': 'crabc.x86_64-owned-utmpx-link-identities/v1',
+            'expected_linkages': sorted(expected_linkages),
+            'links': records,
+        },
+        indent=2,
+        sort_keys=True,
+    ) + '\n',
+    encoding='utf-8',
+)
+PY
 }
 
-"$ORACLE_CC" -static -fno-pie -no-pie "$work/workload.o" -o "$work/root/oracle"
-assert_symbol_set "$work/root/oracle" nm "$work/oracle-symbols.txt"
-run_probe /oracle >"$work/oracle.stdout" 2>"$work/oracle.stderr"
-
-if [ "$build_static" -eq 1 ]; then
-    # The baseline fails at these links because the installed header declares
-    # the six symbols before the owned leaf is registered.
-    for mode in static static-pie; do
-        "$work/static-sysroot/bin/crabc-cc" "-$mode" "$work/workload.o" \
-            -o "$work/root/$mode"
-        assert_symbol_set "$work/root/$mode" nm "$work/$mode-symbols.txt"
-        compare "$mode" "/$mode"
-    done
-    assert_symbol_set "$work/static-sysroot/usr/lib/libc.a" nm \
-        "$work/archive-symbols.txt"
+# Build the dynamic product first so its installed driver emits the one object
+# consumed unchanged by pinned musl, static/static-PIE, and dynamic PIE/non-PIE
+# links. Supplied products replace only their own product creation.
+if [ "$dynamic_was_supplied" -eq 0 ]; then
+    python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
+        --output "$work/dynamic-sysroot" >"$work/dynamic-build.json"
+    provided_dynamic="$work/dynamic-sysroot"
 fi
+readonly installed="$(realpath "$provided_dynamic")"
+validate_product_payload "$installed" dynamic
 
-assert_symbol_set "$provided_dynamic/usr/lib/libc.so" readelf \
-    "$work/dynamic-symbols.txt"
-cp -a "$provided_dynamic/." "$work/root/"
-for mode in pie non-pie; do
-    "$provided_dynamic/bin/crabc-cc-dynamic" "--dynamic-$mode" \
-        "$work/workload.o" -o "$work/root/dynamic-$mode"
-    compare "dynamic-$mode-kernel" "/dynamic-$mode"
-    compare "dynamic-$mode-direct" /lib/ld-crabc-x86_64.so.1 "/dynamic-$mode"
+"$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+    -c "$probe" -o "$work/workload.o"
+python3 -B - "$installed" "$work" "$probe" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+product, work, source = map(Path, sys.argv[1:])
+source_path = source.resolve(strict=True)
+workload = work / 'workload.o'
+headers = (product / 'usr/include').resolve(strict=True)
+# Repeat only preprocessing with the installed driver's source translator and
+# sanitized environment. The linked workload remains the object emitted by the
+# installed driver above; this checks its header boundary without replacing it.
+sys.path.insert(0, str(product / 'share/crabc'))
+import crabc_cc_static as compiler_contract
+
+dependency_command = [compiler_contract.compiler(), '-nostdinc', '-isystem', str(headers),
+    '-std=c11', '-ffreestanding', '-fno-builtin', '-fstack-protector-strong', '-fPIE', '-M', str(source_path)]
+dependency_file = work / 'workload.d'
+with dependency_file.open('xb') as output:
+    subprocess.run(
+        dependency_command,
+        check=True,
+        env=compiler_contract.clean_environment(),
+        stdin=subprocess.DEVNULL,
+        stdout=output,
+    )
+try:
+    dependencies = dependency_file.read_text(encoding='utf-8').replace('\\\n', ' ').split(':', 1)[1].split()
+except (IndexError, UnicodeDecodeError) as error:
+    raise SystemExit(f'owned-utmpx installed-driver dependency output is invalid: {error}') from error
+if not dependencies:
+    raise SystemExit('owned-utmpx installed-driver dependency output is empty')
+dependency_paths = []
+for name in dependencies:
+    path = Path(name).resolve(strict=True)
+    if path != source_path and not path.is_relative_to(headers):
+        raise SystemExit(f'owned-utmpx dependency escaped the installed headers: {path}')
+    dependency_paths.append(path)
+if source_path not in dependency_paths:
+    raise SystemExit('owned-utmpx dependency output omits the workload source')
+
+def digest(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+record = {
+    'schema': 'crabc.x86_64-owned-utmpx-compile/v1',
+    'driver_sha256': digest(product / 'bin/crabc-cc-dynamic'),
+    'manifest_sha256': digest(product / 'share/crabc/manifest.json'),
+    'source_sha256': digest(source_path),
+    'object_sha256': digest(workload),
+    'dependency_audit_command': dependency_command,
+    'dependencies': {str(path): digest(path) for path in dependency_paths},
+}
+(work / 'compile.json').write_text(
+    json.dumps(record, indent=2, sort_keys=True) + '\n', encoding='utf-8'
+)
+PY
+"$oracle_cc" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
+prepare_root "$work/oracle-root"
+for scenario in ordinary; do
+    cp "$work/oracle" "$work/oracle-root/consumer"
+    run_capture "$work/oracle-$scenario.stdout" \
+        chroot "$work/oracle-root" /consumer "$scenario"
 done
 
+# A supplied static product retains its static/static-PIE replay even when a
+# dynamic product is supplied. Dynamic-only qualification skips static product
+# construction; zero arguments retain both disposable product builds.
+static_product=''
+if [ "$static_was_supplied" -eq 1 ]; then
+    static_product="$provided_static"
+elif [ "$dynamic_was_supplied" -eq 0 ]; then
+    python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
+        --output "$work/static-sysroot" >"$work/static-build.json"
+    static_product="$work/static-sysroot"
+fi
+if [ -n "$static_product" ]; then
+    validate_product_payload "$static_product" static
+    assert_archive_symbols "$static_product/usr/lib/libc.a" "$work/archive-symbols.txt"
+    for mode in static static-pie; do
+        candidate="$work/static-$mode"
+        receipt="$candidate.receipt.json"
+        (
+            cd "$work"
+            "$static_product/bin/crabc-cc" "-$mode" \
+                --link-receipt "$(basename "$receipt")" "$work/workload.o" -o "$candidate"
+        )
+        validate_sealed_link "$static_product" "$work/workload.o" "$candidate" "$receipt" "$mode"
+        assert_executable_symbols "$candidate" "$work/$mode-symbols.txt"
+        root="$work/static-$mode-root"
+        prepare_root "$root"
+        cp "$candidate" "$root/consumer"
+        for scenario in ordinary; do
+            run_capture "$work/static-$mode-$scenario.stdout" \
+                chroot "$root" /consumer "$scenario"
+            compare_oracle "static-$mode" "$scenario"
+        done
+    done
+fi
+
+assert_shared_symbols "$installed/usr/lib/libc.so" "$work/dynamic-symbols.txt"
+for mode in pie non-pie; do
+    candidate="$work/dynamic-$mode"
+    "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$candidate"
+    receipt="$candidate.crabc-link.json"
+    validate_sealed_link "$installed" "$work/workload.o" "$candidate" "$receipt" "$mode"
+    assert_executable_symbols "$candidate" "$work/dynamic-$mode-symbols.txt"
+    root="$work/dynamic-$mode-root"
+    mkdir -p "$root"
+    cp -a "$installed/." "$root/"
+    prepare_root "$root"
+    cp "$candidate" "$root/consumer"
+    for scenario in ordinary; do
+        run_capture "$work/dynamic-$mode-kernel-$scenario.stdout" \
+            chroot "$root" /consumer "$scenario"
+        compare_oracle "dynamic-$mode-kernel" "$scenario"
+        run_capture "$work/dynamic-$mode-direct-$scenario.stdout" \
+            chroot "$root" "$interpreter" /consumer "$scenario"
+        compare_oracle "dynamic-$mode-direct" "$scenario"
+    done
+done
+
+if [ -n "$static_product" ]; then
+    retain_link_identities static static-pie pie non-pie
+else
+    retain_link_identities pie non-pie
+fi
+if [ "$static_was_supplied" -eq 1 ] && [ "$dynamic_was_supplied" -eq 1 ]; then
+    matrix='provided static/static-PIE plus provided dynamic PIE/non-PIE kernel/direct'
+elif [ "$static_was_supplied" -eq 1 ]; then
+    matrix='provided static/static-PIE plus disposable dynamic PIE/non-PIE kernel/direct'
+elif [ "$dynamic_was_supplied" -eq 1 ]; then
+    matrix='provided dynamic PIE/non-PIE kernel/direct'
+else
+    matrix='disposable static/static-PIE plus dynamic PIE/non-PIE kernel/direct'
+fi
 sha256sum -c "$work/header-input.sha256" >"$work/header-input-verified.txt"
 sha256sum -c "$work/input.sha256" >"$work/input-verified.txt"
-printf 'owned utmpx: PASS (same installed-header object; pinned musl and selected owned entries; C/C++ declarations and unmangled linkage, six inert source stubs, unchanged errno and caller input, and static/static-PIE/dynamic PIE/non-PIE kernel/direct execution); evidence: %s\n' "$work"
+printf 'owned utmpx: PASS (one installed-header object through pinned musl; %s; seven strong providers, nine weak same-address aliases, C/C++ declarations, null/unreadable ignored inputs, ENOTSUP name results, unchanged errno and caller input, raw status/stdout/stderr and sealed link identities retained); evidence: %s\n' \
+    "$matrix" "$work"
