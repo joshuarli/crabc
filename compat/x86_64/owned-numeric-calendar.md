@@ -19,8 +19,10 @@ boundary without changing the current thread locale, and narrow
 `strtof`/`strtod`/`strtold` with `wcstof`/`wcstod`/`wcstold`. Long double
 comparisons are semantic; the object never inspects ABI padding.
 
-The time half observes normalized realtime and monotonic records without
-recording an exact wall-clock value. It uses only explicit POSIX `TZ` strings:
+The time half observes individually normalized realtime records and
+nondecreasing monotonic records without ordering the externally adjustable
+realtime calls or recording an exact wall-clock value. It uses only explicit
+POSIX `TZ` strings:
 `UTC0` checks a leap-year civil-date normalization and a
 `strftime`→`strptime`→`mktime` round trip, while a fixed `EST5EDT` rule checks
 winter and summer local conversions, offsets, names, and DST flags. It never

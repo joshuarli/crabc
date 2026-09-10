@@ -130,10 +130,8 @@ static int clocks(void)
         clock_gettime(CLOCK_REALTIME, &realtime_after) != 0 ||
         !valid_timespec(&realtime_after))
         return 22;
-    /* Realtime is externally adjustable.  It contributes only normalized
-     * structure and a loose whole-second relation, never an exact transcript. */
-    if (observed < realtime_before.tv_sec - 1 || observed > realtime_after.tv_sec + 1)
-        return 23;
+    /* Realtime is externally adjustable.  These calls prove only normalized
+     * records; they never establish an ordering or exact wall-clock transcript. */
     return 0;
 }
 
@@ -195,12 +193,17 @@ static int calendar(void)
 
 int main(void)
 {
-    if (numeric_locale() != 0)
-        return 80;
-    if (clocks() != 0)
-        return 81;
-    if (calendar() != 0)
-        return 82;
+    int status;
+
+    status = numeric_locale();
+    if (status != 0)
+        return status;
+    status = clocks();
+    if (status != 0)
+        return status;
+    status = calendar();
+    if (status != 0)
+        return status;
     puts("owned-numeric-calendar-products-ok");
     return 0;
 }
