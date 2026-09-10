@@ -339,6 +339,31 @@ def load_feature_archive_roster(
     )
 
 
+def selected_baseline_callables(
+    archive: FeatureArchive, rows: Sequence[FeatureArchive], static_exports: Iterable[str]
+) -> set[str]:
+    """Resolve only providers already selected by an archive's dependencies.
+
+    A replacement preserves the unique original provider in callable accounting.
+    Its variant can replace either a default symbol or a dependency's addition;
+    a provider in an unrelated feature cannot authorize that replacement.
+    """
+    by_id = {row.identifier: row for row in rows}
+    selected = set(static_exports)
+    pending = list(archive.baseline_features)
+    visited: set[str] = set()
+    while pending:
+        identifier = pending.pop()
+        if identifier in visited:
+            continue
+        require(identifier in by_id, f"selected baseline omits feature {identifier}")
+        visited.add(identifier)
+        dependency = by_id[identifier]
+        selected.update(dependency.additive_callables)
+        pending.extend(dependency.baseline_features)
+    return selected
+
+
 def validate_ledger_bindings(
     rows: Sequence[FeatureArchive],
     *,
@@ -406,10 +431,11 @@ def validate_ledger_bindings(
             )
             previous = additive_owners.setdefault(name, row.identifier)
             require(previous == row.identifier, f"feature archive callable {name} has multiple owners")
+        baseline = selected_baseline_callables(row, rows, static_export_set)
         for name in row.replacement_callables:
             require(
-                name in static_export_set,
-                f"feature archive {row.identifier} replacement callable {name} is not default-static",
+                name in baseline,
+                f"feature archive {row.identifier} replacement callable {name} is not in its selected baseline",
             )
         for alias in row.aliases:
             previous = alias_owners.setdefault(alias.name, row.identifier)
@@ -444,9 +470,10 @@ def partition_candidate_callables(
             require(name not in owned, f"feature archive callable {name} is not exclusively owned")
             owned.add(name)
         replacement_members = tuple(row.replacement_callables)
+        baseline = selected_baseline_callables(row, rows, static_export_set)
         for name in replacement_members:
             require(name in candidates, f"feature archive {row.identifier} replacement callable {name} is not header-declared")
-            require(name in static_export_set, f"feature archive {row.identifier} replacement callable {name} is not default-static")
+            require(name in baseline, f"feature archive {row.identifier} replacement callable {name} is not in its selected baseline")
         for alias in row.aliases:
             if alias.name in candidates:
                 require(

@@ -48076,7 +48076,7 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "static_c_abi.rs"
     ).read_text(encoding="utf-8")
     require(
-        '#[cfg(feature = "x86-legacy-misc")]\n#[path = "legacy_misc.rs"]\nmod legacy_misc;'
+        '#[cfg(all(feature = "x86-legacy-misc", not(feature = "x86-owned-static-runtime")))]\n#[path = "legacy_misc.rs"]\nmod legacy_misc;'
         in static_root,
         "legacy.misc owner must remain behind its dedicated opt-in root gate",
     )

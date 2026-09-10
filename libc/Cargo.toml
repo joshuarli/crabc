@@ -55,7 +55,7 @@ x86-owned-static-runtime = [
     "x86-ualarm",
     "x86-sched-rr-interval",
     "x86-netdb-setent",
-    "x86-legacy-des-compat",
+    "x86-legacy-misc",
     "x86-a64l",
     "x86-memory-special",
 ]

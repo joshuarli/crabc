@@ -81,6 +81,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "x86-h-errno",
                 "x86-interval-timers",
                 "x86-legacy-des-compat",
+                "x86-legacy-misc",
                 "x86-math-long-double-completion",
                 "x86-memory-special",
                 "x86-netdb-setent",
@@ -318,6 +319,8 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "shm_unlink",
                 "statx",
                 "stime",
+                "strfmon",
+                "strfmon_l",
                 "strftime",
                 "strftime_l",
                 "strptime",
@@ -390,6 +393,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "fgets",
                 "fileno",
                 "fileno_unlocked",
+                "fmtmsg",
                 "fopen",
                 "fpathconf",
                 "fputc",
@@ -611,20 +615,26 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             for item in ROSTER.load_feature_archive_roster()
             if item.identifier in {"x86-owned-static-runtime", "x86-owned-dynamic-runtime"}
         )
+        import tomllib
+        data = tomllib.loads((ROOT / "compat/x86_64/parity.toml").read_text())
+        records = {record["id"]: record for family in data["family"]
+                   for key in ("verified_slice", "verified_artifact")
+                   for record in family.get(key, [])}
+        all_rows = ROSTER.load_feature_archive_roster()
         report = ROSTER.validate_ledger_bindings(
-            planned_products,
+            all_rows,
             static_exports=(ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
             .read_text(encoding="utf-8")
             .split(),
-            verified_records={},
+            verified_records=records,
             dispatcher_path=ROOT / "scripts" / "dev-x86_64.sh",
         )
         self.assertEqual(
             report,
             {
-                "feature_archive_count": len(planned_products),
+                "feature_archive_count": len(all_rows),
                 "planned_feature_archive_count": len(planned_products),
-                "verified_feature_archive_count": 0,
+                "verified_feature_archive_count": len(all_rows) - len(planned_products),
             },
         )
 
@@ -640,6 +650,28 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             "baseline does not match its Cargo feature dependency closure",
         ):
             ROSTER.parse_feature_archive_roster(rows, cargo_features)
+
+    def test_replacement_requires_a_provider_in_the_selected_dependency_baseline(self) -> None:
+        cargo_features = {"x86-owned": ("x86-leaf",), "x86-leaf": (), "x86-other": ()}
+        rows = ROSTER.parse_feature_archive_roster([
+            row("x86-owned", state="planned", baseline_features=["x86-leaf"],
+                replacement_callables=["fmtmsg"]),
+            row("x86-leaf", additive_callables=["fmtmsg"]),
+            row("x86-other", additive_callables=["unrelated"]),
+        ], cargo_features)
+        partition = ROSTER.partition_candidate_callables(
+            rows, candidate_callables={"fmtmsg", "unrelated"}, static_exports=set(),
+        )
+        self.assertEqual(partition.verified_feature_archives[0][1], ("fmtmsg",))
+        self.assertEqual(partition.replacement_variants, ((rows[0], ("fmtmsg",)),))
+        self.assertEqual(partition.unprovided, ())
+        self.assertEqual(partition.declared_unverified_feature_archives[0][1], ())
+        from dataclasses import replace
+        invalid = (replace(rows[0], replacement_callables=("unrelated",)), *rows[1:])
+        with self.assertRaisesRegex(ROSTER.FeatureArchiveRosterError, "selected baseline"):
+            ROSTER.partition_candidate_callables(
+                invalid, candidate_callables={"fmtmsg", "unrelated"}, static_exports=set(),
+            )
 
     def test_partition_rejects_default_static_additive_ownership(self) -> None:
         cargo_features = {"x86-extra": ()}

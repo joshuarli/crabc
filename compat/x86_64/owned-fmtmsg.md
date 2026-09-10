@@ -71,3 +71,11 @@ owned execution forms. Its workload SHA-256 is
 to the initial missing-symbol regression object. The separate replay/containment
 suite passed three tests. This proves the named `fmtmsg` boundary, not an
 unrelated campaign or public-support promotion.
+
+The owned feature selects `x86-legacy-misc` as its dependency baseline and
+records `fmtmsg` as a replacement supplied by `owned_fmtmsg.rs`. The older
+`legacy_misc.rs` provider is selected only outside owned products. Callable
+accounting keeps the dependency's single original provider and records the
+owned replacement independently; this does not reuse the older piece writer's
+behavioral evidence. The mandatory `fmtmsg` dynamic qualification case checks
+each installed and extracted product's four entries.

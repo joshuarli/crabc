@@ -107,7 +107,7 @@ bash "$ROOT_DIR/compat/x86_64/run_libc_issetugid.sh" >/dev/null
 
 [ -f "$LEGACY_MISC_ROOT" ] || fail "missing target-local legacy.misc fmtmsg owner"
 [ -f "$LEGACY_DES_ROOT" ] || fail "missing shared target-local inert DES owner"
-grep -Fq '#[cfg(feature = "x86-legacy-misc")]' "$STATIC_C_ABI_ROOT" ||
+grep -Fq '#[cfg(all(feature = "x86-legacy-misc", not(feature = "x86-owned-static-runtime")))]' "$STATIC_C_ABI_ROOT" ||
     fail "legacy.misc is not opt-in at the selected-static root"
 grep -Fq 'mod legacy_misc;' "$STATIC_C_ABI_ROOT" ||
     fail "selected-static root does not compose the opt-in legacy.misc owner"

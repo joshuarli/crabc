@@ -82,6 +82,7 @@ CASES = {
     "regex": ("run_owned_regex.sh", None),
     "wide-calendar": ("run_owned_wcsftime.sh", None),
     "monetary": ("run_owned_strfmon.sh", None),
+    "fmtmsg": ("run_owned_fmtmsg.sh", None),
     "classic-netdb": ("run_owned_classic_netdb.sh", None),
     "posix-filesystem": ("run_owned_posix_filesystem.sh", None),
     "unix-mechanisms": ("run_owned_unix_mechanisms.sh", None),

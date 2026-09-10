@@ -50,6 +50,7 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Owned TRE regex evidence](evidence/x86-owned-regex.md)
 - [`evidence/x86-owned-strfmon.md`](evidence/x86-owned-strfmon.md): fixed-profile monetary formatting and installed-product evidence.
 - [Owned wide calendar evidence](evidence/x86-owned-wcsftime.md)
+- [Owned fmtmsg evidence](../compat/x86_64/owned-fmtmsg.md)
 - [Owned C filename-pattern evidence](../compat/x86_64/owned-pattern.md)
   — source-mapped `fnmatch`/`glob` C ABI slice across owned products; neither
   pattern-family completion nor public support.
