@@ -82,6 +82,7 @@ CASES = {
     "account-files": ("run_owned_account_files.sh", None),
     "utmpx": ("run_owned_utmpx.sh", None),
     "locale": ("run_owned_locale.sh", None),
+    "stdio": ("run_owned_stdio.sh", None),
     "pattern": ("run_owned_pattern.sh", None),
     "regex": ("run_owned_regex.sh", None),
     "wordexp": ("run_owned_wordexp.sh", None),

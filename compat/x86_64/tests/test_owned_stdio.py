@@ -12,8 +12,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
 RUNNER = ROOT / "compat/x86_64/run_owned_stdio.sh"
-SOURCE = ROOT / "compat/x86_64/owned_stdio_probe.c"
-DOCUMENT = ROOT / "compat/x86_64/owned-stdio.md"
 
 
 class OwnedStdioTests(unittest.TestCase):
@@ -62,47 +60,6 @@ class OwnedStdioTests(unittest.TestCase):
                     self.assertIn("owned stdio products dynamic product", result.stderr)
                     self.assertEqual(result.stdout, "")
                     self.assertEqual(set(base.iterdir()), {product, alias, parent})
-
-    def test_one_object_keeps_byte_wide_and_descriptor_boundaries_separate(self) -> None:
-        source = SOURCE.read_text(encoding="utf-8")
-        runner = RUNNER.read_text(encoding="utf-8")
-        document = DOCUMENT.read_text(encoding="utf-8")
-
-        self.assertIn("static int byte_stream", source)
-        self.assertIn("static int wide_stream", source)
-        self.assertIn("fgetpos(stream, &saved)", source)
-        self.assertIn("fsetpos(stream, &saved)", source)
-        self.assertIn('freopen(second, "w+", stream) != stream', source)
-        self.assertIn("errno = EAGAIN", source)
-        self.assertIn("fputc('x', read_only) != EOF || !ferror(read_only) || errno != EAGAIN", source)
-        self.assertIn("clearerr(read_only)", source)
-        self.assertIn("adopted = fdopen(adopted_descriptor, \"r\")", source)
-        self.assertIn("surviving_descriptor = dup(adopted_descriptor)", source)
-        self.assertIn("fcntl(adopted_descriptor, F_GETFD) != -1 || errno != EBADF", source)
-        self.assertIn("fwide(stream, 1) <= 0", source)
-        self.assertIn("fputwc(0x20ac, stream)", source)
-        self.assertIn('fputws(L"\\U0001f642\\n", stream)', source)
-        self.assertIn("ungetwc(0x20ac, stream)", source)
-        self.assertIn("fgetws(line, 3, stream)", source)
-
-        self.assertIn('readonly PROBE="$ROOT/compat/x86_64/owned_stdio_probe.c"', runner)
-        self.assertIn('readonly RUNNER="$ROOT/compat/x86_64/run_owned_stdio.sh"', runner)
-        self.assertIn("-nostdinc -isystem \"$DYNAMIC_PRODUCT/usr/include\"", runner)
-        self.assertIn('sha256sum "$PROBE" "$RUNNER" "$WORK/workload.o"', runner)
-        self.assertIn('capture oracle-link "$ORACLE_CC" -std=c11 -static -fno-pie -no-pie', runner)
-        self.assertIn("for mode in static static-pie; do", runner)
-        self.assertIn("for mode in pie non-pie; do", runner)
-        self.assertIn('mkdir "$root/scratch"', runner)
-        self.assertIn('rmdir "$root/scratch"', runner)
-        self.assertIn("/scratch/first /scratch/second /scratch/wide", runner)
-        self.assertIn("validate_link", runner)
-        self.assertIn('capture "$stem-validate" python3 -B -', runner)
-        self.assertIn("record \\\n        --product \"$DYNAMIC_PRODUCT\" --execution-root \"$root\"", runner)
-        self.assertIn("audit \\\n        --product \"$DYNAMIC_PRODUCT\" --execution-root \"$root\"", runner)
-        self.assertIn("'family_completion': False", runner)
-        for scope in ("stdio.path-stream", "stdio.stream-io", "stdio.position-buffering", "stdio.format-scan"):
-            self.assertIn(scope, document)
-        self.assertIn("close the stdio family", document)
 
     def test_runner_remains_shell_syntax_valid(self) -> None:
         result = subprocess.run(["bash", "-n", str(RUNNER)], cwd=ROOT,

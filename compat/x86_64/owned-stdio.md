@@ -45,7 +45,9 @@ Run it in the pinned native environment:
 Its interface is `[--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`. With
 supplied products it never builds replacements. With neither argument it
 builds disposable products below checkout-local `.work`. Inputs must be
-physical directories below that tree.
+physical directories below that tree. A supplied static product also requires
+the dynamic product that provides the installed compilation headers. Every
+dynamic product must replay this component in the canonical qualification catalog.
 
 This receipt is evidence for four finite stdio components only. It does not
 close the stdio family, alter a disposition, imply broad locale or wide-format

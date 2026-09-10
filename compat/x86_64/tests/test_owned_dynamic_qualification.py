@@ -393,7 +393,7 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
 
     def test_each_product_requires_runtime_regressions(self):
         for product in qualification.PRODUCTS:
-            for case in ("mimalloc-startup-errno", "stdio-allocator-interposition", "c-allocation-interposition", "pthread-cpuclock", "signal-handler-fork", "wide-calendar", "regex", "monetary", "fmtmsg", "underscore-fork", "utmpx", "account-files", "locale", "wordexp"):
+            for case in ("mimalloc-startup-errno", "stdio-allocator-interposition", "c-allocation-interposition", "pthread-cpuclock", "signal-handler-fork", "wide-calendar", "regex", "monetary", "fmtmsg", "underscore-fork", "utmpx", "account-files", "locale", "wordexp", "stdio"):
                 with self.subTest(product=product, case=case):
                     path = self.work / "qualification-cases" / product / (case + ".json")
                     self.assertTrue(path.is_file(), "required regression has no product receipt")

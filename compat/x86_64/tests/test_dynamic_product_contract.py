@@ -123,6 +123,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "account-files",
                 "utmpx",
                 "locale",
+                "stdio",
                 "pattern",
                 "regex",
                 "wordexp",
