@@ -115,6 +115,16 @@ static void call_update(const char *name, utmpx_update_signature function,
         checksum((const unsigned char *)input, sizeof *input));
 }
 
+static void call_update_null(const char *name, utmpx_update_signature function,
+    const struct utmpx *input)
+{
+    errno = EINVAL;
+    function(NULL, NULL);
+    CHECK(errno == EINVAL);
+    printf("%s ptr=0 errno=%d input=%08x\n", name, errno,
+        checksum((const unsigned char *)input, sizeof *input));
+}
+
 static void call_name(const char *name, utmpx_name_signature function,
     const struct utmpx *input, const char *path)
 {
@@ -173,7 +183,9 @@ int main(void)
     call_query_protected("pututline-protected", public_pututline, &before);
 
     call_update("updwtmpx", public_updwtmpx, &before);
+    call_update_null("updwtmpx-null", public_updwtmpx, &before);
     call_update("updwtmp", public_updwtmp, &before);
+    call_update_null("updwtmp-null", public_updwtmp, &before);
 
     call_name("utmpname-null", public_utmpname, &before, NULL);
     call_name("utmpname-protected", public_utmpname, &before,
