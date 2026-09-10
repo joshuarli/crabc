@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -80,6 +81,25 @@ def live_tools(product):
     return result
 
 
+def _tool_roster(tools):
+    """Require the fixed compiler/linker identity shape used by one profile run."""
+    keys(tools, ('compiler', 'linker'), 'atomic compiler/linker roster')
+    for role, item in tools.items():
+        keys(item, ('path', 'sha256'), 'atomic recorded tool identity')
+        require(isinstance(item['path'], str) and Path(item['path']).is_absolute()
+                and '..' not in Path(item['path']).parts
+                and isinstance(item['sha256'], str) and re.fullmatch('[0-9a-f]{64}', item['sha256']) is not None,
+                'atomic malformed tool identity')
+    return tools
+
+
+def _recorded_tools(work):
+    """Read the container's retained tool identities without probing this host."""
+    tools = _tool_roster(native.read_json(work / 'profile-tools-before.json'))
+    same(native.read_json(work / 'profile-tools-after.json'), tools, 'atomic tools before/after seal')
+    return tools
+
+
 def _write(path, value):
     family.static_products.write_new(path, value)
 
@@ -100,6 +120,7 @@ def _reader(root, work, product=None):
     request = native.read_json(work / 'profile-request.json')
     keys(request, ('schema', 'source_mount', 'product'), 'atomic profile request')
     same(request['schema'], SCHEMA, 'atomic profile request schema')
+    same(request['source_mount'], '/workspace', 'atomic profile recorded source mount')
     require(isinstance(request['product'], str) and not Path(request['product']).is_absolute(),
             'atomic profile product path differs')
     selected = family.physical(root, root / request['product'])
@@ -181,7 +202,7 @@ def _link_command(reader, objects, binary, mode, linker):
             '-o', reader.recorded(binary)]
 
 
-def _collect_link(reader, objects, binary, mode):
+def _collect_link(reader, objects, binary, mode, tools):
     receipt_path = Path(str(binary) + '.crabc-link.json')
     receipt = native.read_json(receipt_path)
     keys(receipt, ('schema', 'format', 'mode', 'binding', 'runtime_imports', 'application_runpath', 'output_path',
@@ -202,6 +223,7 @@ def _collect_link(reader, objects, binary, mode):
     require(isinstance(linker['path'], str) and Path(linker['path']).name == 'ld.lld'
             and isinstance(linker['sha256'], str) and re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None,
             'atomic linker differs')
+    same(linker, tools['linker'], 'atomic sealed linker differs from retained tool')
     same(receipt['link_command'], _link_command(reader, objects, binary, mode, linker['path']),
          'atomic sealed linker invocation')
     direct = {reader.recorded(path) for path in [*runtime, *objects]}
@@ -215,9 +237,29 @@ def _collect_link(reader, objects, binary, mode):
 
 
 def _collect_copy(reader, mode, binary):
+    product = reader.product
+    manifest = native.read_json(reader.manifest)
+    files, aliases = manifest['files'], manifest['symlinks']
     execution = reader.leaf / ('dynamic-' + mode + '-root')
     record = reader.leaf / ('dynamic-' + mode + '-execution-payload.json')
-    copies.audit_execution_payload(reader.product, execution, binary, execution / 'consumer', record)
+    def file_pair(source, copied):
+        same(native.digest(source), native.digest(copied), 'atomic execution copy bytes')
+        return {'source': reader.binding(source), 'execution': reader.binding(copied)}
+    def alias_pair(name, target):
+        source, copied = product / name, execution / name
+        require(source.is_symlink() and copied.is_symlink() and os.readlink(source) == target
+                and os.readlink(copied) == target, 'atomic execution loader alias differs')
+        return {'source': {'path': reader.recorded(source), 'target': target},
+                'execution': {'path': reader.recorded(copied), 'target': target}}
+    expected = {'schema': copies.EXECUTION_PAYLOAD_SCHEMA,
+        'product': {'root': reader.recorded(product),
+                    'manifest': file_pair(reader.manifest, execution / 'share/crabc/manifest.json')},
+        'execution_root': reader.recorded(execution),
+        'payload': {name: file_pair(product / name, execution / name) for name in files},
+        'aliases': {name: alias_pair(name, target) for name, target in aliases.items()},
+        'consumer': file_pair(binary, execution / 'consumer')}
+    copies.assert_execution_tree(execution, files, aliases, execution / 'consumer')
+    same(native.read_json(record), expected, 'atomic execution payload')
     return reader.identity(record)
 
 
@@ -225,7 +267,7 @@ def run(root, work, product):
     root, work, product = root.resolve(strict=True), family.physical(root, work), family.physical(root, product)
     prepare(root, work, product)
     reader = _reader(root, work, product)
-    tools = live_tools(product)
+    tools = _tool_roster(native.read_json(work / 'profile-tools-before.json'))
     commands = _compile_commands(reader, tools)
     try:
         _command(root, work, 'dependencies', _dependency_command(reader, tools))
@@ -248,7 +290,7 @@ def run(root, work, product):
             _command(root, work, 'link-' + mode,
                      [str(product / 'bin/crabc-cc-dynamic'), '--dynamic-' + mode,
                       *(str(path) for path in objects), '-o', str(binary)])
-            _collect_link(reader, objects, binary, mode)
+            _collect_link(reader, objects, binary, mode, tools)
             execution = work / ('dynamic-' + mode + '-root')
             shutil.copytree(product, execution, symlinks=True)
             shutil.copyfile(binary, execution / 'consumer')
@@ -274,8 +316,8 @@ def run(root, work, product):
 def collect(root, work, *, product=None):
     reader = _reader(root, work, product)
     work, product = reader.leaf, reader.product
-    sources, payload, tools = source_records(root), product_record(root, product), live_tools(product)
-    for phase, value in (('source', sources), ('product', payload), ('tools', tools)):
+    sources, payload, tools = source_records(root), product_record(root, product), _recorded_tools(work)
+    for phase, value in (('source', sources), ('product', payload)):
         for point in ('before', 'after'):
             same(native.read_json(work / ('profile-' + phase + '-' + point + '.json')), value,
                  'atomic ' + phase + ' seal changed')
@@ -299,7 +341,7 @@ def collect(root, work, *, product=None):
     entries = {}
     for mode in ('pie', 'non-pie'):
         binary = work / ('dynamic-' + mode + '-consumer')
-        link = _collect_link(reader, objects, binary, mode)
+        link = _collect_link(reader, objects, binary, mode, tools)
         link['command'] = sealed.collect_command(reader, 'link-' + mode,
             [reader.recorded(product / 'bin/crabc-cc-dynamic'), '--dynamic-' + mode,
              *(reader.recorded(path) for path in objects), '-o', reader.recorded(binary)], raw_stdout=b'')
