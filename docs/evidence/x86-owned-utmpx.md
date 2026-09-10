@@ -1,9 +1,8 @@
 # Owned fixed-profile utmpx compatibility
 
 The native owned runtime has a private complete `utmpx.c` compatibility leaf in
-`libc/src/c_abi/x86_64/owned_utmpx.rs`. It is selected only when the x86 root
-registers that module under `x86-owned-static-runtime`; the owned dynamic
-product inherits the same owner. This is C ABI compatibility machinery for
+`libc/src/c_abi/x86_64/owned_utmpx.rs`. The x86 root selects it under
+`x86-owned-static-runtime`; the owned dynamic product inherits the same owner. This is C ABI compatibility machinery for
 musl's deliberately inert utmpx profile. It does not open files, retain a
 cursor, own records, allocate memory, or import the paused AArch64 database
 implementation.
@@ -81,3 +80,9 @@ also covers the remaining aliases captured by the final provider checks.
 containment, and the physical evidence-directory boundary without building a
 product. This evidence does not claim a utmp database, login accounting,
 runtime-family closure, or public x86 support.
+
+The `owned-utmpx` dispatcher accepts the existing physical static/dynamic
+product replay paths. The `utmpx` case is mandatory in every dynamic product
+qualification. The owned-static callable roster accounts for all sixteen
+public names and the eight explicit same-address alias relationships;
+`utmpname` is itself the weak Rust provider for the shared name-rejection body.

@@ -1,14 +1,14 @@
 {
-  "schema": "crabc.x86_64-owned-dynamic-product-state/v1",
-  "owner_family": "sysroot.owned-artifact",
-  "contract_sha256": "ab9f81b0bd0e855552ca1bbb57d5492c014f6bcf3eaa184e3875e783a9ef4870",
-  "status": "implemented-unqualified",
-  "materialized_sysroot": null,
+  "contract_sha256": "ccc028986a5cb80b9748aac9da795bc9ca8c2fa22284c118266cc667581dcb52",
   "evidence": [],
-  "reason": "Implemented product requires a live three-product qualification receipt; checked-in state is not execution evidence.",
+  "materialized_sysroot": null,
+  "owner_family": "sysroot.owned-artifact",
   "promotion": {
     "family_completion": false,
     "promotion_ready": false,
     "public_support": false
-  }
+  },
+  "reason": "Implemented product requires a live three-product qualification receipt; checked-in state is not execution evidence.",
+  "schema": "crabc.x86_64-owned-dynamic-product-state/v1",
+  "status": "implemented-unqualified"
 }

@@ -52,6 +52,7 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Owned wide calendar evidence](evidence/x86-owned-wcsftime.md)
 - [Owned `_Fork` evidence](../compat/x86_64/owned-underscore-fork.md)
 - [Owned fmtmsg evidence](../compat/x86_64/owned-fmtmsg.md)
+- [Owned utmpx evidence](evidence/x86-owned-utmpx.md)
 - [Owned C filename-pattern evidence](../compat/x86_64/owned-pattern.md)
   — source-mapped `fnmatch`/`glob` C ABI slice across owned products; neither
   pattern-family completion nor public support.

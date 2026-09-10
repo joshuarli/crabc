@@ -120,6 +120,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "mimalloc-startup-errno",
                 "pty",
                 "passwd",
+                "utmpx",
                 "pattern",
                 "regex",
                 "wide-calendar",

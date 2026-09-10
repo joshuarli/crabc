@@ -727,6 +727,9 @@ mod owned_syslog;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_fmtmsg.rs"]
 mod owned_fmtmsg;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_utmpx.rs"]
+mod owned_utmpx;
 #[path = "time_observation.rs"]
 mod time_observation;
 #[path = "nanosleep.rs"]

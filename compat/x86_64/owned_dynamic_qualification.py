@@ -79,6 +79,7 @@ CASES = {
     "mimalloc-startup-errno": ("run_owned_mimalloc_startup_errno.sh", None),
     "pty": ("run_owned_pty.sh", None),
     "passwd": ("run_owned_passwd.sh", None),
+    "utmpx": ("run_owned_utmpx.sh", None),
     "pattern": ("run_owned_pattern.sh", None),
     "regex": ("run_owned_regex.sh", None),
     "wide-calendar": ("run_owned_wcsftime.sh", None),
