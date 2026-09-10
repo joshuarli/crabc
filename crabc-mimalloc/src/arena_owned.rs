@@ -1755,10 +1755,22 @@ mod tests {
         trace.clear_observation();
         let before = process.subprocess().vm_statistics().snapshot();
         let source_capacity = unsafe { page.as_ref().capacity() };
+        let source_reserved = unsafe { page.as_ref().reserved() };
         let source_prefix = unsafe { page.as_ref().slice_pcommitted() };
         let source_free = unsafe { page.as_ref().free_list_head() };
+        let source_local_free = unsafe { page.as_ref().remote_free_test_local_free() };
+        assert!(source_prefix != 0);
+        assert!(source_free.is_null());
+        assert!(source_local_free.is_null());
+        assert!(source_capacity < source_reserved);
         fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
-        let failure = !allocator.test_extend_on_demand_page_before_allocation(page);
+        // SAFETY: `page` came from this active allocator's PageMap and its
+        // installed external backing retains it. The isolated session has no
+        // concurrent owner or teardown path; the assertions above establish
+        // the selected on-demand Page's prefix, exhausted lists, and capacity.
+        let failure = !unsafe {
+            allocator.test_extend_on_demand_page_before_allocation(page)
+        };
         let failed = process.subprocess().vm_statistics().snapshot();
         let failure_consumes_direct_fault_without_callback = failure
             && failed.commit_calls == before.commit_calls + 1
@@ -1771,7 +1783,12 @@ mod tests {
                 && unsafe { page.as_ref().free_list_head() } == source_free;
 
         fault.set(fault::Plan::disabled());
-        let retry = allocator.test_extend_on_demand_page_before_allocation(page);
+        // SAFETY: the failed direct commit left this same live Page's
+        // capacity, prefix, and free list unchanged, as asserted above; its
+        // active allocator, PageMap publication, and external backing remain.
+        let retry = unsafe {
+            allocator.test_extend_on_demand_page_before_allocation(page)
+        };
         let retried = process.subprocess().vm_statistics().snapshot();
         let retry_prefix = unsafe { page.as_ref().slice_pcommitted() };
         let requested_direct_commit = usize::from(

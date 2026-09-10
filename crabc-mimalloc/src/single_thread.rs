@@ -35276,9 +35276,19 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
     /// its PageMap entry, and the process arena backing live while observing
     /// the source failure/retry state. It grants no page selection, fresh
     /// allocation, or backing capability.
+    ///
+    /// # Safety
+    ///
+    /// `page` must be aligned, initialized, and live for this call. It must
+    /// remain published in the `PageMap` and retained by the same active
+    /// engine, session, and process arena backing. The caller must have
+    /// exclusive access to its ordinary fields, with no concurrent free or
+    /// teardown. Its on-demand committed prefix must be nonzero, both
+    /// `free` and `local_free` must be exhausted, and its capacity must be
+    /// below its reserved block count.
     #[cfg(test)]
     #[inline]
-    pub(crate) fn test_extend_on_demand_page_before_allocation(
+    pub(crate) unsafe fn test_extend_on_demand_page_before_allocation(
         &mut self,
         page: NonNull<Page>,
     ) -> bool {
