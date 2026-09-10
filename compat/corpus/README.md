@@ -58,3 +58,58 @@ SHA-256 witnesses.
 
 This is intentionally not a glibc test and it does not replace the host
 system's loader. A non-AArch64 invocation is an explicit setup error.
+
+## Native x86_64 consumer corpus
+
+`manifest-x86_64.toml` is a separate, finite Alpine v3.24 x86_64 APK snapshot
+for the existing 34 workloads. It seals the unchanged `manifest.toml` workload
+bytes, so all case IDs, argv, setup, stateful cases, and DT_RELR obligations
+remain exactly those frozen workloads. It does not transfer an AArch64 result
+or claim package-source equivalence. Five unavailable historical x86_64 URLs
+are recorded as explicit target-only version deltas: gzip `1.14-r3`, sqlite
+`3.53.4-r0`, curl `8.22.0-r0`, openssl `3.5.8-r0`, and
+openssh-client-default `10.3_p1-r1`.
+
+The native runner takes a supplied, already-built owned dynamic product. It
+does not build a replacement product. Before any private execution it verifies
+the signed Alpine index and all 59 exact APK archives using the pinned Alpine
+`apk` verifier and keys. It extracts the complete non-libc package closure
+without package-manager installation or hooks. The `musl` APK is verified but
+not extracted; the candidate and musl roots receive separate sealed loader and
+libc bytes at `/lib/ld-musl-x86_64.so.1` and
+`/lib/libc.musl-x86_64.so.1`.
+
+The package closure includes third-party application DSOs such as `libgcc_s`
+and `libstdc++`; those archives and bytes are shared by both roots. They are
+consumer payload, never candidate libc, loader, CRT, compiler input, or an
+ambient-image fallback. The runner audits every package ELF executable and
+DSO: each interpreter is canonical, every `DT_NEEDED` edge resolves either to
+the frozen package `/usr/lib` closure or the exact sealed libc, and a RUNPATH
+may name only that declared package library directory. Python's standard
+library, file magic database, Git templates, terminfo data, and the pinned
+`/etc/alpine-release` fixture are part of the retained payload.
+
+The private base also carries the pinned image's sealed `/etc/passwd` and
+`/etc/group` bytes and metadata, plus private `/tmp`, `/root`, and a real
+`/dev/null` character device (major 1, minor 3). No account record, device, or
+directory is inherited from the host. Tree seals encode the device kind,
+major/minor, and mode as well as regular files and symlinks.
+
+Every side/case root is retained under `.work/x86_64/tmp`, with pre/post tree
+seals, product and archive identities, raw stdout/stderr/status, and the full
+ELF dependency witness in its JSON report. A matched nonzero exit or timeout
+is a failure; streams and statuses are never normalized. The chroot leaf
+calls the package executable directly through the kernel with the manifest's
+original `argv[0]`; it never passes the package program to a loader argv.
+
+Inside the pinned native Docker environment, after supplying a dynamic product:
+
+```sh
+compat/x86_64/run_owned_package_corpus.sh \
+  --dynamic-sysroot /path/to/dynamic-sysroot \
+  --report .work/x86_64/tmp/owned-package-corpus/latest.json
+python3 -B compat/corpus/tests/test_runner_x86.py
+```
+
+This is one consumer component for the frozen 34 workloads. It does not close
+the wider software-corpus, loader-family, performance, or source-build scope.

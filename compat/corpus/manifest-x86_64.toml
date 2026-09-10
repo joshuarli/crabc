@@ -1,0 +1,143 @@
+# Frozen native x86_64 input contract for the existing 34-case Alpine corpus.
+#
+# The workload semantics are sealed by the unchanged AArch64 manifest's exact
+# bytes.  This does not transfer an AArch64 result: it only keeps the finite
+# case IDs, argv, fixtures, stateful cases, and DT_RELR obligations identical
+# while this manifest supplies a distinct native APK input snapshot.
+schema = 1
+alpine_release = "3.24.1"
+architecture = "x86_64"
+image = "alpine:3.24.1@sha256:79ff19e9084a00eece421b2523fb93e22d730e2c0e525905de047e848e56d95f"
+musl_version = "1.2.6"
+apk_tools_version = "3.0.6-r0"
+
+[repository]
+base_url = "https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64"
+index_filename = "APKINDEX.tar.gz"
+index_sha256 = "1a66c389ffa52b213474fb345577f3cd8716b98249fb5a21cce283d6e2566f2c"
+index_signing_key = "alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub"
+
+[workload]
+source_manifest = "compat/corpus/manifest.toml"
+source_manifest_sha256 = "8cee578b19e94e6963115694244e2fcc8fc06616a273099abbd6cc9c54deefe8"
+case_count = 34
+
+# The direct 15-package workload is byte-pinned below with its complete finite
+# solved non-libc closure.  `musl` was a solver input only and is deliberately
+# not extracted: each root receives its separately sealed candidate or pinned
+# musl runtime at the canonical musl interpreter/libc spellings.
+[direct_packages]
+busybox = "1.37.0-r31"
+coreutils = "9.11-r0"
+coreutils-env = "9.11-r0"
+grep = "3.12-r0"
+sed = "4.9-r2"
+file = "5.47-r2"
+tar = "1.35-r5"
+gzip = "1.14-r3"
+zstd = "1.5.7-r2"
+sqlite = "3.53.4-r0"
+curl = "8.22.0-r0"
+openssl = "3.5.8-r0"
+openssh-client-default = "10.3_p1-r1"
+git = "2.54.0-r0"
+python3 = "3.14.7-r1"
+
+# These are target-specific package archive changes from the frozen AArch64
+# snapshot after the old x86_64 official URLs returned 404.  They preserve
+# workload cases only; they make no package-source or outcome equivalence
+# claim.
+[native_version_deltas]
+gzip = { aarch64 = "1.14-r2", x86_64 = "1.14-r3" }
+sqlite = { aarch64 = "3.53.2-r0", x86_64 = "3.53.4-r0" }
+curl = { aarch64 = "8.21.0-r0", x86_64 = "8.22.0-r0" }
+openssl = { aarch64 = "3.5.7-r0", x86_64 = "3.5.8-r0" }
+openssh-client-default = { aarch64 = "10.3_p1-r0", x86_64 = "10.3_p1-r1" }
+
+[archive_roster]
+"acl-libs-2.3.2-r1.apk" = "3f02851d586c25d97ba8b5b845615aacc209ae7eaeb6f7843eca76d85da2249d"
+"brotli-libs-1.2.0-r1.apk" = "f0823de7c6d45859aeb6a7facfc5cfbf2dadb83ad4f27c794cb6ecc74e578cee"
+"busybox-1.37.0-r31.apk" = "0e626fa97cf937fda7bba4ed4dde8e2f2dbb5083ac34e02180cec0c4eba9351b"
+"busybox-binsh-1.37.0-r31.apk" = "93f803ae5db6b729c0f66f4afba6e907ccc17d7d5f8b8c3d25bdb4636de2c48a"
+"c-ares-1.34.8-r0.apk" = "123fdeadc5ec884b897787f98d865492bf70402697b251cd1f3591a00b8c9d73"
+"ca-certificates-bundle-20260611-r0.apk" = "cd7752154d0fa628a5f7360218e9e8e83edf31f7fa26f58ee42d26b507bd0372"
+"coreutils-9.11-r0.apk" = "18710a17a606d2454491d7e5b6114776c2ea861633234efdaee5b85fad5f2434"
+"coreutils-env-9.11-r0.apk" = "dac9a6bc36a5287d7c00b1076294edc73bb162fbff0e4802c0021c1db6ca7981"
+"coreutils-fmt-9.11-r0.apk" = "cc04ffc0d1bb7df029a90b629f92cf034eacae390f940690c60cb0bfe2a569b6"
+"coreutils-sha512sum-9.11-r0.apk" = "c06d02f68a5071bf1f4cd21fca43834f551044cee87d29cde0900358e1e4a2a6"
+"curl-8.22.0-r0.apk" = "9262352e6341bb87e3047d1ca0b4051b2a9f4011409df25e4190e6be0334b860"
+"file-5.47-r2.apk" = "4681c153c509aec126e2b9ea2c959730309b24a792d49fc8cc26fa5fa87e8fdd"
+"gdbm-1.26-r0.apk" = "3278ccba30b241168ca4ab93c919be805411b918fdc062f06d3684d12dc33ae3"
+"git-2.54.0-r0.apk" = "5a2c6782774d2e891fc2fc3fdc50c3c2743b8eb2dc7cda69b6b723af2eedcf78"
+"git-init-template-2.54.0-r0.apk" = "e8094a47bfa6e66b7d550ae12a7a8bcab0bc4af502aacd5d2a6fc62d2c5e488d"
+"grep-3.12-r0.apk" = "a39238e2ddadc483c1512145bac8e246af940d6c828e5e14fb99a287eb139f42"
+"gzip-1.14-r3.apk" = "ef53c932016484c9d5f8c53838161db0a5798b05f58827b81d3e512586268775"
+"less-702-r0.apk" = "afa47eee1729eab04d6d72142c52dea513c756b71be91cc13756fa628282ec7e"
+"libattr-2.5.2-r2.apk" = "42a0975e03d3ca6f973340cb02b5985099735808c3a1845239f6f8925b0e4d40"
+"libbz2-1.0.8-r6.apk" = "2737e2b23ed08d4911ee62cd0163b5f4bf0379cacf4dc35b23a00209584c98fd"
+"libcrypto3-3.5.8-r0.apk" = "161223a16f042b8e469e9441291e071464fd91d4f4bbe6f496ee8d0abd4e0701"
+"libcurl-8.22.0-r0.apk" = "40b2a8e15a8d24bc95a5f42aaeb018313a1ff457cee71d8e15aaf1328da765e8"
+"libedit-20260508.3.1-r1.apk" = "dfb62b3fb06346a525ffea788c6a48a0581d61a89014f57885b84b1df5a365c0"
+"libexpat-2.8.4-r0.apk" = "34fa41e3994d9a844f50a7c01cb40bb2e272fa7f506b96e92a2b4a20b23a81bc"
+"libffi-3.5.2-r1.apk" = "6da1a19313a40c56cac756fb11e2c4d5267831e1c22fc8323f24c943c94da6e0"
+"libgcc-15.2.0-r5.apk" = "393dcd32629f06d7d85409c272d142d0c082772d10b87ef55ee82f47de3be637"
+"libidn2-2.3.8-r0.apk" = "7d038ac558dde464964b033ce5126dd2eaf84cc414dc15e77c5424a321d0ebee"
+"libmagic-5.47-r2.apk" = "1820acd299025619a848b19ac98c7996fd92c06965255898800b6a790a8b03a2"
+"libncursesw-6.6_p20260516-r0.apk" = "cf8caa8a88bc4ce9d9e395567fefaf9ef7fbd55c50ae6155b35c1b58f3755023"
+"libpanelw-6.6_p20260516-r0.apk" = "057be8b1b788580f4cb72c382a6dcc03467d15bd69700f32192bd709e7a57a12"
+"libpsl-0.21.5-r3.apk" = "ec665a344b6e887f00f0a47015cc732c3a281b69e84641dc8662ea234fde6cdb"
+"libssl3-3.5.8-r0.apk" = "aca521e5ae4a321322a9d47ed64a1775f5ab1ffd215d1e9fc0433c58f7bfd037"
+"libstdc++-15.2.0-r5.apk" = "14c987b556f5385a5db18376e788c75f37d85321b8dc1920d926ea7daac1d6f6"
+"libunistring-1.4.2-r0.apk" = "3aa6030e603e34d96192742f327c0509f409c6769ce2e7b1463685dede38d714"
+"mpdecimal-4.0.1-r0.apk" = "1278f374bbc8b4aad674244458cca5fc63e0780a921138eef400d5db64381a31"
+"musl-1.2.6-r2.apk" = "573712e2f49c15bfc20a2699f204acdfc74c772722b15e7353d768057fae0e71"
+"ncurses-terminfo-base-6.6_p20260516-r0.apk" = "ce83be6d0bd10584a53c3a5868cc1595ce5f0f8e0b621f8f7f70b6144e521fc9"
+"nghttp2-libs-1.69.0-r0.apk" = "7d7705cea464389989d3ca6b9505dbfce3cf25cfca1eeb06709a9909f93f4f11"
+"openssh-client-common-10.3_p1-r1.apk" = "b56b7fca470d627ff80bdff9267533abb13ccab1246c932032b190bd7dffa4d9"
+"openssh-client-default-10.3_p1-r1.apk" = "14132eba5d98eda8c57c103aad9ead0de982ba14a67bfadd15f56130f6a73634"
+"openssh-keygen-10.3_p1-r1.apk" = "a7a197dd781fd25d127fe7815db3d69130f0772655f421b4a88c7e4f7bb2ecf7"
+"openssl-3.5.8-r0.apk" = "e18c561e6a8fb744b42fe000f4a8cdfcc38e7956e62a6ab44b0a0580db948450"
+"pcre2-10.48-r0.apk" = "cffaedb6cf404647619a8b0323958d293d9cd240e8f887c16bdf4b0a039f993a"
+"pyc-3.14.7-r1.apk" = "353665d585c0c54705794fea9667c6b8afe8accb525e30819e9c1d4b9383b673"
+"python3-3.14.7-r1.apk" = "8b7e0ce40ab6f0955138e791caf3e16c8b4616befde61c840137cc1a16770985"
+"python3-pyc-3.14.7-r1.apk" = "c9da22e6f75c460ebc9d157a2c46393cd9ab6da83b6ab64044910b43a87c8df1"
+"python3-pycache-pyc0-3.14.7-r1.apk" = "04c6f299bd36870a78e8afe1a04e8c64673d46ad3905f84b590b36281f947bd1"
+"readline-8.3.3-r1.apk" = "766911ecb986a6c5cf0841a6b556cd1e9dbbf22b3559726de32416486cd15c81"
+"sed-4.9-r2.apk" = "fcfd689bdc96eec979a4a1046b65d844ba3698f268ab6b041793d013a64c658e"
+"skalibs-libs-2.15.0.0-r0.apk" = "3301f6ccbeaea49cdd966c7e636898a8612fb8fe964a15f24f6d204b3944c3f3"
+"sqlite-3.53.4-r0.apk" = "c51f4aae4fdbbec678639cdaa7af6758eef331dbf7299e2777fa7020b41ff194"
+"sqlite-libs-3.53.4-r0.apk" = "a8a216e53d22faa3f04d2e3650c1991af66f8d0b42fadff5afcdb9afb60b19e5"
+"ssl_client-1.37.0-r31.apk" = "e578a140670e4cf9816117b0c2063632bf3754ecbe8fa593a7fd2b4039372bf0"
+"tar-1.35-r5.apk" = "5dad2fe0c7d18394dd7ffb64682760ce63718a7a1552b661f6e63036ce8b4958"
+"utmps-libs-0.1.3.3-r0.apk" = "497f0f1cb51f0e6c1acc338fded0dc7722b1d43ea17bdb749f0d556794f8b2d8"
+"xz-libs-5.8.4-r0.apk" = "ab362dd515ead04c31a6c302163248da7aa4813e283c971e6dd3f789b453a1d9"
+"zlib-1.3.2-r0.apk" = "b636306cbf8a0c15493b38de608ba11605fd8f11ade631f5ece6f7fdf5a1e09e"
+"zstd-1.5.7-r2.apk" = "774da060da278110a2075de01ecee04fb036033ec19de9f3c36f0283c150a487"
+"zstd-libs-1.5.7-r2.apk" = "23c6065b0049b2406441564bcf0032515a43f78e80d76fcb85535a3803ef5d4e"
+
+[excluded_payload]
+archives = ["musl-1.2.6-r2.apk"]
+
+# Non-library data required by the selected consumers is part of the closure
+# rather than inherited from the container image.
+[payload]
+package_library_dirs = ["/usr/lib"]
+required_paths = [
+  "/usr/share/misc/magic.mgc",
+  "/usr/lib/python3.14",
+  "/usr/share/git-core/templates",
+  "/etc/terminfo",
+]
+
+# `file /etc/alpine-release` is one of the frozen workload cases.  It is an
+# explicit shared fixture with the pinned image's bytes, never inherited from
+# the image at execution time.
+[fixtures]
+"/etc/alpine-release" = "3.24.1\n"
+
+# These ordinary account records come from the digest-pinned native Alpine
+# image. They are copied, hashed, and mode/owner checked into every private
+# root so lookup-using consumers never inherit host account state.
+[base_image_files]
+"/etc/passwd" = { sha256 = "31a94f06f17bc3b9085fccab1d0fa6ee9e79c4a1e4d91f617fa5de95863be015", mode = 420, uid = 0, gid = 0 }
+"/etc/group" = { sha256 = "6fb6ab5a5526e6f4896b70c7e3c350fd475158a1f0d7b5fc0f3f9bd57f1c3be8", mode = 420, uid = 0, gid = 0 }
