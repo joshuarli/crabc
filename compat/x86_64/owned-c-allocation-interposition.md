@@ -41,6 +41,9 @@ interposers, installs a one-record passwd file in disposable chroots, and runs
 both cases through kernel and direct-interpreter entry. It compares status,
 stdout, and stderr for eight musl/candidate pairs. A passing receipt therefore
 requires all sixteen executions to succeed with the same observable results.
+Every target must independently exit zero before comparison; a failure or
+timeout stops the runner after retaining its raw status and streams. Matching
+oracle and candidate failures cannot qualify this boundary.
 
 Timezone's growth-only `OLD_TZ` cache and classic netdb's nonreentrant host
 cache remain separate allocator clients. This receipt records their existence

@@ -136,6 +136,13 @@ run_in_root() {
         status=$?
     fi
     printf '%s\n' "$status" >"$prefix.status"
+    # Equal oracle/candidate failures are never successful interposition
+    # evidence. Preserve the failed target's streams before stopping the run.
+    [ "$status" -eq 0 ] || {
+        printf 'owned C allocator interposition: target exited %s; evidence: %s\n' \
+            "$status" "$prefix" >&2
+        return 1
+    }
 }
 
 for mode in pie non-pie; do
