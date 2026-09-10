@@ -111,6 +111,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "credentials-profile",
                 "pthread-spin",
                 "process-trio",
+                "underscore-fork",
                 "process-control",
                 "filesystem-mechanisms",
                 "error-reporting",

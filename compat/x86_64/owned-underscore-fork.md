@@ -53,3 +53,9 @@ but failed the owned static link with `undefined symbol: _Fork` at its ordinary
 and error-case call sites. The existing clone/process-trio, ordinary atfork and
 worker TLS evidence must accompany the new matrix after shared-owner changes.
 AArch64 and the frozen private archive retain their existing paths.
+
+The `underscore-fork` case is required for all three dynamic products. Its
+independent six-mode runner also supplies static/static-PIE replay; the
+aggregate consumes the supplied dynamic product without rebuilding it. The
+owned feature accounts for `_Fork` as one additive callable, while the frozen
+default static export contract remains unchanged.

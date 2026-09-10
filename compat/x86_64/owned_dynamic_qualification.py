@@ -70,6 +70,7 @@ CASES = {
     "credentials-profile": ("run_owned_credentials_profile.sh", None),
     "pthread-spin": ("run_owned_pthread_spin.sh", None),
     "process-trio": ("run_owned_process_trio.sh", None),
+    "underscore-fork": ("run_owned_underscore_fork.sh", None),
     "process-control": ("run_owned_process_control.sh", None),
     "filesystem-mechanisms": ("run_owned_filesystem_mechanisms.sh", None),
     "error-reporting": ("run_owned_error_reporting.sh", None),

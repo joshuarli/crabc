@@ -127,6 +127,7 @@
         "evidence_record": null,
         "id": "x86-owned-static-runtime",
         "members": [
+          "_Fork",
           "__assert_fail",
           "__fpending",
           "__fpurge",
@@ -1632,7 +1633,6 @@
     ],
     "unprovided": {
       "members": [
-        "_Fork",
         "_flush_cache",
         "aio_cancel",
         "aio_fsync",
@@ -417456,7 +417456,7 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "2a8bc9de931345eb3715f34f6d9db7bbafd60c33824f846293765aa601b020a2",
+    "parity_ledger_sha256": "c86a4dc6fd76b86cc350a91246f761e531a0123680db0631f5b0dccf0fcbb42d",
     "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -436266,9 +436266,9 @@
       "macro": 5202
     },
     "callable_provider_counts": {
-      "declared_unverified_feature_archives": 271,
+      "declared_unverified_feature_archives": 272,
       "default_static": 1122,
-      "unprovided": 54,
+      "unprovided": 53,
       "verified_feature_archives": 78
     },
     "candidate_external_callable_count": 1525,

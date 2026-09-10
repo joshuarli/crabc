@@ -97,6 +97,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(
             owned_static.additive_callables,
             (
+                "_Fork",
                 "__assert_fail",
                 "__fpending",
                 "__fpurge",
