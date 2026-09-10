@@ -12,6 +12,7 @@ export LC_ALL=C
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly INVENTORY_GENERATOR="$ROOT_DIR/compat/x86_64/header_callable_inventory.py"
 readonly DISPOSITION_GENERATOR="$ROOT_DIR/compat/x86_64/header_callable_disposition.py"
+readonly ORACLE_NO_PROVIDER_AUDIT="$ROOT_DIR/compat/x86_64/header_callable_oracle_no_provider_audit.py"
 readonly INVENTORY="$ROOT_DIR/compat/x86_64/header_callable_inventory.json"
 readonly DISPOSITION="$ROOT_DIR/compat/x86_64/header_callable_disposition.json"
 readonly MUSL_INCLUDE=/opt/musl-1.2.6/include
@@ -36,11 +37,12 @@ require_tool() {
 
 [ "$#" -eq 0 ] || fail "usage: $0"
 require_native_linux_x86_64
-for tool in clang python3; do
+for tool in clang curl grep nm python3 readelf tar; do
     require_tool "$tool"
 done
 [ -x "$INVENTORY_GENERATOR" ] || fail "inventory generator is not executable"
 [ -x "$DISPOSITION_GENERATOR" ] || fail "disposition generator is not executable"
+[ -x "$ORACLE_NO_PROVIDER_AUDIT" ] || fail "oracle no-provider audit is not executable"
 [ -f "$INVENTORY" ] || fail "checked callable inventory is missing"
 [ -f "$DISPOSITION" ] || fail "checked callable disposition report is missing"
 [ -d "$MUSL_INCLUDE" ] || fail "pinned musl headers are missing"
@@ -55,5 +57,8 @@ python3 "$INVENTORY_GENERATOR" \
     --linux-uapi-include "$LINUX_UAPI_INCLUDE" \
     --check
 python3 "$DISPOSITION_GENERATOR" --check
+python3 "$ORACLE_NO_PROVIDER_AUDIT" \
+    --work-root "$TMPDIR" \
+    --scratch-root "$ROOT_DIR/.work/x86_64"
 
-printf 'x86 header callable disposition: PASS (checked ownership routing)\n'
+printf 'x86 header callable disposition: PASS (checked ownership routing and pinned-musl structural no-provider audit)\n'
