@@ -1437,19 +1437,6 @@
     },
     "deferred_owner_groups": [
       {
-        "id": "x86-cabi-pthread-tls-completion-v1",
-        "linkage_owner_family": "libc.c-abi-compat",
-        "linkage_owner_obligation": "final-callable-provider-archive-closure",
-        "members": [
-          "pthread_mutexattr_getprioceiling",
-          "pthread_mutexattr_setprioceiling"
-        ],
-        "provider_target": "future selected C ABI providers in libc.pthread-tls",
-        "resolution": "planned-provider",
-        "semantic_family": "libc.pthread-tls",
-        "source_oracle": "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-      },
-      {
         "id": "x86-cabi-posix-runtime-missing-v1",
         "linkage_owner_family": "libc.c-abi-compat",
         "linkage_owner_obligation": "final-callable-provider-archive-closure",
@@ -1531,6 +1518,8 @@
           "cacheflush",
           "getcontext",
           "makecontext",
+          "pthread_mutexattr_getprioceiling",
+          "pthread_mutexattr_setprioceiling",
           "setcontext",
           "swapcontext"
         ],
@@ -1782,8 +1771,8 @@
     "deferred_resolution_counts": {
       "compiler-builtin": 1,
       "consumer-supplied": 1,
-      "oracle-declared-no-provider": 7,
-      "planned-provider": 28
+      "oracle-declared-no-provider": 9,
+      "planned-provider": 26
     },
     "final_provider_archive_closure_complete": false,
     "header_declaration_parity_complete": false,

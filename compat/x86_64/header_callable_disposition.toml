@@ -44,16 +44,6 @@ expected_transition = "Completed as a non-promoting checked disposition: every c
 evidence = ["compiler-derived inventory digest binding", "exact disjoint primary callable partition", "exact deferred-owner roster", "exact missing-reference declaration roster", "native x86 inventory regeneration plus checked report"]
 
 [[deferred_owner_group]]
-id = "x86-cabi-pthread-tls-completion-v1"
-semantic_family = "libc.pthread-tls"
-linkage_owner_family = "libc.c-abi-compat"
-linkage_owner_obligation = "final-callable-provider-archive-closure"
-resolution = "planned-provider"
-provider_target = "future selected C ABI providers in libc.pthread-tls"
-source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["pthread_mutexattr_getprioceiling", "pthread_mutexattr_setprioceiling"]
-
-[[deferred_owner_group]]
 id = "x86-cabi-posix-runtime-missing-v1"
 semantic_family = "libc.posix-runtime"
 linkage_owner_family = "libc.c-abi-compat"
@@ -93,6 +83,10 @@ provider_target = "program-supplied Linux UAPI sequencer callback; no crabc arch
 source_oracle = "Pinned Linux 5.10 UAPI sys/soundcard.h callback declaration boundary"
 members = ["seqbuf_dump"]
 
+# Musl 1.2.6 declares the two priority-ceiling attribute entries in pthread.h
+# but supplies no source definition or native x86 static/shared provider.
+# Preserve those declarations in the same structural boundary as its cache
+# and context declarations; do not invent unavailable runtime entry points.
 [[deferred_owner_group]]
 id = "x86-header-callable-oracle-no-provider-v1"
 semantic_family = "libc.c-abi-compat"
@@ -101,4 +95,4 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "oracle-declared-no-provider"
 provider_target = "Pinned musl declares these names without a pinned x86 libc.a or libc.so provider; do not invent one"
 source_oracle = "Pinned musl 1.2.6 x86 header and archive export inventory"
-members = ["_flush_cache", "cachectl", "cacheflush", "getcontext", "makecontext", "setcontext", "swapcontext"]
+members = ["_flush_cache", "cachectl", "cacheflush", "getcontext", "makecontext", "pthread_mutexattr_getprioceiling", "pthread_mutexattr_setprioceiling", "setcontext", "swapcontext"]

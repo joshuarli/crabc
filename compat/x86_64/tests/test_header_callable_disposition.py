@@ -31,6 +31,15 @@ DISPOSITION = load_module("header_callable_disposition_test", SCRIPT)
 
 
 class HeaderCallableDispositionTests(unittest.TestCase):
+    def test_priority_ceiling_attributes_are_declared_without_an_oracle_provider(self) -> None:
+        contract = DISPOSITION.load_contract()
+        for name in ("pthread_mutexattr_getprioceiling", "pthread_mutexattr_setprioceiling"):
+            with self.subTest(name=name):
+                owners = [group for group in contract.deferred_owner_groups if name in group.members]
+                self.assertEqual(len(owners), 1)
+                self.assertEqual(owners[0].resolution, "oracle-declared-no-provider")
+                self.assertEqual(owners[0].linkage_owner_family, "libc.c-abi-compat")
+
     def test_checked_report_routes_every_current_external_without_claiming_linkage(self) -> None:
         contract = DISPOSITION.load_contract()
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
