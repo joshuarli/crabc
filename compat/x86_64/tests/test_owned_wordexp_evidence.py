@@ -91,9 +91,6 @@ class OwnedWordexpExecutionRootTests(unittest.TestCase):
             self.module.validate_execution_root(self.root, record)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 class OwnedWordexpCommandBindingTests(unittest.TestCase):
     def test_substituted_oracle_argv_cannot_satisfy_candidate_binding(self) -> None:
         module = load_module()
@@ -230,3 +227,40 @@ class OwnedWordexpReconstructionTests(unittest.TestCase):
                 record[name] = self.module._checkout_identity(ROOT, path, name)
             with self.assertRaises(self.module.EvidenceError):
                 self.module._command_record(ROOT, self.work, "cell-candidate", record, ["/consumer"], {}, "candidate")
+
+
+class OwnedWordexpEnvironmentTests(unittest.TestCase):
+    def test_ldd_closure_collapses_duplicate_loader_observations(self) -> None:
+        module = load_module()
+        closure = module._ldd_closure_candidates(
+            "\t/lib/ld-musl-x86_64.so.1 (0x1)\n"
+            "\tlibc.musl-x86_64.so.1 => /lib/ld-musl-x86_64.so.1 (0x1)\n"
+        )
+        self.assertEqual(closure, (Path("/lib/ld-musl-x86_64.so.1"),))
+
+    def test_command_without_an_explicit_environment_is_rejected(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True)
+        with self.assertRaises(module.EvidenceError):
+            module._run(root, "ambient", ["/bin/true"])
+        shutil.rmtree(root, ignore_errors=True)
+
+    def test_scrubbed_command_environment_does_not_inherit_injected_include_or_library_paths(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True)
+        inherited = {"CPATH": "/foreign/include", "LIBRARY_PATH": "/foreign/lib", "WORDEXP_MARKER": "ambient"}
+        with unittest.mock.patch.dict("os.environ", inherited, clear=False):
+            record = module._run(root, "environment", ["/usr/bin/python3", "-c",
+                "import os; print('|'.join(os.environ.get(k, '') for k in ('CPATH','LIBRARY_PATH','WORDEXP_MARKER')))"],
+                environment=module.evidence_environment(root))
+        output = (ROOT / Path(record["stdout"]["path"]).relative_to(module.SOURCE_MOUNT)).read_bytes()
+        self.assertEqual(output, b"||\n")
+        shutil.rmtree(root, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    unittest.main()

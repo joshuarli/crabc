@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tomllib
 from typing import Any, Mapping
 
 HERE = Path(__file__).resolve().parent
@@ -28,6 +29,7 @@ if str(HERE) not in sys.path:
 import owned_crypt_runtime_evidence as copies
 import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as products
+import run_qualification_manifest as native_qualification
 
 SCHEMA = "crabc.x86_64-owned-wordexp-products/v1"
 SOURCE_MOUNT = "/workspace"
@@ -39,8 +41,8 @@ LEGACY_RUNNER = "compat/x86_64/run_libc_owned_wordexp.sh"
 HEADERS = ("errno.h", "wordexp.h", "stdio.h", "stdlib.h", "string.h", "features.h", "bits/alltypes.h")
 SOURCES = (PROBE, DOC, RUNNER, LEGACY_RUNNER, "compat/x86_64/owned_wordexp_evidence.py",
            "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
-           "compat/x86_64/owned_dynamic_qualification.py", "compat/upstreams.toml",
-           "docker/x86_64-musl-oracle-gcc")
+           "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",
+           "compat/upstreams.toml", "docker/x86_64-musl-oracle-gcc")
 SHELL_CASES = ("normal", "missing", "inaccessible", "invalid")
 MODE_SPECS = {
     "static-et-exec": ("static", "static", "consumer-static-et-exec"),
@@ -276,6 +278,9 @@ def _run(work: Path, label: str, argv: list[str], *, environment: Mapping[str, s
     """Run exactly one producer or execution command and retain all streams."""
     if not argv or not all(isinstance(argument, str) for argument in argv):
         fail(f"{label} command is malformed")
+    if environment is None or not isinstance(environment, Mapping) or not all(isinstance(key, str) and isinstance(item, str)
+                                      for key, item in environment.items()):
+        fail(f"{label} command environment must be explicit")
     directory = work / "commands"
     directory.mkdir(parents=True, exist_ok=True)
     command_path = directory / f"{label}.argv.json"
@@ -284,8 +289,8 @@ def _run(work: Path, label: str, argv: list[str], *, environment: Mapping[str, s
     stderr_path = directory / f"{label}.stderr"
     status_path = directory / f"{label}.status"
     _write_json(command_path, argv)
-    env = dict(environment) if environment is not None else None
-    _write_json(environment_path, {} if env is None else env)
+    env = dict(environment)
+    _write_json(environment_path, env)
     try:
         completed = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
@@ -318,6 +323,28 @@ def require_exact_command(argv_path: Path, expected_argv: list[str], expected_en
     if not isinstance(expected_environment, Mapping) or not all(isinstance(key, str) and isinstance(value, str)
                                                                   for key, value in expected_environment.items()):
         fail(f"{description} expected environment is malformed")
+
+
+def evidence_environment(work: Path) -> dict[str, str]:
+    """Return the complete non-producer environment for retained commands."""
+    work = _physical(work, "wordexp command work", directory=True)
+    return {"LC_ALL": "C", "PATH": "/usr/bin:/bin", "SOURCE_DATE_EPOCH": "1", "TZ": "UTC", "TMPDIR": str(work)}
+
+
+def producer_environment(work: Path) -> dict[str, str]:
+    """Keep the build invocation explicit without opening ambient C inputs."""
+    result = evidence_environment(work)
+    # Git's safe-directory configuration is source-control plumbing only.  The
+    # builders themselves choose pinned Cargo/Rust state and target inputs.
+    for name in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
+        if name in os.environ:
+            result[name] = os.environ[name]
+    return result
+
+
+def _mounted_environment(root: Path, work: Path) -> dict[str, str]:
+    return {"LC_ALL": "C", "PATH": "/usr/bin:/bin", "SOURCE_DATE_EPOCH": "1", "TZ": "UTC",
+            "TMPDIR": _mounted(root, work)}
 
 
 def _native_requirements() -> None:
@@ -380,29 +407,49 @@ def _copy_dynamic_product(product: Path, execution_root: Path) -> tuple[dict[str
     return product_files, product_aliases
 
 
-def _shell_dependencies(shell: Path) -> list[Path]:
-    completed = subprocess.run(["/usr/bin/ldd", str(shell)], stdin=subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, text=True,
-                               env={"LC_ALL": "C", "PATH": "/usr/bin:/bin"})
-    if completed.returncode != 0:
-        fail("controlled shell ldd failed")
-    names: list[Path] = []
-    for line in completed.stdout.splitlines():
+def _ldd_closure_candidates(text: str) -> tuple[Path, ...]:
+    """Parse every physical library path advertised by the sealed ``ldd`` run."""
+    result: list[Path] = []
+    for line in text.splitlines():
         fields = line.split()
         candidate = fields[0] if fields and fields[0].startswith("/") else (
             fields[2] if len(fields) >= 3 and fields[1] == "=>" and fields[2].startswith("/") else None
         )
-        if candidate is not None:
-            resolved = Path(os.path.realpath(candidate))
-            _physical(resolved, "controlled shell dependency", directory=False)
-            if resolved not in names:
-                names.append(resolved)
-    if not names:
-        fail("controlled shell has no copied loader closure")
-    return names
+        if candidate is None:
+            # The virtual VDSO has no copied filesystem input. Any other line
+            # would make the actual shell closure ambiguous.
+            if fields and fields[0].startswith("linux-vdso"):
+                continue
+            fail(f"controlled shell ldd line is not a physical dependency: {line!r}")
+        path = Path(candidate)
+        if not path.is_absolute() or ".." in path.parts:
+            fail("controlled shell ldd dependency path is unsafe")
+        if path not in result:
+            result.append(path)
+    if not result:
+        fail("controlled shell ldd closure is empty")
+    return tuple(result)
 
 
-def _prepare_fixture_source(work: Path) -> tuple[Path, dict[str, str], dict[str, Any]]:
+def _shell_dependencies(work: Path, shell: Path, ldd: str) -> tuple[list[tuple[str, Path]], dict[str, Any]]:
+    record = _run(work, "controlled-shell-ldd", [ldd, str(shell)], environment=evidence_environment(work))
+    output = _local_mounted(ROOT, record["stdout"]["path"], "controlled shell ldd stdout")
+    try:
+        text = output.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise EvidenceError("controlled shell ldd output is not text") from error
+    closure = _ldd_closure_candidates(text)
+    if closure != (Path("/lib/ld-musl-x86_64.so.1"),):
+        fail("controlled shell ldd closure differs from the one pinned loader fixture")
+    # ``ldd`` establishes the shell's required in-root pathname. The pinned
+    # qualification loader supplies those bytes, so the fixture never imports
+    # Alpine's bootstrap loader just because it ran the observation command.
+    loader = _physical(Path(os.path.realpath(native_qualification.MUSL_RUNTIME_PATHS["loader"])),
+                       "pinned musl shell loader", directory=False)
+    return [("lib/ld-musl-x86_64.so.1", loader)], record
+
+
+def _prepare_fixture_source(work: Path, ldd: str) -> tuple[Path, dict[str, str], dict[str, Any], dict[str, Any]]:
     shell = Path(os.path.realpath("/bin/sh"))
     shell = _physical(shell, "controlled /bin/sh", directory=False)
     if not os.access(shell, os.X_OK):
@@ -412,10 +459,10 @@ def _prepare_fixture_source(work: Path) -> tuple[Path, dict[str, str], dict[str,
     _copy_regular(shell, source / "bin/sh", "controlled shell")
     files = {"shell": "bin/sh"}
     source_records = {"shell": _checkout_identity(ROOT, source / "bin/sh", "retained controlled shell")}
-    for index, dependency in enumerate(_shell_dependencies(shell)):
+    dependencies, ldd_record = _shell_dependencies(work, shell, ldd)
+    for index, (relative, dependency) in enumerate(dependencies):
         # Preserve absolute fixture names inside the chroot while the retained
         # source copy gives host readers a path that never needs ambient /lib.
-        relative = dependency.as_posix().lstrip("/")
         _copy_regular(dependency, source / relative, f"controlled shell dependency {dependency}")
         name = f"dependency:{index}"
         files[name] = relative
@@ -426,7 +473,7 @@ def _prepare_fixture_source(work: Path) -> tuple[Path, dict[str, str], dict[str,
     null.chmod(0o666)
     files["null"] = "dev/null"
     source_records["null"] = _checkout_identity(ROOT, null, "retained private null fixture")
-    return source, files, source_records
+    return source, files, source_records, ldd_record
 
 
 def _copy_fixture(source: Path, files: Mapping[str, str], execution_root: Path, shell_case: str) -> tuple[dict[str, str], tuple[str, ...]]:
@@ -489,27 +536,6 @@ def _identity_current(root: Path, value: object, description: str) -> Path:
     return path
 
 
-def _copy_oracle_inputs(work: Path, oracle_compiler: Path) -> dict[str, Any]:
-    root = Path("/opt/musl-1.2.6")
-    inputs: list[tuple[str, Path]] = [
-        ("compiler", oracle_compiler), ("source-manifest", root / ".crabc-oracle"),
-        ("shared-libc", root / "lib/libc.so"), ("static-libc", root / "lib/libc.a"),
-        ("gcc-specs", root / "lib/musl-gcc.specs"),
-    ]
-    retained = work / "pinned-musl-inputs"
-    retained.mkdir()
-    records: dict[str, Any] = {}
-    for name, source in inputs:
-        source = _physical(source, f"pinned musl {name}", directory=False)
-        destination = retained / name
-        _copy_regular(source, destination, f"pinned musl {name}")
-        records[name] = {
-            "native": _tool_identity(source, f"pinned musl {name}"),
-            "retained": _checkout_identity(ROOT, destination, f"retained pinned musl {name}"),
-        }
-    return records
-
-
 def _installed_tool_roster(dynamic: Path, static: Path | None) -> dict[str, dict[str, Any]]:
     """Resolve source compiler/LLD before the first installed consumption."""
     helper = _physical(dynamic / "share/crabc/crabc_cc_static.py", "installed compiler helper", directory=False)
@@ -541,7 +567,8 @@ def _installed_tool_roster(dynamic: Path, static: Path | None) -> dict[str, dict
     return roster
 
 
-def _fixture_record(root: Path, fixture_root: Path, files: Mapping[str, str], records: Mapping[str, Any]) -> dict[str, Any]:
+def _fixture_record(root: Path, fixture_root: Path, files: Mapping[str, str], records: Mapping[str, Any],
+                    ldd_record: Mapping[str, Any]) -> dict[str, Any]:
     fixture_root = _physical(fixture_root, "sealed external shell fixture root", directory=True)
     expected = set(files.values())
     observed, aliases = _walk_root(fixture_root)
@@ -551,7 +578,7 @@ def _fixture_record(root: Path, fixture_root: Path, files: Mapping[str, str], re
                for name, relative in files.items()}
     if dict(records) != current:
         fail("sealed external shell fixture records differ")
-    return {"root": _mounted(root, fixture_root), "files": current}
+    return {"root": _mounted(root, fixture_root), "files": current, "ldd": dict(ldd_record)}
 
 
 def _input_seal(root: Path, dynamic: Path, static: Path | None, tools: Mapping[str, Any],
@@ -569,7 +596,7 @@ def _products(dynamic: Path | None, static: Path | None, work: Path) -> tuple[Pa
     if dynamic is None:
         dynamic = work / "owned-dynamic-product"
         _run(work, "build-dynamic", [sys.executable, str(ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py"),
-                                      "--output", str(dynamic)])
+                                      "--output", str(dynamic)], environment=producer_environment(work))
     dynamic = _physical(dynamic, "selected dynamic product", directory=True)
     try:
         products._validate_dynamic_product(dynamic)
@@ -578,7 +605,7 @@ def _products(dynamic: Path | None, static: Path | None, work: Path) -> tuple[Pa
     if static is None and built:
         static = work / "owned-static-product"
         _run(work, "build-static", [sys.executable, str(ROOT / "scripts/build_x86_64_owned_sysroot.py"),
-                                     "--output", str(static)])
+                                     "--output", str(static)], environment=producer_environment(work))
     if static is not None:
         static = _physical(static, "selected static product", directory=True)
         try:
@@ -694,9 +721,11 @@ def _capture_oracle_inputs(work: Path) -> dict[str, Any]:
     except qualification.QualificationError as error:
         raise EvidenceError(f"pinned musl qualification input is unavailable: {error}") from error
     source = _physical(Path("/opt/musl-1.2.6/lib/libc.a"), "pinned musl static libc", directory=False)
+    loader_path = Path(native_qualification.MUSL_RUNTIME_PATHS["loader"])
+    loader = {"source_path": str(loader_path), "identity": _tool_identity(loader_path, "pinned musl loader")}
     retained = work / "pinned-musl-static-libc.a"
     _copy_regular(source, retained, "pinned musl static libc")
-    return {"qualification": qualified,
+    return {"qualification": qualified, "loader": loader,
             "static_libc": {"native": _tool_identity(source, "pinned musl static libc"),
                             "retained": _checkout_identity(ROOT, retained, "retained pinned musl static libc")}}
 
@@ -708,8 +737,8 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
         dynamic, static, built = _products(dynamic, static, work)
         tools_before = _installed_tool_roster(dynamic, static)
         oracle_inputs = _capture_oracle_inputs(work)
-        fixture_source, fixture_files, fixture_records = _prepare_fixture_source(work)
-        fixture = _fixture_record(ROOT, fixture_source, fixture_files, fixture_records)
+        fixture_source, fixture_files, fixture_records, fixture_ldd = _prepare_fixture_source(work, tools_before["ldd"]["path"])
+        fixture = _fixture_record(ROOT, fixture_source, fixture_files, fixture_records, fixture_ldd)
         before = _input_seal(ROOT, dynamic, static, tools_before, oracle_inputs, fixture)
 
         dynamic_driver = dynamic / "bin/crabc-cc-dynamic"
@@ -717,16 +746,18 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
         oracle_compiler = Path(tools_before["oracle-compiler"]["path"])
         header_trace = _run(work, "installed-header-trace", [tools_before["compiler"]["path"], "-nostdinc", "-isystem",
                             str(dynamic / "usr/include"), "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
-                            "-fPIE", "-std=c11", "-D_GNU_SOURCE", "-E", "-H", str(ROOT / PROBE)])
+                            "-fPIE", "-std=c11", "-D_GNU_SOURCE", "-E", "-H", str(ROOT / PROBE)],
+                            environment=evidence_environment(work))
         header_trace_path = _local_mounted(ROOT, header_trace["stderr"]["path"], "installed header trace stderr")
         header = _validate_header_trace(ROOT, header_trace_path, dynamic)
         workload = work / "workload.o"
         compile_record = _run(work, "compile-workload", [str(dynamic_driver), "--dynamic-pie", "-std=c11",
-                              "-D_GNU_SOURCE", "-fno-builtin", "-c", str(ROOT / PROBE), "-o", str(workload)])
+                              "-D_GNU_SOURCE", "-fno-builtin", "-c", str(ROOT / PROBE), "-o", str(workload)],
+                              environment=evidence_environment(work))
         _physical(workload, "installed wordexp workload", directory=False)
         oracle = work / "pinned-musl-static-et-exec"
         oracle_link = _run(work, "pinned-musl-link", [str(oracle_compiler), "-static", "-fno-pie", "-no-pie",
-                           str(workload), "-o", str(oracle)])
+                           str(workload), "-o", str(oracle)], environment=evidence_environment(work))
         _physical(oracle, "pinned-musl wordexp oracle", directory=False)
         links: dict[str, Any] = {}
         candidates: dict[str, tuple[Path, Path | None]] = {}
@@ -734,7 +765,8 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
             for mode, flag, linkage in (("static-et-exec", "-static", "static"), ("static-pie", "-static-pie", "static-pie")):
                 binary = work / MODE_SPECS[mode][2]
                 command = _run(work, f"link-{mode}", [str(static_driver), flag, "--link-receipt",
-                               f"{binary.name}.crabc-link.json", str(workload), "-o", str(binary)], cwd=work)
+                               f"{binary.name}.crabc-link.json", str(workload), "-o", str(binary)], cwd=work,
+                               environment=evidence_environment(work))
                 links[mode] = _link_validate(ROOT, work, static, workload, binary, linkage, mode)
                 links[mode]["command"] = command
                 candidates[mode] = (binary, None)
@@ -742,7 +774,8 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
                                     ("dynamic-non-pie-kernel", "--dynamic-non-pie", "non-pie")):
             base = "dynamic-pie" if linkage == "pie" else "dynamic-non-pie"
             binary = work / base
-            command = _run(work, f"link-{base}", [str(dynamic_driver), flag, str(workload), "-o", str(binary)])
+            command = _run(work, f"link-{base}", [str(dynamic_driver), flag, str(workload), "-o", str(binary)],
+                           environment=evidence_environment(work))
             links[base] = _link_validate(ROOT, work, dynamic, workload, binary, linkage, base)
             links[base]["command"] = command
             for entry in (f"{base}-kernel", f"{base}-direct"):
@@ -763,8 +796,10 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
             raise EvidenceError(f"pinned musl oracle changed during collection: {error}") from error
         if _tool_identity(Path("/opt/musl-1.2.6/lib/libc.a"), "post-run pinned musl static libc") != oracle_inputs["static_libc"]["native"]:
             fail("pinned musl static libc changed during collection")
+        if _tool_identity(Path(native_qualification.MUSL_RUNTIME_PATHS["loader"]), "post-run pinned musl loader") != oracle_inputs["loader"]["identity"]:
+            fail("pinned musl loader changed during collection")
         after = _input_seal(ROOT, dynamic, static, _installed_tool_roster(dynamic, static), oracle_inputs,
-                            _fixture_record(ROOT, fixture_source, fixture_files, fixture_records))
+                            _fixture_record(ROOT, fixture_source, fixture_files, fixture_records, fixture_ldd))
         if before != after:
             fail("source, product, tool, oracle, or fixture input changed during wordexp collection")
         report = {
@@ -795,6 +830,47 @@ def _validate_tool_record(value: object, description: str) -> dict[str, Any]:
     return value
 
 
+def _validate_retained_oracle(root: Path, work: Path, value: object) -> dict[str, Any]:
+    """Validate the retained musl oracle against the caller's checked source.
+
+    ``owned_dynamic_qualification.validate_oracle`` is intentionally tied to
+    that module's checkout-global path. A retained-wordexp reader instead gets
+    its checkout explicitly, so an integration reader can replay a worker
+    receipt without accidentally consulting the worker module's source tree.
+    """
+    oracle = _exact_dict(value, {"version", "runtime_sha256", "compiler_wrapper_sha256", "pins_sha256", "files"},
+                         "wordexp retained pinned oracle")
+    files = oracle["files"]
+    if oracle["version"] != "musl-1.2.6" or not isinstance(files, dict) or set(files) != set(qualification.ORACLE_FILES):
+        fail("wordexp retained pinned oracle roster differs")
+    pins_path = _physical(root / "compat/upstreams.toml", "wordexp caller upstream pins", directory=False)
+    wrapper_path = _physical(root / "docker/x86_64-musl-oracle-gcc", "wordexp caller oracle wrapper", directory=False)
+    if oracle["pins_sha256"] != _sha(pins_path):
+        fail("wordexp retained pinned oracle pin identity differs")
+    directory = _physical(work / "qualification-oracle", "wordexp retained pinned oracle directory", directory=True)
+    if {path.name for path in directory.iterdir()} != set(files):
+        fail("wordexp retained pinned oracle file roster differs")
+    for name, digest in files.items():
+        if not isinstance(digest, str) or len(digest) != 64 or _sha(directory / name) != digest:
+            fail("wordexp retained pinned oracle file identity differs")
+    if oracle["runtime_sha256"] != files["runtime"] or oracle["compiler_wrapper_sha256"] != files["compiler_wrapper"]:
+        fail("wordexp retained pinned oracle summary differs")
+    if files["compiler_wrapper"] != _sha(wrapper_path):
+        fail("wordexp retained oracle compiler differs from the caller pin")
+    try:
+        pins = tomllib.loads(pins_path.read_text(encoding="utf-8"))["musl"]
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError, KeyError) as error:
+        raise EvidenceError("wordexp caller upstream pins are malformed") from error
+    expected_manifest = ("format=crabc-pinned-musl-oracle-v1\n"
+                         f"version={pins['version']}\nsource_sha256={pins['sha256']}\n"
+                         f"fallback_revision={pins['fallback_revision']}\narchitecture=x86_64\n")
+    if (directory / "source_manifest").read_text(encoding="utf-8") != expected_manifest:
+        fail("wordexp retained oracle source manifest differs")
+    if (directory / "specs_manifest").read_text(encoding="utf-8") != f"{files['specs']}  /opt/musl-1.2.6/lib/musl-gcc.specs\n":
+        fail("wordexp retained oracle specs manifest differs")
+    return oracle
+
+
 def _command_record(root: Path, work: Path, label: str, record: object, expected_argv: list[str],
                     expected_environment: Mapping[str, str], description: str) -> dict[str, Any]:
     record = _exact_dict(record, {"argv", "environment", "stdout", "stderr", "status"}, description)
@@ -821,8 +897,9 @@ def _command_record(root: Path, work: Path, label: str, record: object, expected
     return record
 
 
-def _fixture_from_seal(root: Path, work: Path, value: object) -> tuple[Path, dict[str, str], dict[str, dict[str, Any]]]:
-    value = _exact_dict(value, {"root", "files"}, "wordexp external fixture")
+def _fixture_from_seal(root: Path, work: Path, value: object, tools: Mapping[str, dict[str, Any]],
+                       oracle: Mapping[str, Any]) -> tuple[Path, dict[str, str], dict[str, dict[str, Any]]]:
+    value = _exact_dict(value, {"root", "files", "ldd"}, "wordexp external fixture")
     fixture_root = _local_mounted(root, value["root"], "wordexp external fixture root")
     expected_root = _physical(work / "external-shell-fixture", "wordexp expected external fixture root", directory=True)
     if fixture_root != expected_root:
@@ -843,8 +920,35 @@ def _fixture_from_seal(root: Path, work: Path, value: object) -> tuple[Path, dic
     observed, aliases = _walk_root(fixture_root)
     if aliases or observed != set(paths.values()) or len(set(paths.values())) != len(paths):
         fail("wordexp external fixture roster differs")
-    if paths.get("shell") != "bin/sh" or paths.get("null") != "dev/null" or not any(name.startswith("dependency:") for name in paths):
+    if paths.get("shell") != "bin/sh" or paths.get("null") != "dev/null":
         fail("wordexp external fixture roles differ")
+    dependencies = sorted((name for name in paths if name.startswith("dependency:")),
+                          key=lambda name: int(name.removeprefix("dependency:")) if name.removeprefix("dependency:").isdigit() else -1)
+    if dependencies != [f"dependency:{index}" for index in range(len(dependencies))]:
+        fail("wordexp external fixture dependency roster differs")
+    shell = files["shell"]
+    if shell["sha256"] != tools["shell"]["sha256"] or shell["mode"] != tools["shell"]["mode"]:
+        fail("wordexp retained fixture shell differs from its sealed source tool")
+    loader_record = _exact_dict(oracle["loader"], {"source_path", "identity"}, "wordexp pinned musl loader")
+    loader = _validate_tool_record(loader_record["identity"], "wordexp pinned musl loader identity")
+    expected_loader = Path(native_qualification.MUSL_RUNTIME_PATHS["loader"])
+    if loader_record["source_path"] != str(expected_loader):
+        fail("wordexp retained fixture loader source path differs")
+    if dependencies != ["dependency:0"] or paths["dependency:0"] != "lib/ld-musl-x86_64.so.1":
+        fail("wordexp retained fixture loader closure differs")
+    dependency = files["dependency:0"]
+    if dependency["sha256"] != loader["sha256"] or dependency["mode"] != loader["mode"]:
+        fail("wordexp retained fixture loader differs from the pinned musl loader")
+    ldd = _command_record(root, work, "controlled-shell-ldd", value["ldd"],
+                          [tools["ldd"]["path"], tools["shell"]["path"]], _mounted_environment(root, work),
+                          "wordexp controlled shell ldd")
+    ldd_stdout = _identity_current(root, ldd["stdout"], "wordexp controlled shell ldd stdout")
+    try:
+        closure = _ldd_closure_candidates(ldd_stdout.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as error:
+        raise EvidenceError("wordexp controlled shell ldd output is not text") from error
+    if tuple(path.as_posix().lstrip("/") for path in closure) != tuple(paths[name] for name in dependencies):
+        fail("wordexp retained fixture differs from the sealed ldd closure")
     return fixture_root, paths, {name: files[name] for name in paths}
 
 
@@ -884,11 +988,18 @@ def _validate_input_seal(root: Path, work: Path, value: object) -> tuple[Path, P
         expected_static_driver = {"path": _mounted(root, static_driver), "sha256": _sha(static_driver), "mode": _mode(static_driver)}
         if tools["static-driver"] != expected_static_driver:
             fail("wordexp static driver pre-seal differs")
-    oracle = _exact_dict(value["oracle"], {"qualification", "static_libc"}, "wordexp pinned oracle input")
-    try:
-        qualification.validate_oracle(work, oracle["qualification"])
-    except qualification.QualificationError as error:
-        raise EvidenceError(f"wordexp retained pinned oracle differs: {error}") from error
+    oracle = _exact_dict(value["oracle"], {"qualification", "loader", "static_libc"}, "wordexp pinned oracle input")
+    _validate_retained_oracle(root, work, oracle["qualification"])
+    oracle_compiler = tools["oracle-compiler"]
+    expected_wrapper = native_qualification.MUSL_RUNTIME_PATHS["compiler_wrapper"]
+    if oracle_compiler["path"] != expected_wrapper or oracle_compiler["sha256"] != oracle["qualification"]["compiler_wrapper_sha256"]:
+        fail("wordexp oracle compiler differs from the independently pinned wrapper")
+    loader_record = _exact_dict(oracle["loader"], {"source_path", "identity"}, "wordexp pinned musl loader")
+    loader = _validate_tool_record(loader_record["identity"], "wordexp pinned musl loader identity")
+    if (loader_record["source_path"] != native_qualification.MUSL_RUNTIME_PATHS["loader"]
+            or loader["path"] != native_qualification.MUSL_RUNTIME_PATHS["libc"]
+            or loader["sha256"] != oracle["qualification"]["runtime_sha256"]):
+        fail("wordexp pinned loader differs from the qualified musl runtime")
     static_libc = _exact_dict(oracle["static_libc"], {"native", "retained"}, "wordexp static oracle libc")
     native = _validate_tool_record(static_libc["native"], "wordexp static oracle libc native")
     if native["path"] != "/opt/musl-1.2.6/lib/libc.a":
@@ -896,7 +1007,7 @@ def _validate_input_seal(root: Path, work: Path, value: object) -> tuple[Path, P
     retained = _identity_current(root, static_libc["retained"], "wordexp retained static oracle libc")
     if retained != _physical(work / "pinned-musl-static-libc.a", "wordexp retained static oracle libc path", directory=False) or native["sha256"] != _sha(retained):
         fail("wordexp static oracle libc retention differs")
-    return dynamic, static, tools, _fixture_from_seal(root, work, value["fixture"])
+    return dynamic, static, tools, _fixture_from_seal(root, work, value["fixture"], tools, oracle)
 
 
 def _expected_execution_maps(dynamic: Path | None, fixture_paths: Mapping[str, str], shell_case: str,
@@ -939,8 +1050,8 @@ def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, s
     fixture_root, fixture_paths, fixture_records = fixture
     product_files, product_aliases, fixture_expected = _expected_execution_maps(dynamic_product, fixture_paths, shell_case, overrides)
     consumer = MODE_SPECS[mode][2]
-    if execution.get("product_files") != {name: {"path": relative, "sha256": _sha((dynamic_product / relative) if name != "manifest" else dynamic_product / relative),
-                                                        "mode": _mode((dynamic_product / relative) if name != "manifest" else dynamic_product / relative)}
+    if execution.get("product_files") != {name: {"path": relative, "sha256": _sha(dynamic_product / relative),
+                                                        "mode": _mode(dynamic_product / relative)}
                                           for name, relative in product_files.items()}:
         fail("wordexp execution product file binding differs")
     expected_aliases = {name: {"path": relative, "target": os.readlink(dynamic_product / relative)}
@@ -999,7 +1110,8 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     expected_header = [tools["compiler"]["path"], "-nostdinc", "-isystem", _mounted(root, dynamic / "usr/include"),
                        "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-fPIE", "-std=c11",
                        "-D_GNU_SOURCE", "-E", "-H", _mounted(root, root / PROBE)]
-    header_command = _command_record(root, work, "installed-header-trace", header["command"], expected_header, {},
+    command_environment = _mounted_environment(root, work)
+    header_command = _command_record(root, work, "installed-header-trace", header["command"], expected_header, command_environment,
                                      "wordexp installed header trace")
     trace = _identity_current(root, header["trace"], "wordexp installed header trace bytes")
     if header_command["stderr"] != header["trace"] or trace != _physical(work / "commands/installed-header-trace.stderr",
@@ -1008,13 +1120,14 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     _validate_header_trace(root, trace, dynamic)
     expected_compile = [tools["dynamic-driver"]["path"], "--dynamic-pie", "-std=c11", "-D_GNU_SOURCE", "-fno-builtin",
                         "-c", _mounted(root, root / PROBE), "-o", _mounted(root, workload)]
-    _command_record(root, work, "compile-workload", report["compile"], expected_compile, {}, "wordexp compile")
+    _command_record(root, work, "compile-workload", report["compile"], expected_compile, command_environment, "wordexp compile")
     oracle = _identity_current(root, report["oracle"], "wordexp static oracle")
     if oracle != _physical(work / "pinned-musl-static-et-exec", "wordexp canonical static oracle", directory=False):
         fail("wordexp static oracle path differs")
     expected_oracle_link = [tools["oracle-compiler"]["path"], "-static", "-fno-pie", "-no-pie",
                             _mounted(root, workload), "-o", _mounted(root, oracle)]
-    _command_record(root, work, "pinned-musl-link", report["oracle_link"], expected_oracle_link, {}, "wordexp pinned-musl link")
+    _command_record(root, work, "pinned-musl-link", report["oracle_link"], expected_oracle_link, command_environment,
+                    "wordexp pinned-musl link")
 
     links = report["links"]
     expected_links = {"dynamic-pie", "dynamic-non-pie"} | ({"static-et-exec", "static-pie"} if static else set())
@@ -1035,7 +1148,8 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
                              _mounted(root, workload), "-o", _mounted(root, executable)]
         else:
             expected_link = [tools["dynamic-driver"]["path"], mode_flag, _mounted(root, workload), "-o", _mounted(root, executable)]
-        _command_record(root, work, f"link-{name}", item["command"], expected_link, {}, f"wordexp {name} link")
+        _command_record(root, work, f"link-{name}", item["command"], expected_link, command_environment,
+                        f"wordexp {name} link")
         sealed_linker = {"path": tools["linker"]["path"], "sha256": tools["linker"]["sha256"]}
         try:
             receipt_value = json.loads(receipt.read_text(encoding="utf-8"))

@@ -66,9 +66,19 @@ and rejects every other alias change.  Successful and failed
 runs remain under `.work/x86_64` for replay.
 
 `python3 -B compat/x86_64/owned_wordexp_evidence.py validate --report REPORT`
-reconstructs a retained receipt on the host.  It requires the fixed
+reconstructs a retained receipt on the host. It requires the fixed
 `/workspace` source-mount translation, current source/product/header/object
 identities, sealed retained pinned-musl inputs, exact retained link receipts
 and ELF observations, and exact execution-tree bytes, modes, aliases, raw
 results, and expected transcripts.  This proves only the bounded
 installed-product component; it does not qualify a family or public support.
+
+The selected installed compiler and linker identities are native producer
+seals: this component records and requires them unchanged across collection,
+but does not claim a separate caller-supplied expected hash for either tool.
+The pinned-musl oracle compiler is different: its exact wrapper bytes are
+checked against `docker/x86_64-musl-oracle-gcc` in the caller checkout, and the
+fixture's `/bin/sh` plus its `/lib/ld-musl-x86_64.so.1` closure are bound to the
+presealed shell tool and to the qualified pinned-musl runtime respectively.
+A coordinator that needs an independent native compiler/linker expectation
+must supply that sealed tool input separately.
