@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import tomllib
@@ -56,6 +57,19 @@ STATIC_MODES = (("static", "static"), ("static-pie", "static-pie"))
 DYNAMIC_MODES = (("dynamic-pie", "pie"), ("dynamic-non-pie", "non-pie"))
 ROUTES = ("kernel", "direct")
 HEADERS = ("aio.h", "signal.h", "time.h", "features.h", "bits/alltypes.h")
+STANDARD_TRANSCRIPTS = {
+    "workload": b"owned-aio basic ok\n",
+    "behavior": b"owned-aio behavior positioned/nonseekable/append/cancel/partial-sigevent/notify/list/suspend/fork=ok\n",
+    "lio-create-failure": b"lio-create-failure-mask-retained=ok\n",
+    "suspend-wake": b"aio-suspend wake-all single/list=ok\n",
+}
+FD_REUSE_SUCCESS = b"fd-reuse-regular-to-pipe=ok\n"
+FD_REUSE_ESPIPE = re.compile(
+    rb"fd-reuse-failure step=[A-Za-z0-9-]+ attempt=[1-9][0-9]* regular=[0-9]+ "
+    rb"pipe-read=-?[0-9]+ pipe-write=-?[0-9]+ positioned-submit=-?[0-9]+ "
+    rb"positioned-error=-?[0-9]+ positioned-return=-?[0-9]+ pipe-submit=0 "
+    rb"pipe-error=29 pipe-return=-1 byte=-?[0-9]+ errno=29\n\Z"
+)
 SOURCES = tuple(PROBES.values()) + (
     "compat/x86_64/run_owned_aio.sh", "compat/x86_64/owned_aio_evidence.py",
     "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
@@ -225,6 +239,10 @@ def _input(root: Path, work: Path, dynamic: Path, static: Path | None, tools: Ma
                          "static": _product(root, static, "static") if static is not None else None},
             "tools": dict(tools), "oracle": dict(oracle)}
 
+def command_environment(root: Path, work: Path) -> dict[str, str]:
+    """The complete scrubbed environment actually passed to each command."""
+    return {**ENVIRONMENT, "TMPDIR": _mounted(root, work)}
+
 def expected_native_input(tools: Mapping[str, Any], oracle: Mapping[str, Any]) -> dict[str, Any]:
     expected = {name: tools[name] for name in TOOL_NAMES}
     return {"schema": EXPECTED_SCHEMA, "target": "x86_64-unknown-linux-musl", "tools": expected,
@@ -261,13 +279,16 @@ def tool_path(dynamic: Path, static: Path | None, name: str) -> str:
         fail(f"unknown installed tool: {name}")
     return str(tools[name]["path"])
 
-def record_command(root: Path, work: Path, label: str, argv: list[str], environment: Mapping[str, str], stdout: Path, stderr: Path, status: Path) -> Path:
+def record_command(root: Path, work: Path, label: str, argv: list[str], cwd: Path, stdout: Path, stderr: Path, status: Path) -> Path:
     if not label or any(character not in "abcdefghijklmnopqrstuvwxyz0123456789-" for character in label):
         fail("command label is unsafe")
-    if not argv or not all(isinstance(item, str) for item in argv) or dict(environment) != ENVIRONMENT:
-        fail("retained command must have a nonempty argv and the scrubbed evidence environment")
+    if not argv or not all(isinstance(item, str) for item in argv):
+        fail("retained command must have a nonempty argv")
     root = _physical(root, "checkout", directory=True); work = _physical(work, "AIO work", directory=True)
-    record = {"argv": argv, "environment": dict(environment),
+    cwd = _physical(cwd, "AIO command cwd", directory=True)
+    if not cwd.is_relative_to(root):
+        fail("AIO command cwd escapes checkout")
+    record = {"argv": argv, "cwd": _mounted(root, cwd), "environment": command_environment(root, work),
               "stdout": _identity(root, stdout, f"{label} stdout"),
               "stderr": _identity(root, stderr, f"{label} stderr"),
               "status": _identity(root, status, f"{label} status")}
@@ -353,10 +374,13 @@ def _check_input(root: Path, work: Path, value: object, *, after: bool) -> tuple
     _tool_record(oracle["loader"], "AIO retained musl loader")
     return dynamic, static, dict(tools), dict(oracle)
 
-def _command(root: Path, work: Path, label: str, expected_argv: list[str], expected_status: set[bytes]) -> dict[str, Any]:
+def _command(root: Path, work: Path, label: str, expected_argv: list[str], expected_status: set[bytes],
+             *, cwd: Path | None = None) -> dict[str, Any]:
     record = _read(work / "commands" / f"{label}.json", f"AIO command {label}")
-    record = _exact(record, {"argv", "environment", "stdout", "stderr", "status"}, f"AIO command {label}")
-    if record["argv"] != expected_argv or record["environment"] != ENVIRONMENT:
+    record = _exact(record, {"argv", "cwd", "environment", "stdout", "stderr", "status"}, f"AIO command {label}")
+    cwd = root if cwd is None else _physical(cwd, f"AIO command {label} cwd", directory=True)
+    if (record["argv"] != expected_argv or record["cwd"] != _mounted(root, cwd)
+            or record["environment"] != command_environment(root, work)):
         fail(f"AIO command {label} differs from canonical invocation")
     status = _identity_current(root, record["status"], work / f"{label}.status", f"AIO command {label} status")
     if status.read_bytes() not in expected_status:
@@ -462,6 +486,49 @@ def _link(root: Path, work: Path, product: Path, obj: Path, binary: Path, receip
 def _status_text(root: Path, command: Mapping[str, Any]) -> bytes:
     return _local(root, command["status"]["path"], "AIO command status", directory=False).read_bytes()
 
+def _streams(root: Path, command: Mapping[str, Any], description: str) -> tuple[bytes, bytes]:
+    stdout = _local(root, command["stdout"]["path"], f"{description} stdout", directory=False).read_bytes()
+    stderr = _local(root, command["stderr"]["path"], f"{description} stderr", directory=False).read_bytes()
+    return stdout, stderr
+
+def assert_success_transcript(root: Path, command: Mapping[str, Any], expected: bytes, description: str) -> tuple[bytes, bytes]:
+    """Require one completed AIO workload's full, quiet transcript."""
+    stdout, stderr = _streams(root, command, description)
+    if stdout != expected or stderr != b"":
+        fail(f"{description} transcript differs")
+    return stdout, stderr
+
+def assert_matched_transcript(root: Path, oracle: Mapping[str, Any], candidate: Mapping[str, Any], description: str) -> None:
+    if _streams(root, oracle, f"{description} oracle") != _streams(root, candidate, f"{description} candidate"):
+        fail(f"{description} candidate differs from pinned-musl transcript")
+
+def assert_oracle_fd_reuse(root: Path, command: Mapping[str, Any]) -> None:
+    """Accept only the observed success or the pinned stale-queue ESPIPE form."""
+    status, (stdout, stderr) = _status_text(root, command), _streams(root, command, "pinned musl fd-reuse")
+    if status == b"0\n":
+        if stdout != FD_REUSE_SUCCESS or stderr != b"":
+            fail("pinned musl fd-reuse success transcript differs")
+    elif status == b"1\n":
+        if stdout != b"" or FD_REUSE_ESPIPE.fullmatch(stderr) is None:
+            fail("pinned musl fd-reuse failure is not the stale-queue ESPIPE observation")
+    else:
+        fail("pinned musl fd-reuse status differs")
+
+def _candidate_expected(consumer: str, arguments: str) -> bytes:
+    if consumer in STANDARD_TRANSCRIPTS:
+        return STANDARD_TRANSCRIPTS[consumer]
+    if consumer == "fd-reuse":
+        return FD_REUSE_SUCCESS
+    if consumer == "queued-cancel":
+        return f"queued-cancel-{arguments}=ok\n".encode("ascii")
+    if consumer == "cancel-cursor":
+        return f"cancel-cursor-{arguments}=ok\n".encode("ascii")
+    if consumer == "submit-cancel":
+        return b"submit-handoff-cancellation=deferred\n"
+    if consumer == "fresh-signal":
+        return b"fresh-signal-handler-close-pending=not-observed\n"
+    fail(f"unknown AIO candidate consumer: {consumer}")
+
 def _validate_header(root: Path, work: Path, dynamic: Path, tools: Mapping[str, Any]) -> dict[str, Any]:
     expected = [tools["compiler"]["path"], "-nostdinc", "-isystem", _mounted(root, dynamic / "usr/include"),
                 "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-fPIE", "-std=c11", "-D_GNU_SOURCE",
@@ -561,8 +628,7 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
         label = f"oracle-queued-cancel-{case}"
         _command(root, work, label, ["/usr/bin/timeout", "-k", "1", "5", _mounted(root, defect_binary), case], {b"124\n", b"137\n"})
     submit = _command(root, work, "oracle-submit-cancel", ["/usr/bin/timeout", "60", _mounted(root, work / "oracle-submit-cancel"), "s"], {b"0\n"})
-    if _local(root, submit["stdout"]["path"], "source submit cancellation stdout", directory=False).read_bytes() != b"submit-handoff-cancellation=observed\n":
-        fail("source submit cancellation transcript differs")
+    assert_success_transcript(root, submit, b"submit-handoff-cancellation=observed\n", "source submit cancellation")
     oracle_commands: dict[str, Any] = {}
     for key in ORACLE_CASES:
         binary = work / ("oracle" if key == "workload" else f"oracle-{key}")
@@ -570,7 +636,10 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
         if key == "fd-reuse": argv.append("512")
         statuses = {b"0\n", b"1\n"} if key == "fd-reuse" else {b"0\n"}
         oracle_commands[key] = _command(root, work, f"oracle-{key}" if key != "workload" else "oracle", argv, statuses)
-        if key != "fd-reuse" and _status_text(root, oracle_commands[key]) != b"0\n": fail("ordinary oracle cell did not succeed")
+        if key == "fd-reuse":
+            assert_oracle_fd_reuse(root, oracle_commands[key])
+        else:
+            assert_success_transcript(root, oracle_commands[key], STANDARD_TRANSCRIPTS[key], f"pinned musl {key}")
     links: dict[str, Any] = {}
     if static is not None:
         for mode, linkage in STATIC_MODES:
@@ -580,7 +649,7 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
                 label = f"link-{mode}-{key}"
                 expected_argv = [tools["static-driver"]["path"], f"-{mode}", "--link-receipt", receipt.name,
                                  _mounted(root, work / OBJECTS[key]), "-o", _mounted(root, binary)]
-                _command(root, work, label, expected_argv, {b"0\n"})
+                _command(root, work, label, expected_argv, {b"0\n"}, cwd=work)
                 links[label] = _link(root, work, static, work / OBJECTS[key], binary, receipt, linkage, tools, retained=not live)
     for mode, linkage in DYNAMIC_MODES:
         short = mode.removeprefix("dynamic-")
@@ -588,7 +657,7 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
             binary = work / (f"dynamic-{short}" if key == "workload" else f"dynamic-{short}-{key}")
             label = f"link-{mode}-{key}"
             expected_argv = [tools["dynamic-driver"]["path"], f"--dynamic-{short}", _mounted(root, work / OBJECTS[key]), "-o", _mounted(root, binary)]
-            _command(root, work, label, expected_argv, {b"0\n"})
+            _command(root, work, label, expected_argv, {b"0\n"}, cwd=work)
             links[label] = _link(root, work, dynamic, work / OBJECTS[key], binary, binary.with_name(binary.name + ".crabc-link.json"), linkage, tools, retained=not live)
     if report["links"] != links: fail("AIO sealed link records differ")
     executions = {"oracle": _execution(root, work, "oracle", None)}
@@ -597,7 +666,10 @@ def validate_report(root: Path, report_path: Path, expected: object, *, live: bo
     executions.update({mode: _execution(root, work, mode, dynamic) for mode, _ in DYNAMIC_MODES})
     if report["executions"] != executions: fail("AIO execution root records differ")
     for label, rootmode, consumer, route, arguments in _cell_specs(static):
-        _command(root, work, label, _execution_argv(root, work, rootmode, consumer, route, arguments), {b"0\n"})
+        candidate = _command(root, work, label, _execution_argv(root, work, rootmode, consumer, route, arguments), {b"0\n"})
+        assert_success_transcript(root, candidate, _candidate_expected(consumer, arguments), f"owned {label}")
+        if consumer in STANDARD_TRANSCRIPTS:
+            assert_matched_transcript(root, oracle_commands[consumer], candidate, f"owned {label}")
     expected_labels = {"installed-header-trace", *{f"compile-{key}" for key in PROBES},
                        *{label for label, _, _ in source_links}, "oracle-queued-cancel-target",
                        "oracle-queued-cancel-all", "oracle-submit-cancel", "oracle", "oracle-behavior",
@@ -653,7 +725,7 @@ def main() -> int:
     path = sub.add_parser("tool-path"); path.add_argument("--dynamic", type=Path, required=True); path.add_argument("--static", type=Path); path.add_argument("--name", required=True)
     seal = sub.add_parser("seal-inputs"); seal.add_argument("--root", type=Path, required=True); seal.add_argument("--work", type=Path, required=True); seal.add_argument("--dynamic", type=Path, required=True); seal.add_argument("--static", type=Path)
     external = sub.add_parser("capture-expected-inputs"); external.add_argument("--root", type=Path, required=True); external.add_argument("--work", type=Path, required=True); external.add_argument("--dynamic", type=Path, required=True); external.add_argument("--static", type=Path)
-    command = sub.add_parser("record-command"); command.add_argument("--root", type=Path, required=True); command.add_argument("--work", type=Path, required=True); command.add_argument("--label", required=True); command.add_argument("--stdout", type=Path, required=True); command.add_argument("--stderr", type=Path, required=True); command.add_argument("--status", type=Path, required=True); command.add_argument("argv", nargs=argparse.REMAINDER)
+    command = sub.add_parser("record-command"); command.add_argument("--root", type=Path, required=True); command.add_argument("--work", type=Path, required=True); command.add_argument("--label", required=True); command.add_argument("--cwd", type=Path, required=True); command.add_argument("--stdout", type=Path, required=True); command.add_argument("--stderr", type=Path, required=True); command.add_argument("--status", type=Path, required=True); command.add_argument("argv", nargs=argparse.REMAINDER)
     finish = sub.add_parser("finalize"); finish.add_argument("--root", type=Path, required=True); finish.add_argument("--work", type=Path, required=True); finish.add_argument("--expected-inputs", type=Path, required=True)
     validate = sub.add_parser("validate"); validate.add_argument("--root", type=Path, required=True); validate.add_argument("--report", type=Path, required=True); validate.add_argument("--expected-inputs", type=Path, required=True)
     args = parser.parse_args()
@@ -664,7 +736,7 @@ def main() -> int:
         elif args.action == "capture-expected-inputs": print(capture_expected(args.root, args.work, args.dynamic, args.static))
         elif args.action == "record-command":
             argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
-            print(record_command(args.root, args.work, args.label, argv, ENVIRONMENT, args.stdout, args.stderr, args.status))
+            print(record_command(args.root, args.work, args.label, argv, args.cwd, args.stdout, args.stderr, args.status))
         elif args.action == "finalize": print(finalize(args.root, args.work, args.expected_inputs))
         else: validate_report(args.root, args.report, _read(args.expected_inputs, "external AIO native input seal"))
     except EvidenceError as error:

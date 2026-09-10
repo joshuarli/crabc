@@ -83,7 +83,7 @@ class OwnedAioCommandAndTrustTests(unittest.TestCase):
 
     def test_failing_status_or_ambient_environment_cannot_pass_command_receipt(self) -> None:
         with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
-            self.evidence.record_command(self.root, self.work, "command", ["/bin/true"], self.evidence.ENVIRONMENT,
+            self.evidence.record_command(self.root, self.work, "command", ["/bin/true"], self.root,
                                          self.work / "command.stdout", self.work / "command.stderr", self.work / "command.status")
             self.evidence._command(self.root, self.work, "command", ["/bin/true"], {b"0\n"})
             receipt = self.work / "commands/command.json"
@@ -92,9 +92,14 @@ class OwnedAioCommandAndTrustTests(unittest.TestCase):
             receipt.write_text(json.dumps(changed), encoding="utf-8")
             with self.assertRaises(self.evidence.EvidenceError):
                 self.evidence._command(self.root, self.work, "command", ["/bin/true"], {b"0\n"})
-        # The mutation above is rejected at the receipt boundary; an explicit
-        # nonzero raw status is independently rejected too.
-        (self.work / "command.status").write_bytes(b"1\n")
+            # Restore the canonical environment and re-sign the changed raw
+            # status, so this next rejection reaches the status judge.
+            changed["environment"] = self.evidence.command_environment(self.root, self.work)
+            (self.work / "command.status").write_bytes(b"1\n")
+            changed["status"] = self.evidence._identity(self.root, self.work / "command.status", "changed status")
+            receipt.write_text(json.dumps(changed), encoding="utf-8")
+        # The mutation above is rejected at the environment boundary; this
+        # independent record restores it before exercising raw status.
         with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
             with self.assertRaises(self.evidence.EvidenceError):
                 self.evidence._command(self.root, self.work, "command", ["/bin/true"], {b"0\n"})
@@ -115,6 +120,52 @@ class OwnedAioCommandAndTrustTests(unittest.TestCase):
         changed = copy.deepcopy(tools); changed["compiler"]["sha256"] = "d" * 64
         with self.assertRaises(self.evidence.EvidenceError):
             self.evidence._same_expected(external, changed, oracle)
+
+
+class OwnedAioBehaviorObservationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.evidence = module()
+        self.root = TMP / self.id().replace(".", "-")
+        shutil.rmtree(self.root, ignore_errors=True)
+        self.work = self.root / "work"; self.work.mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def _record(self, label: str, stdout: bytes, stderr: bytes = b"", status: bytes = b"0\n"):
+        (self.work / f"{label}.stdout").write_bytes(stdout)
+        (self.work / f"{label}.stderr").write_bytes(stderr)
+        (self.work / f"{label}.status").write_bytes(status)
+        with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+            self.evidence.record_command(self.root, self.work, label, ["/bin/true"], self.root,
+                                         self.work / f"{label}.stdout", self.work / f"{label}.stderr",
+                                         self.work / f"{label}.status")
+            return self.evidence._command(self.root, self.work, label, ["/bin/true"], {status})
+
+    def test_re_signed_changed_stdout_is_rejected_by_behavior_judge(self) -> None:
+        command = self._record("standard", b"owned-aio basic ok\n")
+        with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+            self.evidence.assert_success_transcript(self.root, command, b"owned-aio basic ok\n", "standard")
+            output = self.work / "standard.stdout"
+            output.write_bytes(b"re-signed substituted output\n")
+            receipt_path = self.work / "commands/standard.json"
+            receipt = json.loads(receipt_path.read_text())
+            receipt["stdout"] = self.evidence._identity(self.root, output, "re-signed stdout")
+            receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+            command = self.evidence._command(self.root, self.work, "standard", ["/bin/true"], {b"0\n"})
+            with self.assertRaises(self.evidence.EvidenceError):
+                self.evidence.assert_success_transcript(self.root, command, b"owned-aio basic ok\n", "standard")
+
+    def test_candidate_oracle_mismatch_and_arbitrary_fd_failure_are_rejected(self) -> None:
+        oracle = self._record("oracle", b"same pinned transcript\n")
+        candidate = self._record("candidate", b"changed candidate transcript\n")
+        with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+            with self.assertRaises(self.evidence.EvidenceError):
+                self.evidence.assert_matched_transcript(self.root, oracle, candidate, "ordinary workload")
+        fd = self._record("oracle-fd", b"", b"arbitrary failure\n", b"1\n")
+        with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+            with self.assertRaises(self.evidence.EvidenceError):
+                self.evidence.assert_oracle_fd_reuse(self.root, fd)
 
 
 class OwnedAioSuppliedPathTests(unittest.TestCase):

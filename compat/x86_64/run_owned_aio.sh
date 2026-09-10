@@ -142,7 +142,7 @@ run_capture() {
 		/usr/bin/timeout 30 "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
 	printf '%s\n' "$status" >"${output%.stdout}.status"
 	python3 -B "$EVIDENCE" record-command --root "$ROOT" --work "$WORK" --label "$label" \
-		--stdout "$output" --stderr "${output%.stdout}.stderr" --status "${output%.stdout}.status" -- \
+		--cwd "$ROOT" --stdout "$output" --stderr "${output%.stdout}.stderr" --status "${output%.stdout}.status" -- \
 		/usr/bin/timeout 30 "$@" >/dev/null
 	[ "$status" -eq 0 ] || fail "expected success, got ${status}: $*"
 }
@@ -159,7 +159,7 @@ run_fd_reuse_source_observation() {
 		/usr/bin/timeout 30 "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
 	printf '%s\n' "$status" >"${output%.stdout}.status"
 	python3 -B "$EVIDENCE" record-command --root "$ROOT" --work "$WORK" --label "$label" \
-		--stdout "$output" --stderr "${output%.stdout}.stderr" --status "${output%.stdout}.status" -- \
+		--cwd "$ROOT" --stdout "$output" --stderr "${output%.stdout}.stderr" --status "${output%.stdout}.status" -- \
 		/usr/bin/timeout 30 "$@" >/dev/null
 	case "$status" in
 		0)
@@ -207,10 +207,10 @@ compare_oracle() {
 }
 
 record_raw() {
-	local label="$1" output="$2" status="$3"
-	shift 3
+	local label="$1" output="$2" status="$3" cwd="$4"
+	shift 4
 	python3 -B "$EVIDENCE" record-command --root "$ROOT" --work "$WORK" --label "$label" \
-		--stdout "$output" --stderr "${output%.stdout}.stderr" --status "$status" -- "$@" >/dev/null
+		--cwd "$cwd" --stdout "$output" --stderr "${output%.stdout}.stderr" --status "$status" -- "$@" >/dev/null
 }
 
 run_compile() {
@@ -219,7 +219,7 @@ run_compile() {
 		"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
 		-c "$source" -o "$object" >"$WORK/$label.stdout" 2>"$WORK/$label.stderr" || status=$?
 	printf '%s\n' "$status" >"$WORK/$label.status"
-	record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" \
+	record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" "$ROOT" \
 		"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
 		-c "$source" -o "$object"
 	[ "$status" -eq 0 ] || fail "installed header compilation failed for $key"
@@ -238,7 +238,7 @@ run_link() {
 				"$object" -o "$output"
 		) >"$WORK/$label.stdout" 2>"$WORK/$label.stderr" || status=$?
 		printf '%s\n' "$status" >"$WORK/$label.status"
-		record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" \
+		record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" "$WORK" \
 			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$output").receipt.json" "$object" -o "$output"
 	else
 		(
@@ -247,7 +247,7 @@ run_link() {
 				"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-${mode#dynamic-}" "$object" -o "$output"
 		) >"$WORK/$label.stdout" 2>"$WORK/$label.stderr" || status=$?
 		printf '%s\n' "$status" >"$WORK/$label.status"
-		record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" \
+		record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" "$WORK" \
 			"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-${mode#dynamic-}" "$object" -o "$output"
 	fi
 	[ "$status" -eq 0 ] || fail "installed $mode link failed for $key"
@@ -259,7 +259,7 @@ run_oracle_link() {
 		"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$input" -o "$output" \
 		>"$WORK/$label.stdout" 2>"$WORK/$label.stderr" || status=$?
 	printf '%s\n' "$status" >"$WORK/$label.status"
-	record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" \
+	record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" "$ROOT" \
 		"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$input" -o "$output"
 	[ "$status" -eq 0 ] || fail "pinned musl link failed for $label"
 }
@@ -298,7 +298,7 @@ for cancel_case in target all; do
 		2>"$WORK/oracle-queued-cancel-$cancel_case.stderr" || cancel_status=$?
 	printf '%s\n' "$cancel_status" >"$WORK/oracle-queued-cancel-$cancel_case.status"
 	record_raw "oracle-queued-cancel-$cancel_case" "$WORK/oracle-queued-cancel-$cancel_case.stdout" \
-		"$WORK/oracle-queued-cancel-$cancel_case.status" /usr/bin/timeout -k 1 5 "$WORK/oracle-queued-cancel" "$cancel_case"
+		"$WORK/oracle-queued-cancel-$cancel_case.status" "$ROOT" /usr/bin/timeout -k 1 5 "$WORK/oracle-queued-cancel" "$cancel_case"
 	case "$cancel_status" in
 		124|137) ;;
 		*) fail "pinned musl queued $cancel_case cancellation did not reproduce its deadlock (status $cancel_status)" ;;
@@ -311,7 +311,7 @@ env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
 	/usr/bin/timeout 60 "$WORK/oracle-submit-cancel" s >"$WORK/oracle-submit-cancel.stdout" \
 	2>"$WORK/oracle-submit-cancel.stderr" || submit_cancel_status=$?
 printf '%s\n' "$submit_cancel_status" >"$WORK/oracle-submit-cancel.status"
-record_raw oracle-submit-cancel "$WORK/oracle-submit-cancel.stdout" "$WORK/oracle-submit-cancel.status" \
+record_raw oracle-submit-cancel "$WORK/oracle-submit-cancel.stdout" "$WORK/oracle-submit-cancel.status" "$ROOT" \
 	/usr/bin/timeout 60 "$WORK/oracle-submit-cancel" s
 [ "$submit_cancel_status" -eq 0 ] || fail "pinned musl submit handoff cancellation probe exited ${submit_cancel_status}"
 grep -Fxq 'submit-handoff-cancellation=observed' "$WORK/oracle-submit-cancel.stdout" ||
@@ -324,7 +324,7 @@ env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
 	-fstack-protector-strong -fPIE -std=c11 -D_GNU_SOURCE -E -H "$PROBE" \
 	>"$WORK/installed-header-trace.stdout" 2>"$WORK/installed-header-trace.stderr" || header_status=$?
 printf '%s\n' "$header_status" >"$WORK/installed-header-trace.status"
-record_raw installed-header-trace "$WORK/installed-header-trace.stdout" "$WORK/installed-header-trace.status" \
+record_raw installed-header-trace "$WORK/installed-header-trace.stdout" "$WORK/installed-header-trace.status" "$ROOT" \
 	"$compiler_path" -nostdinc -isystem "$dynamic_product/usr/include" -ffreestanding -fno-builtin \
 	-fstack-protector-strong -fPIE -std=c11 -D_GNU_SOURCE -E -H "$PROBE"
 [ "$header_status" -eq 0 ] || fail 'installed-header trace failed'
