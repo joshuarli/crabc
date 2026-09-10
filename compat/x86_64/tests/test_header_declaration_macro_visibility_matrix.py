@@ -103,7 +103,7 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
         self.assertEqual(
             report["summary"]["comparison_counts"],
             {
-                "candidate-only-pending-c-abi-policy": 56,
+                "candidate-only-reviewed-project-c-abi-extension": 56,
                 "matched": 1280,
                 "oracle-not-applicable": 1,
             },
@@ -126,7 +126,7 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
         project_only = next(
             row
             for row in report["rows"]
-            if row["comparison"] == "candidate-only-pending-c-abi-policy"
+            if row["comparison"] == "candidate-only-reviewed-project-c-abi-extension"
         )
         oracle_not_applicable = next(
             row

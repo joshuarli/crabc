@@ -1,8 +1,8 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-feature-visibility-matrix/v1",
   "inputs": {
-    "callable_inventory_sha256": "52dc2ec514389fedb5bc5622d8ccf8a4e6eb208849eb05aa25adc5515f1eb735",
-    "matrix_contract_sha256": "335eeba75e30e98d996a35f079d1e7b2da36df2ebd3be023ab85253049ac0113",
+    "callable_inventory_sha256": "9519c728ae22326c5d10b0ee8e02687f01be44a285dce90ff8c70c17872b0c03",
+    "matrix_contract_sha256": "8128dae9c5b713f6c9b15eb9098151119a39b32d43ae3f15f576fed7b6346f3c",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
   "oracle": "Pinned musl 1.2.6",
@@ -24,15 +24,20 @@
       ],
       "canonical_visibility": "unistd.h gates daemon to X/Open, GNU, and BSD forms; this standalone path is currently unconditional.",
       "capability_owner": "process.control",
-      "cxx_linkage": "cxx-default",
+      "cxx_linkage": "extern-c",
       "cxx_surface": "callable-declarations",
       "declared_symbols": [
         "daemon"
       ],
-      "disposition": "retained-pending-c-abi-policy",
+      "disposition": "retained-reviewed-project-c-abi-extension",
       "evidence": [
         "include/daemon.h",
         "include/unistd.h",
+        "libc/src/c_abi/x86_64/owned_process_trio.rs",
+        "compat/x86_64/project_header_extension_probe.c",
+        "compat/x86_64/project_header_extension_probe.cpp",
+        "compat/x86_64/run_project_header_extension_policy.sh",
+        "Pinned musl 1.2.6 src/legacy/daemon.c",
         "compat/crabc-rs/coverage.toml#process.control"
       ],
       "observed_profiles": [
@@ -46,7 +51,7 @@
       ],
       "origin": "standalone-alias",
       "path": "daemon.h",
-      "provider_state": "unprovided",
+      "provider_state": "owned-runtime",
       "removal_requires_abi_decision": true,
       "retained_profiles": [
         "c11-gnu",
@@ -72,10 +77,14 @@
         "dn_expand",
         "dn_skipname"
       ],
-      "disposition": "retained-pending-c-abi-policy",
+      "disposition": "retained-reviewed-project-c-abi-extension",
       "evidence": [
         "include/dn_expand.h",
         "include/arpa/nameser.h",
+        "libc/src/c_abi/x86_64/dn_expand.rs",
+        "libc/src/c_abi/x86_64/dn_skipname.rs",
+        "Pinned musl 1.2.6 src/network/dn_expand.c",
+        "Pinned musl 1.2.6 src/network/dn_skipname.c",
         "compat/x86_64/parity.toml#static-c-dn-expand"
       ],
       "observed_profiles": [
@@ -113,9 +122,15 @@
         "capget",
         "capset"
       ],
-      "disposition": "retained-pending-c-abi-policy",
+      "disposition": "retained-reviewed-project-c-abi-extension",
       "evidence": [
         "include/linux/capability.h",
+        "libc/src/c_abi/x86_64/owned_linux_control.rs",
+        "compat/x86_64/owned_linux_control_probe.c",
+        "compat/x86_64/project_header_extension_probe.c",
+        "compat/x86_64/project_header_extension_probe.cpp",
+        "compat/x86_64/run_project_header_extension_policy.sh",
+        "Pinned musl 1.2.6 src/linux/cap.c",
         "compat/crabc-rs/coverage.toml#system.kernel-admin"
       ],
       "observed_profiles": [
@@ -129,7 +144,7 @@
       ],
       "origin": "linux-uapi-local",
       "path": "linux/capability.h",
-      "provider_state": "unprovided",
+      "provider_state": "owned-runtime",
       "removal_requires_abi_decision": true,
       "retained_profiles": [
         "c11-gnu",
@@ -162,10 +177,12 @@
         "seed48",
         "srand48"
       ],
-      "disposition": "retained-pending-c-abi-policy",
+      "disposition": "retained-reviewed-project-c-abi-extension",
       "evidence": [
         "include/lrand48.h",
         "include/stdlib.h",
+        "libc/src/c_abi/x86_64/lrand48.rs",
+        "Pinned musl 1.2.6 src/prng/__seed48.c, __rand48_step.c, drand48.c, lrand48.c, mrand48.c, lcong48.c, seed48.c, srand48.c",
         "compat/crabc-rs/coverage.toml#random.state"
       ],
       "observed_profiles": [
@@ -197,17 +214,19 @@
       "canonical_headers": [
         "pthread.h"
       ],
-      "canonical_visibility": "pthread.h supplies pthread_atfork with C++ C linkage; this standalone path currently has default C++ linkage.",
+      "canonical_visibility": "pthread.h supplies pthread_atfork with C++ C linkage; this standalone path retains that linkage unconditionally.",
       "capability_owner": "process.atfork-exit-hooks",
-      "cxx_linkage": "cxx-default",
+      "cxx_linkage": "extern-c",
       "cxx_surface": "callable-declarations",
       "declared_symbols": [
         "pthread_atfork"
       ],
-      "disposition": "retained-pending-c-abi-policy",
+      "disposition": "retained-reviewed-project-c-abi-extension",
       "evidence": [
         "include/pthread_atfork.h",
         "include/pthread.h",
+        "libc/src/c_abi/x86_64/pthread_atfork.rs",
+        "Pinned musl 1.2.6 src/thread/pthread_atfork.c",
         "compat/x86_64/parity.toml#static-c-pthread-atfork-fork"
       ],
       "observed_profiles": [
@@ -249,9 +268,10 @@
         "atomic_signal_fence",
         "atomic_thread_fence"
       ],
-      "disposition": "retained-pending-c-abi-policy",
+      "disposition": "retained-reviewed-project-c-abi-extension",
       "evidence": [
         "include/stdatomic.h",
+        "ISO C11 7.17",
         "compat/x86_64/atomic_addressable_abi_probe.c",
         "compat/x86_64/run_atomic_addressable_abi.sh"
       ],
@@ -291,10 +311,12 @@
       "declared_symbols": [
         "strverscmp"
       ],
-      "disposition": "retained-pending-c-abi-policy",
+      "disposition": "retained-reviewed-project-c-abi-extension",
       "evidence": [
         "include/strverscmp.h",
         "include/string.h",
+        "libc/src/c_abi/x86_64/byte_strings.rs",
+        "Pinned musl 1.2.6 src/string/strverscmp.c",
         "compat/x86_64/parity.toml#static-c-byte-strings"
       ],
       "observed_profiles": [
@@ -332,9 +354,15 @@
         "delete_module",
         "init_module"
       ],
-      "disposition": "retained-pending-c-abi-policy",
+      "disposition": "retained-reviewed-project-c-abi-extension",
       "evidence": [
         "include/sys/module.h",
+        "libc/src/c_abi/x86_64/owned_linux_control.rs",
+        "compat/x86_64/owned_linux_control_probe.c",
+        "compat/x86_64/project_header_extension_probe.c",
+        "compat/x86_64/project_header_extension_probe.cpp",
+        "compat/x86_64/run_project_header_extension_policy.sh",
+        "Pinned musl 1.2.6 src/linux/module.c",
         "compat/crabc-rs/coverage.toml#system.kernel-admin"
       ],
       "observed_profiles": [
@@ -348,7 +376,7 @@
       ],
       "origin": "project-extension",
       "path": "sys/module.h",
-      "provider_state": "unprovided",
+      "provider_state": "owned-runtime",
       "removal_requires_abi_decision": true,
       "retained_profiles": [
         "c11-gnu",
@@ -1718,7 +1746,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "matched_callable_count": 0,
       "profile": "c11-gnu",
@@ -1735,7 +1763,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "matched_callable_count": 0,
       "profile": "cxx17-gnu",
@@ -1752,7 +1780,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "matched_callable_count": 0,
       "profile": "c11-strict",
@@ -1769,7 +1797,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "matched_callable_count": 0,
       "profile": "c11-posix-2008",
@@ -1786,7 +1814,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "matched_callable_count": 0,
       "profile": "c11-xopen-700",
@@ -1803,7 +1831,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "matched_callable_count": 0,
       "profile": "c11-bsd",
@@ -1820,7 +1848,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "matched_callable_count": 0,
       "profile": "cxx17-strict",
@@ -2009,7 +2037,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "matched_callable_count": 0,
       "profile": "c11-gnu",
@@ -2030,7 +2058,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "matched_callable_count": 0,
       "profile": "cxx17-gnu",
@@ -2051,7 +2079,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "matched_callable_count": 0,
       "profile": "c11-strict",
@@ -2072,7 +2100,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "matched_callable_count": 0,
       "profile": "c11-posix-2008",
@@ -2093,7 +2121,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "matched_callable_count": 0,
       "profile": "c11-xopen-700",
@@ -2114,7 +2142,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "matched_callable_count": 0,
       "profile": "c11-bsd",
@@ -2135,7 +2163,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "matched_callable_count": 0,
       "profile": "cxx17-strict",
@@ -4224,7 +4252,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "matched_callable_count": 0,
       "profile": "c11-gnu",
@@ -4297,7 +4325,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "matched_callable_count": 0,
       "profile": "cxx17-gnu",
@@ -4370,7 +4398,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "matched_callable_count": 0,
       "profile": "c11-strict",
@@ -4443,7 +4471,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "matched_callable_count": 0,
       "profile": "c11-posix-2008",
@@ -4516,7 +4544,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "matched_callable_count": 0,
       "profile": "c11-xopen-700",
@@ -4589,7 +4617,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "matched_callable_count": 0,
       "profile": "c11-bsd",
@@ -4662,7 +4690,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "matched_callable_count": 0,
       "profile": "cxx17-strict",
@@ -4795,7 +4823,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "matched_callable_count": 0,
       "profile": "c11-gnu",
@@ -4844,7 +4872,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "matched_callable_count": 0,
       "profile": "cxx17-gnu",
@@ -4893,7 +4921,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "matched_callable_count": 0,
       "profile": "c11-strict",
@@ -4942,7 +4970,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "matched_callable_count": 0,
       "profile": "c11-posix-2008",
@@ -4991,7 +5019,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "matched_callable_count": 0,
       "profile": "c11-xopen-700",
@@ -5040,7 +5068,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "matched_callable_count": 0,
       "profile": "c11-bsd",
@@ -5089,7 +5117,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "matched_callable_count": 0,
       "profile": "cxx17-strict",
@@ -7374,7 +7402,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "matched_callable_count": 0,
       "profile": "c11-gnu",
@@ -7391,7 +7419,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "matched_callable_count": 0,
       "profile": "cxx17-gnu",
@@ -7408,7 +7436,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "matched_callable_count": 0,
       "profile": "c11-strict",
@@ -7425,7 +7453,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "matched_callable_count": 0,
       "profile": "c11-posix-2008",
@@ -7442,7 +7470,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "matched_callable_count": 0,
       "profile": "c11-xopen-700",
@@ -7459,7 +7487,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "matched_callable_count": 0,
       "profile": "c11-bsd",
@@ -7476,7 +7504,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "matched_callable_count": 0,
       "profile": "cxx17-strict",
@@ -8985,7 +9013,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "matched_callable_count": 0,
       "profile": "c11-gnu",
@@ -8997,7 +9025,7 @@
       "candidate_callable_count": 0,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "matched_callable_count": 0,
       "profile": "cxx17-gnu",
@@ -9162,7 +9190,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "matched_callable_count": 0,
       "profile": "c11-strict",
@@ -9327,7 +9355,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "matched_callable_count": 0,
       "profile": "c11-posix-2008",
@@ -9492,7 +9520,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "matched_callable_count": 0,
       "profile": "c11-xopen-700",
@@ -9657,7 +9685,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "matched_callable_count": 0,
       "profile": "c11-bsd",
@@ -9669,7 +9697,7 @@
       "candidate_callable_count": 0,
       "candidate_only": [],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "matched_callable_count": 0,
       "profile": "cxx17-strict",
@@ -10610,7 +10638,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "matched_callable_count": 0,
       "profile": "c11-gnu",
@@ -10627,7 +10655,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "matched_callable_count": 0,
       "profile": "cxx17-gnu",
@@ -10644,7 +10672,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "matched_callable_count": 0,
       "profile": "c11-strict",
@@ -10661,7 +10689,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "matched_callable_count": 0,
       "profile": "c11-posix-2008",
@@ -10678,7 +10706,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "matched_callable_count": 0,
       "profile": "c11-xopen-700",
@@ -10695,7 +10723,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "matched_callable_count": 0,
       "profile": "c11-bsd",
@@ -10712,7 +10740,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "matched_callable_count": 0,
       "profile": "cxx17-strict",
@@ -12329,7 +12357,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "matched_callable_count": 0,
       "profile": "c11-gnu",
@@ -12350,7 +12378,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "matched_callable_count": 0,
       "profile": "cxx17-gnu",
@@ -12371,7 +12399,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "matched_callable_count": 0,
       "profile": "c11-strict",
@@ -12392,7 +12420,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "matched_callable_count": 0,
       "profile": "c11-posix-2008",
@@ -12413,7 +12441,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "matched_callable_count": 0,
       "profile": "c11-xopen-700",
@@ -12434,7 +12462,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "matched_callable_count": 0,
       "profile": "c11-bsd",
@@ -12455,7 +12483,7 @@
         }
       ],
       "candidate_status": "ok",
-      "comparison": "candidate-only-retained-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "matched_callable_count": 0,
       "profile": "cxx17-strict",
@@ -18193,14 +18221,13 @@
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
-      "candidate-only-retained-pending-c-abi-policy": 56,
+      "candidate-only-reviewed-project-c-abi-extension": 56,
       "matched": 1280,
       "oracle-not-applicable": 1
     },
     "complete": false,
     "incomplete_reasons": [
-      "1 pinned-musl header/profile rows are oracle-not-applicable",
-      "56 project-only header/profile rows remain pending C ABI policy"
+      "1 pinned-musl header/profile rows are oracle-not-applicable"
     ],
     "matched_callable_count": 34692,
     "mismatch_row_count": 0,

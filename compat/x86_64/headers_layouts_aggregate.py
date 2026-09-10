@@ -93,6 +93,7 @@ SUPPORTING_COMMANDS = (
     "./scripts/dev-x86_64.sh linux-5-10-uapi",
     "./scripts/dev-x86_64.sh installed-header-tree-closure",
     "./scripts/dev-x86_64.sh header-callable-linkage-audit",
+    "./scripts/dev-x86_64.sh project-header-extension-policy",
 )
 GENERIC_REPORTS = (
     (

@@ -34,31 +34,36 @@ header = "aio.h"
 profile = "c11-strict"
 reason = "Pinned musl leaves struct sigevent incomplete without a POSIX or GNU feature request."
 
-# A retained row records current source-tree behavior only. It neither makes a
-# standalone path part of the musl oracle nor supplies an x86 runtime/linkage
-# promise. Removing or repairing any one path changes the public header ABI
-# and requires a separately reviewed decision.
+# Each row below is an expressly reviewed project C-ABI extension. It remains
+# candidate-only: it never becomes a musl pathname match, a family-completion
+# claim, or public-support promotion. Its canonical header retains its own
+# feature gating, and removing the standalone path still changes the public
+# header ABI. `owned-runtime` is a selected owned-runtime provider proved by
+# the direct-header product-link fixture; it is distinct from `default-static`.
+# The separate header-callable-disposition `unprovided` complement covers only
+# its default-static and registered feature-provider routing boundary, so it
+# does not negate an owned-runtime provider recorded here.
 [[project_only_header]]
 path = "daemon.h"
-disposition = "retained-pending-c-abi-policy"
+disposition = "retained-reviewed-project-c-abi-extension"
 origin = "standalone-alias"
 observed_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 retained_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 c_surface = "callable-declarations"
 cxx_surface = "callable-declarations"
-cxx_linkage = "cxx-default"
+cxx_linkage = "extern-c"
 canonical_headers = ["unistd.h"]
 canonical_visibility = "unistd.h gates daemon to X/Open, GNU, and BSD forms; this standalone path is currently unconditional."
 declared_symbols = ["daemon"]
 capability_owner = "process.control"
 x86_family = "libc.posix-runtime"
-provider_state = "unprovided"
-evidence = ["include/daemon.h", "include/unistd.h", "compat/crabc-rs/coverage.toml#process.control"]
+provider_state = "owned-runtime"
+evidence = ["include/daemon.h", "include/unistd.h", "libc/src/c_abi/x86_64/owned_process_trio.rs", "compat/x86_64/project_header_extension_probe.c", "compat/x86_64/project_header_extension_probe.cpp", "compat/x86_64/run_project_header_extension_policy.sh", "Pinned musl 1.2.6 src/legacy/daemon.c", "compat/crabc-rs/coverage.toml#process.control"]
 removal_requires_abi_decision = true
 
 [[project_only_header]]
 path = "dn_expand.h"
-disposition = "retained-pending-c-abi-policy"
+disposition = "retained-reviewed-project-c-abi-extension"
 origin = "standalone-alias"
 observed_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 retained_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
@@ -71,12 +76,12 @@ declared_symbols = ["dn_expand", "dn_skipname"]
 capability_owner = "network.resolver"
 x86_family = "libc.posix-runtime"
 provider_state = "default-static"
-evidence = ["include/dn_expand.h", "include/arpa/nameser.h", "compat/x86_64/parity.toml#static-c-dn-expand"]
+evidence = ["include/dn_expand.h", "include/arpa/nameser.h", "libc/src/c_abi/x86_64/dn_expand.rs", "libc/src/c_abi/x86_64/dn_skipname.rs", "Pinned musl 1.2.6 src/network/dn_expand.c", "Pinned musl 1.2.6 src/network/dn_skipname.c", "compat/x86_64/parity.toml#static-c-dn-expand"]
 removal_requires_abi_decision = true
 
 [[project_only_header]]
 path = "linux/capability.h"
-disposition = "retained-pending-c-abi-policy"
+disposition = "retained-reviewed-project-c-abi-extension"
 origin = "linux-uapi-local"
 observed_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 retained_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
@@ -88,13 +93,13 @@ canonical_visibility = "This local Linux capability ABI is not one of the hash-p
 declared_symbols = ["capget", "capset"]
 capability_owner = "system.kernel-admin"
 x86_family = "libc.c-abi-compat"
-provider_state = "unprovided"
-evidence = ["include/linux/capability.h", "compat/crabc-rs/coverage.toml#system.kernel-admin"]
+provider_state = "owned-runtime"
+evidence = ["include/linux/capability.h", "libc/src/c_abi/x86_64/owned_linux_control.rs", "compat/x86_64/owned_linux_control_probe.c", "compat/x86_64/project_header_extension_probe.c", "compat/x86_64/project_header_extension_probe.cpp", "compat/x86_64/run_project_header_extension_policy.sh", "Pinned musl 1.2.6 src/linux/cap.c", "compat/crabc-rs/coverage.toml#system.kernel-admin"]
 removal_requires_abi_decision = true
 
 [[project_only_header]]
 path = "lrand48.h"
-disposition = "retained-pending-c-abi-policy"
+disposition = "retained-reviewed-project-c-abi-extension"
 origin = "standalone-alias"
 observed_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 retained_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
@@ -107,30 +112,30 @@ declared_symbols = ["drand48", "erand48", "jrand48", "lcong48", "lrand48", "mran
 capability_owner = "random.state"
 x86_family = "libc.posix-runtime"
 provider_state = "default-static"
-evidence = ["include/lrand48.h", "include/stdlib.h", "compat/crabc-rs/coverage.toml#random.state"]
+evidence = ["include/lrand48.h", "include/stdlib.h", "libc/src/c_abi/x86_64/lrand48.rs", "Pinned musl 1.2.6 src/prng/__seed48.c, __rand48_step.c, drand48.c, lrand48.c, mrand48.c, lcong48.c, seed48.c, srand48.c", "compat/crabc-rs/coverage.toml#random.state"]
 removal_requires_abi_decision = true
 
 [[project_only_header]]
 path = "pthread_atfork.h"
-disposition = "retained-pending-c-abi-policy"
+disposition = "retained-reviewed-project-c-abi-extension"
 origin = "standalone-alias"
 observed_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 retained_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 c_surface = "callable-declarations"
 cxx_surface = "callable-declarations"
-cxx_linkage = "cxx-default"
+cxx_linkage = "extern-c"
 canonical_headers = ["pthread.h"]
-canonical_visibility = "pthread.h supplies pthread_atfork with C++ C linkage; this standalone path currently has default C++ linkage."
+canonical_visibility = "pthread.h supplies pthread_atfork with C++ C linkage; this standalone path retains that linkage unconditionally."
 declared_symbols = ["pthread_atfork"]
 capability_owner = "process.atfork-exit-hooks"
 x86_family = "libc.pthread-tls"
 provider_state = "default-static"
-evidence = ["include/pthread_atfork.h", "include/pthread.h", "compat/x86_64/parity.toml#static-c-pthread-atfork-fork"]
+evidence = ["include/pthread_atfork.h", "include/pthread.h", "libc/src/c_abi/x86_64/pthread_atfork.rs", "Pinned musl 1.2.6 src/thread/pthread_atfork.c", "compat/x86_64/parity.toml#static-c-pthread-atfork-fork"]
 removal_requires_abi_decision = true
 
 [[project_only_header]]
 path = "stdatomic.h"
-disposition = "retained-pending-c-abi-policy"
+disposition = "retained-reviewed-project-c-abi-extension"
 origin = "c11-vocabulary"
 observed_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 retained_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
@@ -143,12 +148,12 @@ declared_symbols = ["atomic_flag_clear", "atomic_flag_clear_explicit", "atomic_f
 capability_owner = "process.atfork-exit-hooks"
 x86_family = "libc.c-abi-compat"
 provider_state = "default-static"
-evidence = ["include/stdatomic.h", "compat/x86_64/atomic_addressable_abi_probe.c", "compat/x86_64/run_atomic_addressable_abi.sh"]
+evidence = ["include/stdatomic.h", "ISO C11 7.17", "compat/x86_64/atomic_addressable_abi_probe.c", "compat/x86_64/run_atomic_addressable_abi.sh"]
 removal_requires_abi_decision = true
 
 [[project_only_header]]
 path = "strverscmp.h"
-disposition = "retained-pending-c-abi-policy"
+disposition = "retained-reviewed-project-c-abi-extension"
 origin = "project-extension"
 observed_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 retained_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
@@ -161,12 +166,12 @@ declared_symbols = ["strverscmp"]
 capability_owner = "text.byte-strings-stateful"
 x86_family = "libc.posix-runtime"
 provider_state = "default-static"
-evidence = ["include/strverscmp.h", "include/string.h", "compat/x86_64/parity.toml#static-c-byte-strings"]
+evidence = ["include/strverscmp.h", "include/string.h", "libc/src/c_abi/x86_64/byte_strings.rs", "Pinned musl 1.2.6 src/string/strverscmp.c", "compat/x86_64/parity.toml#static-c-byte-strings"]
 removal_requires_abi_decision = true
 
 [[project_only_header]]
 path = "sys/module.h"
-disposition = "retained-pending-c-abi-policy"
+disposition = "retained-reviewed-project-c-abi-extension"
 origin = "project-extension"
 observed_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 retained_profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
@@ -178,6 +183,6 @@ canonical_visibility = "This project-local Linux module syscall spelling has no 
 declared_symbols = ["delete_module", "init_module"]
 capability_owner = "system.kernel-admin"
 x86_family = "libc.c-abi-compat"
-provider_state = "unprovided"
-evidence = ["include/sys/module.h", "compat/crabc-rs/coverage.toml#system.kernel-admin"]
+provider_state = "owned-runtime"
+evidence = ["include/sys/module.h", "libc/src/c_abi/x86_64/owned_linux_control.rs", "compat/x86_64/owned_linux_control_probe.c", "compat/x86_64/project_header_extension_probe.c", "compat/x86_64/project_header_extension_probe.cpp", "compat/x86_64/run_project_header_extension_policy.sh", "Pinned musl 1.2.6 src/linux/module.c", "compat/crabc-rs/coverage.toml#system.kernel-admin"]
 removal_requires_abi_decision = true

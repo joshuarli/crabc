@@ -2,7 +2,7 @@
   "contract_schema": "crabc.x86_64-header-abi-matrix/v1",
   "inputs": {
     "compiler": "clang",
-    "compiler_collection_inputs_sha256": "07e9111f1cceec737bb25c5aabef8d1ab01ccc6613e56f7c22c477709c553993",
+    "compiler_collection_inputs_sha256": "8cdba6b5174bd004acd53354c5067707d469b773fad037c8c414d875e2557e17",
     "header_abi_matrix_contract_sha256": "5fdc8ba458e9e65c2d23a69dd87276a9b7159f08870debca0010f7f7e3417b08",
     "public_header_inventory_sha256": "2cdcd860a423d99afef8360b6376447cf17ae926f1cd47416be817d421fca80f"
   },
@@ -3639,14 +3639,15 @@
     },
     {
       "candidate": {
-        "count": 1,
+        "count": 2,
         "kind_counts": {
-          "function": 1
+          "function": 1,
+          "macro": 1
         },
-        "sha256": "8614ccd8dd67c26b764f1d87d60384d6565438ca995f94e4e7b65f2dd9d5d1e2"
+        "sha256": "59ed4975542ce3393e773209ae7d58803c542f0201968f6d90197ca249ffbb13"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "profile": "c11-gnu",
       "reference": null,
@@ -3654,14 +3655,15 @@
     },
     {
       "candidate": {
-        "count": 1,
+        "count": 2,
         "kind_counts": {
-          "function": 1
+          "function": 1,
+          "macro": 1
         },
-        "sha256": "8dce2ab0be211664217c88f957b5490538d6b843ee9782a2e171ebc50dcda6bd"
+        "sha256": "59ed4975542ce3393e773209ae7d58803c542f0201968f6d90197ca249ffbb13"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "profile": "cxx17-gnu",
       "reference": null,
@@ -3669,14 +3671,15 @@
     },
     {
       "candidate": {
-        "count": 1,
+        "count": 2,
         "kind_counts": {
-          "function": 1
+          "function": 1,
+          "macro": 1
         },
-        "sha256": "8614ccd8dd67c26b764f1d87d60384d6565438ca995f94e4e7b65f2dd9d5d1e2"
+        "sha256": "59ed4975542ce3393e773209ae7d58803c542f0201968f6d90197ca249ffbb13"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "profile": "c11-strict",
       "reference": null,
@@ -3684,14 +3687,15 @@
     },
     {
       "candidate": {
-        "count": 1,
+        "count": 2,
         "kind_counts": {
-          "function": 1
+          "function": 1,
+          "macro": 1
         },
-        "sha256": "8614ccd8dd67c26b764f1d87d60384d6565438ca995f94e4e7b65f2dd9d5d1e2"
+        "sha256": "59ed4975542ce3393e773209ae7d58803c542f0201968f6d90197ca249ffbb13"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "profile": "c11-posix-2008",
       "reference": null,
@@ -3699,14 +3703,15 @@
     },
     {
       "candidate": {
-        "count": 1,
+        "count": 2,
         "kind_counts": {
-          "function": 1
+          "function": 1,
+          "macro": 1
         },
-        "sha256": "8614ccd8dd67c26b764f1d87d60384d6565438ca995f94e4e7b65f2dd9d5d1e2"
+        "sha256": "59ed4975542ce3393e773209ae7d58803c542f0201968f6d90197ca249ffbb13"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "profile": "c11-xopen-700",
       "reference": null,
@@ -3714,14 +3719,15 @@
     },
     {
       "candidate": {
-        "count": 1,
+        "count": 2,
         "kind_counts": {
-          "function": 1
+          "function": 1,
+          "macro": 1
         },
-        "sha256": "8614ccd8dd67c26b764f1d87d60384d6565438ca995f94e4e7b65f2dd9d5d1e2"
+        "sha256": "59ed4975542ce3393e773209ae7d58803c542f0201968f6d90197ca249ffbb13"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "profile": "c11-bsd",
       "reference": null,
@@ -3729,14 +3735,15 @@
     },
     {
       "candidate": {
-        "count": 1,
+        "count": 2,
         "kind_counts": {
-          "function": 1
+          "function": 1,
+          "macro": 1
         },
-        "sha256": "8dce2ab0be211664217c88f957b5490538d6b843ee9782a2e171ebc50dcda6bd"
+        "sha256": "59ed4975542ce3393e773209ae7d58803c542f0201968f6d90197ca249ffbb13"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "daemon.h",
       "profile": "cxx17-strict",
       "reference": null,
@@ -3744,14 +3751,14 @@
     },
     {
       "candidate": {
-        "count": 55,
+        "count": 56,
         "kind_counts": {
           "function": 14,
           "macro": 33,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "bd4b61ac2230dd4aecdd02a7692a20358566b419f927cf76ccedce7602557568"
+        "sha256": "11502b66fd7bbdf3c5789354fbfc2e2dd6b4279683eae86048b02b17c31b98e1"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -3760,34 +3767,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 55,
+        "matched_count": 56,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 55,
+        "count": 56,
         "kind_counts": {
           "function": 14,
           "macro": 33,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "bd4b61ac2230dd4aecdd02a7692a20358566b419f927cf76ccedce7602557568"
+        "sha256": "11502b66fd7bbdf3c5789354fbfc2e2dd6b4279683eae86048b02b17c31b98e1"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 55,
+        "count": 56,
         "kind_counts": {
           "function": 14,
           "macro": 33,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "91bf438676f7a7ba47d056d38fe7137f2e39844443a95df87a6f6b39029e7e5f"
+        "sha256": "193536b16c9718cefa42ec13c7f91235874dd3668fc313f0e0c396adf6a47e93"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -3796,34 +3803,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 55,
+        "matched_count": 56,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 55,
+        "count": 56,
         "kind_counts": {
           "function": 14,
           "macro": 33,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "91bf438676f7a7ba47d056d38fe7137f2e39844443a95df87a6f6b39029e7e5f"
+        "sha256": "193536b16c9718cefa42ec13c7f91235874dd3668fc313f0e0c396adf6a47e93"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 49,
+        "count": 50,
         "kind_counts": {
           "function": 10,
           "macro": 31,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "36cb81270947824ec3fd0f8e539288d3497e777f9c802215023cff134e555557"
+        "sha256": "4979084cedff4d24b780a910d5296c3cbd695f16f3cccff2cb991f4fcbaf33d5"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -3832,34 +3839,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 49,
+        "matched_count": 50,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 49,
+        "count": 50,
         "kind_counts": {
           "function": 10,
           "macro": 31,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "36cb81270947824ec3fd0f8e539288d3497e777f9c802215023cff134e555557"
+        "sha256": "4979084cedff4d24b780a910d5296c3cbd695f16f3cccff2cb991f4fcbaf33d5"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 49,
+        "count": 50,
         "kind_counts": {
           "function": 10,
           "macro": 31,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "36cb81270947824ec3fd0f8e539288d3497e777f9c802215023cff134e555557"
+        "sha256": "4979084cedff4d24b780a910d5296c3cbd695f16f3cccff2cb991f4fcbaf33d5"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -3868,34 +3875,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 49,
+        "matched_count": 50,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 49,
+        "count": 50,
         "kind_counts": {
           "function": 10,
           "macro": 31,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "36cb81270947824ec3fd0f8e539288d3497e777f9c802215023cff134e555557"
+        "sha256": "4979084cedff4d24b780a910d5296c3cbd695f16f3cccff2cb991f4fcbaf33d5"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 51,
+        "count": 52,
         "kind_counts": {
           "function": 12,
           "macro": 31,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "fd477958559acb085e7212f3d467e47156954b48999f6ce9ce31544ed8c2f2d9"
+        "sha256": "29daae45c176550a3429b094da2ce5b7789cf0b37f02918e4f75c7f039ca00ae"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -3904,57 +3911,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 51,
+        "matched_count": 52,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "dirent.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 51,
+        "count": 52,
         "kind_counts": {
           "function": 12,
           "macro": 31,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "fd477958559acb085e7212f3d467e47156954b48999f6ce9ce31544ed8c2f2d9"
-      },
-      "reference_status": "ok"
-    },
-    {
-      "candidate": {
-        "count": 54,
-        "kind_counts": {
-          "function": 13,
-          "macro": 33,
-          "record": 3,
-          "typedef": 5
-        },
-        "sha256": "1f010b4c5a871e4845cbe480a2d32eb8c76b44e466c0f7e77a8ec9289ed224b7"
-      },
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "difference": {
-        "candidate_only": [],
-        "candidate_only_count": 0,
-        "incompatible": [],
-        "incompatible_count": 0,
-        "matched_count": 54,
-        "reference_only": [],
-        "reference_only_count": 0
-      },
-      "header": "dirent.h",
-      "profile": "c11-bsd",
-      "reference": {
-        "count": 54,
-        "kind_counts": {
-          "function": 13,
-          "macro": 33,
-          "record": 3,
-          "typedef": 5
-        },
-        "sha256": "1f010b4c5a871e4845cbe480a2d32eb8c76b44e466c0f7e77a8ec9289ed224b7"
+        "sha256": "29daae45c176550a3429b094da2ce5b7789cf0b37f02918e4f75c7f039ca00ae"
       },
       "reference_status": "ok"
     },
@@ -3962,12 +3933,12 @@
       "candidate": {
         "count": 55,
         "kind_counts": {
-          "function": 14,
+          "function": 13,
           "macro": 33,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "91bf438676f7a7ba47d056d38fe7137f2e39844443a95df87a6f6b39029e7e5f"
+        "sha256": "c09f4c7b86211e14791ba88eb1d19e8fb25ec28047db7ef08f0e2e7342bd4e8b"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -3981,16 +3952,52 @@
         "reference_only_count": 0
       },
       "header": "dirent.h",
-      "profile": "cxx17-strict",
+      "profile": "c11-bsd",
       "reference": {
         "count": 55,
+        "kind_counts": {
+          "function": 13,
+          "macro": 33,
+          "record": 3,
+          "typedef": 6
+        },
+        "sha256": "c09f4c7b86211e14791ba88eb1d19e8fb25ec28047db7ef08f0e2e7342bd4e8b"
+      },
+      "reference_status": "ok"
+    },
+    {
+      "candidate": {
+        "count": 56,
         "kind_counts": {
           "function": 14,
           "macro": 33,
           "record": 3,
-          "typedef": 5
+          "typedef": 6
         },
-        "sha256": "91bf438676f7a7ba47d056d38fe7137f2e39844443a95df87a6f6b39029e7e5f"
+        "sha256": "193536b16c9718cefa42ec13c7f91235874dd3668fc313f0e0c396adf6a47e93"
+      },
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "difference": {
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 56,
+        "reference_only": [],
+        "reference_only_count": 0
+      },
+      "header": "dirent.h",
+      "profile": "cxx17-strict",
+      "reference": {
+        "count": 56,
+        "kind_counts": {
+          "function": 14,
+          "macro": 33,
+          "record": 3,
+          "typedef": 6
+        },
+        "sha256": "193536b16c9718cefa42ec13c7f91235874dd3668fc313f0e0c396adf6a47e93"
       },
       "reference_status": "ok"
     },
@@ -4236,7 +4243,7 @@
         "sha256": "b78d3261de952a609c0f97aca9b8c9de7e10bbbb8e6f5e23edd6718da51a0c6e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "profile": "c11-gnu",
       "reference": null,
@@ -4252,7 +4259,7 @@
         "sha256": "b78d3261de952a609c0f97aca9b8c9de7e10bbbb8e6f5e23edd6718da51a0c6e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "profile": "cxx17-gnu",
       "reference": null,
@@ -4268,7 +4275,7 @@
         "sha256": "b78d3261de952a609c0f97aca9b8c9de7e10bbbb8e6f5e23edd6718da51a0c6e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "profile": "c11-strict",
       "reference": null,
@@ -4284,7 +4291,7 @@
         "sha256": "b78d3261de952a609c0f97aca9b8c9de7e10bbbb8e6f5e23edd6718da51a0c6e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "profile": "c11-posix-2008",
       "reference": null,
@@ -4300,7 +4307,7 @@
         "sha256": "b78d3261de952a609c0f97aca9b8c9de7e10bbbb8e6f5e23edd6718da51a0c6e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "profile": "c11-xopen-700",
       "reference": null,
@@ -4316,7 +4323,7 @@
         "sha256": "b78d3261de952a609c0f97aca9b8c9de7e10bbbb8e6f5e23edd6718da51a0c6e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "profile": "c11-bsd",
       "reference": null,
@@ -4332,7 +4339,7 @@
         "sha256": "b78d3261de952a609c0f97aca9b8c9de7e10bbbb8e6f5e23edd6718da51a0c6e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "dn_expand.h",
       "profile": "cxx17-strict",
       "reference": null,
@@ -5040,13 +5047,13 @@
     },
     {
       "candidate": {
-        "count": 142,
+        "count": 143,
         "kind_counts": {
           "function": 1,
           "macro": 140,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "3ea38220d4ee7046755406c56e8b13d0e5250f59c5f7097ccfc3ec1b54f0432a"
+        "sha256": "a9e614a3ccf5376d956be79138930c12b3e29e07e892a72b27f3661ffcb535c6"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -5055,32 +5062,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 142,
+        "matched_count": 143,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "errno.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 142,
+        "count": 143,
         "kind_counts": {
           "function": 1,
           "macro": 140,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "3ea38220d4ee7046755406c56e8b13d0e5250f59c5f7097ccfc3ec1b54f0432a"
+        "sha256": "a9e614a3ccf5376d956be79138930c12b3e29e07e892a72b27f3661ffcb535c6"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 142,
+        "count": 143,
         "kind_counts": {
           "function": 1,
           "macro": 140,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "d21f6996e5acaeefc7ce195b199361e1da66c16dd1512dadeedb2ee0edafe38a"
+        "sha256": "a4f08c4adecf5ab1cb334e12f059a11d474a38dd4a0a0dab1fb5fe883343a6c5"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -5089,20 +5096,20 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 142,
+        "matched_count": 143,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "errno.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 142,
+        "count": 143,
         "kind_counts": {
           "function": 1,
           "macro": 140,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "d21f6996e5acaeefc7ce195b199361e1da66c16dd1512dadeedb2ee0edafe38a"
+        "sha256": "a4f08c4adecf5ab1cb334e12f059a11d474a38dd4a0a0dab1fb5fe883343a6c5"
       },
       "reference_status": "ok"
     },
@@ -5236,13 +5243,13 @@
     },
     {
       "candidate": {
-        "count": 142,
+        "count": 143,
         "kind_counts": {
           "function": 1,
           "macro": 140,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "d21f6996e5acaeefc7ce195b199361e1da66c16dd1512dadeedb2ee0edafe38a"
+        "sha256": "a4f08c4adecf5ab1cb334e12f059a11d474a38dd4a0a0dab1fb5fe883343a6c5"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -5251,20 +5258,20 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 142,
+        "matched_count": 143,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "errno.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 142,
+        "count": 143,
         "kind_counts": {
           "function": 1,
           "macro": 140,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "d21f6996e5acaeefc7ce195b199361e1da66c16dd1512dadeedb2ee0edafe38a"
+        "sha256": "a4f08c4adecf5ab1cb334e12f059a11d474a38dd4a0a0dab1fb5fe883343a6c5"
       },
       "reference_status": "ok"
     },
@@ -6894,14 +6901,14 @@
     },
     {
       "candidate": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -6910,34 +6917,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 10,
+        "matched_count": 13,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "getopt.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -6946,34 +6953,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 10,
+        "matched_count": 13,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "getopt.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -6982,34 +6989,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 10,
+        "matched_count": 13,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "getopt.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -7018,34 +7025,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 10,
+        "matched_count": 13,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "getopt.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -7054,34 +7061,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 10,
+        "matched_count": 13,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "getopt.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -7090,34 +7097,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 10,
+        "matched_count": 13,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "getopt.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -7126,21 +7133,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 10,
+        "matched_count": 13,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "getopt.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 10,
+        "count": 13,
         "kind_counts": {
           "function": 3,
           "macro": 4,
           "record": 1,
-          "variable": 2
+          "variable": 5
         },
-        "sha256": "5f69e8d01cdd93f3d35643a4d14ca17018066da6fe0c917bab74270d8fe11bf6"
+        "sha256": "91f28a9bc57b989abe0e31826ea3e568a98e73ff79c31fdb1c3b33c405b78344"
       },
       "reference_status": "ok"
     },
@@ -8140,13 +8147,13 @@
     },
     {
       "candidate": {
-        "count": 289,
+        "count": 290,
         "kind_counts": {
           "function": 6,
           "macro": 254,
-          "typedef": 29
+          "typedef": 30
         },
-        "sha256": "a921fe69ae445fbe4a612c6c8492b98a1219a47234c15ca704a590036f4ee16c"
+        "sha256": "4807aedf1f2150e3dc8a2671c334dbe307b4f80df4c63eba91382b4ce655ea02"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -8155,32 +8162,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 289,
+        "matched_count": 290,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "inttypes.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 289,
+        "count": 290,
         "kind_counts": {
           "function": 6,
           "macro": 254,
-          "typedef": 29
+          "typedef": 30
         },
-        "sha256": "a921fe69ae445fbe4a612c6c8492b98a1219a47234c15ca704a590036f4ee16c"
+        "sha256": "4807aedf1f2150e3dc8a2671c334dbe307b4f80df4c63eba91382b4ce655ea02"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 287,
+        "count": 288,
         "kind_counts": {
           "function": 6,
           "macro": 253,
-          "typedef": 28
+          "typedef": 29
         },
-        "sha256": "4f2c2db33198733ed22fcf4a34dff54f77fcd8fca071591d3abf1cc33760ed86"
+        "sha256": "1278a05ce4bd32cb9063dd77b2ab393b7761a0aa59f283459c693c3eb8b8acda"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -8189,32 +8196,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 287,
+        "matched_count": 288,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "inttypes.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 287,
+        "count": 288,
         "kind_counts": {
           "function": 6,
           "macro": 253,
-          "typedef": 28
+          "typedef": 29
         },
-        "sha256": "4f2c2db33198733ed22fcf4a34dff54f77fcd8fca071591d3abf1cc33760ed86"
+        "sha256": "1278a05ce4bd32cb9063dd77b2ab393b7761a0aa59f283459c693c3eb8b8acda"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 289,
+        "count": 290,
         "kind_counts": {
           "function": 6,
           "macro": 254,
-          "typedef": 29
+          "typedef": 30
         },
-        "sha256": "a921fe69ae445fbe4a612c6c8492b98a1219a47234c15ca704a590036f4ee16c"
+        "sha256": "4807aedf1f2150e3dc8a2671c334dbe307b4f80df4c63eba91382b4ce655ea02"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -8223,32 +8230,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 289,
+        "matched_count": 290,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "inttypes.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 289,
+        "count": 290,
         "kind_counts": {
           "function": 6,
           "macro": 254,
-          "typedef": 29
+          "typedef": 30
         },
-        "sha256": "a921fe69ae445fbe4a612c6c8492b98a1219a47234c15ca704a590036f4ee16c"
+        "sha256": "4807aedf1f2150e3dc8a2671c334dbe307b4f80df4c63eba91382b4ce655ea02"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 289,
+        "count": 290,
         "kind_counts": {
           "function": 6,
           "macro": 254,
-          "typedef": 29
+          "typedef": 30
         },
-        "sha256": "a921fe69ae445fbe4a612c6c8492b98a1219a47234c15ca704a590036f4ee16c"
+        "sha256": "4807aedf1f2150e3dc8a2671c334dbe307b4f80df4c63eba91382b4ce655ea02"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -8257,32 +8264,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 289,
+        "matched_count": 290,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "inttypes.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 289,
+        "count": 290,
         "kind_counts": {
           "function": 6,
           "macro": 254,
-          "typedef": 29
+          "typedef": 30
         },
-        "sha256": "a921fe69ae445fbe4a612c6c8492b98a1219a47234c15ca704a590036f4ee16c"
+        "sha256": "4807aedf1f2150e3dc8a2671c334dbe307b4f80df4c63eba91382b4ce655ea02"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 289,
+        "count": 290,
         "kind_counts": {
           "function": 6,
           "macro": 254,
-          "typedef": 29
+          "typedef": 30
         },
-        "sha256": "a921fe69ae445fbe4a612c6c8492b98a1219a47234c15ca704a590036f4ee16c"
+        "sha256": "4807aedf1f2150e3dc8a2671c334dbe307b4f80df4c63eba91382b4ce655ea02"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -8291,32 +8298,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 289,
+        "matched_count": 290,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "inttypes.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 289,
+        "count": 290,
         "kind_counts": {
           "function": 6,
           "macro": 254,
-          "typedef": 29
+          "typedef": 30
         },
-        "sha256": "a921fe69ae445fbe4a612c6c8492b98a1219a47234c15ca704a590036f4ee16c"
+        "sha256": "4807aedf1f2150e3dc8a2671c334dbe307b4f80df4c63eba91382b4ce655ea02"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 289,
+        "count": 290,
         "kind_counts": {
           "function": 6,
           "macro": 254,
-          "typedef": 29
+          "typedef": 30
         },
-        "sha256": "a921fe69ae445fbe4a612c6c8492b98a1219a47234c15ca704a590036f4ee16c"
+        "sha256": "4807aedf1f2150e3dc8a2671c334dbe307b4f80df4c63eba91382b4ce655ea02"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -8325,32 +8332,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 289,
+        "matched_count": 290,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "inttypes.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 289,
+        "count": 290,
         "kind_counts": {
           "function": 6,
           "macro": 254,
-          "typedef": 29
+          "typedef": 30
         },
-        "sha256": "a921fe69ae445fbe4a612c6c8492b98a1219a47234c15ca704a590036f4ee16c"
+        "sha256": "4807aedf1f2150e3dc8a2671c334dbe307b4f80df4c63eba91382b4ce655ea02"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 287,
+        "count": 288,
         "kind_counts": {
           "function": 6,
           "macro": 253,
-          "typedef": 28
+          "typedef": 29
         },
-        "sha256": "4f2c2db33198733ed22fcf4a34dff54f77fcd8fca071591d3abf1cc33760ed86"
+        "sha256": "1278a05ce4bd32cb9063dd77b2ab393b7761a0aa59f283459c693c3eb8b8acda"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -8359,20 +8366,20 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 287,
+        "matched_count": 288,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "inttypes.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 287,
+        "count": 288,
         "kind_counts": {
           "function": 6,
           "macro": 253,
-          "typedef": 28
+          "typedef": 29
         },
-        "sha256": "4f2c2db33198733ed22fcf4a34dff54f77fcd8fca071591d3abf1cc33760ed86"
+        "sha256": "1278a05ce4bd32cb9063dd77b2ab393b7761a0aa59f283459c693c3eb8b8acda"
       },
       "reference_status": "ok"
     },
@@ -10012,7 +10019,7 @@
         "sha256": "bb71180ba1383720794a128b418ed870e1dfc5b71ba11626731a7da2eb8e9da3"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "profile": "c11-gnu",
       "reference": null,
@@ -10030,7 +10037,7 @@
         "sha256": "47c57b81ee927eb30f9918de0f9d4f704c7a4a2ccb8eb9d33392f023b0772292"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "profile": "cxx17-gnu",
       "reference": null,
@@ -10048,7 +10055,7 @@
         "sha256": "bb71180ba1383720794a128b418ed870e1dfc5b71ba11626731a7da2eb8e9da3"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "profile": "c11-strict",
       "reference": null,
@@ -10066,7 +10073,7 @@
         "sha256": "bb71180ba1383720794a128b418ed870e1dfc5b71ba11626731a7da2eb8e9da3"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "profile": "c11-posix-2008",
       "reference": null,
@@ -10084,7 +10091,7 @@
         "sha256": "bb71180ba1383720794a128b418ed870e1dfc5b71ba11626731a7da2eb8e9da3"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "profile": "c11-xopen-700",
       "reference": null,
@@ -10102,7 +10109,7 @@
         "sha256": "bb71180ba1383720794a128b418ed870e1dfc5b71ba11626731a7da2eb8e9da3"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "profile": "c11-bsd",
       "reference": null,
@@ -10120,7 +10127,7 @@
         "sha256": "47c57b81ee927eb30f9918de0f9d4f704c7a4a2ccb8eb9d33392f023b0772292"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "linux/capability.h",
       "profile": "cxx17-strict",
       "reference": null,
@@ -10385,7 +10392,7 @@
         "sha256": "1bf5058f34cd5a207939e979e184caab479e99a3d41feb46ee357172595900ea"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "profile": "c11-gnu",
       "reference": null,
@@ -10400,7 +10407,7 @@
         "sha256": "f11c295324b77b332c34bd36b62cb244ae1d669bdb059179745fac3d6601cf7a"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "profile": "cxx17-gnu",
       "reference": null,
@@ -10415,7 +10422,7 @@
         "sha256": "1bf5058f34cd5a207939e979e184caab479e99a3d41feb46ee357172595900ea"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "profile": "c11-strict",
       "reference": null,
@@ -10430,7 +10437,7 @@
         "sha256": "1bf5058f34cd5a207939e979e184caab479e99a3d41feb46ee357172595900ea"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "profile": "c11-posix-2008",
       "reference": null,
@@ -10445,7 +10452,7 @@
         "sha256": "1bf5058f34cd5a207939e979e184caab479e99a3d41feb46ee357172595900ea"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "profile": "c11-xopen-700",
       "reference": null,
@@ -10460,7 +10467,7 @@
         "sha256": "1bf5058f34cd5a207939e979e184caab479e99a3d41feb46ee357172595900ea"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "profile": "c11-bsd",
       "reference": null,
@@ -10475,7 +10482,7 @@
         "sha256": "f11c295324b77b332c34bd36b62cb244ae1d669bdb059179745fac3d6601cf7a"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "lrand48.h",
       "profile": "cxx17-strict",
       "reference": null,
@@ -10721,14 +10728,14 @@
     },
     {
       "candidate": {
-        "count": 286,
+        "count": 271,
         "kind_counts": {
-          "function": 226,
+          "function": 211,
           "macro": 57,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "1724c341f968bc82f53b27cb656abab3fd71a1bc8d1a359912382d73e42d1aee"
+        "sha256": "3f0b2092e0a336fdbfdf405ac4a80cbd2e968cc039031228bcaf4de31ebf7ebb"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -10737,34 +10744,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 286,
+        "matched_count": 271,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "math.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 286,
+        "count": 271,
         "kind_counts": {
-          "function": 226,
+          "function": 211,
           "macro": 57,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "1724c341f968bc82f53b27cb656abab3fd71a1bc8d1a359912382d73e42d1aee"
+        "sha256": "3f0b2092e0a336fdbfdf405ac4a80cbd2e968cc039031228bcaf4de31ebf7ebb"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 286,
+        "count": 271,
         "kind_counts": {
-          "function": 226,
+          "function": 211,
           "macro": 57,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "d32be5bb9a7ff4d219a8328d9c770da33d3e60b3c92a9ecf77ae85c11ae61e99"
+        "sha256": "948fc863daec44fe56a595008cf0c2a6fe173afb85ddeac6cec380aba53654b3"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -10773,33 +10780,33 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 286,
+        "matched_count": 271,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "math.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 286,
+        "count": 271,
         "kind_counts": {
-          "function": 226,
+          "function": 211,
           "macro": 57,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "d32be5bb9a7ff4d219a8328d9c770da33d3e60b3c92a9ecf77ae85c11ae61e99"
+        "sha256": "948fc863daec44fe56a595008cf0c2a6fe173afb85ddeac6cec380aba53654b3"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 239,
+        "count": 224,
         "kind_counts": {
-          "function": 194,
+          "function": 179,
           "macro": 43,
           "typedef": 2
         },
-        "sha256": "25bb70d89022dac7bc6601a8f2c955f3b7a8e26c5b930f5aee7c70ccb71c9baa"
+        "sha256": "a533740687f860aa7e1cfaad1a347bb7e23afd8ffe8fa8793f80e80a26e144a9"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -10808,32 +10815,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 239,
+        "matched_count": 224,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "math.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 239,
+        "count": 224,
         "kind_counts": {
-          "function": 194,
+          "function": 179,
           "macro": 43,
           "typedef": 2
         },
-        "sha256": "25bb70d89022dac7bc6601a8f2c955f3b7a8e26c5b930f5aee7c70ccb71c9baa"
+        "sha256": "a533740687f860aa7e1cfaad1a347bb7e23afd8ffe8fa8793f80e80a26e144a9"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 239,
+        "count": 224,
         "kind_counts": {
-          "function": 194,
+          "function": 179,
           "macro": 43,
           "typedef": 2
         },
-        "sha256": "25bb70d89022dac7bc6601a8f2c955f3b7a8e26c5b930f5aee7c70ccb71c9baa"
+        "sha256": "a533740687f860aa7e1cfaad1a347bb7e23afd8ffe8fa8793f80e80a26e144a9"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -10842,33 +10849,33 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 239,
+        "matched_count": 224,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "math.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 239,
+        "count": 224,
         "kind_counts": {
-          "function": 194,
+          "function": 179,
           "macro": 43,
           "typedef": 2
         },
-        "sha256": "25bb70d89022dac7bc6601a8f2c955f3b7a8e26c5b930f5aee7c70ccb71c9baa"
+        "sha256": "a533740687f860aa7e1cfaad1a347bb7e23afd8ffe8fa8793f80e80a26e144a9"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 260,
+        "count": 245,
         "kind_counts": {
-          "function": 200,
+          "function": 185,
           "macro": 57,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "b324168883dce2a7a5cab6ce992cd99f3642a420eb9f0a3d09855ff7aaf6556b"
+        "sha256": "ec87d3126cd139b9206f12cc0a3e83ebd8dec59d7f72710227622339d76d4b2f"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -10877,34 +10884,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 260,
+        "matched_count": 245,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "math.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 260,
+        "count": 245,
         "kind_counts": {
-          "function": 200,
+          "function": 185,
           "macro": 57,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "b324168883dce2a7a5cab6ce992cd99f3642a420eb9f0a3d09855ff7aaf6556b"
+        "sha256": "ec87d3126cd139b9206f12cc0a3e83ebd8dec59d7f72710227622339d76d4b2f"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 277,
+        "count": 262,
         "kind_counts": {
-          "function": 216,
+          "function": 201,
           "macro": 58,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "d6b2f9bfeeb8dd04d4ffaa4a0f5798507f40063397175a5da46e8cb2adebf062"
+        "sha256": "a4e148ea1dd6cd06a18f92b609fc95b7dd5c5aecce80087ecaecae8ca2e94a93"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -10913,34 +10920,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 277,
+        "matched_count": 262,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "math.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 277,
+        "count": 262,
         "kind_counts": {
-          "function": 216,
+          "function": 201,
           "macro": 58,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "d6b2f9bfeeb8dd04d4ffaa4a0f5798507f40063397175a5da46e8cb2adebf062"
+        "sha256": "a4e148ea1dd6cd06a18f92b609fc95b7dd5c5aecce80087ecaecae8ca2e94a93"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 286,
+        "count": 271,
         "kind_counts": {
-          "function": 226,
+          "function": 211,
           "macro": 57,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "d32be5bb9a7ff4d219a8328d9c770da33d3e60b3c92a9ecf77ae85c11ae61e99"
+        "sha256": "948fc863daec44fe56a595008cf0c2a6fe173afb85ddeac6cec380aba53654b3"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -10949,21 +10956,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 286,
+        "matched_count": 271,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "math.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 286,
+        "count": 271,
         "kind_counts": {
-          "function": 226,
+          "function": 211,
           "macro": 57,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "d32be5bb9a7ff4d219a8328d9c770da33d3e60b3c92a9ecf77ae85c11ae61e99"
+        "sha256": "948fc863daec44fe56a595008cf0c2a6fe173afb85ddeac6cec380aba53654b3"
       },
       "reference_status": "ok"
     },
@@ -14293,15 +14300,15 @@
     },
     {
       "candidate": {
-        "count": 845,
+        "count": 846,
         "kind_counts": {
           "function": 31,
           "macro": 749,
           "record": 25,
           "typedef": 39,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "570c07bbb519d15a50a247bbabe6e51f2e67aa8d541561284f333a0c687b687e"
+        "sha256": "2e502b1eb3a26359c94742c56640e5c17e8aacb534a88e8b2b9e795e764c8857"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14310,36 +14317,36 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 845,
+        "matched_count": 846,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 845,
+        "count": 846,
         "kind_counts": {
           "function": 31,
           "macro": 749,
           "record": 25,
           "typedef": 39,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "570c07bbb519d15a50a247bbabe6e51f2e67aa8d541561284f333a0c687b687e"
+        "sha256": "2e502b1eb3a26359c94742c56640e5c17e8aacb534a88e8b2b9e795e764c8857"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 843,
+        "count": 844,
         "kind_counts": {
           "function": 31,
           "macro": 748,
           "record": 25,
           "typedef": 38,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "eb276b857a40ceaa11d73fd5069b0d98f9b702ccc9b7d6e65a7c9efcbd9092ef"
+        "sha256": "810855eceb393cc052fffd0b19b43af077496ccb43cd95f36aa8c06f438ac074"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14348,36 +14355,36 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 843,
+        "matched_count": 844,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 843,
+        "count": 844,
         "kind_counts": {
           "function": 31,
           "macro": 748,
           "record": 25,
           "typedef": 38,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "eb276b857a40ceaa11d73fd5069b0d98f9b702ccc9b7d6e65a7c9efcbd9092ef"
+        "sha256": "810855eceb393cc052fffd0b19b43af077496ccb43cd95f36aa8c06f438ac074"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 819,
+        "count": 820,
         "kind_counts": {
           "function": 29,
           "macro": 738,
           "record": 12,
           "typedef": 39,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "2789feadb7710cad004a4e9a0f8cbaa6ecc9afb364d4a0b1407716eb654bf5e0"
+        "sha256": "e79548e492956e3c5bfef281a4bc6bfc9d02d990d693d6a2fd1cc152bbdcb939"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14386,36 +14393,36 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 819,
+        "matched_count": 820,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 819,
+        "count": 820,
         "kind_counts": {
           "function": 29,
           "macro": 738,
           "record": 12,
           "typedef": 39,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "2789feadb7710cad004a4e9a0f8cbaa6ecc9afb364d4a0b1407716eb654bf5e0"
+        "sha256": "e79548e492956e3c5bfef281a4bc6bfc9d02d990d693d6a2fd1cc152bbdcb939"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 819,
+        "count": 820,
         "kind_counts": {
           "function": 29,
           "macro": 738,
           "record": 12,
           "typedef": 39,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "2789feadb7710cad004a4e9a0f8cbaa6ecc9afb364d4a0b1407716eb654bf5e0"
+        "sha256": "e79548e492956e3c5bfef281a4bc6bfc9d02d990d693d6a2fd1cc152bbdcb939"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14424,36 +14431,36 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 819,
+        "matched_count": 820,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 819,
+        "count": 820,
         "kind_counts": {
           "function": 29,
           "macro": 738,
           "record": 12,
           "typedef": 39,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "2789feadb7710cad004a4e9a0f8cbaa6ecc9afb364d4a0b1407716eb654bf5e0"
+        "sha256": "e79548e492956e3c5bfef281a4bc6bfc9d02d990d693d6a2fd1cc152bbdcb939"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 819,
+        "count": 820,
         "kind_counts": {
           "function": 29,
           "macro": 738,
           "record": 12,
           "typedef": 39,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "2789feadb7710cad004a4e9a0f8cbaa6ecc9afb364d4a0b1407716eb654bf5e0"
+        "sha256": "e79548e492956e3c5bfef281a4bc6bfc9d02d990d693d6a2fd1cc152bbdcb939"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14462,36 +14469,36 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 819,
+        "matched_count": 820,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 819,
+        "count": 820,
         "kind_counts": {
           "function": 29,
           "macro": 738,
           "record": 12,
           "typedef": 39,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "2789feadb7710cad004a4e9a0f8cbaa6ecc9afb364d4a0b1407716eb654bf5e0"
+        "sha256": "e79548e492956e3c5bfef281a4bc6bfc9d02d990d693d6a2fd1cc152bbdcb939"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 840,
+        "count": 841,
         "kind_counts": {
           "function": 29,
           "macro": 749,
           "record": 22,
           "typedef": 39,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "05724c5e8a8f2c58c514cde5fc7c1960613fea032e406208bf19ba715f853260"
+        "sha256": "7e82fe80ae3a265d8ad8074dac3498e217134f0e35353e932eacc49d7861d7b5"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14500,36 +14507,36 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 840,
+        "matched_count": 841,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 840,
+        "count": 841,
         "kind_counts": {
           "function": 29,
           "macro": 749,
           "record": 22,
           "typedef": 39,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "05724c5e8a8f2c58c514cde5fc7c1960613fea032e406208bf19ba715f853260"
+        "sha256": "7e82fe80ae3a265d8ad8074dac3498e217134f0e35353e932eacc49d7861d7b5"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 843,
+        "count": 844,
         "kind_counts": {
           "function": 31,
           "macro": 748,
           "record": 25,
           "typedef": 38,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "eb276b857a40ceaa11d73fd5069b0d98f9b702ccc9b7d6e65a7c9efcbd9092ef"
+        "sha256": "810855eceb393cc052fffd0b19b43af077496ccb43cd95f36aa8c06f438ac074"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14538,33 +14545,33 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 843,
+        "matched_count": 844,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 843,
+        "count": 844,
         "kind_counts": {
           "function": 31,
           "macro": 748,
           "record": 25,
           "typedef": 38,
-          "variable": 1
+          "variable": 2
         },
-        "sha256": "eb276b857a40ceaa11d73fd5069b0d98f9b702ccc9b7d6e65a7c9efcbd9092ef"
+        "sha256": "810855eceb393cc052fffd0b19b43af077496ccb43cd95f36aa8c06f438ac074"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14573,30 +14580,30 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 122,
+        "matched_count": 123,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in_systm.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14605,30 +14612,30 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 122,
+        "matched_count": 123,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in_systm.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14637,30 +14644,30 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 122,
+        "matched_count": 123,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in_systm.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14669,30 +14676,30 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 122,
+        "matched_count": 123,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in_systm.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14701,30 +14708,30 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 122,
+        "matched_count": 123,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in_systm.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14733,30 +14740,30 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 122,
+        "matched_count": 123,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in_systm.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -14765,19 +14772,19 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 122,
+        "matched_count": 123,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "netinet/in_systm.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 122,
+        "count": 123,
         "kind_counts": {
           "macro": 92,
-          "typedef": 30
+          "typedef": 31
         },
-        "sha256": "dba2ac21a235ef147afa7158a836570714d0a1ca93c54b2d0684afc1e1c7a5f8"
+        "sha256": "ede15dc92290077b05f1135dae31c7770b89139ca651568f6beba059faa410e4"
       },
       "reference_status": "ok"
     },
@@ -16983,15 +16990,15 @@
     },
     {
       "candidate": {
-        "count": 361,
+        "count": 358,
         "kind_counts": {
-          "function": 162,
+          "function": 159,
           "macro": 163,
           "record": 10,
           "typedef": 22,
           "variable": 4
         },
-        "sha256": "d0740200926ad2209d471523283a84679fffe7287317224d0098effb996a3563"
+        "sha256": "75c0d4d9874f35c73bf10cc6b652ab9f4f12e09dd59bcb5fa9b001afe50c5408"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -17000,36 +17007,36 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 361,
+        "matched_count": 358,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "pthread.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 361,
+        "count": 358,
         "kind_counts": {
-          "function": 162,
+          "function": 159,
           "macro": 163,
           "record": 10,
           "typedef": 22,
           "variable": 4
         },
-        "sha256": "d0740200926ad2209d471523283a84679fffe7287317224d0098effb996a3563"
+        "sha256": "75c0d4d9874f35c73bf10cc6b652ab9f4f12e09dd59bcb5fa9b001afe50c5408"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 359,
+        "count": 356,
         "kind_counts": {
-          "function": 162,
+          "function": 159,
           "macro": 162,
           "record": 9,
           "typedef": 22,
           "variable": 4
         },
-        "sha256": "608cbf2100695c09353d0e4dd15984d31f5f13ee847f12685487da33e26ff6f7"
+        "sha256": "43c89baed00678efa3e1c6831139d678867e37b1cf6428026658d004d4ae75f7"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -17038,22 +17045,22 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 359,
+        "matched_count": 356,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "pthread.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 359,
+        "count": 356,
         "kind_counts": {
-          "function": 162,
+          "function": 159,
           "macro": 162,
           "record": 9,
           "typedef": 22,
           "variable": 4
         },
-        "sha256": "608cbf2100695c09353d0e4dd15984d31f5f13ee847f12685487da33e26ff6f7"
+        "sha256": "43c89baed00678efa3e1c6831139d678867e37b1cf6428026658d004d4ae75f7"
       },
       "reference_status": "ok"
     },
@@ -17209,15 +17216,15 @@
     },
     {
       "candidate": {
-        "count": 359,
+        "count": 356,
         "kind_counts": {
-          "function": 162,
+          "function": 159,
           "macro": 162,
           "record": 9,
           "typedef": 22,
           "variable": 4
         },
-        "sha256": "608cbf2100695c09353d0e4dd15984d31f5f13ee847f12685487da33e26ff6f7"
+        "sha256": "43c89baed00678efa3e1c6831139d678867e37b1cf6428026658d004d4ae75f7"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -17226,22 +17233,22 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 359,
+        "matched_count": 356,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "pthread.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 359,
+        "count": 356,
         "kind_counts": {
-          "function": 162,
+          "function": 159,
           "macro": 162,
           "record": 9,
           "typedef": 22,
           "variable": 4
         },
-        "sha256": "608cbf2100695c09353d0e4dd15984d31f5f13ee847f12685487da33e26ff6f7"
+        "sha256": "43c89baed00678efa3e1c6831139d678867e37b1cf6428026658d004d4ae75f7"
       },
       "reference_status": "ok"
     },
@@ -17255,7 +17262,7 @@
         "sha256": "b57fdd650fc6298c17627c2a64298eace1b190546d934e89f3f0afe13e8396a1"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "profile": "c11-gnu",
       "reference": null,
@@ -17268,10 +17275,10 @@
           "function": 1,
           "macro": 1
         },
-        "sha256": "9abaffb4dad13541ac6264dcef97afff054f0db3a5d5aafabdb12e86008994c8"
+        "sha256": "f900c89845dde18b8a29990d5839702d97caea685b200e8d365ef4c87d7c8a08"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "profile": "cxx17-gnu",
       "reference": null,
@@ -17287,7 +17294,7 @@
         "sha256": "b57fdd650fc6298c17627c2a64298eace1b190546d934e89f3f0afe13e8396a1"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "profile": "c11-strict",
       "reference": null,
@@ -17303,7 +17310,7 @@
         "sha256": "b57fdd650fc6298c17627c2a64298eace1b190546d934e89f3f0afe13e8396a1"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "profile": "c11-posix-2008",
       "reference": null,
@@ -17319,7 +17326,7 @@
         "sha256": "b57fdd650fc6298c17627c2a64298eace1b190546d934e89f3f0afe13e8396a1"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "profile": "c11-xopen-700",
       "reference": null,
@@ -17335,7 +17342,7 @@
         "sha256": "b57fdd650fc6298c17627c2a64298eace1b190546d934e89f3f0afe13e8396a1"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "profile": "c11-bsd",
       "reference": null,
@@ -17348,10 +17355,10 @@
           "function": 1,
           "macro": 1
         },
-        "sha256": "9abaffb4dad13541ac6264dcef97afff054f0db3a5d5aafabdb12e86008994c8"
+        "sha256": "f900c89845dde18b8a29990d5839702d97caea685b200e8d365ef4c87d7c8a08"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "pthread_atfork.h",
       "profile": "cxx17-strict",
       "reference": null,
@@ -18395,14 +18402,14 @@
     },
     {
       "candidate": {
-        "count": 103,
+        "count": 101,
         "kind_counts": {
-          "function": 22,
+          "function": 19,
           "macro": 75,
           "record": 3,
-          "typedef": 3
+          "typedef": 4
         },
-        "sha256": "11ec754cc0dd7f540fab3007888e9a4d37f3a6f69820be3d386f97468064ad6b"
+        "sha256": "7731a2c5009e2012b5a8a93b09ea66f5b61d836f6a5f7dbab33d2e81a59d1638"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -18411,34 +18418,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 103,
+        "matched_count": 101,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sched.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 103,
+        "count": 101,
         "kind_counts": {
-          "function": 22,
+          "function": 19,
           "macro": 75,
           "record": 3,
-          "typedef": 3
+          "typedef": 4
         },
-        "sha256": "11ec754cc0dd7f540fab3007888e9a4d37f3a6f69820be3d386f97468064ad6b"
+        "sha256": "7731a2c5009e2012b5a8a93b09ea66f5b61d836f6a5f7dbab33d2e81a59d1638"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 103,
+        "count": 101,
         "kind_counts": {
-          "function": 22,
+          "function": 19,
           "macro": 75,
           "record": 3,
-          "typedef": 3
+          "typedef": 4
         },
-        "sha256": "413bb37cfab3c8acd7f06f204cf2a259c2c573d3b8bde40fd37fcdcad0757aaa"
+        "sha256": "e23dfd92221a3132d58a5445989f2c4c64ea9e035e0e112772f8f8af8dca0788"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -18447,21 +18454,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 103,
+        "matched_count": 101,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sched.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 103,
+        "count": 101,
         "kind_counts": {
-          "function": 22,
+          "function": 19,
           "macro": 75,
           "record": 3,
-          "typedef": 3
+          "typedef": 4
         },
-        "sha256": "413bb37cfab3c8acd7f06f204cf2a259c2c573d3b8bde40fd37fcdcad0757aaa"
+        "sha256": "e23dfd92221a3132d58a5445989f2c4c64ea9e035e0e112772f8f8af8dca0788"
       },
       "reference_status": "ok"
     },
@@ -18611,14 +18618,14 @@
     },
     {
       "candidate": {
-        "count": 103,
+        "count": 101,
         "kind_counts": {
-          "function": 22,
+          "function": 19,
           "macro": 75,
           "record": 3,
-          "typedef": 3
+          "typedef": 4
         },
-        "sha256": "413bb37cfab3c8acd7f06f204cf2a259c2c573d3b8bde40fd37fcdcad0757aaa"
+        "sha256": "e23dfd92221a3132d58a5445989f2c4c64ea9e035e0e112772f8f8af8dca0788"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -18627,21 +18634,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 103,
+        "matched_count": 101,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sched.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 103,
+        "count": 101,
         "kind_counts": {
-          "function": 22,
+          "function": 19,
           "macro": 75,
           "record": 3,
-          "typedef": 3
+          "typedef": 4
         },
-        "sha256": "413bb37cfab3c8acd7f06f204cf2a259c2c573d3b8bde40fd37fcdcad0757aaa"
+        "sha256": "e23dfd92221a3132d58a5445989f2c4c64ea9e035e0e112772f8f8af8dca0788"
       },
       "reference_status": "ok"
     },
@@ -19081,13 +19088,13 @@
     },
     {
       "candidate": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19096,32 +19103,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 67,
+        "matched_count": 68,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "scsi/sg.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19130,32 +19137,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 67,
+        "matched_count": 68,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "scsi/sg.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19164,32 +19171,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 67,
+        "matched_count": 68,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "scsi/sg.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19198,32 +19205,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 67,
+        "matched_count": 68,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "scsi/sg.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19232,32 +19239,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 67,
+        "matched_count": 68,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "scsi/sg.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19266,32 +19273,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 67,
+        "matched_count": 68,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "scsi/sg.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19300,33 +19307,33 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 67,
+        "matched_count": 68,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "scsi/sg.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 67,
+        "count": 68,
         "kind_counts": {
           "macro": 55,
           "record": 6,
-          "typedef": 6
+          "typedef": 7
         },
-        "sha256": "792f3991c83cede3d2554dd94d5c9785526230e40b125d4e85b1dcd1a81c128c"
+        "sha256": "814dbbbeb303b6023690ad889a3664a9939e90d5d2d64ec0c81ee68b266331a9"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 33,
+        "count": 35,
         "kind_counts": {
           "function": 15,
           "macro": 12,
           "record": 4,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "468526b790596880f64091fd391b58bbeeba95084417151a503d247e1bace84a"
+        "sha256": "aca4467dcc3e07bc3116670d1a8b6ebef3009c9af9414d03d28ba1354c4cd3b7"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19335,34 +19342,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 33,
+        "matched_count": 35,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "search.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 33,
+        "count": 35,
         "kind_counts": {
           "function": 15,
           "macro": 12,
           "record": 4,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "468526b790596880f64091fd391b58bbeeba95084417151a503d247e1bace84a"
+        "sha256": "aca4467dcc3e07bc3116670d1a8b6ebef3009c9af9414d03d28ba1354c4cd3b7"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 33,
+        "count": 35,
         "kind_counts": {
           "function": 15,
           "macro": 12,
           "record": 4,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "a78a90696b19dbf946422d28fc6b9f7cc9354be2ab05a087c56085cde3da1b17"
+        "sha256": "f20425d60f574488d7f18677cb40d1896059732a471b3c8da89821adf27cb1b6"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19371,34 +19378,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 33,
+        "matched_count": 35,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "search.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 33,
+        "count": 35,
         "kind_counts": {
           "function": 15,
           "macro": 12,
           "record": 4,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "a78a90696b19dbf946422d28fc6b9f7cc9354be2ab05a087c56085cde3da1b17"
+        "sha256": "f20425d60f574488d7f18677cb40d1896059732a471b3c8da89821adf27cb1b6"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 26,
+        "count": 28,
         "kind_counts": {
           "function": 11,
           "macro": 12,
           "record": 1,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "b3692c59b560e923a4002875fdc235bec27b76365cc43b60c2e535bbb828cf85"
+        "sha256": "ad0aba5bc0587649581b6a3d7f5533feec61d1861b74f4e16d65856c436660bd"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19407,34 +19414,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 26,
+        "matched_count": 28,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "search.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 26,
+        "count": 28,
         "kind_counts": {
           "function": 11,
           "macro": 12,
           "record": 1,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "b3692c59b560e923a4002875fdc235bec27b76365cc43b60c2e535bbb828cf85"
+        "sha256": "ad0aba5bc0587649581b6a3d7f5533feec61d1861b74f4e16d65856c436660bd"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 26,
+        "count": 28,
         "kind_counts": {
           "function": 11,
           "macro": 12,
           "record": 1,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "b3692c59b560e923a4002875fdc235bec27b76365cc43b60c2e535bbb828cf85"
+        "sha256": "ad0aba5bc0587649581b6a3d7f5533feec61d1861b74f4e16d65856c436660bd"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19443,34 +19450,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 26,
+        "matched_count": 28,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "search.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 26,
+        "count": 28,
         "kind_counts": {
           "function": 11,
           "macro": 12,
           "record": 1,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "b3692c59b560e923a4002875fdc235bec27b76365cc43b60c2e535bbb828cf85"
+        "sha256": "ad0aba5bc0587649581b6a3d7f5533feec61d1861b74f4e16d65856c436660bd"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 26,
+        "count": 28,
         "kind_counts": {
           "function": 11,
           "macro": 12,
           "record": 1,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "b3692c59b560e923a4002875fdc235bec27b76365cc43b60c2e535bbb828cf85"
+        "sha256": "ad0aba5bc0587649581b6a3d7f5533feec61d1861b74f4e16d65856c436660bd"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19479,34 +19486,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 26,
+        "matched_count": 28,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "search.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 26,
+        "count": 28,
         "kind_counts": {
           "function": 11,
           "macro": 12,
           "record": 1,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "b3692c59b560e923a4002875fdc235bec27b76365cc43b60c2e535bbb828cf85"
+        "sha256": "ad0aba5bc0587649581b6a3d7f5533feec61d1861b74f4e16d65856c436660bd"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 26,
+        "count": 28,
         "kind_counts": {
           "function": 11,
           "macro": 12,
           "record": 1,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "b3692c59b560e923a4002875fdc235bec27b76365cc43b60c2e535bbb828cf85"
+        "sha256": "ad0aba5bc0587649581b6a3d7f5533feec61d1861b74f4e16d65856c436660bd"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19515,34 +19522,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 26,
+        "matched_count": 28,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "search.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 26,
+        "count": 28,
         "kind_counts": {
           "function": 11,
           "macro": 12,
           "record": 1,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "b3692c59b560e923a4002875fdc235bec27b76365cc43b60c2e535bbb828cf85"
+        "sha256": "ad0aba5bc0587649581b6a3d7f5533feec61d1861b74f4e16d65856c436660bd"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 33,
+        "count": 35,
         "kind_counts": {
           "function": 15,
           "macro": 12,
           "record": 4,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "a78a90696b19dbf946422d28fc6b9f7cc9354be2ab05a087c56085cde3da1b17"
+        "sha256": "f20425d60f574488d7f18677cb40d1896059732a471b3c8da89821adf27cb1b6"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -19551,21 +19558,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 33,
+        "matched_count": 35,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "search.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 33,
+        "count": 35,
         "kind_counts": {
           "function": 15,
           "macro": 12,
           "record": 4,
-          "typedef": 2
+          "typedef": 4
         },
-        "sha256": "a78a90696b19dbf946422d28fc6b9f7cc9354be2ab05a087c56085cde3da1b17"
+        "sha256": "f20425d60f574488d7f18677cb40d1896059732a471b3c8da89821adf27cb1b6"
       },
       "reference_status": "ok"
     },
@@ -20327,14 +20334,50 @@
     },
     {
       "candidate": {
-        "count": 260,
+        "count": 261,
         "kind_counts": {
           "function": 34,
           "macro": 199,
           "record": 10,
-          "typedef": 17
+          "typedef": 18
         },
-        "sha256": "bb6cb284df10763b00e072237aef74b85456472959b56d19e5119781db825c4c"
+        "sha256": "01a10281f8f3d393154084f44f9608096868b4b21a6e64719934eed53da94382"
+      },
+      "candidate_status": "ok",
+      "comparison": "matched",
+      "difference": {
+        "candidate_only": [],
+        "candidate_only_count": 0,
+        "incompatible": [],
+        "incompatible_count": 0,
+        "matched_count": 261,
+        "reference_only": [],
+        "reference_only_count": 0
+      },
+      "header": "signal.h",
+      "profile": "c11-gnu",
+      "reference": {
+        "count": 261,
+        "kind_counts": {
+          "function": 34,
+          "macro": 199,
+          "record": 10,
+          "typedef": 18
+        },
+        "sha256": "01a10281f8f3d393154084f44f9608096868b4b21a6e64719934eed53da94382"
+      },
+      "reference_status": "ok"
+    },
+    {
+      "candidate": {
+        "count": 260,
+        "kind_counts": {
+          "function": 34,
+          "macro": 199,
+          "record": 9,
+          "typedef": 18
+        },
+        "sha256": "a46d5448cb500973462ead2e84f094fbba6c6f7ca1e16cf9a8f6e38e0857748e"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -20348,52 +20391,16 @@
         "reference_only_count": 0
       },
       "header": "signal.h",
-      "profile": "c11-gnu",
+      "profile": "cxx17-gnu",
       "reference": {
         "count": 260,
         "kind_counts": {
           "function": 34,
           "macro": 199,
-          "record": 10,
-          "typedef": 17
-        },
-        "sha256": "bb6cb284df10763b00e072237aef74b85456472959b56d19e5119781db825c4c"
-      },
-      "reference_status": "ok"
-    },
-    {
-      "candidate": {
-        "count": 259,
-        "kind_counts": {
-          "function": 34,
-          "macro": 199,
           "record": 9,
-          "typedef": 17
+          "typedef": 18
         },
-        "sha256": "c704ecb9f0fcf299212a50cada15fb07fbbdfc7c96063307ed2ca900d71c42df"
-      },
-      "candidate_status": "ok",
-      "comparison": "matched",
-      "difference": {
-        "candidate_only": [],
-        "candidate_only_count": 0,
-        "incompatible": [],
-        "incompatible_count": 0,
-        "matched_count": 259,
-        "reference_only": [],
-        "reference_only_count": 0
-      },
-      "header": "signal.h",
-      "profile": "cxx17-gnu",
-      "reference": {
-        "count": 259,
-        "kind_counts": {
-          "function": 34,
-          "macro": 199,
-          "record": 9,
-          "typedef": 17
-        },
-        "sha256": "c704ecb9f0fcf299212a50cada15fb07fbbdfc7c96063307ed2ca900d71c42df"
+        "sha256": "a46d5448cb500973462ead2e84f094fbba6c6f7ca1e16cf9a8f6e38e0857748e"
       },
       "reference_status": "ok"
     },
@@ -20433,14 +20440,14 @@
     },
     {
       "candidate": {
-        "count": 195,
+        "count": 196,
         "kind_counts": {
           "function": 22,
           "macro": 153,
           "record": 8,
-          "typedef": 12
+          "typedef": 13
         },
-        "sha256": "b54a630f1c6c8690c90e881d9d036e7aad7f77d7fc4d5d89436432968adb2f6e"
+        "sha256": "96b7f7e6558e11c39b7f150e95c350410c79777a34c88bc3319ef96b2793e543"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -20449,34 +20456,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 195,
+        "matched_count": 196,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "signal.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 195,
+        "count": 196,
         "kind_counts": {
           "function": 22,
           "macro": 153,
           "record": 8,
-          "typedef": 12
+          "typedef": 13
         },
-        "sha256": "b54a630f1c6c8690c90e881d9d036e7aad7f77d7fc4d5d89436432968adb2f6e"
+        "sha256": "96b7f7e6558e11c39b7f150e95c350410c79777a34c88bc3319ef96b2793e543"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 220,
+        "count": 221,
         "kind_counts": {
           "function": 30,
           "macro": 170,
           "record": 8,
-          "typedef": 12
+          "typedef": 13
         },
-        "sha256": "e7bfcb89346773b7f2b02e68327aad0e913dbb2bc7b27f9e6bc0b33a71242548"
+        "sha256": "8ced3c7de047954d7518271213e930047111b03ebc7a52417078a6bef4839694"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -20485,34 +20492,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 220,
+        "matched_count": 221,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "signal.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 220,
+        "count": 221,
         "kind_counts": {
           "function": 30,
           "macro": 170,
           "record": 8,
-          "typedef": 12
+          "typedef": 13
         },
-        "sha256": "e7bfcb89346773b7f2b02e68327aad0e913dbb2bc7b27f9e6bc0b33a71242548"
+        "sha256": "8ced3c7de047954d7518271213e930047111b03ebc7a52417078a6bef4839694"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 229,
+        "count": 230,
         "kind_counts": {
           "function": 30,
           "macro": 173,
           "record": 10,
-          "typedef": 16
+          "typedef": 17
         },
-        "sha256": "1f5da3eae63399f1fc38d7686cbcffd3fa7f3c36f57bb159305f799032094bf9"
+        "sha256": "6261d005c0692722ce210d388463e4ac31c7720e25306e7f85565cdc65c89917"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -20521,34 +20528,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 229,
+        "matched_count": 230,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "signal.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 229,
+        "count": 230,
         "kind_counts": {
           "function": 30,
           "macro": 173,
           "record": 10,
-          "typedef": 16
+          "typedef": 17
         },
-        "sha256": "1f5da3eae63399f1fc38d7686cbcffd3fa7f3c36f57bb159305f799032094bf9"
+        "sha256": "6261d005c0692722ce210d388463e4ac31c7720e25306e7f85565cdc65c89917"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 259,
+        "count": 260,
         "kind_counts": {
           "function": 34,
           "macro": 199,
           "record": 9,
-          "typedef": 17
+          "typedef": 18
         },
-        "sha256": "c704ecb9f0fcf299212a50cada15fb07fbbdfc7c96063307ed2ca900d71c42df"
+        "sha256": "a46d5448cb500973462ead2e84f094fbba6c6f7ca1e16cf9a8f6e38e0857748e"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -20557,21 +20564,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 259,
+        "matched_count": 260,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "signal.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 259,
+        "count": 260,
         "kind_counts": {
           "function": 34,
           "macro": 199,
           "record": 9,
-          "typedef": 17
+          "typedef": 18
         },
-        "sha256": "c704ecb9f0fcf299212a50cada15fb07fbbdfc7c96063307ed2ca900d71c42df"
+        "sha256": "a46d5448cb500973462ead2e84f094fbba6c6f7ca1e16cf9a8f6e38e0857748e"
       },
       "reference_status": "ok"
     },
@@ -21263,17 +21270,17 @@
     },
     {
       "candidate": {
-        "count": 118,
+        "count": 119,
         "kind_counts": {
           "enum": 1,
           "function": 6,
           "macro": 66,
-          "typedef": 45
+          "typedef": 46
         },
-        "sha256": "f3f7a60630754d1f32a804e797ebb78f6a990fa031d9ea372b1d562ddb8aeeb2"
+        "sha256": "5d5ff07846130bc14072f4f021ab83924dd616780e9a81155dd96caad4e060e8"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "profile": "c11-gnu",
       "reference": null,
@@ -21288,7 +21295,7 @@
         "sha256": "29316f746e9f285089bc2526aa8665b039fc15b27d175e8beba31b35ee3d8564"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "profile": "cxx17-gnu",
       "reference": null,
@@ -21296,17 +21303,17 @@
     },
     {
       "candidate": {
-        "count": 118,
+        "count": 119,
         "kind_counts": {
           "enum": 1,
           "function": 6,
           "macro": 66,
-          "typedef": 45
+          "typedef": 46
         },
-        "sha256": "f3f7a60630754d1f32a804e797ebb78f6a990fa031d9ea372b1d562ddb8aeeb2"
+        "sha256": "5d5ff07846130bc14072f4f021ab83924dd616780e9a81155dd96caad4e060e8"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "profile": "c11-strict",
       "reference": null,
@@ -21314,17 +21321,17 @@
     },
     {
       "candidate": {
-        "count": 118,
+        "count": 119,
         "kind_counts": {
           "enum": 1,
           "function": 6,
           "macro": 66,
-          "typedef": 45
+          "typedef": 46
         },
-        "sha256": "f3f7a60630754d1f32a804e797ebb78f6a990fa031d9ea372b1d562ddb8aeeb2"
+        "sha256": "5d5ff07846130bc14072f4f021ab83924dd616780e9a81155dd96caad4e060e8"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "profile": "c11-posix-2008",
       "reference": null,
@@ -21332,17 +21339,17 @@
     },
     {
       "candidate": {
-        "count": 118,
+        "count": 119,
         "kind_counts": {
           "enum": 1,
           "function": 6,
           "macro": 66,
-          "typedef": 45
+          "typedef": 46
         },
-        "sha256": "f3f7a60630754d1f32a804e797ebb78f6a990fa031d9ea372b1d562ddb8aeeb2"
+        "sha256": "5d5ff07846130bc14072f4f021ab83924dd616780e9a81155dd96caad4e060e8"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "profile": "c11-xopen-700",
       "reference": null,
@@ -21350,17 +21357,17 @@
     },
     {
       "candidate": {
-        "count": 118,
+        "count": 119,
         "kind_counts": {
           "enum": 1,
           "function": 6,
           "macro": 66,
-          "typedef": 45
+          "typedef": 46
         },
-        "sha256": "f3f7a60630754d1f32a804e797ebb78f6a990fa031d9ea372b1d562ddb8aeeb2"
+        "sha256": "5d5ff07846130bc14072f4f021ab83924dd616780e9a81155dd96caad4e060e8"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "profile": "c11-bsd",
       "reference": null,
@@ -21375,7 +21382,7 @@
         "sha256": "29316f746e9f285089bc2526aa8665b039fc15b27d175e8beba31b35ee3d8564"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "stdatomic.h",
       "profile": "cxx17-strict",
       "reference": null,
@@ -22783,14 +22790,14 @@
     },
     {
       "candidate": {
-        "count": 122,
+        "count": 125,
         "kind_counts": {
           "function": 88,
           "macro": 31,
           "record": 1,
-          "typedef": 2
+          "typedef": 5
         },
-        "sha256": "2437ed38cb3b0365acc01f08d76d497ce7540930118fe4435bfe9b6a966021cf"
+        "sha256": "7cae047eda4b56b0bc0c26ab98695c26fa6477fd6e31a075adcf5b4f78ecca1c"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -22799,34 +22806,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 122,
+        "matched_count": 125,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "stdlib.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 122,
+        "count": 125,
         "kind_counts": {
           "function": 88,
           "macro": 31,
           "record": 1,
-          "typedef": 2
+          "typedef": 5
         },
-        "sha256": "2437ed38cb3b0365acc01f08d76d497ce7540930118fe4435bfe9b6a966021cf"
+        "sha256": "7cae047eda4b56b0bc0c26ab98695c26fa6477fd6e31a075adcf5b4f78ecca1c"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 120,
+        "count": 123,
         "kind_counts": {
           "function": 88,
           "macro": 30,
           "record": 1,
-          "typedef": 1
+          "typedef": 4
         },
-        "sha256": "fa212e9a4cf6086436265b4bd3e3501d1769a2a6b8a955bc36b317941c621df4"
+        "sha256": "c32d50968b5f4197f584e07672caca38846c96f0075af6696de211ecc292229c"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -22835,33 +22842,33 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 120,
+        "matched_count": 123,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "stdlib.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 120,
+        "count": 123,
         "kind_counts": {
           "function": 88,
           "macro": 30,
           "record": 1,
-          "typedef": 1
+          "typedef": 4
         },
-        "sha256": "fa212e9a4cf6086436265b4bd3e3501d1769a2a6b8a955bc36b317941c621df4"
+        "sha256": "c32d50968b5f4197f584e07672caca38846c96f0075af6696de211ecc292229c"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 61,
+        "count": 64,
         "kind_counts": {
           "function": 40,
           "macro": 19,
-          "typedef": 2
+          "typedef": 5
         },
-        "sha256": "98976427c17b50e3c9556573a4408a79bcdb19fd41c5ac526ab83318490592bc"
+        "sha256": "0ea21ef95fa22d78a7fa8ff02ed2fd97eb8c7c8338f0cfdab8f30c9154c2de97"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -22870,32 +22877,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 61,
+        "matched_count": 64,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "stdlib.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 61,
+        "count": 64,
         "kind_counts": {
           "function": 40,
           "macro": 19,
-          "typedef": 2
+          "typedef": 5
         },
-        "sha256": "98976427c17b50e3c9556573a4408a79bcdb19fd41c5ac526ab83318490592bc"
+        "sha256": "0ea21ef95fa22d78a7fa8ff02ed2fd97eb8c7c8338f0cfdab8f30c9154c2de97"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 77,
+        "count": 80,
         "kind_counts": {
           "function": 48,
           "macro": 27,
-          "typedef": 2
+          "typedef": 5
         },
-        "sha256": "9dba53236498a0f94e84ebcc84c7e2ff0f5c8cbe590739ed955533967e2d8ef1"
+        "sha256": "ecad351eedacc3bddf8989964714b76c4d156ff054af2c8a6ba5d66e3c421f9a"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -22904,32 +22911,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 77,
+        "matched_count": 80,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "stdlib.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 77,
+        "count": 80,
         "kind_counts": {
           "function": 48,
           "macro": 27,
-          "typedef": 2
+          "typedef": 5
         },
-        "sha256": "9dba53236498a0f94e84ebcc84c7e2ff0f5c8cbe590739ed955533967e2d8ef1"
+        "sha256": "ecad351eedacc3bddf8989964714b76c4d156ff054af2c8a6ba5d66e3c421f9a"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 99,
+        "count": 102,
         "kind_counts": {
           "function": 70,
           "macro": 27,
-          "typedef": 2
+          "typedef": 5
         },
-        "sha256": "214c5da73e735e837551fb147fa576f000ce2544f0a17be0e08ae891acebf42f"
+        "sha256": "cbe1f076121a939c676e76a678f3da8c3cfd4801bb51fb1a113846e9ef48e935"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -22938,32 +22945,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 99,
+        "matched_count": 102,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "stdlib.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 99,
+        "count": 102,
         "kind_counts": {
           "function": 70,
           "macro": 27,
-          "typedef": 2
+          "typedef": 5
         },
-        "sha256": "214c5da73e735e837551fb147fa576f000ce2544f0a17be0e08ae891acebf42f"
+        "sha256": "cbe1f076121a939c676e76a678f3da8c3cfd4801bb51fb1a113846e9ef48e935"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 113,
+        "count": 116,
         "kind_counts": {
           "function": 80,
           "macro": 31,
-          "typedef": 2
+          "typedef": 5
         },
-        "sha256": "157162c1508b4d80552fd562bf1d95a91af066c9827276b82d02057348c87499"
+        "sha256": "e919320b260c46253fc8f22d0d056be5179d53cdacdbb061cedea02162cb1dea"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -22972,33 +22979,33 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 113,
+        "matched_count": 116,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "stdlib.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 113,
+        "count": 116,
         "kind_counts": {
           "function": 80,
           "macro": 31,
-          "typedef": 2
+          "typedef": 5
         },
-        "sha256": "157162c1508b4d80552fd562bf1d95a91af066c9827276b82d02057348c87499"
+        "sha256": "e919320b260c46253fc8f22d0d056be5179d53cdacdbb061cedea02162cb1dea"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 120,
+        "count": 123,
         "kind_counts": {
           "function": 88,
           "macro": 30,
           "record": 1,
-          "typedef": 1
+          "typedef": 4
         },
-        "sha256": "fa212e9a4cf6086436265b4bd3e3501d1769a2a6b8a955bc36b317941c621df4"
+        "sha256": "c32d50968b5f4197f584e07672caca38846c96f0075af6696de211ecc292229c"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -23007,21 +23014,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 120,
+        "matched_count": 123,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "stdlib.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 120,
+        "count": 123,
         "kind_counts": {
           "function": 88,
           "macro": 30,
           "record": 1,
-          "typedef": 1
+          "typedef": 4
         },
-        "sha256": "fa212e9a4cf6086436265b4bd3e3501d1769a2a6b8a955bc36b317941c621df4"
+        "sha256": "c32d50968b5f4197f584e07672caca38846c96f0075af6696de211ecc292229c"
       },
       "reference_status": "ok"
     },
@@ -23985,7 +23992,7 @@
         "sha256": "c55223f1cfc99b689cd733ccd10d97c812dd9081f01e353fd3a03be40d64ae0e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "profile": "c11-gnu",
       "reference": null,
@@ -24001,7 +24008,7 @@
         "sha256": "c55223f1cfc99b689cd733ccd10d97c812dd9081f01e353fd3a03be40d64ae0e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "profile": "cxx17-gnu",
       "reference": null,
@@ -24017,7 +24024,7 @@
         "sha256": "c55223f1cfc99b689cd733ccd10d97c812dd9081f01e353fd3a03be40d64ae0e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "profile": "c11-strict",
       "reference": null,
@@ -24033,7 +24040,7 @@
         "sha256": "c55223f1cfc99b689cd733ccd10d97c812dd9081f01e353fd3a03be40d64ae0e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "profile": "c11-posix-2008",
       "reference": null,
@@ -24049,7 +24056,7 @@
         "sha256": "c55223f1cfc99b689cd733ccd10d97c812dd9081f01e353fd3a03be40d64ae0e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "profile": "c11-xopen-700",
       "reference": null,
@@ -24065,7 +24072,7 @@
         "sha256": "c55223f1cfc99b689cd733ccd10d97c812dd9081f01e353fd3a03be40d64ae0e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "profile": "c11-bsd",
       "reference": null,
@@ -24081,7 +24088,7 @@
         "sha256": "c55223f1cfc99b689cd733ccd10d97c812dd9081f01e353fd3a03be40d64ae0e"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "strverscmp.h",
       "profile": "cxx17-strict",
       "reference": null,
@@ -27747,12 +27754,9 @@
     },
     {
       "candidate": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -27761,30 +27765,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 15,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/kd.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -27793,30 +27791,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 15,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/kd.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -27825,30 +27817,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 15,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/kd.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -27857,30 +27843,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 15,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/kd.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -27889,30 +27869,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 15,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/kd.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -27921,30 +27895,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 15,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/kd.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -27953,19 +27921,16 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 15,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/kd.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 15,
-        "kind_counts": {
-          "record": 14,
-          "typedef": 1
-        },
-        "sha256": "8458ad22b1c67b2baec49d72f7d4ec041543729fbfbea8f8ca03e5e031a0e1e9"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
@@ -28665,7 +28630,7 @@
         "sha256": "3957837050b3086091b127bf03f73e184176563e4caac84ad4d6ebe0c1cd3c8c"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "profile": "c11-gnu",
       "reference": null,
@@ -28681,7 +28646,7 @@
         "sha256": "3957837050b3086091b127bf03f73e184176563e4caac84ad4d6ebe0c1cd3c8c"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "profile": "cxx17-gnu",
       "reference": null,
@@ -28697,7 +28662,7 @@
         "sha256": "3957837050b3086091b127bf03f73e184176563e4caac84ad4d6ebe0c1cd3c8c"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "profile": "c11-strict",
       "reference": null,
@@ -28713,7 +28678,7 @@
         "sha256": "3957837050b3086091b127bf03f73e184176563e4caac84ad4d6ebe0c1cd3c8c"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "profile": "c11-posix-2008",
       "reference": null,
@@ -28729,7 +28694,7 @@
         "sha256": "3957837050b3086091b127bf03f73e184176563e4caac84ad4d6ebe0c1cd3c8c"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "profile": "c11-xopen-700",
       "reference": null,
@@ -28745,7 +28710,7 @@
         "sha256": "3957837050b3086091b127bf03f73e184176563e4caac84ad4d6ebe0c1cd3c8c"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "profile": "c11-bsd",
       "reference": null,
@@ -28761,7 +28726,7 @@
         "sha256": "3957837050b3086091b127bf03f73e184176563e4caac84ad4d6ebe0c1cd3c8c"
       },
       "candidate_status": "ok",
-      "comparison": "candidate-only-pending-c-abi-policy",
+      "comparison": "candidate-only-reviewed-project-c-abi-extension",
       "header": "sys/module.h",
       "profile": "cxx17-strict",
       "reference": null,
@@ -33989,14 +33954,13 @@
     },
     {
       "candidate": {
-        "count": 79,
+        "count": 45,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 39,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "56ab430e2797e820cfc392ed1a448aece71b41992a81a2c931d7a368e51b0846"
+        "sha256": "59b6977eab4ff50e2e89ad16a78aeb0d777072db2ab3f9395422b2d8f74a81f2"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -34005,34 +33969,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 79,
+        "matched_count": 45,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/soundcard.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 79,
+        "count": 45,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 39,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "56ab430e2797e820cfc392ed1a448aece71b41992a81a2c931d7a368e51b0846"
+        "sha256": "59b6977eab4ff50e2e89ad16a78aeb0d777072db2ab3f9395422b2d8f74a81f2"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 79,
+        "count": 45,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 39,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "cc15c619dfe85a6e3ec5ce1b664126d61c050ebeefdec54c2bab5a5bd711bd24"
+        "sha256": "c6271a3a7423baf1af3f2fa0b49302aa08a23c7f179713138393dba9029ecc4d"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -34041,34 +34003,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 79,
+        "matched_count": 45,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/soundcard.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 79,
+        "count": 45,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 39,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "cc15c619dfe85a6e3ec5ce1b664126d61c050ebeefdec54c2bab5a5bd711bd24"
+        "sha256": "c6271a3a7423baf1af3f2fa0b49302aa08a23c7f179713138393dba9029ecc4d"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 73,
+        "count": 39,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 33,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "744c661c1108dcfe0ff4963430f709ec960657d8cd93c32fb6a92e0e2ed4186e"
+        "sha256": "7592b4e2752a400eaf1d5dd6e50b5a252f6f637fd67f3dab2a74f344f2da27a5"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -34077,34 +34037,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 73,
+        "matched_count": 39,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/soundcard.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 73,
+        "count": 39,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 33,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "744c661c1108dcfe0ff4963430f709ec960657d8cd93c32fb6a92e0e2ed4186e"
+        "sha256": "7592b4e2752a400eaf1d5dd6e50b5a252f6f637fd67f3dab2a74f344f2da27a5"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 73,
+        "count": 39,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 33,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "744c661c1108dcfe0ff4963430f709ec960657d8cd93c32fb6a92e0e2ed4186e"
+        "sha256": "7592b4e2752a400eaf1d5dd6e50b5a252f6f637fd67f3dab2a74f344f2da27a5"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -34113,34 +34071,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 73,
+        "matched_count": 39,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/soundcard.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 73,
+        "count": 39,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 33,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "744c661c1108dcfe0ff4963430f709ec960657d8cd93c32fb6a92e0e2ed4186e"
+        "sha256": "7592b4e2752a400eaf1d5dd6e50b5a252f6f637fd67f3dab2a74f344f2da27a5"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 73,
+        "count": 39,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 33,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "744c661c1108dcfe0ff4963430f709ec960657d8cd93c32fb6a92e0e2ed4186e"
+        "sha256": "7592b4e2752a400eaf1d5dd6e50b5a252f6f637fd67f3dab2a74f344f2da27a5"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -34149,34 +34105,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 73,
+        "matched_count": 39,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/soundcard.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 73,
+        "count": 39,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 33,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "744c661c1108dcfe0ff4963430f709ec960657d8cd93c32fb6a92e0e2ed4186e"
+        "sha256": "7592b4e2752a400eaf1d5dd6e50b5a252f6f637fd67f3dab2a74f344f2da27a5"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 79,
+        "count": 45,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 39,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "56ab430e2797e820cfc392ed1a448aece71b41992a81a2c931d7a368e51b0846"
+        "sha256": "59b6977eab4ff50e2e89ad16a78aeb0d777072db2ab3f9395422b2d8f74a81f2"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -34185,34 +34139,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 79,
+        "matched_count": 45,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/soundcard.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 79,
+        "count": 45,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 39,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "56ab430e2797e820cfc392ed1a448aece71b41992a81a2c931d7a368e51b0846"
+        "sha256": "59b6977eab4ff50e2e89ad16a78aeb0d777072db2ab3f9395422b2d8f74a81f2"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 79,
+        "count": 45,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 39,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "cc15c619dfe85a6e3ec5ce1b664126d61c050ebeefdec54c2bab5a5bd711bd24"
+        "sha256": "c6271a3a7423baf1af3f2fa0b49302aa08a23c7f179713138393dba9029ecc4d"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -34221,21 +34173,20 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 79,
+        "matched_count": 45,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/soundcard.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 79,
+        "count": 45,
         "kind_counts": {
-          "function": 4,
+          "function": 3,
           "macro": 39,
-          "record": 18,
-          "typedef": 18
+          "typedef": 3
         },
-        "sha256": "cc15c619dfe85a6e3ec5ce1b664126d61c050ebeefdec54c2bab5a5bd711bd24"
+        "sha256": "c6271a3a7423baf1af3f2fa0b49302aa08a23c7f179713138393dba9029ecc4d"
       },
       "reference_status": "ok"
     },
@@ -38083,14 +38034,14 @@
     },
     {
       "candidate": {
-        "count": 201,
+        "count": 204,
         "kind_counts": {
           "function": 5,
           "macro": 135,
           "record": 4,
-          "typedef": 57
+          "typedef": 60
         },
-        "sha256": "2f9af05e6ee414b5a10cbaa68c9aec0ccb8d13b8cd5c34557e27c1bce476cd67"
+        "sha256": "1c6e848120d6a891a53e0203304c26324a86ec710dadc3af86b6682bcf252c4a"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -38099,34 +38050,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 201,
+        "matched_count": 204,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/types.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 201,
+        "count": 204,
         "kind_counts": {
           "function": 5,
           "macro": 135,
           "record": 4,
-          "typedef": 57
+          "typedef": 60
         },
-        "sha256": "2f9af05e6ee414b5a10cbaa68c9aec0ccb8d13b8cd5c34557e27c1bce476cd67"
+        "sha256": "1c6e848120d6a891a53e0203304c26324a86ec710dadc3af86b6682bcf252c4a"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 200,
+        "count": 203,
         "kind_counts": {
           "function": 5,
           "macro": 135,
           "record": 3,
-          "typedef": 57
+          "typedef": 60
         },
-        "sha256": "6b500bc23b0361ab6638730498c5fd08119909879c4868cff6520de93ec04c29"
+        "sha256": "fa1bdc5939eefdfcff9b047828b1ebb771fcd6321c8560e0ae7c7cd58cdb41fb"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -38135,21 +38086,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 200,
+        "matched_count": 203,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/types.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 200,
+        "count": 203,
         "kind_counts": {
           "function": 5,
           "macro": 135,
           "record": 3,
-          "typedef": 57
+          "typedef": 60
         },
-        "sha256": "6b500bc23b0361ab6638730498c5fd08119909879c4868cff6520de93ec04c29"
+        "sha256": "fa1bdc5939eefdfcff9b047828b1ebb771fcd6321c8560e0ae7c7cd58cdb41fb"
       },
       "reference_status": "ok"
     },
@@ -38257,14 +38208,14 @@
     },
     {
       "candidate": {
-        "count": 201,
+        "count": 204,
         "kind_counts": {
           "function": 5,
           "macro": 135,
           "record": 4,
-          "typedef": 57
+          "typedef": 60
         },
-        "sha256": "2f9af05e6ee414b5a10cbaa68c9aec0ccb8d13b8cd5c34557e27c1bce476cd67"
+        "sha256": "1c6e848120d6a891a53e0203304c26324a86ec710dadc3af86b6682bcf252c4a"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -38273,34 +38224,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 201,
+        "matched_count": 204,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/types.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 201,
+        "count": 204,
         "kind_counts": {
           "function": 5,
           "macro": 135,
           "record": 4,
-          "typedef": 57
+          "typedef": 60
         },
-        "sha256": "2f9af05e6ee414b5a10cbaa68c9aec0ccb8d13b8cd5c34557e27c1bce476cd67"
+        "sha256": "1c6e848120d6a891a53e0203304c26324a86ec710dadc3af86b6682bcf252c4a"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 200,
+        "count": 203,
         "kind_counts": {
           "function": 5,
           "macro": 135,
           "record": 3,
-          "typedef": 57
+          "typedef": 60
         },
-        "sha256": "6b500bc23b0361ab6638730498c5fd08119909879c4868cff6520de93ec04c29"
+        "sha256": "fa1bdc5939eefdfcff9b047828b1ebb771fcd6321c8560e0ae7c7cd58cdb41fb"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -38309,21 +38260,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 200,
+        "matched_count": 203,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/types.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 200,
+        "count": 203,
         "kind_counts": {
           "function": 5,
           "macro": 135,
           "record": 3,
-          "typedef": 57
+          "typedef": 60
         },
-        "sha256": "6b500bc23b0361ab6638730498c5fd08119909879c4868cff6520de93ec04c29"
+        "sha256": "fa1bdc5939eefdfcff9b047828b1ebb771fcd6321c8560e0ae7c7cd58cdb41fb"
       },
       "reference_status": "ok"
     },
@@ -39835,11 +39786,9 @@
     },
     {
       "candidate": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -39848,28 +39797,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 6,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/vt.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -39878,28 +39823,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 6,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/vt.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -39908,28 +39849,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 6,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/vt.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -39938,28 +39875,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 6,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/vt.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -39968,28 +39901,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 6,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/vt.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -39998,28 +39927,24 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 6,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/vt.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -40028,18 +39953,16 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 6,
+        "matched_count": 0,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "sys/vt.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 6,
-        "kind_counts": {
-          "record": 6
-        },
-        "sha256": "9d0fc4763ae5ee1813b2508b02644097f78f85609356ff94bf4f807ffeaa2102"
+        "count": 0,
+        "kind_counts": {},
+        "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       },
       "reference_status": "ok"
     },
@@ -41647,14 +41570,14 @@
     },
     {
       "candidate": {
-        "count": 452,
+        "count": 437,
         "kind_counts": {
-          "function": 292,
+          "function": 277,
           "macro": 157,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "ae102ac74628fae23867364036e5a0a2d33bd02cf7be8cf89bb3df691aa2142c"
+        "sha256": "bb182db3182aa0a7914045770817e1311644408c1d778346658cf10bc5e7dddf"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -41663,34 +41586,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 452,
+        "matched_count": 437,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "tgmath.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 452,
+        "count": 437,
         "kind_counts": {
-          "function": 292,
+          "function": 277,
           "macro": 157,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "ae102ac74628fae23867364036e5a0a2d33bd02cf7be8cf89bb3df691aa2142c"
+        "sha256": "bb182db3182aa0a7914045770817e1311644408c1d778346658cf10bc5e7dddf"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 443,
+        "count": 428,
         "kind_counts": {
-          "function": 292,
+          "function": 277,
           "macro": 148,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "05e5a97ddc1c6589269d30d27e8324ed92a693125afc2e1df6ef1e5980b73722"
+        "sha256": "64ec66a4f9c42db2f553e6e176662de8effcd885888f945230aa8d932687edbe"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -41699,33 +41622,33 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 443,
+        "matched_count": 428,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "tgmath.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 443,
+        "count": 428,
         "kind_counts": {
-          "function": 292,
+          "function": 277,
           "macro": 148,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "05e5a97ddc1c6589269d30d27e8324ed92a693125afc2e1df6ef1e5980b73722"
+        "sha256": "64ec66a4f9c42db2f553e6e176662de8effcd885888f945230aa8d932687edbe"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 405,
+        "count": 390,
         "kind_counts": {
-          "function": 260,
+          "function": 245,
           "macro": 143,
           "typedef": 2
         },
-        "sha256": "ab26d305402cfda445a7f8e6f81b93373a54c8480a8855c11e76513b31311cd5"
+        "sha256": "264ca1f414b89ef51011399f0a805c09218a543671b22eec9009c5f18685a51b"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -41734,32 +41657,32 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 405,
+        "matched_count": 390,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "tgmath.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 405,
+        "count": 390,
         "kind_counts": {
-          "function": 260,
+          "function": 245,
           "macro": 143,
           "typedef": 2
         },
-        "sha256": "ab26d305402cfda445a7f8e6f81b93373a54c8480a8855c11e76513b31311cd5"
+        "sha256": "264ca1f414b89ef51011399f0a805c09218a543671b22eec9009c5f18685a51b"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 405,
+        "count": 390,
         "kind_counts": {
-          "function": 260,
+          "function": 245,
           "macro": 143,
           "typedef": 2
         },
-        "sha256": "ab26d305402cfda445a7f8e6f81b93373a54c8480a8855c11e76513b31311cd5"
+        "sha256": "264ca1f414b89ef51011399f0a805c09218a543671b22eec9009c5f18685a51b"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -41768,33 +41691,33 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 405,
+        "matched_count": 390,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "tgmath.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 405,
+        "count": 390,
         "kind_counts": {
-          "function": 260,
+          "function": 245,
           "macro": 143,
           "typedef": 2
         },
-        "sha256": "ab26d305402cfda445a7f8e6f81b93373a54c8480a8855c11e76513b31311cd5"
+        "sha256": "264ca1f414b89ef51011399f0a805c09218a543671b22eec9009c5f18685a51b"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 426,
+        "count": 411,
         "kind_counts": {
-          "function": 266,
+          "function": 251,
           "macro": 157,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "a7b4f85584984153670e29b0e0156cbc85b9fd59d7694e03fff5f646a18dd4e7"
+        "sha256": "1a50662ccad1e344f77ae532bf846e374d535706cfb431dffc040f8ab4dd0ed0"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -41803,34 +41726,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 426,
+        "matched_count": 411,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "tgmath.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 426,
+        "count": 411,
         "kind_counts": {
-          "function": 266,
+          "function": 251,
           "macro": 157,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "a7b4f85584984153670e29b0e0156cbc85b9fd59d7694e03fff5f646a18dd4e7"
+        "sha256": "1a50662ccad1e344f77ae532bf846e374d535706cfb431dffc040f8ab4dd0ed0"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 443,
+        "count": 428,
         "kind_counts": {
-          "function": 282,
+          "function": 267,
           "macro": 158,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "5f37f631740fd1fdde76a27055fbcf756bb2864ede8a341e333c385bb2a3e394"
+        "sha256": "d70a4dfd6e212d76a9fa2856ef4eba0347069c309335d53b5fd231b9031320a5"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -41839,34 +41762,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 443,
+        "matched_count": 428,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "tgmath.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 443,
+        "count": 428,
         "kind_counts": {
-          "function": 282,
+          "function": 267,
           "macro": 158,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "5f37f631740fd1fdde76a27055fbcf756bb2864ede8a341e333c385bb2a3e394"
+        "sha256": "d70a4dfd6e212d76a9fa2856ef4eba0347069c309335d53b5fd231b9031320a5"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 443,
+        "count": 428,
         "kind_counts": {
-          "function": 292,
+          "function": 277,
           "macro": 148,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "05e5a97ddc1c6589269d30d27e8324ed92a693125afc2e1df6ef1e5980b73722"
+        "sha256": "64ec66a4f9c42db2f553e6e176662de8effcd885888f945230aa8d932687edbe"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -41875,35 +41798,35 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 443,
+        "matched_count": 428,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "tgmath.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 443,
+        "count": 428,
         "kind_counts": {
-          "function": 292,
+          "function": 277,
           "macro": 148,
           "typedef": 2,
           "variable": 1
         },
-        "sha256": "05e5a97ddc1c6589269d30d27e8324ed92a693125afc2e1df6ef1e5980b73722"
+        "sha256": "64ec66a4f9c42db2f553e6e176662de8effcd885888f945230aa8d932687edbe"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 132,
+        "count": 133,
         "kind_counts": {
           "function": 56,
           "macro": 53,
           "record": 6,
-          "typedef": 13,
+          "typedef": 14,
           "variable": 4
         },
-        "sha256": "db0b52b9edc42795ce1c57d8b7dd9a458ca6fbcc442f9e605a97e2cf99a08b7d"
+        "sha256": "5cd3cc68bc56754113c0f0c32fabff78d706873552295229089789a75d87678e"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -41912,22 +41835,22 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 132,
+        "matched_count": 133,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "threads.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 132,
+        "count": 133,
         "kind_counts": {
           "function": 56,
           "macro": 53,
           "record": 6,
-          "typedef": 13,
+          "typedef": 14,
           "variable": 4
         },
-        "sha256": "db0b52b9edc42795ce1c57d8b7dd9a458ca6fbcc442f9e605a97e2cf99a08b7d"
+        "sha256": "5cd3cc68bc56754113c0f0c32fabff78d706873552295229089789a75d87678e"
       },
       "reference_status": "ok"
     },
@@ -41971,14 +41894,14 @@
     },
     {
       "candidate": {
-        "count": 77,
+        "count": 78,
         "kind_counts": {
           "function": 35,
           "macro": 30,
           "record": 3,
-          "typedef": 9
+          "typedef": 10
         },
-        "sha256": "e97225c4eb00d03409847ec1d0cf747591b3c7f3b0b6c4e8e7d85a97fe802d2e"
+        "sha256": "1d959625b0a14f0b5f1c96f0d9b0dbc7b8da3be17a8b08484fbcf329d10b96b7"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -41987,35 +41910,35 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 77,
+        "matched_count": 78,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "threads.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 77,
+        "count": 78,
         "kind_counts": {
           "function": 35,
           "macro": 30,
           "record": 3,
-          "typedef": 9
+          "typedef": 10
         },
-        "sha256": "e97225c4eb00d03409847ec1d0cf747591b3c7f3b0b6c4e8e7d85a97fe802d2e"
+        "sha256": "1d959625b0a14f0b5f1c96f0d9b0dbc7b8da3be17a8b08484fbcf329d10b96b7"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 123,
+        "count": 124,
         "kind_counts": {
           "function": 52,
           "macro": 51,
           "record": 6,
-          "typedef": 13,
+          "typedef": 14,
           "variable": 1
         },
-        "sha256": "ccae98de47f1709d021ceca1b8c5652b7efe582489c06be22ee45c782bf0222f"
+        "sha256": "e1641ef1101e72320f918690690fd666feefe072cff410c4505a9851df9c7f9a"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -42024,36 +41947,36 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 123,
+        "matched_count": 124,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "threads.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 123,
+        "count": 124,
         "kind_counts": {
           "function": 52,
           "macro": 51,
           "record": 6,
-          "typedef": 13,
+          "typedef": 14,
           "variable": 1
         },
-        "sha256": "ccae98de47f1709d021ceca1b8c5652b7efe582489c06be22ee45c782bf0222f"
+        "sha256": "e1641ef1101e72320f918690690fd666feefe072cff410c4505a9851df9c7f9a"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 128,
+        "count": 129,
         "kind_counts": {
           "function": 54,
           "macro": 51,
           "record": 6,
-          "typedef": 13,
+          "typedef": 14,
           "variable": 4
         },
-        "sha256": "784f4561a86b84e83f09470de496f54701920533ed0f7009dcd5a5aecd179b0d"
+        "sha256": "919c276e26170993c601bc68d4d121ef688cee846f1a15073c6ad87f38aa1b1f"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -42062,36 +41985,36 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 128,
+        "matched_count": 129,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "threads.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 128,
+        "count": 129,
         "kind_counts": {
           "function": 54,
           "macro": 51,
           "record": 6,
-          "typedef": 13,
+          "typedef": 14,
           "variable": 4
         },
-        "sha256": "784f4561a86b84e83f09470de496f54701920533ed0f7009dcd5a5aecd179b0d"
+        "sha256": "919c276e26170993c601bc68d4d121ef688cee846f1a15073c6ad87f38aa1b1f"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 132,
+        "count": 133,
         "kind_counts": {
           "function": 56,
           "macro": 53,
           "record": 6,
-          "typedef": 13,
+          "typedef": 14,
           "variable": 4
         },
-        "sha256": "db0b52b9edc42795ce1c57d8b7dd9a458ca6fbcc442f9e605a97e2cf99a08b7d"
+        "sha256": "5cd3cc68bc56754113c0f0c32fabff78d706873552295229089789a75d87678e"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -42100,22 +42023,22 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 132,
+        "matched_count": 133,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "threads.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 132,
+        "count": 133,
         "kind_counts": {
           "function": 56,
           "macro": 53,
           "record": 6,
-          "typedef": 13,
+          "typedef": 14,
           "variable": 4
         },
-        "sha256": "db0b52b9edc42795ce1c57d8b7dd9a458ca6fbcc442f9e605a97e2cf99a08b7d"
+        "sha256": "5cd3cc68bc56754113c0f0c32fabff78d706873552295229089789a75d87678e"
       },
       "reference_status": "ok"
     },
@@ -43151,14 +43074,14 @@
     },
     {
       "candidate": {
-        "count": 429,
+        "count": 431,
         "kind_counts": {
           "function": 120,
           "macro": 297,
           "typedef": 8,
-          "variable": 4
+          "variable": 6
         },
-        "sha256": "2312535231c0a06c93fd35b56da772cc58382ff9d4748543cfc5e4766a7cbad7"
+        "sha256": "1a647427e6c50508ad661d48f6415e331a46933cf1108fe3c9f29e9485b26115"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -43167,34 +43090,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 429,
+        "matched_count": 431,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "unistd.h",
       "profile": "c11-gnu",
       "reference": {
-        "count": 429,
+        "count": 431,
         "kind_counts": {
           "function": 120,
           "macro": 297,
           "typedef": 8,
-          "variable": 4
+          "variable": 6
         },
-        "sha256": "2312535231c0a06c93fd35b56da772cc58382ff9d4748543cfc5e4766a7cbad7"
+        "sha256": "1a647427e6c50508ad661d48f6415e331a46933cf1108fe3c9f29e9485b26115"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 429,
+        "count": 431,
         "kind_counts": {
           "function": 120,
           "macro": 297,
           "typedef": 8,
-          "variable": 4
+          "variable": 6
         },
-        "sha256": "3e15bbe19612071e7f0a381cf549a36bfd6b34626ae1795f6175bbfb657a85ba"
+        "sha256": "afd468e447031101c0610d35d705be4d80d4bb597b68b791e75bf70cec1274b4"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -43203,34 +43126,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 429,
+        "matched_count": 431,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "unistd.h",
       "profile": "cxx17-gnu",
       "reference": {
-        "count": 429,
+        "count": 431,
         "kind_counts": {
           "function": 120,
           "macro": 297,
           "typedef": 8,
-          "variable": 4
+          "variable": 6
         },
-        "sha256": "3e15bbe19612071e7f0a381cf549a36bfd6b34626ae1795f6175bbfb657a85ba"
+        "sha256": "afd468e447031101c0610d35d705be4d80d4bb597b68b791e75bf70cec1274b4"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 377,
+        "count": 379,
         "kind_counts": {
           "function": 77,
           "macro": 290,
           "typedef": 8,
-          "variable": 2
+          "variable": 4
         },
-        "sha256": "498b26f7869c2579cd7bd26bc90a504349c36c2c19b0ee609e4194748e508214"
+        "sha256": "0c45e8d08a0f4d039f2a708fcb802c2b2d309f7eac0c99e9c7493083717ce86f"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -43239,34 +43162,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 377,
+        "matched_count": 379,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "unistd.h",
       "profile": "c11-strict",
       "reference": {
-        "count": 377,
+        "count": 379,
         "kind_counts": {
           "function": 77,
           "macro": 290,
           "typedef": 8,
-          "variable": 2
+          "variable": 4
         },
-        "sha256": "498b26f7869c2579cd7bd26bc90a504349c36c2c19b0ee609e4194748e508214"
+        "sha256": "0c45e8d08a0f4d039f2a708fcb802c2b2d309f7eac0c99e9c7493083717ce86f"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 377,
+        "count": 379,
         "kind_counts": {
           "function": 77,
           "macro": 290,
           "typedef": 8,
-          "variable": 2
+          "variable": 4
         },
-        "sha256": "498b26f7869c2579cd7bd26bc90a504349c36c2c19b0ee609e4194748e508214"
+        "sha256": "0c45e8d08a0f4d039f2a708fcb802c2b2d309f7eac0c99e9c7493083717ce86f"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -43275,34 +43198,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 377,
+        "matched_count": 379,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "unistd.h",
       "profile": "c11-posix-2008",
       "reference": {
-        "count": 377,
+        "count": 379,
         "kind_counts": {
           "function": 77,
           "macro": 290,
           "typedef": 8,
-          "variable": 2
+          "variable": 4
         },
-        "sha256": "498b26f7869c2579cd7bd26bc90a504349c36c2c19b0ee609e4194748e508214"
+        "sha256": "0c45e8d08a0f4d039f2a708fcb802c2b2d309f7eac0c99e9c7493083717ce86f"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 391,
+        "count": 393,
         "kind_counts": {
           "function": 87,
           "macro": 294,
           "typedef": 8,
-          "variable": 2
+          "variable": 4
         },
-        "sha256": "93769691c7fed7a76b14b744264adebfceef5132fd1af08554d7183f1ff2a0fa"
+        "sha256": "ccc7c37f87d715aa52c596d72007b48b3be3c12e087959900916c5f8ea16cda9"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -43311,34 +43234,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 391,
+        "matched_count": 393,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "unistd.h",
       "profile": "c11-xopen-700",
       "reference": {
-        "count": 391,
+        "count": 393,
         "kind_counts": {
           "function": 87,
           "macro": 294,
           "typedef": 8,
-          "variable": 2
+          "variable": 4
         },
-        "sha256": "93769691c7fed7a76b14b744264adebfceef5132fd1af08554d7183f1ff2a0fa"
+        "sha256": "ccc7c37f87d715aa52c596d72007b48b3be3c12e087959900916c5f8ea16cda9"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 418,
+        "count": 420,
         "kind_counts": {
           "function": 110,
           "macro": 297,
           "typedef": 8,
-          "variable": 3
+          "variable": 5
         },
-        "sha256": "2f75c1d01d53acc345a6420d44093fad0b9ad6819c62a44aec177e3d742d7813"
+        "sha256": "b2daecf3087506413d94a98f541173ffba30a49492069779d57f59f7fa95ae8c"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -43347,34 +43270,34 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 418,
+        "matched_count": 420,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "unistd.h",
       "profile": "c11-bsd",
       "reference": {
-        "count": 418,
+        "count": 420,
         "kind_counts": {
           "function": 110,
           "macro": 297,
           "typedef": 8,
-          "variable": 3
+          "variable": 5
         },
-        "sha256": "2f75c1d01d53acc345a6420d44093fad0b9ad6819c62a44aec177e3d742d7813"
+        "sha256": "b2daecf3087506413d94a98f541173ffba30a49492069779d57f59f7fa95ae8c"
       },
       "reference_status": "ok"
     },
     {
       "candidate": {
-        "count": 429,
+        "count": 431,
         "kind_counts": {
           "function": 120,
           "macro": 297,
           "typedef": 8,
-          "variable": 4
+          "variable": 6
         },
-        "sha256": "3e15bbe19612071e7f0a381cf549a36bfd6b34626ae1795f6175bbfb657a85ba"
+        "sha256": "afd468e447031101c0610d35d705be4d80d4bb597b68b791e75bf70cec1274b4"
       },
       "candidate_status": "ok",
       "comparison": "matched",
@@ -43383,21 +43306,21 @@
         "candidate_only_count": 0,
         "incompatible": [],
         "incompatible_count": 0,
-        "matched_count": 429,
+        "matched_count": 431,
         "reference_only": [],
         "reference_only_count": 0
       },
       "header": "unistd.h",
       "profile": "cxx17-strict",
       "reference": {
-        "count": 429,
+        "count": 431,
         "kind_counts": {
           "function": 120,
           "macro": 297,
           "typedef": 8,
-          "variable": 4
+          "variable": 6
         },
-        "sha256": "3e15bbe19612071e7f0a381cf549a36bfd6b34626ae1795f6175bbfb657a85ba"
+        "sha256": "afd468e447031101c0610d35d705be4d80d4bb597b68b791e75bf70cec1274b4"
       },
       "reference_status": "ok"
     },
@@ -45388,7 +45311,7 @@
   "summary": {
     "candidate_public_header_count": 191,
     "comparison_counts": {
-      "candidate-only-pending-c-abi-policy": 56,
+      "candidate-only-reviewed-project-c-abi-extension": 56,
       "matched": 1280,
       "oracle-not-applicable": 1
     },
@@ -45396,7 +45319,6 @@
     "incomplete_reasons": [
       "0 comparable header/profile rows have prototype or named declaration-form differences",
       "1 pinned-musl header/profile rows are oracle-not-applicable",
-      "56 project-only header/profile rows remain pending C ABI policy",
       "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix"
     ],
     "mismatch_fact_counts": {},

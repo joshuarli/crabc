@@ -514,6 +514,7 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         self.assertTrue(all(not path.startswith("/") and ".." not in Path(path).parts for path in runners))
         self.assertIn("compat/x86_64/run_header_abi_matrix.sh", runners)
         self.assertIn("compat/x86_64/run_header_record_layout_matrix.sh", runners)
+        self.assertIn("compat/x86_64/run_project_header_extension_policy.sh", runners)
         self.assertIn("compat/x86_64/run_time_header_abi.sh", runners)
 
     def test_checked_output_rejects_drift(self) -> None:

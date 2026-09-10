@@ -1872,6 +1872,11 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("    selected-header-install-projection) ;;", source)
         self.assertIn("    header-callable-visibility-matrix) ;;", source)
         self.assertIn("    header-callable-disposition) ;;", source)
+        self.assertIn("    project-header-extension-policy) ;;", source)
+        self.assertIn(
+            "run_in_container bash /workspace/compat/x86_64/run_project_header_extension_policy.sh \"$@\"",
+            source,
+        )
         self.assertIn("    header-abi-matrix) ;;", source)
         self.assertIn("    header-record-layout-matrix) ;;", source)
         self.assertIn(
@@ -2029,6 +2034,7 @@ unsafe fn join_selected_worker_inner(
             "selected-header-install-projection",
             "header-callable-visibility-matrix",
             "header-callable-disposition",
+            "project-header-extension-policy",
             "header-abi-matrix",
             "header-record-layout-matrix",
             "header-declaration-macro-visibility-matrix",

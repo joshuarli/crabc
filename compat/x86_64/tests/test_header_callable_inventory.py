@@ -25,6 +25,14 @@ RUNNER = ROOT / "compat" / "x86_64" / "run_header_callable_linkage_audit.sh"
 CHECKED_INVENTORY = ROOT / "compat" / "x86_64" / "header_callable_inventory.json"
 DOCKERFILE = ROOT / "docker" / "Dockerfile.x86_64"
 DISPATCHER = ROOT / "scripts" / "dev-x86_64.sh"
+LINKAGE_SPEC_AST_FIXTURE = (
+    ROOT
+    / "compat"
+    / "x86_64"
+    / "tests"
+    / "fixtures"
+    / "header_callable_inventory_linkage_spec_nested_actual_ast.json"
+)
 
 
 def load_module(name: str, path: Path):
@@ -114,6 +122,137 @@ class HeaderCallableInventoryTests(unittest.TestCase):
         self.assertEqual(
             [(row["name"], row["classification"], row["declaring_header"]) for row in rows],
             [("archive_owner", "external", "demo.h"), ("header_local", "inline", "demo.h")],
+        )
+
+    def test_ast_linkage_spec_source_location_owns_compact_function_child(self) -> None:
+        """A LinkageSpecDecl child must not inherit its consumer include context."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            daemon = root / "daemon.h"
+            reg = root / "sys" / "reg.h"
+            daemon.write_text("/* direct standalone project header */\n", encoding="utf-8")
+            reg.parent.mkdir()
+            reg.write_text("/* unrelated consumer include context */\n", encoding="utf-8")
+            ast = {
+                "kind": "TranslationUnitDecl",
+                "inner": [
+                    {
+                        "kind": "LinkageSpecDecl",
+                        "loc": {
+                            "offset": 0,
+                            "file": str(daemon),
+                            "line": 8,
+                            "col": 1,
+                            "tokLen": 3,
+                        },
+                        "inner": [
+                            {
+                                "kind": "FunctionDecl",
+                                "name": "daemon",
+                                "loc": {
+                                    "offset": 10,
+                                    "line": 11,
+                                    "col": 5,
+                                    "tokLen": 6,
+                                    "includedFrom": {"file": str(reg)},
+                                },
+                                "type": {"qualType": "int (int, int)"},
+                            }
+                        ],
+                    }
+                ],
+            }
+
+            rows = INVENTORY.discover_functions(ast, root, "daemon.h")
+
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "classification": "external",
+                    "declaration_kind": "function",
+                    "declaring_header": "daemon.h",
+                    "line": 11,
+                    "name": "daemon",
+                    "origin_resolution": "physical",
+                    "storage_class": "extern",
+                    "type": "int (int, int)",
+                }
+            ],
+        )
+
+    def test_actual_ast_fixture_recovers_nested_header_location_inside_linkage_spec(self) -> None:
+        """Global bare-location state must outlive an enclosing extern-C node."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            ast = json.loads(
+                LINKAGE_SPEC_AST_FIXTURE.read_text(encoding="utf-8").replace(
+                    "__CRABC_FIXTURE_ROOT__", str(root)
+                )
+            )
+            rows = INVENTORY.discover_functions(ast, root, "outer.h")
+
+        self.assertEqual(
+            [(row["name"], row["declaring_header"], row["line"], row["origin_resolution"]) for row in rows],
+            [
+                ("nested_first", "nested.h", 1, "physical"),
+                ("nested_second", "nested.h", 2, "physical"),
+                ("outer_after", "outer.h", 7, "physical"),
+            ],
+        )
+
+    def test_ast_locations_use_actual_file_state_not_presumed_or_expansion_context(self) -> None:
+        """Clang's spelling location is physical; presumed and include fields are descriptive."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            spelling = root / "macro_definition.h"
+            expansion = root / "consumer.h"
+            spelling.write_text("/* macro definition */\n", encoding="utf-8")
+            expansion.write_text("/* macro consumer */\n", encoding="utf-8")
+            ast = {
+                "kind": "TranslationUnitDecl",
+                "inner": [
+                    {
+                        "kind": "FunctionDecl",
+                        "name": "from_spelling",
+                        "loc": {
+                            "spellingLoc": {
+                                "offset": 0,
+                                "file": str(spelling),
+                                "line": 4,
+                                "presumedFile": "/not-a-header/generated.h",
+                                "presumedLine": 400,
+                                "col": 1,
+                                "tokLen": 13,
+                            },
+                            "expansionLoc": {
+                                "offset": 7,
+                                "file": str(expansion),
+                                "line": 9,
+                                "col": 1,
+                                "tokLen": 13,
+                                "includedFrom": {"file": "/not-a-header/outer.h"},
+                            },
+                        },
+                        "type": {"qualType": "int (void)"},
+                    },
+                    {
+                        "kind": "FunctionDecl",
+                        "name": "after_expansion",
+                        "loc": {"offset": 21, "line": 10, "col": 1, "tokLen": 15},
+                        "type": {"qualType": "int (void)"},
+                    },
+                ],
+            }
+
+            rows = INVENTORY.discover_functions(ast, root)
+
+        self.assertEqual(
+            [(row["name"], row["declaring_header"], row["line"]) for row in rows],
+            [
+                ("from_spelling", "macro_definition.h", 4),
+                ("after_expansion", "consumer.h", 10),
+            ],
         )
 
     def test_preprocessor_records_classify_function_like_and_builtin_macros_without_scanning_headers(self) -> None:
@@ -531,6 +670,40 @@ class HeaderCallableInventoryTests(unittest.TestCase):
                 "umount2",
                 "vhangup",
                 "vmsplice",
+            }
+            | {
+                "_Fork",
+                "cuserid",
+                "endspent",
+                "endutent",
+                "endutxent",
+                "endusershell",
+                "fgetspent",
+                "getspent",
+                "getspnam",
+                "getspnam_r",
+                "getutent",
+                "getutid",
+                "getutline",
+                "getutxent",
+                "getutxid",
+                "getutxline",
+                "getusershell",
+                "lckpwdf",
+                "putspent",
+                "pututline",
+                "pututxline",
+                "setspent",
+                "setutent",
+                "setutxent",
+                "setusershell",
+                "strfmon",
+                "strfmon_l",
+                "updwtmp",
+                "updwtmpx",
+                "ulckpwdf",
+                "utmpname",
+                "utmpxname",
             },
         )
         self.assertEqual(
@@ -751,13 +924,13 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             ),
             "setns": (
                 profiles["gnu"],
-                "pthread.h",
+                "sched.h",
                 "int (int, int)",
                 ["pthread.h", "sched.h"],
             ),
             "unshare": (
                 profiles["gnu"],
-                "pthread.h",
+                "sched.h",
                 "int (int)",
                 ["pthread.h", "sched.h"],
             ),
@@ -1520,7 +1693,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             for record in callables
             if record.get("tree") == "candidate"
             and record.get("classification") == "macro"
-            and record.get("declaring_header") == "sched.h"
+            and "sched.h" in record.get("visible_from_headers", [])
             and record.get("name") in macro_names
         }
         candidate_inlines = {
@@ -1528,7 +1701,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             for record in callables
             if record.get("tree") == "candidate"
             and record.get("classification") == "inline"
-            and record.get("declaring_header") == "sched.h"
+            and "sched.h" in record.get("visible_from_headers", [])
             and record.get("name") in inline_names
         }
         missing = {
@@ -1780,7 +1953,7 @@ class HeaderCallableInventoryTests(unittest.TestCase):
             self.assertEqual({row["profile"] for row in rows}, profiles)
             self.assertTrue(
                 all(
-                    row.get("declaring_header") == "ftw.h"
+                    row.get("declaring_header") == "sys/stat.h"
                     and row.get("visible_from_headers") == ["ftw.h", "sys/stat.h"]
                     for row in rows
                 )

@@ -181,8 +181,8 @@ def load_project_only_header(value: object, index: int) -> ProjectOnlyHeader:
     disposition = value["disposition"]
     require(isinstance(path, str) and path in PROJECT_ONLY_PATHS, f"{location}.path is invalid")
     require(
-        disposition == "retained-pending-c-abi-policy",
-        f"{location}.disposition must retain the pending C ABI policy boundary",
+        disposition == "retained-reviewed-project-c-abi-extension",
+        f"{location}.disposition must retain the reviewed project C ABI extension boundary",
     )
     origin = value["origin"]
     require(origin in {"standalone-alias", "project-extension", "linux-uapi-local", "c11-vocabulary"}, f"{location}.origin is invalid")
@@ -198,7 +198,7 @@ def load_project_only_header(value: object, index: int) -> ProjectOnlyHeader:
         cxx_surface in {"callable-declarations", "callable-types-and-macros", "empty-intentional"},
         f"{location}.cxx_surface is invalid",
     )
-    require(cxx_linkage in {"extern-c", "cxx-default", "no-callable-surface"}, f"{location}.cxx_linkage is invalid")
+    require(cxx_linkage in {"extern-c", "no-callable-surface"}, f"{location}.cxx_linkage is invalid")
     if cxx_surface == "empty-intentional":
         require(cxx_linkage == "no-callable-surface", f"{location} empty C++ surface has linkage")
     else:
@@ -213,7 +213,7 @@ def load_project_only_header(value: object, index: int) -> ProjectOnlyHeader:
     provider_state = value["provider_state"]
     require(isinstance(capability_owner, str) and capability_owner, f"{location}.capability_owner is invalid")
     require(isinstance(x86_family, str) and x86_family, f"{location}.x86_family is invalid")
-    require(provider_state in {"default-static", "unprovided"}, f"{location}.provider_state is invalid")
+    require(provider_state in {"default-static", "owned-runtime"}, f"{location}.provider_state is invalid")
     evidence = string_tuple(value["evidence"], f"{location}.evidence")
     require(
         value["removal_requires_abi_decision"] is True,
@@ -517,7 +517,7 @@ def build_report(
                 base.update(
                     {
                         "candidate_only": canonical_units(candidate_units),
-                        "comparison": "candidate-only-retained-pending-c-abi-policy",
+                        "comparison": "candidate-only-reviewed-project-c-abi-extension",
                         "matched_callable_count": 0,
                         "reference_callable_count": 0,
                         "reference_only": [],
@@ -563,15 +563,12 @@ def build_report(
 
     mismatch_rows = comparison_counts["mismatch"]
     oracle_not_applicable_rows = comparison_counts["oracle-not-applicable"]
-    project_only_rows = comparison_counts["candidate-only-retained-pending-c-abi-policy"]
+    project_only_rows = comparison_counts["candidate-only-reviewed-project-c-abi-extension"]
     incomplete_reasons: list[str] = []
     if mismatch_rows:
         incomplete_reasons.append(f"{mismatch_rows} comparable pinned header/profile rows have callable visibility differences")
     if oracle_not_applicable_rows:
         incomplete_reasons.append(f"{oracle_not_applicable_rows} pinned-musl header/profile rows are oracle-not-applicable")
-    if project_only_rows:
-        incomplete_reasons.append(f"{project_only_rows} project-only header/profile rows remain pending C ABI policy")
-
     return {
         "schema": SCHEMA,
         "contract_schema": CONTRACT_SCHEMA,

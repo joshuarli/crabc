@@ -1,0 +1,145 @@
+{
+  "fixture": "Relevant clang -Xclang -ast-dump=json subtree captured in crabc-core-evidence:x86_64 (Alpine clang 22.1.3).",
+  "source": "outer.h opens extern C, includes nested.h, then declares outer_after; nested.h declares nested_first and nested_second.",
+  "kind": "LinkageSpecDecl",
+  "loc": {
+    "offset": 26,
+    "file": "__CRABC_FIXTURE_ROOT__/outer.h",
+    "line": 2,
+    "col": 8,
+    "tokLen": 3,
+    "includedFrom": {
+      "file": "__CRABC_FIXTURE_ROOT__/probe.cpp"
+    }
+  },
+  "range": {
+    "begin": {
+      "offset": 19,
+      "col": 1,
+      "tokLen": 6,
+      "includedFrom": {
+        "file": "__CRABC_FIXTURE_ROOT__/probe.cpp"
+      }
+    },
+    "end": {
+      "offset": 104,
+      "line": 10,
+      "col": 1,
+      "tokLen": 1,
+      "includedFrom": {
+        "file": "__CRABC_FIXTURE_ROOT__/probe.cpp"
+      }
+    }
+  },
+  "language": "C",
+  "hasBraces": true,
+  "inner": [
+    {
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 4,
+        "file": "__CRABC_FIXTURE_ROOT__/nested.h",
+        "line": 1,
+        "col": 5,
+        "tokLen": 12,
+        "includedFrom": {
+          "file": "__CRABC_FIXTURE_ROOT__/outer.h"
+        }
+      },
+      "range": {
+        "begin": {
+          "offset": 0,
+          "col": 1,
+          "tokLen": 3,
+          "includedFrom": {
+            "file": "__CRABC_FIXTURE_ROOT__/outer.h"
+          }
+        },
+        "end": {
+          "offset": 21,
+          "col": 22,
+          "tokLen": 1,
+          "includedFrom": {
+            "file": "__CRABC_FIXTURE_ROOT__/outer.h"
+          }
+        }
+      },
+      "name": "nested_first",
+      "mangledName": "nested_first",
+      "type": {
+        "qualType": "int ()"
+      }
+    },
+    {
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 28,
+        "line": 2,
+        "col": 5,
+        "tokLen": 13,
+        "includedFrom": {
+          "file": "__CRABC_FIXTURE_ROOT__/outer.h"
+        }
+      },
+      "range": {
+        "begin": {
+          "offset": 24,
+          "col": 1,
+          "tokLen": 3,
+          "includedFrom": {
+            "file": "__CRABC_FIXTURE_ROOT__/outer.h"
+          }
+        },
+        "end": {
+          "offset": 46,
+          "col": 23,
+          "tokLen": 1,
+          "includedFrom": {
+            "file": "__CRABC_FIXTURE_ROOT__/outer.h"
+          }
+        }
+      },
+      "name": "nested_second",
+      "mangledName": "nested_second",
+      "type": {
+        "qualType": "int ()"
+      }
+    },
+    {
+      "kind": "FunctionDecl",
+      "loc": {
+        "offset": 65,
+        "file": "__CRABC_FIXTURE_ROOT__/outer.h",
+        "line": 7,
+        "col": 5,
+        "tokLen": 11,
+        "includedFrom": {
+          "file": "__CRABC_FIXTURE_ROOT__/probe.cpp"
+        }
+      },
+      "range": {
+        "begin": {
+          "offset": 61,
+          "col": 1,
+          "tokLen": 3,
+          "includedFrom": {
+            "file": "__CRABC_FIXTURE_ROOT__/probe.cpp"
+          }
+        },
+        "end": {
+          "offset": 81,
+          "col": 21,
+          "tokLen": 1,
+          "includedFrom": {
+            "file": "__CRABC_FIXTURE_ROOT__/probe.cpp"
+          }
+        }
+      },
+      "name": "outer_after",
+      "mangledName": "outer_after",
+      "type": {
+        "qualType": "int ()"
+      }
+    }
+  ]
+}

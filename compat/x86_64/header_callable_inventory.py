@@ -356,34 +356,100 @@ def compiler_command(
     return command
 
 
-def source_path_for_location(value: object, root: Path) -> str | None:
+def is_bare_source_location(value: object) -> bool:
+    """Recognize one `writeBareSourceLocation` JSON object."""
+
+    return (
+        isinstance(value, Mapping)
+        and isinstance(value.get("offset"), int)
+        and isinstance(value.get("col"), int)
+        and isinstance(value.get("tokLen"), int)
+    )
+
+
+def reconstruct_source_locations(ast: Mapping[str, Any]) -> dict[int, tuple[str | None, int | None]]:
+    """Recover Clang JSONNodeDumper's global bare-location state.
+
+    `writeBareSourceLocation` elides a repeated file or line with dumper-global
+    `LastLoc*` fields. The omission crosses declaration parents, source ranges,
+    and nested included headers. The dumper writes an actual buffer file and
+    line, separately from `presumedFile`, `presumedLine`, and `includedFrom`;
+    only the actual pair is declaration provenance. Walk parsed JSON in emitted
+    dictionary order so every bare location receives the source file and line
+    Clang had when it wrote that object.
+    """
+
+    resolved: dict[int, tuple[str | None, int | None]] = {}
+    last_file: str | None = None
+    last_line: int | None = None
+
+    def visit(value: object) -> None:
+        nonlocal last_file, last_line
+        if isinstance(value, Mapping):
+            if is_bare_source_location(value):
+                file_name = value.get("file")
+                line = value.get("line")
+                actual_file = file_name if isinstance(file_name, str) and file_name else last_file
+                actual_line = line if isinstance(line, int) and line > 0 else last_line
+                resolved[id(value)] = (actual_file, actual_line)
+                last_file = actual_file
+                last_line = actual_line
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit(ast)
+    return resolved
+
+
+def resolved_source_location(
+    value: object, locations: Mapping[int, tuple[str | None, int | None]]
+) -> tuple[str | None, int | None]:
     if not isinstance(value, Mapping):
-        return None
-    candidates: list[object] = [value]
-    for key in ("spellingLoc", "expansionLoc", "includedFrom"):
+        return (None, None)
+    direct = locations.get(id(value))
+    if direct is not None:
+        return direct
+    # Focused synthetic ASTs can use an uncompressed source location. Real
+    # compiler output has `offset`, `col`, and `tokLen` and is covered by the
+    # global reconstruction above. This fallback deliberately reads only the
+    # direct actual file and line, never a presumed file or include stack.
+    direct_file = value.get("file")
+    direct_line = value.get("line")
+    if isinstance(direct_file, str) and direct_file:
+        return (direct_file, direct_line if isinstance(direct_line, int) and direct_line > 0 else None)
+    for key in ("spellingLoc", "expansionLoc"):
         nested = value.get(key)
         if isinstance(nested, Mapping):
-            candidates.append(nested)
-    resolved_root = root.resolve()
-    for candidate in candidates:
-        if not isinstance(candidate, Mapping):
-            continue
-        file_name = candidate.get("file")
-        if not isinstance(file_name, str) or not file_name or file_name.startswith("<"):
-            continue
-        try:
-            candidate_path = Path(file_name).resolve()
-            return candidate_path.relative_to(resolved_root).as_posix()
-        except (OSError, ValueError):
-            continue
-    return None
+            resolved = locations.get(id(nested))
+            if resolved is not None:
+                return resolved
+    return (None, None)
 
 
-def source_line_for_location(value: object) -> int | None:
-    if not isinstance(value, Mapping):
+def source_path_for_location(
+    value: object,
+    root: Path,
+    locations: Mapping[int, tuple[str | None, int | None]],
+) -> str | None:
+    file_name, _ = resolved_source_location(value, locations)
+    if not isinstance(file_name, str) or not file_name or file_name.startswith("<"):
         return None
-    line = value.get("line")
-    return line if isinstance(line, int) and line > 0 else None
+    resolved_root = root.resolve()
+    try:
+        candidate_path = Path(file_name).resolve()
+        return candidate_path.relative_to(resolved_root).as_posix()
+    except (OSError, ValueError):
+        return None
+
+
+def source_line_for_location(
+    value: object, locations: Mapping[int, tuple[str | None, int | None]]
+) -> int | None:
+    _, line = resolved_source_location(value, locations)
+    return line
 
 
 def has_function_body(node: Mapping[str, Any]) -> bool:
@@ -402,10 +468,13 @@ def function_classification(node: Mapping[str, Any]) -> str:
 
 
 def discover_functions(
-    ast: Mapping[str, Any], header_root: Path, primary_header: str | None = None
+    ast: Mapping[str, Any],
+    header_root: Path,
+    primary_header: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return declarations physically emitted from one compiler header root."""
     records: list[dict[str, Any]] = []
+    locations = reconstruct_source_locations(ast)
     stack: list[Mapping[str, Any]] = [ast]
     while stack:
         node = stack.pop()
@@ -422,14 +491,13 @@ def discover_functions(
         if not isinstance(qualified_type, str) or not qualified_type:
             continue
         location = node.get("loc")
-        declaring_header = source_path_for_location(location, header_root)
+        declaring_header = source_path_for_location(location, header_root, locations)
         origin_resolution = "physical"
         if declaring_header is None and primary_header is not None:
-            # Clang's compact JSON AST omits a repeated `file` key when the
-            # declaration has the same presumed source as the immediately
-            # preceding emitted declaration.  The direct include is still a
-            # compiler-established public provenance boundary, so preserve it
-            # explicitly instead of dropping the declaration.
+            # An implicit or otherwise unresolvable compiler location has no
+            # physical header provenance after full JSON location recovery.
+            # Retain the direct consumer boundary explicitly instead of using
+            # an include-stack location as if it declared the function.
             declaring_header = primary_header
             origin_resolution = "primary-include-fallback"
         if declaring_header is None:
@@ -438,7 +506,7 @@ def discover_functions(
             "classification": function_classification(node),
             "declaration_kind": "function",
             "declaring_header": declaring_header,
-            "line": source_line_for_location(location),
+            "line": source_line_for_location(location, locations),
             "name": name,
             "origin_resolution": origin_resolution,
             "storage_class": node.get("storageClass") if isinstance(node.get("storageClass"), str) else "extern",
@@ -596,7 +664,14 @@ def run_header_profile(
     return (
         "ok",
         "compiler AST and preprocessor records",
-        [*discover_functions(ast, header_root, header), *discover_macros(macro_result.stdout, header_root)],
+        [
+            *discover_functions(
+                ast,
+                header_root,
+                header,
+            ),
+            *discover_macros(macro_result.stdout, header_root),
+        ],
     )
 
 

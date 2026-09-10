@@ -436,13 +436,13 @@ def derive_row(source_row: Mapping[str, Any], contract: MatrixContract) -> dict[
         "header": header,
         "profile": profile,
     }
-    if source_comparison == "candidate-only-pending-c-abi-policy":
+    if source_comparison == "candidate-only-reviewed-project-c-abi-extension":
         require(header in contract.project_only_headers, f"source project-only path drifted: {header}")
         require(source_row["reference"] is None and source_row["reference_status"] == "not-in-pinned-inventory", f"source project-only reference drifted: {header}:{profile}")
         result.update(
             {
                 "comparison": source_comparison,
-                "disposition": "retained-pending-c-abi-policy",
+                "disposition": "retained-reviewed-project-c-abi-extension",
                 "reference": None,
                 "reference_status": "not-in-pinned-inventory",
             }
@@ -544,7 +544,7 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
     source_form_only_difference_row_count = 0
     for row in rows:
         comparison = row["comparison"]
-        if comparison == "candidate-only-pending-c-abi-policy":
+        if comparison == "candidate-only-reviewed-project-c-abi-extension":
             project_only_candidate_fact_count += int(row["candidate"]["count"])
             continue
         if comparison == "oracle-not-applicable":
@@ -566,7 +566,7 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
 
     mismatch_rows = comparison_counts["mismatch"]
     oracle_rows = comparison_counts["oracle-not-applicable"]
-    project_rows = comparison_counts["candidate-only-pending-c-abi-policy"]
+    project_rows = comparison_counts["candidate-only-reviewed-project-c-abi-extension"]
     summary = {
         "candidate_only_identity_count": candidate_only_identity_count,
         "candidate_only_identity_kind_counts": dict(sorted(candidate_only_kind_counts.items())),
@@ -577,7 +577,6 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
         "incomplete_reasons": [
             f"{mismatch_rows} comparable pinned header/profile rows have declaration or macro identity visibility differences",
             f"{oracle_rows} pinned-musl header/profile rows are oracle-not-applicable",
-            f"{project_rows} project-only header/profile rows remain pending C ABI policy",
             "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
         ],
         "matched_identity_count": matched_identity_count,
@@ -615,7 +614,7 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
         "work_package": dict(contract.work_package),
         "profiles": source["profiles"],
         "project_only_headers": [
-            {"disposition": "retained-pending-c-abi-policy", "path": header}
+            {"disposition": "retained-reviewed-project-c-abi-extension", "path": header}
             for header in contract.project_only_headers
         ],
         "rows": rows,

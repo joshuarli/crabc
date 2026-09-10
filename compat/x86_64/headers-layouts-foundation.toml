@@ -127,7 +127,7 @@ header_classes = ["pinned-non-uapi", "pinned-uapi-inputs", "project-only-extensi
 abi_facets = ["public-path-inventory", "candidate-tree-presence", "c11-gnu-consumability", "ioctl-header-profile-matrix", "sys-io-header-profile-matrix", "epoll-header-profile-matrix", "event-descriptors-header-profile-matrix", "dirent-header-profile-matrix", "stdlib-header-profile-matrix", "timeval-transitive-header-profile-matrix", "sys-time-direct-header-profile-matrix", "access-header-profile-matrix", "xattr-header-profile-matrix", "uapi-input-provenance", "uapi-wrapper-profile-matrix", "project-only-extension-policy", "candidate-transitive-closure", "cxx17-consumability", "feature-visibility", "callable-feature-visibility", "callable-prototype-layout", "record-byte-layout-matrix", "callable-linkage-ownership", "legacy-direct-layout-inputs", "static-c-cxx-composition"]
 linkage_owners = ["current-static-c-exports", "header-callable-disposition", "noncallable-header-abi"]
 evidence_tables = ["closure_diagnostic", "feature_visibility_matrix", "callable_feature_visibility_matrix", "prototype_layout_matrix", "record_layout_matrix", "callable_disposition", "selected_callable_provider_linkage_audit", "selected_header_install_projection", "uapi_wrapper_matrix", "ioctl_header_profile_matrix", "sys_io_header_profile_matrix", "epoll_header_profile_matrix", "event_descriptors_header_profile_matrix", "dirent_header_profile_matrix", "stdlib_header_profile_matrix", "timeval_transitive_header_profile_matrix", "sys_time_direct_header_profile_matrix", "access_header_profile_matrix", "xattr_header_profile_matrix"]
-supporting_commands = ["./scripts/dev-x86_64.sh musl-oracle", "./scripts/dev-x86_64.sh linux-5-10-uapi", "./scripts/dev-x86_64.sh installed-header-tree-closure", "./scripts/dev-x86_64.sh header-callable-linkage-audit"]
+supporting_commands = ["./scripts/dev-x86_64.sh musl-oracle", "./scripts/dev-x86_64.sh linux-5-10-uapi", "./scripts/dev-x86_64.sh installed-header-tree-closure", "./scripts/dev-x86_64.sh header-callable-linkage-audit", "./scripts/dev-x86_64.sh project-header-extension-policy"]
 source_owners = ["compat/x86_64/headers_layouts_aggregate.py", "compat/x86_64/run_headers_layouts_aggregate.sh", "compat/x86_64/tests/test_headers_layouts_aggregate.py", "compat/x86_64/generated/headers_layouts_aggregate/report.json"]
 family_promotion = false
 public_support = false
@@ -228,6 +228,10 @@ script = "compat/x86_64/run_header_callable_linkage_audit.sh"
 # aggregate accepts only that exact report through its dedicated validator;
 # every other runner remains an ordinary native pass requirement.
 outcome = "accounted-incomplete"
+
+[[aggregate_control.runner]]
+command = "./scripts/dev-x86_64.sh project-header-extension-policy"
+script = "compat/x86_64/run_project_header_extension_policy.sh"
 
 [selected_callable_provider_linkage_audit]
 id = "selected-header-callable-provider-linkage-audit"
@@ -1478,7 +1482,7 @@ profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-7
 pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
-comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 1280, oracle-not-applicable = 1 }
+comparison_counts = { candidate-only-reviewed-project-c-abi-extension = 56, matched = 1280, oracle-not-applicable = 1 }
 identity_difference_counts = { candidate_only = 0, reference_only = 0 }
 source_form_difference_count = 0
 source_form_difference_row_count = 0
@@ -1513,7 +1517,7 @@ profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-7
 pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
-comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 1280, oracle-not-applicable = 1 }
+comparison_counts = { candidate-only-reviewed-project-c-abi-extension = 56, matched = 1280, oracle-not-applicable = 1 }
 mismatch_fact_counts = {}
 scope = "Compiler-derived direct-public-include source declaration forms: function signatures with emitted linkage spellings, named typedefs, named record shapes, enum values, variables, and macro replacement forms across all seven C11/C++17 profiles. All 1,280 comparable rows match pinned musl, while one C11 strict aio.h row remains oracle-not-applicable. It does not classify raw spelling differences as ABI differences or prove record byte layouts, anonymous declarations, archive linkage, runtime behavior, family promotion, or public support."
 
@@ -1528,7 +1532,7 @@ profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-7
 pinned_public_header_count = 183
 candidate_public_header_count = 191
 record_count = 1337
-comparison_counts = { candidate-only-pending-c-abi-policy = 56, matched = 1280, oracle-not-applicable = 1 }
+comparison_counts = { candidate-only-reviewed-project-c-abi-extension = 56, matched = 1280, oracle-not-applicable = 1 }
 candidate_record_count = 2615
 reference_record_count = 2562
 candidate_record_categories = { anonymous-only = 452, incomplete = 118 }
@@ -1922,7 +1926,7 @@ state = "partial-verified"
 scope = "project-only-extensions"
 owner = "libc.c-abi-compat"
 evidence = ["project-only-header-classification", "x86-selected-header-install-projection"]
-description = "The eight project-only source headers remain classified in the shared tree and are explicitly absent from the private x86 selected install projection; declaration/provider decisions for their retained source-tree surfaces remain outside this partial policy slice."
+description = "The eight project-only source headers are reviewed candidate-only C-ABI extensions, not musl pathname matches or family closure. Their canonical header feature gates remain unchanged; direct C/C++ type and owned-product linkage evidence records their declared provider boundary, while `<stdatomic.h>` remains intentionally empty in C++17. The private 183-path x86 selected install projection continues to exclude all eight paths. This slice does not promote AArch64, runtime families, or public x86 support."
 
 [[abi_facet]]
 id = "candidate-transitive-closure"

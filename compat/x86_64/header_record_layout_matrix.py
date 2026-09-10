@@ -736,7 +736,7 @@ def expected_summary(rows: Sequence[Mapping[str, Any]], candidate_records: Seque
         "candidate_record_count": len(candidate_records),
         "comparison_counts": dict(sorted(comparisons.items())),
         "complete": False,
-        "incomplete_reasons": [f"{comparisons.get('mismatch', 0)} comparable header/profile rows have record-byte-layout differences", f"{comparisons.get('oracle-not-applicable', 0)} pinned-musl header/profile rows are oracle-not-applicable", f"{comparisons.get('candidate-only-pending-c-abi-policy', 0)} project-only header/profile rows remain pending C ABI policy", "record-byte-layouts remain partial until every applicable named record and field is matched", "archive linkage, runtime behavior, family promotion, and public support remain outside this matrix"],
+        "incomplete_reasons": [f"{comparisons.get('mismatch', 0)} comparable header/profile rows have record-byte-layout differences", f"{comparisons.get('oracle-not-applicable', 0)} pinned-musl header/profile rows are oracle-not-applicable", "record-byte-layouts remain partial until every applicable named record and field is matched", "archive linkage, runtime behavior, family promotion, and public support remain outside this matrix"],
         "pinned_public_header_count": pinned_header_count,
         "profile_count": profile_count,
         "reference_field_categories": dict(sorted(reference_summary["not_applicable_field_categories"].items())),
@@ -768,7 +768,7 @@ def build_report(compiler: str, project_include: Path, musl_include: Path, linux
                 candidate_records, candidate_detail = tree_header_profile(compiler, profile, header, project_include, resource_include, linux_uapi_include, work_dir)
                 row: dict[str, Any] = {"header": header, "profile": profile.identifier, "candidate_status": "ok", "candidate_detail": candidate_detail, "candidate": record_summary(candidate_records), "candidate_records": candidate_records}
                 if header not in pinned_headers:
-                    row.update({"comparison": "candidate-only-pending-c-abi-policy", "reference": None, "reference_records": None, "reference_status": "not-in-pinned-inventory"})
+                    row.update({"comparison": "candidate-only-reviewed-project-c-abi-extension", "reference": None, "reference_records": None, "reference_status": "not-in-pinned-inventory"})
                 elif key in contract.oracle_not_applicable:
                     row.update({"comparison": "oracle-not-applicable", "reference": None, "reference_records": None, "reference_status": "oracle-not-applicable", "reference_detail": contract.oracle_not_applicable[key]})
                 else:
@@ -837,7 +837,7 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract 
     require(isinstance(summary, Mapping), "record-layout summary is invalid")
     candidate_records: list[Mapping[str, Any]] = []
     reference_records: list[Mapping[str, Any]] = []
-    allowed_comparisons = {"matched", "mismatch", "oracle-not-applicable", "candidate-only-pending-c-abi-policy"}
+    allowed_comparisons = {"matched", "mismatch", "oracle-not-applicable", "candidate-only-reviewed-project-c-abi-extension"}
     for row in rows:
         require(isinstance(row, Mapping), "record-layout row is invalid")
         candidate = validate_record_facts(row.get("candidate_records"), "candidate")

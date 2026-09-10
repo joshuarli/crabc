@@ -452,7 +452,7 @@ EXPECTED_HEADER_ABI_MATRIX_COMMAND = "./scripts/dev-x86_64.sh header-abi-matrix"
 EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
-        "candidate-only-pending-c-abi-policy": 56,
+        "candidate-only-reviewed-project-c-abi-extension": 56,
         "matched": 1280,
         "oracle-not-applicable": 1,
     },
@@ -460,7 +460,6 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "incomplete_reasons": [
         "0 comparable header/profile rows have prototype or named declaration-form differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
-        "56 project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
     "mismatch_fact_counts": {},
@@ -482,7 +481,7 @@ EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_SUMMARY = {
     "candidate_record_categories": {"anonymous-only": 452, "incomplete": 118},
     "candidate_record_count": 2615,
     "comparison_counts": {
-        "candidate-only-pending-c-abi-policy": 56,
+        "candidate-only-reviewed-project-c-abi-extension": 56,
         "matched": 1280,
         "oracle-not-applicable": 1,
     },
@@ -490,7 +489,6 @@ EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_SUMMARY = {
     "incomplete_reasons": [
         "0 comparable header/profile rows have record-byte-layout differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
-        "56 project-only header/profile rows remain pending C ABI policy",
         "record-byte-layouts remain partial until every applicable named record and field is matched",
         "archive linkage, runtime behavior, family promotion, and public support remain outside this matrix",
     ],
@@ -520,7 +518,7 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparable_row_count": 1280,
     "comparison_counts": {
-        "candidate-only-pending-c-abi-policy": 56,
+        "candidate-only-reviewed-project-c-abi-extension": 56,
         "matched": 1280,
         "oracle-not-applicable": 1,
     },
@@ -528,24 +526,23 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "incomplete_reasons": [
         "0 comparable pinned header/profile rows have declaration or macro identity visibility differences",
         "1 pinned-musl header/profile rows are oracle-not-applicable",
-        "56 project-only header/profile rows remain pending C ABI policy",
         "declaration-form equality, record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ],
-    "matched_identity_count": 295364,
+    "matched_identity_count": 294885,
     "mismatch_row_count": 0,
     "oracle_not_applicable_candidate_fact_count": 104,
     "oracle_not_applicable_row_count": 1,
     "pinned_public_header_count": 183,
     "pinned_row_count": 1281,
     "profile_count": 7,
-    "project_only_candidate_fact_count": 2125,
+    "project_only_candidate_fact_count": 2137,
     "project_only_header_count": 8,
     "project_only_row_count": 56,
     "reference_only_identity_count": 0,
     "reference_only_identity_kind_counts": {},
     "row_count": 1337,
     "source_form_comparison_counts": {
-        "candidate-only-pending-c-abi-policy": 56,
+        "candidate-only-reviewed-project-c-abi-extension": 56,
         "matched": 1280,
         "oracle-not-applicable": 1,
     },
@@ -2814,14 +2811,13 @@ def require_header_callable_visibility_matrix(
             "candidate_public_header_count": 191,
             "comparable_row_count": 1280,
             "comparison_counts": {
-                "candidate-only-retained-pending-c-abi-policy": 56,
+                "candidate-only-reviewed-project-c-abi-extension": 56,
                 "matched": 1280,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
             "incomplete_reasons": [
                 "1 pinned-musl header/profile rows are oracle-not-applicable",
-                "56 project-only header/profile rows remain pending C ABI policy",
             ],
             "matched_callable_count": 34692,
             "mismatch_row_count": 0,
@@ -3966,6 +3962,7 @@ def validate_header_layout_foundation_manifest(
         "./scripts/dev-x86_64.sh linux-5-10-uapi",
         "./scripts/dev-x86_64.sh installed-header-tree-closure",
         "./scripts/dev-x86_64.sh header-callable-linkage-audit",
+        "./scripts/dev-x86_64.sh project-header-extension-policy",
     ]
     require(
         aggregate_control.get("supporting_commands") == expected_supporting_commands,
@@ -7235,6 +7232,113 @@ def require_all_header_record_byte_layout_artifact(
         and "zero comparable byte-layout differences" in scope
         and "not archive, runtime, promotion, or public-support evidence" in scope,
         "record byte-layout artifact evidence scope drifted",
+    )
+
+
+def require_reviewed_project_header_c_abi_extensions_artifact(
+    family: Mapping[str, Any],
+) -> None:
+    """Keep the reviewed standalone headers below musl and family promotion."""
+
+    artifacts = require_verified_artifacts(
+        family.get("verified_artifact"),
+        "family[libc.headers-layouts].verified_artifact",
+        family.get("status", ""),
+    )
+    matching = [
+        entry for entry in artifacts if entry.get("id") == "reviewed-project-header-c-abi-extensions"
+    ]
+    require(
+        len(matching) == 1,
+        "libc.headers-layouts must contain exactly one reviewed project-header extension artifact",
+    )
+    artifact = matching[0]
+    require(
+        "capabilities" not in artifact,
+        "reviewed project-header extension evidence must remain a private artifact",
+    )
+    description = artifact.get("description")
+    require(isinstance(description, str), "reviewed project-header extension description is invalid")
+    for phrase in (
+        "directly includes",
+        "C11 and C++17",
+        "Linux capability widths",
+        "C++17 `<stdatomic.h>` empty",
+        "unmangled C undefined symbols",
+        "static, static-PIE, dynamic PIE, and dynamic non-PIE",
+        "does not invoke capability or module operations",
+        "musl pathname match",
+        "private 183-path install projection",
+        "AArch64 qualification",
+        "public x86 support",
+    ):
+        require(phrase in description, f"reviewed project-header extension description omits {phrase}")
+    owners = set(nonempty_strings(artifact.get("source_owners"), "reviewed project-header extension source owners"))
+    for owner in (
+        "compat/x86_64/header_callable_visibility_matrix.toml",
+        "compat/x86_64/project_header_extension_probe.c",
+        "compat/x86_64/project_header_extension_probe.cpp",
+        "compat/x86_64/run_project_header_extension_policy.sh",
+        "include/daemon.h",
+        "include/pthread_atfork.h",
+        "libc/src/c_abi/x86_64/owned_linux_control.rs",
+        "libc/src/c_abi/x86_64/owned_process_trio.rs",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"reviewed project-header extension artifact omits {owner}")
+    evidence = artifact.get("native_evidence")
+    require(
+        isinstance(evidence, list)
+        and [entry.get("command") for entry in evidence if isinstance(entry, Mapping)]
+        == ["./scripts/dev-x86_64.sh project-header-extension-policy"],
+        "reviewed project-header extension artifact must use its dedicated native command",
+    )
+    runner = ROOT / "compat" / "x86_64" / "run_project_header_extension_policy.sh"
+    require(runner.is_file(), "reviewed project-header extension runner is missing")
+    runner_text = runner.read_text(encoding="utf-8")
+    for phrase in (
+        "project_header_extension_probe.c",
+        "project_header_extension_probe.cpp",
+        "assert_cxx_undefineds",
+        "assert_static_symbols",
+        "assert_dynamic_symbols",
+        "validate_sealed_link",
+        "static static-pie",
+        "pie non-pie",
+    ):
+        require(phrase in runner_text, f"reviewed project-header extension runner omits {phrase}")
+    dispatch = X86_64_DISPATCHER_PATH.read_text(encoding="utf-8")
+    require(
+        "project-header-extension-policy)" in dispatch,
+        "reviewed project-header extension command is absent from the native dispatcher",
+    )
+    try:
+        contract = load_callable_visibility_contract()
+    except MatrixError as error:
+        raise LedgerError(f"reviewed project-header extension contract is invalid: {error}") from error
+    headers = {header.path: header for header in contract.project_only_headers}
+    require(
+        set(headers) == EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY,
+        "reviewed project-header extension roster drifted",
+    )
+    require(
+        all(
+            header.disposition == "retained-reviewed-project-c-abi-extension"
+            and header.removal_requires_abi_decision
+            for header in headers.values()
+        ),
+        "reviewed project-header extension disposition drifted",
+    )
+    require(
+        {path: headers[path].provider_state for path in ("daemon.h", "linux/capability.h", "sys/module.h")}
+        == {"daemon.h": "owned-runtime", "linux/capability.h": "owned-runtime", "sys/module.h": "owned-runtime"},
+        "owned-runtime project-header provider state drifted",
+    )
+    require(
+        headers["daemon.h"].cxx_linkage == "extern-c"
+        and headers["pthread_atfork.h"].cxx_linkage == "extern-c"
+        and headers["stdatomic.h"].cxx_surface == "empty-intentional",
+        "reviewed project-header C++ linkage policy drifted",
     )
 
 
@@ -79723,6 +79827,7 @@ def _validate_ledger(
     )
     require_all_header_prototype_layout_artifact(by_id["libc.headers-layouts"])
     require_all_header_record_byte_layout_artifact(by_id["libc.headers-layouts"])
+    require_reviewed_project_header_c_abi_extensions_artifact(by_id["libc.headers-layouts"])
     require_selected_header_install_projection_artifact(by_id["libc.headers-layouts"])
     require_installed_header_tree_closure_artifact(by_id["libc.headers-layouts"])
     if header_layout_foundation_manifest is None:

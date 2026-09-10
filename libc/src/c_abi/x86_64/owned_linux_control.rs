@@ -90,9 +90,11 @@ pub unsafe extern "C" fn capget(header: *mut CapabilityHeader, data: *mut Capabi
 /// # Safety
 /// `header` and its version-selected data array must be valid for kernel
 /// access. The caller must coordinate the resulting capability transition;
-/// this entry does not perform a process-wide pthread rendezvous.
+/// this entry does not perform a process-wide pthread rendezvous. `data` is
+/// mutable at the C ABI boundary, matching `cap_user_data_t`; capset itself
+/// reads the caller-provided words.
 #[no_mangle]
-pub unsafe extern "C" fn capset(header: *mut CapabilityHeader, data: *const CapabilityData) -> c_int {
+pub unsafe extern "C" fn capset(header: *mut CapabilityHeader, data: *mut CapabilityData) -> c_int {
     c_status(unsafe { raw_syscall::syscall2(SYS_CAPSET, header as i64, data as i64) })
 }
 

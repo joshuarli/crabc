@@ -646,8 +646,14 @@ def fact(kind: str, name: str, signature: str) -> dict[str, str]:
     }
 
 
-def source_header(node: Mapping[str, Any], header_root: Path) -> str | None:
-    return callable_inventory.source_path_for_location(node.get("loc"), header_root)
+def source_header(
+    node: Mapping[str, Any],
+    header_root: Path,
+    locations: Mapping[int, tuple[str | None, int | None]],
+) -> str | None:
+    return callable_inventory.source_path_for_location(
+        node.get("loc"), header_root, locations
+    )
 
 
 def has_explicit_source_file(location: object) -> bool:
@@ -1032,14 +1038,16 @@ def discover_ast_facts(
 ) -> list[dict[str, str]]:
     """Extract named declarations visible through one isolated direct include.
 
-    Clang's compact JSON AST can omit a repeated file path after another node
-    from the same direct include. The direct header is still a compiler-known
-    visibility boundary, so retain such a declaration under ``primary_header``
-    rather than dropping its ABI fact.
+    Global bare-location reconstruction resolves normal compact AST locations
+    to their physical declaration source before this traversal. A deliberately
+    narrow direct-include fallback remains for records whose location is still
+    unresolved, preserving the direct consumer boundary without assigning an
+    include-stack file as declaration provenance.
     """
     discovered: list[dict[str, str]] = []
     path_roots = ((header_root, "public"),) if path_roots is None else path_roots
     anonymous_identities = anonymous_type_identities(ast, path_roots)
+    locations = callable_inventory.reconstruct_source_locations(ast)
     stack: list[tuple[Mapping[str, Any], bool]] = [(ast, False)]
     last_header_provenance: str | None = None
     while stack:
@@ -1054,7 +1062,7 @@ def discover_ast_facts(
                 if isinstance(child, Mapping)
             )
         location = node.get("loc")
-        physical_header = source_header(node, header_root)
+        physical_header = source_header(node, header_root, locations)
         if physical_header is not None:
             last_header_provenance = physical_header
         elif has_explicit_source_file(location):
@@ -1452,7 +1460,7 @@ def build_report(
             if header not in pinned_headers:
                 row.update(
                     {
-                        "comparison": "candidate-only-pending-c-abi-policy",
+                        "comparison": "candidate-only-reviewed-project-c-abi-extension",
                         "reference": None,
                         "reference_status": "not-in-pinned-inventory",
                     }
@@ -1494,7 +1502,6 @@ def build_report(
     incomplete_reasons = [
         f"{comparison_counts.get('mismatch', 0)} comparable header/profile rows have prototype or named declaration-form differences",
         f"{comparison_counts.get('oracle-not-applicable', 0)} pinned-musl header/profile rows are oracle-not-applicable",
-        f"{comparison_counts.get('candidate-only-pending-c-abi-policy', 0)} project-only header/profile rows remain pending C ABI policy",
         "record byte layouts, archive linkage, runtime behavior, family promotion, and public support remain outside this partial matrix",
     ]
     return {
@@ -1598,7 +1605,7 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract)
         key = (header, profile)
         if header not in pinned_headers:
             require(
-                comparison == "candidate-only-pending-c-abi-policy"
+                comparison == "candidate-only-reviewed-project-c-abi-extension"
                 and row.get("reference") is None
                 and row.get("reference_status") == "not-in-pinned-inventory",
                 f"checked header ABI matrix project-only row drifted: {header}:{profile}",

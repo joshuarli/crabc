@@ -335,7 +335,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            378,
+            379,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
@@ -401,7 +401,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         headers_layouts = next(
             row for row in report["families"] if row["id"] == "libc.headers-layouts"
         )
-        self.assertEqual(headers_layouts["verified_artifact_count"], 16)
+        self.assertEqual(headers_layouts["verified_artifact_count"], 17)
         self.assertEqual(headers_layouts["contract_state"], "implemented-foundation")
         self.assertIn(
             {
@@ -414,6 +414,13 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {
                 "family": "libc.headers-layouts",
                 "id": "header-callable-disposition",
+            },
+            report["selected_private_artifacts"],
+        )
+        self.assertIn(
+            {
+                "family": "libc.headers-layouts",
+                "id": "reviewed-project-header-c-abi-extensions",
             },
             report["selected_private_artifacts"],
         )

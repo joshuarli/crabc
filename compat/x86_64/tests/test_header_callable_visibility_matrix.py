@@ -107,15 +107,27 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
         self.assertEqual(tuple(contract.oracle_not_applicable), (("aio.h", "c11-strict"),))
         self.assertTrue(
             all(
-                header.disposition == "retained-pending-c-abi-policy"
+                header.disposition == "retained-reviewed-project-c-abi-extension"
                 and header.removal_requires_abi_decision
                 for header in contract.project_only_headers
             )
         )
+        headers = {header.path: header for header in contract.project_only_headers}
+        self.assertEqual(
+            {path for path, header in headers.items() if header.provider_state == "owned-runtime"},
+            {"daemon.h", "linux/capability.h", "sys/module.h"},
+        )
+        self.assertTrue(
+            all(
+                headers[path].cxx_linkage == "extern-c"
+                for path in ("daemon.h", "pthread_atfork.h")
+            )
+        )
+        self.assertEqual(headers["stdatomic.h"].cxx_linkage, "no-callable-surface")
         self.assertEqual(
             report["summary"]["comparison_counts"],
             {
-                "candidate-only-retained-pending-c-abi-policy": 56,
+                "candidate-only-reviewed-project-c-abi-extension": 56,
                 "matched": 1280,
                 "oracle-not-applicable": 1,
             },
@@ -156,6 +168,7 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             stdatomic_header["evidence"],
             [
                 "include/stdatomic.h",
+                "ISO C11 7.17",
                 "compat/x86_64/atomic_addressable_abi_probe.c",
                 "compat/x86_64/run_atomic_addressable_abi.sh",
             ],
@@ -214,7 +227,7 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             project_only_headers=(
                 MATRIX.ProjectOnlyHeader(
                     path="extension.h",
-                    disposition="retained-pending-c-abi-policy",
+                    disposition="retained-reviewed-project-c-abi-extension",
                     declared_symbols=("extension_only",),
                 ),
             ),
@@ -305,7 +318,7 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
         )
         self.assertEqual(
             rows[("extension.h", "c11-gnu")]["comparison"],
-            "candidate-only-retained-pending-c-abi-policy",
+            "candidate-only-reviewed-project-c-abi-extension",
         )
         self.assertEqual(report["summary"]["row_count"], 3)
         self.assertEqual(report["summary"]["comparable_row_count"], 1)

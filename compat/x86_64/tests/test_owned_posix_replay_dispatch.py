@@ -15,7 +15,7 @@ COMMANDS = (
     "owned-kernel-residual", "owned-linux-control", "owned-dynamic-spawn",
     "owned-process-trio", "owned-underscore-fork", "owned-utmpx", "owned-account-files", "owned-syslog", "owned-crypt-runtime", "owned-system-cancellation",
     "owned-signal-helpers", "owned-pthread-signal", "owned-posix-timers",
-    "owned-dynamic-io-cancellation",
+    "owned-dynamic-io-cancellation", "project-header-extension-policy",
 )
 
 
@@ -64,7 +64,7 @@ class OwnedPosixReplayDispatchTests(unittest.TestCase):
                     self.assertEqual("--cap-add=SYS_ADMIN" in argv, command == "owned-pthread-signal")
                     self.assertEqual("--security-opt=apparmor=unconfined" in argv, command == "owned-pthread-signal")
                     self.assertEqual("--security-opt=seccomp=unconfined" in argv, command == "owned-credentials-profile")
-                    self.assertEqual("--cap-add=SYS_CHROOT" in argv, command not in ("owned-posix-signals", "owned-posix-timers"))
+                    self.assertEqual("--cap-add=SYS_CHROOT" in argv, command not in ("owned-posix-signals", "owned-posix-timers", "project-header-extension-policy"))
                     self.assertNotIn("--privileged", argv)
 
     def test_optional_modes_and_required_pthread_dynamic_product(self):
