@@ -352,7 +352,7 @@
       {
         "id": "os-range-transition-policy-and-failure-owners",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, and retry/error ownership.",
+        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, and retry/error ownership. The selected native record drives one process-paired regular mapping through the normal no-callback Linux arms, including MADV_FREE-to-MADV_DONTNEED fallback, the normal Unix decommit-error no-recommit result, and imported primitive errors.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -368,7 +368,7 @@
           "native-protection-owner-and-retry"
         ],
         "missing_conditions": [
-          "Custom arena commit callback ownership; purge_decommits and other option branches; all partial-range callers; and pinned-C failure/retry differential coverage for commit, decommit, purge, protect, unprotect, and every release caller beyond the selected normal-offset full-MemoryId retry."
+          "Custom arena commit callback ownership; preloading and every remaining purge option/caller combination; all partial-range allocator callers; MI_DEBUG/MI_SECURE behavior; and pinned-C failure/retry differential coverage beyond the selected one-page process-paired commit/decommit/reset/purge/protect/unprotect and normal-offset full-MemoryId release records."
         ]
       },
       {
@@ -459,7 +459,7 @@
       {
         "id": "unix-commit-decommit-reset-reuse-and-protect",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global fallback, and reuse semantics.",
+        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global MADV_FREE-to-MADV_DONTNEED fallback, and reuse semantics. The selected native record faults the unchanged imported mprotect/madvise calls around one regular process-owned mapping.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -475,7 +475,7 @@
           "native-protection-owner-and-retry"
         ],
         "missing_conditions": [
-          "The selected default Linux success/retry slices do not qualify MI_DEBUG/MI_SECURE decommit policy, MADV_FREE fallback state across all callers, mprotect diagnostics, or every failure owner."
+          "The selected release-profile record covers fixed one-page mprotect/madvise failures and retries plus one MADV_FREE EINVAL fallback, but does not qualify MI_DEBUG/MI_SECURE decommit policy, EAGAIN/fallback state across every caller, source warning diagnostics, or every retained failure owner."
         ]
       },
       {

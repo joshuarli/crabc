@@ -54,6 +54,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "-Wl,--wrap=munmap",
             "-Wl,--wrap=mmap",
             "-Wl,--wrap=madvise",
+            "-Wl,--wrap=mprotect",
             "-pthread",
             "-o",
             str(
@@ -166,6 +167,22 @@ class NativeVmAssemblyTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(key, producer.TRACE_KEYS)
 
+    def test_transition_fault_trace_schema_requires_source_result_and_retry_relations(self):
+        """The normal receiver cannot reduce C primitive failures to success counters."""
+
+        producer = RUNNER._m2_x86_64_vm_producer()
+        for key in (
+            "m2.vm.reserved.commit.failure.one_source_attempt_and_counters_unchanged",
+            "m2.vm.reserved.decommit.failure_returns_false",
+            "m2.vm.reserved.reset.madv_free_einval_falls_back_to_dontneed",
+            "m2.vm.reserved.purge.decommit_failure_no_recommit",
+            "m2.vm.reserved.purge.reset_failure_is_consumed",
+            "m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
+            "m2.vm.reserved.unprotect.failure_returns_false_and_one_source_attempt",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(key, producer.TRACE_KEYS)
+
     def summary(self):
         return RUNNER.validate_x86_64_m2_memory_substrate_contract(
             RUNNER.read_json(RUNNER.M2_X86_64_MEMORY_SUBSTRATE_CONTRACT), RUNNER.load_pin()
@@ -265,8 +282,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, wrong_features)
 
-    def test_vm_producer_requires_policy_wrapper_and_direct_arena_source_closure(self):
-        """The policy record must observe source mmap and madvise, not a model."""
+    def test_vm_producer_requires_source_wrappers_and_direct_arena_source_closure(self):
+        """The C record must observe source mmap, madvise, and mprotect imports."""
 
         summary = self.summary()
 
@@ -279,6 +296,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
         without_madvise_wrap["c_command"].remove("-Wl,--wrap=madvise")
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, without_madvise_wrap)
+
+        without_mprotect_wrap = self.vm_evidence(summary)
+        without_mprotect_wrap["c_command"].remove("-Wl,--wrap=mprotect")
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, without_mprotect_wrap)
 
         direct_arena_source = self.vm_evidence(summary)
         direct_arena_source["c_command"].append("/pinned/src/arena.c")

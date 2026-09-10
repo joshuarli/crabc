@@ -2359,6 +2359,15 @@ impl Mapping {
     /// owner. The callback form remains unavailable until its arena caller can
     /// supply a source-owned typed commit capability; silently treating it as
     /// reset/decommit would erase its failure ownership.
+    ///
+    /// Pinned `src/os.c:663-679` intentionally consumes an advisory failure
+    /// here. The normal Unix `_mi_prim_decommit` stores `needs_recommit =
+    /// false` after its `madvise` result, including an error; only a
+    /// conservative empty range retains `_mi_os_purge_ex`'s initial true.
+    /// A failed reset also reports false. Those result values drive the arena
+    /// commitment bitmap; the retained [`Mapping`] remains the only retry
+    /// owner in every case. Do not surface the primitive error through this
+    /// source-shaped policy result.
     pub(crate) fn purge_for_process(
         &self,
         process: VmProcess<'_>,
@@ -2371,13 +2380,42 @@ impl Mapping {
             return Ok(false);
         }
         process.subprocess.vm_statistics().purge(length);
-        if process.policy.purge_decommits() {
-            return self
-                .decommit_for_process(process, offset, length, stat_size)
-                .map(|_| false);
+        if process.policy.purge_decommits() && !process.is_preloading() {
+            // Preserve the typed mapping boundary before consuming the raw
+            // primitive error below. The second source-shaped range query
+            // cannot now hide an inactive or out-of-bounds owner violation.
+            if self
+                .page_range(offset, length, PageAlignment::Contained)?
+                .is_none()
+            {
+                return Ok(true);
+            }
+            return match self.decommit_for_process(process, offset, length, stat_size) {
+                // `src/prim/unix/prim.c:544-548` assigns false after the
+                // `MADV_DONTNEED` call even when that call returned an error.
+                // `_mi_os_purge_ex` returns that source output while retaining
+                // this mapping for the caller's later retry or release.
+                Ok(Some(DecommitOutcome::DoesNotNeedRecommit)) | Err(_) => Ok(false),
+                // The preflight above normally makes this unreachable, but
+                // keep the source's initialized local result if the mapping
+                // can produce a conservative empty range again.
+                Ok(None) => Ok(true),
+            };
         }
         if allow_reset {
-            let _ = self.reset_for_process(process, offset, length)?;
+            // The source has no typed owner boundary. Validate this exact
+            // Rust mapping range before consuming only the reset advisory
+            // error, while retaining its empty-range no-recommit result.
+            if self
+                .page_range(offset, length, PageAlignment::Contained)?
+                .is_none()
+            {
+                return Ok(false);
+            }
+            // `_mi_os_purge_ex` ignores `_mi_os_reset`'s advisory error and
+            // returns its fixed no-recommit outcome. The mapping remains live
+            // for the caller's later policy-selected transition or release.
+            let _ = self.reset_for_process(process, offset, length);
         }
         Ok(false)
     }
@@ -6216,7 +6254,7 @@ mod tests {
     }
 
     #[test]
-    fn vm_process_purge_counts_before_a_failed_reset_primitive() {
+    fn vm_process_purge_consumes_a_failed_reset_primitive_with_source_counters() {
         let fault = fault::install(fault::Plan::disabled());
         let config = MemoryConfig::detect(current_startup());
         let page = config.page_size().bytes();
@@ -6236,7 +6274,11 @@ mod tests {
         .expect("the paired source process maps one purge range");
 
         fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::NOMEM));
-        assert_eq!(mapping.purge_for_process(process, 0, page, true, page), Err(Errno::NOMEM));
+        assert_eq!(
+            mapping.purge_for_process(process, 0, page, true, page),
+            Ok(false),
+            "_mi_os_purge_ex consumes the reset advisory error and reports no recommit",
+        );
         let after_failed_reset = subprocess.vm_statistics().snapshot();
         assert_eq!(after_failed_reset.purge_calls, 1);
         assert_eq!(after_failed_reset.purged, page as i64);
@@ -6247,7 +6289,102 @@ mod tests {
         fault.set(fault::Plan::disabled());
         mapping
             .unmap_for_process(process, page, false)
-            .expect("the exact retained mapping releases after a reset failure");
+            .expect("the owned mapping releases after the consumed reset advisory failure");
+    }
+
+    #[test]
+    fn vm_process_purge_reset_does_not_consume_invalid_owner_errors() {
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let mut policy = VmPolicy::defaults_for_test();
+        policy.set_option(VmOption::PurgeDecommits, 0);
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapping = Mapping::map_for_process(
+            process,
+            config,
+            page,
+            1,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("the reset-purge owner starts with one complete mapped page");
+        let before = subprocess.vm_statistics().snapshot();
+
+        // Rust's typed mapping boundary has no C analogue to consume: the
+        // source-style reset advisory policy begins only after this exact
+        // owner has accepted the requested range.
+        assert_eq!(
+            mapping.purge_for_process(process, page, page, true, page),
+            Err(Errno::INVAL),
+        );
+        let after_invalid_range = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_invalid_range.purge_calls, before.purge_calls + 1);
+        assert_eq!(after_invalid_range.purged, before.purged + page as i64);
+        assert_eq!(after_invalid_range.reset_calls, before.reset_calls);
+
+        mapping
+            .unmap_for_process(process, page, false)
+            .expect("the live reset-purge owner releases once");
+        assert_eq!(
+            mapping.purge_for_process(process, 0, page, true, page),
+            Err(Errno::INVAL),
+        );
+        let after_released_mapping = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_released_mapping.purge_calls, before.purge_calls + 2);
+        assert_eq!(after_released_mapping.purged, before.purged + 2 * page as i64);
+        assert_eq!(after_released_mapping.reset_calls, before.reset_calls);
+    }
+
+    #[test]
+    fn vm_process_purge_decommit_failure_reports_source_no_recommit_and_retains_mapping() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        let page = config.page_size().bytes();
+        let mut policy = VmPolicy::defaults_for_test();
+        policy.set_option(VmOption::PurgeDecommits, 1);
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let mut mapping = Mapping::map_for_process(
+            process,
+            config,
+            page,
+            1,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("the paired source process maps one decommit-purge range");
+        let base = mapping.base().expect("the purge owner starts live");
+        let before = subprocess.vm_statistics().snapshot();
+
+        // Pinned `_mi_os_purge_ex` starts `needs_recommit` as true, but the
+        // normal Unix `_mi_prim_decommit` writes false after its madvise
+        // result, including an error. The caller keeps its mapping owner and
+        // follows that source result instead of replacing it with an error.
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        assert_eq!(
+            mapping.purge_for_process(process, 0, page, true, page),
+            Ok(false),
+        );
+        assert_eq!(fault.observed(), 1, "the selected decommit has no hidden retry");
+        assert_eq!(mapping.base(), Ok(base), "the failed advisory retains its mapping owner");
+        let after_failure = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_failure.purge_calls, before.purge_calls + 1);
+        assert_eq!(after_failure.purged, before.purged + page as i64);
+        assert_eq!(after_failure.reset_calls, before.reset_calls);
+        assert_eq!(after_failure.committed_current, before.committed_current);
+
+        fault.set(fault::Plan::disabled());
+        assert_eq!(
+            mapping.purge_for_process(process, 0, page, true, page),
+            Ok(false),
+            "a later source decommit success does not need recommit on this Linux profile",
+        );
+        mapping
+            .unmap_for_process(process, page, false)
+            .expect("the retained mapping releases after the decommit-purge retry");
     }
 
     #[test]
@@ -6922,33 +7059,155 @@ mod tests {
             .checked_mul(16)
             .expect("the fixed trace alignment fits");
 
-        let mut reserved = Mapping::map_for_allocator(config, page, MapAccess::Reserved)
-            .expect("the fixed trace reserves one page");
+        // Keep the ordinary transition source pair alive through every
+        // operation. The C companion drives the same `mi_subproc_t` through
+        // `_mi_os_*`; this receiver proves a failed raw primitive cannot
+        // discard or replace the typed Rust mapping that owns its retry.
+        let transition_policy = VmPolicy::defaults_for_test();
+        assert!(
+            transition_policy.purge_decommits(),
+            "the selected fixed source profile starts in its decommit purge arm"
+        );
+        let transition_subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let transition_process = VmProcess::new(&transition_policy, transition_subprocess);
+        let mut reserved = Mapping::map_for_process(
+            transition_process,
+            config,
+            page,
+            1,
+            MapAccess::Reserved,
+            false,
+            None,
+        )
+        .expect("the fixed trace reserves one process-owned page");
         let reserved_initially_zero = reserved.initially_zero();
         let reserved_initially_committed = reserved.initially_committed();
+        let reserved_base = reserved.base().expect("the reserved transition owner starts live");
+
+        let before_failed_commit = transition_subprocess.vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        let commit_failure_returns_false = matches!(
+            reserved.commit_for_process(transition_process, 0, page, 0),
+            Err(Errno::NOMEM)
+        );
+        let after_failed_commit = transition_subprocess.vm_statistics().snapshot();
+        let commit_failure_is_one_source_attempt_and_counters_unchanged =
+            fault.observed() == 1
+            && reserved.base() == Ok(reserved_base)
+            && after_failed_commit.commit_calls == before_failed_commit.commit_calls + 1
+            && after_failed_commit.committed_current == before_failed_commit.committed_current;
+        fault.set(fault::Plan::disabled());
         assert_eq!(
-            reserved.commit(0, page),
+            reserved.commit_for_process(transition_process, 0, page, 0),
             Ok(Some(CommitOutcome::NotKnownZero)),
             "the source commit covers the complete one-page reservation"
         );
-        assert_eq!(
-            reserved.decommit(0, page),
-            Ok(Some(DecommitOutcome::DoesNotNeedRecommit)),
-            "the default Linux source decommit keeps the mapping accessible"
+        let commit_retry_is_one_additional_source_attempt =
+            transition_subprocess.vm_statistics().snapshot().commit_calls
+                == after_failed_commit.commit_calls + 1;
+
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        let decommit_failure_returns_false = matches!(
+            reserved.decommit_for_process(transition_process, 0, page, page),
+            Err(Errno::NOMEM)
         );
-        assert!(reserved.purge(0, page).expect("the source reset succeeds"));
+        let decommit_failure_is_one_source_attempt =
+            fault.observed() == 1 && reserved.base() == Ok(reserved_base);
+        fault.set(fault::Plan::disabled());
+        let decommit_retry_is_one_additional_source_attempt = matches!(
+            reserved.decommit_for_process(transition_process, 0, page, page),
+            Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
+        );
+        assert!(
+            decommit_retry_is_one_additional_source_attempt,
+            "the default Linux source decommit retry keeps the mapping accessible"
+        );
+
+        RESET_ADVICE.store(MADV_FREE as usize, Ordering::Release);
+        let before_reset_fallback = transition_subprocess.vm_statistics().snapshot();
+        fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::INVAL));
         assert_eq!(
+            reserved.reset_for_process(transition_process, 0, page),
+            Ok(true),
+            "the source reset retries MADV_DONTNEED after MADV_FREE EINVAL",
+        );
+        let after_reset_fallback = transition_subprocess.vm_statistics().snapshot();
+        let reset_madv_free_einval_falls_back_to_dontneed = fault.observed() == 2
+            && RESET_ADVICE.load(Ordering::Acquire) == MADV_DONTNEED as usize
+            && after_reset_fallback.reset_calls == before_reset_fallback.reset_calls + 1
+            && after_reset_fallback.reset == before_reset_fallback.reset + page as i64;
+
+        fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
+        let purge_decommit_failure_no_recommit =
+            reserved.purge_for_process(transition_process, 0, page, true, page) == Ok(false)
+                && fault.observed() == 1
+                && reserved.base() == Ok(reserved_base);
+        // Keep a later failure ordinal armed so this successful retry still
+        // proves exactly one Decommit primitive attempt without turning it
+        // into another synthetic failure.
+        fault.set(fault::Plan::at(fault::Point::Decommit, 2, Errno::NOMEM));
+        let purge_decommit_retry_no_recommit =
+            reserved.purge_for_process(transition_process, 0, page, true, page) == Ok(false)
+                && fault.observed() == 1
+                && reserved.base() == Ok(reserved_base);
+        fault.set(fault::Plan::disabled());
+        let reuse_linux_noop = matches!(
             reserved.reuse(0, page),
-            Ok(Some(ReuseOutcome::NoOp)),
+            Ok(Some(ReuseOutcome::NoOp))
+        );
+        assert!(
+            reuse_linux_noop,
             "Linux reuse has no VM syscall after conservative page normalization"
         );
-        assert!(reserved.protect(0, page).expect("the source protect succeeds"));
-        assert!(reserved
+
+        fault.set(fault::Plan::at(fault::Point::Protect, 1, Errno::NOMEM));
+        let protect_failure_returns_false_and_one_source_attempt = matches!(
+            reserved.protect(0, page),
+            Err(Errno::NOMEM)
+        ) && fault.observed() == 1 && reserved.base() == Ok(reserved_base);
+        fault.set(fault::Plan::disabled());
+        let protect_retry_is_one_additional_source_attempt =
+            reserved.protect(0, page).expect("the source protect retry succeeds");
+        assert!(protect_retry_is_one_additional_source_attempt);
+
+        fault.set(fault::Plan::at(fault::Point::Unprotect, 1, Errno::NOMEM));
+        let unprotect_failure_returns_false_and_one_source_attempt = matches!(
+            reserved.unprotect(0, page),
+            Err(Errno::NOMEM)
+        ) && fault.observed() == 1 && reserved.base() == Ok(reserved_base);
+        fault.set(fault::Plan::disabled());
+        let unprotect_retry_is_one_additional_source_attempt = reserved
             .unprotect(0, page)
-            .expect("the source unprotect succeeds"));
+            .expect("the source unprotect retry succeeds");
+        assert!(unprotect_retry_is_one_additional_source_attempt);
         reserved
-            .unmap()
-            .expect("the fixed trace releases the reserved owner once");
+            .unmap_for_process(transition_process, page, false)
+            .expect("the fixed trace releases the reserved source owner once");
+
+        let mut reset_policy = VmPolicy::defaults_for_test();
+        reset_policy.set_option(VmOption::PurgeDecommits, 0);
+        let reset_subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let reset_process = VmProcess::new(&reset_policy, reset_subprocess);
+        let mut reset_mapping = Mapping::map_for_process(
+            reset_process,
+            config,
+            page,
+            1,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("the reset-purge option arm receives one owned mapping");
+        fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::NOMEM));
+        let reset_mapping_base = reset_mapping.base().expect("the reset-purge owner starts live");
+        let purge_reset_failure_is_consumed = reset_mapping
+            .purge_for_process(reset_process, 0, page, true, page) == Ok(false)
+            && fault.observed() == 1
+            && reset_mapping.base() == Ok(reset_mapping_base);
+        fault.set(fault::Plan::disabled());
+        reset_mapping
+            .unmap_for_process(reset_process, page, false)
+            .expect("the reset-purge owner releases after its consumed advisory failure");
 
         let normal = NormalOsAllocation::allocate(
             config,
@@ -7167,11 +7426,67 @@ mod tests {
             "m2.vm.reserved.initially_committed",
             u8::from(reserved_initially_committed)
         );
+        emit!(
+            "m2.vm.reserved.commit.failure_returns_false",
+            u8::from(commit_failure_returns_false)
+        );
+        emit!(
+            "m2.vm.reserved.commit.failure.one_source_attempt_and_counters_unchanged",
+            u8::from(commit_failure_is_one_source_attempt_and_counters_unchanged)
+        );
+        emit!(
+            "m2.vm.reserved.commit.retry.one_additional_source_attempt",
+            u8::from(commit_retry_is_one_additional_source_attempt)
+        );
         emit!("m2.vm.reserved.commit_not_known_zero", 1);
+        emit!(
+            "m2.vm.reserved.decommit.failure_returns_false",
+            u8::from(decommit_failure_returns_false)
+        );
+        emit!(
+            "m2.vm.reserved.decommit.failure.one_source_attempt",
+            u8::from(decommit_failure_is_one_source_attempt)
+        );
+        emit!(
+            "m2.vm.reserved.decommit.retry.one_additional_source_attempt",
+            u8::from(decommit_retry_is_one_additional_source_attempt)
+        );
         emit!("m2.vm.reserved.decommit_no_recommit", 1);
+        emit!(
+            "m2.vm.reserved.reset.madv_free_einval_falls_back_to_dontneed",
+            u8::from(reset_madv_free_einval_falls_back_to_dontneed)
+        );
         emit!("m2.vm.reserved.reset_success", 1);
-        emit!("m2.vm.reserved.reuse_linux_noop", 1);
+        emit!(
+            "m2.vm.reserved.purge.decommit_failure_no_recommit",
+            u8::from(purge_decommit_failure_no_recommit)
+        );
+        emit!(
+            "m2.vm.reserved.purge.decommit_retry_no_recommit",
+            u8::from(purge_decommit_retry_no_recommit)
+        );
+        emit!(
+            "m2.vm.reserved.purge.reset_failure_is_consumed",
+            u8::from(purge_reset_failure_is_consumed)
+        );
+        emit!("m2.vm.reserved.reuse_linux_noop", u8::from(reuse_linux_noop));
+        emit!(
+            "m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
+            u8::from(protect_failure_returns_false_and_one_source_attempt)
+        );
+        emit!(
+            "m2.vm.reserved.protect.retry.one_additional_source_attempt",
+            u8::from(protect_retry_is_one_additional_source_attempt)
+        );
         emit!("m2.vm.reserved.protect_success", 1);
+        emit!(
+            "m2.vm.reserved.unprotect.failure_returns_false_and_one_source_attempt",
+            u8::from(unprotect_failure_returns_false_and_one_source_attempt)
+        );
+        emit!(
+            "m2.vm.reserved.unprotect.retry.one_additional_source_attempt",
+            u8::from(unprotect_retry_is_one_additional_source_attempt)
+        );
         emit!("m2.vm.reserved.unprotect_success", 1);
         emit!("m2.vm.reserved.release_success", 1);
         emit!("m2.vm.normal.client_is_base", 1);

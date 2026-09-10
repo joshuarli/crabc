@@ -4,14 +4,14 @@
 This module owns neither milestone aggregation nor source-map promotion.  It
 checks the target-local fragment's complete source-policy matrix, compiles a
 fresh direct-include C oracle from the pinned archive, and compares its fixed
-regular-VM lifecycle, one offset-release failure/retry record, and one
+process-paired regular-VM lifecycle, source commit/decommit/reset/purge/
+protection fault records, one offset-release failure/retry record, and one
 child-isolated source-option first-arena record with one already-built Rust
-exact test. The C release fault wraps only the unchanged pinned `munmap`
-import for the selected `_mi_prim_free` call; the policy record wraps the
-unchanged Unix `mmap` and `madvise` imports. The fragment deliberately remains
-partial: passing this producer is not a claim for ambient option retries,
-huge-page success/placement, diagnostics, or general allocator lifecycle
-integration.
+exact test. The C faults wrap only unchanged Unix imports: `mprotect`,
+`madvise`, `munmap`, and the policy record's `mmap`. The fragment deliberately
+remains partial: passing this producer is not a claim for ambient option
+retries, source warning diagnostics, huge-page success/placement, or general
+allocator lifecycle integration.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ SCHEMA = "crabc-mimalloc-x86_64-m2-component-evidence"
 TRACE_BEGIN = "CRABC_MI_M2_VM_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_M2_VM_TRACE_END"
 EXPECTED_RUST_TEST_COUNT = 1
-EVIDENCE_PROFILE = "release-no-default-features-fixed-regular-vm-and-child-policy-arena-fault"
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-and-child-policy-arena-fault"
 
 CHECKS = (
     (
@@ -152,11 +152,25 @@ TRACE_KEYS = (
     "m2.vm.thp.process_disabled",
     "m2.vm.reserved.initially_zero",
     "m2.vm.reserved.initially_committed",
+    "m2.vm.reserved.commit.failure_returns_false",
+    "m2.vm.reserved.commit.failure.one_source_attempt_and_counters_unchanged",
+    "m2.vm.reserved.commit.retry.one_additional_source_attempt",
     "m2.vm.reserved.commit_not_known_zero",
+    "m2.vm.reserved.decommit.failure_returns_false",
+    "m2.vm.reserved.decommit.failure.one_source_attempt",
+    "m2.vm.reserved.decommit.retry.one_additional_source_attempt",
     "m2.vm.reserved.decommit_no_recommit",
+    "m2.vm.reserved.reset.madv_free_einval_falls_back_to_dontneed",
     "m2.vm.reserved.reset_success",
+    "m2.vm.reserved.purge.decommit_failure_no_recommit",
+    "m2.vm.reserved.purge.decommit_retry_no_recommit",
+    "m2.vm.reserved.purge.reset_failure_is_consumed",
     "m2.vm.reserved.reuse_linux_noop",
+    "m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
+    "m2.vm.reserved.protect.retry.one_additional_source_attempt",
     "m2.vm.reserved.protect_success",
+    "m2.vm.reserved.unprotect.failure_returns_false_and_one_source_attempt",
+    "m2.vm.reserved.unprotect.retry.one_additional_source_attempt",
     "m2.vm.reserved.unprotect_success",
     "m2.vm.reserved.release_success",
     "m2.vm.normal.client_is_base",
@@ -629,6 +643,7 @@ def run_evidence(
             "-Wl,--wrap=munmap",
             "-Wl,--wrap=mmap",
             "-Wl,--wrap=madvise",
+            "-Wl,--wrap=mprotect",
             "-pthread",
             "-o",
             str(binary),
