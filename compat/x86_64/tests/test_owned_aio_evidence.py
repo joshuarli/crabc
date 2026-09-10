@@ -170,18 +170,18 @@ class OwnedAioBehaviorObservationTests(unittest.TestCase):
     @staticmethod
     def _fd_reuse_espipe(*, attempt: int, step: str = "wait-pipe-read", regular: int = 3,
                          pipe_read: int = 3, pipe_write: int = 4,
-                         positioned_return: int = 1) -> bytes:
+                         positioned_return: int = 1, saved_errno: int | str = 11) -> bytes:
         return (
             f"fd-reuse-failure step={step} attempt={attempt} regular={regular} "
             f"pipe-read={pipe_read} pipe-write={pipe_write} positioned-submit=0 "
             f"positioned-error=0 positioned-return={positioned_return} pipe-submit=0 "
-            "pipe-error=29 pipe-return=-1 byte=0 errno=29\n"
+            f"pipe-error=29 pipe-return=-1 byte=0 errno={saved_errno}\n"
         ).encode("ascii")
 
     def test_fd_reuse_espipe_requires_the_exact_stale_queue_observation(self) -> None:
-        for attempt in (0, 511):
-            with self.subTest(valid_attempt=attempt):
-                command = self._record(f"fd-valid-{attempt}", b"", self._fd_reuse_espipe(attempt=attempt), b"1\n")
+        for attempt, saved_errno in ((0, 11), (511, 29)):
+            with self.subTest(valid_attempt=attempt, saved_errno=saved_errno):
+                command = self._record(f"fd-valid-{attempt}", b"", self._fd_reuse_espipe(attempt=attempt, saved_errno=saved_errno), b"1\n")
                 with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
                     self.evidence.assert_oracle_fd_reuse(self.root, command)
         invalid = (
@@ -190,6 +190,12 @@ class OwnedAioBehaviorObservationTests(unittest.TestCase):
             {"attempt": 0, "positioned_return": 0},
             {"attempt": 0, "pipe_write": 3},
             {"attempt": 0, "pipe_read": 4},
+            {"attempt": 0, "regular": 0, "pipe_read": 0},
+            {"attempt": 0, "pipe_write": 0},
+            {"attempt": 0, "saved_errno": "01"},
+            {"attempt": 0, "saved_errno": "-0"},
+            {"attempt": 0, "saved_errno": "2147483648"},
+            {"attempt": 0, "saved_errno": "-2147483649"},
         )
         for index, kwargs in enumerate(invalid):
             with self.subTest(invalid=kwargs):
@@ -210,6 +216,26 @@ class OwnedAioSuppliedPathTests(unittest.TestCase):
         with self.assertRaises(evidence.EvidenceError):
             evidence.supplied_product(root, root / ".work/product-link", "dynamic")
         shutil.rmtree(root, ignore_errors=True)
+
+
+class OwnedAioCatalogueEvidenceTests(unittest.TestCase):
+    def test_catalogue_parser_admits_the_work_directory_not_the_receipt_file(self) -> None:
+        evidence = module()
+        scratch = TMP / self.id().replace(".", "-")
+        shutil.rmtree(scratch, ignore_errors=True)
+        leaf = scratch / "owned-aio"
+        leaf.mkdir(parents=True)
+        receipt = leaf / "owned-aio-receipts.json"
+        receipt.write_text("{}\n", encoding="utf-8")
+        log = scratch / "runner.log"
+        # This is the completed runner line: the receipt is named separately,
+        # leaving the catalogue's evidence parser one physical work directory.
+        log.write_text(f"owned aio: PASS; receipt: {receipt}; evidence: {leaf}\n", encoding="utf-8")
+        self.assertEqual(evidence.qualification.leaf_evidence_directories(log, str(ROOT)), {leaf})
+        log.write_text(f"owned aio: PASS; evidence: {receipt}\n", encoding="utf-8")
+        with self.assertRaises(evidence.qualification.QualificationError):
+            evidence.qualification.leaf_evidence_directories(log, str(ROOT))
+        shutil.rmtree(scratch, ignore_errors=True)
 
 
 class OwnedAioModeAndRouteTests(unittest.TestCase):

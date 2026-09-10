@@ -441,5 +441,5 @@ done
 
 report="$(python3 -B "$EVIDENCE" finalize --root "$ROOT" --work "$WORK" --expected-inputs "$EXPECTED_INPUTS")"
 
-printf 'owned aio: PASS (installed-header object, pinned-musl oracle, %s); evidence: %s\n' \
-	"$executed_products" "$report"
+printf 'owned aio: PASS (installed-header object, pinned-musl oracle, %s); receipt: %s; evidence: %s\n' \
+	"$executed_products" "$report" "$WORK"
