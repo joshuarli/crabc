@@ -600,7 +600,11 @@ reentrant lookups, shared enumeration and FILE records, and literal `putpwent`
 formatting. [`owned-passwd.md`](owned-passwd.md) records the pinned source,
 local-only provider boundary, storage/cancellation contracts, and same-object
 musl/static/dynamic evidence. The Rust facade's snapshot semantics and the
-remaining `users.databases` C roster are separate contracts.
+remaining `users.databases` C roster are separate contracts. The installed
+`owned-account-files` companion covers conventional shadow and usershell
+files plus `cuserid`; [`owned-account-files.md`](owned-account-files.md)
+records the opaque hash-field, TCB fallback, source no-op, storage, and
+same-object musl/static/dynamic boundaries.
 
 The installed C filename-pattern entries are qualified by `owned-pattern`.
 [`owned-pattern.md`](owned-pattern.md) records the musl source mapping,

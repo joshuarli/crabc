@@ -1,5 +1,5 @@
 {
-  "contract_sha256": "ccc028986a5cb80b9748aac9da795bc9ca8c2fa22284c118266cc667581dcb52",
+  "contract_sha256": "e96b22c0aa250f37119ab0660db7290843fdb698ea75bb9617d99d7b035f552d",
   "evidence": [],
   "materialized_sysroot": null,
   "owner_family": "sysroot.owned-artifact",

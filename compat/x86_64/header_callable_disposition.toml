@@ -54,16 +54,6 @@ source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inve
 members = ["aio_cancel", "aio_fsync", "aio_read", "aio_return", "aio_suspend", "aio_write", "initstate", "lio_listio", "rand", "random", "setstate", "srand", "srandom"]
 
 [[deferred_owner_group]]
-id = "x86-cabi-compat-errors-users-v1"
-semantic_family = "libc.c-abi-compat"
-linkage_owner_family = "libc.c-abi-compat"
-linkage_owner_obligation = "final-callable-provider-archive-closure"
-resolution = "planned-provider"
-provider_target = "future selected C ABI providers in libc.c-abi-compat"
-source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["cuserid", "endspent", "endusershell", "fgetspent", "getspent", "getspnam", "getspnam_r", "getusershell", "lckpwdf", "putspent", "setspent", "setusershell", "ulckpwdf"]
-
-[[deferred_owner_group]]
 id = "x86-header-callable-builtin-v1"
 semantic_family = "libc.headers-layouts"
 linkage_owner_family = "libc.c-abi-compat"

@@ -31,6 +31,19 @@ DISPOSITION = load_module("header_callable_disposition_test", SCRIPT)
 
 
 class HeaderCallableDispositionTests(unittest.TestCase):
+    def test_account_file_callables_belong_to_the_owned_runtime_provider(self) -> None:
+        report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
+        primary = report["primary_disposition"]
+        owned = next(row for row in primary["declared_unverified_feature_archives"]
+                     if row["id"] == "x86-owned-static-runtime")
+        names = {"cuserid", "endspent", "endusershell", "fgetspent", "getspent",
+                 "getspnam", "getspnam_r", "getusershell", "lckpwdf", "putspent",
+                 "setspent", "setusershell", "ulckpwdf"}
+        self.assertTrue(names <= set(owned["members"]))
+        self.assertFalse(names & set(primary["default_static"]["members"]))
+        self.assertFalse(names & {name for row in primary["deferred_owner_groups"]
+                                  for name in row["members"]})
+
     def test_priority_ceiling_attributes_are_declared_without_an_oracle_provider(self) -> None:
         contract = DISPOSITION.load_contract()
         for name in ("pthread_mutexattr_getprioceiling", "pthread_mutexattr_setprioceiling"):

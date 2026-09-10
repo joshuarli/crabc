@@ -393,6 +393,19 @@ mod owned_signal_helpers;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_passwd.rs"]
 mod owned_passwd;
+// Conventional account-file compatibility owners compose the existing local
+// passwd parser and owned FILE/cancellation state. They remain confined to
+// installed owned products; the frozen default archive does not gain a
+// shadow cursor, usershell state, or legacy effective-user-name provider.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_shadow.rs"]
+mod owned_shadow;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_usershell.rs"]
+mod owned_usershell;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_cuserid.rs"]
+mod owned_cuserid;
 #[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_siginterrupt.rs")]
 #[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "siginterrupt.rs")]
 mod siginterrupt;
