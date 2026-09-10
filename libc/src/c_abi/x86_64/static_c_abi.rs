@@ -855,6 +855,12 @@ mod mq_setattr;
 mod owned_message_queues;
 #[path = "aio_error.rs"]
 mod aio_error;
+// The frozen archive retains its archive-free `aio_error` observation leaf.
+// Owned products select the source AIO completion protocol and its request
+// siblings instead.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_aio.rs"]
+mod owned_aio;
 #[path = "timer_fd.rs"]
 mod timer_fd;
 #[path = "signal_fd.rs"]
@@ -1046,6 +1052,34 @@ mod allocator {
         unsafe { mimalloc_failed(libmimalloc_sys::mi_malloc_aligned(
             size, MIMALLOC_MALLOC_ALIGNMENT,
         )) }
+    }
+
+    /// Allocate zero-filled storage through musl's noninterposable
+    /// `__libc_calloc`-shaped owned allocator seam.
+    ///
+    /// This stays separate from public `calloc`: private libc state must not
+    /// select an executable replacement for the weak public spelling.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    pub(super) unsafe fn allocate_zeroed_internal(size: usize) -> *mut c_void {
+        let allocation = unsafe { allocate_internal(size) };
+        if !allocation.is_null() {
+            // SAFETY: the internal allocation reserves `size` writable bytes.
+            unsafe { core::ptr::write_bytes(allocation, 0, size) };
+        }
+        allocation
+    }
+
+    /// Release private owned storage without crossing public `free`.
+    ///
+    /// Musl's internal free preserves the calling thread's errno at cleanup
+    /// boundaries, just as the selected public wrapper does.
+    #[cfg(feature = "x86-owned-static-runtime")]
+    pub(super) unsafe fn deallocate_internal(pointer: *mut c_void) {
+        if !pointer.is_null() {
+            let saved_errno = cabi_allocator_errno();
+            unsafe { libmimalloc_sys::mi_free(pointer) };
+            cabi_set_allocator_errno(saved_errno);
+        }
     }
 
     /// Link-time witness for the opt-in x86 allocator wrapper object.

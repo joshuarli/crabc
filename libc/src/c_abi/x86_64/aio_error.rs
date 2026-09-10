@@ -16,13 +16,16 @@
 //! inspect concurrently: caller-provided AIO/external synchronization remains
 //! the caller's responsibility.
 
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 use core::{
     arch::asm,
     ffi::{c_int, c_void},
     sync::atomic::{compiler_fence, Ordering},
 };
 
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 const AIOCB_ERR_OFFSET: usize = 112;
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 const AIO_ERROR_MASK: c_int = 0x7fff_ffff;
 
 /// Observe the selected `struct aiocb::__err` word with musl's sign-bit mask.
@@ -34,6 +37,7 @@ const AIO_ERROR_MASK: c_int = 0x7fff_ffff;
 /// offset 112 is readable for this call. The caller must provide the same
 /// external synchronization required to read that field while AIO state may
 /// change. This function neither initializes nor synchronizes AIO state.
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[no_mangle]
 pub unsafe extern "C" fn aio_error(control_block: *const c_void) -> c_int {
     // Musl's x86 a_barrier is a compiler-only empty asm with a memory clobber.

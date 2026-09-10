@@ -121,6 +121,11 @@ fn retry_dup3(old_descriptor: c_int, new_descriptor: c_int, flags: c_int) -> i64
 /// without delivery, and EINTR after close never becomes cancellation.
 #[no_mangle]
 pub extern "C" fn close(file_descriptor: c_int) -> c_int {
+    #[cfg(feature = "x86-owned-static-runtime")]
+    // Musl passes `__aio_close(fd)` as close's cancellation-point argument.
+    // The owned hook cancels matching work and detaches its visible queue
+    // incarnation before the kernel can recycle this numeric descriptor.
+    let file_descriptor = unsafe { super::owned_aio::close(file_descriptor) };
     // SAFETY: `file_descriptor` is a scalar Linux descriptor word; the kernel
     // validates it and owns the close lifetime transition.
     #[cfg(feature = "x86-owned-static-runtime")]

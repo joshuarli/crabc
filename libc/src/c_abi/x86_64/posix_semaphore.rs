@@ -136,7 +136,6 @@ unsafe fn trywait_raw(semaphore: *mut PublicSemaphore) -> bool {
 /// `value` must remain a live aligned semaphore value word through the raw
 /// futex call, and `private_word` must come from an initialized selected
 /// semaphore record.
-#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[inline(always)]
 unsafe fn futex_wait(value: *mut c_int, private_word: c_int) -> i64 {
     // SAFETY: the public semaphore's value word is caller-owned aligned
@@ -149,6 +148,56 @@ unsafe fn futex_wait(value: *mut c_int, private_word: c_int) -> i64 {
             i64::from(SEM_WAITER_BIT),
             0,
         )
+    }
+}
+
+/// Consume the private AIO worker-handoff semaphore without creating a public
+/// cancellation point.
+///
+/// `aio_read`, `aio_write`, and `aio_fsync` are absent from POSIX's
+/// cancellation-point roster. musl's `aio.c::submit` nevertheless waits for a
+/// stack `aio_args` handoff through public `sem_wait`, whose selected owned
+/// implementation rightly is cancellable. This private owner-level helper
+/// preserves the same value/waiter/futex protocol while intentionally
+/// suppressing cancellation and application-signal interruption until the
+/// detached worker has copied every stack argument and posted the token.
+/// A pending request remains pending for the caller's next actual POSIX
+/// cancellation point.
+///
+/// # Safety
+///
+/// `semaphore` must be the live, private, zero-or-one handoff semaphore owned
+/// by an AIO submitter and its just-created worker. No public caller may use
+/// the record, and the submitter keeps it on stack until this function returns.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn wait_aio_handoff_without_cancellation(semaphore: *mut c_void) {
+    let semaphore = semaphore.cast::<PublicSemaphore>();
+    let value = unsafe { semaphore_word(semaphore, SEM_VALUE_WORD) };
+    let waiter_count = unsafe { semaphore_word(semaphore, SEM_WAITER_COUNT_WORD) };
+
+    let mut spins = 100;
+    while spins > 0
+        && unsafe { atomic::x86_64_load_acquire_i32(value) } & SEM_VALUE_MAX == 0
+        && unsafe { atomic::x86_64_load_relaxed_i32(waiter_count) } == 0
+    {
+        core::hint::spin_loop();
+        spins -= 1;
+    }
+
+    while !unsafe { trywait_raw(semaphore) } {
+        // The AIO handoff record is initialized with pshared=0 and remains
+        // private, but retain the selected word so its source ownership is
+        // explicit and this helper stays coupled to sem_init's layout.
+        let private_word = unsafe { core::ptr::read(semaphore_word(semaphore, SEM_PRIVATE_WORD)) };
+        unsafe { atomic::x86_64_fetch_add_acqrel_i32(waiter_count, 1) };
+        let _ = unsafe {
+            atomic::x86_64_compare_exchange_acqrel_i32(value, 0, SEM_WAITER_BIT)
+        };
+        // This deliberately uses the raw futex, never syscall_cp. A wake,
+        // expected-value race, application interruption, or reserved
+        // cancellation signal all retry the private handoff until sem_post.
+        let _ = unsafe { futex_wait(value, private_word) };
+        unsafe { atomic::x86_64_fetch_sub_acqrel_i32(waiter_count, 1) };
     }
 }
 

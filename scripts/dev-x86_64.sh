@@ -576,6 +576,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-utmpx [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify the complete inert musl utmpx source boundary
   owned-process-trio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed clone/vfork/daemon semantics against musl
   owned-underscore-fork [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed _Fork against musl
+  owned-aio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed POSIX AIO against pinned musl
   owned-process-control [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed residual POSIX process control
   owned-filesystem-mechanisms  test installed owned filesystem C mechanisms against musl
   owned-credentials-profile [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify the selected credential-setter profile against musl
@@ -5977,7 +5978,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-crypt-runtime|owned-atomic-addressable-profile) ;;
     owned-system-cancellation) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-regex|owned-strfmon) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -8066,6 +8067,10 @@ case "$command" in
     owned-underscore-fork)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_underscore_fork.sh "$@"
+        ;;
+    owned-aio)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_aio.sh "$@"
         ;;
     owned-process-trio)
         ensure_image

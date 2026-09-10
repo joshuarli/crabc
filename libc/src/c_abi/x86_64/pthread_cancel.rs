@@ -473,3 +473,16 @@ pub(super) fn reset_timer_callback_cancellation() {
         slot.asynchronous.store(0, Ordering::Release);
     }
 }
+
+/// Clear only the pending request before an AIO `SIGEV_THREAD` callback.
+///
+/// Musl's `src/aio/aio.c::cleanup` stores zero in the current task's cancel
+/// word immediately before it invokes the callback. It does not pop cleanup
+/// records or change cancellation state, so this must not reuse the timer
+/// callback reset above.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) fn clear_current_aio_callback_pending() {
+    if let Some(slot) = current_pthread_slot() {
+        slot.pending.store(0, Ordering::Release);
+    }
+}

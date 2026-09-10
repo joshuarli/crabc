@@ -261,6 +261,7 @@ pub unsafe extern "C" fn __ldso_atfork(_who: c_int) {}
 /// The owned fork and _Fork transitions call this exact seam in source
 /// order. The fallback selects no queues, cancellation or descriptor
 /// coordination; those require the future strong owned AIO implementation.
+#[cfg(not(feature = "x86-owned-static-runtime"))]
 #[inline(never)]
 #[no_mangle]
 #[linkage = "weak"]
@@ -283,9 +284,8 @@ unsafe fn fork_without_handlers() -> i64 {
             pthread_create_join::adopt_process_child_caller(caller);
             super::owned_process_lock::pthread_fork_child();
             // Source __post_Fork calls AIO after thread repair and abort
-            // unlock, before restoring the nested all-signal mask. Its weak
-            // fallback remains inert until the owned AIO engine is linked.
-            __aio_atfork(1);
+            // unlock, before restoring the nested all-signal mask.
+            super::owned_aio::atfork(1);
         }
     } else {
         unsafe { super::owned_process_lock::pthread_fork_parent() };
@@ -423,7 +423,7 @@ pub unsafe extern "C" fn fork() -> c_int {
     // coherent child snapshot rather than clearing an inherited partial lock.
     pthread_tsd::pthread_fork_prepare();
     #[cfg(feature = "x86-owned-static-runtime")]
-    unsafe { __aio_atfork(-1) };
+    unsafe { super::owned_aio::atfork(-1) };
     #[cfg(feature = "x86-owned-static-runtime")]
     unsafe {
         // Musl `fork.c` locks __at_quick_exit_lockptr after pthread-key
@@ -487,7 +487,7 @@ pub unsafe extern "C" fn fork() -> c_int {
         // SAFETY: this is the matching outer key-metadata completion after
         // every parent-side raw fork result.
         #[cfg(feature = "x86-owned-static-runtime")]
-        unsafe { __aio_atfork(0) };
+        unsafe { super::owned_aio::atfork(0) };
         unsafe { pthread_tsd::pthread_fork_parent() };
     }
     #[cfg(feature = "x86-owned-dynamic-runtime")]

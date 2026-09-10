@@ -101,7 +101,7 @@ unsafe extern "C" fn clone_start(argument: *mut c_void) -> c_int {
         owned_process_lock::pthread_fork_child();
         // Musl clone.c shares __post_Fork: AIO follows minimal caller
         // repair and abort unlock, still inside the all-signal mask.
-        super::pthread_atfork::__aio_atfork(1);
+        super::owned_aio::atfork(1);
         signal_execution::restore_application_signals(&start.signal_mask);
         (start.function.unwrap_unchecked())(start.argument)
     }
