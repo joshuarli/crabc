@@ -1,17 +1,23 @@
 # Pinned musl AIO signal-order witness
 
-`run_aio_source_signal_order.sh` is a native Linux/x86-64, **instrumented
-fixed-source** witness for one order inside musl 1.2.6 `submit`. It is neither
-an unmodified-musl execution nor a crabc runtime/product test. It records a
-positive source observation: at the selected submission boundary, a
-`SIGUSR1` handler can call `close` on the exact queued descriptor and return.
-It does not establish a deadlock in musl or in crabc.
+`run_aio_source_signal_order.sh` is a native Linux/x86-64,
+**instrumented fixed-source** witness for two distinct signal-mask boundaries
+in musl 1.2.6 `src/aio/aio.c`. It neither executes unmodified musl nor builds
+or runs crabc. The direct source inclusion maps only `aio.c`'s
+`pthread_sigmask` spelling to the visible wrapper in
+`aio_source_signal_order_witness.c`; it does not rewrite the pinned source.
+
+The two later `submit` schedules remain positive: a `SIGUSR1` handler's
+`close(exact_fd)` returned after `submit` had released `q->lock`. The separate
+fresh-queue schedule has a different result: after a real
+`__aio_get_queue` signal restore, the handler entered and began that `close`,
+but did not return before the bounded supervisor killed the child. These are
+separate source locations and are never treated as interchangeable results.
 
 ## Fixed source and provenance
 
-The runner accepts only the local fixed archive
-`.work/x86_64/source-oracles/musl-1.2.6.tar.gz`, SHA-256
-`d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a`,
+The runner accepts only `.work/x86_64/source-oracles/musl-1.2.6.tar.gz`,
+SHA-256 `d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a`,
 and invokes the pinned native oracle verifier. The archive is musl 1.2.6,
 revision `9fa28ece75d8a2191de7c5bb53bed224c5947417`. Its focal source is under
 the standard musl MIT license; the archive's `COPYRIGHT` is SHA-256
@@ -19,95 +25,84 @@ the standard musl MIT license; the archive's `COPYRIGHT` is SHA-256
 
 | Pinned file | SHA-256 | Use in the witness |
 | --- | --- | --- |
-| `src/aio/aio.c` | `a094ee091f0afc34789be384d450e8c5960d14d651ee924f6e08542554202ca4` | Included as immutable source translation-unit bytes. The harness maps only its `pthread_sigmask` spelling to the visible test wrapper. |
+| `src/aio/aio.c` | `a094ee091f0afc34789be384d450e8c5960d14d651ee924f6e08542554202ca4` | Immutable direct-inclusion translation unit; only its `pthread_sigmask` spelling maps to the test wrapper. |
 | `src/internal/aio_impl.h` | `d89b582d5f2e49890b4830f942555b6a513b1c5125613f9e9f121db267185b16` | Declares the hidden `__aio_close` binding used by the included source. |
 | `src/unistd/close.c` | `0a287fdef55394bdedfafc924efcec2d27e584a252cd2c71553fae0bb8ec9672` | Comes from the pinned static archive; its weak hidden `__aio_close` alias must bind to the included `aio.c` definition. |
-| `src/signal/block.c` | `c0288b630002171684c42830f219ac2bc94a108f52e18dcddbd7405b3d5477e7` | Documents `__block_app_sigs`, which exists in musl but is not called by this `aio.c` source. |
+| `src/signal/block.c` | `c0288b630002171684c42830f219ac2bc94a108f52e18dcddbd7405b3d5477e7` | Establishes that `__block_app_sigs` exists, while the pinned `aio.c` does not call it. |
 
-The runner regenerates only musl's two generated internal headers using the
-source Makefile recipes. It verifies `aio.c` before and after compilation, so
-those source bytes are never rewritten.
+The runner regenerates only musl's generated internal headers with the source
+Makefile recipes. It checks `aio.c` before and after compilation. It also
+checks the direct object definition of `__aio_close`, the pinned `close.lo`
+weak hidden alias, the link map's exclusion of archive `aio.lo`, and the final
+`close` disassembly call to the included `__aio_close`.
 
-## Actual source order
+## Distinct source boundaries
 
-The selected source is not an `__block_app_sigs` call site. In `submit`, it
-gets the queue, increments `q->ref`, and releases `q->lock`; only afterward it
-calls `pthread_sigmask(SIG_BLOCK, &allmask, &origmask)`. The runner records the
-validated offsets in `source-order.json` and rejects a source file that calls
-`__block_app_sigs` or changes that sequence.
+The receipt in `source-order.json` validates both sequences instead of
+inferring either from the wrapper.
 
-This matters for the handler reentry question: the submitter owns a queue
-reference at the selected pre-block boundary, but it no longer owns the queue
-mutex. The test does not synthesize a held mutex or insert a delay into musl.
+`submit` first obtains the queue, increments `q->ref`, and unlocks `q->lock`.
+Its all-signal block occurs afterward. The `early` and `deferred` cases cover
+that later boundary only.
 
-The static link is also checked rather than assumed. The direct source object
-must define `__aio_close` as `FUNC/GLOBAL/HIDDEN`; the pinned `close.lo` must
-provide its weak hidden alias; the final `close` disassembly must call the
-included `__aio_close`; and the link map must select `close.lo` without also
-selecting archive `aio.lo`.
+For the first operation on a fresh descriptor, `__aio_get_queue` has a
+separate sequence: its real all-signal block, map-entry registration,
+`aio_fd_cnt` increment, `q->lock` acquisition, `maplock` release, and then
+the real `pthread_sigmask(SIG_SETMASK, &origmask, 0)` restore before it returns
+the still-locked queue. The receipt rejects drift in that exact order. This is
+the boundary relevant to the fresh case and to the source comment that says
+all AIO locks require signals blocked.
 
-## Controlled schedules
+## Controlled schedules and checkpoints
 
-The parent forks before the child starts AIO workers. The child leaves a pipe
-writer open without data and submits a pipe read. `Q` is emitted only after a
-non-main task is observed in a `pipe_read` wait channel below
-`/proc/self/task`, so the descriptor queue is both live and backed by a
-blocked request. It then submits another read for the same descriptor and
-uses the wrapper at the real source call.
+Every request explicitly uses `SIGEV_NONE`; no schedule relies on an invalid
+signal number from a zeroed `aiocb`. The parent forks before any AIO worker and
+uses a three-second child watchdog plus an outer eight-second containment
+timeout. It reports setup, sender, restore, handler, and close checkpoints
+separately, so a timeout alone is never a conclusion.
 
-| Event | Meaning |
-| --- | --- |
-| `S` | Child signal/pipe setup completed. |
-| `Q` | Seed request was observed blocked in a pipe read. |
-| `W` | The wrapper reached `submit`'s real pre-block call. |
-| `H` | The `SIGUSR1` handler entered. |
-| `R` | The handler's `close(exact_seed_fd)` returned. |
-| `A` | The early wrapper resumed after handler return. |
-| `B` | The source call has blocked signals. |
-| `P` | `SIGUSR1` was sent while blocked and remained pending. |
-| `U` / `V` | Source `SIG_SETMASK` handoff begins / returns. |
-| `X` | Child observed both requests terminal and exited normally. |
+| Case | Required stream | Meaning |
+| --- | --- | --- |
+| `early` | `SQWHRAX` | A live seed pipe read was observed; the handler was delivered immediately before `submit`'s real block and `close` returned. |
+| `deferred` | `SQWBPUHRVX` | The same later `submit` block queued the signal; delivery occurred within that source restore and `close` returned. |
+| `fresh` | `SFGBPUHC` | A fresh descriptor reached `__aio_get_queue`'s real block (`G`), the call succeeded (`B`), `SIGUSR1` was queued while blocked (`P`), and the wrapper recorded state immediately before its real restore (`U`). The handler entered (`H`) and reached its exact-fd `close` call (`C`); neither restore return (`V`) nor handler close return (`R`) occurred. |
 
-The `early` run raises `SIGUSR1` immediately before the real signal-block
-call. Its required raw checkpoint stream is `SQWHRAX`. The `deferred` run
-first calls the real signal block, raises `SIGUSR1` while it is blocked, then
-records delivery only inside the real source `SIG_SETMASK` restore. Its
-required stream is `SQWBPUHRVX`.
-
-A parent watchdog bounds each child to three seconds. Its classifications keep
-`handler-close-pending` separate from setup, seed handoff, wrapper reach,
-sender/delivery, parent pipe, parent wait, and post-handler failures. The
-outer runner timeout is only a second containment boundary; a timeout alone
-is never a deadlock claim.
+Before the fresh case invokes the real restore, it writes one fixed report to
+the parent. The accepted record requires a registered exact-fd queue,
+`ref == 0`, `init == 0`, empty `head`, and `aio_fd_cnt == 1`. The source-order
+receipt places that record after source acquisition of `q->lock`; the harness
+does not probe or modify the mutex. This separates a valid fresh registered
+queue from a setup or sender failure.
 
 ## Observed evidence
 
-The native pinned run retained at
-`.work/x86_64/tmp/aio-source-signal-order.cuzWnQ` produced raw status `0`,
-empty stderr, and these stdout records:
+The retained native run at
+`.work/x86_64/tmp/aio-source-signal-order.xE0yJf` produced raw status `0` and
+empty stderr for every case:
 
 ```text
 mode=early events=SQWHRAX child_status=0 timeout=0 classification=early-close-returned
 mode=deferred events=SQWBPUHRVX child_status=0 timeout=0 classification=deferred-close-returned
+mode=fresh events=SFGBPUHC child_status=9 timeout=1 fresh_report=1 fresh_queue_registered=1 fresh_queue_fd_matches=1 fresh_queue_ref=0 fresh_queue_init=0 fresh_queue_head_empty=1 fresh_aio_fd_count=1 classification=fresh-queue-handler-close-pending
 ```
 
-`evidence.json` binds the source archive, oracle static archive, test source,
-runner, object, binary, raw stdout/stderr/status hashes, and the explicit
-non-product/non-unmodified identity. `source-order.json`, the link map,
-symbol tables, `close` disassembly, and generated source tree stay beside the
-raw run records.
+For the fresh case, `child_status=9` is the parent watchdog's `SIGKILL`, not a
+source-generated status. The classification requires the ordered source and
+handler checkpoints plus the fresh queue receipt before it calls the close
+pending. `evidence.json` binds the archive, oracle archive, source, runner,
+object, binary, and raw stream/status hashes; `source-order.json`, link map,
+symbol tables, and disassembly remain beside the raw records.
 
-Run the script only inside the pinned native x86 container with `TMPDIR` set to
-the checkout's `.work/x86_64/tmp`; it intentionally has no dispatcher
-registration in this component. A future registration belongs to the owner
-integrating the AIO runtime evidence.
+Run the script only in the pinned native x86 container with `TMPDIR` under the
+checkout's `.work/x86_64/tmp`. It deliberately has no dispatcher registration;
+the component owner decides any later integration.
 
 ## Limits
 
-This witness proves only these two injected schedules. The preprocessor mapping
-is test-only and visible in `aio_source_signal_order_witness.c`; there is no
-LD_PRELOAD, compiler substitution, source rewrite, product build, or crabc
-object. It does not reproduce, relabel, or use prior stochastic sender/hang
-probes. It does not claim that arbitrary handler interleavings are safe, that
-unmodified musl cannot fail, or that a successful rerun closes an owned AIO
-regression.
+This is an injected fixed-source observation. It does not establish behavior
+of an unmodified musl build, a crabc product, every possible signal schedule,
+or the root cause of the nonreturn beyond the instrumented sequence recorded
+here. In particular, it does not relabel the successful later-`submit` cases
+as fresh-queue evidence, and it does not call a timeout by itself a deadlock.
+There is no LD_PRELOAD, compiler substitution, source rewrite, product build,
+or crabc object in this witness.

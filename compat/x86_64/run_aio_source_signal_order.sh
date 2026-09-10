@@ -108,6 +108,18 @@ import sys
 
 source_path, record_path = map(Path, sys.argv[1:])
 source = source_path.read_text(encoding="utf-8")
+get_queue = source.index("static struct aio_queue *__aio_get_queue(int fd, int need)")
+get_queue_end = source.index("\n}\n\nstatic void __aio_unref_queue", get_queue)
+fresh_fd_check = source.index("\tif (fcntl(fd, F_GETFD) < 0) return 0;", get_queue)
+fresh_block = source.index("\tpthread_sigmask(SIG_BLOCK, &allmask, &origmask);", fresh_fd_check)
+fresh_register = source.index("\t\t\tmap[a][b][c][d] = q = calloc(sizeof *****map, 1);", fresh_block)
+fresh_fd_count = source.index("\t\t\t\ta_inc(&aio_fd_cnt);", fresh_register)
+fresh_queue_lock = source.index("\tif (q) pthread_mutex_lock(&q->lock);", fresh_fd_count)
+fresh_map_unlock = source.index("\tpthread_rwlock_unlock(&maplock);", fresh_queue_lock)
+fresh_restore = source.index("\tif (masked) pthread_sigmask(SIG_SETMASK, &origmask, 0);", fresh_map_unlock)
+if not (get_queue < fresh_fd_check < fresh_block < fresh_register < fresh_fd_count <
+        fresh_queue_lock < fresh_map_unlock < fresh_restore < get_queue_end):
+    raise SystemExit("fresh __aio_get_queue signal/queue order drifted")
 queue_ref = source.index("\tq->ref++;")
 queue_unlock = source.index("\tpthread_mutex_unlock(&q->lock);", queue_ref)
 submit_block = source.index("\tpthread_sigmask(SIG_BLOCK, &allmask, &origmask);", queue_unlock)
@@ -116,8 +128,18 @@ submit_restore = source.index("\tpthread_sigmask(SIG_SETMASK, &origmask, 0);", s
 if "__block_app_sigs" in source:
     raise SystemExit("aio.c unexpectedly calls __block_app_sigs")
 record_path.write_text(json.dumps({
-    "schema": "crabc.x86_64-pinned-musl-aio-source-order/v1",
+    "schema": "crabc.x86_64-pinned-musl-aio-source-order/v2",
     "source": "src/aio/aio.c",
+    "get_queue_offsets": {
+        "fresh_fd_check": fresh_fd_check,
+        "all_signal_block": fresh_block,
+        "fresh_map_registration": fresh_register,
+        "aio_fd_count_increment": fresh_fd_count,
+        "queue_mutex_lock": fresh_queue_lock,
+        "map_lock_release": fresh_map_unlock,
+        "original_mask_restore": fresh_restore,
+        "function_end": get_queue_end,
+    },
     "submit_offsets": {
         "queue_reference_increment": queue_ref,
         "queue_mutex_unlock": queue_unlock,
@@ -203,6 +225,7 @@ run_case() {
 
 run_case early 'mode=early events=SQWHRAX child_status=0 timeout=0 classification=early-close-returned'
 run_case deferred 'mode=deferred events=SQWBPUHRVX child_status=0 timeout=0 classification=deferred-close-returned'
+run_case fresh 'mode=fresh events=SFGBPUHC child_status=9 timeout=1 fresh_report=1 fresh_queue_registered=1 fresh_queue_fd_matches=1 fresh_queue_ref=0 fresh_queue_init=0 fresh_queue_head_empty=1 fresh_aio_fd_count=1 classification=fresh-queue-handler-close-pending'
 assert_sha256 "$SOURCE_AIO_SHA256" "$source_tree/src/aio/aio.c" "src/aio/aio.c after witness compile"
 
 python3 -B - "$work/evidence.json" "$work" "$MUSL_ARCHIVE" "$ORACLE_ARCHIVE" \
@@ -216,7 +239,7 @@ record_path, work, source_archive, oracle_archive, witness_source, obj, binary, 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 record = {
-    "schema": "crabc.x86_64-pinned-musl-aio-source-signal-order/v1",
+    "schema": "crabc.x86_64-pinned-musl-aio-source-signal-order/v2",
     "status": "passed",
     "instrumented_fixed_source_only": True,
     "unmodified_musl_execution": False,
@@ -247,18 +270,24 @@ record = {
             "stderr_sha256": digest(work / f"{mode}.stderr"),
             "raw_status": int((work / f"{mode}.status").read_text(encoding="utf-8")),
         }
-        for mode in ("early", "deferred")
+        for mode in ("early", "deferred", "fresh")
     },
     "checkpoints": {
         "early": "SQWHRAX",
         "deferred": "SQWBPUHRVX",
+        "fresh": "SFGBPUHC",
         "Q": "seed pipe-read observed in /proc/self/task/*/wchan",
         "H": "SIGUSR1 handler entered",
         "R": "handler close(exact seeded fd) returned",
-        "U": "source SIG_SETMASK handoff begins",
-        "V": "source SIG_SETMASK handoff returned",
+        "submit_U": "submit source SIG_SETMASK handoff begins",
+        "submit_V": "submit source SIG_SETMASK handoff returned",
+        "G": "fresh __aio_get_queue real SIG_BLOCK wrapper reached",
+        "F": "fresh descriptor setup completed before its first aio_read",
+        "P": "SIGUSR1 queued after fresh get_queue's real SIG_BLOCK returned",
+        "U": "fresh __aio_get_queue real SIG_SETMASK restore begins after q lock/map state receipt",
+        "C": "handler reached close(exact fresh descriptor) call",
     },
-    "result": "close reentry returned in the controlled pre-block and deferred handoff schedules",
+    "result": "submit-boundary close reentry returned; the separately instrumented fresh get_queue restore left handler close pending after exact pre-delivery checkpoints",
 }
 record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
