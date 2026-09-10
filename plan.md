@@ -136,8 +136,9 @@ These are component measurements, not final same-revision qualification.
    builds: the dynamic producer hashes **all nonignored source content and
    modes**, so even a concurrent documentation merge rejects a run.
 2. Run `./scripts/dev-x86_64.sh owned-dynamic-sysroot` from a clean committed
-   checkout. The current 50-case, three-product qualification path needs a
-   fresh complete native run after the latest integrations. Review its generated
+   checkout. Replay the complete catalog in
+   `compat/x86_64/owned_dynamic_qualification.py` across all three products
+   after the latest integrations. Review its generated
    `qualification.json`, then use
    `python3 -B compat/x86_64/owned_dynamic_qualification.py publish --receipt PATH`
    to select that exact ignored receipt. Later source edits invalidate the
