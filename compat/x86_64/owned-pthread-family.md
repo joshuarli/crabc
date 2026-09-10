@@ -66,3 +66,9 @@ native `ld.lld` identity to a before/after compiler-tool roster; it does not
 pretend that the host has the native container linker. The musl compiler,
 libc runtime, and oracle-pin hashes must match the validated POSIX matrix
 oracle.
+
+The same host reconstruction compares the whole `dynamic-root` copied product
+to its selected installed product, including every payload file and alias. It
+also requires `consumer-pie` and `consumer-non-pie` to be exact copies of their
+respective sealed executables before accepting either kernel or direct-loader
+runtime stream.

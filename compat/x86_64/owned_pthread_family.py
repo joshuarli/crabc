@@ -491,6 +491,43 @@ def _validate_link(root: Path, leaf: Path, report: object, static_product: Path,
         require(family.same_json(retained, expected), "composition sealed link validation differs")
 
 
+def _validate_execution_root(root: Path, leaf: Path, dynamic_product: Path) -> dict[str, Any]:
+    """Reconstruct the exact copied runtime tree consumed by both dynamic entries."""
+
+    import owned_crypt_runtime_evidence as copies
+
+    execution_root = leaf / "dynamic-root"
+    consumers = {
+        "pie": (leaf / "dynamic-pie", execution_root / "consumer-pie"),
+        "non-pie": (leaf / "dynamic-non-pie", execution_root / "consumer-non-pie"),
+    }
+    try:
+        product, manifest, files, aliases = copies.dynamic_product(dynamic_product)
+        copies.assert_execution_tree(execution_root, files, aliases,
+                                     tuple(execution for _, execution in consumers.values()))
+        copies.copied_file(manifest, execution_root / "share/crabc/manifest.json",
+                           "composition execution manifest")
+        for name in files:
+            copies.copied_file(product / name, execution_root / name,
+                               f"composition execution payload {name}")
+        for name, target in aliases.items():
+            copies.copied_alias(product / name, execution_root / name, target,
+                                f"composition execution alias {name}")
+        for linkage, (source, execution) in consumers.items():
+            copies.copied_file(source, execution, f"composition {linkage} execution consumer")
+    except copies.CryptRuntimeEvidenceError as error:
+        raise PthreadFamilyError(str(error)) from error
+    return {
+        "root": execution_root.relative_to(root).as_posix(),
+        "product_manifest": family.file_identity(root, manifest),
+        "consumers": {linkage: {
+            "source": family.file_identity(root, source),
+            "execution": family.file_identity(root, execution),
+        } for linkage, (source, execution) in consumers.items()},
+        "snapshot_sha256": stable_hash(family.snapshot(execution_root)),
+    }
+
+
 def _composition_report(root: Path, leaf: Path, static_product: Path, dynamic_product: Path,
                         roster_entry: dict[str, Any], source_mount: str, oracle: object) -> dict[str, Any]:
     report_path = family.physical(root, leaf / "composition.json")
@@ -542,6 +579,7 @@ def _composition_report(root: Path, leaf: Path, static_product: Path, dynamic_pr
         require((root / streams["status"]["path"]).read_bytes() == b"0\n",
                 "composition command status differs")
     _validate_link(root, leaf, report["links"], static_product, dynamic_product, source_mount, before)
+    execution = _validate_execution_root(root, leaf, dynamic_product)
     raw = report["raw"]
     require(isinstance(raw, dict) and set(raw) == set(RAW_STEMS), "composition raw roster differs")
     for name, streams in raw.items():
@@ -555,7 +593,8 @@ def _composition_report(root: Path, leaf: Path, static_product: Path, dynamic_pr
                 and (root / status["path"]).read_bytes() == b"0\n",
                 "composition raw result differs")
     return {"report": family.file_identity(root, report_path), "leaf": leaf.relative_to(root).as_posix(),
-            "workload": workload, "artifact_snapshot_sha256": stable_hash(family.snapshot(leaf))}
+            "workload": workload, "execution": execution,
+            "artifact_snapshot_sha256": stable_hash(family.snapshot(leaf))}
 
 
 def composition_cells(root: Path, work: Path, matrix: dict[str, Any],

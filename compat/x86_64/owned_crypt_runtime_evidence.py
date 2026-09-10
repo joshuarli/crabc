@@ -187,17 +187,25 @@ def assert_alias_record(value: object, path: Path, description: str) -> None:
 
 
 def assert_execution_tree(
-    execution_root: Path, files: dict[str, str], aliases: dict[str, str], consumer: Path
+    execution_root: Path, files: dict[str, str], aliases: dict[str, str], consumer: Path | tuple[Path, ...]
 ) -> None:
     """Reject additions as well as changed runtime files in the private root."""
 
     execution_root = directory(execution_root, "execution root")
-    consumer = regular(consumer, "execution consumer")
-    try:
-        consumer_relative = consumer.relative_to(execution_root).as_posix()
-    except ValueError as error:
-        raise CryptRuntimeEvidenceError("execution consumer escapes the execution root") from error
-    expected_files = {"share/crabc/manifest.json", *files, consumer_relative}
+    consumers = (consumer,) if isinstance(consumer, Path) else consumer
+    if not isinstance(consumers, tuple) or not consumers:
+        fail("execution consumer roster differs")
+    consumer_relatives: set[str] = set()
+    for entry in consumers:
+        entry = regular(entry, "execution consumer")
+        try:
+            relative = entry.relative_to(execution_root).as_posix()
+        except ValueError as error:
+            raise CryptRuntimeEvidenceError("execution consumer escapes the execution root") from error
+        consumer_relatives.add(relative)
+    if len(consumer_relatives) != len(consumers):
+        fail("execution consumer roster duplicates a path")
+    expected_files = {"share/crabc/manifest.json", *files, *consumer_relatives}
     expected_aliases = set(aliases)
     observed_files: set[str] = set()
     observed_aliases: set[str] = set()

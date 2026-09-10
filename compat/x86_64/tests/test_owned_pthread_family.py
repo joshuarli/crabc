@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -293,3 +294,56 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
         swapped["static_driver"] = dict(swapped["dynamic_driver"])
         with self.assertRaisesRegex(family.PthreadFamilyError, "installed driver seal"):
             family._tool_roster(self.root, swapped, static, dynamic, "/workspace")
+
+    def _execution_copy_fixture(self, name: str) -> tuple[Path, Path]:
+        """Build one synthetic sealed product and the root that would execute it."""
+
+        product = self.root / ".work" / (name + "-product")
+        payload = tuple(product_evidence.DYNAMIC_REQUIRED)
+        for relative in payload:
+            path = product / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(relative.encode())
+        (product / "usr/include").mkdir(parents=True)
+        (product / "bin/crabc-cc-dynamic").chmod(0o755)
+        (product / "lib/ld-crabc-x86_64.so.1").chmod(0o755)
+        (product / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+        files = {
+            path.relative_to(product).as_posix(): family.family.digest(path)
+            for path in sorted(product.rglob("*")) if path.is_file() and not path.is_symlink()
+        }
+        manifest = {
+            "schema": 1, "format": product_evidence.DYNAMIC_PRODUCT_FORMAT,
+            "target": product_evidence.TARGET, "files": files,
+            "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
+        }
+        manifest_path = product / "share/crabc/manifest.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        leaf = self.root / ".work" / (name + "-leaf")
+        leaf.mkdir()
+        for linkage in ("pie", "non-pie"):
+            (leaf / ("dynamic-" + linkage)).write_bytes(("consumer-" + linkage).encode())
+        execution = leaf / "dynamic-root"
+        shutil.copytree(product, execution, symlinks=True)
+        for linkage in ("pie", "non-pie"):
+            shutil.copyfile(leaf / ("dynamic-" + linkage), execution / ("consumer-" + linkage))
+        return product, leaf
+
+    def test_execution_root_reconstructs_exact_product_and_two_consumers(self) -> None:
+        for name, mutation, pattern in (
+            ("good", None, None),
+            ("swapped-runtime", lambda root: (root / "usr/lib/libc.so").write_bytes(b"foreign runtime"), "copy differs"),
+            ("swapped-consumer", lambda root: (root / "consumer-pie").write_bytes(b"wrong consumer"), "copy differs"),
+            ("extra-entry", lambda root: (root / "extra").write_bytes(b"undeclared"), "file roster"),
+        ):
+            with self.subTest(name=name):
+                product, leaf = self._execution_copy_fixture(name)
+                execution = leaf / "dynamic-root"
+                if mutation is not None:
+                    mutation(execution)
+                    with self.assertRaisesRegex(family.PthreadFamilyError, pattern):
+                        family._validate_execution_root(self.root, leaf, product)
+                else:
+                    record = family._validate_execution_root(self.root, leaf, product)
+                    self.assertEqual(record["root"], execution.relative_to(self.root).as_posix())
