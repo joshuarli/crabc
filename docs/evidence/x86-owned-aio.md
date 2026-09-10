@@ -183,3 +183,36 @@ receipt was tightened, rather than rebuilding the runtime.
 
 This focused evidence does not promote x86-64 to public support or close the
 broader native campaign.
+
+### Retained installed-product receipts
+
+`compat/x86_64/run_owned_aio.sh` now writes a single
+`owned-aio-receipts.json` beside its raw artifacts. It seals the nine
+installed-header compilation commands and dependency trace, every pinned-musl
+source link, every static/static-PIE and dynamic PIE/non-PIE link receipt, and
+the raw command, stdout, stderr, and status for each executed cell. The
+source-only queued-cancellation deadlocks retain their observed `124`/`137`
+status independently; they are not compared as successful oracle cells. The
+submit-handoff source observation, ordinary transcript comparisons, and the
+owned queue/cursor/fresh-signal corrections remain separately named records.
+
+A supplied static sysroot is accepted only with the supplied dynamic sysroot
+that provides the installed headers and compilation driver. With no supplied
+products the runner may build both; a dynamic-only supplied run leaves the
+static routes absent.
+
+The receipt records only the modes that actually executed: a supplied dynamic
+product without a static product emits the four dynamic kernel/direct modes
+and cannot claim either static mode. Before and after the run it seals the
+selected physical product manifests, source files, installed drivers and
+resolved compiler/linker tools, and the pinned musl oracle inputs. A host
+reader receives an independently captured `expected-native-inputs.json`; it
+rejects a report that merely re-signs a changed native tool or oracle identity.
+
+Each execution root is reconstructed from the selected product manifest,
+sealed linked consumer, and required `/dev/null` device. Dynamic roots must
+contain every copied product file and the one loader compatibility alias, plus
+exactly the nine copied consumers. Static and pinned-musl roots have their
+fixed consumer rosters. Extra entries, missing files, changed bytes or modes,
+and changed aliases invalidate the receipt. The runner retains failed evidence
+under its checkout-local `.work/x86_64/tmp/owned-aio.*` directory for review.

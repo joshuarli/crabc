@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Focused rejection boundaries for retained owned-AIO receipts."""
+from __future__ import annotations
+
+import copy
+import importlib.util
+import json
+from pathlib import Path
+import shutil
+import stat
+import unittest
+import unittest.mock
+
+ROOT = Path(__file__).resolve().parents[3]
+MODULE_PATH = ROOT / "compat/x86_64/owned_aio_evidence.py"
+TMP = ROOT / ".work/x86_64/test-owned-aio-evidence"
+
+
+def module():
+    spec = importlib.util.spec_from_file_location("owned_aio_evidence", MODULE_PATH)
+    assert spec and spec.loader
+    value = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(value)
+    return value
+
+
+class OwnedAioExecutionTreeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.evidence = module()
+        self.root = TMP / self.id().replace(".", "-")
+        shutil.rmtree(self.root, ignore_errors=True)
+        (self.root / "lib").mkdir(parents=True)
+        self.source = TMP / (self.id().replace(".", "-") + "-sources")
+        self.source.mkdir()
+        self._write(self.source / "runtime", b"selected runtime\n", 0o755)
+        self._write(self.source / "consumer", b"sealed linked consumer\n", 0o755)
+        self._write(self.root / "lib/runtime", b"selected runtime\n", 0o755)
+        self._write(self.root / "consumer", b"sealed linked consumer\n", 0o755)
+        (self.root / "lib/ld-musl-x86_64.so.1").symlink_to("runtime")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root, ignore_errors=True)
+        shutil.rmtree(self.source, ignore_errors=True)
+
+    @staticmethod
+    def _write(path: Path, data: bytes, mode: int) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data); path.chmod(mode)
+
+    def _check(self) -> None:
+        self.evidence.assert_execution_tree(
+            self.root,
+            {"lib/runtime": self.source / "runtime", "consumer": self.source / "consumer"},
+            {"lib/ld-musl-x86_64.so.1": "runtime"}, None,
+        )
+
+    def test_swapped_runtime_or_consumer_and_alias_are_rejected(self) -> None:
+        self._check()
+        for name, replacement in (("lib/runtime", b"substituted runtime\n"), ("consumer", b"substituted consumer\n")):
+            with self.subTest(name=name):
+                path = self.root / name
+                path.write_bytes(replacement); path.chmod(0o755)
+                with self.assertRaises(self.evidence.EvidenceError): self._check()
+                source = self.source / ("runtime" if name.endswith("runtime") else "consumer")
+                shutil.copy2(source, path)
+        alias = self.root / "lib/ld-musl-x86_64.so.1"
+        alias.unlink(); alias.symlink_to("../consumer")
+        with self.assertRaises(self.evidence.EvidenceError): self._check()
+
+
+class OwnedAioCommandAndTrustTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.evidence = module()
+        self.root = TMP / self.id().replace(".", "-")
+        shutil.rmtree(self.root, ignore_errors=True)
+        self.work = self.root / "work"; self.work.mkdir(parents=True)
+        (self.work / "command.stdout").write_bytes(b"ok\n")
+        (self.work / "command.stderr").write_bytes(b"")
+        (self.work / "command.status").write_bytes(b"0\n")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def test_failing_status_or_ambient_environment_cannot_pass_command_receipt(self) -> None:
+        with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+            self.evidence.record_command(self.root, self.work, "command", ["/bin/true"], self.evidence.ENVIRONMENT,
+                                         self.work / "command.stdout", self.work / "command.stderr", self.work / "command.status")
+            self.evidence._command(self.root, self.work, "command", ["/bin/true"], {b"0\n"})
+            receipt = self.work / "commands/command.json"
+            changed = json.loads(receipt.read_text())
+            changed["environment"]["PATH"] = "/foreign/bin"
+            receipt.write_text(json.dumps(changed), encoding="utf-8")
+            with self.assertRaises(self.evidence.EvidenceError):
+                self.evidence._command(self.root, self.work, "command", ["/bin/true"], {b"0\n"})
+        # The mutation above is rejected at the receipt boundary; an explicit
+        # nonzero raw status is independently rejected too.
+        (self.work / "command.status").write_bytes(b"1\n")
+        with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+            with self.assertRaises(self.evidence.EvidenceError):
+                self.evidence._command(self.root, self.work, "command", ["/bin/true"], {b"0\n"})
+
+    def test_external_tool_seal_rejects_matching_report_tool_mutation(self) -> None:
+        identity = lambda path, byte: {"path": path, "sha256": byte * 64, "mode": 0o755}
+        tools = {
+            "dynamic-driver": identity("/workspace/dynamic-driver", "1"),
+            "compiler": identity("/tools/compiler", "2"), "linker": identity("/tools/linker", "3"),
+            "oracle-compiler": identity("/tools/oracle", "4"), "chroot": identity("/tools/chroot", "5"),
+            "timeout": identity("/tools/timeout", "6"),
+        }
+        oracle = {"qualification": {"version": "musl-1.2.6", "runtime_sha256": "7" * 64,
+                  "compiler_wrapper_sha256": "8" * 64, "pins_sha256": "9" * 64,
+                  "files": {name: "a" * 64 for name in self.evidence.qualification.ORACLE_FILES}},
+                  "static-libc": identity("/opt/musl/libc.a", "b"), "loader": identity("/opt/musl/ld-musl", "c")}
+        external = self.evidence.expected_native_input(tools, oracle)
+        changed = copy.deepcopy(tools); changed["compiler"]["sha256"] = "d" * 64
+        with self.assertRaises(self.evidence.EvidenceError):
+            self.evidence._same_expected(external, changed, oracle)
+
+
+class OwnedAioSuppliedPathTests(unittest.TestCase):
+    def test_symlinked_supplied_product_is_rejected_before_product_validation(self) -> None:
+        evidence = module()
+        root = TMP / self.id().replace(".", "-")
+        shutil.rmtree(root, ignore_errors=True)
+        (root / ".work").mkdir(parents=True)
+        (root / "outside").mkdir()
+        (root / ".work/product-link").symlink_to(root / "outside", target_is_directory=True)
+        with self.assertRaises(evidence.EvidenceError):
+            evidence.supplied_product(root, root / ".work/product-link", "dynamic")
+        shutil.rmtree(root, ignore_errors=True)
+
+
+class OwnedAioModeAndRouteTests(unittest.TestCase):
+    def test_dynamic_only_claims_exactly_four_routes_and_direct_uses_the_loader(self) -> None:
+        evidence = module()
+        self.assertEqual(evidence._mode_claims(None), [
+            "dynamic-pie-kernel", "dynamic-pie-direct",
+            "dynamic-non-pie-kernel", "dynamic-non-pie-direct",
+        ])
+        root = TMP / self.id().replace(".", "-")
+        work = root / "work"
+        shutil.rmtree(root, ignore_errors=True)
+        work.mkdir(parents=True)
+        (work / "dynamic-pie-root").mkdir()
+        with unittest.mock.patch.object(evidence, "SOURCE_MOUNT", str(root)):
+            direct = evidence._execution_argv(root, work, "dynamic-pie", "workload", "direct", "")
+            kernel = evidence._execution_argv(root, work, "dynamic-pie", "workload", "kernel", "")
+        self.assertEqual(direct[-2:], ["/lib/ld-crabc-x86_64.so.1", "/consumer"])
+        self.assertEqual(kernel[-1:], ["/consumer"])
+        shutil.rmtree(root, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -8,6 +8,7 @@ set -euo pipefail
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly EVIDENCE="$ROOT/compat/x86_64/owned_aio_evidence.py"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/owned_aio_probe.c"
 readonly BEHAVIOR_PROBE="$ROOT/compat/x86_64/owned_aio_behavior_probe.c"
@@ -43,19 +44,21 @@ while [ "$#" -gt 0 ]; do
 		--static-sysroot)
 			[ "$#" -ge 2 ] && [ "$supplied_static" -eq 0 ] && [ -n "$2" ] || usage
 			case "$2" in -*) usage ;; esac
-			static_product="$(realpath -e -- "$2")"
+			static_product="$(python3 -B "$EVIDENCE" supplied-product --root "$ROOT" --family static "$2")"
 			supplied_static=1
 			shift 2
 			;;
 		-*|'') usage ;;
 		*)
 			[ "$supplied_dynamic" -eq 0 ] || usage
-			dynamic_product="$(realpath -e -- "$1")"
+			dynamic_product="$(python3 -B "$EVIDENCE" supplied-product --root "$ROOT" --family dynamic "$1")"
 			supplied_dynamic=1
 			shift
 			;;
 	esac
 done
+
+[ "$supplied_static" -eq 0 ] || [ "$supplied_dynamic" -eq 1 ] || usage
 
 python3 -B - "$ROOT" "${TMPDIR:-}" "$static_product" "$dynamic_product" <<'PY'
 from pathlib import Path
@@ -132,10 +135,15 @@ prepare_root() {
 }
 
 run_capture() {
-	local output="$1" status=0
+	local output="$1" label status=0
 	shift
-	timeout 30 env -i PATH="$PATH" "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
+	label="$(basename "${output%.stdout}")"
+	env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+		/usr/bin/timeout 30 "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
 	printf '%s\n' "$status" >"${output%.stdout}.status"
+	python3 -B "$EVIDENCE" record-command --root "$ROOT" --work "$WORK" --label "$label" \
+		--stdout "$output" --stderr "${output%.stdout}.stderr" --status "${output%.stdout}.status" -- \
+		/usr/bin/timeout 30 "$@" >/dev/null
 	[ "$status" -eq 0 ] || fail "expected success, got ${status}: $*"
 }
 
@@ -144,10 +152,15 @@ run_capture() {
 # may either complete all attempts or reach the stale positioned-I/O witness;
 # both transcripts are preserved, while any other failure is rejected.
 run_fd_reuse_source_observation() {
-	local output="$1" status=0
+	local output="$1" label status=0
 	shift
-	timeout 30 env -i PATH="$PATH" "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
+	label="$(basename "${output%.stdout}")"
+	env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+		/usr/bin/timeout 30 "$@" >"$output" 2>"${output%.stdout}.stderr" || status=$?
 	printf '%s\n' "$status" >"${output%.stdout}.status"
+	python3 -B "$EVIDENCE" record-command --root "$ROOT" --work "$WORK" --label "$label" \
+		--stdout "$output" --stderr "${output%.stdout}.stderr" --status "${output%.stdout}.status" -- \
+		/usr/bin/timeout 30 "$@" >/dev/null
 	case "$status" in
 		0)
 			grep -Fxq 'fd-reuse-regular-to-pipe=ok' "$output" ||
@@ -193,31 +206,63 @@ compare_oracle() {
 	compare_transcript oracle "$1"
 }
 
-# The two source cancellation cases are deliberately expected to time out.
-# Keep their raw status/logs beside the normal oracle transcript so the owned
-# correction never turns a known source deadlock into a silent comparison
-# mismatch.
-"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$CANCEL_DEFECT_PROBE" -o "$WORK/oracle-queued-cancel"
-for cancel_case in target all; do
-	cancel_status=0
-	timeout -k 1 5 "$WORK/oracle-queued-cancel" "$cancel_case" \
-		>"$WORK/oracle-queued-cancel-$cancel_case.stdout" \
-		2>"$WORK/oracle-queued-cancel-$cancel_case.stderr" || cancel_status=$?
-	printf '%s\n' "$cancel_status" >"$WORK/oracle-queued-cancel-$cancel_case.status"
-	case "$cancel_status" in
-		124|137) ;;
-		*) fail "pinned musl queued $cancel_case cancellation did not reproduce its deadlock (status $cancel_status)" ;;
-	esac
-done
+record_raw() {
+	local label="$1" output="$2" status="$3"
+	shift 3
+	python3 -B "$EVIDENCE" record-command --root "$ROOT" --work "$WORK" --label "$label" \
+		--stdout "$output" --stderr "${output%.stdout}.stderr" --status "$status" -- "$@" >/dev/null
+}
 
-"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$SUBMIT_CANCEL_PROBE" -o "$WORK/oracle-submit-cancel"
-submit_cancel_status=0
-timeout 60 "$WORK/oracle-submit-cancel" s >"$WORK/oracle-submit-cancel.stdout" \
-	2>"$WORK/oracle-submit-cancel.stderr" || submit_cancel_status=$?
-printf '%s\n' "$submit_cancel_status" >"$WORK/oracle-submit-cancel.status"
-[ "$submit_cancel_status" -eq 0 ] || fail "pinned musl submit handoff cancellation probe exited ${submit_cancel_status}"
-grep -Fxq 'submit-handoff-cancellation=observed' "$WORK/oracle-submit-cancel.stdout" ||
-	fail "pinned musl did not reproduce submit handoff cancellation"
+run_compile() {
+	local key="$1" source="$2" object="$3" label="compile-$1" status=0
+	env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+		"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+		-c "$source" -o "$object" >"$WORK/$label.stdout" 2>"$WORK/$label.stderr" || status=$?
+	printf '%s\n' "$status" >"$WORK/$label.status"
+	record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" \
+		"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+		-c "$source" -o "$object"
+	[ "$status" -eq 0 ] || fail "installed header compilation failed for $key"
+}
+
+run_link() {
+	local family="$1" mode="$2" key="$3" output="$4" status=0 label
+	label="link-$mode-$key"
+	local object="$WORK/${key/workload/workload}-workload.o"
+	[ "$key" = workload ] && object="$WORK/workload.o"
+	if [ "$family" = static ]; then
+		(
+			cd "$WORK"
+			env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+				"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$output").receipt.json" \
+				"$object" -o "$output"
+		) >"$WORK/$label.stdout" 2>"$WORK/$label.stderr" || status=$?
+		printf '%s\n' "$status" >"$WORK/$label.status"
+		record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" \
+			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$output").receipt.json" "$object" -o "$output"
+	else
+		(
+			cd "$WORK"
+			env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+				"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-${mode#dynamic-}" "$object" -o "$output"
+		) >"$WORK/$label.stdout" 2>"$WORK/$label.stderr" || status=$?
+		printf '%s\n' "$status" >"$WORK/$label.status"
+		record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" \
+			"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-${mode#dynamic-}" "$object" -o "$output"
+	fi
+	[ "$status" -eq 0 ] || fail "installed $mode link failed for $key"
+}
+
+run_oracle_link() {
+	local label="$1" input="$2" output="$3" status=0
+	env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+		"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$input" -o "$output" \
+		>"$WORK/$label.stdout" 2>"$WORK/$label.stderr" || status=$?
+	printf '%s\n' "$status" >"$WORK/$label.status"
+	record_raw "$label" "$WORK/$label.stdout" "$WORK/$label.status" \
+		"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$input" -o "$output"
+	[ "$status" -eq 0 ] || fail "pinned musl link failed for $label"
+}
 
 if [ "$supplied_dynamic" -eq 0 ]; then
 	python3 -B "$ROOT/scripts/build_x86_64_owned_dynamic_sysroot.py" \
@@ -225,293 +270,174 @@ if [ "$supplied_dynamic" -eq 0 ]; then
 	dynamic_product="$WORK/dynamic-sysroot"
 fi
 validate_product "$dynamic_product" dynamic
-
-"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-	-c "$PROBE" -o "$WORK/workload.o"
-"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-	-c "$BEHAVIOR_PROBE" -o "$WORK/behavior-workload.o"
-"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-	-c "$FD_REUSE_PROBE" -o "$WORK/fd-reuse-workload.o"
-"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-	-c "$LIO_CREATE_FAILURE_PROBE" -o "$WORK/lio-create-failure-workload.o"
-"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-	-c "$SUSPEND_WAKE_PROBE" -o "$WORK/suspend-wake-workload.o"
-"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-	-c "$CANCEL_DEFECT_PROBE" -o "$WORK/queued-cancel-workload.o"
-"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-	-c "$CANCEL_CURSOR_PROBE" -o "$WORK/cancel-cursor-workload.o"
-"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-	-c "$SUBMIT_CANCEL_PROBE" -o "$WORK/submit-cancel-workload.o"
-"$dynamic_product/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
-	-c "$FRESH_SIGNAL_PROBE" -o "$WORK/fresh-signal-workload.o"
-"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$WORK/workload.o" -o "$WORK/oracle"
-prepare_root "$WORK/oracle-root"
-cp "$WORK/oracle" "$WORK/oracle-root/consumer"
-run_capture "$WORK/oracle.stdout" chroot "$WORK/oracle-root" /consumer
-"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$WORK/behavior-workload.o" -o "$WORK/oracle-behavior"
-cp "$WORK/oracle-behavior" "$WORK/oracle-root/behavior"
-run_capture "$WORK/oracle-behavior.stdout" chroot "$WORK/oracle-root" /behavior
-"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$WORK/fd-reuse-workload.o" -o "$WORK/oracle-fd-reuse"
-cp "$WORK/oracle-fd-reuse" "$WORK/oracle-root/fd-reuse"
-run_fd_reuse_source_observation "$WORK/oracle-fd-reuse.stdout" chroot "$WORK/oracle-root" /fd-reuse "$FD_REUSE_ATTEMPTS"
-"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$WORK/lio-create-failure-workload.o" -o "$WORK/oracle-lio-create-failure"
-cp "$WORK/oracle-lio-create-failure" "$WORK/oracle-root/lio-create-failure"
-run_capture "$WORK/oracle-lio-create-failure.stdout" chroot "$WORK/oracle-root" /lio-create-failure
-"$ORACLE_CC" -static -fno-pie -no-pie -pthread "$WORK/suspend-wake-workload.o" -o "$WORK/oracle-suspend-wake"
-cp "$WORK/oracle-suspend-wake" "$WORK/oracle-root/suspend-wake"
-run_capture "$WORK/oracle-suspend-wake.stdout" chroot "$WORK/oracle-root" /suspend-wake
-
 if [ "$supplied_static" -eq 0 ] && [ "$supplied_dynamic" -eq 0 ]; then
 	python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
 		--output "$WORK/static-sysroot" >"$WORK/static-build.json"
 	static_product="$WORK/static-sysroot"
 fi
+if [ -n "$static_product" ]; then
+	validate_product "$static_product" static
+fi
+input_seal_args=(seal-inputs --root "$ROOT" --work "$WORK" --dynamic "$dynamic_product")
+if [ -n "$static_product" ]; then
+	input_seal_args+=(--static "$static_product")
+fi
+EXPECTED_INPUTS="$(python3 -B "$EVIDENCE" "${input_seal_args[@]}")"
+readonly EXPECTED_INPUTS
+
+# The two source cancellation cases are deliberately expected to time out.
+# Keep their raw status/logs beside the normal oracle transcript so the owned
+# correction never turns a known source deadlock into a silent comparison
+# mismatch.
+run_oracle_link source-link-queued-cancel "$CANCEL_DEFECT_PROBE" "$WORK/oracle-queued-cancel"
+for cancel_case in target all; do
+	cancel_status=0
+	env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+		/usr/bin/timeout -k 1 5 "$WORK/oracle-queued-cancel" "$cancel_case" \
+		>"$WORK/oracle-queued-cancel-$cancel_case.stdout" \
+		2>"$WORK/oracle-queued-cancel-$cancel_case.stderr" || cancel_status=$?
+	printf '%s\n' "$cancel_status" >"$WORK/oracle-queued-cancel-$cancel_case.status"
+	record_raw "oracle-queued-cancel-$cancel_case" "$WORK/oracle-queued-cancel-$cancel_case.stdout" \
+		"$WORK/oracle-queued-cancel-$cancel_case.status" /usr/bin/timeout -k 1 5 "$WORK/oracle-queued-cancel" "$cancel_case"
+	case "$cancel_status" in
+		124|137) ;;
+		*) fail "pinned musl queued $cancel_case cancellation did not reproduce its deadlock (status $cancel_status)" ;;
+	esac
+done
+
+run_oracle_link source-link-submit-cancel "$SUBMIT_CANCEL_PROBE" "$WORK/oracle-submit-cancel"
+submit_cancel_status=0
+env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+	/usr/bin/timeout 60 "$WORK/oracle-submit-cancel" s >"$WORK/oracle-submit-cancel.stdout" \
+	2>"$WORK/oracle-submit-cancel.stderr" || submit_cancel_status=$?
+printf '%s\n' "$submit_cancel_status" >"$WORK/oracle-submit-cancel.status"
+record_raw oracle-submit-cancel "$WORK/oracle-submit-cancel.stdout" "$WORK/oracle-submit-cancel.status" \
+	/usr/bin/timeout 60 "$WORK/oracle-submit-cancel" s
+[ "$submit_cancel_status" -eq 0 ] || fail "pinned musl submit handoff cancellation probe exited ${submit_cancel_status}"
+grep -Fxq 'submit-handoff-cancellation=observed' "$WORK/oracle-submit-cancel.stdout" ||
+	fail "pinned musl did not reproduce submit handoff cancellation"
+
+header_status=0
+compiler_path="$(python3 -B "$EVIDENCE" tool-path --dynamic "$dynamic_product" --name compiler)"
+env -i LC_ALL=C PATH=/usr/bin:/bin SOURCE_DATE_EPOCH=1 TZ=UTC TMPDIR="$WORK" \
+	"$compiler_path" -nostdinc -isystem "$dynamic_product/usr/include" -ffreestanding -fno-builtin \
+	-fstack-protector-strong -fPIE -std=c11 -D_GNU_SOURCE -E -H "$PROBE" \
+	>"$WORK/installed-header-trace.stdout" 2>"$WORK/installed-header-trace.stderr" || header_status=$?
+printf '%s\n' "$header_status" >"$WORK/installed-header-trace.status"
+record_raw installed-header-trace "$WORK/installed-header-trace.stdout" "$WORK/installed-header-trace.status" \
+	"$compiler_path" -nostdinc -isystem "$dynamic_product/usr/include" -ffreestanding -fno-builtin \
+	-fstack-protector-strong -fPIE -std=c11 -D_GNU_SOURCE -E -H "$PROBE"
+[ "$header_status" -eq 0 ] || fail 'installed-header trace failed'
+run_compile workload "$PROBE" "$WORK/workload.o"
+run_compile behavior "$BEHAVIOR_PROBE" "$WORK/behavior-workload.o"
+run_compile fd-reuse "$FD_REUSE_PROBE" "$WORK/fd-reuse-workload.o"
+run_compile lio-create-failure "$LIO_CREATE_FAILURE_PROBE" "$WORK/lio-create-failure-workload.o"
+run_compile suspend-wake "$SUSPEND_WAKE_PROBE" "$WORK/suspend-wake-workload.o"
+run_compile queued-cancel "$CANCEL_DEFECT_PROBE" "$WORK/queued-cancel-workload.o"
+run_compile cancel-cursor "$CANCEL_CURSOR_PROBE" "$WORK/cancel-cursor-workload.o"
+run_compile submit-cancel "$SUBMIT_CANCEL_PROBE" "$WORK/submit-cancel-workload.o"
+run_compile fresh-signal "$FRESH_SIGNAL_PROBE" "$WORK/fresh-signal-workload.o"
+run_oracle_link source-link-workload "$WORK/workload.o" "$WORK/oracle"
+prepare_root "$WORK/oracle-root"
+cp "$WORK/oracle" "$WORK/oracle-root/consumer"
+run_capture "$WORK/oracle.stdout" /usr/sbin/chroot "$WORK/oracle-root" /consumer
+run_oracle_link source-link-behavior "$WORK/behavior-workload.o" "$WORK/oracle-behavior"
+cp "$WORK/oracle-behavior" "$WORK/oracle-root/behavior"
+run_capture "$WORK/oracle-behavior.stdout" /usr/sbin/chroot "$WORK/oracle-root" /behavior
+run_oracle_link source-link-fd-reuse "$WORK/fd-reuse-workload.o" "$WORK/oracle-fd-reuse"
+cp "$WORK/oracle-fd-reuse" "$WORK/oracle-root/fd-reuse"
+run_fd_reuse_source_observation "$WORK/oracle-fd-reuse.stdout" /usr/sbin/chroot "$WORK/oracle-root" /fd-reuse "$FD_REUSE_ATTEMPTS"
+run_oracle_link source-link-lio-create-failure "$WORK/lio-create-failure-workload.o" "$WORK/oracle-lio-create-failure"
+cp "$WORK/oracle-lio-create-failure" "$WORK/oracle-root/lio-create-failure"
+run_capture "$WORK/oracle-lio-create-failure.stdout" /usr/sbin/chroot "$WORK/oracle-root" /lio-create-failure
+run_oracle_link source-link-suspend-wake "$WORK/suspend-wake-workload.o" "$WORK/oracle-suspend-wake"
+cp "$WORK/oracle-suspend-wake" "$WORK/oracle-root/suspend-wake"
+run_capture "$WORK/oracle-suspend-wake.stdout" /usr/sbin/chroot "$WORK/oracle-root" /suspend-wake
+
 executed_products='dynamic PIE/non-PIE kernel/direct'
 if [ -n "$static_product" ]; then
 	executed_products='static/static-PIE and dynamic PIE/non-PIE kernel/direct'
-	validate_product "$static_product" static
 	assert_symbols "$static_product/usr/lib/libc.a" static "$WORK/static-symbols.txt"
 	for mode in static static-pie; do
-		candidate="$WORK/$mode"
-		receipt="$candidate.receipt.json"
-		(
-			cd "$WORK"
-			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$receipt")" \
-				"$WORK/workload.o" -o "$candidate"
-		)
-		validate_link "$static_product" "$WORK/workload.o" "$candidate" "$receipt" "$mode"
 		root="$WORK/$mode-root"
 		prepare_root "$root"
-		cp "$candidate" "$root/consumer"
-		run_capture "$WORK/$mode.stdout" chroot "$root" /consumer
+		for key in workload behavior fd-reuse lio-create-failure suspend-wake queued-cancel cancel-cursor submit-cancel fresh-signal; do
+			candidate="$WORK/$mode"
+			[ "$key" = workload ] || candidate="$WORK/$mode-$key"
+			object="$WORK/$key-workload.o"
+			[ "$key" = workload ] && object="$WORK/workload.o"
+			run_link static "$mode" "$key" "$candidate"
+			validate_link "$static_product" "$object" "$candidate" "$candidate.receipt.json" "$mode"
+			cp "$candidate" "$root/${key/workload/consumer}"
+		done
+		run_capture "$WORK/$mode.stdout" /usr/sbin/chroot "$root" /consumer
 		compare_oracle "$mode"
-
-		behavior_candidate="$WORK/$mode-behavior"
-		behavior_receipt="$behavior_candidate.receipt.json"
-		(
-			cd "$WORK"
-			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$behavior_receipt")" \
-				"$WORK/behavior-workload.o" -o "$behavior_candidate"
-		)
-		validate_link "$static_product" "$WORK/behavior-workload.o" "$behavior_candidate" "$behavior_receipt" "$mode"
-		cp "$behavior_candidate" "$root/behavior"
-		run_capture "$WORK/$mode-behavior.stdout" chroot "$root" /behavior
+		run_capture "$WORK/$mode-behavior.stdout" /usr/sbin/chroot "$root" /behavior
 		compare_transcript oracle-behavior "$mode-behavior"
-
-		fd_reuse_candidate="$WORK/$mode-fd-reuse"
-		fd_reuse_receipt="$fd_reuse_candidate.receipt.json"
-		(
-			cd "$WORK"
-			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$fd_reuse_receipt")" \
-				"$WORK/fd-reuse-workload.o" -o "$fd_reuse_candidate"
-		)
-		validate_link "$static_product" "$WORK/fd-reuse-workload.o" "$fd_reuse_candidate" "$fd_reuse_receipt" "$mode"
-		cp "$fd_reuse_candidate" "$root/fd-reuse"
-		run_fd_reuse_owned "$WORK/$mode-fd-reuse.stdout" chroot "$root" /fd-reuse "$FD_REUSE_ATTEMPTS"
-
-		lio_create_failure_candidate="$WORK/$mode-lio-create-failure"
-		lio_create_failure_receipt="$lio_create_failure_candidate.receipt.json"
-		(
-			cd "$WORK"
-			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$lio_create_failure_receipt")" \
-				"$WORK/lio-create-failure-workload.o" -o "$lio_create_failure_candidate"
-		)
-		validate_link "$static_product" "$WORK/lio-create-failure-workload.o" "$lio_create_failure_candidate" "$lio_create_failure_receipt" "$mode"
-		cp "$lio_create_failure_candidate" "$root/lio-create-failure"
-		run_capture "$WORK/$mode-lio-create-failure.stdout" chroot "$root" /lio-create-failure
+		run_fd_reuse_owned "$WORK/$mode-fd-reuse.stdout" /usr/sbin/chroot "$root" /fd-reuse "$FD_REUSE_ATTEMPTS"
+		run_capture "$WORK/$mode-lio-create-failure.stdout" /usr/sbin/chroot "$root" /lio-create-failure
 		compare_transcript oracle-lio-create-failure "$mode-lio-create-failure"
-
-		suspend_wake_candidate="$WORK/$mode-suspend-wake"
-		suspend_wake_receipt="$suspend_wake_candidate.receipt.json"
-		(
-			cd "$WORK"
-			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$suspend_wake_receipt")" \
-				"$WORK/suspend-wake-workload.o" -o "$suspend_wake_candidate"
-		)
-		validate_link "$static_product" "$WORK/suspend-wake-workload.o" "$suspend_wake_candidate" "$suspend_wake_receipt" "$mode"
-		cp "$suspend_wake_candidate" "$root/suspend-wake"
-		run_capture "$WORK/$mode-suspend-wake.stdout" chroot "$root" /suspend-wake
+		run_capture "$WORK/$mode-suspend-wake.stdout" /usr/sbin/chroot "$root" /suspend-wake
 		compare_transcript oracle-suspend-wake "$mode-suspend-wake"
-
-		queued_candidate="$WORK/$mode-queued-cancel"
-		queued_receipt="$queued_candidate.receipt.json"
-		(
-			cd "$WORK"
-			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$queued_receipt")" \
-				"$WORK/queued-cancel-workload.o" -o "$queued_candidate"
-		)
-		validate_link "$static_product" "$WORK/queued-cancel-workload.o" "$queued_candidate" "$queued_receipt" "$mode"
-		cp "$queued_candidate" "$root/queued-cancel"
 		for cancel_case in target all; do
-			run_capture "$WORK/$mode-queued-cancel-$cancel_case.stdout" \
-				chroot "$root" /queued-cancel "$cancel_case"
-			grep -Fxq "queued-cancel-$cancel_case=ok" "$WORK/$mode-queued-cancel-$cancel_case.stdout" ||
-				fail "owned $mode queued $cancel_case cancellation did not complete"
+			run_capture "$WORK/$mode-queued-cancel-$cancel_case.stdout" /usr/sbin/chroot "$root" /queued-cancel "$cancel_case"
+			grep -Fxq "queued-cancel-$cancel_case=ok" "$WORK/$mode-queued-cancel-$cancel_case.stdout" || fail "owned $mode queued $cancel_case cancellation did not complete"
 		done
-
-		cursor_candidate="$WORK/$mode-cancel-cursor"
-		cursor_receipt="$cursor_candidate.receipt.json"
-		(
-			cd "$WORK"
-			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$cursor_receipt")" \
-				"$WORK/cancel-cursor-workload.o" -o "$cursor_candidate"
-		)
-		validate_link "$static_product" "$WORK/cancel-cursor-workload.o" "$cursor_candidate" "$cursor_receipt" "$mode"
-		cp "$cursor_candidate" "$root/cancel-cursor"
 		for cursor_case in target-target all-target late; do
-			run_capture "$WORK/$mode-cancel-cursor-$cursor_case.stdout" \
-				chroot "$root" /cancel-cursor "$cursor_case"
-			grep -Fxq "cancel-cursor-$cursor_case=ok" "$WORK/$mode-cancel-cursor-$cursor_case.stdout" ||
-				fail "owned $mode cancel cursor $cursor_case regression did not complete"
+			run_capture "$WORK/$mode-cancel-cursor-$cursor_case.stdout" /usr/sbin/chroot "$root" /cancel-cursor "$cursor_case"
+			grep -Fxq "cancel-cursor-$cursor_case=ok" "$WORK/$mode-cancel-cursor-$cursor_case.stdout" || fail "owned $mode cancel cursor $cursor_case regression did not complete"
 		done
-
-		submit_cancel_candidate="$WORK/$mode-submit-cancel"
-		submit_cancel_receipt="$submit_cancel_candidate.receipt.json"
-		(
-			cd "$WORK"
-			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$submit_cancel_receipt")" \
-				"$WORK/submit-cancel-workload.o" -o "$submit_cancel_candidate"
-		)
-		validate_link "$static_product" "$WORK/submit-cancel-workload.o" "$submit_cancel_candidate" "$submit_cancel_receipt" "$mode"
-		cp "$submit_cancel_candidate" "$root/submit-cancel"
-		run_capture "$WORK/$mode-submit-cancel.stdout" chroot "$root" /submit-cancel c 128
-		grep -Fxq 'submit-handoff-cancellation=deferred' "$WORK/$mode-submit-cancel.stdout" ||
-			fail "owned $mode submit handoff did not defer cancellation until pthread_testcancel"
-
-		fresh_signal_candidate="$WORK/$mode-fresh-signal"
-		fresh_signal_receipt="$fresh_signal_candidate.receipt.json"
-		(
-			cd "$WORK"
-			"$static_product/bin/crabc-cc" "-$mode" --link-receipt "$(basename "$fresh_signal_receipt")" \
-				"$WORK/fresh-signal-workload.o" -o "$fresh_signal_candidate"
-		)
-		validate_link "$static_product" "$WORK/fresh-signal-workload.o" "$fresh_signal_candidate" "$fresh_signal_receipt" "$mode"
-		cp "$fresh_signal_candidate" "$root/fresh-signal"
-		run_fresh_signal_owned "$WORK/$mode-fresh-signal.stdout" \
-			chroot "$root" /fresh-signal
+		run_capture "$WORK/$mode-submit-cancel.stdout" /usr/sbin/chroot "$root" /submit-cancel c 128
+		grep -Fxq 'submit-handoff-cancellation=deferred' "$WORK/$mode-submit-cancel.stdout" || fail "owned $mode submit handoff did not defer cancellation until pthread_testcancel"
+		run_fresh_signal_owned "$WORK/$mode-fresh-signal.stdout" /usr/sbin/chroot "$root" /fresh-signal
 	done
 fi
 
 assert_symbols "$dynamic_product/usr/lib/libc.so" dynamic "$WORK/dynamic-symbols.txt"
 for mode in pie non-pie; do
-	candidate="$WORK/dynamic-$mode"
-	"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$WORK/workload.o" -o "$candidate"
-	validate_link "$dynamic_product" "$WORK/workload.o" "$candidate" "$candidate.crabc-link.json" "$mode"
 	root="$WORK/dynamic-$mode-root"
 	mkdir -p "$root"
 	cp -a "$dynamic_product/." "$root/"
 	prepare_root "$root"
-	cp "$candidate" "$root/consumer"
-	behavior_candidate="$WORK/dynamic-$mode-behavior"
-	"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$WORK/behavior-workload.o" -o "$behavior_candidate"
-	validate_link "$dynamic_product" "$WORK/behavior-workload.o" "$behavior_candidate" "$behavior_candidate.crabc-link.json" "$mode"
-	cp "$behavior_candidate" "$root/behavior"
-	fd_reuse_candidate="$WORK/dynamic-$mode-fd-reuse"
-	"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$WORK/fd-reuse-workload.o" -o "$fd_reuse_candidate"
-	validate_link "$dynamic_product" "$WORK/fd-reuse-workload.o" "$fd_reuse_candidate" "$fd_reuse_candidate.crabc-link.json" "$mode"
-	cp "$fd_reuse_candidate" "$root/fd-reuse"
-	lio_create_failure_candidate="$WORK/dynamic-$mode-lio-create-failure"
-	"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$WORK/lio-create-failure-workload.o" -o "$lio_create_failure_candidate"
-	validate_link "$dynamic_product" "$WORK/lio-create-failure-workload.o" "$lio_create_failure_candidate" "$lio_create_failure_candidate.crabc-link.json" "$mode"
-	cp "$lio_create_failure_candidate" "$root/lio-create-failure"
-	suspend_wake_candidate="$WORK/dynamic-$mode-suspend-wake"
-	"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$WORK/suspend-wake-workload.o" -o "$suspend_wake_candidate"
-	validate_link "$dynamic_product" "$WORK/suspend-wake-workload.o" "$suspend_wake_candidate" "$suspend_wake_candidate.crabc-link.json" "$mode"
-	cp "$suspend_wake_candidate" "$root/suspend-wake"
-	queued_candidate="$WORK/dynamic-$mode-queued-cancel"
-	"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$WORK/queued-cancel-workload.o" -o "$queued_candidate"
-	validate_link "$dynamic_product" "$WORK/queued-cancel-workload.o" "$queued_candidate" "$queued_candidate.crabc-link.json" "$mode"
-	cp "$queued_candidate" "$root/queued-cancel"
-	cursor_candidate="$WORK/dynamic-$mode-cancel-cursor"
-	"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$WORK/cancel-cursor-workload.o" -o "$cursor_candidate"
-	validate_link "$dynamic_product" "$WORK/cancel-cursor-workload.o" "$cursor_candidate" "$cursor_candidate.crabc-link.json" "$mode"
-	cp "$cursor_candidate" "$root/cancel-cursor"
-	submit_cancel_candidate="$WORK/dynamic-$mode-submit-cancel"
-	"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$WORK/submit-cancel-workload.o" -o "$submit_cancel_candidate"
-	validate_link "$dynamic_product" "$WORK/submit-cancel-workload.o" "$submit_cancel_candidate" "$submit_cancel_candidate.crabc-link.json" "$mode"
-	cp "$submit_cancel_candidate" "$root/submit-cancel"
-	fresh_signal_candidate="$WORK/dynamic-$mode-fresh-signal"
-	"$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" "$WORK/fresh-signal-workload.o" -o "$fresh_signal_candidate"
-	validate_link "$dynamic_product" "$WORK/fresh-signal-workload.o" "$fresh_signal_candidate" "$fresh_signal_candidate.crabc-link.json" "$mode"
-	cp "$fresh_signal_candidate" "$root/fresh-signal"
+	for key in workload behavior fd-reuse lio-create-failure suspend-wake queued-cancel cancel-cursor submit-cancel fresh-signal; do
+		candidate="$WORK/dynamic-$mode"
+		[ "$key" = workload ] || candidate="$WORK/dynamic-$mode-$key"
+		object="$WORK/$key-workload.o"
+		[ "$key" = workload ] && object="$WORK/workload.o"
+		run_link dynamic "dynamic-$mode" "$key" "$candidate"
+		validate_link "$dynamic_product" "$object" "$candidate" "$candidate.crabc-link.json" "$mode"
+		cp "$candidate" "$root/${key/workload/consumer}"
+	done
 	for route in kernel direct; do
 		if [ "$route" = kernel ]; then
-			run_capture "$WORK/dynamic-$mode-$route.stdout" chroot "$root" /consumer
+			prefix=(/usr/sbin/chroot "$root")
 		else
-			run_capture "$WORK/dynamic-$mode-$route.stdout" chroot "$root" "$INTERPRETER" /consumer
+			prefix=(/usr/sbin/chroot "$root" "$INTERPRETER")
 		fi
+		run_capture "$WORK/dynamic-$mode-$route.stdout" "${prefix[@]}" /consumer
 		compare_oracle "dynamic-$mode-$route"
-
-		if [ "$route" = kernel ]; then
-			run_capture "$WORK/dynamic-$mode-$route-behavior.stdout" chroot "$root" /behavior
-		else
-			run_capture "$WORK/dynamic-$mode-$route-behavior.stdout" chroot "$root" "$INTERPRETER" /behavior
-		fi
+		run_capture "$WORK/dynamic-$mode-$route-behavior.stdout" "${prefix[@]}" /behavior
 		compare_transcript oracle-behavior "dynamic-$mode-$route-behavior"
-
-		if [ "$route" = kernel ]; then
-			run_fd_reuse_owned "$WORK/dynamic-$mode-$route-fd-reuse.stdout" chroot "$root" /fd-reuse "$FD_REUSE_ATTEMPTS"
-		else
-			run_fd_reuse_owned "$WORK/dynamic-$mode-$route-fd-reuse.stdout" chroot "$root" "$INTERPRETER" /fd-reuse "$FD_REUSE_ATTEMPTS"
-		fi
-
-		if [ "$route" = kernel ]; then
-			run_capture "$WORK/dynamic-$mode-$route-lio-create-failure.stdout" chroot "$root" /lio-create-failure
-		else
-			run_capture "$WORK/dynamic-$mode-$route-lio-create-failure.stdout" chroot "$root" "$INTERPRETER" /lio-create-failure
-		fi
+		run_fd_reuse_owned "$WORK/dynamic-$mode-$route-fd-reuse.stdout" "${prefix[@]}" /fd-reuse "$FD_REUSE_ATTEMPTS"
+		run_capture "$WORK/dynamic-$mode-$route-lio-create-failure.stdout" "${prefix[@]}" /lio-create-failure
 		compare_transcript oracle-lio-create-failure "dynamic-$mode-$route-lio-create-failure"
-
-		if [ "$route" = kernel ]; then
-			run_capture "$WORK/dynamic-$mode-$route-suspend-wake.stdout" chroot "$root" /suspend-wake
-		else
-			run_capture "$WORK/dynamic-$mode-$route-suspend-wake.stdout" chroot "$root" "$INTERPRETER" /suspend-wake
-		fi
+		run_capture "$WORK/dynamic-$mode-$route-suspend-wake.stdout" "${prefix[@]}" /suspend-wake
 		compare_transcript oracle-suspend-wake "dynamic-$mode-$route-suspend-wake"
-
 		for cancel_case in target all; do
-			if [ "$route" = kernel ]; then
-				run_capture "$WORK/dynamic-$mode-$route-queued-cancel-$cancel_case.stdout" \
-					chroot "$root" /queued-cancel "$cancel_case"
-			else
-				run_capture "$WORK/dynamic-$mode-$route-queued-cancel-$cancel_case.stdout" \
-					chroot "$root" "$INTERPRETER" /queued-cancel "$cancel_case"
-			fi
-			grep -Fxq "queued-cancel-$cancel_case=ok" "$WORK/dynamic-$mode-$route-queued-cancel-$cancel_case.stdout" ||
-				fail "owned dynamic-$mode-$route queued $cancel_case cancellation did not complete"
+			run_capture "$WORK/dynamic-$mode-$route-queued-cancel-$cancel_case.stdout" "${prefix[@]}" /queued-cancel "$cancel_case"
+			grep -Fxq "queued-cancel-$cancel_case=ok" "$WORK/dynamic-$mode-$route-queued-cancel-$cancel_case.stdout" || fail "owned dynamic-$mode-$route queued $cancel_case cancellation did not complete"
 		done
-
 		for cursor_case in target-target all-target late; do
-			if [ "$route" = kernel ]; then
-				run_capture "$WORK/dynamic-$mode-$route-cancel-cursor-$cursor_case.stdout" \
-					chroot "$root" /cancel-cursor "$cursor_case"
-			else
-				run_capture "$WORK/dynamic-$mode-$route-cancel-cursor-$cursor_case.stdout" \
-					chroot "$root" "$INTERPRETER" /cancel-cursor "$cursor_case"
-			fi
-			grep -Fxq "cancel-cursor-$cursor_case=ok" "$WORK/dynamic-$mode-$route-cancel-cursor-$cursor_case.stdout" ||
-				fail "owned dynamic-$mode-$route cancel cursor $cursor_case regression did not complete"
+			run_capture "$WORK/dynamic-$mode-$route-cancel-cursor-$cursor_case.stdout" "${prefix[@]}" /cancel-cursor "$cursor_case"
+			grep -Fxq "cancel-cursor-$cursor_case=ok" "$WORK/dynamic-$mode-$route-cancel-cursor-$cursor_case.stdout" || fail "owned dynamic-$mode-$route cancel cursor $cursor_case regression did not complete"
 		done
-
-		if [ "$route" = kernel ]; then
-			run_capture "$WORK/dynamic-$mode-$route-submit-cancel.stdout" \
-				chroot "$root" /submit-cancel c 128
-		else
-			run_capture "$WORK/dynamic-$mode-$route-submit-cancel.stdout" \
-				chroot "$root" "$INTERPRETER" /submit-cancel c 128
-		fi
-		grep -Fxq 'submit-handoff-cancellation=deferred' "$WORK/dynamic-$mode-$route-submit-cancel.stdout" ||
-			fail "owned dynamic-$mode-$route submit handoff did not defer cancellation until pthread_testcancel"
-
-		if [ "$route" = kernel ]; then
-			run_fresh_signal_owned "$WORK/dynamic-$mode-$route-fresh-signal.stdout" \
-				chroot "$root" /fresh-signal
-		else
-			run_fresh_signal_owned "$WORK/dynamic-$mode-$route-fresh-signal.stdout" \
-				chroot "$root" "$INTERPRETER" /fresh-signal
-		fi
+		run_capture "$WORK/dynamic-$mode-$route-submit-cancel.stdout" "${prefix[@]}" /submit-cancel c 128
+		grep -Fxq 'submit-handoff-cancellation=deferred' "$WORK/dynamic-$mode-$route-submit-cancel.stdout" || fail "owned dynamic-$mode-$route submit handoff did not defer cancellation until pthread_testcancel"
+		run_fresh_signal_owned "$WORK/dynamic-$mode-$route-fresh-signal.stdout" "${prefix[@]}" /fresh-signal
 	done
 done
 
+report="$(python3 -B "$EVIDENCE" finalize --root "$ROOT" --work "$WORK" --expected-inputs "$EXPECTED_INPUTS")"
+
 printf 'owned aio: PASS (installed-header object, pinned-musl oracle, %s); evidence: %s\n' \
-	"$executed_products" "$WORK"
+	"$executed_products" "$report"
