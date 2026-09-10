@@ -44,10 +44,11 @@ NEW_PRIORITY_CEILING_NAMES = (
     "pthread_mutexattr_getprioceiling",
     "pthread_mutexattr_setprioceiling",
 )
-UNDEFINED_REFERENCE = re.compile(
-    r"(?:undefined reference to|undefined symbol:)\s*[`'‘]?([A-Za-z_][A-Za-z0-9_]*)"
+LINKER_CONTEXT = re.compile(r"^(?:\S*/)?ld: .+: in function [`'][^`']+['']:$")
+LINKER_UNDEFINED_REFERENCE = re.compile(
+    r"^(?:(?:\S*/)?ld: )?.+: undefined reference to [`']([A-Za-z_][A-Za-z0-9_]*)['']$"
 )
-NM_GLOBAL_TYPES = set("ABCDGIRSTVW")
+COLLECT2_LINK_FAILURE = "collect2: error: ld returned 1 exit status"
 
 
 class OracleNoProviderAuditError(ValueError):
@@ -78,17 +79,33 @@ def require_successful_inspection(tool: str, returncode: int, stderr: str) -> No
 
 
 def global_or_weak_providers(output: str, names: set[str]) -> dict[str, list[str]]:
-    """Return all selected names with a global or weak defined ``nm`` binding."""
+    """Return every selected defined POSIX-``nm`` row, including IFUNC/UNIQUE.
+
+    The command supplies ``-g --defined-only --format=posix``. Its selected
+    rows therefore have a POSIX name and one-character type field; no finite
+    spelling whitelist is safe because GNU extensions such as ``i`` and ``u``
+    still name actual providers.
+    """
 
     providers: dict[str, list[str]] = {}
-    for line in output.splitlines():
+    for line_number, line in enumerate(output.splitlines(), start=1):
         fields = line.split()
-        for index, binding in enumerate(fields):
-            if binding not in NM_GLOBAL_TYPES or index == 0:
-                continue
-            name = fields[index - 1]
-            if name in names:
-                providers.setdefault(name, []).append(binding)
+        selected_indexes = [index for index, field in enumerate(fields) if field in names]
+        if not selected_indexes:
+            continue
+        require(len(selected_indexes) == 1, f"malformed selected nm row at line {line_number}: {line}")
+        name_index = selected_indexes[0]
+        prefix_fields = 1 if fields[0].endswith(":") else 0
+        require(
+            name_index == prefix_fields and len(fields) == prefix_fields + 4,
+            f"malformed selected nm row at line {line_number}: {line}",
+        )
+        binding = fields[name_index + 1]
+        require(
+            len(binding) == 1 and binding not in {"U", "w", "v"},
+            f"selected nm row is not a defined POSIX symbol at line {line_number}: {line}",
+        )
+        providers.setdefault(fields[name_index], []).append(binding)
     return providers
 
 
@@ -114,18 +131,33 @@ def require_no_providers(providers: Mapping[str, Sequence[str]], artifact: str) 
         raise OracleNoProviderAuditError(f"{artifact} provides declared no-provider symbol(s): {rendered}")
 
 
-def undefined_reference_names(stderr: str) -> set[str]:
-    return set(UNDEFINED_REFERENCE.findall(stderr))
-
-
 def require_exact_undefined_reference(stderr: str, intended: str) -> None:
-    names = undefined_reference_names(stderr)
+    lines = [line for line in stderr.splitlines() if line]
+    require(lines, "link failure has no diagnostic")
+    names: set[str] = set()
+    saw_collect2 = False
+    saw_context = False
+    for index, line in enumerate(lines):
+        undefined = LINKER_UNDEFINED_REFERENCE.fullmatch(line)
+        if undefined is not None:
+            names.add(undefined.group(1))
+            continue
+        if LINKER_CONTEXT.fullmatch(line) is not None:
+            saw_context = True
+            continue
+        if line == COLLECT2_LINK_FAILURE:
+            require(index == len(lines) - 1, "collect2 link failure is not the final diagnostic")
+            saw_collect2 = True
+            continue
+        raise OracleNoProviderAuditError(f"unexpected linker diagnostic: {line}")
     require(intended in names, f"link failure does not name intended undefined symbol {intended}")
     unexpected = sorted(names - {intended})
     require(
         not unexpected,
         f"link failure includes unrelated undefined symbol(s): {', '.join(unexpected)}",
     )
+    require(saw_context, "link failure has no expected ld context diagnostic")
+    require(saw_collect2, "link failure has no expected collect2 terminal diagnostic")
 
 
 def require_exact_undefined_object(output: str, intended: str) -> None:
@@ -265,22 +297,29 @@ def checked_no_provider_members(contract_path: Path, inventory_path: Path) -> tu
     records = inventory.get("callables")
     require(isinstance(records, list), "checked callable inventory has no callable rows")
     headers: dict[str, set[str]] = {member: set() for member in members}
+    pinned_references: set[str] = set()
     for record in records:
         if not isinstance(record, Mapping):
             continue
         name = record.get("name")
         if name not in headers:
             continue
-        if (
-            record.get("tree") == "candidate"
-            and record.get("classification") == "external"
-            and record.get("declaration_kind") == "function"
-        ):
+        if record.get("classification") != "external" or record.get("declaration_kind") != "function":
+            continue
+        if record.get("tree") == "candidate":
             declaring_header = record.get("declaring_header")
             require(isinstance(declaring_header, str) and declaring_header, f"inventory declaration header missing for {name}")
             headers[name].add(declaring_header)
+        elif record.get("tree") == "reference":
+            pinned_references.add(name)
     missing = sorted(name for name, values in headers.items() if not values)
     require(not missing, f"oracle no-provider names are not declared candidate externals: {', '.join(missing)}")
+    missing_references = sorted(set(members) - pinned_references)
+    require(
+        not missing_references,
+        "oracle no-provider names are not pinned reference external functions: "
+        + ", ".join(missing_references),
+    )
     return list(members), headers
 
 
