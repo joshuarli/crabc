@@ -7,12 +7,16 @@
 //! cache and these helpers never mutate h_errno. Source destination policy
 //! remains scalar. The native transport sends family queries sequentially
 //! instead of musl's parallel msend, retaining the established bounded core
-//! transport contract and independent response validation. That raw transport
-//! is not a deferred C cancellation point and has no C cancellation cleanup
-//! registration. An owned cancellation/descriptor cleanup adapter remains a
-//! resolver-family closure obligation. Only the source sorting and address
-//! configuration cancellation masks are preserved by this slice. The native
-//! C lookup path has its own ordered answer callback below: it follows musl's
+//! transport contract and independent response validation. Owned C resolver
+//! calls use `owned_resolver_transport::exchange`: its pinned C cleanup record
+//! retires the one live descriptor, and its send, receive, and poll syscall
+//! windows are deferred cancellation points that retain source MASKED-to-DISABLE
+//! and final-errno behavior. Native Rust callers retain the raw core exchange
+//! contract. The remaining resolver-family boundary is the deliberate
+//! sequential transport/profile and other unqualified resolver behavior,
+//! including shared rejection of physically incomplete late records; this
+//! module does not claim full source parity or public family closure. The
+//! native C lookup path has its own ordered answer callback below: it follows musl's
 //! `__dns_parse` and `dns_parse_callback` stop boundary without changing the
 //! shared `DnsResponse` or transport contract.
 use core::{ffi::{c_char, c_int}, ptr};
