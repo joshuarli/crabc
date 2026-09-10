@@ -439,6 +439,7 @@ record = {
     json.dumps(record, indent=2, sort_keys=True) + '\n', encoding='utf-8'
 )
 PY
+sha256sum "$probe" "$work/workload.o" >"$work/input.sha256"
 "$oracle_cc" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
 prepare_root "$work/oracle-root"
 for scenario in ordinary; do
