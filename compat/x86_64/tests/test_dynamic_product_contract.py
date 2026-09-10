@@ -125,6 +125,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "aio",
                 "locale",
                 "stdio",
+                "numeric-calendar",
                 "pattern",
                 "regex",
                 "wordexp",

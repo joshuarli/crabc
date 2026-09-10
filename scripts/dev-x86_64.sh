@@ -600,6 +600,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-locale [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed fixed locale, multibyte and UTF iconv behavior
   owned-wordexp [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed word expansion across controlled shell states
   owned-stdio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed byte/wide streams, positioning and format/scan
+  owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
   owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
@@ -2873,7 +2874,7 @@ prepare_owned_posix_replay_arguments() {
     if [ "$selected_command" = owned-pthread-signal ] && [ -z "$dynamic_product" ]; then
         fail "$expected"
     fi
-    if { [ "$selected_command" = owned-locale ] || [ "$selected_command" = owned-wordexp ] || [ "$selected_command" = owned-stdio ]; } && [ -n "$static_product" ] && [ -z "$dynamic_product" ]; then
+    if { [ "$selected_command" = owned-locale ] || [ "$selected_command" = owned-wordexp ] || [ "$selected_command" = owned-stdio ] || [ "$selected_command" = owned-numeric-calendar ]; } && [ -n "$static_product" ] && [ -z "$dynamic_product" ]; then
         fail "$expected"
     fi
     POSIX_REPLAY_ARGUMENTS=()
@@ -5978,7 +5979,7 @@ case "$command" in
     libc-crt1-static-tls) ;;
     owned-crypt-runtime|owned-atomic-addressable-profile) ;;
     owned-system-cancellation) ;;
-    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
+    owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-regex|owned-strfmon) ;;
     owned-pthread-spin) ;;
     owned-syslog) ;;
@@ -6157,7 +6158,7 @@ case "$command" in
         prepare_owned_pthread_family_composition_arguments "$@"
         set -- "${PTHREAD_COMPOSITION_ARGUMENTS[@]}"
         ;;
-    owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy)
+    owned-aio|owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-utmpx|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation|project-header-extension-policy)
         prepare_owned_posix_replay_arguments "$command" "$@"
         set -- "${POSIX_REPLAY_ARGUMENTS[@]}"
         ;;
@@ -8105,6 +8106,10 @@ case "$command" in
     owned-stdio)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_stdio.sh "$@"
+        ;;
+    owned-numeric-calendar)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_numeric_calendar.sh "$@"
         ;;
     owned-posix-composition)
         ensure_image

@@ -1,6 +1,6 @@
 # Installed numeric and clock/calendar composition
 
-`run_owned_numeric_calendar.sh` is a bounded installed-product behavior
+`./scripts/dev-x86_64.sh owned-numeric-calendar` runs a bounded installed-product behavior
 component for `numeric.parse-float-locale` and `time.clock-calendar`. It
 translates one C11 object through the selected dynamic product's installed
 headers, then links those unchanged object bytes with pinned musl and the

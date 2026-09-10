@@ -84,6 +84,7 @@ CASES = {
     "aio": ("run_owned_aio.sh", None),
     "locale": ("run_owned_locale.sh", None),
     "stdio": ("run_owned_stdio.sh", None),
+    "numeric-calendar": ("run_owned_numeric_calendar.sh", None),
     "pattern": ("run_owned_pattern.sh", None),
     "regex": ("run_owned_regex.sh", None),
     "wordexp": ("run_owned_wordexp.sh", None),
