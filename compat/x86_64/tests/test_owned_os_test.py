@@ -2,12 +2,14 @@
 """Pure contract tests for the owned native os-test adapter."""
 from __future__ import annotations
 
+from contextlib import ExitStack
 import hashlib
 import importlib.util
 import json
 import shlex
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -19,6 +21,15 @@ assert SPEC is not None and SPEC.loader is not None
 RUNNER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
+
+sys.path.insert(0, str(MODULE.parent))
+sys.modules["owned_os_test"] = RUNNER
+TTYNAME_PROC_MODULE = ROOT / "compat/x86_64/owned_os_test_ttyname_proc.py"
+TTYNAME_PROC_SPEC = importlib.util.spec_from_file_location("owned_os_test_ttyname_proc_test", TTYNAME_PROC_MODULE)
+assert TTYNAME_PROC_SPEC is not None and TTYNAME_PROC_SPEC.loader is not None
+TTYNAME_PROC = importlib.util.module_from_spec(TTYNAME_PROC_SPEC)
+sys.modules[TTYNAME_PROC_SPEC.name] = TTYNAME_PROC
+TTYNAME_PROC_SPEC.loader.exec_module(TTYNAME_PROC)
 
 
 class TargetAdapterPlanTests(unittest.TestCase):
@@ -105,6 +116,25 @@ class TargetAdapterPlanTests(unittest.TestCase):
 
 
 class EvidenceContractTests(unittest.TestCase):
+    def assert_live_proc_root_is_not_walked(self, root: Path, lifecycle: dict[str, object]) -> None:
+        proc = Path(lifecycle["receipt"]["mountpoint"])
+        (proc / "live").mkdir(parents=True)
+        (root / "records").mkdir()
+        (root / "records" / "report.json").write_text("{}\n")
+        original_lstat = Path.lstat
+
+        def guarded_lstat(path: Path):
+            if path == proc or path.is_relative_to(proc):
+                raise AssertionError("host-readability walk entered the live procfs fixture")
+            return original_lstat(path)
+
+        live_proc_roots = {Path(item["receipt"]["mountpoint"])
+                           for item in [lifecycle]
+                           if not RUNNER.private_proc_lifecycle_postwalk_safe(item)}
+        self.assertEqual(live_proc_roots, {proc})
+        with mock.patch.object(Path, "lstat", guarded_lstat):
+            RUNNER.make_evidence_host_readable(root, skip_roots=live_proc_roots)
+
     def test_basic_proc_reservation_and_mount_are_separate_from_the_snapshot(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
             root = Path(temporary)
@@ -163,6 +193,152 @@ class EvidenceContractTests(unittest.TestCase):
                     RUNNER.mount_private_proc(root / "second", private)
             self.assertEqual(capture.call_count, 2)
 
+    def test_interrupted_proc_mount_attempts_cleanup_and_skips_the_live_root(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            private = {"mountpoint": str(root / "proc")}
+            lifecycle = RUNNER.private_proc_lifecycle(private)
+            with mock.patch.object(RUNNER, "mount_private_proc", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    RUNNER.mount_private_proc_tracked(root, lifecycle)
+            self.assertTrue(lifecycle["mount_pending"])
+            self.assertFalse(RUNNER.private_proc_lifecycle_postwalk_safe(lifecycle))
+            with mock.patch.object(RUNNER, "unmount_private_proc", return_value={"status": 1}) as unmount:
+                RUNNER.unmount_private_proc_tracked(lifecycle)
+            self.assertEqual(unmount.call_args.args[0], private)
+            self.assertFalse(RUNNER.private_proc_lifecycle_postwalk_safe(lifecycle))
+            self.assert_live_proc_root_is_not_walked(root, lifecycle)
+            cleared_private = {"mountpoint": str(root / "cleared-proc")}
+            cleared_lifecycle = RUNNER.private_proc_lifecycle(cleared_private)
+            with mock.patch.object(RUNNER, "mount_private_proc", side_effect=KeyboardInterrupt):
+                with self.assertRaises(KeyboardInterrupt):
+                    RUNNER.mount_private_proc_tracked(root, cleared_lifecycle)
+            with mock.patch.object(RUNNER, "unmount_private_proc", return_value={"status": 0}) as cleared_unmount:
+                RUNNER.unmount_private_proc_tracked(cleared_lifecycle)
+            self.assertEqual(cleared_unmount.call_args.args[0], cleared_private)
+            self.assertTrue(RUNNER.private_proc_lifecycle_postwalk_safe(cleared_lifecycle))
+
+    def test_failed_proc_mount_receipt_attempts_cleanup_and_skips_the_live_root(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            private = {"mountpoint": str(root / "proc")}
+            lifecycle = RUNNER.private_proc_lifecycle(private)
+
+            def mount_failure(_destination: Path, receipt: dict[str, object]) -> None:
+                receipt["mount"] = {"status": 32}
+                raise RUNNER.FixtureError("private procfs fixture setup failed", {"private_proc": receipt})
+
+            with mock.patch.object(RUNNER, "mount_private_proc", side_effect=mount_failure):
+                with self.assertRaises(RUNNER.FixtureError):
+                    RUNNER.mount_private_proc_tracked(root, lifecycle)
+            self.assertTrue(lifecycle["mount_pending"])
+            with mock.patch.object(RUNNER, "unmount_private_proc", return_value={"status": 1}) as unmount:
+                RUNNER.unmount_private_proc_tracked(lifecycle)
+            self.assertEqual(unmount.call_args.args[0], private)
+            self.assertFalse(RUNNER.private_proc_lifecycle_postwalk_safe(lifecycle))
+            self.assert_live_proc_root_is_not_walked(root, lifecycle)
+
+    def test_proc_witness_failure_attempts_cleanup_and_skips_the_live_root(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            private = {"mountpoint": str(root / "proc")}
+            lifecycle = RUNNER.private_proc_lifecycle(private)
+
+            def witness_failure(_destination: Path, receipt: dict[str, object]) -> None:
+                receipt["mount"] = {"status": 0}
+                raise RUNNER.FixtureError("private procfs PID namespace witness failed", {"private_proc": receipt})
+
+            with mock.patch.object(RUNNER, "mount_private_proc", side_effect=witness_failure):
+                with self.assertRaises(RUNNER.FixtureError):
+                    RUNNER.mount_private_proc_tracked(root, lifecycle)
+            with mock.patch.object(RUNNER, "unmount_private_proc", return_value={"status": 1}) as unmount:
+                RUNNER.unmount_private_proc_tracked(lifecycle)
+            self.assertEqual(unmount.call_args.args[0], private)
+            self.assertFalse(RUNNER.private_proc_lifecycle_postwalk_safe(lifecycle))
+            self.assert_live_proc_root_is_not_walked(root, lifecycle)
+
+    def test_failed_proc_unmount_skips_the_live_root(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            private = {"mountpoint": str(root / "proc")}
+            lifecycle = RUNNER.private_proc_lifecycle(private)
+
+            def successful_mount(_destination: Path, receipt: dict[str, object]) -> None:
+                receipt["mount"] = {"status": 0}
+
+            with mock.patch.object(RUNNER, "mount_private_proc", side_effect=successful_mount):
+                RUNNER.mount_private_proc_tracked(root, lifecycle)
+            with mock.patch.object(RUNNER, "unmount_private_proc", return_value={"status": 1}) as unmount:
+                RUNNER.unmount_private_proc_tracked(lifecycle)
+            self.assertEqual(unmount.call_args.args[0], private)
+            self.assertFalse(RUNNER.private_proc_lifecycle_postwalk_safe(lifecycle))
+            self.assert_live_proc_root_is_not_walked(root, lifecycle)
+
+    def test_ttyname_proc_variant_registers_an_interrupted_mount_before_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            runtime = root / "runtime" / "with-proc"
+            private = {"mountpoint": str(runtime / "proc")}
+            control = {"root": str(runtime), "private_proc": private, "private_devpts": None}
+            lifecycles: list[dict[str, object]] = []
+            with mock.patch.object(TTYNAME_PROC.os_test, "prepare_execution_root", return_value=control), \
+                 mock.patch.object(TTYNAME_PROC.os_test, "mount_private_proc", side_effect=KeyboardInterrupt), \
+                 mock.patch.object(TTYNAME_PROC.os_test, "unmount_private_proc", return_value={"status": 1}) as unmount:
+                with self.assertRaises(KeyboardInterrupt):
+                    TTYNAME_PROC.run_variant(root, root / "product", root / "source", [], {}, {}, 1.0, "with-proc", lifecycles)
+            self.assertEqual(len(lifecycles), 1)
+            self.assertIs(lifecycles[0]["receipt"], private)
+            self.assertEqual(unmount.call_args.args[0], private)
+            self.assert_live_proc_root_is_not_walked(root, lifecycles[0])
+
+    def test_ttyname_proc_profile_skips_an_interrupted_unreported_variant(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            product, source, work = root / "product", root / "source", root / "evidence"
+            product.mkdir()
+            source.mkdir()
+            work.mkdir()
+            proc = work / "runtime" / "with-proc" / "proc"
+            values = SimpleNamespace(timeout=1.0, dynamic_sysroot=str(product), os_test_root=str(source))
+
+            def interrupted_variant(_work: Path, _product: Path, _source: Path, _roster: list[dict[str, object]],
+                                    _programs: dict[str, object], _environment: dict[str, str], _timeout: float,
+                                    _variant: str, lifecycles: list[dict[str, object]]) -> dict[str, object]:
+                private = {"mountpoint": str(proc)}
+                lifecycle = RUNNER.private_proc_lifecycle(private)
+                lifecycles.append(lifecycle)
+                lifecycle["mount_pending"] = True
+                (proc / "live").mkdir(parents=True)
+                raise KeyboardInterrupt
+
+            original_lstat = Path.lstat
+
+            def guarded_lstat(path: Path):
+                if path == proc or path.is_relative_to(proc):
+                    raise AssertionError("host-readability walk entered the live procfs fixture")
+                return original_lstat(path)
+
+            static = SimpleNamespace(clean_environment=lambda: {
+                "LC_ALL": "C", "PATH": "/usr/bin:/bin", "SOURCE_DATE_EPOCH": "1", "TZ": "UTC",
+            })
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.dict(TTYNAME_PROC.os.environ, {"TMPDIR": str(root)}, clear=False))
+                stack.enter_context(mock.patch.object(TTYNAME_PROC.os_test, "physical_work_directory", side_effect=lambda value, _label: Path(value)))
+                stack.enter_context(mock.patch.object(TTYNAME_PROC.os_test, "validate_source_root", return_value={"root": str(source)}))
+                stack.enter_context(mock.patch.object(TTYNAME_PROC.os_test, "validate_dynamic_product", return_value={"root": str(product)}))
+                stack.enter_context(mock.patch.object(TTYNAME_PROC.os_test, "tree_roster", return_value=[]))
+                stack.enter_context(mock.patch.object(TTYNAME_PROC.os_test, "musl_oracle_identity", return_value={}))
+                stack.enter_context(mock.patch.object(TTYNAME_PROC.os_test, "load_module", return_value=static))
+                stack.enter_context(mock.patch.object(TTYNAME_PROC.tempfile, "mkdtemp", return_value=str(work)))
+                stack.enter_context(mock.patch.object(TTYNAME_PROC, "source_binding", return_value=(source / "ttyname.c", {})))
+                stack.enter_context(mock.patch.object(TTYNAME_PROC, "build_programs", return_value={}))
+                stack.enter_context(mock.patch.object(TTYNAME_PROC, "run_variant", side_effect=interrupted_variant))
+                with mock.patch.object(Path, "lstat", guarded_lstat):
+                    with self.assertRaises(KeyboardInterrupt):
+                        TTYNAME_PROC.run_profile(values)
+
+            self.assertTrue((work / "ttyname-proc.json").is_file())
+
     def test_proc_teardown_failure_skips_the_post_run_tree_walk(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
             root = Path(temporary)
@@ -199,6 +375,64 @@ class EvidenceContractTests(unittest.TestCase):
 
             with mock.patch.object(Path, "lstat", guarded_lstat):
                 RUNNER.make_evidence_host_readable(root, skip_roots={proc})
+
+    def test_exception_after_failed_proc_teardown_still_skips_the_unreported_mount(self) -> None:
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:
+            root = Path(temporary)
+            product, source, work = root / "product", root / "source", root / "evidence"
+            product.mkdir()
+            source.mkdir()
+            work.mkdir()
+            runtime = work / "runtime" / "basic"
+            proc = runtime / "proc"
+            private = {"schema": RUNNER.PRIVATE_PROC_SCHEMA, "mountpoint": str(proc),
+                       "reservation": {"empty": True, "mode": 0o755}}
+            devpts = {"status": 0, "target": str(runtime / "dev/pts")}
+            control = {"root": str(runtime), "private_proc": private, "private_devpts": devpts,
+                       "product_payload_before": [], "execution_root_after_setup": []}
+            values = SimpleNamespace(timeout=1.0, header_jobs=1, dynamic_sysroot=str(product), os_test_root=source)
+
+            def mount(destination: Path, receipt: dict[str, object]) -> None:
+                self.assertEqual(destination, runtime)
+                self.assertIs(receipt, private)
+                receipt["mount"] = {"status": 0}
+
+            def command(*_arguments: object) -> list[str]:
+                (work / "evidence" / "basic" / "events").mkdir(parents=True)
+                return ["make"]
+
+            readable = mock.Mock()
+            with ExitStack() as stack:
+                stack.enter_context(mock.patch.dict(RUNNER.os.environ, {"TMPDIR": str(root)}, clear=False))
+                stack.enter_context(mock.patch.object(RUNNER, "physical_work_directory", side_effect=lambda value, _label: Path(value)))
+                stack.enter_context(mock.patch.object(RUNNER, "validate_dynamic_product", return_value={"root": str(product)}))
+                stack.enter_context(mock.patch.object(RUNNER, "validate_source_root", return_value={"root": str(source)}))
+                stack.enter_context(mock.patch.object(RUNNER.tempfile, "mkdtemp", return_value=str(work)))
+                stack.enter_context(mock.patch.object(RUNNER, "tree_roster", return_value=[]))
+                stack.enter_context(mock.patch.object(RUNNER, "retain_json", return_value={"path": "record"}))
+                stack.enter_context(mock.patch.object(RUNNER, "stage_pristine_source", return_value={"stage": "source-stage"}))
+                stack.enter_context(mock.patch.object(RUNNER, "musl_oracle_identity", return_value={}))
+                stack.enter_context(mock.patch.object(RUNNER, "retain_expected_outcomes", return_value=([], {"path": "expected"})))
+                stack.enter_context(mock.patch.object(RUNNER, "copied_tree"))
+                stack.enter_context(mock.patch.object(RUNNER, "musl_make_command", return_value=["make"]))
+                stack.enter_context(mock.patch.object(RUNNER, "run_make", return_value=(0, b"", b"")))
+                stack.enter_context(mock.patch.object(RUNNER, "make_record", return_value={}))
+                stack.enter_context(mock.patch.object(RUNNER, "collect_outcomes", return_value={}))
+                stack.enter_context(mock.patch.object(RUNNER, "suite_passed", return_value=True))
+                stack.enter_context(mock.patch.object(RUNNER, "prepare_compile_product", return_value={"root": str(work / "compiler"), "identity": {}, "copy_difference": {}, "payload": []}))
+                stack.enter_context(mock.patch.object(RUNNER, "prepare_execution_root", return_value=control))
+                stack.enter_context(mock.patch.object(RUNNER, "DEFAULT_SUITES", ("basic",)))
+                stack.enter_context(mock.patch.object(RUNNER, "mount_private_proc", side_effect=mount))
+                stack.enter_context(mock.patch.object(RUNNER, "make_command", side_effect=command))
+                stack.enter_context(mock.patch.object(RUNNER, "unmount_private_proc", side_effect=OSError("proc umount denied")))
+                devpts_unmount = stack.enter_context(mock.patch.object(RUNNER, "unmount_private_devpts", return_value={"status": 0}))
+                stack.enter_context(mock.patch.object(RUNNER, "make_evidence_host_readable", readable))
+                with self.assertRaisesRegex(OSError, "proc umount denied"):
+                    RUNNER.run_profile(values)
+
+            self.assertTrue((work / "os-test.json").is_file())
+            self.assertEqual(readable.call_args.kwargs["skip_roots"], {proc})
+            self.assertEqual(devpts_unmount.call_args.args[0], devpts)
 
     def test_private_devpts_setup_uses_a_new_instance_and_root_local_ptmx(self) -> None:
         with tempfile.TemporaryDirectory(dir=ROOT / ".work/x86_64") as temporary:

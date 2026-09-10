@@ -206,16 +206,22 @@ def install_programs(runtime: Path, programs: dict[str, Any], work: Path) -> dic
     return installed
 
 
-def close_runtime(work: Path, variant: str, control: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+def close_runtime(work: Path, variant: str, control: dict[str, Any],
+                  proc_lifecycle: dict[str, Any] | None) -> tuple[dict[str, Any], bool]:
     """Unmount fixtures before post-run integrity inspection; never walk a live procfs."""
     private = control.get("private_proc")
-    if isinstance(private, dict) and isinstance(private.get("mount"), dict) and private["mount"].get("status") == 0:
-        if "unmount" not in private:
-            private["unmount"] = os_test.unmount_private_proc(private)
     devpts = control.get("private_devpts")
-    if isinstance(devpts, dict) and devpts.get("status") == 0 and "unmount" not in devpts:
-        devpts["unmount"] = os_test.unmount_private_devpts(devpts)
-    safe_proc = os_test.private_proc_postwalk_safe(private)
+    try:
+        if proc_lifecycle is not None:
+            os_test.unmount_private_proc_tracked(proc_lifecycle)
+        elif isinstance(private, dict) and isinstance(private.get("mount"), dict) and private["mount"].get("status") == 0:
+            if "unmount" not in private:
+                private["unmount"] = os_test.unmount_private_proc(private)
+    finally:
+        if isinstance(devpts, dict) and devpts.get("status") == 0 and "unmount" not in devpts:
+            devpts["unmount"] = os_test.unmount_private_devpts(devpts)
+    safe_proc = (os_test.private_proc_lifecycle_postwalk_safe(proc_lifecycle)
+                 if proc_lifecycle is not None else os_test.private_proc_postwalk_safe(private))
     safe_devpts = devpts is None or devpts.get("unmount", {}).get("status") == 0
     if not safe_proc or not safe_devpts:
         control["focused_product_integrity"] = {
@@ -232,19 +238,23 @@ def close_runtime(work: Path, variant: str, control: dict[str, Any]) -> tuple[di
 
 
 def run_variant(work: Path, product: Path, source: Path, roster: list[dict[str, Any]], programs: dict[str, Any],
-                environment: dict[str, str], timeout: float, variant: str) -> dict[str, Any]:
+                environment: dict[str, str], timeout: float, variant: str,
+                private_proc_lifecycles: list[dict[str, Any]]) -> dict[str, Any]:
     """Run the same installed binaries in an empty or mounted procfs basic root."""
     runtime = work / "runtime" / variant
     control: dict[str, Any] = {"root": str(runtime), "setup_status": "ERROR"}
     result: dict[str, Any] = {"root": str(runtime), "mount_procfs": variant == "with-proc", "runs": {}, "passed": False}
     failure: str | None = None
+    proc_lifecycle: dict[str, Any] | None = None
     try:
         control = os_test.prepare_execution_root(product, source, runtime, "basic", True, roster)
         private = control.get("private_proc")
         if not isinstance(private, dict):
             raise ProofError("basic runtime did not reserve its private procfs mountpoint")
+        proc_lifecycle = os_test.private_proc_lifecycle(private)
+        private_proc_lifecycles.append(proc_lifecycle)
         if variant == "with-proc":
-            os_test.mount_private_proc(runtime, private)
+            os_test.mount_private_proc_tracked(runtime, proc_lifecycle)
         elif "mount" in private or "namespace" in private or "unmount" in private:
             raise ProofError("unmounted source-proof root unexpectedly mounted procfs")
         result["installed_programs"] = install_programs(runtime, programs, work)
@@ -265,7 +275,7 @@ def run_variant(work: Path, product: Path, source: Path, roster: list[dict[str, 
     except (OSError, RuntimeError, os_test.RunnerError) as error:
         failure = str(error)
     finally:
-        control, intact = close_runtime(work, variant, control)
+        control, intact = close_runtime(work, variant, control, proc_lifecycle)
         result["execution_control"] = control
         result["product_intact"] = intact
     if failure is not None:
@@ -286,7 +296,7 @@ def run_profile(values: argparse.Namespace) -> int:
                                   variant: {name: {"status": row["status"], "stdout": row["stdout"].decode(),
                                                    "stderr": row["stderr"].decode()} for name, row in cases.items()}
                                   for variant, cases in EXPECTED_RUNS.items()}, "variants": []}
-    live_proc_roots: set[Path] = set()
+    private_proc_lifecycles: list[dict[str, Any]] = []
     try:
         source_before = os_test.validate_source_root(source)
         product_before = os_test.validate_dynamic_product(product)
@@ -302,11 +312,9 @@ def run_profile(values: argparse.Namespace) -> int:
         programs = build_programs(work, product, source, environment, values.timeout)
         report["programs"] = programs
         for variant in ("without-proc", "with-proc"):
-            result = run_variant(work, product, source, product_roster, programs, environment, values.timeout, variant)
+            result = run_variant(work, product, source, product_roster, programs, environment, values.timeout, variant,
+                                 private_proc_lifecycles)
             report["variants"].append(result)
-            private = result["execution_control"].get("private_proc")
-            if isinstance(private, dict) and not os_test.private_proc_postwalk_safe(private):
-                live_proc_roots.add(Path(private["mountpoint"]))
         source_after = os_test.validate_source_root(source)
         product_after = os_test.validate_dynamic_product(product)
         roster_after = os_test.tree_roster(product)
@@ -328,6 +336,11 @@ def run_profile(values: argparse.Namespace) -> int:
     finally:
         report_path = work / "ttyname-proc.json"
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+        live_proc_roots = {
+            Path(lifecycle["receipt"]["mountpoint"])
+            for lifecycle in private_proc_lifecycles
+            if not os_test.private_proc_lifecycle_postwalk_safe(lifecycle)
+        }
         os_test.make_evidence_host_readable(work, skip_roots=live_proc_roots)
         print(f"owned os-test ttyname proc evidence: {work}")
     return 0 if report["passed"] else 1

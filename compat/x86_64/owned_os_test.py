@@ -984,6 +984,64 @@ def private_proc_fixture_passed(private: dict[str, Any] | None) -> bool:
             isinstance(unmount, dict) and unmount.get("status") == 0)
 
 
+def private_proc_lifecycle(private: dict[str, Any]) -> dict[str, Any]:
+    """Track a mutable procfs receipt without changing its successful schema.
+
+    A signal can interrupt the mount helper after the kernel has accepted the
+    mount but before its successful receipt is stored.  The internal lifecycle
+    therefore starts uncertain and only permits a post-run walk after a
+    recorded successful teardown.  It is intentionally not serialized into a
+    passing suite's execution-control receipt.
+    """
+    return {"receipt": private, "mount_pending": False, "teardown_pending": False,
+            "teardown_succeeded": False}
+
+
+def private_proc_lifecycle_postwalk_safe(lifecycle: dict[str, Any]) -> bool:
+    """Allow a root walk only when every possible procfs mount was removed."""
+    private = lifecycle["receipt"]
+    mount = private.get("mount")
+    mounted = isinstance(mount, dict) and type(mount.get("status")) is int and mount["status"] == 0
+    if lifecycle["teardown_pending"]:
+        return False
+    if lifecycle["mount_pending"] or mounted:
+        return lifecycle["teardown_succeeded"] is True
+    return True
+
+
+def mount_private_proc_tracked(destination: Path, lifecycle: dict[str, Any]) -> None:
+    """Mark mount uncertainty before calling the kernel-facing procfs helper."""
+    private = lifecycle["receipt"]
+    lifecycle["mount_pending"] = True
+    # A mount utility can report failure after the kernel accepted the mount.
+    # Preserve uncertainty for every exceptional result until teardown records
+    # a successful unmount, including a completed nonzero command receipt.
+    mount_private_proc(destination, private)
+    lifecycle["mount_pending"] = False
+
+
+def unmount_private_proc_tracked(lifecycle: dict[str, Any]) -> None:
+    """Attempt teardown for known or uncertain mounts before any root walk."""
+    private = lifecycle["receipt"]
+    mount = private.get("mount")
+    mounted = isinstance(mount, dict) and type(mount.get("status")) is int and mount["status"] == 0
+    if not lifecycle["mount_pending"] and not mounted:
+        return
+    if "unmount" in private:
+        status = private["unmount"].get("status")
+        lifecycle["teardown_succeeded"] = type(status) is int and status == 0
+        return
+    lifecycle["teardown_pending"] = True
+    try:
+        private["unmount"] = unmount_private_proc(private)
+    except Exception:
+        raise
+    else:
+        lifecycle["teardown_pending"] = False
+        status = private["unmount"].get("status")
+        lifecycle["teardown_succeeded"] = type(status) is int and status == 0
+
+
 def install_basic_runtime_fixtures(destination: Path, suite: str) -> dict[str, Any] | None:
     """Supply only the conventional files that frozen basic cases explicitly read.
 
@@ -1233,6 +1291,10 @@ def run_profile(values: argparse.Namespace) -> int:
     work = Path(tempfile.mkdtemp(prefix="owned-os-test.", dir=temporary))
     report: dict[str, Any] = {"schema": SCHEMA, "passed": False, "profile": list(DEFAULT_SUITES),
                               "timeout_seconds": values.timeout, "work": str(work), "suites": []}
+    # Keep each receipt by object identity before its mount call.  A suite is
+    # appended only after outcome collection and payload inspection, while a
+    # signal may arrive earlier with a live or uncertain procfs mount.
+    private_proc_lifecycles: list[dict[str, Any]] = []
     try:
         product_roster = tree_roster(product)
         product_roster_artifact = retain_json(work, work / "records" / "supplied-product-roster.json", {
@@ -1267,6 +1329,7 @@ def run_profile(values: argparse.Namespace) -> int:
             stderr = b""
             dynamic_record: dict[str, Any] | None = None
             control: dict[str, Any] = {"root": str(runtime), "setup_status": "ERROR"}
+            proc_lifecycle: dict[str, Any] | None = None
             started = time.monotonic()
             try:
                 compile_control = prepare_compile_product(product, compile_product, product_roster)
@@ -1279,7 +1342,9 @@ def run_profile(values: argparse.Namespace) -> int:
                                                 "copy_difference": compile_control["copy_difference"], "payload": compiler_payload}
                 private_proc = control.get("private_proc")
                 if private_proc is not None:
-                    mount_private_proc(runtime, private_proc)
+                    proc_lifecycle = private_proc_lifecycle(private_proc)
+                    private_proc_lifecycles.append(proc_lifecycle)
+                    mount_private_proc_tracked(runtime, proc_lifecycle)
                 command = make_command(suite, suite_root, Path(__file__).resolve(), compile_product, evidence, runtime, values.header_jobs)
                 status, stdout, stderr = run_make(command, values.timeout)
                 dynamic_record = make_record(work, suite, "dynamic", command, values.timeout, status, stdout, stderr)
@@ -1291,13 +1356,13 @@ def run_profile(values: argparse.Namespace) -> int:
                     "control": control,
                 })
             finally:
-                private_proc = control.get("private_proc")
-                if (private_proc is not None and isinstance(private_proc.get("mount"), dict) and
-                        private_proc["mount"].get("status") == 0 and "unmount" not in private_proc):
-                    private_proc["unmount"] = unmount_private_proc(private_proc)
-                private_devpts = control.get("private_devpts")
-                if private_devpts is not None and private_devpts.get("status") == 0 and "unmount" not in private_devpts:
-                    private_devpts["unmount"] = unmount_private_devpts(private_devpts)
+                try:
+                    if proc_lifecycle is not None:
+                        unmount_private_proc_tracked(proc_lifecycle)
+                finally:
+                    private_devpts = control.get("private_devpts")
+                    if private_devpts is not None and private_devpts.get("status") == 0 and "unmount" not in private_devpts:
+                        private_devpts["unmount"] = unmount_private_devpts(private_devpts)
             events = evidence_events(evidence) if (evidence / "events").is_dir() else []
             outcomes = collect_outcomes(suite_root, suite)
             differences = compare_outcomes(musl_outcomes, outcomes)
@@ -1307,7 +1372,9 @@ def run_profile(values: argparse.Namespace) -> int:
             product_intact = False
             if "product_payload_before" in control and "execution_root_after_setup" in control:
                 control, product_intact = retain_execution_integrity(
-                    work, suite, control, inspect_payload=private_proc_postwalk_safe(control.get("private_proc")),
+                    work, suite, control,
+                    inspect_payload=(private_proc_lifecycle_postwalk_safe(proc_lifecycle)
+                                     if proc_lifecycle is not None else private_proc_postwalk_safe(control.get("private_proc"))),
                 )
             candidate_passed = suite_passed(status, outcomes, expected, events) and fixture_passed and product_intact
             report["suites"].append({"suite": suite,
@@ -1329,10 +1396,9 @@ def run_profile(values: argparse.Namespace) -> int:
         report_path = work / "os-test.json"
         report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
         live_proc_mounts = {
-            Path(private["mountpoint"])
-            for suite in report["suites"]
-            if isinstance((private := suite.get("dynamic", {}).get("execution_control", {}).get("private_proc")), dict)
-            and not private_proc_postwalk_safe(private)
+            Path(lifecycle["receipt"]["mountpoint"])
+            for lifecycle in private_proc_lifecycles
+            if not private_proc_lifecycle_postwalk_safe(lifecycle)
         }
         make_evidence_host_readable(work, skip_roots=live_proc_mounts)
         print(f"owned os-test evidence: {work}")
