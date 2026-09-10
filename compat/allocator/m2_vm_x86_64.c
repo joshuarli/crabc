@@ -1,12 +1,13 @@
 /* Native x86-64 M2 VM-primitives oracle.
  *
- * This intentionally includes the fixed v3.5.0 `src/os.c` and `src/arena.c`
- * into the probe so their private configuration, OS-allocation, and first
- * arena-reserve bodies are observed directly. The Python producer omits those
- * two ordinary source objects from the link list. It records address-free
- * fixed-profile facts for the regular lifecycle and one bounded, child-only
- * source-option/first-arena policy record. It does not qualify ambient
- * retries, huge-page success/placement, diagnostics, or general arena use.
+ * This intentionally includes the fixed v3.5.0 `src/os.c`, `src/arena.c`, and
+ * `src/init.c` into the probe so their private configuration, OS-allocation,
+ * first arena-reserve, and preloading-state bodies are observed directly. The
+ * Python producer omits those three ordinary source objects from the link
+ * list. It records address-free fixed-profile facts for the regular lifecycle
+ * and one bounded, child-only source-option/first-arena policy record. It
+ * does not qualify ambient retries, huge-page success/placement, diagnostics,
+ * or general arena use.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -26,10 +27,11 @@
 #include <mimalloc/prim.h>
 
 /* Resolved through `-I <pinned-source>/src`; keep each private source body
- * singular by omitting `src/os.c` and `src/arena.c` from the ordinary C
- * source list. */
+ * singular by omitting `src/os.c`, `src/arena.c`, and `src/init.c` from the
+ * ordinary C source list. */
 #include "os.c"
 #include "arena.c"
+#include "init.c"
 
 /* The producer links with `--wrap=munmap`.  This controlled one-shot seam
  * reaches the unchanged pinned `_mi_prim_free` call inside `src/prim/unix/prim.c`;
@@ -52,6 +54,8 @@ static int captured_transition_protections[4];
 static bool capture_transition_madvise = false;
 static size_t captured_transition_madvise_calls = 0;
 static int captured_transition_advices[4];
+static void* captured_transition_madvise_addresses[4];
+static size_t captured_transition_madvise_lengths[4];
 /* The ordinary lifecycle above also frees mappings through this wrapper.
  * Capture only the selected failed full-MemoryId release and its retry, so
  * the address-free trace can prove both source calls used the retained base
@@ -149,7 +153,10 @@ int __wrap_madvise(void* address, size_t length, int advice) {
     return -1;
   }
   if (capture_transition_madvise && captured_transition_madvise_calls < 4) {
-    captured_transition_advices[captured_transition_madvise_calls] = advice;
+    const size_t index = captured_transition_madvise_calls;
+    captured_transition_advices[index] = advice;
+    captured_transition_madvise_addresses[index] = address;
+    captured_transition_madvise_lengths[index] = length;
     captured_transition_madvise_calls++;
   }
   if (advice == MADV_FREE && fail_next_madvise_free_einval) {
@@ -173,6 +180,120 @@ static int64_t current_reserved(const mi_subproc_t* subproc) {
 
 static int64_t current_committed(const mi_subproc_t* subproc) {
   return mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)(&subproc->stats.committed.current));
+}
+
+static int64_t current_reset(const mi_subproc_t* subproc) {
+  return subproc->stats.reset.total;
+}
+
+static int64_t current_purged(const mi_subproc_t* subproc) {
+  return subproc->stats.purged.total;
+}
+
+static int64_t current_reset_calls(const mi_subproc_t* subproc) {
+  return subproc->stats.reset_calls.total;
+}
+
+static int64_t current_purge_calls(const mi_subproc_t* subproc) {
+  return subproc->stats.purge_calls.total;
+}
+
+/* This is the full normal Linux no-callback `_mi_os_purge_ex` choice matrix:
+ * the exact private `os_preloading` state, negative/zero/positive delay,
+ * purge_decommits, allow_reset, and source conservative range normalization.
+ * Every raw advice is observed through the unchanged Unix import wrapper; the
+ * source counter changes are checked before the full mapping owner is freed. */
+static bool capture_normal_no_callback_purge_matrix(
+    mi_subproc_t* subproc, void* base, size_t page) {
+  typedef struct purge_range_s {
+    size_t offset;
+    size_t size;
+    bool contains_page;
+    size_t advice_offset;
+    size_t advice_length;
+  } purge_range_t;
+  const long delays[] = { -1, 0, 1 };
+  const bool purge_decommits[] = { false, true };
+  const bool preloading_states[] = { false, true };
+  const bool reset_permissions[] = { false, true };
+  const purge_range_t ranges[] = {
+    { 0, 0, false, 0, 0 },
+    { 1, page - 1, false, 0, 0 },
+    { 0, page, true, 0, page },
+    /* Conservative source normalization of this nonempty span retains only
+     * its middle page: start=base+page, length=page. */
+    { 1, 3 * page - 2, true, page, page },
+  };
+  const long prior_delay = mi_option_get(mi_option_purge_delay);
+  const long prior_purge_decommits = mi_option_get(mi_option_purge_decommits);
+  const bool prior_preloading = os_preloading;
+  bool complete = true;
+
+  for (size_t delay_index = 0; delay_index < sizeof(delays) / sizeof(delays[0]); delay_index++) {
+    for (size_t decommit_index = 0;
+         decommit_index < sizeof(purge_decommits) / sizeof(purge_decommits[0]);
+         decommit_index++) {
+      for (size_t preloading_index = 0;
+           preloading_index < sizeof(preloading_states) / sizeof(preloading_states[0]);
+           preloading_index++) {
+        for (size_t reset_index = 0;
+             reset_index < sizeof(reset_permissions) / sizeof(reset_permissions[0]);
+             reset_index++) {
+          for (size_t range_index = 0; range_index < sizeof(ranges) / sizeof(ranges[0]); range_index++) {
+            const long delay = delays[delay_index];
+            const bool purge_decommit = purge_decommits[decommit_index];
+            const bool preloading = preloading_states[preloading_index];
+            const bool allow_reset = reset_permissions[reset_index];
+            const purge_range_t range = ranges[range_index];
+            const bool negative_delay = delay < 0;
+            const bool decommit_branch = !negative_delay && purge_decommit && !preloading;
+            const bool reset_branch = !negative_delay && !decommit_branch
+                && allow_reset && range.contains_page;
+            const bool advice_expected = !negative_delay && range.contains_page
+                && (decommit_branch || allow_reset);
+            const bool expected_recommit = decommit_branch && !range.contains_page;
+            const int64_t purge_calls_before = current_purge_calls(subproc);
+            const int64_t purged_before = current_purged(subproc);
+            const int64_t reset_calls_before = current_reset_calls(subproc);
+            const int64_t reset_before = current_reset(subproc);
+            const int64_t committed_before = current_committed(subproc);
+
+            mi_option_set(mi_option_purge_delay, delay);
+            mi_option_set(mi_option_purge_decommits, purge_decommit ? 1 : 0);
+            os_preloading = preloading;
+            captured_transition_madvise_calls = 0;
+            capture_transition_madvise = true;
+            const bool needs_recommit = _mi_os_purge_ex(
+                subproc, (uint8_t*)base + range.offset, range.size, allow_reset,
+                range.size, NULL, NULL);
+            capture_transition_madvise = false;
+
+            const bool counters_match =
+                current_purge_calls(subproc) == purge_calls_before + (negative_delay ? 0 : 1)
+                && current_purged(subproc) == purged_before
+                    + (negative_delay ? 0 : (int64_t)range.size)
+                && current_reset_calls(subproc) == reset_calls_before + (reset_branch ? 1 : 0)
+                && current_reset(subproc) == reset_before + (reset_branch ? (int64_t)page : 0)
+                && current_committed(subproc) == committed_before;
+            const bool advice_matches = captured_transition_madvise_calls
+                    == (advice_expected ? 1 : 0)
+                && (!advice_expected || (captured_transition_advices[0] == MADV_DONTNEED
+                    && captured_transition_madvise_addresses[0]
+                        == (uint8_t*)base + range.advice_offset
+                    && captured_transition_madvise_lengths[0] == range.advice_length));
+            if (needs_recommit != expected_recommit || !counters_match || !advice_matches) {
+              complete = false;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  mi_option_set(mi_option_purge_delay, prior_delay);
+  mi_option_set(mi_option_purge_decommits, prior_purge_decommits);
+  os_preloading = prior_preloading;
+  return complete;
 }
 
 static bool write_all(int descriptor, const void* buffer, size_t length) {
@@ -403,6 +524,9 @@ int main(void) {
    * consumed by the source's fixed false outcome. */
   captured_transition_madvise_calls = 0;
   capture_transition_madvise = true;
+  /* `src/init.c` owns this private source bit. Select the ordinary
+   * post-startup receiver before recording the decommit option arm. */
+  os_preloading = false;
   mi_option_set(mi_option_purge_decommits, 1);
   fail_next_madvise_dontneed = true;
   const bool purge_decommit_failure_no_recommit =
@@ -437,6 +561,16 @@ int main(void) {
             fail_next_madvise_dontneed);
     return 18;
   }
+
+  mi_memid_t purge_matrix_id = _mi_memid_none();
+  void* const purge_matrix_mapping = _mi_os_alloc_aligned(
+      subproc, page * 3, page, true /* commit */, false /* allow_large */, &purge_matrix_id);
+  if (purge_matrix_mapping == NULL || purge_matrix_id.mem.os.base != purge_matrix_mapping
+      || purge_matrix_id.mem.os.size != page * 3) return 31;
+  const bool normal_no_callback_purge_matrix =
+      capture_normal_no_callback_purge_matrix(subproc, purge_matrix_mapping, page);
+  _mi_os_free(subproc, purge_matrix_mapping, page * 3, purge_matrix_id);
+  if (!normal_no_callback_purge_matrix) return 31;
 
   _mi_os_reuse(subproc, reserved, page);
   captured_transition_mprotect_calls = 0;
@@ -492,6 +626,77 @@ int main(void) {
       || ((uintptr_t)offset_client + offset) % alignment != 0
       || offset_id.mem.os.size != offset_size) return 24;
   _mi_os_free(subproc, offset_client, offset_request, offset_id);
+
+  /* `src/os.c:521-525` calls its regular decommit primitive after a successful
+   * process-owned offset allocation and intentionally ignores that primitive's
+   * result. Observe both outcomes before full-ID release. This is not an
+   * allocation rollback: in both records the client remains interior and the
+   * source retains the complete base/length `mi_memid_t` owner. */
+  const size_t offset_prefix = _mi_align_up(offset, alignment) - offset;
+  const size_t offset_full_size = _mi_os_good_alloc_size(offset_request + offset_prefix);
+  const int64_t offset_success_reserved_before = current_reserved(subproc);
+  const int64_t offset_success_committed_before = current_committed(subproc);
+  mi_memid_t offset_success_id = _mi_memid_none();
+  captured_transition_madvise_calls = 0;
+  capture_transition_madvise = true;
+  void* const offset_success_client = _mi_os_alloc_aligned_at_offset(
+      subproc, offset_request, alignment, offset, true /* commit */, false /* allow_large */,
+      &offset_success_id);
+  capture_transition_madvise = false;
+  const int64_t offset_success_reserved_after_allocate = current_reserved(subproc);
+  const int64_t offset_success_committed_after_allocate = current_committed(subproc);
+  const bool offset_prefix_decommit_success_attempt_and_full_owner =
+      offset_success_client != NULL
+      && offset_success_id.mem.os.base != offset_success_client
+      && offset_success_id.mem.os.size == offset_full_size
+      && (size_t)((uint8_t*)offset_success_client - (uint8_t*)offset_success_id.mem.os.base)
+          == offset_prefix
+      && captured_transition_madvise_calls == 1
+      && captured_transition_advices[0] == MADV_DONTNEED
+      && offset_success_reserved_after_allocate
+          == offset_success_reserved_before + (int64_t)offset_success_id.mem.os.size
+      && offset_success_committed_after_allocate
+          == offset_success_committed_before + (int64_t)offset_success_id.mem.os.size;
+  if (!offset_prefix_decommit_success_attempt_and_full_owner) return 32;
+  _mi_os_free(subproc, offset_success_client, offset_request, offset_success_id);
+  if (current_reserved(subproc) != offset_success_reserved_before
+      || current_committed(subproc) != offset_success_committed_before + (int64_t)offset_prefix) {
+    return 33;
+  }
+
+  const int64_t offset_failure_reserved_before = current_reserved(subproc);
+  const int64_t offset_failure_committed_before = current_committed(subproc);
+  mi_memid_t offset_failure_id = _mi_memid_none();
+  captured_transition_madvise_calls = 0;
+  capture_transition_madvise = true;
+  fail_next_madvise_dontneed = true;
+  void* const offset_failure_client = _mi_os_alloc_aligned_at_offset(
+      subproc, offset_request, alignment, offset, true /* commit */, false /* allow_large */,
+      &offset_failure_id);
+  capture_transition_madvise = false;
+  const int64_t offset_failure_reserved_after_allocate = current_reserved(subproc);
+  const int64_t offset_failure_committed_after_allocate = current_committed(subproc);
+  const bool offset_prefix_decommit_failure_attempt_consumed_and_full_owner =
+      offset_failure_client != NULL
+      && offset_failure_id.mem.os.base != offset_failure_client
+      && offset_failure_id.mem.os.size == offset_full_size
+      && (size_t)((uint8_t*)offset_failure_client - (uint8_t*)offset_failure_id.mem.os.base)
+          == offset_prefix
+      && captured_transition_madvise_calls == 1
+      && captured_transition_advices[0] == MADV_DONTNEED
+      && !fail_next_madvise_dontneed
+      && offset_failure_reserved_after_allocate
+          == offset_failure_reserved_before + (int64_t)offset_failure_id.mem.os.size
+      && offset_failure_committed_after_allocate
+          == offset_failure_committed_before + (int64_t)offset_failure_id.mem.os.size;
+  if (!offset_prefix_decommit_failure_attempt_consumed_and_full_owner) return 34;
+  if (mprotect(offset_failure_id.mem.os.base, offset_failure_id.mem.os.size,
+               PROT_READ | PROT_WRITE) != 0) return 35;
+  _mi_os_free(subproc, offset_failure_client, offset_request, offset_failure_id);
+  if (current_reserved(subproc) != offset_failure_reserved_before
+      || current_committed(subproc) != offset_failure_committed_before + (int64_t)offset_prefix) {
+    return 36;
+  }
 
   /* `_mi_os_free_ex` must use the complete MemoryId base/size even though its
    * client pointer is interior.  The source primitive reports `munmap`
@@ -579,6 +784,8 @@ int main(void) {
       purge_decommit_retry_no_recommit);
   U("m2.vm.reserved.purge.reset_failure_is_consumed",
       purge_reset_failure_is_consumed);
+  U("m2.vm.reserved.purge.normal_no_callback_policy_range_matrix",
+      normal_no_callback_purge_matrix);
   U("m2.vm.reserved.reuse_linux_noop", 1);
   U("m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
       protect_failure_returns_false && protect_failure_is_one_source_attempt);
@@ -607,6 +814,10 @@ int main(void) {
   U("m2.vm.offset.good_size", offset_size);
   U("m2.vm.offset.memid_base_and_size", offset_id.mem.os.size == offset_size);
   U("m2.vm.offset.release_full_mapping_success", 1);
+  U("m2.vm.offset.prefix_decommit.success_attempt_and_full_owner",
+      offset_prefix_decommit_success_attempt_and_full_owner);
+  U("m2.vm.offset.prefix_decommit.failure_attempt_consumed_and_full_owner",
+      offset_prefix_decommit_failure_attempt_consumed_and_full_owner);
   U("m2.vm.release.offset_owner_interior", failed_release_id.mem.os.base != failed_release_client);
   U("m2.vm.release.failure.one_primitive_attempt", munmap_after_failure == munmap_before_failure + 1);
   U("m2.vm.release.failure.full_memid_base_and_size",

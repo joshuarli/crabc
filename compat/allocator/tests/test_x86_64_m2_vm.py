@@ -70,6 +70,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 for path in sorted((
                     "include/mimalloc/prim.h",
                     "src/arena.c",
+                    "src/init.c",
                     "src/os.c",
                     "src/prim/prim.c",
                     "src/prim/unix/prim.c",
@@ -177,6 +178,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
             "m2.vm.reserved.reset.madv_free_einval_falls_back_to_dontneed",
             "m2.vm.reserved.purge.decommit_failure_no_recommit",
             "m2.vm.reserved.purge.reset_failure_is_consumed",
+            "m2.vm.reserved.purge.normal_no_callback_policy_range_matrix",
+            "m2.vm.offset.prefix_decommit.success_attempt_and_full_owner",
+            "m2.vm.offset.prefix_decommit.failure_attempt_consumed_and_full_owner",
             "m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
             "m2.vm.reserved.unprotect.failure_returns_false_and_one_source_attempt",
         ):
@@ -193,8 +197,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm = summary["components"][0]
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
-        self.assertEqual(len(vm["checks"]), 21)
-        self.assertEqual(len(vm["bounded_source_definitions"]), 9)
+        self.assertEqual(len(vm["checks"]), 23)
+        self.assertEqual(len(vm["bounded_source_definitions"]), 10)
         self.assertEqual(len(vm["branch_matrix"]), 14)
         self.assertEqual(len(vm["unqualified_failure_matrix"]), 3)
         self.assertEqual(len(vm["remaining_conditions"]), 5)
@@ -282,7 +286,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, wrong_features)
 
-    def test_vm_producer_requires_source_wrappers_and_direct_arena_source_closure(self):
+    def test_vm_producer_requires_source_wrappers_and_direct_private_source_closure(self):
         """The C record must observe source mmap, madvise, and mprotect imports."""
 
         summary = self.summary()
@@ -306,6 +310,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
         direct_arena_source["c_command"].append("/pinned/src/arena.c")
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, direct_arena_source)
+
+        direct_init_source = self.vm_evidence(summary)
+        direct_init_source["c_command"].append("/pinned/src/init.c")
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, direct_init_source)
 
 
 if __name__ == "__main__":

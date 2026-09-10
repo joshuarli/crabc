@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "ea0699bfb64bcf8b92aabf862d3d2a5aa95e6fb934c8df01f921d7fdcffa9e23"
+M2_X86_64_VM_FRAGMENT_DIGEST = "08a3d28483d7d323a76d1975897571f5be390cdc5233861fa529344707785dd0"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -1535,12 +1535,13 @@ M1_RAW_PRIMITIVE_ORACLE_SOURCES = tuple(
     item for item in ORACLE_SOURCES if item != "src/os.c"
 )
 
-# The native M2 VM fixture directly includes both the pinned source OS and
-# first-arena bodies. Keep the ordinary raw source closure otherwise complete
-# and singular: a separately linked `os.c` or `arena.c` would let an unrelated
-# translation unit replace the private source route the trace claims to run.
+# The native M2 VM fixture directly includes the pinned source OS, first-arena,
+# and process-preloading bodies. Keep the ordinary raw source closure otherwise
+# complete and singular: a separately linked `os.c`, `arena.c`, or `init.c`
+# would let an unrelated translation unit replace the private source route the
+# trace claims to run.
 M2_X86_64_VM_C_ORACLE_SOURCES = tuple(
-    item for item in M1_RAW_PRIMITIVE_ORACLE_SOURCES if item != "src/arena.c"
+    item for item in M1_RAW_PRIMITIVE_ORACLE_SOURCES if item not in {"src/arena.c", "src/init.c"}
 )
 
 # Both compiler-TLS readers include the pinned `src/threadlocal.c` directly

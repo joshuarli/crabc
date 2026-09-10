@@ -2288,6 +2288,8 @@ impl Mapping {
         // SAFETY: `range` is a complete-page subrange of this live mapping.
         // `MADV_DONTNEED` may discard its bytes but creates no Rust reference
         // and does not change the mapping's ownership or accessibility.
+        #[cfg(test)]
+        fault::record_advice_range(range.address, range.length, MADV_DONTNEED);
         unsafe { crabc_core::mm::madvise_raw(range.address, range.length, MADV_DONTNEED) }?;
         Ok(Some(DecommitOutcome::DoesNotNeedRecommit))
     }
@@ -2327,6 +2329,8 @@ impl Mapping {
             // SAFETY: `range` is a complete-page subrange of this live mapping.
             // The advisory may discard contents but does not yield references
             // or alter this boundary's ownership state.
+            #[cfg(test)]
+            fault::record_advice_range(range.address, range.length, advice);
             unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) }
         })
         .map(|()| true)
@@ -2350,6 +2354,8 @@ impl Mapping {
             // SAFETY: `range` is a complete-page subrange of this live
             // mapping. The advisory does not create aliases or change the
             // mapping's release owner.
+            #[cfg(test)]
+            fault::record_advice_range(range.address, range.length, advice);
             unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) }
         })
         .map(|()| true)
@@ -4388,6 +4394,15 @@ pub(crate) mod fault {
         AtomicUsize::new(0),
         AtomicUsize::new(0),
     ];
+    // The normal no-callback purge matrix needs the source-normalized raw
+    // advisory range, not just its call count. It captures one selected
+    // mapping-owned advice at a time, so an unnormalized whole span cannot
+    // pass by reaching the same Unix primitive once.
+    static ADVICE_RANGE_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+    static ADVICE_RANGE_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
+    static ADVICE_RANGE_CAPTURE_ADDRESS: AtomicUsize = AtomicUsize::new(0);
+    static ADVICE_RANGE_CAPTURE_LENGTH: AtomicUsize = AtomicUsize::new(0);
+    static ADVICE_RANGE_CAPTURE_ADVICE: AtomicUsize = AtomicUsize::new(0);
     // The option/hint/large/THP policy slice has a small, source-bounded
     // raw mmap sequence: a high aligned hint can fail and retry at null, and
     // a large-page attempt can precede the regular mapping. Keep those raw
@@ -4522,6 +4537,12 @@ pub(crate) mod fault {
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
 
+    /// Test-only capture token for one source-normalized `madvise` argument
+    /// tuple from a mapping-owned transition.
+    pub(crate) struct AdviceRangeCapture<'guard> {
+        _guard: core::marker::PhantomData<&'guard Guard>,
+    }
+
     /// One raw mmap argument pair from the bounded process-policy route.
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub(crate) struct PolicyMmapAttempt {
@@ -4591,6 +4612,20 @@ pub(crate) mod fault {
             }
         }
 
+        /// Starts a fresh capture of exactly one subsequent mapping-owned
+        /// advice tuple. More or fewer calls invalidate the witness.
+        pub(crate) fn capture_advice_range(&self) -> AdviceRangeCapture<'_> {
+            ADVICE_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            ADVICE_RANGE_CAPTURE_COUNT.store(0, Ordering::Release);
+            ADVICE_RANGE_CAPTURE_ADDRESS.store(0, Ordering::Release);
+            ADVICE_RANGE_CAPTURE_LENGTH.store(0, Ordering::Release);
+            ADVICE_RANGE_CAPTURE_ADVICE.store(0, Ordering::Release);
+            ADVICE_RANGE_CAPTURE_ACTIVE.store(true, Ordering::Release);
+            AdviceRangeCapture {
+                _guard: core::marker::PhantomData,
+            }
+        }
+
         /// Captures at most four immediately following policy mmap calls.
         /// More calls deliberately invalidate the record rather than making a
         /// partial branch-order assertion look complete.
@@ -4636,6 +4671,27 @@ pub(crate) mod fault {
         }
     }
 
+    impl AdviceRangeCapture<'_> {
+        /// Returns the exact raw tuple only if the selected branch made one
+        /// mapping-owned advisory call.
+        pub(crate) fn range(&self) -> Option<(usize, usize, u32)> {
+            if ADVICE_RANGE_CAPTURE_COUNT.load(Ordering::Acquire) != 1 {
+                return None;
+            }
+            Some((
+                ADVICE_RANGE_CAPTURE_ADDRESS.load(Ordering::Acquire),
+                ADVICE_RANGE_CAPTURE_LENGTH.load(Ordering::Acquire),
+                ADVICE_RANGE_CAPTURE_ADVICE.load(Ordering::Acquire) as u32,
+            ))
+        }
+    }
+
+    impl Drop for AdviceRangeCapture<'_> {
+        fn drop(&mut self) {
+            ADVICE_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+        }
+    }
+
     impl PolicyMmapCapture<'_> {
         /// Returns every selected raw call only when it fits the fixed
         /// bounded capture. A zero stored hint is the source null address.
@@ -4664,6 +4720,7 @@ pub(crate) mod fault {
     impl Drop for Guard {
         fn drop(&mut self) {
             UNMAP_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+            ADVICE_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             POLICY_MMAP_CAPTURE_ACTIVE.store(false, Ordering::Release);
             set(Plan::disabled());
             LOCKED.store(false, Ordering::Release);
@@ -4748,6 +4805,22 @@ pub(crate) mod fault {
         if index < 2 {
             UNMAP_RANGE_CAPTURE_ADDRESSES[index].store(address.addr(), Ordering::Release);
             UNMAP_RANGE_CAPTURE_LENGTHS[index].store(length, Ordering::Release);
+        }
+    }
+
+    /// Records the source-normalized raw `madvise` arguments before the Unix
+    /// primitive. This remains a serial test seam beside the existing unmap
+    /// capture; it is not a production callback or policy interface.
+    #[inline]
+    pub(crate) fn record_advice_range(address: *mut u8, length: usize, advice: u32) {
+        if !ADVICE_RANGE_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+            return;
+        }
+        let index = ADVICE_RANGE_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
+        if index == 0 {
+            ADVICE_RANGE_CAPTURE_ADDRESS.store(address.addr(), Ordering::Release);
+            ADVICE_RANGE_CAPTURE_LENGTH.store(length, Ordering::Release);
+            ADVICE_RANGE_CAPTURE_ADVICE.store(advice as usize, Ordering::Release);
         }
     }
 
@@ -6431,6 +6504,222 @@ mod tests {
         assert_eq!(statistics.reserved_total, full_size as i64);
     }
 
+    /// Drives the exact process-paired `src/os.c:502-527` receiver through
+    /// its best-effort offset-prefix decommit. The success plan faults on a
+    /// later ordinal to prove the raw primitive ran; the failure plan faults
+    /// its one attempt. Both preserve the full mapping and source release
+    /// counters because prefix advice is never an allocation rollback.
+    fn process_offset_prefix_decommit_receiver(
+        config: MemoryConfig,
+        fault: &fault::Guard,
+        inject_decommit_failure: bool,
+    ) -> bool {
+        let page = config.page_size().bytes();
+        let size = page.checked_mul(2).expect("the selected source span fits");
+        let alignment = page.checked_mul(16).expect("the selected source alignment fits");
+        let offset = page;
+        let prefix = invariants::align_up(offset, alignment)
+            .and_then(|aligned| aligned.checked_sub(offset))
+            .expect("the selected source prefix geometry fits");
+        assert!(prefix >= page, "the selected source geometry reaches the prefix decommit");
+
+        let policy = VmPolicy::defaults_for_test();
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        let process = VmProcess::new(&policy, subprocess);
+        let before = subprocess.vm_statistics().snapshot();
+        // Ordinal two reaches the real advice after proving one selected raw
+        // call; ordinal one injects the advisory failure that source ignores.
+        fault.set(fault::Plan::at(
+            fault::Point::Decommit,
+            if inject_decommit_failure { 1 } else { 2 },
+            Errno::NOMEM,
+        ));
+        let allocation = NormalOsAllocation::allocate_aligned_at_offset_for_process(
+            process,
+            config,
+            size,
+            alignment,
+            offset,
+            MapAccess::Committed,
+            false,
+            None,
+        )
+        .expect("a prefix decommit advisory never discards its successful source allocation");
+        let base = allocation.base().expect("the full source owner remains live");
+        let pointer = allocation.pointer().expect("the source client pointer remains live");
+        let full_size = allocation.full_size().expect("the source owner retains its full extent");
+        let memory = allocation.memory_id().expect("the source owner retains full provenance");
+        let after_allocate = subprocess.vm_statistics().snapshot();
+        assert_eq!(fault.observed(), 1, "the selected prefix primitive has one source attempt");
+        assert_eq!(pointer.as_ptr().addr() - base.addr(), prefix);
+        assert_eq!(memory.os_base().map(|address| address.value()), Some(base.addr()));
+        assert_eq!(memory.size(), Some(full_size));
+        assert_eq!(after_allocate.reserved_current, before.reserved_current + full_size as i64);
+        assert_eq!(after_allocate.committed_current, before.committed_current + full_size as i64);
+
+        fault.set(fault::Plan::disabled());
+        allocation
+            .release_for_process(process, true)
+            .expect("the retained full owner releases after either prefix-advice outcome");
+        let after_release = subprocess.vm_statistics().snapshot();
+        assert_eq!(after_release.reserved_current, before.reserved_current);
+        assert_eq!(
+            after_release.committed_current,
+            before.committed_current + prefix as i64,
+            "pinned source frees the client extent after its prefix-decommit accounting edge"
+        );
+        true
+    }
+
+    #[test]
+    fn vm_process_offset_prefix_decommit_keeps_full_owner_after_success_and_failure() {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::detect(current_startup());
+        assert!(process_offset_prefix_decommit_receiver(config, &fault, false));
+        assert!(process_offset_prefix_decommit_receiver(config, &fault, true));
+    }
+
+    /// Executes the finite normal Linux no-callback `_mi_os_purge_ex` policy
+    /// matrix from `src/os.c:655-679`. It keeps source option resolution,
+    /// preloading, conservative normalization, raw advisory selection, and
+    /// typed mapping ownership in the same receiver instead of treating a
+    /// counter-only fixture as a policy result.
+    fn normal_no_callback_purge_policy_range_matrix(
+        config: MemoryConfig,
+        fault: &fault::Guard,
+    ) -> bool {
+        let page = config.page_size().bytes();
+        let matrix_length = page.checked_mul(3).expect("the selected three-page matrix owner fits");
+        for delay in [-1_i64, 0, 1] {
+            for purge_decommits in [false, true] {
+                for preloading in [false, true] {
+                    for allow_reset in [false, true] {
+                        for (offset, length, contains_page, advice_offset) in [
+                            (0, 0, false, 0),
+                            (1, page - 1, false, 0),
+                            (0, page, true, 0),
+                            // Source conservative alignment discards the
+                            // partial first and last pages, retaining only
+                            // this live mapping's middle page for advice.
+                            (1, matrix_length - 2, true, page),
+                        ]
+                        {
+                            let mut options = VmOptions::uninitialized();
+                            options.initialize_all(|_| VmOptionEnvironment::Absent);
+                            options.set(VmOption::PurgeDelay, delay);
+                            options.set(VmOption::PurgeDecommits, i64::from(purge_decommits));
+                            let policy = VmPolicy::new(options)
+                                .expect("the direct matrix owns one complete source option image");
+                            if !preloading {
+                                policy.finish_preloading();
+                            }
+                            let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+                            let process = VmProcess::new(&policy, subprocess);
+                            let mut mapping = Mapping::map_for_process(
+                                process,
+                                config,
+                                matrix_length,
+                                1,
+                                MapAccess::Committed,
+                                false,
+                                None,
+                            )
+                            .expect("each source-policy cell starts with one typed page owner");
+                            let base = mapping.base().expect("the matrix owner starts live");
+                            let before = subprocess.vm_statistics().snapshot();
+                            let negative_delay = delay < 0;
+                            let decommit_branch = !negative_delay && purge_decommits && !preloading;
+                            let reset_branch = !negative_delay && !decommit_branch
+                                && allow_reset && contains_page;
+                            let primitive_expected = !negative_delay && contains_page
+                                && (decommit_branch || allow_reset);
+                            let expected_recommit = decommit_branch && !contains_page;
+                            if primitive_expected {
+                                fault.set(fault::Plan::at(
+                                    if decommit_branch {
+                                        fault::Point::Decommit
+                                    } else {
+                                        fault::Point::Purge
+                                    },
+                                    2,
+                                    Errno::NOMEM,
+                                ));
+                            } else {
+                                fault.set(fault::Plan::disabled());
+                            }
+                            let advice_capture = primitive_expected
+                                .then(|| fault.capture_advice_range());
+
+                            assert_eq!(
+                                mapping.purge_for_process(process, offset, length, allow_reset, length),
+                                Ok(expected_recommit),
+                                "source policy result for delay={delay}, purge_decommits={purge_decommits}, preloading={preloading}, allow_reset={allow_reset}, offset={offset}, length={length}"
+                            );
+                            assert_eq!(
+                                fault.observed(),
+                                usize::from(primitive_expected),
+                                "raw advice selection for delay={delay}, purge_decommits={purge_decommits}, preloading={preloading}, allow_reset={allow_reset}, offset={offset}, length={length}"
+                            );
+                            if let Some(advice_capture) = advice_capture.as_ref() {
+                                let (address, advised_length, advice) = advice_capture
+                                    .range()
+                                    .expect("the selected source policy reaches one normalized raw advice");
+                                assert_eq!(address, base.addr() + advice_offset);
+                                assert_eq!(advised_length, page);
+                                assert!(
+                                    matches!(advice, MADV_FREE | MADV_DONTNEED),
+                                    "the source reset/decommit profile selects one Linux advice"
+                                );
+                            }
+                            assert_eq!(mapping.base(), Ok(base), "the policy result retains its typed mapping owner");
+                            let after = subprocess.vm_statistics().snapshot();
+                            assert_eq!(
+                                after.purge_calls,
+                                before.purge_calls + i64::from(!negative_delay),
+                                "source purge counter timing for this policy cell"
+                            );
+                            assert_eq!(
+                                after.purged,
+                                before.purged + if negative_delay { 0 } else { length as i64 },
+                                "source purged-byte timing for this policy cell"
+                            );
+                            assert_eq!(
+                                after.reset_calls,
+                                before.reset_calls + i64::from(reset_branch),
+                                "source reset-call timing for this policy cell"
+                            );
+                            assert_eq!(
+                                after.reset,
+                                before.reset + if reset_branch { page as i64 } else { 0 },
+                                "source reset-byte timing for this policy cell"
+                            );
+                            assert_eq!(
+                                after.committed_current, before.committed_current,
+                                "normal Linux advisory policy does not move source committed bytes"
+                            );
+
+                            fault.set(fault::Plan::disabled());
+                            drop(advice_capture);
+                            mapping
+                                .unmap_for_process(process, matrix_length, false)
+                                .expect("each typed matrix owner releases after its policy observation");
+                        }
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn vm_process_purge_normal_no_callback_policy_range_matrix_matches_source() {
+        let fault = fault::install(fault::Plan::disabled());
+        assert!(normal_no_callback_purge_policy_range_matrix(
+            MemoryConfig::detect(current_startup()),
+            &fault,
+        ));
+    }
+
     #[test]
     fn normal_os_base_handoff_preserves_full_mapping_and_memid() {
         let _fault = fault::install(fault::Plan::disabled());
@@ -7209,6 +7498,13 @@ mod tests {
             .unmap_for_process(reset_process, page, false)
             .expect("the reset-purge owner releases after its consumed advisory failure");
 
+        let normal_no_callback_purge_matrix =
+            normal_no_callback_purge_policy_range_matrix(config, &fault);
+        let offset_prefix_decommit_success_attempt_and_full_owner =
+            process_offset_prefix_decommit_receiver(config, &fault, false);
+        let offset_prefix_decommit_failure_attempt_consumed_and_full_owner =
+            process_offset_prefix_decommit_receiver(config, &fault, true);
+
         let normal = NormalOsAllocation::allocate(
             config,
             page.checked_add(1).expect("the fixed normal request fits"),
@@ -7469,6 +7765,10 @@ mod tests {
             "m2.vm.reserved.purge.reset_failure_is_consumed",
             u8::from(purge_reset_failure_is_consumed)
         );
+        emit!(
+            "m2.vm.reserved.purge.normal_no_callback_policy_range_matrix",
+            u8::from(normal_no_callback_purge_matrix)
+        );
         emit!("m2.vm.reserved.reuse_linux_noop", u8::from(reuse_linux_noop));
         emit!(
             "m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
@@ -7505,6 +7805,14 @@ mod tests {
         emit!("m2.vm.offset.good_size", offset_size);
         emit!("m2.vm.offset.memid_base_and_size", 1);
         emit!("m2.vm.offset.release_full_mapping_success", 1);
+        emit!(
+            "m2.vm.offset.prefix_decommit.success_attempt_and_full_owner",
+            u8::from(offset_prefix_decommit_success_attempt_and_full_owner)
+        );
+        emit!(
+            "m2.vm.offset.prefix_decommit.failure_attempt_consumed_and_full_owner",
+            u8::from(offset_prefix_decommit_failure_attempt_consumed_and_full_owner)
+        );
         emit!("m2.vm.release.offset_owner_interior", 1);
         emit!(
             "m2.vm.release.failure.one_primitive_attempt",

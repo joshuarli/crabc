@@ -4,14 +4,15 @@
 This module owns neither milestone aggregation nor source-map promotion.  It
 checks the target-local fragment's complete source-policy matrix, compiles a
 fresh direct-include C oracle from the pinned archive, and compares its fixed
-process-paired regular-VM lifecycle, source commit/decommit/reset/purge/
-protection fault records, one offset-release failure/retry record, and one
-child-isolated source-option first-arena record with one already-built Rust
-exact test. The C faults wrap only unchanged Unix imports: `mprotect`,
-`madvise`, `munmap`, and the policy record's `mmap`. The fragment deliberately
-remains partial: passing this producer is not a claim for ambient option
-retries, source warning diagnostics, huge-page success/placement, or general
-allocator lifecycle integration.
+process-paired regular-VM lifecycle, normal no-callback purge decision/range
+matrix, source commit/decommit/reset/purge/protection fault records, offset
+prefix-decommit and release failure/retry records, and one child-isolated
+source-option first-arena record with one already-built Rust exact test. The C
+faults wrap only unchanged Unix imports: `mprotect`, `madvise`, `munmap`, and
+the policy record's `mmap`. The fragment deliberately remains partial: passing
+this producer is not a claim for ambient option retries, source warning
+diagnostics, huge-page success/placement, or general allocator lifecycle
+integration.
 """
 
 from __future__ import annotations
@@ -102,6 +103,16 @@ CHECKS = (
         "os::tests::normal_offset_os_allocation_retains_full_provenance_and_retries_release",
     ),
     (
+        "process-offset-prefix-decommit-advisory-owner",
+        "rust-unit",
+        "os::tests::vm_process_offset_prefix_decommit_keeps_full_owner_after_success_and_failure",
+    ),
+    (
+        "normal-no-callback-purge-policy-range-matrix",
+        "rust-unit",
+        "os::tests::vm_process_purge_normal_no_callback_policy_range_matrix_matches_source",
+    ),
+    (
         "normal-os-good-size-and-base-provenance",
         "rust-unit",
         "os::tests::normal_os_allocation_uses_good_size_and_base_provenance",
@@ -165,6 +176,7 @@ TRACE_KEYS = (
     "m2.vm.reserved.purge.decommit_failure_no_recommit",
     "m2.vm.reserved.purge.decommit_retry_no_recommit",
     "m2.vm.reserved.purge.reset_failure_is_consumed",
+    "m2.vm.reserved.purge.normal_no_callback_policy_range_matrix",
     "m2.vm.reserved.reuse_linux_noop",
     "m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",
     "m2.vm.reserved.protect.retry.one_additional_source_attempt",
@@ -189,6 +201,8 @@ TRACE_KEYS = (
     "m2.vm.offset.good_size",
     "m2.vm.offset.memid_base_and_size",
     "m2.vm.offset.release_full_mapping_success",
+    "m2.vm.offset.prefix_decommit.success_attempt_and_full_owner",
+    "m2.vm.offset.prefix_decommit.failure_attempt_consumed_and_full_owner",
     "m2.vm.release.offset_owner_interior",
     "m2.vm.release.failure.one_primitive_attempt",
     "m2.vm.release.failure.full_memid_base_and_size",
@@ -252,6 +266,7 @@ BRANCH_IDS = (
 SOURCE_UNITS = (
     "include/mimalloc/prim.h",
     "src/arena.c",
+    "src/init.c",
     "src/os.c",
     "src/prim/prim.c",
     "src/prim/unix/prim.c",

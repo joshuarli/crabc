@@ -19,6 +19,7 @@
     "source_units": [
       "include/mimalloc/prim.h",
       "src/arena.c",
+      "src/init.c",
       "src/os.c",
       "src/prim/prim.c",
       "src/prim/unix/prim.c"
@@ -42,6 +43,23 @@
       }
     ],
     "bounded_source_definitions": [
+      {
+        "id": "init-preloading-purge-guard",
+        "source_anchor": {
+          "member": "src/init.c",
+          "start_line": 493,
+          "end_line": 498,
+          "sha256": "840c37a72fe41be0dfbcb547f2a8d1d483725606cc87f109915d6cc0ed587b22"
+        },
+        "required_definitions": [
+          "static bool os_preloading",
+          "bool mi_decl_noinline _mi_preloading"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "normal-no-callback-purge-policy-range-matrix"
+        ]
+      },
       {
         "id": "os-memory-configuration-and-good-size",
         "source_anchor": {
@@ -114,6 +132,7 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "normal-os-offset-full-provenance-and-release-retry",
+          "process-offset-prefix-decommit-advisory-owner",
           "normal-os-good-size-and-base-provenance",
           "normal-os-offset-zero-delegation-and-geometry",
           "normal-os-aligned-failure-owner"
@@ -139,6 +158,7 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "reset-advice-retry-snapshot",
+          "normal-no-callback-purge-policy-range-matrix",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry"
         ]
@@ -177,6 +197,7 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "reset-advice-retry-snapshot",
+          "process-offset-prefix-decommit-advisory-owner",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry"
         ]
@@ -328,7 +349,7 @@
       {
         "id": "os-normal-aligned-and-offset-allocation",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:438-527 normal, aligned, zero-offset, and interior-offset allocation routes, including source allow_large forwarding and prefix decommit.",
+        "source_scope": "src/os.c:438-527 normal, aligned, zero-offset, and interior-offset allocation routes, including source allow_large forwarding and the best-effort prefix decommit.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -340,35 +361,43 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "normal-os-offset-full-provenance-and-release-retry",
+          "process-offset-prefix-decommit-advisory-owner",
           "normal-os-good-size-and-base-provenance",
           "normal-os-offset-zero-delegation-and-geometry",
           "normal-os-aligned-failure-owner",
           "normal-os-source-reservation-caller"
         ],
         "missing_conditions": [
-          "The selected first-arena caller forwards one live allow_large policy and default-Theap random image, but option-driven large-page/hint policy across all regular and arena callers, prefix-decommit failure disposition, and source statistics/error behavior remain unqualified."
+          "The selected normal process receiver proves one offset-prefix decommit success and one consumed advisory failure with the full owner retained, but option-driven large-page/hint policy across all regular and arena callers, general offset geometry, and source statistics/error behavior remain unqualified."
         ]
       },
       {
         "id": "os-range-transition-policy-and-failure-owners",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, and retry/error ownership. The selected native record drives one process-paired regular mapping through the normal no-callback Linux arms, including MADV_FREE-to-MADV_DONTNEED fallback, the normal Unix decommit-error no-recommit result, and imported primitive errors.",
+        "source_scope": "src/os.c:534-712 page alignment plus commit/decommit/reset/reuse/purge/protect/unprotect policy, custom commit callbacks, purge options, statistics, and retry/error ownership. The selected native record drives one process-paired regular mapping through every normal no-callback Linux purge decision/range cell: preloading, negative/zero/positive purge delay, purge_decommits, allow_reset, and empty/conservatively normalized/contained ranges, plus MADV_FREE-to-MADV_DONTNEED fallback and imported primitive errors.",
         "source_anchors": [
           {
             "member": "src/os.c",
             "start_line": 534,
             "end_line": 712,
             "sha256": "dc9c44664aa3348206cdfe456b3a1eff19ffed26192d64ad314baf0b4d014feb"
+          },
+          {
+            "member": "src/init.c",
+            "start_line": 493,
+            "end_line": 498,
+            "sha256": "840c37a72fe41be0dfbcb547f2a8d1d483725606cc87f109915d6cc0ed587b22"
           }
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "reset-advice-retry-snapshot",
+          "normal-no-callback-purge-policy-range-matrix",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry"
         ],
         "missing_conditions": [
-          "Custom arena commit callback ownership; preloading and every remaining purge option/caller combination; all partial-range allocator callers; MI_DEBUG/MI_SECURE behavior; and pinned-C failure/retry differential coverage beyond the selected one-page process-paired commit/decommit/reset/purge/protect/unprotect and normal-offset full-MemoryId release records."
+          "Custom arena commit callback ownership; purge routing outside the finite normal no-callback decision/range matrix; all allocator/arena partial-range callers; MI_DEBUG/MI_SECURE behavior; and pinned-C failure/retry differential coverage beyond the selected process-paired commit/decommit/reset/purge/protect/unprotect and normal-offset full-MemoryId release records."
         ]
       },
       {
@@ -459,7 +488,7 @@
       {
         "id": "unix-commit-decommit-reset-reuse-and-protect",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global MADV_FREE-to-MADV_DONTNEED fallback, and reuse semantics. The selected native record faults the unchanged imported mprotect/madvise calls around one regular process-owned mapping.",
+        "source_scope": "src/prim/unix/prim.c:521-605 mprotect commit/protect, Linux decommit profile, reset EAGAIN loop/global MADV_FREE-to-MADV_DONTNEED fallback, and reuse semantics. The selected native record faults the unchanged imported mprotect/madvise calls around one regular process-owned mapping and an offset-prefix advice receiver.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -471,11 +500,13 @@
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "reset-advice-retry-snapshot",
+          "process-offset-prefix-decommit-advisory-owner",
+          "normal-no-callback-purge-policy-range-matrix",
           "linux-os-reuse-contained-range-noop",
           "native-protection-owner-and-retry"
         ],
         "missing_conditions": [
-          "The selected release-profile record covers fixed one-page mprotect/madvise failures and retries plus one MADV_FREE EINVAL fallback, but does not qualify MI_DEBUG/MI_SECURE decommit policy, EAGAIN/fallback state across every caller, source warning diagnostics, or every retained failure owner."
+          "The selected release-profile record covers fixed one-page mprotect/madvise failures and retries, one MADV_FREE EINVAL fallback, normal no-callback purge policy/ranges, and one process-owned offset-prefix advisory success/failure, but does not qualify MI_DEBUG/MI_SECURE decommit policy, EAGAIN/fallback state across every caller, source warning diagnostics, or every retained failure owner."
         ]
       },
       {
@@ -631,6 +662,18 @@
         "expected_passed_test_count": 1
       },
       {
+        "id": "process-offset-prefix-decommit-advisory-owner",
+        "kind": "rust-unit",
+        "target": "os::tests::vm_process_offset_prefix_decommit_keeps_full_owner_after_success_and_failure",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "normal-no-callback-purge-policy-range-matrix",
+        "kind": "rust-unit",
+        "target": "os::tests::vm_process_purge_normal_no_callback_policy_range_matrix_matches_source",
+        "expected_passed_test_count": 1
+      },
+      {
         "id": "normal-os-good-size-and-base-provenance",
         "kind": "rust-unit",
         "target": "os::tests::normal_os_allocation_uses_good_size_and_base_provenance",
@@ -674,7 +717,7 @@
       }
     ],
     "remaining_conditions": [
-      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle, normal-offset full-MemoryId release failure/retry, child-isolated THP transactions, and one child-isolated 128-MiB first-arena large-page fallback, including pinned-C failure ownership and retry evidence for every source branch.",
+      "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, and one child-isolated 128-MiB first-arena large-page fallback, including pinned-C failure ownership and retry evidence for every source branch.",
       "Complete the aligned-overmap substrate beyond the selected direct/prefix/suffix retained-map owners and one first-arena high-hint fallback: every receiving allocator caller, callback/counter/error path, and native cleanup failure/retry differential remains required.",
       "Complete random aligned-hint policy, virtual-address eligibility, secure/debug default-Theap random state, ambient source options and diagnostics, Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success and retry-state behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
