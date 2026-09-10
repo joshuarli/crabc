@@ -26,7 +26,7 @@ class X86LegacyDesCompatTests(unittest.TestCase):
         self.assertIn(
             'x86-legacy-misc = ["x86-legacy-des-compat"]', manifest
         )
-        self.assertIn('"x86-legacy-des-compat",', manifest)
+        self.assertIn('"x86-legacy-misc",', manifest)
         self.assertIn(
             '#[cfg(feature = "x86-legacy-des-compat")]\n'
             '#[path = "legacy_des_compat.rs"]\n'
