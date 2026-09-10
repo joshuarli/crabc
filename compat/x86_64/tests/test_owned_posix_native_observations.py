@@ -326,6 +326,8 @@ class NativeObservationsTests(unittest.TestCase):
             import owned_posix_native_dispositions as dispositions
             for alias, content in dispositions.OS_ALIAS_SOURCES.items():
                 self.put(stage / 'basic/unistd' / (alias + '.c'), content.encode())
+            for symbol, content in dispositions.OS_ATOMIC_SOURCES.items():
+                self.put(stage / 'include/stdatomic' / (symbol + '.c'), content.encode())
         self.put(stage / 'GNUmakefile', b'pinned Make graph fixture\n')
         self.put(stage / 'misc/suites.list', ('\n'.join(native.OS_TEST_SUITES) + '\n').encode())
         (stage / 'Makefile').symlink_to('GNUmakefile')
@@ -515,6 +517,8 @@ class NativeObservationsTests(unittest.TestCase):
                     value = b'good\n'
                     if profile and suite == 'basic' and name.startswith('unistd/'):
                         value = b'exit: 0\n' if side == 'musl' else (Path(name).stem + ': ENOTSUP\n').encode()
+                    if profile and suite == 'include' and name.startswith('stdatomic/'):
+                        value = b'undefined\n' if side == 'musl' else b'good\n'
                     path = self.put(root / 'out/linux' / suite / name, value)
                     outcomes[name] = {'sha256': self.binding(path)['sha256'], 'text': value.decode()}
                 command = (contract.musl_make_command(suite, Path(self.recorded(root)), 8) if side == 'musl' else
@@ -577,6 +581,11 @@ class NativeObservationsTests(unittest.TestCase):
                 row.update(passed=False, difference_count=4, differences=[
                     {'case': name, 'dynamic': row['dynamic']['outcomes'][name], 'musl': row['musl']['outcomes'][name]}
                     for name in expected if name.startswith('unistd/')])
+                report['passed'] = False
+            if profile and suite == 'include':
+                row.update(passed=False, difference_count=6, differences=[
+                    {'case': name, 'dynamic': row['dynamic']['outcomes'][name], 'musl': row['musl']['outcomes'][name]}
+                    for name in expected if name.startswith('stdatomic/')])
                 report['passed'] = False
             report['suites'].append(row)
             contract.freeze_tree(product)
@@ -1066,23 +1075,26 @@ class NativeObservationsTests(unittest.TestCase):
         return {'credentials': {'receipt': {'path': '.work/family/execution.json', 'sha256': 'b'*64},
                     'selected_dynamic_entries': {mode: {} for mode in MODES}},
                 'crypt': {'vectors': dispositions.crypt_vectors(self.root),
-                    'receipt': {'path': '.work/crypt/crypt-profile.json', 'sha256': 'c'*64}}}
+                    'receipt': {'path': '.work/crypt/crypt-profile.json', 'sha256': 'c'*64}},
+                'atomic': {'receipt': {'path': '.work/atomic/atomic-addressable-profile.json', 'sha256': 'd'*64},
+                    'selected_dynamic_entries': {mode: {} for mode in MODES}}}
 
-    def test_native_os_profile_preserves_exact_four_raw_failures(self):
+    def test_native_os_profile_preserves_exact_ten_raw_failures(self):
         report = self.os_test_fixture(profile=True)
         proof = self.profile_companions()
-        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json'}
+        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
+                  'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
         with self.assertRaises(native.NativeObservationError): self.collect('os-test')
         with patch.object(native, '_load_profile_companions', return_value=proof):
             result = native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                     root=self.root, profile_inputs=inputs)
             self.assertIs(report['passed'], False)
             self.assertEqual(result['qualification']['status'], 'profile-qualified')
-            self.assertEqual(len(result['qualification']['dispositions']), 4)
+            self.assertEqual(len(result['qualification']['dispositions']), 10)
             self.assertIs(result['qualification']['raw_passed'], False)
-            basic = next(row for row in report['suites'] if row['suite'] == 'basic')
-            basic['differences'].append({'case': 'case.out', 'dynamic': {}, 'musl': {}})
-            basic['difference_count'] = 5
+            include = next(row for row in report['suites'] if row['suite'] == 'include')
+            include['differences'].append({'case': 'case.out', 'dynamic': {}, 'musl': {}})
+            include['difference_count'] = 7
             self.put(self.leaf / 'os-test.json', report)
             with self.assertRaises(native.NativeObservationError):
                 native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
@@ -1091,7 +1103,8 @@ class NativeObservationsTests(unittest.TestCase):
     def test_native_libc_crypt_profile_preserves_failed_unit_and_every_other_unit(self):
         report = self.libc_test_fixture(profile=True)
         proof = self.profile_companions()
-        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json'}
+        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
+                  'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
         with self.assertRaises(native.NativeObservationError): self.collect('libc-test')
         with patch.object(native, '_load_profile_companions', return_value=proof):
             result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,

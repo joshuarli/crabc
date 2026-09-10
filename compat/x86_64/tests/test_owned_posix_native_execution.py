@@ -43,6 +43,8 @@ class NativeExecutionTests(unittest.TestCase):
         self.matrix_path = self.root / '.work/family/execution.json'
         self.put(self.matrix_path, {'fixture': 'external family judge owns its complete matrix'})
         self.crypt_path = self.put(self.root / '.work/crypt/crypt-profile.json', {'fixture': 'external crypt judge'})
+        self.atomic_path = self.put(self.root / '.work/atomic/atomic-addressable-profile.json',
+                                    {'fixture': 'external atomic judge'})
         self.products = {}
         for label in ('installed', 'second', 'extracted'):
             product = self.root / '.work/dynamic' / label
@@ -104,6 +106,7 @@ class NativeExecutionTests(unittest.TestCase):
         self.patch(execution, 'require_execution_environment')
         self.patch(execution, 'require_live_oracle')
         self.patch(execution.crypt, 'validate_receipt', side_effect=lambda *args, **kwargs: {'vectors': [], 'vector_observations': {}})
+        self.patch(execution.atomic, 'validate_receipt', side_effect=lambda *args, **kwargs: {'entries': {}})
         self.patch(execution.dispositions, 'credentials_companion', return_value={'fixture': 'external credentials judge'})
         self.profile_components = set()
         self.native_judge = self.patch(native, 'collect', side_effect=self.native_result)
@@ -139,7 +142,9 @@ class NativeExecutionTests(unittest.TestCase):
     def native_result(self, component, leaf, *, source_mount, dynamic_product, root, profile_inputs=None):
         self.assertEqual(dynamic_product, self.product)
         self.assertEqual(root, self.root)
-        self.assertEqual(profile_inputs, {'family_execution': self.relative(self.matrix_path), 'crypt_profile': self.relative(self.crypt_path)})
+        self.assertEqual(profile_inputs, {'family_execution': self.relative(self.matrix_path),
+            'crypt_profile': self.relative(self.crypt_path),
+            'atomic_addressable_profile': self.relative(self.atomic_path)})
         if (leaf / 'raw.status').read_bytes() != b'0\n' or (leaf / 'raw.stdout').read_bytes() != (component + ' observed\n').encode():
             raise native.NativeObservationError('synthetic component raw observation failed')
         def identity(path):
@@ -163,7 +168,7 @@ class NativeExecutionTests(unittest.TestCase):
         return result
 
     def execute(self):
-        return execution.execute(self.root, self.work, self.matrix_path, self.crypt_path)
+        return execution.execute(self.root, self.work, self.matrix_path, self.crypt_path, self.atomic_path)
 
     def leaf(self, component):
         item = next(item for item in execution.COMPONENTS if item.id == component)
@@ -195,10 +200,23 @@ class NativeExecutionTests(unittest.TestCase):
             self.execute()
         self.assertFalse(self.work.exists())
 
+    def test_missing_atomic_prerequisite_prevents_execution(self):
+        self.atomic_path.unlink()
+        with self.assertRaises((RuntimeError, OSError)):
+            self.execute()
+        self.assertFalse(self.work.exists())
+
     def test_crypt_artifact_mutation_stops_sequence(self):
         self.put(self.crypt_path.parent / 'raw.stdout', b'physical companion')
         self.append_runner('os-test', 'printf changed > "$root/.work/crypt/raw.stdout"\n')
         with self.assertRaisesRegex(RuntimeError, 'crypt input changed'):
+            self.execute()
+        self.assertFalse((self.work / 'runs/signal-process').exists())
+
+    def test_atomic_artifact_mutation_stops_sequence(self):
+        self.put(self.atomic_path.parent / 'raw.stdout', b'physical companion')
+        self.append_runner('os-test', 'printf changed > "$root/.work/atomic/raw.stdout"\n')
+        with self.assertRaisesRegex(RuntimeError, 'atomic addressable input changed'):
             self.execute()
         self.assertFalse((self.work / 'runs/signal-process').exists())
 
@@ -355,9 +373,9 @@ class NativeExecutionTests(unittest.TestCase):
 
     def test_fresh_output_cannot_overlap_an_input_or_be_reused(self):
         with self.assertRaisesRegex(RuntimeError, 'overlap|input|product'):
-            execution.execute(self.root, self.product / 'aggregate', self.matrix_path, self.crypt_path)
+            execution.execute(self.root, self.product / 'aggregate', self.matrix_path, self.crypt_path, self.atomic_path)
         with self.assertRaisesRegex(RuntimeError, 'overlap|input|matrix'):
-            execution.execute(self.root, self.matrix_path.parent / 'aggregate', self.matrix_path, self.crypt_path)
+            execution.execute(self.root, self.matrix_path.parent / 'aggregate', self.matrix_path, self.crypt_path, self.atomic_path)
         self.execute()
         with self.assertRaisesRegex(RuntimeError, 'fresh'):
             self.execute()
@@ -365,7 +383,8 @@ class NativeExecutionTests(unittest.TestCase):
     def test_relative_matrix_input_cannot_overlap_output(self):
         with self.assertRaisesRegex(RuntimeError, 'overlap'):
             execution.execute(self.root, self.matrix_path.parent / 'aggregate',
-                              Path(self.relative(self.matrix_path)), Path(self.relative(self.crypt_path)))
+                              Path(self.relative(self.matrix_path)), Path(self.relative(self.crypt_path)),
+                              Path(self.relative(self.atomic_path)))
         self.assertFalse((self.matrix_path.parent / 'aggregate').exists())
 
     def test_predecessor_binding_rejects_reordered_successful_steps(self):

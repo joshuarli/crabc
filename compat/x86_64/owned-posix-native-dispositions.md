@@ -8,7 +8,7 @@ A qualified profile difference is never an upstream pass or an excluded unit.
 `owned_posix_native_observations.py` still validates every source, object,
 link, execution root, raw outcome and oracle observation.
 
-Only these two source boundaries may have a profile disposition:
+Only these three source boundaries may have a profile disposition:
 
 * OS-test `basic/unistd/{seteuid,setegid,setreuid,setregid}.out`: pinned musl
   reports `exit: 0`; the candidate reports the exact alias and `ENOTSUP`.
@@ -17,6 +17,17 @@ Only these two source boundaries may have a profile disposition:
   `credentials-profile` replays must retain their direct-setter and alias
   observations in all six modes. The installed product's four dynamic entries
   are explicitly bound to the native aggregate's selected product.
+* OS-test `include/stdatomic/{atomic_flag_clear,atomic_flag_clear_explicit,
+  atomic_flag_test_and_set,atomic_flag_test_and_set_explicit,atomic_signal_fence,
+  atomic_thread_fence}.out`: the six untouched address-taken source forms retain
+  candidate `good` and pinned-musl `undefined` raw observations. This is the
+  existing `static-c-atomic-addressable` project extension, whose installed
+  companion requires the same product's installed header dependencies, exactly
+  six dynamic `libc.so` exports, the existing C and C++ behavior probes, and
+  all four owned dynamic entry modes. The C++ probe declares only the six
+  `extern "C"` spellings and may not introduce a C++ runtime dependency.
+  It does not show musl declaration or export availability, a general
+  `stdatomic.h` closure, C11 family closure, or a C ABI policy decision.
 * libc-test `functional/crypt`: all 32 active calls in the fixed pinned source
   remain present. Twelve legacy-format calls and sixteen unsupported SHA
   setting calls require an actual nonnull `*` result. Two invalid-bcrypt
@@ -46,10 +57,11 @@ null behavior and overlapping inputs. `owned_crypt_profile.py` reconstructs
 `crypt-profile.json` from physical source/header/object/link/product-copy and
 raw execution evidence; a success marker alone is insufficient.
 
-The native coordinator requires both the complete family `execution.json`
-and `--crypt-profile RECEIPT` before creating output. The crypt companion must
-consume the identical installed product. Its raw source, product and receipt
-identities join the before/after input seals.
+The native coordinator requires the complete family `execution.json`,
+`--crypt-profile RECEIPT`, and `--atomic-addressable-profile RECEIPT` before
+creating output. Both installed-product companions consume the identical
+product. Their raw source, product and receipt identities join the before/after
+input seals.
 
 The state transition is explicit:
 

@@ -138,6 +138,31 @@ class NativeDispositionTests(unittest.TestCase):
         with self.assertRaises(native.NativeObservationError):
             dispositions.os_alias_disposition(self.reader, 'basic', 'unistd/setuid.out', source, b'', b'', proof)
 
+    def test_only_six_address_taken_atomic_outcomes_have_the_third_boundary(self):
+        atomic = {'receipt': {'path': '.work/atomic/atomic-addressable-profile.json', 'sha256': 'c'*64},
+                  'selected_dynamic_entries': {mode: {} for mode in dispositions.DYNAMIC_MODES}}
+        credentials = {'receipt': {'path': '.work/family/execution.json', 'sha256': 'b'*64},
+                       'selected_dynamic_entries': {mode: {} for mode in dispositions.DYNAMIC_MODES}}
+        for symbol, content in dispositions.OS_ATOMIC_SOURCES.items():
+            source = self.put(self.leaf / 'source-stage/include/stdatomic' / (symbol + '.c'), content.encode())
+            observed = dispositions.os_disposition(self.reader, 'include', 'stdatomic/' + symbol + '.out', source,
+                b'good\n', b'undefined\n', {'credentials': credentials, 'atomic': atomic})
+            self.assertEqual(observed['symbol'], symbol)
+            self.assertIs(observed['raw_passed'], False)
+            for candidate, oracle in ((b'undefined\n', b'undefined\n'), (b'good\n', b'good\n'),
+                                       (b'good\n', b'exit: 0\n'), (b'good\nextra\n', b'undefined\n')):
+                with self.assertRaises(native.NativeObservationError):
+                    dispositions.os_disposition(self.reader, 'include', 'stdatomic/' + symbol + '.out', source,
+                        candidate, oracle, {'credentials': credentials, 'atomic': atomic})
+        source = self.put(self.leaf / 'source-stage/include/stdatomic/atomic_load.c', b'#include <stdatomic.h>\n')
+        with self.assertRaisesRegex(native.NativeObservationError, 'no selected'):
+            dispositions.os_disposition(self.reader, 'include', 'stdatomic/atomic_load.out', source,
+                b'good\n', b'undefined\n', {'credentials': credentials, 'atomic': atomic})
+        with self.assertRaisesRegex(native.NativeObservationError, 'complete'):
+            dispositions.os_disposition(self.reader, 'include', 'stdatomic/atomic_flag_clear.out',
+                self.leaf / 'source-stage/include/stdatomic/atomic_flag_clear.c', b'good\n', b'undefined\n',
+                {'atomic': atomic})
+
 
 if __name__ == '__main__':
     unittest.main()

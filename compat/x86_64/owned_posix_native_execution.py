@@ -22,6 +22,7 @@ import owned_posix_family_execution as family
 import owned_posix_family_observations as family_observations
 import owned_posix_native_observations as native
 import owned_crypt_profile as crypt
+import owned_atomic_addressable_profile as atomic
 import owned_posix_native_dispositions as dispositions
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -60,7 +61,7 @@ COMPONENTS = (
     Component('libc-test', 'compat/x86_64/run_owned_libc_test.sh',
         ('compat/x86_64/owned_libc_test.py',), (), '', 'owned-libc-test.'),
 )
-SHARED_SOURCES = (*crypt.SOURCES,
+SHARED_SOURCES = (*crypt.SOURCES, *atomic.SOURCES,
     'compat/x86_64/owned_posix_native_dispositions.py',
     'compat/x86_64/owned-posix-native-dispositions.md',
     'compat/x86_64/owned_posix_native_execution.py',
@@ -173,7 +174,8 @@ def io_replacement(root, matrix):
 
 
 def input_matrix(root, request):
-    require(isinstance(request, dict) and set(request) == {'schema', 'source_mount', 'family_execution', 'crypt_profile'}
+    require(isinstance(request, dict) and set(request) == {'schema', 'source_mount', 'family_execution', 'crypt_profile',
+            'atomic_addressable_profile'}
             and request['schema'] == SCHEMA, 'native execution request fields differ')
     mount = request['source_mount']
     require(isinstance(mount, str) and Path(mount).is_absolute() and '..' not in Path(mount).parts
@@ -201,10 +203,17 @@ def input_matrix(root, request):
     require(isinstance(crypt_value, str) and not Path(crypt_value).is_absolute(), 'crypt input must be checkout-relative')
     crypt_path = family.physical(root, root / crypt_value)
     crypt_record = crypt.validate_receipt(root, crypt_path, product=product)
+    atomic_value = request['atomic_addressable_profile']
+    require(isinstance(atomic_value, str) and not Path(atomic_value).is_absolute(),
+            'atomic input must be checkout-relative')
+    atomic_path = family.physical(root, root / atomic_value)
+    atomic_record = atomic.validate_receipt(root, atomic_path, product=product)
     credentials = dispositions.credentials_companion(root, matrix, family.file_identity(root, path), product)
     inputs = {'crypt_profile': family.file_identity(root, crypt_path),
               'crypt_tree': tree_binding(root, crypt_path.parent),
-              'profile_companions': {'credentials': credentials, 'crypt': crypt_record},
+              'atomic_addressable_profile': family.file_identity(root, atomic_path),
+              'atomic_addressable_tree': tree_binding(root, atomic_path.parent),
+              'profile_companions': {'credentials': credentials, 'crypt': crypt_record, 'atomic': atomic_record},
               'family_execution': family.file_identity(root, path), 'source': source,
               'source_files': source_files(root), 'product': product_binding(root, product),
               'matrix_inputs': matrix['inputs'], 'io_cancellation_replacement': io_replacement(root, matrix)}
@@ -258,7 +267,8 @@ def collect_component(root, work, index, component, inputs, product, source_moun
     require(set((step / 'tmp').iterdir()) == {leaf}, 'undeclared component scratch child')
     try:
         observed = native.collect(component.id, leaf, source_mount=source_mount, dynamic_product=product, root=root,
-            profile_inputs={key: inputs[key]['path'] for key in ('family_execution', 'crypt_profile')})
+            profile_inputs={key: inputs[key]['path'] for key in
+                            ('family_execution', 'crypt_profile', 'atomic_addressable_profile')})
     except native.NativeObservationError as error:
         raise family.ExecutionError(str(error)) from error
     require(observed['component'] == component.id and observed['product']['path'] == product.relative_to(root).as_posix()
@@ -290,6 +300,10 @@ def guard(root, inputs, product):
     require(same_json(family.file_identity(root, root / inputs['crypt_profile']['path']), inputs['crypt_profile'])
             and same_json(tree_binding(root, (root / inputs['crypt_profile']['path']).parent), inputs['crypt_tree']),
             'crypt input changed during native execution')
+    require(same_json(family.file_identity(root, root / inputs['atomic_addressable_profile']['path']),
+                      inputs['atomic_addressable_profile']) and
+            same_json(tree_binding(root, (root / inputs['atomic_addressable_profile']['path']).parent),
+                      inputs['atomic_addressable_tree']), 'atomic addressable input changed during native execution')
 
 
 def collect(root, work):
@@ -323,18 +337,21 @@ def collect(root, work):
             'native_aggregate_complete': True, 'campaign_complete': False, 'family_completion': False, 'public_support': False}
 
 
-def execute(root, work, matrixpath, cryptpath):
+def execute(root, work, matrixpath, cryptpath, atomicpath):
     root = root.resolve(strict=True)
     work = family.physical(root, root / work)
     matrixpath = family.physical(root, root / matrixpath)
     cryptpath = family.physical(root, root / cryptpath)
+    atomicpath = family.physical(root, root / atomicpath)
     require(not work.exists(), 'native execution requires fresh output')
     request = {'schema': SCHEMA, 'source_mount': str(root),
                'family_execution': family.physical(root, matrixpath).relative_to(root).as_posix(),
-               'crypt_profile': family.physical(root, cryptpath).relative_to(root).as_posix()}
+               'crypt_profile': family.physical(root, cryptpath).relative_to(root).as_posix(),
+               'atomic_addressable_profile': family.physical(root, atomicpath).relative_to(root).as_posix()}
     inputs, product = input_matrix(root, request)
     matrix_inputs = inputs['matrix_inputs']
-    input_roots = [family.physical(root, cryptpath).parent, matrixpath.parent, root / matrix_inputs['dynamic_work']]
+    input_roots = [family.physical(root, cryptpath).parent, family.physical(root, atomicpath).parent,
+                   matrixpath.parent, root / matrix_inputs['dynamic_work']]
     input_roots.extend((root / matrix_inputs[name]['path']).parent
                        for name in ('static_preparation', 'dynamic_qualification'))
     require(work.is_relative_to(root / '.work'), 'native output must stay under checkout .work')
@@ -417,12 +434,14 @@ def main():
     run.add_argument('--output', type=Path, required=True)
     run.add_argument('--family-execution', type=Path, required=True)
     run.add_argument('--crypt-profile', type=Path, required=True)
+    run.add_argument('--atomic-addressable-profile', type=Path, required=True)
     check = sub.add_parser('validate')
     check.add_argument('receipt', type=Path)
     args = parser.parse_args()
     try:
         if args.action == 'run':
-            print(execute(ROOT, args.output, args.family_execution, args.crypt_profile))
+            print(execute(ROOT, args.output, args.family_execution, args.crypt_profile,
+                          args.atomic_addressable_profile))
         else:
             validate_receipt(ROOT, args.receipt)
             print('native POSIX aggregate receipt: PASS')

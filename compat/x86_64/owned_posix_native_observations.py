@@ -231,8 +231,10 @@ def _load_profile_companions(root, product, inputs):
     """Only physical prerequisite paths are accepted, never caller waivers."""
     import owned_posix_family_execution as family
     import owned_crypt_profile as crypt
+    import owned_atomic_addressable_profile as atomic
     import owned_posix_native_dispositions as dispositions
-    keys(inputs, ('family_execution', 'crypt_profile'), 'native profile prerequisite paths')
+    keys(inputs, ('family_execution', 'crypt_profile', 'atomic_addressable_profile'),
+         'native profile prerequisite paths')
     paths = {}
     for key, value in inputs.items():
         require(isinstance(value, str) and not Path(value).is_absolute(), 'native profile input must be checkout-relative')
@@ -240,8 +242,11 @@ def _load_profile_companions(root, product, inputs):
     matrix = family.validate_receipt(root, paths['family_execution'])
     credential = dispositions.credentials_companion(root, matrix, family.file_identity(root, paths['family_execution']), product)
     crypt_record = crypt.validate_receipt(root, paths['crypt_profile'], product=product)
+    atomic_record = atomic.validate_receipt(root, paths['atomic_addressable_profile'], product=product)
     return {'credentials': credential, 'crypt': {'receipt': family.file_identity(root, paths['crypt_profile']),
-            'vectors': crypt_record['vectors'], 'observations': crypt_record['vector_observations']}}
+            'vectors': crypt_record['vectors'], 'observations': crypt_record['vector_observations']},
+            'atomic': {'receipt': family.file_identity(root, paths['atomic_addressable_profile']),
+                       'selected_dynamic_entries': atomic_record['entries']}}
 
 
 def collect(component, leaf_root, *, source_mount, dynamic_product, root=ROOT, profile_inputs=None):
@@ -1536,7 +1541,7 @@ def _os_test(reader):
     observations, objects, commands = {}, {}, {}
     for suite in report['suites']:
         name = suite['suite']
-        profiled_suite = profiled and name == 'basic'
+        profiled_suite = profiled and name in ('basic', 'include')
         expected_differences = []
         if not profiled_suite:
             same([suite['passed'], suite['differences'], suite['difference_count']], [True, [], 0], 'os-test suite comparison')
@@ -1573,19 +1578,25 @@ def _os_test(reader):
                 observations.setdefault(name + '/' + relative, {})[side] = reader.identity(path, raw=True)
         for relative in expected:
             row = observations[name + '/' + relative]
-            if profiled_suite and relative in ('unistd/seteuid.out', 'unistd/setegid.out', 'unistd/setreuid.out', 'unistd/setregid.out'):
+            if profiled and ((name == 'basic' and relative in ('unistd/seteuid.out', 'unistd/setegid.out',
+                'unistd/setreuid.out', 'unistd/setregid.out')) or (name == 'include' and relative in
+                ('stdatomic/atomic_flag_clear.out', 'stdatomic/atomic_flag_clear_explicit.out',
+                 'stdatomic/atomic_flag_test_and_set.out', 'stdatomic/atomic_flag_test_and_set_explicit.out',
+                 'stdatomic/atomic_signal_fence.out', 'stdatomic/atomic_thread_fence.out'))):
                 import owned_posix_native_dispositions as profile_contract
                 source = stage / name / Path(relative).with_suffix('.c')
-                dispositions.append(profile_contract.os_alias_disposition(reader, name, relative, source,
+                dispositions.append(profile_contract.os_disposition(reader, name, relative, source,
                     base64.b64decode(row['dynamic']['base64']), base64.b64decode(row['musl']['base64']),
-                    reader.profile_companions['credentials']))
+                    {'credentials': reader.profile_companions['credentials'],
+                     'atomic': reader.profile_companions['atomic']}))
                 expected_differences.append({'case': relative, 'dynamic': suite['dynamic']['outcomes'][relative],
                                              'musl': suite['musl']['outcomes'][relative]})
             else:
                 same(row['musl']['base64'], row['dynamic']['base64'], 'os-test exact raw outcome comparison')
         if profiled_suite:
             same([suite['passed'], suite['differences'], suite['difference_count']],
-                 [False, expected_differences, 4], 'os-test exact four credential differences')
+                 [False, expected_differences, 4 if name == 'basic' else 6],
+                 'os-test exact selected profile differences')
         objects.update(_os_event_graph(reader, name, expected, suite['dynamic'], files, contract))
         _os_product_copy(reader, name, suite['dynamic']['execution_control'], product_roster['entries'], contract)
     oracle = report['musl_oracle']
@@ -1608,7 +1619,7 @@ def _os_test(reader):
         same([roster['schema'], identity['include']['path'], identity['include']['entry_count']],
              ['crabc.x86_64-owned-os-test-musl-include-roster/v1', '/opt/musl-1.2.6/include', len(roster['entries'])],
              'os-test pinned musl header roster')
-    require(not profiled or len(dispositions) == 4, 'os-test fixed credential dispositions are missing')
+    require(not profiled or len(dispositions) == 10, 'os-test fixed profile dispositions are missing')
     return reader.finish('os-test', 'os-test.json', observations, objects, suite_commands=commands,
         qualification={'status': 'profile-qualified' if profiled else 'passed', 'raw_passed': not profiled,
                        'dispositions': dispositions},

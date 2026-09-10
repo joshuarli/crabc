@@ -1,7 +1,8 @@
 # Native POSIX aggregate execution
 
 `owned_posix_native_execution.py` consumes a fully validated three-product POSIX
-family `execution.json` and an installed-product `crypt-profile.json`, selects its installed dynamic product, and executes
+family `execution.json` plus installed-product `crypt-profile.json` and
+`atomic-addressable-profile.json` receipts, selects their shared installed dynamic product, and executes
 five fresh component commands in fixed order: differential, os-test,
 signal-process, pthread-stress, and libc-test. It neither builds products nor
 substitutes the static workload matrix for these native runs.
@@ -34,6 +35,7 @@ starts the pinned native container with private mount authority and no network:
 ./scripts/dev-x86_64.sh owned-posix-native \
   --family-execution .work/x86_64/posix-matrix/execution.json \
   --crypt-profile .work/x86_64/crypt/crypt-profile.json \
+  --atomic-addressable-profile .work/x86_64/atomic/atomic-addressable-profile.json \
   --output .work/x86_64/posix-native
 ```
 
@@ -48,6 +50,7 @@ and the read-only host validation command are:
 python3 -B compat/x86_64/owned_posix_native_execution.py run \
   --family-execution .work/x86_64/posix-matrix/execution.json \
   --crypt-profile .work/x86_64/crypt/crypt-profile.json \
+  --atomic-addressable-profile .work/x86_64/atomic/atomic-addressable-profile.json \
   --output .work/x86_64/posix-native
 python3 -B compat/x86_64/owned_posix_native_execution.py validate \
   .work/x86_64/posix-native/native-execution.json
@@ -58,9 +61,9 @@ A validated `native-execution.json` sets only `native_aggregate_complete`.
 The focused coordinator regressions use explicit prerequisite/native judge
 seams and five actual subprocesses; they do not claim real runtime qualification.
 
-The finite credential-alias and crypt differences retain upstream reports, counts
-and raw exit 1. Only the strict native profile collector may qualify these two
-components; all other outcomes still require raw success. See
+The finite credential-alias, address-taken atomic, and crypt differences retain
+upstream reports, counts and raw exit 1. Only the strict native profile collector
+may qualify these three finite source boundaries; all other outcomes still require raw success. See
 [`owned-posix-native-dispositions.md`](owned-posix-native-dispositions.md) for
 the exact source roster and mandatory same-product companions. The crypt
 receipt and every retained companion artifact are rehashed between steps.
