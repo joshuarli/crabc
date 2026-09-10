@@ -52,6 +52,27 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
+# Check each supplied raw path lexically before realpath can erase a symlink
+# component. Relative paths are made absolute without resolving links; every
+# component must remain a physical checkout path.
+python3 -B - "$ROOT" "$provided_static" "$provided_dynamic" <<'PY'
+import os
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve()
+for raw, name in ((sys.argv[2], 'static'), (sys.argv[3], 'dynamic')):
+    if not raw:
+        continue
+    lexical = Path(os.path.abspath(raw))
+    if not lexical.is_relative_to(root / '.work'):
+        raise SystemExit(f'owned-utmpx {name} product must be a checkout .work directory')
+    cursor = root
+    for component in lexical.relative_to(root).parts:
+        cursor /= component
+        if cursor.is_symlink():
+            raise SystemExit(f'owned-utmpx {name} product must be a checkout .work directory')
+PY
 if [ "$static_was_supplied" -eq 1 ]; then
     provided_static="$(realpath "$provided_static")"
 fi
@@ -208,6 +229,8 @@ weak = {
     'endutent', 'setutent', 'getutent', 'getutid', 'getutline',
     'pututline', 'updwtmp', 'utmpname', 'utmpxname',
 }
+expected = strong | weak
+definitions = Counter()
 strong_seen = Counter()
 weak_seen = Counter()
 text = Path(sys.argv[1]).read_text()
@@ -216,10 +239,15 @@ for line in text.splitlines():
     if len(fields) != 3:
         continue
     _, binding, name = fields
+    if name not in expected:
+        continue
+    definitions[name] += 1
     if name in strong and binding == 'T':
         strong_seen[name] += 1
     if name in weak and binding == 'W':
         weak_seen[name] += 1
+if definitions != Counter({name: 1 for name in expected}):
+    raise SystemExit(f'archive provider multiplicity mismatch: {definitions!r}')
 if strong_seen != Counter({name: 1 for name in strong}):
     raise SystemExit(f'archive strong providers mismatch: {strong_seen!r}')
 if weak_seen != Counter({name: 1 for name in weak}):
@@ -245,6 +273,8 @@ weak = {
     'endutent', 'setutent', 'getutent', 'getutid', 'getutline',
     'pututline', 'updwtmp', 'utmpname', 'utmpxname',
 }
+expected = strong | weak
+definitions = Counter()
 strong_seen = Counter()
 weak_seen = Counter()
 text = Path(sys.argv[1]).read_text()
@@ -253,12 +283,17 @@ for line in text.splitlines():
     if len(fields) < 8:
         continue
     kind, binding, visibility, index, name = fields[3:8]
-    if kind != 'FUNC' or visibility != 'DEFAULT' or index == 'UND':
+    if name not in expected or index == 'UND':
+        continue
+    definitions[name] += 1
+    if kind != 'FUNC' or visibility != 'DEFAULT':
         continue
     if name in strong and binding == 'GLOBAL':
         strong_seen[name] += 1
     if name in weak and binding == 'WEAK':
         weak_seen[name] += 1
+if definitions != Counter({name: 1 for name in expected}):
+    raise SystemExit(f'shared provider multiplicity mismatch: {definitions!r}')
 if strong_seen != Counter({name: 1 for name in strong}):
     raise SystemExit(f'shared strong providers mismatch: {strong_seen!r}')
 if weak_seen != Counter({name: 1 for name in weak}):

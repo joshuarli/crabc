@@ -47,8 +47,8 @@ pub unsafe extern "C" fn getutxent() -> *mut Utmpx {
 /// dereferenced, and this entry does not alter errno.
 ///
 /// # Safety
-/// `query` may be null because this source does not inspect it; any non-null
-/// pointer remains the caller's live object for the duration of the call.
+/// `query` is ignored without dereference. The caller has no pointer validity
+/// or readability requirement for this argument.
 #[no_mangle]
 pub unsafe extern "C" fn getutxid(_query: *const Utmpx) -> *mut Utmpx {
     core::ptr::null_mut()
@@ -60,8 +60,8 @@ pub unsafe extern "C" fn getutxid(_query: *const Utmpx) -> *mut Utmpx {
 /// dereferenced, and this entry does not alter errno.
 ///
 /// # Safety
-/// `query` may be null because this source does not inspect it; any non-null
-/// pointer remains the caller's live object for the duration of the call.
+/// `query` is ignored without dereference. The caller has no pointer validity
+/// or readability requirement for this argument.
 #[no_mangle]
 pub unsafe extern "C" fn getutxline(_query: *const Utmpx) -> *mut Utmpx {
     core::ptr::null_mut()
@@ -73,8 +73,8 @@ pub unsafe extern "C" fn getutxline(_query: *const Utmpx) -> *mut Utmpx {
 /// dereferenced, and this entry does not alter errno.
 ///
 /// # Safety
-/// `record` may be null because this source does not inspect it; any non-null
-/// pointer remains the caller's live object for the duration of the call.
+/// `record` is ignored without dereference. The caller has no pointer validity
+/// or readability requirement for this argument.
 #[no_mangle]
 pub unsafe extern "C" fn pututxline(_record: *const Utmpx) -> *mut Utmpx {
     core::ptr::null_mut()

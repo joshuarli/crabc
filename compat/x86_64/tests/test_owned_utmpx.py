@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -78,6 +79,97 @@ class OwnedUtmpxTests(unittest.TestCase):
                     f"usage: {RUNNER} [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n",
                 )
                 self.assertEqual(list(Path(temporary).iterdir()), [])
+
+    def test_symlink_product_is_rejected_before_normalization_or_payload_access(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="utmpx-product-target.", dir=scratch) as target:
+            link = scratch / "utmpx-product-link"
+            link.symlink_to(target, target_is_directory=True)
+            try:
+                with tempfile.TemporaryDirectory(prefix="utmpx-parser.", dir=scratch) as temporary:
+                    result = self.invoke((str(link),), temporary)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(
+                        "owned-utmpx dynamic product must be a checkout .work directory",
+                        result.stderr,
+                    )
+                    self.assertEqual(result.stdout, "")
+                    self.assertEqual(list(Path(temporary).iterdir()), [])
+            finally:
+                link.unlink(missing_ok=True)
+
+    def test_archive_symbol_judge_rejects_duplicate_wrong_binding(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        function_start = source.index("assert_archive_symbols()")
+        script_start = source.index("<<'PY'\n", function_start) + len("<<'PY'\n")
+        script_end = source.index("\nPY\n}", script_start)
+        descriptor, symbol_path = tempfile.mkstemp(
+            prefix="utmpx-symbols.", dir=ROOT / ".work/x86_64/tmp"
+        )
+        os.close(descriptor)
+        symbols = Path(symbol_path)
+        try:
+            strong = (
+                "endutxent", "setutxent", "getutxent", "getutxid",
+                "getutxline", "pututxline", "updwtmpx",
+            )
+            weak = (
+                "endutent", "setutent", "getutent", "getutid", "getutline",
+                "pututline", "updwtmp", "utmpname", "utmpxname",
+            )
+            symbols.write_text(
+                "".join(f"00000000 T {name}\n" for name in strong)
+                + "".join(f"00000000 W {name}\n" for name in weak)
+                + "00000000 W endutxent\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, "-", str(symbols)],
+                input=source[script_start:script_end],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+        finally:
+            symbols.unlink(missing_ok=True)
+
+    def test_shared_symbol_judge_rejects_duplicate_wrong_binding(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        function_start = source.index("assert_shared_symbols()")
+        script_start = source.index("<<'PY'\n", function_start) + len("<<'PY'\n")
+        script_end = source.index("\nPY\n}", script_start)
+        descriptor, symbol_path = tempfile.mkstemp(
+            prefix="utmpx-dyn-symbols.", dir=ROOT / ".work/x86_64/tmp"
+        )
+        os.close(descriptor)
+        symbols = Path(symbol_path)
+        try:
+            strong = (
+                "endutxent", "setutxent", "getutxent", "getutxid",
+                "getutxline", "pututxline", "updwtmpx",
+            )
+            weak = (
+                "endutent", "setutent", "getutent", "getutid", "getutline",
+                "pututline", "updwtmp", "utmpname", "utmpxname",
+            )
+            symbols.write_text(
+                "".join(f"  1: 00000000 0 FUNC GLOBAL DEFAULT 1 {name}\n" for name in strong)
+                + "".join(f"  1: 00000000 0 FUNC WEAK DEFAULT 1 {name}\n" for name in weak)
+                + "  1: 00000000 0 FUNC WEAK DEFAULT 1 endutxent\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                [sys.executable, "-", str(symbols)],
+                input=source[script_start:script_end],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(result.returncode, 0)
+        finally:
+            symbols.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

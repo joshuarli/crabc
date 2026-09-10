@@ -48,11 +48,13 @@ set errno to `ENOTSUP`; their ignored path is never read. The source's internal
 ## Focused evidence
 
 `compat/x86_64/run_owned_utmpx.sh [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]`
-is the focused runner. It rejects empty or ambiguous product arguments before
-creating evidence, validates every supplied or freshly built product payload,
+is the focused runner. It rejects empty, ambiguous, or symlinked product
+arguments before canonicalization and evidence creation, validates every
+supplied or freshly built product payload,
 and compiles C11 and C++17 witnesses against both pinned musl headers and the
-installed project headers. The witnesses use typed pointers for all seven
-strong and nine weak declarations and retain unmangled C linkage.
+source project headers. The witnesses use typed pointers for all seven strong
+and nine weak declarations and retain unmangled C linkage; the ordinary
+workload below is the installed-header proof.
 
 The runner compiles `owned_utmpx_probe.c` exactly once through the installed
 dynamic driver. An installed-header dependency audit records the driver,
