@@ -21,13 +21,21 @@ across the three replays.
 The required native aggregate remains open. Supplied-product differential,
 signal/process, source-correct pthread stress, full OS-test and libc-test
 runners, and their independent observation collectors are integrated.
-The full libc-test run against the clean `0108a9e4` product records 424 passes,
-one missing-provider link (`random`) and nine runtime failures:
-`.work/x86_64/tmp/owned-libc-test.GETcCg/libc-test.json`. The same product's
-full ten-suite OS-test run passes eight suites; include retains 37 differences
-and basic retains 43:
-`.work/x86_64/tmp/owned-os-test.suth2okb/os-test.json`. These retained failures
-do not satisfy aggregate acceptance. The composite execution owner is now
+The full 434-unit libc-test run against the clean `bc911f5d` product records
+427 passes, one missing-provider link (`random`) and six runtime failures:
+`functional/crypt`, `functional/strptime`, `functional/wordexp`, `math/fmaf`,
+`math/fmal` and `math/powf`. The last five have identical candidate and musl
+failure observations; they remain failures pending their contract decisions.
+The report is
+`.work/worktrees/aio_native_aggregate/.work/x86_64/libc-test-measurement/tmp/owned-libc-test.a0vxiq/libc-test.json`.
+The same product's full ten-suite OS-test run passes eight suites. Include
+retains twelve differences: six missing PRNG APIs and six atomic addressability
+extensions. Basic retains ten: the same six PRNG APIs and four selected
+credential aliases. The report is
+`.work/worktrees/aio_native_aggregate/.work/x86_64/os-measurement/tmp/owned-os-test.6n_4lh1h/os-test.json`.
+The credential, atomic and crypt profile dispositions still require their
+same-product companions; they cannot account for the PRNG or matched upstream
+failures. These retained results do not satisfy aggregate acceptance. The composite execution owner is now
 implemented through `owned-posix-native`; passing full native results and a
 fresh prerequisite matrix remain required.
 The pthread component preserves the original fixture and failed observations;
