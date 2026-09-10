@@ -535,6 +535,278 @@ def _audit_elf(executable: Path, linkage: str) -> None:
         _fail("dynamic linked executable search path differs from the owned runtime")
 
 
+def _retained_source_path(root: Path, source_mount: str, value: object, receipt: Path,
+                          description: str) -> Path:
+    """Translate one recorded native path to the physical host checkout.
+
+    Producer validation intentionally reads the live compiler/linker paths in a
+    native container.  A later receipt reader cannot depend on those paths
+    existing on its host, so it admits only the fixed native `/workspace`
+    spelling and translates it through the caller's physical checkout root.
+    Relative sidecars remain relative to the link receipt itself.
+    """
+
+    if source_mount != "/workspace":
+        _fail("retained link source mount must be /workspace")
+    if not isinstance(value, str) or not value:
+        _fail(f"{description} has no path")
+    candidate = Path(value)
+    if candidate.is_absolute():
+        prefix = source_mount + "/"
+        if not value.startswith(prefix) or ".." in candidate.parts:
+            _fail(f"{description} escapes retained source mount")
+        candidate = root / value[len(prefix):]
+    else:
+        candidate = receipt.parent / candidate
+    return _physical_regular(candidate, description)
+
+
+def _retained_recorded(root: Path, source_mount: str, path: Path, description: str) -> str:
+    path = _physical_regular(path, description)
+    root = _physical_directory(root, "retained checkout root")
+    if not path.is_relative_to(root):
+        _fail(f"{description} is outside retained checkout root")
+    return source_mount + "/" + path.relative_to(root).as_posix()
+
+
+def _retained_file_record(root: Path, source_mount: str, value: object, receipt: Path,
+                          expected: Path, description: str) -> None:
+    record = _require_keys(value, {"path", "sha256"}, description)
+    recorded = _retained_source_path(root, source_mount, record["path"], receipt, description)
+    expected = _physical_regular(expected, description)
+    if recorded != expected:
+        _fail(f"{description} path differs from retained evidence")
+    _require_digest(record["sha256"], _sha256(expected), description)
+
+
+def _retained_linker(value: object, tool: object) -> str:
+    record = _require_keys(value, {"path", "sha256"}, "resolved linker")
+    expected = _require_keys(tool, {"path", "sha256"}, "retained linker")
+    path, digest = record["path"], record["sha256"]
+    if (not isinstance(path, str) or not Path(path).is_absolute() or ".." in Path(path).parts
+            or Path(path).name != "ld.lld" or not isinstance(digest, str)
+            or SHA256.fullmatch(digest) is None):
+        _fail("retained linker identity is malformed")
+    if record != expected:
+        _fail("resolved linker differs from retained tool seal")
+    return path
+
+
+def _retained_static_plan(root: Path, source_mount: str, product: Path, linkage: str) -> list[str]:
+    mode = LINKAGES[linkage]
+    library = product / "usr/lib"
+    return [
+        "ld.lld", "-static", *(["-pie"] if linkage == "static-pie" else []),
+        "--no-dynamic-linker", "--no-undefined", "--gc-sections", "-z", "relro", "-z", "now",
+        "-e", "_start", _retained_recorded(root, source_mount, library / mode["crt"], "static CRT"),
+        _retained_recorded(root, source_mount, library / "crti.o", "static CRT"),
+        "<application-objects>", _retained_recorded(root, source_mount, library / "libc.a", "static libc"),
+        _retained_recorded(root, source_mount, library / "libcrabc-builtins.a", "static builtins"),
+        _retained_recorded(root, source_mount, library / "crtn.o", "static CRT"), "-o", "<output>",
+    ]
+
+
+def _validate_retained_static_trace(trace: Path, root: Path, source_mount: str, product: Path,
+                                    workload: Path, linkage: str) -> None:
+    mode, library = LINKAGES[linkage], product / "usr/lib"
+    direct = {
+        _retained_recorded(root, source_mount, library / mode["crt"], "static CRT"),
+        _retained_recorded(root, source_mount, library / "crti.o", "static CRT"),
+        _retained_recorded(root, source_mount, workload, "static workload"),
+        _retained_recorded(root, source_mount, library / "crtn.o", "static CRT"),
+    }
+    archives = {
+        _retained_recorded(root, source_mount, library / "libc.a", "static libc"),
+        _retained_recorded(root, source_mount, library / "libcrabc-builtins.a", "static builtins"),
+    }
+    seen: set[str] = set()
+    try:
+        lines = trace.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        raise ProductEvidenceError(f"retained static link trace is unreadable: {trace}") from error
+    for line in lines:
+        if not line:
+            continue
+        if line in direct:
+            seen.add(line)
+        elif any(line == archive or (line.startswith(archive + "(") and line.endswith(")"))
+                 for archive in archives):
+            seen.add(next(archive for archive in archives
+                          if line == archive or (line.startswith(archive + "(") and line.endswith(")"))))
+        else:
+            _fail("retained static link trace names an unowned input")
+    missing = sorted((direct | archives) - seen)
+    if missing:
+        _fail("retained static link trace omits an owned input")
+
+
+def _validate_retained_static_receipt(root: Path, source_mount: str, product: Path, workload: Path,
+                                      executable: Path, receipt: Path, linkage: str, linker: object) -> str:
+    record = _json_object(receipt, "retained static link receipt")
+    expected_keys = {"schema", "format", "target", "mode", "resolved_linker", "owned_link_contract", "input_receipts", "output", "map", "trace"}
+    _require_keys(record, expected_keys, "retained static link receipt")
+    mode = LINKAGES[linkage]
+    if (record["schema"], record["format"], record["target"]) != (1, STATIC_FORMAT, TARGET):
+        _fail("retained static link receipt has the wrong sealed driver identity")
+    if record["mode"] != {
+        "id": mode["receipt_mode"], "elf_type": mode["elf_type"], "crt_object": mode["crt"], "interpreter": "absent",
+    }:
+        _fail("retained static link receipt mode differs from requested linkage")
+    _retained_linker(record["resolved_linker"], linker)
+    if record["owned_link_contract"] != _retained_static_plan(root, source_mount, product, linkage):
+        _fail("retained static link receipt sealed link contract differs")
+    inputs = record["input_receipts"]
+    if not isinstance(inputs, list) or len(inputs) != 6:
+        _fail("retained static link receipt has the wrong input roster")
+    library = product / "usr/lib"
+    expected_inputs = (
+        ("crt-entry", "usr/lib/" + str(mode["crt"]), library / str(mode["crt"])),
+        ("crt-prologue", "usr/lib/crti.o", library / "crti.o"),
+        ("libc", "usr/lib/libc.a", library / "libc.a"),
+        ("builtins", "usr/lib/libcrabc-builtins.a", library / "libcrabc-builtins.a"),
+        ("crt-epilogue", "usr/lib/crtn.o", library / "crtn.o"),
+        ("application", _retained_recorded(root, source_mount, workload, "static workload"), workload),
+    )
+    for received, (role, expected_path, path) in zip(inputs, expected_inputs):
+        item = _require_keys(received, {"role", "path", "sha256"}, "retained static input receipt")
+        if item["role"] != role or item["path"] != expected_path:
+            _fail("retained static link receipt input differs from sealed roster")
+        _require_digest(item["sha256"], _sha256(path), f"retained static {role} input")
+    _retained_file_record(root, source_mount, record["output"], receipt, executable, "retained static output")
+    map_path = _physical_regular(receipt.with_suffix(".map"), "retained static link map")
+    trace_path = _physical_regular(receipt.with_suffix(".trace"), "retained static link trace")
+    _retained_file_record(root, source_mount, record["map"], receipt, map_path, "retained static link map")
+    _retained_file_record(root, source_mount, record["trace"], receipt, trace_path, "retained static link trace")
+    _validate_retained_static_trace(trace_path, root, source_mount, product, workload, linkage)
+    return _sha256(receipt)
+
+
+def _retained_dynamic_command(root: Path, source_mount: str, product: Path, workload: Path,
+                              executable: Path, linkage: str, linker: str) -> list[str]:
+    library = product / "usr/lib"
+    entry = str(LINKAGES[linkage]["crt"])
+    recorded = lambda path, description: _retained_recorded(root, source_mount, path, description)
+    return [
+        linker, *(["-pie"] if linkage == "pie" else []), "--hash-style=sysv", "-z", "relro", "-z", "now",
+        "-z", "noexecstack", "-z", "text", "--no-undefined", "--allow-shlib-undefined", "--enable-new-dtags",
+        "-rpath", "/usr/lib", "--dynamic-linker", INTERPRETER,
+        *(recorded(path, "dynamic link input") for path in (
+            library / entry, library / "crabc-dynamic-attach.o", library / "crti.o", workload,
+            library / "libc.so", library / "libcrabc-builtins.a", library / "crtn.o",
+        )), "-o", recorded(executable, "dynamic output"),
+    ]
+
+
+def _validate_retained_dynamic_trace(value: object, root: Path, source_mount: str, product: Path,
+                                     workload: Path, linkage: str) -> None:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        _fail("retained dynamic link trace is not a string list")
+    library = product / "usr/lib"
+    recorded = lambda path, description: _retained_recorded(root, source_mount, path, description)
+    direct = {
+        recorded(library / str(LINKAGES[linkage]["crt"]), "dynamic CRT"),
+        recorded(library / "crabc-dynamic-attach.o", "dynamic attach object"),
+        recorded(library / "crti.o", "dynamic CRT"), recorded(workload, "dynamic workload"),
+        recorded(library / "libc.so", "dynamic libc"), recorded(library / "crtn.o", "dynamic CRT"),
+    }
+    archive = recorded(library / "libcrabc-builtins.a", "dynamic builtins")
+    if (any(item not in direct and item != archive and not (item.startswith(archive + "(") and item.endswith(")"))
+            for item in value) or not direct <= set(value)):
+        _fail("retained dynamic link trace admits foreign or missing inputs")
+
+
+def _validate_retained_dynamic_receipt(root: Path, source_mount: str, product: Path, workload: Path,
+                                       executable: Path, receipt: Path, linkage: str, manifest: Path,
+                                       linker: object) -> str:
+    record = _json_object(receipt, "retained dynamic link receipt")
+    expected_keys = {
+        "schema", "format", "mode", "binding", "runtime_imports", "application_runpath", "output_path",
+        "output_sha256", "manifest_sha256", "application_dsos", "owned_runtime_inputs", "input_receipts",
+        "resolved_linker", "link_command", "link_trace", "campaign_complete",
+    }
+    _require_keys(record, expected_keys, "retained dynamic link receipt")
+    mode = LINKAGES[linkage]
+    if (record["schema"], record["format"], record["mode"]) != (1, DYNAMIC_PRODUCT_FORMAT, mode["receipt_mode"]):
+        _fail("retained dynamic link receipt mode differs from requested linkage")
+    if record["binding"] != "now" or record["runtime_imports"] != [] or record["application_dsos"] != {}:
+        _fail("retained dynamic link receipt admits foreign runtime imports or DSOs")
+    if record["application_runpath"] != "/usr/lib" or record["campaign_complete"] is not False:
+        _fail("retained dynamic link receipt search-path or campaign state drifted")
+    if record["output_path"] != _retained_recorded(root, source_mount, executable, "dynamic output"):
+        _fail("retained dynamic output path differs")
+    _require_digest(record["output_sha256"], _sha256(executable), "retained dynamic output")
+    _require_digest(record["manifest_sha256"], _sha256(manifest), "retained dynamic product manifest")
+    library = product / "usr/lib"
+    runtime = [
+        library / "crti.o", library / "libc.so", library / "crtn.o", library / str(mode["crt"]),
+        library / "crabc-dynamic-attach.o",
+    ]
+    archive = library / "libcrabc-builtins.a"
+    expected_roster = sorted(path.relative_to(product).as_posix() for path in [*runtime, archive])
+    if record["owned_runtime_inputs"] != expected_roster:
+        _fail("retained dynamic link receipt owned runtime roster differs")
+    expected_inputs = [*((path, "runtime") for path in runtime), (workload, "workload"), (archive, "runtime")]
+    if not isinstance(record["input_receipts"], list) or len(record["input_receipts"]) != len(expected_inputs):
+        _fail("retained dynamic link receipt has the wrong input roster")
+    for received, (expected, role) in zip(record["input_receipts"], expected_inputs):
+        item = _require_keys(received, {"path", "sha256"}, "retained dynamic input receipt")
+        if item["path"] != _retained_recorded(root, source_mount, expected, "dynamic link input"):
+            _fail("retained dynamic link receipt input path differs")
+        _require_digest(item["sha256"], _sha256(expected), f"retained dynamic {role} input")
+    retained_linker = _retained_linker(record["resolved_linker"], linker)
+    if record["link_command"] != _retained_dynamic_command(
+            root, source_mount, product, workload, executable, linkage, retained_linker):
+        _fail("retained dynamic link command differs")
+    _validate_retained_dynamic_trace(record["link_trace"], root, source_mount, product, workload, linkage)
+    return _sha256(receipt)
+
+
+def validate_retained_link(root: Path, source_mount: str, product: Path, workload: Path,
+                           executable: Path, receipt: Path, linkage: str, linker: object) -> dict[str, str]:
+    """Read one native `/workspace` link receipt after its container has gone away.
+
+    Unlike :func:`validate_link`, this reader never probes the recorded native
+    linker.  It requires its sealed identity from an outer before/after tool
+    roster, translates only the fixed source mount to the host checkout, and
+    still rehashes every current product payload, link input, output, sidecar,
+    receipt, and ELF view.
+    """
+
+    if source_mount != "/workspace":
+        _fail("retained link source mount must be /workspace")
+    if linkage not in LINKAGES:
+        _fail("retained linkage must be static, static-pie, pie, or non-pie")
+    checkout = _physical_directory(root, "retained checkout root")
+    product_path = _physical_directory(product, "retained owned product")
+    workload_path = _physical_regular(workload, "retained workload object")
+    executable_path = _physical_regular(executable, "retained linked executable")
+    receipt_path = _physical_regular(receipt, "retained link receipt")
+    if not all(path.is_relative_to(checkout) for path in (product_path, workload_path, executable_path, receipt_path)):
+        _fail("retained link evidence escapes checkout root")
+    if linkage in {"static", "static-pie"}:
+        manifest, _ = _validate_static_product(product_path)
+        receipt_hash = _validate_retained_static_receipt(
+            checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, linker
+        )
+        product_format = STATIC_PRODUCT_FORMAT
+    else:
+        manifest, _ = _validate_dynamic_product(product_path)
+        receipt_hash = _validate_retained_dynamic_receipt(
+            checkout, source_mount, product_path, workload_path, executable_path, receipt_path, linkage, manifest, linker
+        )
+        product_format = DYNAMIC_PRODUCT_FORMAT
+    _audit_elf(executable_path, linkage)
+    return {
+        "linkage": linkage,
+        "product": str(product_path),
+        "product_format": product_format,
+        "product_manifest_sha256": _sha256(manifest),
+        "workload_sha256": _sha256(workload_path),
+        "executable_sha256": _sha256(executable_path),
+        "receipt_sha256": receipt_hash,
+    }
+
+
 def validate_link(
     product: Path, workload: Path, executable: Path, receipt: Path, linkage: str
 ) -> dict[str, str]:

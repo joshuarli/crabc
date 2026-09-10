@@ -210,6 +210,16 @@ static and dynamic products, complete ordered qualification, native
 performance, promotion validation, public-document update, and a final clean
 aggregate rerun. Until then, describe results as private foundation evidence.
 
+## Installed pthread/TLS behavior component
+
+`./scripts/dev-x86_64.sh owned-pthread-family --family-execution FILE --output NEW_DIR`
+replays one installed-header C11/TLS/synchronization composition against the
+three sealed static/dynamic product pairs and binds it to the existing POSIX
+matrix and dynamic qualification case receipts. Its
+[component contract](owned-pthread-family.md) has an exact behavior-by-mode
+roster. The resulting receipt remains non-promoting: it does not complete
+`libc.pthread-tls` or public x86 support.
+
 ## Owned pthread scheduling and defaults
 
 `./scripts/dev-x86_64.sh owned-pthread-scheduling` links one project-header

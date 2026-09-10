@@ -1,0 +1,239 @@
+# Installed pthread/TLS family evidence is finite and non-promoting.  Existing
+# private source/archive proofs remain prerequisites; every row below instead
+# names installed-product behavior and the exact executable cells it requires.
+schema = "crabc.x86_64-owned-pthread-family-roster/v1"
+family = "libc.pthread-tls"
+capabilities = [
+  "process.atfork-exit-hooks",
+  "thread.pthread-c11",
+  "time.posix-timer-thread-notify",
+]
+cross_cut = "tls-dtv"
+
+[mode_sets]
+static = [
+  "primary:static-et-exec",
+  "primary:static-pie",
+  "reproduction:static-et-exec",
+  "reproduction:static-pie",
+  "extracted:static-et-exec",
+  "extracted:static-pie",
+]
+dynamic = [
+  "installed:dynamic-pie-kernel",
+  "installed:dynamic-pie-direct",
+  "installed:dynamic-non-pie-kernel",
+  "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel",
+  "second:dynamic-pie-direct",
+  "second:dynamic-non-pie-kernel",
+  "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel",
+  "extracted:dynamic-pie-direct",
+  "extracted:dynamic-non-pie-kernel",
+  "extracted:dynamic-non-pie-direct",
+]
+all = [
+  "primary:static-et-exec",
+  "primary:static-pie",
+  "reproduction:static-et-exec",
+  "reproduction:static-pie",
+  "extracted:static-et-exec",
+  "extracted:static-pie",
+  "installed:dynamic-pie-kernel",
+  "installed:dynamic-pie-direct",
+  "installed:dynamic-non-pie-kernel",
+  "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel",
+  "second:dynamic-pie-direct",
+  "second:dynamic-non-pie-kernel",
+  "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel",
+  "extracted:dynamic-pie-direct",
+  "extracted:dynamic-non-pie-kernel",
+  "extracted:dynamic-non-pie-direct",
+]
+
+# This is the one new required composition. It uses one unchanged C object per
+# product pair and compares each mode with pinned musl. Its exact handshake
+# invariants are owned by the source and runner, not inferred from headers or
+# archive members.
+[[required]]
+id = "c11-tls-synchronization-composition"
+capability = "thread.pthread-c11"
+kind = "composition"
+runner = "compat/x86_64/run_owned_pthread_family_composition.sh"
+source = "compat/x86_64/owned_pthread_family_composition.c"
+modes = [
+  "primary:static-et-exec", "primary:static-pie", "reproduction:static-et-exec", "reproduction:static-pie", "extracted:static-et-exec", "extracted:static-pie",
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "C11 create/join result; distinct initialized and zero TLS; contended call_once publication; TSD destructor rearm/order before join; reusable barrier serial return; rwlock reader/writer publication; contended spin state."
+
+[[required]]
+id = "atfork-static-fork"
+capability = "process.atfork-exit-hooks"
+kind = "matrix"
+workload = "static-fork"
+modes = ["primary:static-et-exec", "primary:static-pie", "reproduction:static-et-exec", "reproduction:static-pie", "extracted:static-et-exec", "extracted:static-pie"]
+behavior = "Static atfork registry and static fork/exec retain their separate product evidence."
+
+[[required]]
+id = "atfork-dynamic-fork"
+capability = "process.atfork-exit-hooks"
+kind = "matrix"
+workload = "fork"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Dynamic fork preserves the selected initial graph, worker survival, and owned layout paths."
+
+[[required]]
+id = "atfork-registry"
+capability = "process.atfork-exit-hooks"
+kind = "dynamic-qualification"
+case = "atfork-registry"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Ordered parent/child callbacks and failed-fork parent completion."
+
+[[required]]
+id = "pthread-exit-tls"
+capability = "thread.pthread-c11"
+kind = "dynamic-qualification"
+case = "pthread-exit"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Initial main and last-worker exit through the owned dynamic runtime."
+
+[[required]]
+id = "pthread-signal"
+capability = "thread.pthread-c11"
+kind = "matrix"
+workload = "pthread-signal"
+modes = [
+  "primary:static-et-exec", "primary:static-pie", "reproduction:static-et-exec", "reproduction:static-pie", "extracted:static-et-exec", "extracted:static-pie",
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Thread-directed signal delivery through installed static and dynamic products."
+
+[[required]]
+id = "timer-thread-notify-tls-dtv"
+capability = "time.posix-timer-thread-notify"
+kind = "matrix"
+workload = "posix-timers"
+modes = [
+  "primary:static-et-exec", "primary:static-pie", "reproduction:static-et-exec", "reproduction:static-pie", "extracted:static-et-exec", "extracted:static-pie",
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "SIGEV_THREAD callback lifecycle, cancellation, TSD cleanup, TLS reset, DTV preservation, and post-fork reuse."
+
+[[required]]
+id = "pthread-join-cancel"
+capability = "thread.pthread-c11"
+kind = "dynamic-qualification"
+case = "pthread-join-cancel"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Try/timed join ownership, cancellation cleanup, and target reclamation."
+
+[[required]]
+id = "pthread-cond-cancel"
+capability = "thread.pthread-c11"
+kind = "dynamic-qualification"
+case = "pthread-cond-cancel"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Main/worker cancellation, disabled and masked state, mutex reacquisition, and reuse."
+
+[[required]]
+id = "pthread-cond-timed"
+capability = "thread.pthread-c11"
+kind = "dynamic-qualification"
+case = "pthread-cond-timed"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Timed and process-shared condition handoffs with C11 timed-condition coverage."
+
+[[required]]
+id = "pthread-mutex"
+capability = "thread.pthread-c11"
+kind = "dynamic-qualification"
+case = "pthread-mutex"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Recursive, error-checking, timed, robust, priority-inheritance, condition, and C11 mutex behavior."
+
+[[required]]
+id = "pthread-spin"
+capability = "thread.pthread-c11"
+kind = "dynamic-qualification"
+case = "pthread-spin"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Private and process-shared spin lock state and publication."
+
+[[required]]
+id = "pthread-getattr"
+capability = "thread.pthread-c11"
+kind = "dynamic-qualification"
+case = "pthread-getattr"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Live-thread stack, guard, detach, filtering, and fork metadata."
+
+[[required]]
+id = "pthread-scheduling"
+capability = "thread.pthread-c11"
+kind = "dynamic-qualification"
+case = "pthread-scheduling"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Attributes, inherited scheduling, default attributes, and C11 thread creation."
+
+[[required]]
+id = "pthread-cpuclock"
+capability = "thread.pthread-c11"
+kind = "dynamic-qualification"
+case = "pthread-cpuclock"
+modes = [
+  "installed:dynamic-pie-kernel", "installed:dynamic-pie-direct", "installed:dynamic-non-pie-kernel", "installed:dynamic-non-pie-direct",
+  "second:dynamic-pie-kernel", "second:dynamic-pie-direct", "second:dynamic-non-pie-kernel", "second:dynamic-non-pie-direct",
+  "extracted:dynamic-pie-kernel", "extracted:dynamic-pie-direct", "extracted:dynamic-non-pie-kernel", "extracted:dynamic-non-pie-direct",
+]
+behavior = "Worker and parent CPU-clock IDs, clock access, and errno preservation."

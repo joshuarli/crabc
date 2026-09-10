@@ -600,6 +600,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
   owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  execute the prepared static and dynamic POSIX family matrix
   owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --output NEW_DIR  execute the five native POSIX components on the matrix's installed product
+  owned-pthread-family --family-execution FILE --output NEW_DIR [--jobs 1|2|3]  validate installed pthread/TLS behavior on the matrix products
+  owned-pthread-family-composition --static-sysroot STATIC DYNAMIC  replay the bounded supplied-product C11/TLS composition
   owned-posix-filesystem [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX filesystem provider composition
   owned-nftw-relative-base [DYNAMIC_SYSROOT]  regress installed nftw relative FTW.base callback metadata
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
@@ -2800,6 +2802,48 @@ prepare_owned_posix_native_arguments() {
     atomic_receipt="$(translate_owned_posix_product "$atomic_receipt" receipt-file)" || exit 2
     output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
     POSIX_NATIVE_ARGUMENTS=(--family-execution "$family_receipt" --crypt-profile "$crypt_receipt" --atomic-addressable-profile "$atomic_receipt" --output "$output")
+}
+
+prepare_owned_pthread_family_arguments() {
+    local family_receipt='' output='' jobs='3' jobs_seen=0
+    local expected='usage: ./scripts/dev-x86_64.sh owned-pthread-family --family-execution FILE --output NEW_DIR [--jobs 1|2|3]'
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --family-execution|--output)
+                [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$expected"
+                if [ "$1" = --family-execution ]; then
+                    [ -z "$family_receipt" ] || fail "$expected"
+                    family_receipt="$2"
+                else
+                    [ -z "$output" ] || fail "$expected"
+                    output="$2"
+                fi
+                shift 2
+                ;;
+            --jobs)
+                [ "$#" -ge 2 ] || fail "$expected"
+                [ "$jobs_seen" -eq 0 ] || fail "$expected"
+                case "$2" in 1|2|3) jobs="$2" ;; *) fail "$expected" ;; esac
+                jobs_seen=1
+                shift 2
+                ;;
+            *) fail "$expected" ;;
+        esac
+    done
+    [ -n "$family_receipt" ] && [ -n "$output" ] || fail "$expected"
+    family_receipt="$(translate_owned_posix_product "$family_receipt" receipt-file)" || exit 2
+    output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
+    PTHREAD_FAMILY_ARGUMENTS=(--family-execution "$family_receipt" --output "$output" --jobs "$jobs")
+}
+
+prepare_owned_pthread_family_composition_arguments() {
+    local expected='usage: ./scripts/dev-x86_64.sh owned-pthread-family-composition --static-sysroot STATIC DYNAMIC'
+    [ "$#" -eq 3 ] && [ "$1" = --static-sysroot ] && [ -n "$2" ] && [ -n "$3" ] \
+        && [[ "$2" != -* ]] && [[ "$3" != -* ]] || fail "$expected"
+    local static_product dynamic_product
+    static_product="$(translate_owned_posix_product "$2")" || exit 2
+    dynamic_product="$(translate_owned_posix_product "$3")" || exit 2
+    PTHREAD_COMPOSITION_ARGUMENTS=(--static-sysroot "$static_product" "$dynamic_product")
 }
 
 prepare_owned_posix_replay_arguments() {
@@ -5932,7 +5976,7 @@ case "$command" in
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
     qualification-manifest) ;;
-    owned-static-sysroot|owned-posix-static-products|owned-posix-family|owned-posix-native) ;;
+    owned-static-sysroot|owned-posix-static-products|owned-posix-family|owned-posix-native|owned-pthread-family|owned-pthread-family-composition) ;;
     lua-static-source-build) ;;
     lua-dynamic-source-build) ;;
     libc-owned-wordexp) ;;
@@ -6091,6 +6135,14 @@ case "$command" in
     owned-atomic-addressable-profile)
         prepare_owned_dynamic_product_argument "$command" "$@"
         set -- "${OWNED_DYNAMIC_PRODUCT_ARGUMENTS[@]}"
+        ;;
+    owned-pthread-family)
+        prepare_owned_pthread_family_arguments "$@"
+        set -- "${PTHREAD_FAMILY_ARGUMENTS[@]}"
+        ;;
+    owned-pthread-family-composition)
+        prepare_owned_pthread_family_composition_arguments "$@"
+        set -- "${PTHREAD_COMPOSITION_ARGUMENTS[@]}"
         ;;
     owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-utmpx|owned-account-files|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation)
         prepare_owned_posix_replay_arguments "$command" "$@"
@@ -8047,6 +8099,14 @@ PY
     owned-posix-native)
         ensure_image
         run_in_dynamic_loader_mount_container python3 -B /workspace/compat/x86_64/owned_posix_native_execution.py run "$@"
+        ;;
+    owned-pthread-family)
+        ensure_image
+        run_in_dynamic_loader_mount_container python3 -B /workspace/compat/x86_64/owned_pthread_family.py run "$@"
+        ;;
+    owned-pthread-family-composition)
+        ensure_image
+        run_in_dynamic_loader_mount_container bash /workspace/compat/x86_64/run_owned_pthread_family_composition.sh "$@"
         ;;
     owned-unix-mechanisms)
         [ "$#" -le 1 ] || fail "owned-unix-mechanisms takes at most one dynamic sysroot"

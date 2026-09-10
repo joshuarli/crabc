@@ -261,6 +261,61 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         with mock.patch.object(evidence, "_readelf", return_value=self.readelf(linkage)):
             return evidence.validate_link(product, self.workload, self.executable, receipt, linkage)
 
+    def retained_receipt(self, linkage: str) -> tuple[Path, dict[str, str]]:
+        """Rewrite a native `/workspace` receipt without materializing its linker."""
+
+        receipt = self.static_receipt(linkage) if linkage in {"static", "static-pie"} else self.dynamic_receipt(linkage)
+        record = json.loads(receipt.read_text(encoding="utf-8"))
+        host = str(self.root)
+
+        def mounted(value: object) -> object:
+            if isinstance(value, str):
+                return "/workspace" + value[len(host):] if value.startswith(host + "/") else value
+            if isinstance(value, list):
+                return [mounted(item) for item in value]
+            if isinstance(value, dict):
+                return {key: mounted(item) for key, item in value.items()}
+            return value
+
+        record = mounted(record)
+        assert isinstance(record, dict)
+        tools = {"path": "/opt/native-tools/ld.lld", "sha256": digest(self.linker)}
+        record["resolved_linker"] = dict(tools)
+        if "link_command" in record:
+            record["link_command"][0] = tools["path"]
+        trace = receipt.with_suffix(".trace")
+        if trace.exists():
+            trace.write_text(trace.read_text(encoding="utf-8").replace(host + "/", "/workspace/"), encoding="utf-8")
+            record["trace"]["sha256"] = digest(trace)
+        self.write_json(receipt, record)
+        return receipt, tools
+
+    def test_retained_reader_reconstructs_source_mounted_receipt_without_native_linker(self) -> None:
+        for linkage in ("static", "static-pie", "pie", "non-pie"):
+            with self.subTest(linkage=linkage):
+                receipt, linker = self.retained_receipt(linkage)
+                product = self.static if linkage in {"static", "static-pie"} else self.dynamic
+                with mock.patch.object(evidence, "_readelf", return_value=self.readelf(linkage)):
+                    identity = evidence.validate_retained_link(
+                        self.root, "/workspace", product, self.workload, self.executable,
+                        receipt, linkage, linker,
+                    )
+                self.assertEqual(identity["linkage"], linkage)
+
+    def test_retained_reader_rejects_changed_source_mount_or_linker(self) -> None:
+        receipt, linker = self.retained_receipt("pie")
+        with mock.patch.object(evidence, "_readelf", return_value=self.readelf("pie")):
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "source mount"):
+                evidence.validate_retained_link(
+                    self.root, "/not-workspace", self.dynamic, self.workload, self.executable,
+                    receipt, "pie", linker,
+                )
+            with self.assertRaisesRegex(evidence.ProductEvidenceError, "resolved linker"):
+                evidence.validate_retained_link(
+                    self.root, "/workspace", self.dynamic, self.workload, self.executable,
+                    receipt, "pie", {"path": "/opt/native-tools/other-ld.lld", "sha256": linker["sha256"]},
+                )
+
     def test_accepts_each_sealed_linkage_and_returns_bound_identity(self) -> None:
         for linkage in ("static", "static-pie", "pie", "non-pie"):
             with self.subTest(linkage=linkage):
