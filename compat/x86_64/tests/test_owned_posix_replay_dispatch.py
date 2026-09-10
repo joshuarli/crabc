@@ -72,7 +72,7 @@ class OwnedPosixReplayDispatchTests(unittest.TestCase):
             for arguments in ([], [str(self.dynamic)], ["--static-sysroot", str(self.static)]):
                 with self.subTest(command=command, arguments=arguments):
                     result = self.invoke(command, arguments)
-                    required_missing = (command == "owned-pthread-signal" and arguments != [str(self.dynamic)]) or (command in ("owned-locale", "owned-wordexp", "owned-stdio", "owned-numeric-calendar") and len(arguments) == 2)
+                    required_missing = (command == "owned-pthread-signal" and arguments != [str(self.dynamic)]) or (command in ("owned-locale", "owned-wordexp", "owned-stdio", "owned-numeric-calendar", "owned-aio") and len(arguments) == 2)
                     self.assertEqual(result.returncode, 2 if required_missing else 0, result.stderr)
                     if required_missing:
                         self.assertIn("usage:", result.stderr)

@@ -2874,7 +2874,7 @@ prepare_owned_posix_replay_arguments() {
     if [ "$selected_command" = owned-pthread-signal ] && [ -z "$dynamic_product" ]; then
         fail "$expected"
     fi
-    if { [ "$selected_command" = owned-locale ] || [ "$selected_command" = owned-wordexp ] || [ "$selected_command" = owned-stdio ] || [ "$selected_command" = owned-numeric-calendar ]; } && [ -n "$static_product" ] && [ -z "$dynamic_product" ]; then
+    if { [ "$selected_command" = owned-locale ] || [ "$selected_command" = owned-wordexp ] || [ "$selected_command" = owned-stdio ] || [ "$selected_command" = owned-numeric-calendar ] || [ "$selected_command" = owned-aio ]; } && [ -n "$static_product" ] && [ -z "$dynamic_product" ]; then
         fail "$expected"
     fi
     POSIX_REPLAY_ARGUMENTS=()
