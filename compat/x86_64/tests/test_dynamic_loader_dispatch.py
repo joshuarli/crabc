@@ -47,6 +47,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                 ("qualification-manifest-prefix", False),
                 ("owned-dynamic-io-cancellation", False),
                 ("owned-crypt-runtime", False),
+                ("owned-atomic-addressable-profile", False),
                 ("owned-system-cancellation", False),
                 ("owned-dynamic-spawn", False),
                 ("owned-atfork-registry", False),
@@ -128,7 +129,7 @@ class DynamicLoaderDispatchTests(unittest.TestCase):
                         self.assertNotIn("--ipc=host", arguments)
                         self.assertNotIn("--userns=host", arguments)
                         self.assertIn("TMPDIR=/workspace/.work/x86_64/tmp", arguments)
-                    if command in ("owned-dynamic-io-cancellation", "owned-crypt-runtime", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-kernel-residual", "owned-assert", "owned-quick-exit", "owned-legacy-time", "owned-environment-lifecycle", "owned-atfork-registry", "owned-syslog", "owned-credentials-profile", "owned-pthread-spin", "owned-process-trio", "owned-underscore-fork", "owned-process-control", "owned-signal-helpers", "owned-filesystem-mechanisms", "owned-error-reporting", "owned-named-ipc", "owned-vm-mechanisms", "owned-passwd", "owned-group", "owned-message-queues", "owned-pattern", "owned-wcsftime", "owned-regex", "owned-strfmon", "owned-fmtmsg", "owned-utmpx", "owned-account-files", "owned-posix-filesystem", "owned-nftw-relative-base", "owned-unix-mechanisms", "owned-stdio-allocator-interposition", "owned-mimalloc-startup-errno", "owned-signal-handler-fork"):
+                    if command in ("owned-dynamic-io-cancellation", "owned-crypt-runtime", "owned-atomic-addressable-profile", "owned-system-cancellation", "owned-dynamic-spawn", "owned-linux-control", "owned-kernel-residual", "owned-assert", "owned-quick-exit", "owned-legacy-time", "owned-environment-lifecycle", "owned-atfork-registry", "owned-syslog", "owned-credentials-profile", "owned-pthread-spin", "owned-process-trio", "owned-underscore-fork", "owned-process-control", "owned-signal-helpers", "owned-filesystem-mechanisms", "owned-error-reporting", "owned-named-ipc", "owned-vm-mechanisms", "owned-passwd", "owned-group", "owned-message-queues", "owned-pattern", "owned-wcsftime", "owned-regex", "owned-strfmon", "owned-fmtmsg", "owned-utmpx", "owned-account-files", "owned-posix-filesystem", "owned-nftw-relative-base", "owned-unix-mechanisms", "owned-stdio-allocator-interposition", "owned-mimalloc-startup-errno", "owned-signal-handler-fork"):
                         self.assertEqual(len(invocations), 1)
                         self.assertIn("--cap-add=SYS_CHROOT", invocations[0])
                         self.assertEqual(invocations[0][-2:], [

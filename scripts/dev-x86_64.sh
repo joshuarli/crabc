@@ -553,6 +553,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-dynamic-io-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify shared-runtime cancellation through kernel and direct entry
 
   owned-crypt-runtime [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  prove bounded SHA-crypt through installed owned products
+  owned-atomic-addressable-profile [DYNAMIC_SYSROOT]  qualify installed addressable C11 atomic ABI evidence
 
   owned-system-cancellation [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify isolated system/pclose cancellation and child wait ownership
   owned-dynamic-spawn [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  qualify installed dynamic spawn semantics against musl
@@ -598,7 +599,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
   owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  execute the prepared static and dynamic POSIX family matrix
-  owned-posix-native --family-execution FILE --crypt-profile FILE --output NEW_DIR  execute the five native POSIX components on the matrix's installed product
+  owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --output NEW_DIR  execute the five native POSIX components on the matrix's installed product
   owned-posix-filesystem [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX filesystem provider composition
   owned-nftw-relative-base [DYNAMIC_SYSROOT]  regress installed nftw relative FTW.base callback metadata
   owned-unix-mechanisms [DYNAMIC_SYSROOT] test installed Linux/filesystem/terminal C mechanisms
@@ -2768,8 +2769,8 @@ prepare_owned_posix_family_arguments() {
 }
 
 prepare_owned_posix_native_arguments() {
-    local family_receipt='' crypt_receipt='' output=''
-    local expected='usage: ./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --output NEW_DIR'
+    local family_receipt='' crypt_receipt='' atomic_receipt='' output=''
+    local expected='usage: ./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --output NEW_DIR'
     while [ "$#" -gt 0 ]; do
         [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$expected"
         case "$1" in
@@ -2781,6 +2782,10 @@ prepare_owned_posix_native_arguments() {
                 [ -z "$crypt_receipt" ] || fail "$expected"
                 crypt_receipt="$2"
                 ;;
+            --atomic-addressable-profile)
+                [ -z "$atomic_receipt" ] || fail "$expected"
+                atomic_receipt="$2"
+                ;;
             --output)
                 [ -z "$output" ] || fail "$expected"
                 output="$2"
@@ -2789,11 +2794,12 @@ prepare_owned_posix_native_arguments() {
         esac
         shift 2
     done
-    [ -n "$family_receipt" ] && [ -n "$crypt_receipt" ] && [ -n "$output" ] || fail "$expected"
+    [ -n "$family_receipt" ] && [ -n "$crypt_receipt" ] && [ -n "$atomic_receipt" ] && [ -n "$output" ] || fail "$expected"
     family_receipt="$(translate_owned_posix_product "$family_receipt" receipt-file)" || exit 2
     crypt_receipt="$(translate_owned_posix_product "$crypt_receipt" receipt-file)" || exit 2
+    atomic_receipt="$(translate_owned_posix_product "$atomic_receipt" receipt-file)" || exit 2
     output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
-    POSIX_NATIVE_ARGUMENTS=(--family-execution "$family_receipt" --crypt-profile "$crypt_receipt" --output "$output")
+    POSIX_NATIVE_ARGUMENTS=(--family-execution "$family_receipt" --crypt-profile "$crypt_receipt" --atomic-addressable-profile "$atomic_receipt" --output "$output")
 }
 
 prepare_owned_posix_replay_arguments() {
@@ -5913,7 +5919,7 @@ case "$command" in
     memfd-create-header-abi) ;;
     vector-io-header-abi) ;;
     libc-crt1-static-tls) ;;
-    owned-crypt-runtime) ;;
+    owned-crypt-runtime|owned-atomic-addressable-profile) ;;
     owned-system-cancellation) ;;
     owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition) ;;
     owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-regex|owned-strfmon) ;;
@@ -6081,6 +6087,10 @@ case "$command" in
     owned-posix-native)
         prepare_owned_posix_native_arguments "$@"
         set -- "${POSIX_NATIVE_ARGUMENTS[@]}"
+        ;;
+    owned-atomic-addressable-profile)
+        prepare_owned_dynamic_product_argument "$command" "$@"
+        set -- "${OWNED_DYNAMIC_PRODUCT_ARGUMENTS[@]}"
         ;;
     owned-posix-filesystem|owned-process-control|owned-posix-signals|owned-posix-composition|owned-credentials-profile|owned-environment-lifecycle|owned-kernel-residual|owned-linux-control|owned-dynamic-spawn|owned-fmtmsg|owned-utmpx|owned-account-files|owned-process-trio|owned-underscore-fork|owned-syslog|owned-crypt-runtime|owned-system-cancellation|owned-signal-helpers|owned-pthread-signal|owned-posix-timers|owned-dynamic-io-cancellation)
         prepare_owned_posix_replay_arguments "$command" "$@"
@@ -7963,6 +7973,10 @@ case "$command" in
     owned-crypt-runtime)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_crypt_runtime.sh "$@"
+        ;;
+    owned-atomic-addressable-profile)
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_atomic_addressable_profile.sh "$@"
         ;;
     owned-system-cancellation)
         ensure_image

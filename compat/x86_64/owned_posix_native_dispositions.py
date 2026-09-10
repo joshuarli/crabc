@@ -1,4 +1,4 @@
-"""Finite source/profile reconciliation for four aliases, six atomics and crypt.
+"""Three finite source/profile boundaries: four aliases, six atomics, and crypt.
 
 This owner does not execute or waive a test. It retains exact upstream raw
 failures and requires separately qualified same-product companion evidence.
@@ -161,7 +161,7 @@ def os_atomic_disposition(reader, suite, outcome, source, candidate, oracle, com
 
 
 def os_disposition(reader, suite, outcome, source, candidate, oracle, companions):
-    """Admit only the two fixed OS rosters; every other raw mismatch rejects."""
+    """Admit the two OS rosters within three source boundaries; every other raw mismatch rejects."""
     native.require(isinstance(companions, dict) and set(companions) == {'credentials', 'atomic'},
                    'complete OS companion proofs required')
     if suite == 'basic' and outcome in {'unistd/' + name + '.out' for name in OS_ALIAS_SOURCES}:

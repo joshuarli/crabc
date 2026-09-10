@@ -5854,7 +5854,14 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/atomic_addressable_abi_probe.c",
             "compat/x86_64/atomic_addressable_abi_probe.cpp",
             "compat/x86_64/atomic_addressable_abi_start.S",
+            "compat/x86_64/atomic_addressable_abi_dynamic_main.c",
             "compat/x86_64/run_atomic_addressable_abi.sh",
+            "compat/x86_64/run_owned_atomic_addressable_profile.sh",
+            "compat/x86_64/owned_atomic_addressable_profile.py",
+            "compat/x86_64/owned-atomic-addressable-profile.md",
+            "compat/x86_64/tests/test_owned_atomic_addressable_profile.py",
+            "compat/x86_64/tests/test_owned_atomic_addressable_profile_dispatch.py",
+            "compat/x86_64/tests/test_dynamic_loader_dispatch.py",
             "compat/x86_64/static_c_abi_exports.txt",
             "libc/src/c_abi/x86_64/atomic.rs",
             "include/stdatomic.h",
@@ -5863,7 +5870,8 @@ class X86ParityLedgerTests(unittest.TestCase):
             self.assertIn(owner, artifact["source_owners"])
         self.assertEqual(
             {evidence["command"] for evidence in artifact["native_evidence"]},
-            {"./scripts/dev-x86_64.sh atomic-addressable-abi"},
+            {"./scripts/dev-x86_64.sh atomic-addressable-abi",
+             "./scripts/dev-x86_64.sh owned-atomic-addressable-profile"},
         )
         for phrase in (
             "foundation-verified `libc.headers-layouts`",
@@ -5871,6 +5879,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "one-byte `atomic_flag`",
             "no C atomic surface to C++17",
             "Musl 1.2.6 does not install `<stdatomic.h>`",
+            "installed-product companion",
+            "four owned dynamic entry modes",
+            "56 `retained-pending-c-abi-policy` rows",
             "complete C ABI",
             "public x86 support",
         ):
@@ -5885,12 +5896,47 @@ class X86ParityLedgerTests(unittest.TestCase):
             if isinstance(entry, dict)
             and entry["id"] == "static-c-atomic-addressable"
         )
-        changed_artifact["native_evidence"][0]["command"] = (
+        changed_artifact["native_evidence"][1]["command"] = (
             "./scripts/dev-x86_64.sh pthread-c11-header-abi"
         )
         with self.assertRaisesRegex(
-            ledger.LedgerError, "closed atomic-addressable-abi command"
+            ledger.LedgerError, "closed atomic-addressable evidence commands"
         ):
+            ledger.validate_ledger(changed)
+
+    def test_posix_native_requires_the_finite_third_profile_companion(self) -> None:
+        data = self.data()
+        family = self.family(data, "libc.posix-runtime")
+        for owner in (
+            "compat/x86_64/atomic_addressable_abi_dynamic_main.c",
+            "compat/x86_64/run_owned_atomic_addressable_profile.sh",
+            "compat/x86_64/owned_atomic_addressable_profile.py",
+            "compat/x86_64/owned-atomic-addressable-profile.md",
+            "compat/x86_64/tests/test_owned_atomic_addressable_profile.py",
+            "compat/x86_64/tests/test_owned_atomic_addressable_profile_dispatch.py",
+            "compat/x86_64/tests/test_owned_posix_native_dispatch.py",
+            "compat/x86_64/tests/test_dynamic_loader_dispatch.py",
+            "scripts/dev-x86_64.sh",
+        ):
+            self.assertIn(owner, family["source_owners"])
+        self.assertEqual(
+            family["native_evidence"][0]["command"],
+            "./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE "
+            "--atomic-addressable-profile FILE --output NEW_DIR",
+        )
+        for phrase in (
+            "credential, crypt, and addressable-atomic",
+            "56 retained-pending-c-abi-policy rows",
+            "Musl or C++ header parity",
+        ):
+            self.assertIn(phrase, family["native_evidence"][0]["scope"])
+
+        changed = self.data()
+        changed_family = self.family(changed, "libc.posix-runtime")
+        changed_family["native_evidence"][0]["command"] = (
+            "./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --output NEW_DIR"
+        )
+        with self.assertRaisesRegex(ledger.LedgerError, "finite native profile command"):
             ledger.validate_ledger(changed)
 
     def test_uio_cxx_archive_linkage_stays_a_closed_cxx_consumer_artifact(self) -> None:

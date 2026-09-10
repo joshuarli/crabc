@@ -8007,7 +8007,11 @@ def require_addressable_stdatomic_artifact(family: Mapping[str, Any]) -> None:
         "C++17 companion",
         "no C atomic surface to C++17",
         "`-nostdlib -static`",
+        "installed-product companion",
+        "four owned dynamic entry modes",
+        "56 `retained-pending-c-abi-policy` rows",
         "Musl 1.2.6 does not install `<stdatomic.h>`",
+        "Musl or C++ header parity",
         "complete C ABI",
         "family promotion",
         "public x86 support",
@@ -8021,7 +8025,11 @@ def require_addressable_stdatomic_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/atomic_addressable_abi_probe.c",
         "compat/x86_64/atomic_addressable_abi_probe.cpp",
         "compat/x86_64/atomic_addressable_abi_start.S",
+        "compat/x86_64/atomic_addressable_abi_dynamic_main.c",
         "compat/x86_64/run_atomic_addressable_abi.sh",
+        "compat/x86_64/run_owned_atomic_addressable_profile.sh",
+        "compat/x86_64/owned_atomic_addressable_profile.py",
+        "compat/x86_64/owned-atomic-addressable-profile.md",
         "compat/x86_64/static_c_abi_exports.txt",
         "compat/x86_64/header_callable_inventory.json",
         "compat/x86_64/header_callable_disposition.toml",
@@ -8030,6 +8038,9 @@ def require_addressable_stdatomic_artifact(family: Mapping[str, Any]) -> None:
         "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
         "compat/x86_64/headers-layouts-foundation.toml",
         "compat/x86_64/tests/test_header_callable_disposition.py",
+        "compat/x86_64/tests/test_dynamic_loader_dispatch.py",
+        "compat/x86_64/tests/test_owned_atomic_addressable_profile.py",
+        "compat/x86_64/tests/test_owned_atomic_addressable_profile_dispatch.py",
         "compat/x86_64/tests/test_parity_ledger.py",
         "compat/x86_64/tests/test_runner.py",
         "compat/x86_64/validate_parity_ledger.py",
@@ -8043,17 +8054,33 @@ def require_addressable_stdatomic_artifact(family: Mapping[str, Any]) -> None:
     assert isinstance(evidence, list)
     require(
         {entry["command"] for entry in evidence}
-        == {"./scripts/dev-x86_64.sh atomic-addressable-abi"},
-        "static-c-atomic-addressable must use the closed atomic-addressable-abi command",
+        == {"./scripts/dev-x86_64.sh atomic-addressable-abi",
+            "./scripts/dev-x86_64.sh owned-atomic-addressable-profile"},
+        "static-c-atomic-addressable must use the closed atomic-addressable evidence commands",
     )
-    scope = evidence[0]["scope"]
+    static_scope = next(entry["scope"] for entry in evidence
+                        if entry["command"] == "./scripts/dev-x86_64.sh atomic-addressable-abi")
     require(
-        isinstance(scope, str)
-        and "Musl 1.2.6 intentionally has no stdatomic.h reference arm" in scope
-        and "C++ header availability" in scope
-        and "general atomic/thread runtime behavior" in scope
-        and "public x86 support" in scope,
+        isinstance(static_scope, str)
+        and "Musl 1.2.6 intentionally has no stdatomic.h reference arm" in static_scope
+        and "C++ header availability" in static_scope
+        and "general atomic/thread runtime behavior" in static_scope
+        and "public x86 support" in static_scope,
         "static-c-atomic-addressable evidence must retain its project-only boundary",
+    )
+    installed_scope = next(entry["scope"] for entry in evidence
+                           if entry["command"] == "./scripts/dev-x86_64.sh owned-atomic-addressable-profile")
+    require(
+        isinstance(installed_scope, str)
+        and "Installed-product companion" in installed_scope
+        and "optionally accepts [DYNAMIC_SYSROOT]" in installed_scope
+        and "six exact libc.so exports" in installed_scope
+        and "four owned dynamic pie/non-pie kernel/direct entries" in installed_scope
+        and "raw_passed=false" in installed_scope
+        and "56 retained-pending-c-abi-policy rows" in installed_scope
+        and "Musl or C++ header parity" in installed_scope
+        and "C++ runtime" in installed_scope,
+        "static-c-atomic-addressable installed companion scope is incomplete",
     )
     runner_path = ROOT / "compat" / "x86_64" / "run_atomic_addressable_abi.sh"
     require(runner_path.is_file(), "static-c-atomic-addressable runner is missing")
@@ -8071,6 +8098,11 @@ def require_addressable_stdatomic_artifact(family: Mapping[str, Any]) -> None:
         "__tls_get_addr",
     ):
         require(phrase in runner, f"static-c-atomic-addressable runner omits {phrase}")
+    installed_runner_path = ROOT / "compat" / "x86_64" / "run_owned_atomic_addressable_profile.sh"
+    require(installed_runner_path.is_file(), "static-c-atomic-addressable installed companion runner is missing")
+    installed_runner = installed_runner_path.read_text(encoding="utf-8")
+    for phrase in ("TMPDIR must be checkout-local", "owned_atomic_addressable_profile.py", "DYNAMIC_SYSROOT"):
+        require(phrase in installed_runner, f"static-c-atomic-addressable installed runner omits {phrase}")
     header = (ROOT / "include" / "stdatomic.h").read_text(encoding="utf-8")
     for phrase in (
         "C++17 has no C `<stdatomic.h>` interface",
@@ -8093,6 +8125,53 @@ def require_addressable_stdatomic_artifact(family: Mapping[str, Any]) -> None:
     require(
         "atomic-addressable-abi)" in dispatch_source,
         "atomic-addressable-abi is absent from the native dispatcher",
+    )
+    require(
+        "owned-atomic-addressable-profile)" in dispatch_source,
+        "owned-atomic-addressable-profile is absent from the native dispatcher",
+    )
+
+
+def require_posix_native_profile_companions(family: Mapping[str, Any]) -> None:
+    """Keep the aggregate's three finite profile boundaries explicit and sealed."""
+
+    owners = set(family["source_owners"])
+    for owner in (
+        "compat/x86_64/atomic_addressable_abi_dynamic_main.c",
+        "compat/x86_64/run_owned_atomic_addressable_profile.sh",
+        "compat/x86_64/owned_atomic_addressable_profile.py",
+        "compat/x86_64/owned-atomic-addressable-profile.md",
+        "compat/x86_64/tests/test_owned_atomic_addressable_profile.py",
+        "compat/x86_64/tests/test_owned_atomic_addressable_profile_dispatch.py",
+        "compat/x86_64/tests/test_owned_posix_native_dispatch.py",
+        "compat/x86_64/tests/test_dynamic_loader_dispatch.py",
+        "scripts/dev-x86_64.sh",
+    ):
+        require(owner in owners, f"libc.posix-runtime must own {owner}")
+    evidence = family["native_evidence"]
+    require(
+        isinstance(evidence, list) and len(evidence) == 1 and isinstance(evidence[0], Mapping)
+        and evidence[0].get("state") == "required"
+        and evidence[0].get("command") == "./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --output NEW_DIR",
+        "libc.posix-runtime must use the finite native profile command",
+    )
+    scope = evidence[0].get("scope")
+    require(
+        isinstance(scope, str)
+        and "credential, crypt, and addressable-atomic" in scope
+        and "candidate good/musl undefined" in scope
+        and "raw_passed=false" in scope
+        and "56 retained-pending-c-abi-policy rows remain pending" in scope
+        and "Musl or C++ header parity" in scope
+        and "native_aggregate_complete only" in scope,
+        "libc.posix-runtime finite profile scope is incomplete",
+    )
+    execution = (ROOT / "compat" / "x86_64" / "owned_posix_native_execution.py").read_text(encoding="utf-8")
+    require(
+        "--atomic-addressable-profile" in execution
+        and "atomic_addressable_profile" in execution
+        and "within three source boundaries; every other raw mismatch rejects" in (ROOT / "compat" / "x86_64" / "owned_posix_native_dispositions.py").read_text(encoding="utf-8"),
+        "libc.posix-runtime finite atomic profile collector is incomplete",
     )
 
 
@@ -79657,6 +79736,7 @@ def _validate_ledger(
     require_stdlib_header_profile_matrix_artifact(by_id["libc.headers-layouts"])
     require_header_layouts_baseline_artifact(by_id["libc.headers-layouts"])
     require_addressable_stdatomic_artifact(by_id["libc.headers-layouts"])
+    require_posix_native_profile_companions(by_id["libc.posix-runtime"])
     require_uio_cxx_archive_linkage_artifact(by_id["libc.headers-layouts"])
     require_memory_sync_header_evidence(by_id["libc.headers-layouts"])
     require_memory_locking_header_evidence(by_id["libc.headers-layouts"])
