@@ -7,6 +7,7 @@ import importlib.util
 import shutil
 import stat
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -92,3 +93,140 @@ class OwnedWordexpExecutionRootTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class OwnedWordexpCommandBindingTests(unittest.TestCase):
+    def test_substituted_oracle_argv_cannot_satisfy_candidate_binding(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True)
+        argv = root / "candidate.argv.json"
+        argv.write_text('["/oracle"]\n', encoding="utf-8")
+        with self.assertRaises(module.EvidenceError):
+            module.require_exact_command(argv, ["/consumer"], {}, "candidate")
+        shutil.rmtree(root, ignore_errors=True)
+
+class OwnedWordexpReconstructionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.module = load_module()
+        self.root = TMP_ROOT / self.id().replace(".", "-")
+        shutil.rmtree(self.root, ignore_errors=True)
+        self.work = self.root / "work"
+        self.product = self.root / "product"
+        self.execution = self.work / "execution/dynamic-pie-kernel-normal"
+        for path, data, mode in (
+            (self.product / "share/crabc/manifest.json", b"manifest\n", 0o644),
+            (self.product / "runtime", b"selected runtime\n", 0o755),
+            (self.product / "lib/keep", b"selected alias target\n", 0o644),
+            (self.work / "candidate", b"linked consumer\n", 0o755),
+            (self.work / "oracle", b"linked oracle\n", 0o755),
+            (self.work / "external-shell-fixture/bin/sh", b"fixture shell\n", 0o755),
+            (self.work / "external-shell-fixture/lib/ld-musl-x86_64.so.1", b"fixture loader\n", 0o755),
+            (self.work / "external-shell-fixture/dev/null", b"", 0o666),
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            path.chmod(mode)
+        (self.product / "lib/ld-musl-x86_64.so.1").symlink_to("keep")
+        (self.product / "lib/keep-alias").symlink_to("keep")
+        shutil.copytree(self.product, self.execution, symlinks=True)
+        self._copy(self.work / "candidate", self.execution / "consumer-pie")
+        self._copy(self.work / "oracle", self.execution / "oracle")
+        # The one allowed external alias replacement is intentionally a regular
+        # pinned fixture loader, never an untracked product modification.
+        (self.execution / "lib/ld-musl-x86_64.so.1").unlink()
+        self._copy(self.work / "external-shell-fixture/bin/sh", self.execution / "bin/sh")
+        self._copy(self.work / "external-shell-fixture/lib/ld-musl-x86_64.so.1",
+                   self.execution / "lib/ld-musl-x86_64.so.1")
+        self._copy(self.work / "external-shell-fixture/dev/null", self.execution / "dev/null")
+
+    def tearDown(self) -> None:
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    @staticmethod
+    def _copy(source: Path, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+
+    def _fixture(self):
+        source = self.work / "external-shell-fixture"
+        paths = {"shell": "bin/sh", "dependency:0": "lib/ld-musl-x86_64.so.1", "null": "dev/null"}
+        records = {name: self.module._checkout_identity(ROOT, source / relative, name) for name, relative in paths.items()}
+        return source, paths, records
+
+    def _record(self):
+        product_files = {"manifest": "share/crabc/manifest.json", "product:runtime": "runtime", "product:lib/keep": "lib/keep"}
+        product_aliases = {"product:lib/keep-alias": "lib/keep-alias"}
+        record = self.module.record_execution_root(
+            self.execution, product_files=product_files, product_aliases=product_aliases,
+            consumers={"candidate": "consumer-pie", "oracle": "oracle"},
+            fixture_files={"shell": "bin/sh", "dependency:0": "lib/ld-musl-x86_64.so.1", "null": "dev/null"},
+        )
+        record["root"] = self.module._mounted(ROOT, self.execution)
+        return record
+
+    def _validate(self, record):
+        record = dict(record)
+        record["root"] = str(self.execution)
+        with unittest.mock.patch.object(self.module, "SOURCE_MOUNT", str(ROOT)), \
+             unittest.mock.patch.object(self.module.copies, "dynamic_product", return_value=(
+                 self.product, self.product / "share/crabc/manifest.json", {"runtime": "unused", "lib/keep": "unused"},
+                 {"lib/ld-musl-x86_64.so.1": "keep", "lib/keep-alias": "keep"},
+             )):
+            return self.module._validate_execution_binding(
+                ROOT, self.work, "dynamic-pie-kernel-normal", "dynamic-pie-kernel", "normal", record,
+                self.product, self.work / "candidate", self.work / "oracle", self._fixture(),
+                ["lib/ld-musl-x86_64.so.1"],
+            )
+
+    def test_reconstructed_root_rejects_re_signed_consumer_runtime_fixture_and_alias(self) -> None:
+        record = self._record()
+        self._validate(record)
+        for target, replacement, path in (
+            ("consumer", b"oracle bytes substituted\n", self.execution / "consumer-pie"),
+            ("runtime", b"runtime bytes substituted\n", self.execution / "runtime"),
+            ("fixture", b"fixture bytes substituted\n", self.execution / "bin/sh"),
+        ):
+            with self.subTest(target=target):
+                fresh = self._record()
+                path.write_bytes(replacement)
+                path.chmod(0o755)
+                if target == "consumer":
+                    fresh["consumers"]["candidate"]["sha256"] = self.module._sha(path)
+                elif target == "runtime":
+                    fresh["product_files"]["product:runtime"]["sha256"] = self.module._sha(path)
+                else:
+                    fresh["fixtures"]["shell"]["sha256"] = self.module._sha(path)
+                with self.assertRaises(self.module.EvidenceError):
+                    self._validate(fresh)
+                # Restore this cell for the following independent substitution.
+                if target == "consumer":
+                    self._copy(self.work / "candidate", path)
+                elif target == "runtime":
+                    self._copy(self.product / "runtime", path)
+                else:
+                    self._copy(self.work / "external-shell-fixture/bin/sh", path)
+
+        fresh = self._record()
+        alias = self.execution / "lib/keep-alias"
+        alias.unlink()
+        alias.symlink_to("ld-musl-x86_64.so.1")
+        fresh["product_aliases"]["product:lib/keep-alias"]["target"] = "ld-musl-x86_64.so.1"
+        with self.assertRaises(self.module.EvidenceError):
+            self._validate(fresh)
+
+    def test_report_command_record_rejects_oracle_substitution(self) -> None:
+        with unittest.mock.patch.object(self.module, "SOURCE_MOUNT", str(ROOT)):
+            commands = self.work / "commands"
+            commands.mkdir(parents=True)
+            values = {
+                "argv": b'["/oracle"]\n', "environment": b'{}\n', "stdout": b"ok\n",
+                "stderr": b"", "status": b"0\n",
+            }
+            record = {}
+            for name, content in values.items():
+                path = commands / f"cell-candidate.{name}" if name not in {"argv", "environment"} else commands / f"cell-candidate.{name}.json"
+                path.write_bytes(content)
+                record[name] = self.module._checkout_identity(ROOT, path, name)
+            with self.assertRaises(self.module.EvidenceError):
+                self.module._command_record(ROOT, self.work, "cell-candidate", record, ["/consumer"], {}, "candidate")

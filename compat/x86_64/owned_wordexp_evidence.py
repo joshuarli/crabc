@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from hashlib import sha256
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import owned_crypt_runtime_evidence as copies
+import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as products
 
 SCHEMA = "crabc.x86_64-owned-wordexp-products/v1"
@@ -35,6 +37,10 @@ DOC = "compat/x86_64/owned-wordexp.md"
 RUNNER = "compat/x86_64/run_owned_wordexp.sh"
 LEGACY_RUNNER = "compat/x86_64/run_libc_owned_wordexp.sh"
 HEADERS = ("errno.h", "wordexp.h", "stdio.h", "stdlib.h", "string.h", "features.h", "bits/alltypes.h")
+SOURCES = (PROBE, DOC, RUNNER, LEGACY_RUNNER, "compat/x86_64/owned_wordexp_evidence.py",
+           "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
+           "compat/x86_64/owned_dynamic_qualification.py", "compat/upstreams.toml",
+           "docker/x86_64-musl-oracle-gcc")
 SHELL_CASES = ("normal", "missing", "inaccessible", "invalid")
 MODE_SPECS = {
     "static-et-exec": ("static", "static", "consumer-static-et-exec"),
@@ -273,11 +279,13 @@ def _run(work: Path, label: str, argv: list[str], *, environment: Mapping[str, s
     directory = work / "commands"
     directory.mkdir(parents=True, exist_ok=True)
     command_path = directory / f"{label}.argv.json"
+    environment_path = directory / f"{label}.environment.json"
     stdout_path = directory / f"{label}.stdout"
     stderr_path = directory / f"{label}.stderr"
     status_path = directory / f"{label}.status"
     _write_json(command_path, argv)
     env = dict(environment) if environment is not None else None
+    _write_json(environment_path, {} if env is None else env)
     try:
         completed = subprocess.run(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
@@ -288,6 +296,7 @@ def _run(work: Path, label: str, argv: list[str], *, environment: Mapping[str, s
     status_path.write_text(f"{completed.returncode}\n", encoding="ascii")
     record = {
         "argv": _checkout_identity(ROOT, command_path, f"{label} argv"),
+        "environment": _checkout_identity(ROOT, environment_path, f"{label} environment"),
         "stdout": _checkout_identity(ROOT, stdout_path, f"{label} stdout"),
         "stderr": _checkout_identity(ROOT, stderr_path, f"{label} stderr"),
         "status": _checkout_identity(ROOT, status_path, f"{label} status"),
@@ -295,6 +304,20 @@ def _run(work: Path, label: str, argv: list[str], *, environment: Mapping[str, s
     if required and completed.returncode != 0:
         fail(f"{label} failed with status {completed.returncode}; retained output is {directory}")
     return record
+
+
+def require_exact_command(argv_path: Path, expected_argv: list[str], expected_environment: Mapping[str, str],
+                          description: str) -> None:
+    """Reject an arbitrary successful command record at a named seam."""
+    try:
+        argv = json.loads(_physical(argv_path, f"{description} argv", directory=False).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise EvidenceError(f"{description} argv is not valid JSON") from error
+    if argv != expected_argv:
+        fail(f"{description} argv differs from its canonical command")
+    if not isinstance(expected_environment, Mapping) or not all(isinstance(key, str) and isinstance(value, str)
+                                                                  for key, value in expected_environment.items()):
+        fail(f"{description} expected environment is malformed")
 
 
 def _native_requirements() -> None:
@@ -339,22 +362,18 @@ def _copy_dynamic_product(product: Path, execution_root: Path) -> tuple[dict[str
         shutil.copytree(product, execution_root, symlinks=True, copy_function=shutil.copy2)
     except OSError as error:
         raise EvidenceError(f"cannot copy dynamic product into execution root") from error
-    # Bind through the shared product manifest contract before adding consumers
-    # and the explicitly non-owned shell fixture.
+    # The shared manifest checker must accept the untouched product copy before
+    # a consumer or external fixture enters the root.  Do not recover from a
+    # failed exact-tree assertion: a product copy mismatch is fatal evidence.
     try:
         copies.assert_execution_tree(execution_root, files, aliases, execution_root / "share/crabc/manifest.json")
+        copies.copied_file(manifest, execution_root / "share/crabc/manifest.json", "wordexp copied manifest")
+        for name in files:
+            copies.copied_file(product / name, execution_root / name, f"wordexp copied product {name}")
+        for name, target in aliases.items():
+            copies.copied_alias(product / name, execution_root / name, target, f"wordexp copied alias {name}")
     except copies.CryptRuntimeEvidenceError as error:
-        # assert_execution_tree treats the manifest as a consumer, which is
-        # valid for its exact tree check but reports a duplicate expected path.
-        # Recreate the shared manifest/file/alias comparisons explicitly.
-        try:
-            copies.copied_file(manifest, execution_root / "share/crabc/manifest.json", "wordexp copied manifest")
-            for name in files:
-                copies.copied_file(product / name, execution_root / name, f"wordexp copied product {name}")
-            for name, target in aliases.items():
-                copies.copied_alias(product / name, execution_root / name, target, f"wordexp copied alias {name}")
-        except copies.CryptRuntimeEvidenceError as nested:
-            raise EvidenceError(str(nested)) from nested
+        raise EvidenceError(str(error)) from error
     product_files = {"manifest": "share/crabc/manifest.json"}
     product_files.update({f"product:{name}": name for name in files})
     product_aliases = {f"product:{name}": name for name in aliases}
@@ -491,6 +510,60 @@ def _copy_oracle_inputs(work: Path, oracle_compiler: Path) -> dict[str, Any]:
     return records
 
 
+def _installed_tool_roster(dynamic: Path, static: Path | None) -> dict[str, dict[str, Any]]:
+    """Resolve source compiler/LLD before the first installed consumption."""
+    helper = _physical(dynamic / "share/crabc/crabc_cc_static.py", "installed compiler helper", directory=False)
+    specification = importlib.util.spec_from_file_location("owned_wordexp_installed_compiler", helper)
+    if specification is None or specification.loader is None:
+        fail("installed compiler helper cannot be loaded")
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = module
+    try:
+        specification.loader.exec_module(module)
+        compiler = Path(module.compiler())
+        linker = Path(module.linker())
+    except (AttributeError, OSError, RuntimeError) as error:
+        raise EvidenceError("installed compiler helper cannot resolve fixed tools") from error
+    finally:
+        sys.modules.pop(specification.name, None)
+    roster = {
+        "dynamic-driver": _tool_identity(dynamic / "bin/crabc-cc-dynamic", "installed dynamic driver"),
+        "compiler": _tool_identity(compiler, "pinned source compiler"),
+        "linker": _tool_identity(linker, "installed linker"),
+        "oracle-compiler": _tool_identity(Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl oracle compiler"),
+        "chroot": _tool_identity(Path("/usr/sbin/chroot"), "chroot"),
+        "timeout": _tool_identity(Path("/usr/bin/timeout"), "timeout"),
+        "ldd": _tool_identity(Path("/usr/bin/ldd"), "ldd"),
+        "shell": _tool_identity(Path(os.path.realpath("/bin/sh")), "controlled shell"),
+    }
+    if static is not None:
+        roster["static-driver"] = _tool_identity(static / "bin/crabc-cc", "installed static driver")
+    return roster
+
+
+def _fixture_record(root: Path, fixture_root: Path, files: Mapping[str, str], records: Mapping[str, Any]) -> dict[str, Any]:
+    fixture_root = _physical(fixture_root, "sealed external shell fixture root", directory=True)
+    expected = set(files.values())
+    observed, aliases = _walk_root(fixture_root)
+    if observed != expected or aliases:
+        fail("sealed external shell fixture roster differs")
+    current = {name: _checkout_identity(root, fixture_root / relative, f"sealed fixture {name}")
+               for name, relative in files.items()}
+    if dict(records) != current:
+        fail("sealed external shell fixture records differ")
+    return {"root": _mounted(root, fixture_root), "files": current}
+
+
+def _input_seal(root: Path, dynamic: Path, static: Path | None, tools: Mapping[str, Any],
+                oracle: Mapping[str, Any], fixture: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "sources": {source: _checkout_identity(root, root / source, f"wordexp source {source}") for source in SOURCES},
+        "products": {"dynamic": _product_record(root, dynamic, "dynamic"),
+                     "static": _product_record(root, static, "static") if static is not None else None},
+        "tools": dict(tools), "oracle": dict(oracle), "fixture": dict(fixture),
+    }
+
+
 def _products(dynamic: Path | None, static: Path | None, work: Path) -> tuple[Path, Path | None, bool]:
     built = dynamic is None
     if dynamic is None:
@@ -597,9 +670,11 @@ def _run_shell_case(work: Path, root: Path, *, label: str, mode: str, candidate:
     if oracle_stdout.read_bytes() != candidate_stdout.read_bytes() or oracle_stderr.read_bytes() != candidate_stderr.read_bytes():
         fail(f"{label} candidate differs from pinned-musl oracle")
     execution_record["root"] = _mounted(root, execution)
-    return {"shell_case": shell_case, "execution": execution_record,
-            "fixture_source": dict(fixture_records), "external_alias_overrides": list(replaced_aliases),
-            "oracle": oracle_result, "candidate": candidate_result, "expected_stdout": expected.decode("ascii")}
+    return {"mode": mode, "shell_case": shell_case, "execution": execution_record,
+            "consumer_sources": {"candidate": _checkout_identity(root, candidate, "candidate consumer source"),
+                                 "oracle": _checkout_identity(root, oracle, "oracle consumer source")},
+            "external_alias_overrides": list(replaced_aliases), "oracle": oracle_result,
+            "candidate": candidate_result, "expected_stdout": expected.decode("ascii")}
 
 
 def _validate_header_trace(root: Path, trace: Path, dynamic: Path) -> dict[str, Any]:
@@ -611,32 +686,38 @@ def _validate_header_trace(root: Path, trace: Path, dynamic: Path) -> dict[str, 
     return _checkout_identity(root, trace, "installed wordexp header trace")
 
 
+def _capture_oracle_inputs(work: Path) -> dict[str, Any]:
+    """Capture the shared independently pinned musl oracle before linking."""
+    try:
+        qualified = qualification.capture_oracle(work)
+        qualification.require_live_oracle(work, qualified)
+    except qualification.QualificationError as error:
+        raise EvidenceError(f"pinned musl qualification input is unavailable: {error}") from error
+    source = _physical(Path("/opt/musl-1.2.6/lib/libc.a"), "pinned musl static libc", directory=False)
+    retained = work / "pinned-musl-static-libc.a"
+    _copy_regular(source, retained, "pinned musl static libc")
+    return {"qualification": qualified,
+            "static_libc": {"native": _tool_identity(source, "pinned musl static libc"),
+                            "retained": _checkout_identity(ROOT, retained, "retained pinned musl static libc")}}
+
+
 def collect(dynamic: Path | None, static: Path | None) -> Path:
     _native_requirements()
     work = _work_directory()
     try:
         dynamic, static, built = _products(dynamic, static, work)
-        dynamic_driver = _physical(dynamic / "bin/crabc-cc-dynamic", "installed dynamic driver", directory=False)
-        static_driver = _physical(static / "bin/crabc-cc", "installed static driver", directory=False) if static else None
-        oracle_compiler = _physical(Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl oracle compiler", directory=False)
-        for source in (ROOT / PROBE, ROOT / DOC, ROOT / RUNNER, ROOT / LEGACY_RUNNER):
-            _physical(source, "wordexp source", directory=False)
-        tool_before = {
-            "dynamic-driver": _tool_identity(dynamic_driver, "installed dynamic driver"),
-            "compiler": _tool_identity(Path("/usr/bin/gcc"), "pinned source compiler"),
-            "oracle-compiler": _tool_identity(oracle_compiler, "pinned musl oracle compiler"),
-            "chroot": _tool_identity(Path("/usr/sbin/chroot"), "chroot"),
-            "timeout": _tool_identity(Path("/usr/bin/timeout"), "timeout"),
-            "ldd": _tool_identity(Path("/usr/bin/ldd"), "ldd"),
-            "shell": _tool_identity(Path(os.path.realpath("/bin/sh")), "controlled shell"),
-        }
-        if static_driver:
-            tool_before["static-driver"] = _tool_identity(static_driver, "installed static driver")
-        source_records = {item: _checkout_identity(ROOT, ROOT / item, f"wordexp source {item}")
-                          for item in (PROBE, DOC, RUNNER, LEGACY_RUNNER, "compat/x86_64/owned_wordexp_evidence.py")}
-        header_trace = _run(work, "installed-header-trace", ["/usr/bin/gcc", "-nostdinc", "-isystem",
+        tools_before = _installed_tool_roster(dynamic, static)
+        oracle_inputs = _capture_oracle_inputs(work)
+        fixture_source, fixture_files, fixture_records = _prepare_fixture_source(work)
+        fixture = _fixture_record(ROOT, fixture_source, fixture_files, fixture_records)
+        before = _input_seal(ROOT, dynamic, static, tools_before, oracle_inputs, fixture)
+
+        dynamic_driver = dynamic / "bin/crabc-cc-dynamic"
+        static_driver = static / "bin/crabc-cc" if static else None
+        oracle_compiler = Path(tools_before["oracle-compiler"]["path"])
+        header_trace = _run(work, "installed-header-trace", [tools_before["compiler"]["path"], "-nostdinc", "-isystem",
                             str(dynamic / "usr/include"), "-ffreestanding", "-fno-builtin", "-fstack-protector-strong",
-                            "-fPIE", "-std=c11", "-D_GNU_SOURCE", "-E", "-H", str(ROOT / PROBE)], required=True)
+                            "-fPIE", "-std=c11", "-D_GNU_SOURCE", "-E", "-H", str(ROOT / PROBE)])
         header_trace_path = _local_mounted(ROOT, header_trace["stderr"]["path"], "installed header trace stderr")
         header = _validate_header_trace(ROOT, header_trace_path, dynamic)
         workload = work / "workload.o"
@@ -647,26 +728,28 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
         oracle_link = _run(work, "pinned-musl-link", [str(oracle_compiler), "-static", "-fno-pie", "-no-pie",
                            str(workload), "-o", str(oracle)])
         _physical(oracle, "pinned-musl wordexp oracle", directory=False)
-        oracle_inputs = _copy_oracle_inputs(work, oracle_compiler)
-        fixture_source, fixture_files, fixture_records = _prepare_fixture_source(work)
         links: dict[str, Any] = {}
         candidates: dict[str, tuple[Path, Path | None]] = {}
         if static is not None and static_driver is not None:
             for mode, flag, linkage in (("static-et-exec", "-static", "static"), ("static-pie", "-static-pie", "static-pie")):
                 binary = work / MODE_SPECS[mode][2]
-                _run(work, f"link-{mode}", [str(static_driver), flag, "--link-receipt",
-                      f"{binary.name}.crabc-link.json", str(workload), "-o", str(binary)], cwd=work)
+                command = _run(work, f"link-{mode}", [str(static_driver), flag, "--link-receipt",
+                               f"{binary.name}.crabc-link.json", str(workload), "-o", str(binary)], cwd=work)
                 links[mode] = _link_validate(ROOT, work, static, workload, binary, linkage, mode)
+                links[mode]["command"] = command
                 candidates[mode] = (binary, None)
         for mode, flag, linkage in (("dynamic-pie-kernel", "--dynamic-pie", "pie"),
                                     ("dynamic-non-pie-kernel", "--dynamic-non-pie", "non-pie")):
             base = "dynamic-pie" if linkage == "pie" else "dynamic-non-pie"
             binary = work / base
-            _run(work, f"link-{base}", [str(dynamic_driver), flag, str(workload), "-o", str(binary)])
-            link_record = _link_validate(ROOT, work, dynamic, workload, binary, linkage, base)
-            links[base] = link_record
+            command = _run(work, f"link-{base}", [str(dynamic_driver), flag, str(workload), "-o", str(binary)])
+            links[base] = _link_validate(ROOT, work, dynamic, workload, binary, linkage, base)
+            links[base]["command"] = command
             for entry in (f"{base}-kernel", f"{base}-direct"):
                 candidates[entry] = (binary, dynamic)
+        sealed_linker = {"path": tools_before["linker"]["path"], "sha256": tools_before["linker"]["sha256"]}
+        if any(link["linker"] != sealed_linker for link in links.values()):
+            fail("installed link receipt differs from the pre-sealed linker")
         cells: dict[str, Any] = {}
         for mode, (candidate, dynamic_root) in candidates.items():
             for shell_case in SHELL_CASES:
@@ -674,28 +757,23 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
                 cells[label] = _run_shell_case(work, ROOT, label=label, mode=mode, candidate=candidate, oracle=oracle,
                                                 dynamic_product=dynamic_root, fixture_source=fixture_source,
                                                 fixture_files=fixture_files, fixture_records=fixture_records)
-        resolved_linkers = {json.dumps(item["linker"], sort_keys=True) for item in links.values()}
-        if len(resolved_linkers) != 1:
-            fail("installed wordexp links selected different resolved linkers")
-        selected_linker = json.loads(next(iter(resolved_linkers)))
-        tool_before["linker"] = _tool_identity(Path(selected_linker["path"]), "selected installed linker")
-        if {"path": tool_before["linker"]["path"], "sha256": tool_before["linker"]["sha256"]} != selected_linker:
-            fail("selected installed linker seal differs from the link receipt")
-        tool_after = {
-            name: _tool_identity(Path(value["path"]), f"retained tool {name}") for name, value in tool_before.items()
-        }
-        if tool_before != tool_after:
-            fail("tool identity changed during wordexp evidence collection")
+        try:
+            qualification.require_live_oracle(work, oracle_inputs["qualification"])
+        except qualification.QualificationError as error:
+            raise EvidenceError(f"pinned musl oracle changed during collection: {error}") from error
+        if _tool_identity(Path("/opt/musl-1.2.6/lib/libc.a"), "post-run pinned musl static libc") != oracle_inputs["static_libc"]["native"]:
+            fail("pinned musl static libc changed during collection")
+        after = _input_seal(ROOT, dynamic, static, _installed_tool_roster(dynamic, static), oracle_inputs,
+                            _fixture_record(ROOT, fixture_source, fixture_files, fixture_records))
+        if before != after:
+            fail("source, product, tool, oracle, or fixture input changed during wordexp collection")
         report = {
             "schema": SCHEMA, "source_mount": SOURCE_MOUNT, "status": "component-verified-not-family-qualified",
-            "products": {"dynamic": _product_record(ROOT, dynamic, "dynamic"),
-                         "static": _product_record(ROOT, static, "static") if static is not None else None,
-                         "built_products": built},
-            "sources": source_records, "header_trace": header,
+            "inputs": {"before": before, "after": after, "built_products": built},
+            "header_trace": {"command": header_trace, "trace": header},
             "workload": _checkout_identity(ROOT, workload, "installed wordexp workload"),
             "compile": compile_record, "oracle_link": oracle_link,
-            "oracle_inputs": oracle_inputs,
-            "tools": {"before": tool_before, "after": tool_after},
+            "oracle": _checkout_identity(ROOT, oracle, "pinned-musl wordexp oracle"),
             "links": links, "cells": cells,
         }
         report_path = work / "owned-wordexp-products.json"
@@ -717,21 +795,181 @@ def _validate_tool_record(value: object, description: str) -> dict[str, Any]:
     return value
 
 
-def _validate_command(root: Path, record: object, description: str) -> dict[str, Any]:
-    record = _exact_dict(record, {"argv", "stdout", "stderr", "status"}, description)
-    argv = _identity_current(root, record["argv"], f"{description} argv")
+def _command_record(root: Path, work: Path, label: str, record: object, expected_argv: list[str],
+                    expected_environment: Mapping[str, str], description: str) -> dict[str, Any]:
+    record = _exact_dict(record, {"argv", "environment", "stdout", "stderr", "status"}, description)
+    expected_paths = {
+        "argv": work / "commands" / f"{label}.argv.json",
+        "environment": work / "commands" / f"{label}.environment.json",
+        "stdout": work / "commands" / f"{label}.stdout",
+        "stderr": work / "commands" / f"{label}.stderr",
+        "status": work / "commands" / f"{label}.status",
+    }
+    paths = {name: _identity_current(root, record[name], f"{description} {name}") for name in expected_paths}
+    for name, expected_path in expected_paths.items():
+        if paths[name] != _physical(expected_path, f"{description} expected {name}", directory=False):
+            fail(f"{description} {name} path differs")
+    require_exact_command(paths["argv"], expected_argv, expected_environment, description)
     try:
-        value = json.loads(argv.read_text(encoding="utf-8"))
+        environment = json.loads(paths["environment"].read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise EvidenceError(f"{description} argv is not JSON") from error
-    if not isinstance(value, list) or not value or not all(isinstance(item, str) for item in value):
-        fail(f"{description} argv is malformed")
-    _identity_current(root, record["stdout"], f"{description} stdout")
-    _identity_current(root, record["stderr"], f"{description} stderr")
-    status = _identity_current(root, record["status"], f"{description} status")
-    if status.read_bytes() != b"0\n":
+        raise EvidenceError(f"{description} environment is not JSON") from error
+    if environment != dict(expected_environment):
+        fail(f"{description} environment differs from its canonical command")
+    if paths["status"].read_bytes() != b"0\n":
         fail(f"{description} status is not zero")
     return record
+
+
+def _fixture_from_seal(root: Path, work: Path, value: object) -> tuple[Path, dict[str, str], dict[str, dict[str, Any]]]:
+    value = _exact_dict(value, {"root", "files"}, "wordexp external fixture")
+    fixture_root = _local_mounted(root, value["root"], "wordexp external fixture root")
+    expected_root = _physical(work / "external-shell-fixture", "wordexp expected external fixture root", directory=True)
+    if fixture_root != expected_root:
+        fail("wordexp external fixture root differs")
+    files = value["files"]
+    if not isinstance(files, dict) or not files:
+        fail("wordexp external fixture files are malformed")
+    paths: dict[str, str] = {}
+    for name, identity in files.items():
+        if not isinstance(name, str) or not name:
+            fail("wordexp external fixture name differs")
+        path = _identity_current(root, identity, f"wordexp external fixture {name}")
+        try:
+            relative = path.relative_to(fixture_root).as_posix()
+        except ValueError as error:
+            raise EvidenceError("wordexp external fixture file escapes its root") from error
+        paths[name] = relative
+    observed, aliases = _walk_root(fixture_root)
+    if aliases or observed != set(paths.values()) or len(set(paths.values())) != len(paths):
+        fail("wordexp external fixture roster differs")
+    if paths.get("shell") != "bin/sh" or paths.get("null") != "dev/null" or not any(name.startswith("dependency:") for name in paths):
+        fail("wordexp external fixture roles differ")
+    return fixture_root, paths, {name: files[name] for name in paths}
+
+
+def _validate_input_seal(root: Path, work: Path, value: object) -> tuple[Path, Path | None, dict[str, Any], tuple[Path, dict[str, str], dict[str, dict[str, Any]]]]:
+    value = _exact_dict(value, {"sources", "products", "tools", "oracle", "fixture"}, "wordexp input seal")
+    sources = value["sources"]
+    if not isinstance(sources, dict) or set(sources) != set(SOURCES):
+        fail("wordexp source input roster differs")
+    for source in SOURCES:
+        path = _identity_current(root, sources[source], f"wordexp source {source}")
+        if path != _physical(root / source, f"wordexp named source {source}", directory=False):
+            fail("wordexp source identity uses the wrong path")
+    product_value = _exact_dict(value["products"], {"dynamic", "static"}, "wordexp product input seal")
+    dynamic_record = _exact_dict(product_value["dynamic"], {"root", "manifest", "files"}, "wordexp dynamic input")
+    dynamic = _local_mounted(root, dynamic_record["root"], "wordexp dynamic product")
+    if dynamic_record != _product_record(root, dynamic, "dynamic"):
+        fail("wordexp dynamic product input drifted")
+    static = None
+    if product_value["static"] is not None:
+        static_record = _exact_dict(product_value["static"], {"root", "manifest", "files"}, "wordexp static input")
+        static = _local_mounted(root, static_record["root"], "wordexp static product")
+        if static_record != _product_record(root, static, "static"):
+            fail("wordexp static product input drifted")
+    tools = value["tools"]
+    expected_tools = {"dynamic-driver", "compiler", "linker", "oracle-compiler", "chroot", "timeout", "ldd", "shell"}
+    if static is not None:
+        expected_tools.add("static-driver")
+    if not isinstance(tools, dict) or set(tools) != expected_tools:
+        fail("wordexp pre-sealed tool roster differs")
+    tools = {name: _validate_tool_record(item, f"wordexp pre-sealed tool {name}") for name, item in tools.items()}
+    dynamic_driver = dynamic / "bin/crabc-cc-dynamic"
+    expected_dynamic_driver = {"path": _mounted(root, dynamic_driver), "sha256": _sha(dynamic_driver), "mode": _mode(dynamic_driver)}
+    if tools["dynamic-driver"] != expected_dynamic_driver:
+        fail("wordexp dynamic driver pre-seal differs")
+    if static is not None:
+        static_driver = static / "bin/crabc-cc"
+        expected_static_driver = {"path": _mounted(root, static_driver), "sha256": _sha(static_driver), "mode": _mode(static_driver)}
+        if tools["static-driver"] != expected_static_driver:
+            fail("wordexp static driver pre-seal differs")
+    oracle = _exact_dict(value["oracle"], {"qualification", "static_libc"}, "wordexp pinned oracle input")
+    try:
+        qualification.validate_oracle(work, oracle["qualification"])
+    except qualification.QualificationError as error:
+        raise EvidenceError(f"wordexp retained pinned oracle differs: {error}") from error
+    static_libc = _exact_dict(oracle["static_libc"], {"native", "retained"}, "wordexp static oracle libc")
+    native = _validate_tool_record(static_libc["native"], "wordexp static oracle libc native")
+    if native["path"] != "/opt/musl-1.2.6/lib/libc.a":
+        fail("wordexp static oracle libc source path differs")
+    retained = _identity_current(root, static_libc["retained"], "wordexp retained static oracle libc")
+    if retained != _physical(work / "pinned-musl-static-libc.a", "wordexp retained static oracle libc path", directory=False) or native["sha256"] != _sha(retained):
+        fail("wordexp static oracle libc retention differs")
+    return dynamic, static, tools, _fixture_from_seal(root, work, value["fixture"])
+
+
+def _expected_execution_maps(dynamic: Path | None, fixture_paths: Mapping[str, str], shell_case: str,
+                             overrides: object) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+    if shell_case not in SHELL_CASES:
+        fail("wordexp shell case differs")
+    fixture = {name: relative for name, relative in fixture_paths.items() if not (shell_case == "missing" and name == "shell")}
+    product_files: dict[str, str] = {}
+    product_aliases: dict[str, str] = {}
+    if dynamic is not None:
+        try:
+            _, _, files, aliases = copies.dynamic_product(dynamic)
+        except copies.CryptRuntimeEvidenceError as error:
+            raise EvidenceError(str(error)) from error
+        product_files = {"manifest": "share/crabc/manifest.json", **{f"product:{name}": name for name in files}}
+        product_aliases = {f"product:{name}": name for name in aliases}
+        expected_override = ["lib/ld-musl-x86_64.so.1"]
+        if overrides != expected_override:
+            fail("wordexp dynamic external alias override differs")
+        for name, relative in tuple(product_aliases.items()):
+            if relative == expected_override[0]:
+                del product_aliases[name]
+                break
+        else:
+            fail("wordexp dynamic product has no expected shell-loader alias")
+    elif overrides != []:
+        fail("wordexp static execution has an external alias override")
+    return product_files, product_aliases, fixture
+
+
+def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, shell_case: str, execution: object,
+                                dynamic_product: Path | None, candidate: Path, oracle: Path,
+                                fixture: tuple[Path, dict[str, str], dict[str, dict[str, Any]]], overrides: object) -> Path:
+    execution = _exact_dict(execution, {"root", "product_files", "product_aliases", "consumers", "fixtures"},
+                            f"wordexp cell {label} execution")
+    execution_root = _local_mounted(root, execution["root"], f"wordexp cell {label} execution root")
+    expected_root = _physical(work / "execution" / label, f"wordexp cell {label} expected execution root", directory=True)
+    if execution_root != expected_root:
+        fail("wordexp execution root path differs")
+    fixture_root, fixture_paths, fixture_records = fixture
+    product_files, product_aliases, fixture_expected = _expected_execution_maps(dynamic_product, fixture_paths, shell_case, overrides)
+    consumer = MODE_SPECS[mode][2]
+    if execution.get("product_files") != {name: {"path": relative, "sha256": _sha((dynamic_product / relative) if name != "manifest" else dynamic_product / relative),
+                                                        "mode": _mode((dynamic_product / relative) if name != "manifest" else dynamic_product / relative)}
+                                          for name, relative in product_files.items()}:
+        fail("wordexp execution product file binding differs")
+    expected_aliases = {name: {"path": relative, "target": os.readlink(dynamic_product / relative)}
+                        for name, relative in product_aliases.items()} if dynamic_product is not None else {}
+    if execution.get("product_aliases") != expected_aliases:
+        fail("wordexp execution product alias binding differs")
+    expected_consumers = {
+        "candidate": {"path": consumer, "sha256": _sha(candidate), "mode": _mode(candidate)},
+        "oracle": {"path": "oracle", "sha256": _sha(oracle), "mode": _mode(oracle)},
+    }
+    if execution.get("consumers") != expected_consumers:
+        fail("wordexp execution consumer binding differs")
+    expected_fixtures: dict[str, dict[str, Any]] = {}
+    for name, relative in fixture_expected.items():
+        source = fixture_root / relative
+        digest = _sha(source)
+        mode_value = _mode(source)
+        if name == "shell" and shell_case == "inaccessible":
+            mode_value = 0o644
+        elif name == "shell" and shell_case == "invalid":
+            digest = sha256(b"not an executable shell image\n").hexdigest()
+            mode_value = 0o755
+        expected_fixtures[name] = {"path": relative, "sha256": digest, "mode": mode_value}
+    if execution.get("fixtures") != expected_fixtures:
+        fail("wordexp execution external fixture binding differs")
+    local = dict(execution)
+    local["root"] = str(execution_root)
+    validate_execution_root(execution_root, local)
+    return execution_root
 
 
 def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
@@ -741,91 +979,70 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
         value = json.loads(report_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise EvidenceError("wordexp report is not valid JSON") from error
-    report = _exact_dict(value, {"schema", "source_mount", "status", "products", "sources", "header_trace", "workload",
-                                 "compile", "oracle_link", "oracle_inputs", "tools", "links", "cells"}, "wordexp report")
+    report = _exact_dict(value, {"schema", "source_mount", "status", "inputs", "header_trace", "workload", "compile",
+                                 "oracle_link", "oracle", "links", "cells"}, "wordexp report")
     if report["schema"] != SCHEMA or report["source_mount"] != SOURCE_MOUNT or report["status"] != "component-verified-not-family-qualified":
         fail("wordexp report contract differs")
-    sources = report["sources"]
-    expected_sources = {PROBE, DOC, RUNNER, LEGACY_RUNNER, "compat/x86_64/owned_wordexp_evidence.py"}
-    if not isinstance(sources, dict) or set(sources) != expected_sources:
-        fail("wordexp source roster differs")
-    for source in expected_sources:
-        _identity_current(root, sources[source], f"wordexp source {source}")
-    products_record = _exact_dict(report["products"], {"dynamic", "static", "built_products"}, "wordexp products")
-    dynamic_record = _exact_dict(products_record["dynamic"], {"root", "manifest", "files"}, "wordexp dynamic product")
-    dynamic = _local_mounted(root, dynamic_record["root"], "wordexp dynamic product")
-    if not isinstance(dynamic_record["files"], dict):
-        fail("wordexp dynamic product files are malformed")
-    current_dynamic = _product_record(root, dynamic, "dynamic")
-    if dynamic_record != current_dynamic:
-        fail("wordexp dynamic product identity drifted")
-    static = None
-    if products_record["static"] is not None:
-        static_record = _exact_dict(products_record["static"], {"root", "manifest", "files"}, "wordexp static product")
-        static = _local_mounted(root, static_record["root"], "wordexp static product")
-        if static_record != _product_record(root, static, "static"):
-            fail("wordexp static product identity drifted")
-    if type(products_record["built_products"]) is not bool:
-        fail("wordexp built product marker differs")
-    header_trace = _identity_current(root, report["header_trace"], "wordexp installed header trace")
-    _validate_header_trace(root, header_trace, dynamic)
+    work = report_path.parent
+    inputs = _exact_dict(report["inputs"], {"before", "after", "built_products"}, "wordexp input seals")
+    if type(inputs["built_products"]) is not bool:
+        fail("wordexp product materialization marker differs")
+    dynamic, static, tools, fixture = _validate_input_seal(root, work, inputs["before"])
+    after_dynamic, after_static, after_tools, after_fixture = _validate_input_seal(root, work, inputs["after"])
+    if (dynamic, static, tools, fixture) != (after_dynamic, after_static, after_tools, after_fixture) or inputs["before"] != inputs["after"]:
+        fail("wordexp inputs changed after collection")
+
     workload = _identity_current(root, report["workload"], "wordexp workload")
-    _validate_command(root, report["compile"], "wordexp compile")
-    _validate_command(root, report["oracle_link"], "wordexp pinned-musl link")
-    tools = _exact_dict(report["tools"], {"before", "after"}, "wordexp tools")
-    if not isinstance(tools["before"], dict) or not isinstance(tools["after"], dict) or set(tools["before"]) != set(tools["after"]):
-        fail("wordexp tool roster differs")
-    before = {name: _validate_tool_record(item, f"wordexp tool {name}") for name, item in tools["before"].items()}
-    after = {name: _validate_tool_record(item, f"wordexp retained tool {name}") for name, item in tools["after"].items()}
-    if before != after or set(before) != ({"dynamic-driver", "compiler", "oracle-compiler", "chroot", "timeout", "ldd", "shell", "linker"} | ({"static-driver"} if static else set())):
-        fail("wordexp tools changed or have the wrong roster")
-    dynamic_driver = dynamic / "bin/crabc-cc-dynamic"
-    expected_dynamic_driver = {"path": _mounted(root, dynamic_driver), "sha256": _sha(dynamic_driver),
-                               "mode": _mode(dynamic_driver)}
-    if before["dynamic-driver"] != expected_dynamic_driver:
-        fail("wordexp dynamic driver seal drifted")
-    if static:
-        static_driver = static / "bin/crabc-cc"
-        expected_static_driver = {"path": _mounted(root, static_driver), "sha256": _sha(static_driver),
-                                  "mode": _mode(static_driver)}
-        if before["static-driver"] != expected_static_driver:
-            fail("wordexp static driver seal drifted")
-    if not isinstance(report["oracle_inputs"], dict) or set(report["oracle_inputs"]) != {"compiler", "source-manifest", "shared-libc", "static-libc", "gcc-specs"}:
-        fail("wordexp pinned-musl input roster differs")
-    for name, item in report["oracle_inputs"].items():
-        item = _exact_dict(item, {"native", "retained"}, f"wordexp oracle input {name}")
-        native = _validate_tool_record(item["native"], f"wordexp oracle native {name}")
-        retained = _identity_current(root, item["retained"], f"wordexp retained oracle {name}")
-        if native["sha256"] != retained.read_bytes() and False:
-            fail("unreachable")
-        if native["sha256"] != _sha(retained):
-            fail(f"wordexp retained oracle {name} bytes differ from native seal")
-    if report["oracle_inputs"]["compiler"]["native"] != before["oracle-compiler"]:
-        fail("wordexp oracle compiler seal differs")
+    if workload != _physical(work / "workload.o", "wordexp canonical workload", directory=False):
+        fail("wordexp workload path differs")
+    header = _exact_dict(report["header_trace"], {"command", "trace"}, "wordexp header trace")
+    expected_header = [tools["compiler"]["path"], "-nostdinc", "-isystem", _mounted(root, dynamic / "usr/include"),
+                       "-ffreestanding", "-fno-builtin", "-fstack-protector-strong", "-fPIE", "-std=c11",
+                       "-D_GNU_SOURCE", "-E", "-H", _mounted(root, root / PROBE)]
+    header_command = _command_record(root, work, "installed-header-trace", header["command"], expected_header, {},
+                                     "wordexp installed header trace")
+    trace = _identity_current(root, header["trace"], "wordexp installed header trace bytes")
+    if header_command["stderr"] != header["trace"] or trace != _physical(work / "commands/installed-header-trace.stderr",
+                                                                              "wordexp installed header trace path", directory=False):
+        fail("wordexp installed header trace record differs")
+    _validate_header_trace(root, trace, dynamic)
+    expected_compile = [tools["dynamic-driver"]["path"], "--dynamic-pie", "-std=c11", "-D_GNU_SOURCE", "-fno-builtin",
+                        "-c", _mounted(root, root / PROBE), "-o", _mounted(root, workload)]
+    _command_record(root, work, "compile-workload", report["compile"], expected_compile, {}, "wordexp compile")
+    oracle = _identity_current(root, report["oracle"], "wordexp static oracle")
+    if oracle != _physical(work / "pinned-musl-static-et-exec", "wordexp canonical static oracle", directory=False):
+        fail("wordexp static oracle path differs")
+    expected_oracle_link = [tools["oracle-compiler"]["path"], "-static", "-fno-pie", "-no-pie",
+                            _mounted(root, workload), "-o", _mounted(root, oracle)]
+    _command_record(root, work, "pinned-musl-link", report["oracle_link"], expected_oracle_link, {}, "wordexp pinned-musl link")
+
     links = report["links"]
     expected_links = {"dynamic-pie", "dynamic-non-pie"} | ({"static-et-exec", "static-pie"} if static else set())
     if not isinstance(links, dict) or set(links) != expected_links:
         fail("wordexp link roster differs")
-    link_specs = {"dynamic-pie": (dynamic, "pie"), "dynamic-non-pie": (dynamic, "non-pie"),
-                  "static-et-exec": (static, "static"), "static-pie": (static, "static-pie")}
-    for name, item in links.items():
-        item = _exact_dict(item, {"linkage", "executable", "receipt", "validated", "linker"}, f"wordexp {name} link")
+    link_specs = {"dynamic-pie": (dynamic, "pie", "--dynamic-pie"), "dynamic-non-pie": (dynamic, "non-pie", "--dynamic-non-pie"),
+                  "static-et-exec": (static, "static", "-static"), "static-pie": (static, "static-pie", "-static-pie")}
+    for name in sorted(links):
+        item = _exact_dict(links[name], {"linkage", "executable", "receipt", "validated", "linker", "command"}, f"wordexp {name} link")
         executable = _identity_current(root, item["executable"], f"wordexp {name} executable")
         receipt = _identity_current(root, item["receipt"], f"wordexp {name} receipt")
         validated_path = _identity_current(root, item["validated"], f"wordexp {name} validation")
-        product, linkage = link_specs[name]
+        product, linkage, mode_flag = link_specs[name]
         if product is None or item["linkage"] != linkage:
-            fail("wordexp linkage selection differs")
-        # The retained reader validates the receipt's full actual linker
-        # identity.  It must also equal the native before/after tool seal.
+            fail("wordexp link product or mode differs")
+        if linkage.startswith("static"):
+            expected_link = [tools["static-driver"]["path"], mode_flag, "--link-receipt", f"{executable.name}.crabc-link.json",
+                             _mounted(root, workload), "-o", _mounted(root, executable)]
+        else:
+            expected_link = [tools["dynamic-driver"]["path"], mode_flag, _mounted(root, workload), "-o", _mounted(root, executable)]
+        _command_record(root, work, f"link-{name}", item["command"], expected_link, {}, f"wordexp {name} link")
+        sealed_linker = {"path": tools["linker"]["path"], "sha256": tools["linker"]["sha256"]}
         try:
             receipt_value = json.loads(receipt.read_text(encoding="utf-8"))
             actual_linker = receipt_value.get("resolved_linker")
-            sealed_linker = {"path": before["linker"]["path"], "sha256": before["linker"]["sha256"]}
             if item["linker"] != sealed_linker or actual_linker != sealed_linker:
                 fail("wordexp retained link selected an unsealed linker")
-            observed = products.validate_retained_link(root, SOURCE_MOUNT, product, workload, executable, receipt,
-                                                       linkage, actual_linker)
+            observed = products.validate_retained_link(root, SOURCE_MOUNT, product, workload, executable, receipt, linkage, actual_linker)
         except (products.ProductEvidenceError, OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             raise EvidenceError(f"wordexp retained {name} link is invalid: {error}") from error
         try:
@@ -836,50 +1053,56 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
         expected_validation["product"] = _mounted(root, product)
         if retained_validation != expected_validation:
             fail(f"wordexp retained {name} link validation drifted")
+
     expected_modes = set(MODE_SPECS)
     if static is None:
         expected_modes -= {"static-et-exec", "static-pie"}
     cells = report["cells"]
-    if not isinstance(cells, dict) or set(cells) != {f"{mode}-{shell}" for mode in expected_modes for shell in SHELL_CASES}:
+    expected_cell_labels = {f"{mode}-{shell}" for mode in expected_modes for shell in SHELL_CASES}
+    if not isinstance(cells, dict) or set(cells) != expected_cell_labels:
         fail("wordexp execution cell roster differs")
-    for label, item in cells.items():
-        item = _exact_dict(item, {"shell_case", "execution", "fixture_source", "external_alias_overrides", "oracle", "candidate", "expected_stdout"},
-                           f"wordexp cell {label}")
-        shell_case = label.rsplit("-", 1)[1]
-        if item["shell_case"] != shell_case or shell_case not in SHELL_CASES:
-            fail("wordexp shell case differs")
-        execution = _exact_dict(item["execution"], {"root", "product_files", "product_aliases", "consumers", "fixtures"},
-                                f"wordexp cell {label} execution")
-        execution_root = _local_mounted(root, execution["root"], f"wordexp cell {label} execution root")
-        local_execution = dict(execution)
-        local_execution["root"] = str(execution_root)
-        validate_execution_root(execution_root, local_execution)
-        if item["fixture_source"] != report_cell_fixture(item["fixture_source"], root):
-            fail("wordexp fixture source identities drifted")
-        if item["external_alias_overrides"] not in ([], ["lib/ld-musl-x86_64.so.1"]):
-            fail("wordexp external shell alias override differs")
-        oracle = _validate_command(root, item["oracle"], f"wordexp cell {label} oracle")
-        candidate = _validate_command(root, item["candidate"], f"wordexp cell {label} candidate")
-        expected = b"owned-wordexp: PASS\n" if shell_case == "normal" else b"owned-wordexp-shell-unavailable: PASS\n"
-        if item["expected_stdout"] != expected.decode("ascii"):
-            fail("wordexp expected transcript differs")
-        for stream in (oracle["stdout"], candidate["stdout"]):
-            if _identity_current(root, stream, f"wordexp cell {label} stdout").read_bytes() != expected:
-                fail("wordexp actual transcript differs")
-        oracle_stderr = _identity_current(root, oracle["stderr"], f"wordexp cell {label} oracle stderr")
-        candidate_stderr = _identity_current(root, candidate["stderr"], f"wordexp cell {label} candidate stderr")
-        if oracle_stderr.read_bytes() != candidate_stderr.read_bytes():
-            fail("wordexp actual oracle/candidate stderr differs")
+    for mode in sorted(expected_modes):
+        link_name = mode if mode.startswith("static") else mode.rsplit("-", 1)[0]
+        candidate = _identity_current(root, links[link_name]["executable"], f"wordexp {mode} linked consumer")
+        dynamic_product = None if mode.startswith("static") else dynamic
+        for shell_case in SHELL_CASES:
+            label = f"{mode}-{shell_case}"
+            item = _exact_dict(cells[label], {"mode", "shell_case", "execution", "consumer_sources", "external_alias_overrides",
+                                               "oracle", "candidate", "expected_stdout"}, f"wordexp cell {label}")
+            if item["mode"] != mode or item["shell_case"] != shell_case:
+                fail("wordexp cell mode or shell case differs")
+            source_consumers = _exact_dict(item["consumer_sources"], {"candidate", "oracle"}, f"wordexp cell {label} source consumers")
+            if source_consumers["candidate"] != links[link_name]["executable"] or source_consumers["oracle"] != report["oracle"]:
+                fail("wordexp cell consumers are not bound to sealed links")
+            execution_root = _validate_execution_binding(root, work, label, mode, shell_case, item["execution"], dynamic_product,
+                                                         candidate, oracle, fixture, item["external_alias_overrides"])
+            suffix = [] if shell_case == "normal" else ["--shell-unavailable"]
+            environment = {"CRABC_WORDEXP": "bar baz"}
+            mounted_execution = _mounted(root, execution_root)
+            expected_oracle = ["/usr/bin/timeout", "20", "/usr/sbin/chroot", mounted_execution, "/oracle", *suffix]
+            program = "/" + MODE_SPECS[mode][2]
+            expected_candidate = ["/usr/bin/timeout", "20", "/usr/sbin/chroot", mounted_execution]
+            if mode.endswith("-direct"):
+                expected_candidate += ["/lib/ld-crabc-x86_64.so.1", program]
+            else:
+                expected_candidate += [program]
+            expected_candidate += suffix
+            oracle_command = _command_record(root, work, f"{label}-oracle", item["oracle"], expected_oracle, environment,
+                                             f"wordexp cell {label} oracle")
+            candidate_command = _command_record(root, work, f"{label}-candidate", item["candidate"], expected_candidate, environment,
+                                                f"wordexp cell {label} candidate")
+            expected_stdout = b"owned-wordexp: PASS\n" if shell_case == "normal" else b"owned-wordexp-shell-unavailable: PASS\n"
+            if item["expected_stdout"] != expected_stdout.decode("ascii"):
+                fail("wordexp expected transcript differs")
+            oracle_stdout = _identity_current(root, oracle_command["stdout"], f"wordexp cell {label} oracle stdout")
+            candidate_stdout = _identity_current(root, candidate_command["stdout"], f"wordexp cell {label} candidate stdout")
+            oracle_stderr = _identity_current(root, oracle_command["stderr"], f"wordexp cell {label} oracle stderr")
+            candidate_stderr = _identity_current(root, candidate_command["stderr"], f"wordexp cell {label} candidate stderr")
+            if oracle_stdout.read_bytes() != expected_stdout or candidate_stdout.read_bytes() != expected_stdout:
+                fail("wordexp cell transcript differs")
+            if oracle_stderr.read_bytes() != candidate_stderr.read_bytes():
+                fail("wordexp cell oracle/candidate stderr differs")
     return report
-
-
-def report_cell_fixture(value: object, root: Path) -> dict[str, Any]:
-    if not isinstance(value, dict) or not value:
-        fail("wordexp fixture source roster differs")
-    return {name: _checkout_identity(root, _local_mounted(root, item.get("path") if isinstance(item, dict) else None,
-                                                             f"wordexp fixture {name}"), f"wordexp fixture {name}")
-            for name, item in value.items()}
-
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)

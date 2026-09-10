@@ -51,7 +51,10 @@ requires a zero result and the exact probe transcript, and compares
 both executables with the separately linked pinned-musl oracle.  It seals the
 installed headers, one workload object, link receipts and ELF validation,
 products, compiler/linker inputs, and every regular file and alias in each
-actual execution root.  Those roots contain the exact copied product files,
+actual execution root.  The source, selected products, fixed compiler/linker
+and shell tools, shared pinned-musl qualification inputs, and retained shell
+fixture are frozen before compilation and required unchanged after all cells;
+the linker is resolved before the first product link.  Those roots contain the exact copied product files,
 the relevant consumer and oracle, and a copied `/bin/sh` loader closure plus
 private `/dev/null`; the shell closure is explicitly an external fixture, not
 an owned runtime provider or a shell-semantics claim.  In the dynamic roots,
