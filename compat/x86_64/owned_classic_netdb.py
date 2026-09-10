@@ -159,6 +159,9 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
                                    ('prefix-a.example.test.', 1, 'udp'),
                                    ('prefix-aaaa.example.test.', 28, 'udp'),
                                    ('prefix-authority.example.test.', 1, 'udp'),
+                                   ('prefix-rdata.example.test.', 1, 'udp'),
+                                   ('prefix-additional.example.test.', 1, 'udp'),
+                                   ('prefix-empty.example.test.', 1, 'udp'),
                                    ('prefix-tcp.example.test.', 1, 'tcp'),
                                    ('47.100.51.198.in-addr.arpa.', 12, 'udp')):
         count = sum(event.get('name') == name and event.get('qtype') == qtype and event.get('transport') == transport for event in events)

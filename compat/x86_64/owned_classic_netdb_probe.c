@@ -168,6 +168,25 @@ static void dns_record_prefix(void) {
     error=97;
     CHECK(!gethostbyname_r("prefix-authority.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
     CHECK(!strcmp(h.h_name,"early.example.test"));address(&h,0,AF_INET,"198.51.100.47");CHECK(!h.h_addr_list[1]);
+    /* A complete late RR header with short RDATA stops after the same prefix. */
+    error=97;
+    CHECK(!gethostbyname_r("prefix-rdata.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    CHECK(!strcmp(h.h_name,"early.example.test"));address(&h,0,AF_INET,"198.51.100.47");CHECK(!h.h_addr_list[1]);
+    /* The source answer callback ignores a physically short additional RR. */
+    error=97;
+    CHECK(!gethostbyname_r("prefix-additional.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    CHECK(!strcmp(h.h_name,"early.example.test"));address(&h,0,AF_INET,"198.51.100.47");CHECK(!h.h_addr_list[1]);
+    /* A physical answer tail before every callback retains no data rather than
+       treating this received response as a transport retry. */
+    error=97;
+    CHECK(!gethostbyname_r("prefix-empty.example.test",&h,b,0,&r,&error)&&!r&&error==NO_DATA);
+    struct addrinfo no_data_hint={.ai_family=AF_INET},*no_data=(void*)1;
+    CHECK(getaddrinfo("prefix-empty.example.test","80",&no_data_hint,&no_data)==EAI_NODATA&&no_data==(void*)1);
+    query_length=res_mkquery(0,"prefix-empty.example.test",C_IN,T_A,0,0,0,query,sizeof query);
+    CHECK(query_length>0&&res_send(query,query_length,answer,sizeof answer)>12
+          &&(answer[3]&15)==0&&answer[6]==0&&answer[7]==1);
+    CHECK(res_query("prefix-empty.example.test",C_IN,T_A,answer,sizeof answer)>12
+          &&(answer[3]&15)==0&&answer[6]==0&&answer[7]==1);
     /* TC still takes the established complete TCP-frame path; only the RR
        tail is physically short. */
     error=97;

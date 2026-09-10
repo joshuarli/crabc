@@ -72,6 +72,9 @@ RECORDS: dict[tuple[str, int], tuple[str, bytes | None]] = {
     ("prefix-a.example.test.", 1): ("callback-prefix-answer", None),
     ("prefix-aaaa.example.test.", 28): ("callback-prefix-answer", None),
     ("prefix-authority.example.test.", 1): ("callback-prefix-authority", None),
+    ("prefix-rdata.example.test.", 1): ("callback-prefix-rdata", None),
+    ("prefix-additional.example.test.", 1): ("callback-prefix-additional", None),
+    ("prefix-empty.example.test.", 1): ("callback-prefix-empty", None),
     ("prefix-tcp.example.test.", 1): ("callback-prefix-tcp", None),
     ("47.100.51.198.in-addr.arpa.", 12): ("callback-prefix-ptr", None),
 }
@@ -225,6 +228,12 @@ def callback_prefix_answer(
     complete, wrong-RDLENGTH records used by ``callback_order_answer``.
     """
     cname = lambda label: bytes([len(label)]) + label + b"\x07example\x04test\x00"
+    if behavior == "callback-prefix-empty":
+        # The one declared answer has no complete callback before its owner
+        # byte runs out. `res_send`/`res_query` still receive its header and
+        # ANCOUNT=1; name lookup has no source callback and returns NODATA.
+        return (struct.pack("!HHHHHH", identifier, 0x8180, 1, 1, 0, 0)
+                + question_bytes + b"\xc0")
     if behavior == "callback-prefix-ptr":
         answers = [answer_record(12, cname(b"physical"))]
         trailing = b"\xc0"
@@ -236,6 +245,19 @@ def callback_prefix_answer(
     trailing = b"\xc0"
     if behavior == "callback-prefix-authority":
         return (struct.pack("!HHHHHH", identifier, 0x8180, 1, len(answers), 1, 0)
+                + question_bytes + b"".join(answers) + trailing)
+    if behavior == "callback-prefix-rdata":
+        # A complete late owner/header declares four RDATA bytes, but only one
+        # arrives. This is distinct from the owner-only tail above.
+        short_rdata = (b"\xc0\x0c" + struct.pack("!HHIH", qtype, 1, 60, 4)
+                       + b"\xc6")
+        return (struct.pack("!HHHHHH", identifier, 0x8180, 1, len(answers) + 1, 0, 0)
+                + question_bytes + b"".join(answers) + short_rdata)
+    if behavior == "callback-prefix-additional":
+        # `__dns_parse` stops after answers. The shared strict transport still
+        # frames this declared additional RR, while the source callback result
+        # retains its complete answer prefix.
+        return (struct.pack("!HHHHHH", identifier, 0x8180, 1, len(answers), 0, 1)
                 + question_bytes + b"".join(answers) + trailing)
     if behavior in ("callback-prefix-answer", "callback-prefix-tcp"):
         return (struct.pack("!HHHHHH", identifier, 0x8180, 1, len(answers) + 1, 0, 0)

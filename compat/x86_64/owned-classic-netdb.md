@@ -95,11 +95,14 @@ output on every completed PTR and clears it on a failed expansion. A
 physically incomplete late RR therefore retains the preceding callback state,
 as in musl.
 
-The contained differential sends valid-prefix A and AAAA records, answer and
-authority late-RR boundaries, a TC-to-complete-TCP late-RR boundary, and a PTR
+The contained differential sends valid-prefix A and AAAA records; owner-only
+and RDATA-short answer tails; authority and additional late-RR boundaries; a
+no-callback answer tail; a TC-to-complete-TCP late-RR boundary; and a PTR
 prefix through modern `getaddrinfo`, classic forward/reverse lookup, and
-direct `res_send`/`res_query`, all from the same installed-header object. It
-also retains CNAME-before/after, no-address and 48-address-cap cases. UDP
+direct `res_send`/`res_query`, all from the same installed-header object. The
+no-callback case retains the received NOERROR/ANCOUNT=1 packet for the raw
+calls while lookup returns source NO_DATA/EAI_NODATA. It also retains
+CNAME-before/after, no-address and 48-address-cap cases. UDP
 datagrams marked `MSG_TRUNC` or exceeding the receive buffer are still ignored;
 only DNS TC starts TCP, and the TCP length-prefixed frame must remain
 physically complete. The unselected non-owned resolver-runtime lookup remains

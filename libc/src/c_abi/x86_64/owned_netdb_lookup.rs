@@ -13,9 +13,8 @@
 //! windows are deferred cancellation points that retain source MASKED-to-DISABLE
 //! and final-errno behavior. Native Rust callers retain the raw core exchange
 //! contract. The remaining resolver-family boundary is the deliberate
-//! sequential transport/profile and other unqualified resolver behavior,
-//! including the sequential transport profile; this module does not claim full
-//! source parity or public family closure. The
+//! sequential transport/profile and other unqualified resolver behavior; this
+//! module does not claim full source parity or public family closure. The
 //! native C lookup path has its own ordered answer callback below: it follows musl's
 //! `__dns_parse` and `dns_parse_callback` stop boundary without changing the
 //! shared `DnsResponse` or transport contract.
