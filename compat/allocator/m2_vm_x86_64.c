@@ -191,7 +191,8 @@ static int run_policy_child(int record_descriptor) {
   record.large_null_hint_retry_failed =
       captured_policy_large_calls == 2 && captured_policy_large_hints[1] == NULL;
   record.regular_hinted_map_after_large_fallback =
-      reserved && captured_policy_regular_calls == 1 && captured_policy_regular_hint != NULL;
+      reserved && captured_policy_regular_calls == 1 &&
+      captured_policy_regular_hint == captured_policy_large_hints[0];
   /* Successful reservation after the wrapper's ENOMEM is the source proof
    * that `unix_mmap` ignores its best-effort MADV_HUGEPAGE result. */
   record.thp_advice_failure_ignored = reserved && captured_policy_thp_calls == 1;
@@ -223,8 +224,8 @@ static bool capture_policy_child(policy_child_record_t* record) {
   const bool read_record = read_all(descriptors[0], record, sizeof(*record));
   close(descriptors[0]);
   int status = 0;
-  return read_record && waitpid(child, &status, 0) == child
-      && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  const pid_t waited = waitpid(child, &status, 0);
+  return read_record && waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 int main(void) {

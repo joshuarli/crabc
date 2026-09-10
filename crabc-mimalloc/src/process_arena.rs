@@ -2284,7 +2284,7 @@ mod tests {
             Err(ProcessSharedArenaReserveFailure::Rejected { error }) => {
                 panic!("the failed cleanup must retain its map: {error:?}")
             }
-            Ok(_) => panic!("the injected commit failure must not publish an arena"),
+            Ok(_) => panic!("the injected unmap failure must not publish an arena"),
         }
         assert_eq!(storage.test_state(), RETAINED);
         assert_eq!(storage.registry.count(), 0);
