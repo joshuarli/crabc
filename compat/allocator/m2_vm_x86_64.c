@@ -52,8 +52,11 @@ static size_t captured_release_munmap_lengths[2];
  * `mmap` wrapper forces both source-generated MAP_HUGETLB attempts to fail,
  * allowing the unchanged Unix source to retry a null hint and then choose a
  * regular hinted map. Its `madvise` wrapper makes the selected THP advisory
- * fail. The record compares source branch relations, never virtual addresses
- * or a raw trace count. */
+ * fail. The regular map starts a separate `unix_mmap_prim_aligned` call, so
+ * its non-null hint is distinct from the failed large map's high hint. The
+ * returned numeric delta is not stable: the source aligns a randomized,
+ * atomically advanced cursor before returning each hint. The record compares
+ * those source relations, never virtual addresses or a raw trace count. */
 static bool capture_policy_mapping = false;
 static size_t captured_policy_large_calls = 0;
 static void* captured_policy_large_hints[2];
@@ -161,6 +164,13 @@ static size_t read_all(int descriptor, void* buffer, size_t length) {
   return read_count;
 }
 
+static bool regular_hint_is_fresh_after_large_fallback(void) {
+  return captured_policy_large_calls == 2 && captured_policy_regular_calls == 1
+      && captured_policy_large_hints[0] != NULL
+      && captured_policy_regular_hint != NULL
+      && captured_policy_regular_hint != captured_policy_large_hints[0];
+}
+
 static int run_policy_child(int record_descriptor) {
   policy_child_record_t record = {0};
   if (setenv("mimalloc_arena_reserve", "128M", 1) != 0
@@ -199,8 +209,7 @@ static int run_policy_child(int record_descriptor) {
   record.large_null_hint_retry_failed =
       captured_policy_large_calls == 2 && captured_policy_large_hints[1] == NULL;
   record.regular_hinted_map_after_large_fallback =
-      reserved && captured_policy_regular_calls == 1 &&
-      captured_policy_regular_hint == captured_policy_large_hints[0];
+      reserved && regular_hint_is_fresh_after_large_fallback();
   /* Successful reservation after the wrapper's ENOMEM is the source proof
    * that `unix_mmap` ignores its best-effort MADV_HUGEPAGE result. */
   record.thp_advice_failure_ignored = reserved && captured_policy_thp_calls == 1;

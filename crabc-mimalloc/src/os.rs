@@ -1428,6 +1428,14 @@ pub(crate) struct Mapping {
 /// high aligned hint for ordinary mappings. Unix retries only the latter with
 /// a null address after `mmap` fails; replacing a caller's explicit huge-page
 /// claim with a null map would lose its claimed-range ownership.
+///
+/// A [`MmapHint::SourceAligned`] value belongs to one
+/// `unix_mmap_prim_aligned` invocation. Pinned `src/prim/unix/prim.c` invokes
+/// that helper once for the large-page attempt and again for the ordinary
+/// fallback after both large maps fail. Each helper call reaches
+/// `_mi_os_get_aligned_hint`, which advances `aligned_base`; reusing the
+/// failed large-map hint for the ordinary map would erase that source cursor
+/// transition.
 #[derive(Clone, Copy)]
 enum MmapHint {
     Explicit(usize),
@@ -1738,10 +1746,19 @@ impl Mapping {
             flags |= MAP_NORESERVE;
         }
         let protection = access.protection();
-        let source_hint = match explicit_hint {
+        let mut default_random = default_random;
+        // This is a source `unix_mmap_prim_aligned` call boundary, rather
+        // than a reusable allocation-wide hint. In particular, the ordinary
+        // fallback below calls it again after a failed large-page attempt.
+        let mut source_hint = || match explicit_hint {
             Some(hint) => Some(MmapHint::Explicit(hint)),
             None => policy
-                .aligned_hint(config, try_alignment, length, default_random)
+                .aligned_hint(
+                    config,
+                    try_alignment,
+                    length,
+                    default_random.as_deref_mut(),
+                )
                 .map(MmapHint::SourceAligned),
         };
         let wants_large = allow_large
@@ -1756,12 +1773,17 @@ impl Mapping {
                     && length % HUGE_PAGE_SIZE == 0
                     && !policy.huge_one_gib_unavailable.load(Ordering::Relaxed);
                 large_flags |= if one_gib { MAP_HUGE_1GB } else { MAP_HUGE_2MB };
-                match Self::mmap_with_hint(source_hint, length, protection, large_flags) {
+                match Self::mmap_with_hint(source_hint(), length, protection, large_flags) {
                     Ok(address) => return Ok(Self::policy_mapping(address, length, config, access, true)),
                     Err(first_error) if one_gib => {
                         policy.huge_one_gib_unavailable.store(true, Ordering::Relaxed);
                         let fallback_flags = (large_flags & !MAP_HUGE_1GB) | MAP_HUGE_2MB;
-                        match Self::mmap_with_hint(source_hint, length, protection, fallback_flags) {
+                        match Self::mmap_with_hint(
+                            source_hint(),
+                            length,
+                            protection,
+                            fallback_flags,
+                        ) {
                             Ok(address) => return Ok(Self::policy_mapping(address, length, config, access, true)),
                             Err(error) if large_only => return Err(error),
                             Err(_) => {
@@ -1787,7 +1809,7 @@ impl Mapping {
                 );
             }
         }
-        let address = Self::mmap_with_hint(source_hint, length, protection, flags)?;
+        let address = Self::mmap_with_hint(source_hint(), length, protection, flags)?;
         if allow_large && policy.allow_thp() && config.can_use_large_page(length, try_alignment) {
             // The source ignores this advisory's errno and does not call the
             // resulting regular map a large-page mapping.
@@ -5053,7 +5075,7 @@ mod tests {
 
     #[cfg(not(miri))]
     #[test]
-    fn source_aligned_hint_retries_failed_large_mmap_at_null_before_regular_fallback() {
+    fn source_aligned_hint_retries_failed_large_mmap_at_null_before_fresh_regular_fallback() {
         let fault = fault::install(fault::Plan::at_pair(
             fault::Point::LargeMap,
             1,
@@ -5095,7 +5117,13 @@ mod tests {
         assert_ne!(attempts[0].flags & MAP_HUGETLB, 0);
         assert_eq!(attempts[1].hint, None, "a failed source aligned hint retries at null");
         assert_eq!(attempts[1].flags, attempts[0].flags);
-        assert_eq!(attempts[2].hint, attempts[0].hint);
+        let first_hint = attempts[0]
+            .hint
+            .expect("the first large map retains its source-aligned hint");
+        let regular_hint = attempts[2]
+            .hint
+            .expect("the regular fallback derives a fresh source-aligned hint");
+        assert_ne!(regular_hint, first_hint);
         assert_eq!(attempts[2].flags & MAP_HUGETLB, 0);
         assert_eq!(fault.observed(), 2);
         assert_eq!(fault.secondary_observed(), 1);

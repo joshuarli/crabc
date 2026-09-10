@@ -1868,6 +1868,16 @@ pub(crate) fn m2_vm_policy_first_arena_trace() -> M2VmPolicyFirstArenaTrace {
     let (attempts, count) = capture
         .attempts()
         .expect("the selected policy mmap sequence fits the fixed capture");
+    let large_hint = attempts[0]
+        .hint
+        .expect("the selected large map uses its source-aligned hint");
+    let regular_hint = attempts[2]
+        .hint
+        .expect("the regular fallback obtains a fresh source-aligned hint");
+    // Pinned `unix_mmap` calls `unix_mmap_prim_aligned` again for the normal
+    // fallback. Its `_mi_os_get_aligned_hint` call advances the same cursor
+    // through its randomized aligned result; reusing `large_hint` was a
+    // source-fidelity bug in this prior Rust witness and policy path.
 
     let trace = M2VmPolicyFirstArenaTrace {
         source_options_applied: policy_options.value(VmOption::ArenaReserve) == Some(131_072)
@@ -1885,7 +1895,8 @@ pub(crate) fn m2_vm_policy_first_arena_trace() -> M2VmPolicyFirstArenaTrace {
             && attempts[1].flags == attempts[0].flags,
         regular_hinted_map_after_large_fallback: count == 3
             && !attempts[2].uses_huge_page_flag()
-            && attempts[2].hint == attempts[0].hint,
+            && regular_hint != large_hint
+            && regular_hint != 0,
         thp_advice_failure_ignored: fault.observed() == 2
             && fault.secondary_observed() == 1
             && fault.third_observed() == 1,
