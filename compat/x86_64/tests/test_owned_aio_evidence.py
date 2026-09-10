@@ -168,8 +168,8 @@ class OwnedAioBehaviorObservationTests(unittest.TestCase):
                 self.evidence.assert_oracle_fd_reuse(self.root, fd)
 
     @staticmethod
-    def _fd_reuse_espipe(*, attempt: int, step: str = "wait-pipe-read", regular: int = 3,
-                         pipe_read: int = 3, pipe_write: int = 4,
+    def _fd_reuse_espipe(*, attempt: int | str, step: str = "wait-pipe-read", regular: int | str = 3,
+                         pipe_read: int | str = 3, pipe_write: int | str = 4,
                          positioned_return: int = 1, saved_errno: int | str = 11) -> bytes:
         return (
             f"fd-reuse-failure step={step} attempt={attempt} regular={regular} "
@@ -196,6 +196,9 @@ class OwnedAioBehaviorObservationTests(unittest.TestCase):
             {"attempt": 0, "saved_errno": "-0"},
             {"attempt": 0, "saved_errno": "2147483648"},
             {"attempt": 0, "saved_errno": "-2147483649"},
+            {"attempt": "00"},
+            {"attempt": 0, "regular": "03", "pipe_read": "03"},
+            {"attempt": 0, "regular": "2147483648", "pipe_read": "2147483648"},
         )
         for index, kwargs in enumerate(invalid):
             with self.subTest(invalid=kwargs):

@@ -8,7 +8,6 @@ fixed AIO object, link, command, and chroot-root roster from those inputs.
 from __future__ import annotations
 
 import argparse
-import ctypes
 from hashlib import sha256
 import importlib.util
 import json
@@ -66,17 +65,17 @@ STANDARD_TRANSCRIPTS = {
 }
 FD_REUSE_SUCCESS = b"fd-reuse-regular-to-pipe=ok\n"
 FD_REUSE_ATTEMPTS = 512
-# In pinned musl aio.c, aio_error/aio_return return the stored request result
+# The receipt models the x86 target ABI, whose C int is signed 32-bit.  In
+# pinned musl aio.c, aio_error/aio_return return the stored request result
 # without publishing errno.  The probe snapshots its caller's ambient errno
-# after that observation, so retain its canonical signed-c_int diagnostic
+# after that observation, so retain its canonical signed-int diagnostic
 # context but do not mistake it for the structural ESPIPE result below.
-C_INT_BITS = ctypes.sizeof(ctypes.c_int) * 8
-C_INT_MIN = -(1 << (C_INT_BITS - 1))
-C_INT_MAX = (1 << (C_INT_BITS - 1)) - 1
+TARGET_C_INT_MIN = -2147483648
+TARGET_C_INT_MAX = 2147483647
 FD_REUSE_ESPIPE = re.compile(
-    rb"fd-reuse-failure step=wait-pipe-read attempt=(?P<attempt>[0-9]+) "
-    rb"regular=(?P<regular>[0-9]+) pipe-read=(?P<pipe_read>[0-9]+) "
-    rb"pipe-write=(?P<pipe_write>[0-9]+) positioned-submit=0 positioned-error=0 "
+    rb"fd-reuse-failure step=wait-pipe-read attempt=(?P<attempt>0|[1-9][0-9]*) "
+    rb"regular=(?P<regular>[1-9][0-9]*) pipe-read=(?P<pipe_read>[1-9][0-9]*) "
+    rb"pipe-write=(?P<pipe_write>[1-9][0-9]*) positioned-submit=0 positioned-error=0 "
     rb"positioned-return=1 pipe-submit=0 pipe-error=29 pipe-return=-1 byte=0 "
     rb"errno=(?P<saved_errno>0|-?[1-9][0-9]*)\n\Z"
 )
@@ -529,7 +528,9 @@ def assert_oracle_fd_reuse(root: Path, command: Mapping[str, Any]) -> None:
         saved_errno = int(match["saved_errno"])
         if not (0 <= attempt < FD_REUSE_ATTEMPTS and regular > 0 and regular == pipe_read
                 and pipe_write > 0 and pipe_write != regular
-                and C_INT_MIN <= saved_errno <= C_INT_MAX):
+                and regular <= TARGET_C_INT_MAX and pipe_read <= TARGET_C_INT_MAX
+                and pipe_write <= TARGET_C_INT_MAX
+                and TARGET_C_INT_MIN <= saved_errno <= TARGET_C_INT_MAX):
             fail("pinned musl fd-reuse failure is not the stale-queue ESPIPE observation")
     else:
         fail("pinned musl fd-reuse status differs")
