@@ -89,12 +89,16 @@ bytes against pinned musl, static, static-PIE, dynamic PIE/kernel, dynamic
 PIE/direct-interpreter, dynamic non-PIE/kernel, and dynamic
 non-PIE/direct-interpreter paths. Static and dynamic product payloads and
 link receipts are validated by `owned_posix_product_evidence.py`; raw status,
-stdout, stderr, header witness objects, symbol tables, and retained link
-identities stay in its evidence directory. It accepts supplied static and
-dynamic products for replay.
+stdout, stderr, source-and-installed-header witness objects, symbol tables,
+and retained link identities stay in its evidence directory. It accepts
+supplied static and dynamic products for replay.
 
-The C and C++ witnesses assert the installed `struct spwd` LP64 layout,
-`L_cuserid`, all thirteen function signatures, and unmangled C linkage. The
+The C and C++ witnesses compile the pinned musl oracle headers, repository
+`include/` source headers, and the installed product headers. They assert each
+header surface's `struct spwd` LP64 layout, `L_cuserid`, all thirteen function
+signatures, and unmangled C linkage. The common C workload is separately
+compiled through the installed dynamic driver; its installed-header dependency
+receipt binds the exact headers consumed by that linked workload. The
 private-chroot probe creates every `/etc` fixture inside the disposable root;
 it never reads a host account file. Its cases cover parser fields, malformed
 and unterminated records, empty `-1` fields, unsigned flag conversion,
@@ -113,7 +117,7 @@ providers are selected.
 
 The completed disposable six-path matrix passed at
 `.work/x86_64/tmp/owned-account-files.7Q2Inq`; a supplied static-plus-dynamic
-product replay passed at `.work/x86_64/tmp/owned-account-files.wYsLF3`. Run
+product replay passed at `.work/x86_64/tmp/owned-account-files.XF5bL7`. Run
 the current matrix with:
 
 ```bash

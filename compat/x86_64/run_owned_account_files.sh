@@ -71,6 +71,30 @@ done
 [ "$expect_missing" -eq 0 ] || {
     [ "$static_was_supplied" -eq 0 ] && [ "$dynamic_was_supplied" -eq 0 ] || usage
 }
+# Reject a raw path before `realpath` could hide an ancestor symlink or a
+# lexical `..` component. A later physical-product validation binds receipts,
+# but it must not be asked to recover this caller-input boundary.
+python3 -B - "$ROOT" "$provided_static" "$provided_dynamic" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).resolve()
+for raw, name in ((sys.argv[2], 'static'), (sys.argv[3], 'dynamic')):
+    if not raw:
+        continue
+    lexical = Path(raw)
+    if any(component == '..' for component in lexical.parts):
+        raise SystemExit(f'owned account files {name} product must be a checkout .work directory')
+    if not lexical.is_absolute():
+        lexical = Path.cwd() / lexical
+    if not lexical.is_relative_to(root / '.work'):
+        raise SystemExit(f'owned account files {name} product must be a checkout .work directory')
+    cursor = root
+    for component in lexical.relative_to(root).parts:
+        cursor /= component
+        if cursor.is_symlink():
+            raise SystemExit(f'owned account files {name} product must be a checkout .work directory')
+PY
 if [ "$static_was_supplied" -eq 1 ]; then
     provided_static="$(realpath "$provided_static")"
 fi
@@ -89,7 +113,7 @@ python3 -B - "$ROOT" "${TMPDIR:-}" "$provided_static" "$provided_dynamic" <<'PY'
 from pathlib import Path
 import sys
 
-root = Path(sys.argv[1])
+root = Path(sys.argv[1]).resolve()
 temporary = Path(sys.argv[2])
 static_product = Path(sys.argv[3]) if sys.argv[3] else None
 dynamic_product = Path(sys.argv[4]) if sys.argv[4] else None
@@ -180,26 +204,43 @@ assert_symbols() {
         readelf --dyn-syms -W "$artifact" >"$report"
     fi
     python3 -B - "$report" "$selector" "${ACCOUNT_SYMBOLS[@]}" <<'PY'
+from collections import Counter
 from pathlib import Path
 import sys
 
 report = Path(sys.argv[1]).read_text(encoding='utf-8').splitlines()
 selector = sys.argv[2]
+expected = Counter({name: 1 for name in sys.argv[3:]})
+definitions = Counter()
+correct = Counter()
 for name in sys.argv[3:]:
     if selector == 'nm':
-        matches = [line.split() for line in report
-                   if len(line.split()) == 3 and line.split()[1] == 'T'
-                   and line.split()[2] == name]
+        for line in report:
+            fields = line.split()
+            if len(fields) != 3 or fields[2] != name:
+                continue
+            definitions[name] += 1
+            if fields[1] == 'T':
+                correct[name] += 1
     else:
-        matches = [line.split() for line in report
-                   if len(line.split()) == 8
-                   and line.split()[3:6] == ['FUNC', 'GLOBAL', 'DEFAULT']
-                   and line.split()[6] != 'UND' and line.split()[7] == name]
-    if len(matches) != 1:
-        raise SystemExit(f'account-file symbol evidence mismatch for {name}: {matches}')
+        for line in report:
+            fields = line.split()
+            if len(fields) != 8 or fields[6] == 'UND' or fields[7] != name:
+                continue
+            definitions[name] += 1
+            if fields[3:6] == ['FUNC', 'GLOBAL', 'DEFAULT']:
+                correct[name] += 1
+if definitions != expected:
+    raise SystemExit(f'account-file provider multiplicity mismatch: {definitions!r}')
+if correct != expected:
+    raise SystemExit(f'account-file provider binding mismatch: {correct!r}')
 PY
 }
 
+# The `source` declaration witness compiles source-tree headers, `oracle`
+# compiles the pinned oracle headers, and `installed` compiles installed
+# product headers. The installed dynamic driver separately compiles the common
+# C workload and its dependency receipt records that workload's headers.
 compile_header_witnesses() {
     local tree="$1" include_root="$2"
     local -a include_args=()
@@ -212,9 +253,9 @@ compile_header_witnesses() {
 
     "$ORACLE_CC" -std=c11 -fno-builtin "${include_args[@]}" \
         -H -c "$HEADER_C" -o "$c_object" >/dev/null 2>"$trace"
-    if [ "$tree" = project ]; then
+    if [ "$tree" = source ]; then
         grep -Fq "$ROOT/include/shadow.h" "$trace" ||
-            fail 'project C header witness did not use include/shadow.h'
+            fail 'source C header witness did not use include/shadow.h'
     fi
     "$ORACLE_CC" -x c++ -std=c++17 -fno-builtin -nostdinc++ \
         "${include_args[@]}" -c "$HEADER_CXX" -o "$cxx_object"
@@ -432,7 +473,7 @@ readonly installed="$(realpath "$provided_dynamic")"
 validate_product_payload "$installed" dynamic
 
 compile_header_witnesses oracle ''
-compile_header_witnesses project "$ROOT/include"
+compile_header_witnesses source "$ROOT/include"
 compile_header_witnesses installed "$installed/usr/include"
 sha256sum "$HEADER_C" "$HEADER_CXX" "$work"/*-header-*.o >"$work/header-input.sha256"
 
@@ -444,6 +485,10 @@ write_compile_receipt "$installed"
 assert_symbols "$work/oracle" nm "$work/oracle-symbols.txt"
 
 if [ "$expect_missing" -eq 1 ]; then
+    # The red baseline first proves that this exact installed-header object
+    # runs through pinned musl in private `/etc` fixtures. Only then may an
+    # absent selected provider be attributed to the owned product links.
+    run_oracle_scenarios
     python3 -B "$ROOT/scripts/build_x86_64_owned_sysroot.py" \
         --output "$work/static-sysroot" >"$work/static-build.json"
     for mode in static static-pie; do
@@ -456,7 +501,6 @@ if [ "$expect_missing" -eq 1 ]; then
             "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" \
             -o "$work/dynamic-$mode"
     done
-    run_oracle_scenarios
     printf 'owned account files: expected red PASS (one installed-header object ran through pinned musl; all four owned links expose the absent account-file providers; private-chroot oracle fixtures retained); evidence: %s\n' "$work"
     exit 0
 fi
@@ -515,5 +559,5 @@ elif [ "$dynamic_was_supplied" -eq 1 ]; then
 else
     matrix='disposable static/static-PIE plus dynamic PIE/non-PIE kernel/direct'
 fi
-printf 'owned account files: PASS (same installed-header object through pinned musl; %s; C/C++ ABI, conventional private /etc fixtures, source-exact shadow parsing/TCB/no-ops/stream errors, usershell state, cuserid, workers, cancellation cleanup, raw status/stdout/stderr, and sealed link identities retained); evidence: %s\n' \
+printf 'owned account files: PASS (same installed-header object through pinned musl; %s; source-and-installed-header C/C++ ABI, installed-header workload receipt, conventional private /etc fixtures, source-exact shadow parsing/TCB/no-ops/stream errors, usershell state, cuserid, workers, cancellation cleanup, raw status/stdout/stderr, and sealed link identities retained); evidence: %s\n' \
     "$matrix" "$work"

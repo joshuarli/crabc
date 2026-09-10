@@ -1,4 +1,4 @@
-/* Installed-header C++17 ABI witness for account-file compatibility entries. */
+/* Source-and-installed-header C++17 ABI witness for account-file entries. */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
