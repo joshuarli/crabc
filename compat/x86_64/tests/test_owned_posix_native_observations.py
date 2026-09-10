@@ -822,11 +822,13 @@ class NativeObservationsTests(unittest.TestCase):
         source_names[source_names.index('regression/case_065')] = 'regression/pthread_atfork-errno-clobber'
         if profile:
             source_names[source_names.index('functional/case_065')] = 'functional/crypt'
+            source_names[source_names.index('functional/case_064')] = 'functional/strptime'
         for name in source_names:
             self.put(stage / 'src' / (name + '.c'), ('/* ' + name + ' */\n').encode())
         if profile:
             import owned_posix_native_dispositions as dispositions
             self.put(stage / 'src/functional/crypt.c', (ROOT / dispositions.CRYPT_REFERENCE).read_bytes())
+            self.put(stage / 'src/functional/strptime.c', (ROOT / dispositions.STRPTIME_REFERENCE).read_bytes())
         self.put(stage / 'src/api/unistd.c', b'C(_PC_TIMESTAMP_RESOLUTION)\nC(_SC_XOPEN_UUCP)\n')
         for number in range(29): self.put(stage / f'src/math/gen/g{number:02d}.c', b'generator\n')
         self.put(stage / 'src/musl/pleval.c', b'excluded upstream target\n')
@@ -1020,6 +1022,16 @@ class NativeObservationsTests(unittest.TestCase):
                             path = self.leaf / 'execution' / name / (side + '.stdout')
                             self.put(path, output)
                             record.update(exit_status=1, stdout=self.binding(path))
+                        if profile and name == 'functional/strptime':
+                            output = (
+                                f'{self.recorded(source)}:36: "%s": for "683078400" expected 1991-08-25T00:00:00 '
+                                'but got 1900-01-00T00:00:00\n'
+                                f'{self.recorded(source)}:47: "%z": failed to parse "-06"\n'
+                                'FAIL /functional/strptime [status 1]\n'
+                            ).encode()
+                            path = self.leaf / 'execution' / name / (side + '.stdout')
+                            self.put(path, output)
+                            record.update(exit_status=1, stdout=self.binding(path))
                         status = self.put(self.leaf / 'execution' / name / (side + '.status.json'), record)
                         copied_files = [
                             {'destination': '/runtest', 'sha256': self.binding(self.leaf / 'links' / side / 'common/runtest.exe')['sha256']},
@@ -1063,7 +1075,12 @@ class NativeObservationsTests(unittest.TestCase):
                 unit['status'] = 'runtime-failed'
                 unit['runtime']['candidate']['status'] = 'failed'
                 unit['runtime']['comparison'] = {'status': 'blocked', 'reason': 'candidate runtime did not pass this prepared root'}
-                report.update(status='incomplete', counts={'passed': 433, 'runtime-failed': 1})
+                report.update(status='incomplete', counts={'passed': 432, 'runtime-failed': 2})
+            if profile and name == 'functional/strptime':
+                unit['status'] = 'runtime-failed'
+                unit['runtime']['oracle']['status'] = 'failed'
+                unit['runtime']['candidate']['status'] = 'failed'
+                unit['runtime']['comparison'] = {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
             report['units'].append(unit)
         self.put(self.leaf / 'libc-test.json', report)
         return report
@@ -1100,7 +1117,7 @@ class NativeObservationsTests(unittest.TestCase):
                 native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                root=self.root, profile_inputs=inputs)
 
-    def test_native_libc_crypt_profile_preserves_failed_unit_and_every_other_unit(self):
+    def test_native_libc_profile_preserves_only_crypt_and_strptime_failed_units(self):
         report = self.libc_test_fixture(profile=True)
         proof = self.profile_companions()
         inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
@@ -1109,10 +1126,19 @@ class NativeObservationsTests(unittest.TestCase):
         with patch.object(native, '_load_profile_companions', return_value=proof):
             result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                     root=self.root, profile_inputs=inputs)
-            self.assertEqual(report['counts'], {'passed': 433, 'runtime-failed': 1})
+            self.assertEqual(report['counts'], {'passed': 432, 'runtime-failed': 2})
             self.assertEqual(len(result['observations']), 434)
             self.assertEqual(result['qualification']['status'], 'profile-qualified')
+            self.assertEqual(len(result['qualification']['dispositions']), 2)
             self.assertEqual(len(result['qualification']['dispositions'][0]['differences']), 28)
+            self.assertEqual(result['qualification']['dispositions'][1]['unit'], 'functional/strptime')
+            count_changed = json.loads(json.dumps(report))
+            count_changed['counts']['runtime-failed'] = 1
+            self.put(self.leaf / 'libc-test.json', count_changed)
+            with self.assertRaises(native.NativeObservationError):
+                native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
+                               root=self.root, profile_inputs=inputs)
+            self.put(self.leaf / 'libc-test.json', report)
             report['units'][0]['status'] = 'runtime-failed'
             self.put(self.leaf / 'libc-test.json', report)
             with self.assertRaises(native.NativeObservationError):

@@ -27,6 +27,9 @@ class NativeDispositionTests(unittest.TestCase):
             self.put(self.root / path, (ROOT / path).read_bytes())
         self.reference = (ROOT / dispositions.CRYPT_REFERENCE).read_bytes()
         self.source = self.put(self.leaf / 'source-prepared/src/functional/crypt.c', self.reference)
+        self.strptime_reference = (ROOT / 'compat/x86_64/native-strptime-reference/strptime.c').read_bytes()
+        self.strptime_source = self.put(self.leaf / 'source-prepared/src/functional/strptime.c',
+                                        self.strptime_reference)
         self.mount = '/workspace'
         self.reader = object.__new__(native.Reader)
         self.reader.root, self.reader.leaf, self.reader.mount = self.root, self.leaf, Path(self.mount)
@@ -118,6 +121,42 @@ class NativeDispositionTests(unittest.TestCase):
             dispositions.crypt_disposition(self.reader, self.source,
                 candidate_status=1, candidate_stdout=raw, candidate_stderr=b'',
                 oracle_status=0, oracle_stdout=b'', oracle_stderr=b'', companion=proof)
+
+    def test_strptime_only_accepts_the_pinned_glibc_block_raw_pair(self):
+        source_name = self.reader.recorded(self.strptime_source)
+        raw = (
+            f'{source_name}:36: "%s": for "683078400" expected 1991-08-25T00:00:00 '
+            'but got 1900-01-00T00:00:00\n'
+            f'{source_name}:47: "%z": failed to parse "-06"\n'
+            'FAIL /functional/strptime [status 1]\n'
+        ).encode()
+        observed = dispositions.strptime_disposition(
+            self.reader, self.strptime_source,
+            candidate_status=1, candidate_stdout=raw, candidate_stderr=b'',
+            oracle_status=1, oracle_stdout=raw, oracle_stderr=b'')
+        self.assertEqual(observed['unit'], 'functional/strptime')
+        self.assertEqual(observed['basis'], 'pinned-source-musl-posix')
+        self.assertIs(observed['raw_passed'], False)
+        for fields in (
+            {'candidate_status': 0}, {'oracle_status': 0},
+            {'candidate_stdout': b'FAIL /functional/strptime [status 1]\n',
+             'oracle_stdout': b'FAIL /functional/strptime [status 1]\n'},
+            {'candidate_stdout': raw.replace(b'1900-01-00', b'1900-01-01')},
+            {'candidate_stdout': raw + b'extra\n'},
+            {'candidate_stderr': b'extra'}, {'oracle_stderr': b'extra'},
+            {'oracle_stdout': raw.replace(b'"-06"', b'"-0600"')},
+        ):
+            arguments = dict(candidate_status=1, candidate_stdout=raw, candidate_stderr=b'',
+                             oracle_status=1, oracle_stdout=raw, oracle_stderr=b'')
+            arguments.update(fields)
+            with self.assertRaises(native.NativeObservationError):
+                dispositions.strptime_disposition(self.reader, self.strptime_source, **arguments)
+        self.strptime_source.write_bytes(self.strptime_reference + b'/* altered source */\n')
+        with self.assertRaises(native.NativeObservationError):
+            dispositions.strptime_disposition(
+                self.reader, self.strptime_source,
+                candidate_status=1, candidate_stdout=raw, candidate_stderr=b'',
+                oracle_status=1, oracle_stdout=raw, oracle_stderr=b'')
 
     def test_only_four_os_aliases_have_exact_profile_outcomes(self):
         proof = {'receipt': {'path': '.work/family/execution.json', 'sha256': 'b'*64},

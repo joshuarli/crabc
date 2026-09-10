@@ -877,15 +877,20 @@ def _libc_test(reader):
     report = read_json(leaf / 'libc-test.json')
     profiled = reader.profile_companions is not None
     dispositions = []
-    same({key: report[key] for key in ('schema', 'status', 'campaign_complete', 'public_support', 'target', 'counts')},
+    same({key: report[key] for key in ('schema', 'status', 'campaign_complete', 'public_support', 'target')},
          {'schema': 'crabc.x86_64-owned-libc-test/v1', 'status': 'incomplete' if profiled else 'passed', 'campaign_complete': False,
-          'public_support': False, 'target': 'x86_64-unknown-linux-musl',
-          'counts': {'passed': 433, 'runtime-failed': 1} if profiled else {'passed': 434}}, 'complete libc-test campaign')
+          'public_support': False, 'target': 'x86_64-unknown-linux-musl'}, 'complete libc-test campaign')
     require('fatal_error' not in report and report['candidate_link_blocker'] is None, 'libc-test campaign has a retained blocker')
     product = report['product']
     copied_product, product_identity = _libc_product(reader, report)
     oracle = _libc_oracle(reader, report)
     units, source_files = _libc_test_source(reader, report, contract)
+    raw_counts = {}
+    for unit in report['units']:
+        status = unit.get('status')
+        require(isinstance(status, str), 'libc-test unit status is malformed')
+        raw_counts[status] = raw_counts.get(status, 0) + 1
+    same(report['counts'], raw_counts, 'libc-test retained raw status counts')
     shell_controls = None
     if any(unit['id'] in contract.SHELL_RUNTIME_UNITS for unit in units):
         shell_controls = _libc_control_launcher(reader, report['external_shell_fixture'], contract=contract,
@@ -933,8 +938,10 @@ def _libc_test(reader):
     for definition, unit in zip(units, report['units']):
         name, kind = definition['id'], definition['kind']
         crypt_profile = profiled and name == 'functional/crypt'
+        strptime_profile = profiled and name == 'functional/strptime'
+        profiled_runtime = crypt_profile or strptime_profile
         same([unit['id'], unit['kind'], unit['suite'], unit['status']],
-             [name, kind, definition['suite'], 'runtime-failed' if crypt_profile else 'passed'], 'libc-test unit role and status')
+             [name, kind, definition['suite'], 'runtime-failed' if profiled_runtime else 'passed'], 'libc-test unit role and status')
         source, obj = leaf / 'source-prepared' / definition['source'], object_paths[name]
         reader.bind(unit['source'], source, 'libc-test prepared compilation source')
         translation, header = unit['candidate_translation'], unit['header_translation']
@@ -980,12 +987,14 @@ def _libc_test(reader):
             continue
         runtime = unit['runtime']
         same(runtime['comparison'], {'status': 'blocked', 'reason': 'candidate runtime did not pass this prepared root'}
-             if crypt_profile else {'status': 'passed', 'detail': 'passed'}, 'libc-test runtime comparison')
+             if crypt_profile else {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
+             if strptime_profile else {'status': 'passed', 'detail': 'passed'}, 'libc-test runtime comparison')
         results, raw = {}, {}
         for side in ('oracle', 'candidate'):
             run = runtime[side]
             same([run['status'], run['root_reclaimed']],
-                 ['failed' if crypt_profile and side == 'candidate' else 'passed', True], 'libc-test private-root raw result')
+                 ['failed' if (crypt_profile and side == 'candidate') or strptime_profile else 'passed', True],
+                 'libc-test private-root raw result')
             record = run['record']
             status_path = leaf / 'execution' / name / (side + '.status.json')
             reader.bind(run['status_record'], status_path, 'libc-test durable runtime status')
@@ -997,7 +1006,8 @@ def _libc_test(reader):
             command = record['command']
             identity = _libc_execution_identity(reader, run['execution_identity'], name=name, side=side,
                                                 source=source, command=command)
-            results[side] = {**_command_streams(reader, record, expected_status=1 if crypt_profile and side == 'candidate' else 0),
+            results[side] = {**_command_streams(reader, record,
+                                                  expected_status=1 if (crypt_profile and side == 'candidate') or strptime_profile else 0),
                              'status': reader.identity(status_path, raw=True),
                              'execution_identity': identity}
             raw[side] = [read_bytes(reader.local(record[stream]['path'])) for stream in ('stdout', 'stderr')]
@@ -1021,10 +1031,15 @@ def _libc_test(reader):
                 candidate_status=runtime['candidate']['record']['exit_status'], candidate_stdout=raw['candidate'][0], candidate_stderr=raw['candidate'][1],
                 oracle_status=runtime['oracle']['record']['exit_status'], oracle_stdout=raw['oracle'][0], oracle_stderr=raw['oracle'][1],
                 companion=reader.profile_companions['crypt']))
+        elif strptime_profile:
+            import owned_posix_native_dispositions as profile_contract
+            dispositions.append(profile_contract.strptime_disposition(reader, source,
+                candidate_status=runtime['candidate']['record']['exit_status'], candidate_stdout=raw['candidate'][0], candidate_stderr=raw['candidate'][1],
+                oracle_status=runtime['oracle']['record']['exit_status'], oracle_stdout=raw['oracle'][0], oracle_stderr=raw['oracle'][1]))
         else:
             require(raw['oracle'] == raw['candidate'], 'libc-test raw runtime streams differ: ' + name)
         observations[name] = {'kind': kind, **results}
-    require(not profiled or len(dispositions) == 1, 'libc-test fixed crypt disposition is missing')
+    require(not profiled or len(dispositions) == 2, 'libc-test fixed crypt/strptime dispositions are missing')
     return reader.finish('libc-test', 'libc-test.json', observations, objects,
                          qualification={'status': 'profile-qualified' if profiled else 'passed',
                                         'raw_passed': not profiled, 'dispositions': dispositions},

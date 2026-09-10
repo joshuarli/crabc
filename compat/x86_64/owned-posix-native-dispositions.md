@@ -8,7 +8,7 @@ A qualified profile difference is never an upstream pass or an excluded unit.
 `owned_posix_native_observations.py` still validates every source, object,
 link, execution root, raw outcome and oracle observation.
 
-Only these three source boundaries may have a profile disposition:
+Only these four source boundaries may have a profile disposition:
 
 * OS-test `basic/unistd/{seteuid,setegid,setreuid,setregid}.out`: pinned musl
   reports `exit: 0`; the candidate reports the exact alias and `ENOTSUP`.
@@ -36,6 +36,32 @@ Only these three source boundaries may have a profile disposition:
   raw failure. No additional failure, missing diagnostic, changed result,
   matched oracle failure, timeout, missing source entry or failed setup can
   acquire this disposition.
+* libc-test `functional/strptime`: the untouched fixed source's `/* Glibc */`
+  block retains exactly two diagnostics for both candidate and pinned musl,
+  both with raw exit status 1 and empty stderr. The `%s` call leaves a zeroed
+  `tm` after parsing `683078400`; the `%z` call rejects `-06`. This is a
+  source-and-standard qualification of the raw upstream failure, never an
+  upstream pass or a general allowance for equal failures. Its prepared source
+  must equal `native-strptime-reference/strptime.c` byte-for-byte, and the
+  candidate and pinned-musl stdout streams must each equal the exact two
+  diagnostics plus `FAIL /functional/strptime [status 1]`. A missing, extra,
+  or changed diagnostic, another status, nonempty stderr, timeout, or source
+  change fails closed.
+
+  The pinned source is MIT-licensed libc-test revision
+  `68edb8bd73dab8147ee54c8bec638f4d2b3cff37`, tree
+  `4f7a5373652c6534b0fbafb58fe3fed1489f3b3b`; the local reference and license
+  are `compat/x86_64/native-strptime-reference/{strptime.c,COPYRIGHT}`. Both
+  calls are in that source's explicit `/* Glibc */` block. POSIX.1-2017 does
+  not list `%s` or `%z` in [`strptime`](https://pubs.opengroup.org/onlinepubs/9699919799.2018edition/functions/strptime.html).
+  POSIX.1-2024 adds `%s` while leaving any effect on `tm` unspecified, and
+  defines `%z` only as ISO 8601 `+hhmm` or `-hhmm`, again with any `tm` effect
+  unspecified ([`strptime`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/strptime.html)).
+  The retained musl 1.2.6 `src/time/strptime.c` parses `%s` while leaving `tm`
+  unchanged and requires four digits after a `%z` sign. The ordinary source
+  cases remain checked by the untouched unit and installed numeric/calendar
+  component; this disposition establishes no general locale, time, or glibc
+  extension closure. It admits no `wordexp`, `random`, or math failure.
 
 The bounded adapter parses decimal rounds and normalizes values below 1000 to
 1000 before validating RustCrypto parameters. It rejects excessive or
@@ -68,8 +94,9 @@ The state transition is explicit:
 1. An ordinary component has raw success and qualification `passed`.
 2. Only OS-test or libc-test may retain raw exit 1 and raw failure while an
    independently reconstructed qualification is `profile-qualified`.
-3. Missing or invalid companion evidence, an unexpected raw outcome or any
-   other failure stops execution and retains `incomplete.json`.
+3. Missing or invalid required companion evidence, a missing or invalid
+   source contract, an unexpected raw outcome, or any other failure stops
+   execution and retains `incomplete.json`.
 4. Only the five fully checked component qualifications can establish
    `native_aggregate_complete`. Family, campaign and public-support flags
    remain false.

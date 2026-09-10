@@ -1,7 +1,8 @@
-"""Three finite source/profile boundaries: four aliases, six atomics, and crypt.
+"""Four finite source/profile boundaries: aliases, atomics, crypt, and strptime.
 
 This owner does not execute or waive a test. It retains exact upstream raw
-failures and requires separately qualified same-product companion evidence.
+failures and requires the source-specific companion or source contract that
+each finite boundary names.
 """
 from __future__ import annotations
 
@@ -15,6 +16,8 @@ import owned_posix_native_observations as native
 SCHEMA = 'crabc.x86_64-owned-posix-native-dispositions/v1'
 CRYPT_REFERENCE = 'compat/x86_64/native-crypt-reference/crypt.c'
 CRYPT_REFERENCE_SHA256 = 'd25b9d533b304f9bbae0c8eae8212196e431fdbeb18e805aebf667741235aafe'
+STRPTIME_REFERENCE = 'compat/x86_64/native-strptime-reference/strptime.c'
+STRPTIME_REFERENCE_SHA256 = 'af24cbeb224b18937c7396ce38710df72f7e35ba896dc5603de2119d16cffe8c'
 DYNAMIC_MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
 PROFILE_SOURCES = ('COMPATIBILITY-PROFILE.md', 'compat/crabc-rs/crypt-profile.md',
     'compat/x86_64/owned-posix-native-dispositions.md', 'compat/x86_64/owned_posix_native_dispositions.py',
@@ -24,7 +27,9 @@ PROFILE_SOURCES = ('COMPATIBILITY-PROFILE.md', 'compat/crabc-rs/crypt-profile.md
     'compat/x86_64/owned_atomic_addressable_profile.py',
     'compat/x86_64/owned-atomic-addressable-profile.md',
     CRYPT_REFERENCE, 'compat/x86_64/native-crypt-reference/COPYRIGHT',
-    'compat/x86_64/native-crypt-reference/README.md')
+    'compat/x86_64/native-crypt-reference/README.md',
+    STRPTIME_REFERENCE, 'compat/x86_64/native-strptime-reference/COPYRIGHT',
+    'compat/x86_64/native-strptime-reference/README.md')
 
 # Exact tiny source inputs from the pinned OS-test tree. The complete native
 # collector also proves their upstream tree/revision and untouched source copies.
@@ -127,6 +132,58 @@ def crypt_disposition(reader, source, *, candidate_status, candidate_stdout, can
             'companion': companion['receipt']}
 
 
+def strptime_disposition(reader, source, *, candidate_status, candidate_stdout, candidate_stderr,
+                         oracle_status, oracle_stdout, oracle_stderr):
+    """Qualify only the exact pinned libc-test Glibc-only strptime block.
+
+    The original unit remains failed for both candidate and pinned musl. The
+    fixed source, exact two diagnostics and empty stderr make this a finite
+    source-and-standard contract rather than a generic matched-failure rule.
+
+    POSIX.1-2017 does not specify ``%s`` or ``%z`` for strptime:
+    https://pubs.opengroup.org/onlinepubs/9699919799.2018edition/functions/strptime.html
+    POSIX.1-2024 specifies ``%s`` but leaves its tm effect unspecified, and
+    specifies ``%z`` as ``+hhmm`` or ``-hhmm`` only:
+    https://pubs.opengroup.org/onlinepubs/9799919799/functions/strptime.html
+    The fixed source's ``-06`` is outside the latter syntax. The pinned musl
+    source parses ``%s`` without changing tm and requires all four %z digits.
+    """
+    expected_source = reader.leaf / 'source-prepared/src/functional/strptime.c'
+    native.require(source == expected_source, 'strptime disposition source path differs')
+    reference = reader.root / STRPTIME_REFERENCE
+    reference_bytes = native.read_bytes(reference)
+    native.require(hashlib.sha256(reference_bytes).hexdigest() == STRPTIME_REFERENCE_SHA256,
+                   'strptime reference source differs')
+    native.require(native.read_bytes(source) == reference_bytes,
+                   'strptime prepared source differs from fixed reference')
+    native.same([candidate_status, oracle_status], [1, 1], 'strptime original raw exit statuses')
+    native.require(candidate_stderr == b'' and oracle_stderr == b'',
+                   'strptime unexpected original stderr')
+    expected = (
+        f'{reader.recorded(source)}:36: "%s": for "683078400" expected 1991-08-25T00:00:00 '
+        'but got 1900-01-00T00:00:00\n'
+        f'{reader.recorded(source)}:47: "%z": failed to parse "-06"\n'
+        'FAIL /functional/strptime [status 1]\n'
+    ).encode()
+    native.require(candidate_stdout == expected and oracle_stdout == expected,
+                   'strptime original diagnostics differ from the fixed two-line source contract')
+    return {
+        'schema': SCHEMA,
+        'unit': 'functional/strptime',
+        'status': 'profile-qualified',
+        'basis': 'pinned-source-musl-posix',
+        'raw_passed': False,
+        'source': reader.identity(source),
+        'reference': reader.identity(reference, source=True),
+        'profiles': profile_sources(reader.root),
+        'diagnostics': [
+            {'line': 36, 'conversion': '%s', 'input': '683078400',
+             'raw': 'expected 1991-08-25T00:00:00 but got 1900-01-00T00:00:00'},
+            {'line': 47, 'conversion': '%z', 'input': '-06', 'raw': 'failed to parse'},
+        ],
+    }
+
+
 def os_alias_disposition(reader, suite, outcome, source, candidate, oracle, companion):
     alias = Path(outcome).stem
     native.require(suite == 'basic' and outcome == 'unistd/' + alias + '.out' and alias in OS_ALIAS_SOURCES,
@@ -161,7 +218,7 @@ def os_atomic_disposition(reader, suite, outcome, source, candidate, oracle, com
 
 
 def os_disposition(reader, suite, outcome, source, candidate, oracle, companions):
-    """Admit the two OS rosters within three source boundaries; every other raw mismatch rejects."""
+    """Admit the two OS rosters only; every other raw mismatch rejects."""
     native.require(isinstance(companions, dict) and set(companions) == {'credentials', 'atomic'},
                    'complete OS companion proofs required')
     if suite == 'basic' and outcome in {'unistd/' + name + '.out' for name in OS_ALIAS_SOURCES}:
