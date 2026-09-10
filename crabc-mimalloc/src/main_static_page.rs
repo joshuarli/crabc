@@ -19,6 +19,8 @@
 //! later-thread attachment, or pthread/TLS hooks.
 
 use core::ptr::NonNull;
+#[cfg(feature = "native-runtime-test-audit")]
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::arena::ArenaId;
 use crate::config::{
@@ -50,6 +52,25 @@ use crate::types::Page;
 
 #[cfg(test)]
 extern crate std;
+
+// These default-off scalars distinguish the live x86 process-binding route
+// from the preserved legacy constructor. They expose neither a mapping
+// address nor an allocator capability: the runtime audit can only report that
+// the coordinator accepted one canonical binding and that its first source
+// policy reservation completed.
+#[cfg(feature = "native-runtime-test-audit")]
+static NATIVE_PROCESS_BACKING_FIRST_ARENA_BEGIN_COUNT: AtomicUsize = AtomicUsize::new(0);
+#[cfg(feature = "native-runtime-test-audit")]
+static NATIVE_PROCESS_BACKING_VM_RESERVATION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(feature = "native-runtime-test-audit")]
+#[inline]
+pub(crate) fn native_process_backing_first_arena_audit() -> (usize, usize) {
+    (
+        NATIVE_PROCESS_BACKING_FIRST_ARENA_BEGIN_COUNT.load(Ordering::Acquire),
+        NATIVE_PROCESS_BACKING_VM_RESERVATION_COUNT.load(Ordering::Acquire),
+    )
+}
 
 /// The one bounded main-thread allocator over a matched process map/arena.
 ///
@@ -835,11 +856,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
             session.retain_terminal();
             return Err(MainStaticRuntimeFirstArenaPageAllocatorBeginError::ProcessBackingInactive);
         }
-        Self::begin_with_reservation(
+        let allocator = Self::begin_with_reservation(
             session,
             MainStaticRuntimeFirstArenaReservation::Process { backing },
             arena_storage,
-        )
+        )?;
+        #[cfg(feature = "native-runtime-test-audit")]
+        NATIVE_PROCESS_BACKING_FIRST_ARENA_BEGIN_COUNT.fetch_add(1, Ordering::AcqRel);
+        Ok(allocator)
     }
 
     fn begin_with_reservation(
@@ -1282,6 +1306,11 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 reservation,
                 arena_storage,
             } => {
+                #[cfg(feature = "native-runtime-test-audit")]
+                let process_backed_reservation = matches!(
+                    reservation,
+                    MainStaticRuntimeFirstArenaReservation::Process { .. }
+                );
                 if matches!(
                     reservation,
                     MainStaticRuntimeFirstArenaReservation::Process { backing }
@@ -1355,7 +1384,14 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
                         return None;
                     }
-                    Some(Ok(arena)) => arena,
+                    Some(Ok(arena)) => {
+                        #[cfg(feature = "native-runtime-test-audit")]
+                        if process_backed_reservation {
+                            NATIVE_PROCESS_BACKING_VM_RESERVATION_COUNT
+                                .fetch_add(1, Ordering::AcqRel);
+                        }
+                        arena
+                    }
                     Some(Err(ProcessSharedArenaReserveFailure::Rejected { .. })) => {
                         self.state = if page_map_lifecycle.finish().is_ok() {
                             MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {

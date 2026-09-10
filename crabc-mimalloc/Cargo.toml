@@ -57,6 +57,14 @@ path = "tests/native_pointer_first_initial_local_free.rs"
 required-features = ["native-runtime-test-audit"]
 
 [[test]]
+name = "native_runtime_first_arena_policy"
+path = "tests/native_runtime_first_arena_policy.rs"
+# This process-isolated integration witness builds the library as a normal
+# dependency, so the native x86 `RuntimeProcessStorage` route cannot use its
+# `cfg(test)` legacy first-arena constructor.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
 name = "native_initial_persistent_live_transfer"
 path = "tests/native_initial_persistent_live_transfer.rs"
 # This direct-only ownership-transition witness distinguishes a source-dormant

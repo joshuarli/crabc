@@ -50,6 +50,8 @@ use crate::config::{
     LARGE_MAX_OBJ_SIZE, MEDIUM_MAX_OBJ_SIZE, MEDIUM_PAGE_SIZE, SMALL_MAX_OBJ_SIZE,
     SMALL_PAGE_SIZE, SMALL_SIZE_MAX, VmOptions,
 };
+#[cfg(feature = "native-runtime-test-audit")]
+use crate::config::VmOption;
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
     MainHeapThreadAttachmentError, MainHeapThreadPageSessionError,
@@ -82,6 +84,8 @@ use crate::main_heap_page::{
     MainHeapThreadProcessPageExitMappedRegularFreeResult,
 };
 use crate::main_static_page::MainStaticRuntimeFirstArenaPageAllocator;
+#[cfg(feature = "native-runtime-test-audit")]
+use crate::main_static_page::native_process_backing_first_arena_audit;
 use crate::main_theap::MainStaticHeapLease;
 #[cfg(test)]
 use crate::meta::MetaAllocation;
@@ -4190,16 +4194,25 @@ enum NativePostExitRouteCompletionsFinishResult {
 /// Read-only scalar accounting for one quiescent native runtime process.
 ///
 /// This is deliberately a default-off evidence hook. It reports lifecycle
-/// counts and readiness bits only; it does not reveal a client address, PageMap
-/// root, arena address, allocator, or release capability. Callers must sample
-/// only after every participating worker has joined, so no normal engine or
-/// pointer-first source operation is concurrently mutating owned state.
+/// counts, selected policy values, and arena geometry only; it does not reveal
+/// a client address, PageMap root, arena address, allocator, or release
+/// capability. Callers must sample only after every participating worker has
+/// joined, so no normal engine or pointer-first source operation is
+/// concurrently mutating owned state.
 #[cfg(feature = "native-runtime-test-audit")]
 #[doc(hidden)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NativeRuntimeLifecycleAudit {
     pub process_active: usize,
     pub page_owner_ready: usize,
+    pub process_backing_first_arena_begin_count: usize,
+    pub process_backing_vm_reservation_count: usize,
+    pub vm_policy_arena_reserve_bytes: usize,
+    pub vm_policy_arena_eager_commit: i64,
+    pub vm_policy_allow_large_os_pages: usize,
+    pub vm_policy_allow_thp: usize,
+    pub process_arena_size: usize,
+    pub process_arena_initially_committed: usize,
     pub page_map_registered_entry_count: usize,
     pub page_map_published_submap_count: usize,
     pub page_map_lazy_submap_allocation_count: usize,
@@ -4960,7 +4973,14 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
     let ready = owner.ready().ok()?;
     let process_page_map = ready.page_map().ok()?;
     let page_map = process_page_map.page_map().ok()?;
+    // The same coordinator-issued binding that native x86 startup hands to
+    // `begin_for_process` keeps the observed policy tied to this PageMap.
+    // This scalar audit does not reconstruct a policy/PageMap pair from
+    // separate global state.
+    let process_backing = ready.process_backing().ok()?;
+    let vm_policy = process_backing.process().policy();
     let arena = ProcessSharedArenaStorage::global().ready_lease().ok()?;
+    let process_arena = arena.arena().ok()?;
     let subprocess = ready.subprocess().ok()?;
     // SAFETY: see the owner access above. The copied lease permits one short
     // serialized read-only Heap projection and carries no allocator authority.
@@ -4968,6 +4988,8 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
     let (main_heap_abandoned_page_count, main_heap_os_abandoned_pages_empty) =
         native_runtime_main_heap_lifecycle_audit(main_heap)?;
     let metadata = MetaAllocator::global().test_allocation_audit();
+    let (process_backing_first_arena_begin_count, process_backing_vm_reservation_count) =
+        native_process_backing_first_arena_audit();
 
     Some(NativeRuntimeLifecycleAudit {
         process_active: usize::from(process_active),
@@ -4980,6 +5002,18 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
             RUNTIME_PROCESS.page_owner_state.load(Ordering::Acquire),
             PAGE_OWNER_READY | PAGE_OWNER_INITIAL_PERSISTENT
         )),
+        process_backing_first_arena_begin_count,
+        process_backing_vm_reservation_count,
+        vm_policy_arena_reserve_bytes: vm_policy.arena_reserve_bytes(),
+        vm_policy_arena_eager_commit: vm_policy.arena_eager_commit(),
+        vm_policy_allow_large_os_pages: usize::from(vm_policy.allow_large_os_pages()),
+        vm_policy_allow_thp: usize::from(
+            vm_policy.options().value(VmOption::AllowThp)? != 0,
+        ),
+        process_arena_size: process_arena.size()?,
+        process_arena_initially_committed: usize::from(
+            process_arena.arena().memid.initially_committed(),
+        ),
         page_map_registered_entry_count: page_map.test_registered_entry_count().ok()?,
         page_map_published_submap_count: page_map.test_published_submap_count().ok()?,
         page_map_lazy_submap_allocation_count: page_map.test_lazy_submap_allocation_count(),

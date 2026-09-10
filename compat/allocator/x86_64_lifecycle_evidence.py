@@ -2,7 +2,8 @@
 """Run a deliberately bounded native Linux/x86-64 lifecycle evidence lane.
 
 This judge exercises only the current crate-private lifecycle and concurrency
-protocols that have focused Rust tests.  It is intentionally separate from
+protocols that have focused Rust tests, plus one process-isolated integration
+witness for the private runtime first-arena route. It is intentionally separate from
 ``run.py``: that runner owns the AArch64 production-oracle contract, whereas
 this file records a native x86-64 laboratory result without implying public
 ``mi_*``, libc, loader, or crabc-rs support.
@@ -68,6 +69,21 @@ class TestLane:
 # module cannot silently enlarge a lifecycle claim: a reviewer must add a
 # source-specific behavior statement and expected pass count here first.
 TEST_LANES = (
+    TestLane(
+        identifier="runtime-process-policy-first-arena",
+        kind="native-integration",
+        test_filter="runtime_process_uses_source_vm_policy_for_ticket_zero_first_arena_and_client_cleanup",
+        exact_filter=True,
+        features=("native-runtime-test-audit",),
+        expected_pass_count=1,
+        source_tests=(
+            "native_runtime_first_arena_policy::runtime_process_uses_source_vm_policy_for_ticket_zero_first_arena_and_client_cleanup",
+        ),
+        bounded_behavior=(
+            "one fresh native process reads a non-default raw source environment and initializes RuntimeProcessStorage through its retained policy/PageMap binding",
+            "the original ticket-zero allocation reaches begin_for_process, maps one committed 128-MiB arena, then frees its exact client and removes its PageMap registration",
+        ),
+    ),
     TestLane(
         identifier="compiler-tls-fresh-native-thread",
         kind="native-unit",
@@ -319,8 +335,11 @@ def cargo_test_command(cargo: str, lane: TestLane, target_dir: Path) -> list[str
         str(target_dir),
         "-p",
         "crabc-mimalloc",
-        "--lib",
     ]
+    if lane.kind == "native-integration":
+        command.extend(("--test", "native_runtime_first_arena_policy"))
+    else:
+        command.append("--lib")
     if lane.features:
         command.extend(("--features", ",".join(lane.features)))
     command.append(lane.test_filter)
@@ -417,7 +436,7 @@ def report_from_results(
             "lane_count": len(lanes),
         },
         "scope": {
-            "boundary": "crate-private crabc-mimalloc engine unit and finite Loom evidence only",
+            "boundary": "crate-private crabc-mimalloc engine, finite Loom, and one process-isolated private first-arena runtime witness only",
             "public_runtime_support": False,
             "claim": "bounded lifecycle and concurrency foundation",
         },
