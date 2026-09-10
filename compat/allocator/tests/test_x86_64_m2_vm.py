@@ -198,7 +198,29 @@ class NativeVmAssemblyTests(unittest.TestCase):
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
         self.assertEqual(len(vm["checks"]), 23)
-        self.assertEqual(len(vm["bounded_source_definitions"]), 10)
+        self.assertEqual(len(vm["bounded_source_definitions"]), 12)
+        callback_definitions = {
+            definition["id"]: definition["source_anchor"]
+            for definition in vm["bounded_source_definitions"]
+            if definition["id"].startswith("arena-external-callback-")
+        }
+        self.assertEqual(
+            callback_definitions,
+            {
+                "arena-external-callback-manage": {
+                    "member": "src/arena.c",
+                    "start_line": 1676,
+                    "end_line": 1884,
+                    "sha256": "9d2632800cde84ccd0fb702f4b5e7db15c5b94a056aca57d592c41105cb94eeb",
+                },
+                "arena-external-callback-purge": {
+                    "member": "src/arena.c",
+                    "start_line": 2257,
+                    "end_line": 2282,
+                    "sha256": "a1023a8302a3aebf431876baa41fea3ee0809cb0b82276e6482de8134f712ff8",
+                },
+            },
+        )
         self.assertEqual(len(vm["branch_matrix"]), 14)
         self.assertEqual(len(vm["unqualified_failure_matrix"]), 3)
         self.assertEqual(len(vm["remaining_conditions"]), 5)

@@ -33,6 +33,7 @@ def valid_trace() -> str:
         "m2.vm.aligned.alignment": 65536,
         "m2.vm.aligned.good_size": 4096,
         "m2.vm.offset.good_size": 69632,
+        "m2.vm.policy.first_arena_size": 128 * 1024 * 1024,
     }
     values.update({key: 1 for key in TRACE_KEYS if key not in values})
     return "\n".join(
@@ -80,15 +81,26 @@ class NativeM2VmFragmentTests(unittest.TestCase):
     def test_checked_fragment_preserves_the_complete_branch_matrix(self) -> None:
         loaded = load_fragment(self.write_fragment(self.fragment))
         self.assertEqual(loaded["component"]["completion_status"], "partial")
-        self.assertEqual(len(loaded["component"]["checks"]), 17)
-        self.assertEqual(len(loaded["component"]["branch_matrix"]), 13)
+        self.assertEqual(len(loaded["component"]["checks"]), 23)
+        self.assertEqual(len(loaded["component"]["branch_matrix"]), 14)
 
     def test_deleting_or_reclassifying_a_required_open_branch_fails(self) -> None:
+        branch_id = "huge-page-and-numa-placement"
         deleted = copy.deepcopy(self.fragment)
-        del deleted["component"]["branch_matrix"][7]
+        deleted_branch_index = next(
+            index
+            for index, branch in enumerate(deleted["component"]["branch_matrix"])
+            if branch["id"] == branch_id
+        )
+        del deleted["component"]["branch_matrix"][deleted_branch_index]
         reclassified = copy.deepcopy(self.fragment)
-        reclassified["component"]["branch_matrix"][7]["disposition"] = "qualified-fixed-profile"
-        reclassified["component"]["branch_matrix"][7]["missing_conditions"] = []
+        target = next(
+            branch
+            for branch in reclassified["component"]["branch_matrix"]
+            if branch["id"] == branch_id
+        )
+        target["disposition"] = "qualified-fixed-profile"
+        target["missing_conditions"] = []
         for fragment in (deleted, reclassified):
             with self.subTest(fragment=fragment), self.assertRaisesRegex(ValueError, "branch"):
                 load_fragment(self.write_fragment(fragment))
