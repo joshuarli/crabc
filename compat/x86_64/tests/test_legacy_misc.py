@@ -28,8 +28,11 @@ class X86LegacyMiscTests(unittest.TestCase):
         self.assertIn(
             'x86-legacy-misc = ["x86-legacy-des-compat"]', manifest
         )
-        self.assertIn('#[cfg(feature = "x86-legacy-misc")]', root)
-        self.assertIn('#[path = "legacy_misc.rs"]\nmod legacy_misc;', root)
+        self.assertIn(
+            '#[cfg(all(feature = "x86-legacy-misc", '
+            'not(feature = "x86-owned-static-runtime")))]\n'
+            '#[path = "legacy_misc.rs"]\nmod legacy_misc;', root,
+        )
         self.assertIn(
             '#[cfg(feature = "x86-legacy-des-compat")]\n'
             '#[path = "legacy_des_compat.rs"]\n'
@@ -43,7 +46,10 @@ class X86LegacyMiscTests(unittest.TestCase):
         des_source = DES_OWNER.read_text(encoding="utf-8")
 
         for required in (
-            "src/legacy/fmtmsg.c::fmtmsg",
+            "src/misc/fmtmsg.c::fmtmsg",
+            "Public domain fmtmsg(); Written by Isaac",
+            "Dunham, 2014",
+            "src/legacy/encrypt.c::{setkey,encrypt}",
             'pub unsafe extern "C" fn fmtmsg',
             "MSGVERB",
             "MM_NOMSG",
@@ -153,17 +159,28 @@ class X86LegacyMiscTests(unittest.TestCase):
         for required in (
             "FEATURE=x86-legacy-misc",
             "FEATURE_EXPORTS=(encrypt fmtmsg setkey)",
+            "x86-owned-static-runtime",
             "run_legacy_misc_header_abi.sh",
             "run_libc_system_information.sh",
             "run_libc_issetugid.sh",
             "unfeatured selected-static C ABI export surface drifted",
-            "opt-in legacy.misc changed more than its exact public closure",
-            "legacy.misc fmtmsg owner export surface drifted",
-            "shared inert DES owner export surface drifted",
-            "shared inert DES names must have one target-local archive owner",
+            "collect_global_bindings",
+            "narrow inert-DES changed more than encrypt/setkey",
+            "narrow inert-DES changed the full global binding surface",
+            "composite legacy.misc changed more than fmtmsg beyond narrow inert-DES",
+            "composite legacy.misc changed the full global binding surface",
+            "assert_provider_counts",
+            "providers default/narrow/composite",
+            '"${#encrypt_members[@]}" 0 1 1',
+            '"${#fmtmsg_members[@]}" 0 0 1',
+            "ar p",
             "inert DES compatibility functions select a local cipher",
-            "candidate link map did not take the target-local legacy.misc fmtmsg owner",
-            "candidate link map did not take the shared inert DES owner",
+            "candidate link map did not take the fmtmsg defining archive member",
+            "candidate link map did not take the encrypt defining archive member",
+            "candidate link map did not take the setkey defining archive member",
+            "checkout_local_tmpdir",
+            "readlink -f",
+            "retained failure evidence",
             "candidate selected a pinned-musl fmtmsg or DES implementation",
             "candidate retains an unresolved symbol",
             "candidate selects a dynamic runtime",
@@ -172,6 +189,9 @@ class X86LegacyMiscTests(unittest.TestCase):
             "public support claim",
         ):
             self.assertIn(required, runner)
+        self.assertNotIn("owner export surface drifted", runner)
+        self.assertNotIn("names must have one target-local archive owner", runner)
+        self.assertNotIn("must retain a distinct fmtmsg owner", runner)
 
 
 if __name__ == "__main__":

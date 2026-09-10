@@ -4,7 +4,7 @@
 # This dedicated opt-in archive adds only fmtmsg/encrypt/setkey to the frozen
 # default selected-static export surface.  It composes the already verified
 # processor/page and issetugid prerequisites, then proves the full eight-name
-# aggregate's C/C++ declarations, archive ownership, static link map and ELF
+# aggregate's C/C++ declarations, source-owner definition checks, static link map and ELF
 # closure.  Pinned musl 1.2.6 is the fmtmsg/header source oracle.  The DES
 # behavior is deliberately different: the candidate retains the project-wide
 # inert ABI contract rather than implementing a local cipher.
@@ -24,6 +24,8 @@ readonly LEGACY_MISC_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/legacy_misc.rs"
 readonly LEGACY_DES_ROOT="$ROOT_DIR/libc/src/c_abi/x86_64/legacy_des_compat.rs"
 readonly AARCH64_STATIC_ABI="$ROOT_DIR/compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
 readonly -a FEATURE_EXPORTS=(encrypt fmtmsg setkey)
+readonly -a NARROW_EXPORTS=(encrypt setkey)
+readonly -a COMPOSITE_EXPORTS=(fmtmsg)
 readonly -a ALL_SYMBOLS=(
     fmtmsg encrypt setkey get_avphys_pages get_nprocs get_nprocs_conf
     get_phys_pages issetugid
@@ -44,6 +46,25 @@ require_native_linux_x86_64() {
 
 require_tool() {
     command -v "$1" >/dev/null 2>&1 || fail "requires $1"
+}
+
+checkout_local_tmpdir() {
+    local physical_work_dir physical_tmpdir
+
+    [ -n "${TMPDIR:-}" ] || fail "requires a checkout-local TMPDIR"
+    physical_work_dir="$(readlink -f "$ROOT_DIR/.work")" \
+        || fail "checkout .work directory must exist"
+    [ "$physical_work_dir" = "$ROOT_DIR/.work" ] \
+        || fail "checkout .work directory must be physical"
+    physical_tmpdir="$(readlink -f "$TMPDIR")" \
+        || fail "TMPDIR must be a physical checkout .work directory"
+    [ "$physical_tmpdir" = "$TMPDIR" ] \
+        || fail "TMPDIR must be a physical checkout .work directory"
+    case "$physical_tmpdir" in
+        "$physical_work_dir"/*) ;;
+        *) fail "TMPDIR must be a physical checkout .work directory" ;;
+    esac
+    printf '%s\n' "$physical_tmpdir"
 }
 
 collect_global_surface() {
@@ -78,7 +99,7 @@ collect_global_bindings() {
 
 archive_member_for_symbol() {
     local archive_path="$1" symbol="$2"
-    nm -A --defined-only "$archive_path" | awk -v symbol="$symbol" '
+    nm -A -g --defined-only "$archive_path" | awk -v symbol="$symbol" '
         $NF == symbol {
             member = $1
             sub(/^.*\.a:/, "", member)
@@ -88,9 +109,20 @@ archive_member_for_symbol() {
     ' | LC_ALL=C sort -u
 }
 
+assert_provider_counts() {
+    local symbol="$1" default_count="$2" narrow_count="$3" composite_count="$4"
+    local expected_default="$5" expected_narrow="$6" expected_composite="$7"
+
+    if [ "$default_count" -ne "$expected_default" ] ||
+        [ "$narrow_count" -ne "$expected_narrow" ] ||
+        [ "$composite_count" -ne "$expected_composite" ]; then
+        fail "${symbol} providers default/narrow/composite were ${default_count}/${narrow_count}/${composite_count}; expected ${expected_default}/${expected_narrow}/${expected_composite}"
+    fi
+}
+
 require_native_linux_x86_64
-for tool in ar awk cargo cmp comm diff env grep mapfile mkdir mktemp nm objdump \
-    readelf rustup sed sort uname; do
+for tool in ar awk cargo chmod cmp comm diff env grep mapfile mkdir mktemp nm objdump \
+    readelf readlink rustup sed sort uname; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -116,7 +148,7 @@ grep -Fq '#[cfg(feature = "x86-legacy-des-compat")]' \
 grep -Fq 'mod legacy_des_compat;' "$STATIC_C_ABI_ROOT" ||
     fail "selected-static root does not compose the shared inert DES owner"
 for phrase in \
-    'src/legacy/fmtmsg.c::fmtmsg' \
+    'src/misc/fmtmsg.c::fmtmsg' \
     'MSGVERB' \
     'retry-on-short-write'; do
     grep -Fq "$phrase" "$LEGACY_MISC_ROOT" ||
@@ -134,11 +166,28 @@ for phrase in \
         fail "shared inert DES provenance/contract omits $phrase"
 done
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-legacy-misc.XXXXXX)"
-trap 'rm -rf -- "$work_dir"' EXIT
+work_tmpdir="$(checkout_local_tmpdir)"
+work_dir="$(mktemp -d "$work_tmpdir/crabc-x86-64-libc-legacy-misc.XXXXXX")"
+chmod g+rwx "$work_dir"
+# Passing runs leave no disposable build state. A failure retains its full
+# archive, final ELF, disassembly, and source/binding receipts for review.
+cleanup_work_dir() {
+    local status=$?
+
+    trap - EXIT
+    if [ "$status" -eq 0 ]; then
+        rm -rf -- "$work_dir"
+    else
+        printf 'x86 static libc legacy.misc retained failure evidence: %s\n' "$work_dir" >&2
+    fi
+    exit "$status"
+}
+trap cleanup_work_dir EXIT
 base_target="$work_dir/base-target"
+narrow_target="$work_dir/narrow-target"
 feature_target="$work_dir/feature-target"
 base_archive="$base_target/x86_64-unknown-linux-musl/debug/libc.a"
+narrow_archive="$narrow_target/x86_64-unknown-linux-musl/debug/libc.a"
 archive="$feature_target/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-legacy-misc-reference"
 candidate="$work_dir/crabc-static-legacy-misc-candidate"
@@ -147,21 +196,29 @@ musl_fmtmsg="$work_dir/musl-fmtmsg.o"
 musl_encrypt="$work_dir/musl-encrypt.o"
 header_trace="$work_dir/header-trace"
 base_surface="$work_dir/base-surface"
+narrow_surface="$work_dir/narrow-surface"
 feature_surface="$work_dir/feature-surface"
 expected_surface="$work_dir/expected-surface"
+expected_narrow_surface="$work_dir/expected-narrow-surface"
 expected_feature_surface="$work_dir/expected-feature-surface"
+observed_narrow_additions="$work_dir/observed-narrow-additions"
 observed_additions="$work_dir/observed-additions"
+expected_narrow_additions="$work_dir/expected-narrow-additions"
 expected_additions="$work_dir/expected-additions"
 base_bindings="$work_dir/base-bindings"
+narrow_bindings="$work_dir/narrow-bindings"
 feature_bindings="$work_dir/feature-bindings"
-feature_baseline_bindings="$work_dir/feature-baseline-bindings"
+expected_narrow_bindings="$work_dir/expected-narrow-bindings"
+expected_feature_bindings="$work_dir/expected-feature-bindings"
+narrow_addition_bindings="$work_dir/narrow-addition-bindings"
+feature_addition_bindings="$work_dir/feature-addition-bindings"
 archive_symbols="$work_dir/archive-symbols"
-fmtmsg_owner_dir="$work_dir/fmtmsg-owner"
-des_owner_dir="$work_dir/des-owner"
-fmtmsg_owner_symbols="$work_dir/fmtmsg-owner-symbols"
-des_owner_symbols="$work_dir/des-owner-symbols"
-des_owner_setkey_disassembly="$work_dir/des-owner-setkey-disassembly"
-des_owner_encrypt_disassembly="$work_dir/des-owner-encrypt-disassembly"
+encrypt_definition_dir="$work_dir/encrypt-definition"
+setkey_definition_dir="$work_dir/setkey-definition"
+encrypt_definition="$encrypt_definition_dir/encrypt-definition.o"
+setkey_definition="$setkey_definition_dir/setkey-definition.o"
+encrypt_definition_disassembly="$work_dir/encrypt-definition-disassembly"
+setkey_definition_disassembly="$work_dir/setkey-definition-disassembly"
 archive_relocations="$work_dir/archive-relocations"
 link_map="$work_dir/candidate.map"
 candidate_symbols="$work_dir/candidate-symbols"
@@ -206,9 +263,9 @@ done
     compat/x86_64/libc_legacy_misc_probe.c -o "$reference"
 env -i LC_ALL=C "$reference" || fail "pinned-musl legacy.misc fixture failed"
 
-# The unfeatured archive must remain precisely the frozen selected-static
-# surface.  The feature archive may add exactly this module's three public
-# spellings, with no mutation to an existing binding.
+# The default, narrow inert-DES, and composite archives have exact C global
+# symbol/binding maps. The narrow map is the frozen default plus encrypt and
+# setkey; the composite map is that narrow map plus fmtmsg.
 CARGO_TARGET_DIR="$base_target" cargo rustc --locked -p crabc-libc --lib \
     --target x86_64-unknown-linux-musl -- \
     -C relocation-model=static -C code-model=small -C panic=abort
@@ -226,28 +283,52 @@ for symbol in "${FEATURE_EXPORTS[@]}"; do
     fi
 done
 
+CARGO_TARGET_DIR="$narrow_target" cargo rustc --locked -p crabc-libc --lib \
+    --features x86-legacy-des-compat --target x86_64-unknown-linux-musl -- \
+    -C relocation-model=static -C code-model=small -C panic=abort
+[ -f "$narrow_archive" ] || fail "cargo did not emit the narrow inert-DES archive"
+collect_global_surface "$narrow_archive" "$narrow_surface" "$work_dir/narrow-members"
+collect_global_bindings "$narrow_archive" "$narrow_bindings" "$work_dir/narrow-binding-members"
+comm -13 "$base_surface" "$narrow_surface" >"$observed_narrow_additions"
+printf '%s\n' "${NARROW_EXPORTS[@]}" | LC_ALL=C sort -u >"$expected_narrow_additions"
+if ! cmp -s "$expected_narrow_additions" "$observed_narrow_additions"; then
+    diff -u "$expected_narrow_additions" "$observed_narrow_additions" >&2 || true
+    fail "narrow inert-DES changed more than encrypt/setkey"
+fi
+LC_ALL=C sort -u "$base_surface" "$expected_narrow_additions" >"$expected_narrow_surface"
+if ! cmp -s "$expected_narrow_surface" "$narrow_surface"; then
+    diff -u "$expected_narrow_surface" "$narrow_surface" >&2 || true
+    fail "narrow inert-DES did not preserve the frozen export surface"
+fi
+printf '%s T\n' "${NARROW_EXPORTS[@]}" | LC_ALL=C sort -u >"$narrow_addition_bindings"
+LC_ALL=C sort -u "$base_bindings" "$narrow_addition_bindings" >"$expected_narrow_bindings"
+if ! cmp -s "$expected_narrow_bindings" "$narrow_bindings"; then
+    diff -u "$expected_narrow_bindings" "$narrow_bindings" >&2 || true
+    fail "narrow inert-DES changed the full global binding surface"
+fi
+
 CARGO_TARGET_DIR="$feature_target" cargo rustc --locked -p crabc-libc --lib \
     --features "$FEATURE" --target x86_64-unknown-linux-musl -- \
     -C relocation-model=static -C code-model=small -C panic=abort
 [ -f "$archive" ] || fail "cargo did not emit the opt-in x86 archive"
 collect_global_surface "$archive" "$feature_surface" "$work_dir/feature-members"
 collect_global_bindings "$archive" "$feature_bindings" "$work_dir/feature-binding-members"
-comm -13 "$base_surface" "$feature_surface" >"$observed_additions"
-printf '%s\n' "${FEATURE_EXPORTS[@]}" | LC_ALL=C sort -u >"$expected_additions"
+comm -13 "$narrow_surface" "$feature_surface" >"$observed_additions"
+printf '%s\n' "${COMPOSITE_EXPORTS[@]}" | LC_ALL=C sort -u >"$expected_additions"
 if ! cmp -s "$expected_additions" "$observed_additions"; then
     diff -u "$expected_additions" "$observed_additions" >&2 || true
-    fail "opt-in legacy.misc changed more than its exact public closure"
+    fail "composite legacy.misc changed more than fmtmsg beyond narrow inert-DES"
 fi
-LC_ALL=C sort -u "$base_surface" "$expected_additions" >"$expected_feature_surface"
+LC_ALL=C sort -u "$narrow_surface" "$expected_additions" >"$expected_feature_surface"
 if ! cmp -s "$expected_feature_surface" "$feature_surface"; then
     diff -u "$expected_feature_surface" "$feature_surface" >&2 || true
-    fail "opt-in legacy.misc did not preserve the frozen export surface"
+    fail "composite legacy.misc did not preserve the narrow export surface"
 fi
-awk 'NR == FNR { baseline[$1] = 1; next } $1 in baseline { print }' \
-    "$base_bindings" "$feature_bindings" >"$feature_baseline_bindings"
-if ! cmp -s "$base_bindings" "$feature_baseline_bindings"; then
-    diff -u "$base_bindings" "$feature_baseline_bindings" >&2 || true
-    fail "opt-in legacy.misc changed a frozen baseline export binding"
+printf '%s T\n' "${COMPOSITE_EXPORTS[@]}" | LC_ALL=C sort -u >"$feature_addition_bindings"
+LC_ALL=C sort -u "$expected_narrow_bindings" "$feature_addition_bindings" >"$expected_feature_bindings"
+if ! cmp -s "$expected_feature_bindings" "$feature_bindings"; then
+    diff -u "$expected_feature_bindings" "$feature_bindings" >&2 || true
+    fail "composite legacy.misc changed the full global binding surface"
 fi
 
 readelf --symbols --wide "$archive" >"$archive_symbols"
@@ -259,51 +340,28 @@ for symbol in "${ALL_SYMBOLS[@]}"; do
         END { exit(found ? 0 : 1) }
     ' "$archive_symbols" || fail "opt-in archive lacks global-default ${symbol}"
 done
+mapfile -t base_encrypt_members < <(archive_member_for_symbol "$base_archive" encrypt)
+mapfile -t base_setkey_members < <(archive_member_for_symbol "$base_archive" setkey)
+mapfile -t base_fmtmsg_members < <(archive_member_for_symbol "$base_archive" fmtmsg)
+mapfile -t narrow_encrypt_members < <(archive_member_for_symbol "$narrow_archive" encrypt)
+mapfile -t narrow_setkey_members < <(archive_member_for_symbol "$narrow_archive" setkey)
+mapfile -t narrow_fmtmsg_members < <(archive_member_for_symbol "$narrow_archive" fmtmsg)
 mapfile -t fmtmsg_members < <(archive_member_for_symbol "$archive" fmtmsg)
 mapfile -t encrypt_members < <(archive_member_for_symbol "$archive" encrypt)
 mapfile -t setkey_members < <(archive_member_for_symbol "$archive" setkey)
-[ "${#fmtmsg_members[@]}" -eq 1 ] || fail "fmtmsg must have one target-local archive owner"
-[ "${#encrypt_members[@]}" -eq 1 ] || fail "encrypt must have one target-local archive owner"
-[ "${#setkey_members[@]}" -eq 1 ] || fail "setkey must have one target-local archive owner"
-if [ "${encrypt_members[0]}" != "${setkey_members[0]}" ]; then
-    fail "shared inert DES names must have one target-local archive owner"
-fi
-if [ "${fmtmsg_members[0]}" = "${encrypt_members[0]}" ]; then
-    fail "legacy fmtmsg must not become an owned-static DES dependency"
-fi
-mkdir "$fmtmsg_owner_dir" "$des_owner_dir"
-(
-    cd "$fmtmsg_owner_dir"
-    ar x "$archive" "${fmtmsg_members[0]}"
-)
-(
-    cd "$des_owner_dir"
-    ar x "$archive" "${encrypt_members[0]}"
-)
-fmtmsg_owner="$fmtmsg_owner_dir/${fmtmsg_members[0]}"
-des_owner="$des_owner_dir/${encrypt_members[0]}"
-nm -g --defined-only --format=posix "$fmtmsg_owner" >"$fmtmsg_owner_symbols"
-nm -g --defined-only --format=posix "$des_owner" >"$des_owner_symbols"
-mapfile -t fmtmsg_owner_exports < <(
-    awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' "$fmtmsg_owner_symbols" | LC_ALL=C sort -u
-)
-mapfile -t des_owner_exports < <(
-    awk '$2 ~ /^[TW]$/ && $1 !~ /^_R/ { print $1 }' "$des_owner_symbols" | LC_ALL=C sort -u
-)
-if [ "${fmtmsg_owner_exports[*]}" != "fmtmsg" ]; then
-    printf 'expected: %s\nactual:   %s\n' 'fmtmsg' \
-        "${fmtmsg_owner_exports[*]}" >&2
-    fail "legacy.misc fmtmsg owner export surface drifted"
-fi
-if [ "${des_owner_exports[*]}" != "encrypt setkey" ]; then
-    printf 'expected: %s\nactual:   %s\n' 'encrypt setkey' \
-        "${des_owner_exports[*]}" >&2
-    fail "shared inert DES owner export surface drifted"
-fi
-objdump -d --disassemble=setkey "$des_owner" >"$des_owner_setkey_disassembly"
-objdump -d --disassemble=encrypt "$des_owner" >"$des_owner_encrypt_disassembly"
+assert_provider_counts encrypt "${#base_encrypt_members[@]}" "${#narrow_encrypt_members[@]}" \
+    "${#encrypt_members[@]}" 0 1 1
+assert_provider_counts setkey "${#base_setkey_members[@]}" "${#narrow_setkey_members[@]}" \
+    "${#setkey_members[@]}" 0 1 1
+assert_provider_counts fmtmsg "${#base_fmtmsg_members[@]}" "${#narrow_fmtmsg_members[@]}" \
+    "${#fmtmsg_members[@]}" 0 0 1
+mkdir "$encrypt_definition_dir" "$setkey_definition_dir"
+ar p "$archive" "${encrypt_members[0]}" >"$encrypt_definition"
+ar p "$archive" "${setkey_members[0]}" >"$setkey_definition"
+objdump -d --disassemble=encrypt "$encrypt_definition" >"$encrypt_definition_disassembly"
+objdump -d --disassemble=setkey "$setkey_definition" >"$setkey_definition_disassembly"
 if grep -Eq '[[:space:]](call|syscall)([[:space:]]|$)' \
-    "$des_owner_setkey_disassembly" "$des_owner_encrypt_disassembly"; then
+    "$encrypt_definition_disassembly" "$setkey_definition_disassembly"; then
     fail "inert DES compatibility functions select a local cipher or runtime edge"
 fi
 readelf --relocs --wide "$archive" >"$archive_relocations"
@@ -327,9 +385,11 @@ readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
 grep -Fq "${fmtmsg_members[0]}" "$link_map" ||
-    fail "candidate link map did not take the target-local legacy.misc fmtmsg owner"
+    fail "candidate link map did not take the fmtmsg defining archive member"
 grep -Fq "${encrypt_members[0]}" "$link_map" ||
-    fail "candidate link map did not take the shared inert DES owner"
+    fail "candidate link map did not take the encrypt defining archive member"
+grep -Fq "${setkey_members[0]}" "$link_map" ||
+    fail "candidate link map did not take the setkey defining archive member"
 if grep -Eq 'libc\.a\((fmtmsg|encrypt)\.lo\)' "$link_map"; then
     fail "candidate selected a pinned-musl fmtmsg or DES implementation"
 fi

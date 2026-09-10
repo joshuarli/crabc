@@ -64,12 +64,28 @@ class X86LegacyDesCompatTests(unittest.TestCase):
             "FEATURE_EXPORTS=(encrypt setkey)",
             "default archive unexpectedly exposes opt-in",
             "narrow feature widened the archive",
+            "collect_global_bindings",
+            "narrow feature changed the full global binding surface",
+            "both-feature closure changed the full global binding surface",
+            "assert_provider_counts",
+            "providers default/narrow/composite",
+            '"${#both_encrypt_members[@]}" 0 1 1',
+            '"${#both_fmtmsg_members[@]}" 0 0 1',
             "fmtmsg",
             "both-feature closure",
+            "ar p",
+            "candidate link map did not take the encrypt defining archive member",
+            "candidate link map did not take the setkey defining archive member",
+            "checkout_local_tmpdir",
+            "readlink -f",
+            "retained failure evidence",
             "candidate errno does not use direct initial TLS",
             "inert DES compatibility functions select a local cipher",
         ):
             self.assertIn(required, runner)
+        self.assertNotIn("names must share exactly one target-local archive owner", runner)
+        self.assertNotIn("must retain a distinct fmtmsg owner", runner)
+        self.assertNotIn("owner export surface drifted", runner)
 
 
 if __name__ == "__main__":

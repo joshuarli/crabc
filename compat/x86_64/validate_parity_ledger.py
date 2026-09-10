@@ -47918,7 +47918,9 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
     require(
         any(
             "9fa28ece75d8a2191de7c5bb53bed224c5947417" in item
-            and "src/legacy/fmtmsg.c::fmtmsg" in item
+            and "src/misc/fmtmsg.c::fmtmsg" in item
+            and "public-domain" in item
+            and "Isaac Dunham, 2014" in item
             and "src/legacy/encrypt.c::{setkey,encrypt}" in item
             and "fmtmsg.lo" in item
             and "encrypt.lo" in item
@@ -47930,9 +47932,12 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
     require(
         any(
             "x86-legacy-des-compat" in item
-            and "only `setkey` and `encrypt`" in item
             and "x86-legacy-misc" in item
-            and "only `fmtmsg`" in item
+            and "semantic source owner" in item
+            and "full C global surface and binding delta" in item
+            and "one defining archive member per named symbol" in item
+            and "compiler CGU is an arbitrary compiler partition" in item
+            and "sched_getcpu" in item
             and "static_c_abi_exports.txt" in item
             and "static-c-system-information" in item
             and "static-c-issetugid" in item
@@ -48016,7 +48021,9 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
                 "Pinned-musl fmtmsg behavior",
                 "feature-gated x86 crabc-libc `-nostdlib -static` aggregate",
                 "exact three-symbol feature delta",
-                "one target-local owner",
+                "full C global surface and binding delta",
+                "one defining archive member per named symbol",
+                "Compiler CGUs remain arbitrary partitions",
                 "MSGVERB/stderr/console/error/short-write fmtmsg behavior",
                 "initial-TLS static closure",
                 "no interpreter/DT_NEEDED/unresolved symbol/PLT/dynamic-TLS/ambient runtime",
@@ -48039,6 +48046,9 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
             phrase in des_scope
             for phrase in (
                 "exact two-symbol feature delta",
+                "full C global surface and binding deltas",
+                "one defining archive member per named symbol",
+                "compiler CGUs as arbitrary partitions",
                 "null and unreadable pointers",
                 "initial-TLS",
                 "no DES semantic differential",
@@ -48084,7 +48094,10 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         encoding="utf-8"
     )
     for snippet in (
-        "src/legacy/fmtmsg.c::fmtmsg",
+        "src/misc/fmtmsg.c::fmtmsg",
+        "Public domain fmtmsg(); Written by Isaac",
+        "Dunham, 2014",
+        "src/legacy/encrypt.c::{setkey,encrypt}",
         "MSGVERB",
         "MM_NOMSG",
         "MM_NOCON",
@@ -48162,12 +48175,17 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
     for snippet in (
         "FEATURE=x86-legacy-misc",
         "FEATURE_EXPORTS=(encrypt fmtmsg setkey)",
+        "x86-owned-static-runtime",
         "run_legacy_misc_header_abi.sh",
         "run_libc_system_information.sh",
         "run_libc_issetugid.sh",
         "unfeatured selected-static C ABI export surface drifted",
-        "opt-in legacy.misc changed more than its exact public closure",
-        "legacy.misc fmtmsg owner export surface drifted",
+        "narrow inert-DES changed more than encrypt/setkey",
+        "narrow inert-DES changed the full global binding surface",
+        "composite legacy.misc changed more than fmtmsg beyond narrow inert-DES",
+        "composite legacy.misc changed the full global binding surface",
+        "assert_provider_counts",
+        "providers default/narrow/composite",
         "inert DES compatibility functions select a local cipher",
         "candidate retains an unresolved symbol",
         "candidate selects a dynamic runtime",
@@ -48176,6 +48194,15 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         "public support claim",
     ):
         require(snippet in runner, f"legacy.misc runner omits {snippet}")
+    for retired in (
+        "owner export surface drifted",
+        "names must have one target-local archive owner",
+        "must retain a distinct fmtmsg owner",
+    ):
+        require(
+            retired not in runner,
+            f"legacy.misc runner must not classify a compiler CGU as a source owner: {retired}",
+        )
     des_runner = (
         ROOT / "compat" / "x86_64" / "run_libc_legacy_des_compat.sh"
     ).read_text(encoding="utf-8")
@@ -48184,11 +48211,22 @@ def require_legacy_misc_slice(family: Mapping[str, Any]) -> None:
         "FEATURE_EXPORTS=(encrypt setkey)",
         "default archive unexpectedly exposes opt-in",
         "narrow feature widened the archive",
+        "assert_provider_counts",
+        "providers default/narrow/composite",
         "both-feature closure",
         "candidate errno does not use direct initial TLS",
         "inert DES compatibility functions select a local cipher",
     ):
         require(snippet in des_runner, f"legacy.misc narrow inert-DES runner omits {snippet}")
+    for retired in (
+        "names must share exactly one target-local archive owner",
+        "must retain a distinct fmtmsg owner",
+        "owner export surface drifted",
+    ):
+        require(
+            retired not in des_runner,
+            f"legacy.misc narrow runner must not classify a compiler CGU as a source owner: {retired}",
+        )
     dispatcher = (ROOT / "scripts" / "dev-x86_64.sh").read_text(encoding="utf-8")
     for snippet in (
         "legacy-misc-header-abi)",

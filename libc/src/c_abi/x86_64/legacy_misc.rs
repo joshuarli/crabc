@@ -13,16 +13,19 @@
 //! legacy runtime.
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
-//! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
+//! `9fa28ece75d8a2191de7c5bb53bed224c5947417`:
 //!
-//! - `src/legacy/fmtmsg.c::fmtmsg` maps to [`fmtmsg`].  Upstream source-tree
-//!   placement is represented by this frozen source mapping; its observable
-//!   contract is `MSGVERB` component selection, fd-2 `MM_PRINT`,
-//!   `/dev/console` `MM_CONSOLE`, and `MM_NOMSG`/`MM_NOCON`/`MM_NOTOK` result
-//!   composition.
+//! - `src/misc/fmtmsg.c::fmtmsg` maps to [`fmtmsg`] (SHA-256
+//!   `27354c57b1827561585a73dbe9f2d7f97cd73563d4043cf2907912c8faaebb6e`).
+//!   The upstream file records “Public domain fmtmsg(); Written by Isaac
+//!   Dunham, 2014”; that source-specific public-domain notice is distinct
+//!   from musl's distribution-wide MIT license. Its observable contract is
+//!   `MSGVERB` component selection, fd-2 `MM_PRINT`, `/dev/console`
+//!   `MM_CONSOLE`, and `MM_NOMSG`/`MM_NOCON`/`MM_NOTOK` result composition.
 //! - `src/legacy/encrypt.c::{setkey,encrypt}` maps to the shared
-//!   `legacy_des_compat.rs` owner. Its documented inert-DES divergence is
-//!   intentionally separate from this `fmtmsg` implementation.
+//!   `legacy_des_compat.rs` owner under musl's MIT distribution license. Its
+//!   documented inert-DES divergence is intentionally separate from this
+//!   `fmtmsg` implementation.
 //!
 //! `fmtmsg` composes only the existing selected static environment lookup,
 //! C-string scan, descriptor entry, descriptor I/O, and initial-TLS errno

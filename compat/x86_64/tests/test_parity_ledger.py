@@ -30267,7 +30267,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for phrase in (
             "exact three-symbol feature delta",
-            "one target-local owner",
+            "full C global surface and binding delta",
+            "one defining archive member per named symbol",
+            "Compiler CGUs remain arbitrary partitions",
             "initial-TLS static closure",
             "inert no-dereference/no-mutation/no-call/no-syscall ABI behavior",
             "not a musl DES semantic differential",
@@ -30284,6 +30286,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         for phrase in (
             "exact two-symbol feature delta",
+            "full C global surface and binding deltas",
+            "one defining archive member per named symbol",
+            "compiler CGUs as arbitrary partitions",
             "null and unreadable pointers",
             "initial-TLS",
             "no DES semantic differential",
