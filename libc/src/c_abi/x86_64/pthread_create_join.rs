@@ -952,38 +952,38 @@ unsafe fn adopt_process_child(child_tid: c_int, inherited_worker: Option<*mut Th
 /// The calling task's control is pinned by its own execution, independently
 /// of the mutable worker registry. The cancellation cache is installed before
 /// user entry and removed only at retirement. This owned-only snapshot lets
-/// public clone perform musl's minimal __post_Fork without taking a list lock
+/// clone and _Fork perform musl's minimal __post_Fork without taking a list lock
 /// that could already be held by an interrupted thread.
 #[cfg(feature = "x86-owned-static-runtime")]
 #[derive(Clone, Copy)]
-pub(super) struct CloneCaller(Option<*mut ThreadControl>);
+pub(super) struct ProcessChildCaller(Option<*mut ThreadControl>);
 
 /// # Safety
 /// The caller is an initialized owned task with all signals blocked. Its
-/// control remains live through the raw clone result and sole-child adoption.
+/// control remains live through the raw process transition and sole-child adoption.
 #[cfg(feature = "x86-owned-static-runtime")]
-pub(super) unsafe fn clone_caller() -> CloneCaller {
+pub(super) unsafe fn capture_process_child_caller() -> ProcessChildCaller {
     let pointer = pthread_identity::current_thread_pointer();
     if static_tls::is_initial_thread_pointer(pointer) {
-        CloneCaller(None)
+        ProcessChildCaller(None)
     } else {
         let cancellation = pthread_identity::current_selected_cancellation_state();
         // SAFETY: every owned non-main caller has its live control's embedded
         // cancellation state in fs:32. Its own execution pins that mapping.
-        CloneCaller(Some(unsafe { cancellation.cast::<u8>().sub(
+        ProcessChildCaller(Some(unsafe { cancellation.cast::<u8>().sub(
             core::mem::offset_of!(ThreadControl, cancellation),
         ) as *mut ThreadControl }))
     }
 }
 
 /// # Safety
-/// Call once in the sole non-CLONE_VM child, with every signal still blocked
+/// Call once in a sole process child, with every signal still blocked
 /// and the copied caller control mapped, before restoring signals or callbacks.
 #[cfg(feature = "x86-owned-static-runtime")]
-pub(super) unsafe fn clone_child(caller: CloneCaller) {
+pub(super) unsafe fn adopt_process_child_caller(caller: ProcessChildCaller) {
     let tid = unsafe { register_fork_child_kernel_tid() };
     let values = caller.0.map(|control| unsafe { core::ptr::addr_of!((*control).tsd) });
-    unsafe { pthread_tsd::adopt_clone_caller_values(values) };
+    unsafe { pthread_tsd::adopt_process_child_values(values) };
     if !static_tls::adopt_current_thread_after_fork() {
         super::immediate_termination::_Exit(127);
     }

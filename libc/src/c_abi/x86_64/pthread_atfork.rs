@@ -52,7 +52,7 @@ use core::sync::atomic::AtomicPtr;
 
 use super::c_status;
 use super::{
-    immediate_termination, pthread_create_join, pthread_identity, pthread_tsd,
+    pthread_create_join, pthread_identity, pthread_tsd,
     signal_execution, static_tls,
 };
 
@@ -258,13 +258,57 @@ pub unsafe extern "C" fn __ldso_atfork(_who: c_int) {}
 /// the selected `fork` owner so a stronger application or runtime spelling
 /// can replace it.
 ///
-/// This selected static fork path does not call the fallback. It therefore
-/// does not select AIO queues, AIO locks, request cancellation, file-descriptor
-/// coordination, loader state, or a general process/fork runtime.
+/// The owned fork and _Fork transitions call this exact seam in source
+/// order. The fallback selects no queues, cancellation or descriptor
+/// coordination; those require the future strong owned AIO implementation.
 #[inline(never)]
 #[no_mangle]
 #[linkage = "weak"]
 pub unsafe extern "C" fn __aio_atfork(_who: c_int) {}
+
+/// Musl 1.2.6 `src/process/_Fork.c`: all-signal/abort-lock transaction.
+/// The captured control belongs to this executing task, so child adoption
+/// never waits on or traverses a possibly interrupted worker registry. The
+/// child keeps its FS image and copies only caller-owned TSD representation;
+/// copied key, allocator, loader and application locks are not repaired here.
+#[cfg(feature = "x86-owned-static-runtime")]
+unsafe fn fork_without_handlers() -> i64 {
+    let mut saved = 0_u64;
+    unsafe { signal_execution::block_all_signals(&mut saved) };
+    let caller = unsafe { pthread_create_join::capture_process_child_caller() };
+    unsafe { super::owned_process_lock::pthread_fork_prepare() };
+    let result = unsafe { raw_selected_fork() };
+    if result == 0 {
+        unsafe {
+            pthread_create_join::adopt_process_child_caller(caller);
+            super::owned_process_lock::pthread_fork_child();
+            // Source __post_Fork calls AIO after thread repair and abort
+            // unlock, before restoring the nested all-signal mask. Its weak
+            // fallback remains inert until the owned AIO engine is linked.
+            __aio_atfork(1);
+        }
+    } else {
+        unsafe { super::owned_process_lock::pthread_fork_parent() };
+    }
+    unsafe { signal_execution::restore_application_signals(&saved) };
+    result
+}
+
+/// Fork the initialized owned task without invoking pthread_atfork handlers.
+///
+/// This is musl's minimal async-signal-safe process transition. It preserves
+/// caller TLS and identity but does not make copied allocator, loader, key or
+/// application locks callable. A multithreaded parent's child uses permitted
+/// async-signal-safe operations through exec or immediate `_Exit`.
+///
+/// # Safety
+/// The caller executes on an initialized owned main or pthread task. In the
+/// child it must obey the post-fork async-signal-safe execution restrictions.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub unsafe extern "C" fn _Fork() -> c_int {
+    c_status(unsafe { fork_without_handlers() })
+}
 
 /// Register one callback triple in the frozen private fixed-capacity table.
 ///
@@ -379,6 +423,8 @@ pub unsafe extern "C" fn fork() -> c_int {
     // coherent child snapshot rather than clearing an inherited partial lock.
     pthread_tsd::pthread_fork_prepare();
     #[cfg(feature = "x86-owned-static-runtime")]
+    unsafe { __aio_atfork(-1) };
+    #[cfg(feature = "x86-owned-static-runtime")]
     unsafe {
         // Musl `fork.c` locks __at_quick_exit_lockptr after pthread-key
         // metadata. It comes before the named IPC registry and stdio-family
@@ -391,43 +437,24 @@ pub unsafe extern "C" fn fork() -> c_int {
     }
     pthread_create_join::pthread_fork_prepare();
     #[cfg(feature = "x86-owned-static-runtime")]
-    let mut saved_all_signal_mask = 0_u64;
-    #[cfg(feature = "x86-owned-static-runtime")]
-    unsafe {
-        // Musl `_Fork` nests an all-signal block around __abort_lock. The
-        // outer transaction still retains its application-signal block while
-        // this inner saved mask is restored after the raw process transition.
-        signal_execution::block_all_signals(&mut saved_all_signal_mask);
-        // The shared abort/process-creation lock is musl's inner `_Fork`
-        // transaction. It follows every outer registry/thread-list lock and
-        // contains no user callback or CLONE_VM spawn child.
-        super::owned_process_lock::pthread_fork_prepare();
-    }
-    // SAFETY: this private leaf owns the fixed zero-argument Linux x86-64
-    // `fork=57` transition while the selected worker list cannot mutate.
+    let result = unsafe { fork_without_handlers() };
+    #[cfg(not(feature = "x86-owned-static-runtime"))]
     let result = unsafe { raw_selected_fork() };
     if result == 0 {
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
         let child_tid = unsafe { pthread_create_join::register_fork_child_kernel_tid() };
-        #[cfg(feature = "x86-owned-static-runtime")]
-        unsafe {
-            // `_Fork` completes its copied abort/process lock before the
-            // enclosing fork transaction repairs any outer TSD/list state.
-            // Restore only the nested all-signal snapshot here; the outer
-            // application block remains in force until the full transaction
-            // becomes callable below.
-            super::owned_process_lock::pthread_fork_child();
-            signal_execution::restore_application_signals(&saved_all_signal_mask);
-        }
         // SAFETY: the copied list lock retains the inherited caller control
         // while this first child-only TSD transfer runs. It also clears the
         // copied TSD lock, whose parent owner cannot exist in this child.
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
         if !unsafe { pthread_tsd::adopt_current_values_after_fork() }
             || !static_tls::adopt_current_thread_after_fork()
         {
-            immediate_termination::_Exit(127)
+            super::immediate_termination::_Exit(127)
         }
         // SAFETY: the child now has its caller's main TSD/TLS identity. Drop
         // inherited worker handles and the copied list lock before callbacks.
+        #[cfg(not(feature = "x86-owned-static-runtime"))]
         unsafe { pthread_create_join::pthread_fork_child(child_tid) };
         #[cfg(feature = "x86-owned-static-runtime")]
         unsafe {
@@ -438,17 +465,12 @@ pub unsafe extern "C" fn fork() -> c_int {
             super::stdio_standard::pthread_fork_child();
             super::owned_syslog::pthread_fork_child();
             super::owned_timezone::pthread_fork_child();
+            // The inner transaction already preserved caller TSD before
+            // changing main identity. Complete only the outer key lock here,
+            // after owned locks and before the loader, as in musl fork.c.
+            pthread_tsd::pthread_fork_child();
         }
     } else {
-        #[cfg(feature = "x86-owned-static-runtime")]
-        unsafe {
-            // A raw error follows the parent completion path. Complete the
-            // inner lock before any outer registry or user callback sees it.
-            super::owned_process_lock::pthread_fork_parent();
-            // Restore `_Fork`'s nested all-signal mask before the outer
-            // thread-list/registry completion, retaining its app-signal mask.
-            signal_execution::restore_application_signals(&saved_all_signal_mask);
-        }
         // SAFETY: this completes the parent side of the exact list-lock pair
         // on both a successful parent return and a raw fork failure.
         unsafe { pthread_create_join::pthread_fork_parent() };
@@ -464,6 +486,8 @@ pub unsafe extern "C" fn fork() -> c_int {
         }
         // SAFETY: this is the matching outer key-metadata completion after
         // every parent-side raw fork result.
+        #[cfg(feature = "x86-owned-static-runtime")]
+        unsafe { __aio_atfork(0) };
         unsafe { pthread_tsd::pthread_fork_parent() };
     }
     #[cfg(feature = "x86-owned-dynamic-runtime")]

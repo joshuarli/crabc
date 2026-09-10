@@ -3,7 +3,7 @@
 //! `src/linux/clone.c` -> clone/clone_start, `src/thread/x86_64/clone.s`
 //! -> __crabc_owned_clone_raw, `src/process/x86_64/vfork.s` -> vfork,
 //! `src/legacy/daemon.c` -> daemon. `_Fork.c::__post_Fork` maps to the
-//! process lock and pthread_create_join::clone_child's caller-only identity,
+//! process lock and pthread_create_join::adopt_process_child_caller's caller-only identity,
 //! robust/list reset. The latter copies caller TSD solely because the owned
 //! runtime stores main values separately; it does not reset the key lock.
 //!
@@ -91,14 +91,17 @@ struct CloneStart {
     function: Option<CloneFunction>,
     argument: *mut c_void,
     signal_mask: u64,
-    caller: pthread_create_join::CloneCaller,
+    caller: pthread_create_join::ProcessChildCaller,
 }
 
 unsafe extern "C" fn clone_start(argument: *mut c_void) -> c_int {
     let start = unsafe { &*argument.cast::<CloneStart>() };
     unsafe {
-        pthread_create_join::clone_child(start.caller);
+        pthread_create_join::adopt_process_child_caller(start.caller);
         owned_process_lock::pthread_fork_child();
+        // Musl clone.c shares __post_Fork: AIO follows minimal caller
+        // repair and abort unlock, still inside the all-signal mask.
+        super::pthread_atfork::__aio_atfork(1);
         signal_execution::restore_application_signals(&start.signal_mask);
         (start.function.unwrap_unchecked())(start.argument)
     }
@@ -135,7 +138,7 @@ pub unsafe extern "C" fn clone(function: Option<CloneFunction>, stack: *mut c_vo
     let mut saved = 0;
     unsafe { signal_execution::block_all_signals(&mut saved) };
     let mut start = CloneStart { function, argument, signal_mask: saved,
-        caller: unsafe { pthread_create_join::clone_caller() } };
+        caller: unsafe { pthread_create_join::capture_process_child_caller() } };
     unsafe { owned_process_lock::pthread_fork_prepare() };
     let result = unsafe { __crabc_owned_clone_raw(Some(clone_start), stack, flags,
         core::ptr::addr_of_mut!(start).cast(), parent_tid, tls, child_tid) };

@@ -168,6 +168,18 @@ pub(super) unsafe fn pthread_fork_parent() {
     unlock_selected_tsd();
 }
 
+/// Complete normal fork's copied key lock after minimal caller-value adoption.
+/// `_Fork` and clone deliberately do not invoke this outer owner repair.
+/// # Safety
+/// The sole child inherited a matching pthread_fork_prepare transaction;
+/// caller values were retained before changing main identity, and every outer
+/// owned lock has completed. No inherited key metadata is being mutated.
+#[cfg(feature = "x86-owned-static-runtime")]
+pub(super) unsafe fn pthread_fork_child() {
+    SELECTED_TSD_LOCK.store(0, Ordering::Release);
+}
+
+
 #[inline]
 fn key_index(key: c_uint) -> Option<usize> {
     let index = key as usize;
@@ -441,8 +453,8 @@ pub(super) unsafe fn run_selected_main_tsd_destructors() {
     unsafe { run_selected_worker_tsd_destructors(core::ptr::addr_of!(MAIN_SELECTED_TSD_VALUES)) }
 }
 
-/// Public clone preserves only its caller's per-thread values. Unlike fork,
-/// musl's __post_Fork does not repair the key registry lock. Keep that copied
+/// Minimal process-child adoption preserves only caller per-thread values.
+/// Musl's __post_Fork does not repair the key registry lock. Keep that copied
 /// metadata untouched and copy only the caller-owned atomic value table when
 /// the owned representation changes a worker into the child main task.
 ///
@@ -450,7 +462,7 @@ pub(super) unsafe fn run_selected_main_tsd_destructors() {
 /// Run in the sole clone child before adopting main TLS identity. A supplied
 /// source is this caller's copied, still-mapped worker value table.
 #[cfg(feature = "x86-owned-static-runtime")]
-pub(super) unsafe fn adopt_clone_caller_values(source: Option<*const SelectedTsdValues>) {
+pub(super) unsafe fn adopt_process_child_values(source: Option<*const SelectedTsdValues>) {
     let Some(source) = source else { return; };
     let source = unsafe { &*source };
     for index in 0..PTHREAD_KEYS_MAX {
