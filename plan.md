@@ -25,7 +25,11 @@ The full 434-unit libc-test run against the clean `bc911f5d` product records
 427 passes, one missing-provider link (`random`) and six runtime failures:
 `functional/crypt`, `functional/strptime`, `functional/wordexp`, `math/fmaf`,
 `math/fmal` and `math/powf`. The last five have identical candidate and musl
-failure observations; they remain failures pending their contract decisions.
+failure observations. The exact two `strptime` diagnostics now have a finite
+source-and-POSIX disposition; the raw unit remains failed. `wordexp` and the
+three math failures remain unresolved. Equal failure alone is never a
+qualification. See
+[`owned-posix-native-dispositions.md`](compat/x86_64/owned-posix-native-dispositions.md).
 The report is
 `.work/worktrees/aio_native_aggregate/.work/x86_64/libc-test-measurement/tmp/owned-libc-test.a0vxiq/libc-test.json`.
 The same product's full ten-suite OS-test run passes eight suites. Include
@@ -34,8 +38,10 @@ extensions. Basic retains ten: the same six PRNG APIs and four selected
 credential aliases. The report is
 `.work/worktrees/aio_native_aggregate/.work/x86_64/os-measurement/tmp/owned-os-test.6n_4lh1h/os-test.json`.
 The credential, atomic and crypt profile dispositions still require their
-same-product companions; they cannot account for the PRNG or matched upstream
-failures. These retained results do not satisfy aggregate acceptance. The composite execution owner is now
+same-product companions. The finite `strptime` disposition checks its exact
+prepared source, both raw statuses and both complete diagnostic streams;
+none of these dispositions accounts for the PRNG, `wordexp`, or math failures.
+These retained results do not satisfy aggregate acceptance. The composite execution owner is now
 implemented through `owned-posix-native`; passing full native results and a
 fresh prerequisite matrix remain required.
 The pthread component preserves the original fixture and failed observations;
