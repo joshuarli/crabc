@@ -209,6 +209,11 @@ static int source_nocmd_case(void)
     return 0;
 }
 
+/* The separately named POSIX correction cells share this ordinary public C
+ * translation unit.  The installed driver therefore seals one object before
+ * linking it unchanged to the pinned-musl oracle and every owned product. */
+#include "owned_wordexp_posix_probe.c"
+
 int main(int argc, char *argv[])
 {
     int result;
@@ -225,6 +230,95 @@ int main(int argc, char *argv[])
         if (result != 0)
             return 96 + result;
         puts("owned-wordexp-nocmd-source: PASS");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--posix-quiet") == 0) {
+        result = posix_quiet_case();
+        if (result != 0) {
+            if (result == 4)
+                puts("owned-wordexp-posix-quiet: SOURCE-RED diagnostic-present");
+            return 80 + result;
+        }
+        puts("owned-wordexp-posix-quiet: PASS");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--posix-nocmd") == 0) {
+        result = posix_nocmd_case();
+        if (result != 0) {
+            if (result == 1)
+                puts("owned-wordexp-posix-nocmd: SOURCE-RED parameter-brace-rejected");
+            return 112 + result;
+        }
+        puts("owned-wordexp-posix-nocmd: PASS");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--posix-nocmd-escaped-control") == 0) {
+        result = posix_nocmd_escaped_brace_control_case();
+        if (result != 0) {
+            if (result == 4)
+                puts("owned-wordexp-posix-nocmd-escaped-control: NOCMD-RED command-marker-created");
+            return 128 + result;
+        }
+        puts("owned-wordexp-posix-nocmd-escaped-control: PASS");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--posix-nocmd-arithmetic-control") == 0) {
+        result = posix_nocmd_arithmetic_command_control_case();
+        if (result != 0) {
+            if (result == 2)
+                puts("owned-wordexp-posix-nocmd-arithmetic-control: SOURCE-RED parameter-brace-rejected");
+            if (result == 4)
+                puts("owned-wordexp-posix-nocmd-arithmetic-control: SOURCE-RED command-marker-created");
+            return 160 + result;
+        }
+        puts("owned-wordexp-posix-nocmd-arithmetic-control: PASS");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--posix-nocmd-pattern-control") == 0) {
+        result = posix_nocmd_pattern_control_case();
+        if (result != 0) {
+            if (result == 4)
+                puts("owned-wordexp-posix-nocmd-pattern-control: NOCMD-RED command-marker-created");
+            return 176 + result;
+        }
+        puts("owned-wordexp-posix-nocmd-pattern-control: PASS");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--posix-nocmd-arithmetic-delimiter-control") == 0) {
+        result = posix_nocmd_arithmetic_delimiter_control_case();
+        if (result != 0) {
+            if (result == 4)
+                puts("owned-wordexp-posix-nocmd-arithmetic-delimiter-control: SOURCE-RED command-marker-created");
+            return 192 + result;
+        }
+        puts("owned-wordexp-posix-nocmd-arithmetic-delimiter-control: PASS");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--posix-nocmd-continuation-control") == 0) {
+        result = posix_nocmd_continuation_command_control_case();
+        if (result != 0) {
+            if (result == 4)
+                puts("owned-wordexp-posix-nocmd-continuation-control: SOURCE-RED command-marker-created");
+            return 208 + result;
+        }
+        puts("owned-wordexp-posix-nocmd-continuation-control: PASS");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--posix-nocmd-dollar-single-control") == 0) {
+        result = posix_nocmd_dollar_single_control_case();
+        if (result != 0) {
+            if (result == 4)
+                puts("owned-wordexp-posix-nocmd-dollar-single-control: SOURCE-RED command-marker-created");
+            return 224 + result;
+        }
+        puts("owned-wordexp-posix-nocmd-dollar-single-control: PASS");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--undef-source-observation") == 0) {
+        result = posix_undef_source_observation();
+        if (result != 0)
+            return 144 + result;
+        puts("owned-wordexp-undef-source-observation: SOURCE-RED");
         return 0;
     }
     if (argc != 1)

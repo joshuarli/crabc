@@ -6,7 +6,6 @@ from __future__ import annotations
 import copy
 import importlib.util
 import shutil
-import stat
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -35,7 +34,10 @@ class OwnedWordexpExecutionRootTests(unittest.TestCase):
         self._write("oracle", b"musl oracle\n", 0o755)
         self._write("bin/sh", b"sealed external shell\n", 0o755)
         self._write("lib/libfixture.so", b"sealed shell dependency\n", 0o644)
-        self._write("dev/null", b"", 0o666)
+        try:
+            self.module._make_private_null(self.root / "dev/null", "test private null fixture")
+        except self.module.EvidenceError as error:
+            self.skipTest(f"requires a private character-device node: {error}")
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root, ignore_errors=True)
@@ -55,8 +57,8 @@ class OwnedWordexpExecutionRootTests(unittest.TestCase):
             fixture_files={
                 "shell": "bin/sh",
                 "shell-dependency": "lib/libfixture.so",
-                "null": "dev/null",
             },
+            fixture_devices={"null": "dev/null"},
         )
 
     def test_extra_execution_file_is_rejected(self) -> None:
@@ -84,13 +86,12 @@ class OwnedWordexpExecutionRootTests(unittest.TestCase):
             fixture_files={
                 "shell": "bin/sh",
                 "shell-dependency": "lib/libfixture.so",
-                "null": "dev/null",
             },
+            fixture_devices={"null": "dev/null"},
         )
         (self.root / "lib/extra-alias").symlink_to("libc.so.1")
         with self.assertRaises(self.module.EvidenceError):
             self.module.validate_execution_root(self.root, record)
-
 
 class OwnedWordexpCommandBindingTests(unittest.TestCase):
     def test_substituted_oracle_argv_cannot_satisfy_candidate_binding(self) -> None:
@@ -102,6 +103,70 @@ class OwnedWordexpCommandBindingTests(unittest.TestCase):
         argv.write_text('["/oracle"]\n', encoding="utf-8")
         with self.assertRaises(module.EvidenceError):
             module.require_exact_command(argv, ["/consumer"], {}, "candidate")
+        shutil.rmtree(root, ignore_errors=True)
+
+    def test_posix_source_red_policy_requires_the_pinned_failure_and_candidate_success(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True)
+
+        def record(prefix: str, status: bytes, stdout: bytes, stderr: bytes):
+            result = {}
+            for name, value in (("status", status), ("stdout", stdout), ("stderr", stderr)):
+                path = root / f"{prefix}.{name}"
+                path.write_bytes(value)
+                result[name] = module._checkout_identity(ROOT, path, f"{prefix} {name}")
+            return result
+
+        oracle = record("oracle", b"84\n",
+                        b"owned-wordexp-posix-quiet: SOURCE-RED diagnostic-present\n", b"")
+        candidate = record("candidate", b"0\n", b"owned-wordexp-posix-quiet: PASS\n", b"")
+        module._assert_case_results(ROOT, "posix-quiet", oracle, candidate, "synthetic quiet cell")
+
+        broken = record("broken", b"0\n", b"owned-wordexp-posix-quiet: PASS\n", b"")
+        with self.assertRaises(module.EvidenceError):
+            module._assert_case_results(ROOT, "posix-quiet", broken, candidate, "missing source red")
+        shutil.rmtree(root, ignore_errors=True)
+
+    def test_execution_record_defers_a_nonzero_source_red_to_its_exact_policy(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        shutil.rmtree(root, ignore_errors=True)
+        commands = root / "commands"
+        commands.mkdir(parents=True)
+        values = {
+            "argv": b'["/consumer"]\n', "environment": b'{}\n',
+            "stdout": b"source-red\n", "stderr": b"", "status": b"84\n",
+        }
+        with unittest.mock.patch.object(module, "SOURCE_MOUNT", str(ROOT)):
+            record = {}
+            for name, content in values.items():
+                path = commands / (f"source-red.{name}.json" if name in {"argv", "environment"}
+                                   else f"source-red.{name}")
+                path.write_bytes(content)
+                record[name] = module._checkout_identity(ROOT, path, name)
+            with self.assertRaises(module.EvidenceError):
+                module._command_record(ROOT, root, "source-red", record, ["/consumer"], {}, "source red")
+            self.assertEqual(
+                module._command_record(ROOT, root, "source-red", record, ["/consumer"], {}, "source red",
+                                       allow_nonzero_status=True),
+                record,
+            )
+        shutil.rmtree(root, ignore_errors=True)
+
+
+class OwnedWordexpFixtureDeviceTests(unittest.TestCase):
+    def test_regular_or_wrong_device_substitutes_are_rejected(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        shutil.rmtree(root, ignore_errors=True)
+        (root / "dev").mkdir(parents=True)
+        (root / "dev/null").write_bytes(b"")
+        with self.assertRaises(module.EvidenceError):
+            module._null_device_identity(root, "dev/null", "regular substitute")
+        with self.assertRaises(module.EvidenceError):
+            module._null_device_identity(root, "dev/zero", "wrong declared device")
         shutil.rmtree(root, ignore_errors=True)
 
 class OwnedWordexpReconstructionTests(unittest.TestCase):
@@ -120,11 +185,15 @@ class OwnedWordexpReconstructionTests(unittest.TestCase):
             (self.work / "oracle", b"linked oracle\n", 0o755),
             (self.work / "external-shell-fixture/bin/sh", b"fixture shell\n", 0o755),
             (self.work / "external-shell-fixture/lib/ld-musl-x86_64.so.1", b"fixture loader\n", 0o755),
-            (self.work / "external-shell-fixture/dev/null", b"", 0o666),
         ):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
             path.chmod(mode)
+        try:
+            self.module._make_private_null(self.work / "external-shell-fixture/dev/null",
+                                           "reconstruction private null fixture")
+        except self.module.EvidenceError as error:
+            self.skipTest(f"requires a private character-device node: {error}")
         (self.product / "lib/ld-musl-x86_64.so.1").symlink_to("keep")
         (self.product / "lib/keep-alias").symlink_to("keep")
         shutil.copytree(self.product, self.execution, symlinks=True)
@@ -136,7 +205,8 @@ class OwnedWordexpReconstructionTests(unittest.TestCase):
         self._copy(self.work / "external-shell-fixture/bin/sh", self.execution / "bin/sh")
         self._copy(self.work / "external-shell-fixture/lib/ld-musl-x86_64.so.1",
                    self.execution / "lib/ld-musl-x86_64.so.1")
-        self._copy(self.work / "external-shell-fixture/dev/null", self.execution / "dev/null")
+        self.module._copy_private_null(self.work / "external-shell-fixture", "dev/null", self.execution,
+                                       "dev/null", "reconstruction execution private null fixture")
 
     def tearDown(self) -> None:
         shutil.rmtree(self.root, ignore_errors=True)
@@ -148,9 +218,9 @@ class OwnedWordexpReconstructionTests(unittest.TestCase):
 
     def _fixture(self):
         source = self.work / "external-shell-fixture"
-        paths = {"shell": "bin/sh", "dependency:0": "lib/ld-musl-x86_64.so.1", "null": "dev/null"}
-        records = {name: self.module._checkout_identity(ROOT, source / relative, name) for name, relative in paths.items()}
-        return source, paths, records
+        paths = {"shell": "bin/sh", "dependency:0": "lib/ld-musl-x86_64.so.1"}
+        devices = {"null": "dev/null"}
+        return source, paths, devices
 
     def _record(self):
         product_files = {"manifest": "share/crabc/manifest.json", "product:runtime": "runtime", "product:lib/keep": "lib/keep"}
@@ -158,7 +228,8 @@ class OwnedWordexpReconstructionTests(unittest.TestCase):
         record = self.module.record_execution_root(
             self.execution, product_files=product_files, product_aliases=product_aliases,
             consumers={"candidate": "consumer-pie", "oracle": "oracle"},
-            fixture_files={"shell": "bin/sh", "dependency:0": "lib/ld-musl-x86_64.so.1", "null": "dev/null"},
+            fixture_files={"shell": "bin/sh", "dependency:0": "lib/ld-musl-x86_64.so.1"},
+            fixture_devices={"null": "dev/null"},
         )
         record["root"] = self.module._mounted(ROOT, self.execution)
         return record

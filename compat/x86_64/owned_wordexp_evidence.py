@@ -31,20 +31,48 @@ import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as products
 import run_qualification_manifest as native_qualification
 
-SCHEMA = "crabc.x86_64-owned-wordexp-products/v1"
+SCHEMA = "crabc.x86_64-owned-wordexp-products/v3"
 EXPECTED_INPUT_SCHEMA = "crabc.x86_64-owned-wordexp-expected-native-inputs/v1"
 SOURCE_MOUNT = "/workspace"
 TARGET = "x86_64-unknown-linux-musl"
 PROBE = "compat/x86_64/owned_wordexp_probe.c"
+POSIX_PROBE = "compat/x86_64/owned_wordexp_posix_probe.c"
 DOC = "compat/x86_64/owned-wordexp.md"
 RUNNER = "compat/x86_64/run_owned_wordexp.sh"
 LEGACY_RUNNER = "compat/x86_64/run_libc_owned_wordexp.sh"
-HEADERS = ("errno.h", "wordexp.h", "stdio.h", "stdlib.h", "string.h", "features.h", "bits/alltypes.h")
-SOURCES = (PROBE, DOC, RUNNER, LEGACY_RUNNER, "compat/x86_64/owned_wordexp_evidence.py",
+HEADERS = ("errno.h", "wordexp.h", "stdio.h", "stdlib.h", "string.h", "unistd.h", "features.h", "bits/alltypes.h")
+SOURCES = (PROBE, POSIX_PROBE, DOC, RUNNER, LEGACY_RUNNER, "compat/x86_64/owned_wordexp_evidence.py",
            "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
            "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",
            "compat/upstreams.toml", "docker/x86_64-musl-oracle-gcc")
 SHELL_CASES = ("normal", "missing", "inaccessible", "invalid")
+NULL_FIXTURE_NAME = "null"
+NULL_FIXTURE_PATH = "dev/null"
+NULL_FIXTURE_MAJOR = 1
+NULL_FIXTURE_MINOR = 3
+NULL_FIXTURE_MODE = 0o666
+# Every entry uses the same installed-header object. `shell_case` controls the
+# sealed private fixture, while `arguments` select one public C observation.
+# `source-match` is an ordinary musl control. The other named policies retain
+# fixed source defects as red observations instead of claiming them as oracle
+# semantics for the owned product.
+WORD_EXP_CASES = {
+    "normal": ("normal", (), b"owned-wordexp: PASS\n", "quiet-source-red"),
+    "missing": ("missing", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "source-match"),
+    "inaccessible": ("inaccessible", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "source-match"),
+    "invalid": ("invalid", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "source-match"),
+    "nocmd-source": ("normal", ("--nocmd-source",), b"owned-wordexp-nocmd-source: PASS\n", "source-match"),
+    "posix-quiet": ("normal", ("--posix-quiet",), b"owned-wordexp-posix-quiet: PASS\n", "posix-quiet-source-red"),
+    "posix-nocmd": ("normal", ("--posix-nocmd",), b"owned-wordexp-posix-nocmd: PASS\n", "posix-nocmd-source-red"),
+    "posix-nocmd-escaped-control": ("normal", ("--posix-nocmd-escaped-control",), b"owned-wordexp-posix-nocmd-escaped-control: PASS\n", "source-match"),
+    "posix-nocmd-arithmetic-control": ("normal", ("--posix-nocmd-arithmetic-control",), b"owned-wordexp-posix-nocmd-arithmetic-control: PASS\n", "posix-nocmd-arithmetic-source-red"),
+    "posix-nocmd-pattern-control": ("normal", ("--posix-nocmd-pattern-control",), b"owned-wordexp-posix-nocmd-pattern-control: PASS\n", "source-match"),
+    "posix-nocmd-arithmetic-delimiter-control": ("normal", ("--posix-nocmd-arithmetic-delimiter-control",), b"owned-wordexp-posix-nocmd-arithmetic-delimiter-control: PASS\n", "posix-nocmd-arithmetic-delimiter-source-red"),
+    "posix-nocmd-continuation-control": ("normal", ("--posix-nocmd-continuation-control",), b"owned-wordexp-posix-nocmd-continuation-control: PASS\n", "posix-nocmd-continuation-source-red"),
+    "posix-nocmd-dollar-single-control": ("normal", ("--posix-nocmd-dollar-single-control",), b"owned-wordexp-posix-nocmd-dollar-single-control: PASS\n", "posix-nocmd-dollar-single-source-red"),
+    "undef-source-observation": ("normal", ("--undef-source-observation",), b"owned-wordexp-undef-source-observation: SOURCE-RED\n", "undef-source-observation"),
+}
+CELL_ENVIRONMENT = {"CRABC_WORDEXP": "bar baz", "FOO": "field", "X": "left", "Y": "right", "SET": "1"}
 MODE_SPECS = {
     "static-et-exec": ("static", "static", "consumer-static-et-exec"),
     "static-pie": ("static-pie", "static", "consumer-static-pie"),
@@ -119,6 +147,36 @@ def _file_identity(root: Path, relative: str, description: str) -> dict[str, Any
     return {"path": relative, "sha256": _sha(path), "mode": _mode(path)}
 
 
+def _null_device_identity(root: Path, relative: str, description: str) -> dict[str, Any]:
+    """Bind the one declared fixture device without opening or hashing it."""
+    relative = _relative(relative, description)
+    if relative != NULL_FIXTURE_PATH:
+        fail(f"{description} is not the declared private null device")
+    path = _physical(root / relative, description)
+    try:
+        path.relative_to(root)
+        details = path.lstat()
+    except OSError as error:
+        raise EvidenceError(f"{description} is unreadable: {path}") from error
+    observed = {
+        "path": relative,
+        "type": "char-device",
+        "major": os.major(details.st_rdev),
+        "minor": os.minor(details.st_rdev),
+        "mode": stat.S_IMODE(details.st_mode),
+    }
+    expected = {
+        "path": NULL_FIXTURE_PATH,
+        "type": "char-device",
+        "major": NULL_FIXTURE_MAJOR,
+        "minor": NULL_FIXTURE_MINOR,
+        "mode": NULL_FIXTURE_MODE,
+    }
+    if not stat.S_ISCHR(details.st_mode) or observed != expected:
+        fail(f"{description} is not character device 1:3 mode 666")
+    return observed
+
+
 def _alias_identity(root: Path, relative: str, description: str) -> dict[str, str]:
     relative = _relative(relative, description)
     path = _physical(root / relative, description)
@@ -132,9 +190,10 @@ def _alias_identity(root: Path, relative: str, description: str) -> dict[str, st
     return {"path": relative, "target": target}
 
 
-def _walk_root(root: Path) -> tuple[set[str], set[str]]:
+def _walk_root(root: Path) -> tuple[set[str], set[str], set[str]]:
     files: set[str] = set()
     aliases: set[str] = set()
+    devices: set[str] = set()
     try:
         entries = sorted(root.rglob("*"))
     except OSError as error:
@@ -151,9 +210,11 @@ def _walk_root(root: Path) -> tuple[set[str], set[str]]:
             files.add(relative)
         elif stat.S_ISLNK(mode):
             aliases.add(relative)
+        elif stat.S_ISCHR(mode):
+            devices.add(relative)
         else:
             fail(f"execution root contains non-file entry: {relative}")
-    return files, aliases
+    return files, aliases, devices
 
 
 def _exact_dict(value: object, keys: set[str], description: str) -> dict[str, Any]:
@@ -169,8 +230,9 @@ def record_execution_root(
     product_aliases: Mapping[str, str],
     consumers: Mapping[str, str],
     fixture_files: Mapping[str, str],
+    fixture_devices: Mapping[str, str],
 ) -> dict[str, Any]:
-    """Seal every regular file and alias in an actually executed root.
+    """Seal every declared regular file, alias, and fixture device in a root.
 
     Callers supply the product manifest's exact file/alias roster.  Consumers
     and external fixture files are explicitly named, so no unrecorded loader,
@@ -192,8 +254,13 @@ def record_execution_root(
     product = roster(product_files, "execution product file") if product_files else {}
     consumer = roster(consumers, "execution consumer")
     fixture = roster(fixture_files, "execution fixture")
+    if not isinstance(fixture_devices, Mapping) or set(fixture_devices) != {NULL_FIXTURE_NAME}:
+        fail("execution fixture device roster differs")
+    devices = {name: _null_device_identity(root, relative, f"execution fixture device {name}")
+               for name, relative in fixture_devices.items()}
     relative_files = [entry["path"] for values in (product, consumer, fixture) for entry in values.values()]
-    if len(relative_files) != len(set(relative_files)):
+    device_paths = [entry["path"] for entry in devices.values()]
+    if len(relative_files) != len(set(relative_files)) or set(relative_files) & set(device_paths):
         fail("execution file rosters overlap")
     aliases: dict[str, dict[str, str]] = {}
     for name, relative in product_aliases.items():
@@ -201,29 +268,32 @@ def record_execution_root(
             fail("execution product alias roster is malformed")
         aliases[name] = _alias_identity(root, relative, f"execution product alias {name}")
     alias_paths = [entry["path"] for entry in aliases.values()]
-    if len(alias_paths) != len(set(alias_paths)) or set(alias_paths) & set(relative_files):
+    if len(alias_paths) != len(set(alias_paths)) or set(alias_paths) & (set(relative_files) | set(device_paths)):
         fail("execution alias roster overlaps or duplicates a file")
-    observed_files, observed_aliases = _walk_root(root)
+    observed_files, observed_aliases, observed_devices = _walk_root(root)
     if observed_files != set(relative_files):
         fail("execution root file roster drifted")
     if observed_aliases != set(alias_paths):
         fail("execution root alias roster drifted")
+    if observed_devices != set(device_paths):
+        fail("execution root device roster drifted")
     return {
         "root": str(root),
         "product_files": product,
         "product_aliases": aliases,
         "consumers": consumer,
         "fixtures": fixture,
+        "fixture_devices": devices,
     }
 
 
 def validate_execution_root(execution_root: Path, record: object) -> dict[str, Any]:
     root = _physical(execution_root, "execution root", directory=True)
-    record = _exact_dict(record, {"root", "product_files", "product_aliases", "consumers", "fixtures"},
+    record = _exact_dict(record, {"root", "product_files", "product_aliases", "consumers", "fixtures", "fixture_devices"},
                          "execution root record")
     if record["root"] != str(root):
         fail("execution root path drifted")
-    for key in ("product_files", "consumers", "fixtures"):
+    for key in ("product_files", "consumers", "fixtures", "fixture_devices"):
         if not isinstance(record[key], dict):
             fail(f"execution root {key} roster is malformed")
     if not isinstance(record["product_aliases"], dict):
@@ -234,6 +304,7 @@ def validate_execution_root(execution_root: Path, record: object) -> dict[str, A
         product_aliases={name: entry.get("path") if isinstance(entry, dict) else "" for name, entry in record["product_aliases"].items()},
         consumers={name: entry.get("path") if isinstance(entry, dict) else "" for name, entry in record["consumers"].items()},
         fixture_files={name: entry.get("path") if isinstance(entry, dict) else "" for name, entry in record["fixtures"].items()},
+        fixture_devices={name: entry.get("path") if isinstance(entry, dict) else "" for name, entry in record["fixture_devices"].items()},
     )
     if replay != record:
         fail("execution root bytes, modes, aliases, or roster drifted")
@@ -383,6 +454,27 @@ def _copy_regular(source: Path, destination: Path, description: str) -> None:
         fail(f"{description} copy differs from its source")
 
 
+def _make_private_null(destination: Path, description: str) -> None:
+    """Create the only device allowed in an execution fixture tree."""
+    if destination.exists() or destination.is_symlink():
+        fail(f"{description} destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.mknod(destination, stat.S_IFCHR | NULL_FIXTURE_MODE,
+                 os.makedev(NULL_FIXTURE_MAJOR, NULL_FIXTURE_MINOR))
+        # `mknod` observes umask; make the sealed public mode explicit.
+        destination.chmod(NULL_FIXTURE_MODE)
+    except OSError as error:
+        raise EvidenceError(f"cannot create {description}: {destination}") from error
+
+
+def _copy_private_null(source_root: Path, source_relative: str, destination_root: Path,
+                       destination_relative: str, description: str) -> None:
+    _null_device_identity(source_root, source_relative, f"{description} source")
+    _make_private_null(destination_root / destination_relative, description)
+    _null_device_identity(destination_root, destination_relative, description)
+
+
 def _copy_dynamic_product(product: Path, execution_root: Path) -> tuple[dict[str, str], dict[str, str]]:
     product, manifest, files, aliases = copies.dynamic_product(product)
     if execution_root.exists() or execution_root.is_symlink():
@@ -451,7 +543,7 @@ def _shell_dependencies(work: Path, shell: Path, ldd: str) -> tuple[list[tuple[s
     return [("lib/ld-musl-x86_64.so.1", loader)], record
 
 
-def _prepare_fixture_source(work: Path, ldd: str) -> tuple[Path, dict[str, str], dict[str, Any], dict[str, Any]]:
+def _prepare_fixture_source(work: Path, ldd: str) -> tuple[Path, dict[str, str], dict[str, str], dict[str, Any], dict[str, Any], dict[str, Any]]:
     shell = Path(os.path.realpath("/bin/sh"))
     shell = _physical(shell, "controlled /bin/sh", directory=False)
     if not os.access(shell, os.X_OK):
@@ -469,17 +561,17 @@ def _prepare_fixture_source(work: Path, ldd: str) -> tuple[Path, dict[str, str],
         name = f"dependency:{index}"
         files[name] = relative
         source_records[name] = _checkout_identity(ROOT, source / relative, f"retained shell dependency {dependency}")
-    (source / "dev").mkdir(exist_ok=True)
-    null = source / "dev/null"
-    null.write_bytes(b"")
-    null.chmod(0o666)
-    files["null"] = "dev/null"
-    source_records["null"] = _checkout_identity(ROOT, null, "retained private null fixture")
-    return source, files, source_records, ldd_record
+    devices = {NULL_FIXTURE_NAME: NULL_FIXTURE_PATH}
+    _make_private_null(source / NULL_FIXTURE_PATH, "retained private null fixture")
+    device_records = {NULL_FIXTURE_NAME: _null_device_identity(
+        source, NULL_FIXTURE_PATH, "retained private null fixture")}
+    return source, files, devices, source_records, device_records, ldd_record
 
 
-def _copy_fixture(source: Path, files: Mapping[str, str], execution_root: Path, shell_case: str) -> tuple[dict[str, str], tuple[str, ...]]:
+def _copy_fixture(source: Path, files: Mapping[str, str], devices: Mapping[str, str], execution_root: Path,
+                  shell_case: str) -> tuple[dict[str, str], dict[str, str], tuple[str, ...]]:
     copied: dict[str, str] = {}
+    copied_devices: dict[str, str] = {}
     replaced_aliases: list[str] = []
     for name, relative in files.items():
         if shell_case == "missing" and name == "shell":
@@ -495,6 +587,11 @@ def _copy_fixture(source: Path, files: Mapping[str, str], execution_root: Path, 
             output_path.unlink()
         _copy_regular(input_path, output_path, f"execution shell fixture {name}")
         copied[name] = relative
+    for name, relative in devices.items():
+        if name != NULL_FIXTURE_NAME:
+            fail("execution fixture device name differs")
+        _copy_private_null(source, relative, execution_root, relative, f"execution shell fixture device {name}")
+        copied_devices[name] = relative
     shell = execution_root / "bin/sh"
     if shell_case == "normal":
         pass
@@ -508,16 +605,7 @@ def _copy_fixture(source: Path, files: Mapping[str, str], execution_root: Path, 
         shell.chmod(0o755)
     else:
         fail(f"unknown controlled shell case: {shell_case}")
-    return copied, tuple(sorted(replaced_aliases))
-
-
-def _status_zero(root: Path, record: Mapping[str, Any], description: str) -> None:
-    value = record.get("status")
-    if not isinstance(value, dict):
-        fail(f"{description} has no status record")
-    path = _local_mounted(root, value.get("path"), f"{description} status")
-    if path.read_bytes() != b"0\n":
-        fail(f"{description} did not succeed")
+    return copied, copied_devices, tuple(sorted(replaced_aliases))
 
 
 def _local_mounted(root: Path, value: object, description: str) -> Path:
@@ -569,18 +657,25 @@ def _installed_tool_roster(dynamic: Path, static: Path | None) -> dict[str, dict
     return roster
 
 
-def _fixture_record(root: Path, fixture_root: Path, files: Mapping[str, str], records: Mapping[str, Any],
+def _fixture_record(root: Path, fixture_root: Path, files: Mapping[str, str], devices: Mapping[str, str],
+                    records: Mapping[str, Any], device_records: Mapping[str, Any],
                     ldd_record: Mapping[str, Any]) -> dict[str, Any]:
     fixture_root = _physical(fixture_root, "sealed external shell fixture root", directory=True)
     expected = set(files.values())
-    observed, aliases = _walk_root(fixture_root)
-    if observed != expected or aliases:
+    expected_devices = set(devices.values())
+    observed, aliases, observed_devices = _walk_root(fixture_root)
+    if observed != expected or aliases or observed_devices != expected_devices:
         fail("sealed external shell fixture roster differs")
     current = {name: _checkout_identity(root, fixture_root / relative, f"sealed fixture {name}")
                for name, relative in files.items()}
+    current_devices = {name: _null_device_identity(fixture_root, relative, f"sealed fixture device {name}")
+                       for name, relative in devices.items()}
     if dict(records) != current:
         fail("sealed external shell fixture records differ")
-    return {"root": _mounted(root, fixture_root), "files": current, "ldd": dict(ldd_record)}
+    if dict(device_records) != current_devices:
+        fail("sealed external shell fixture device records differ")
+    return {"root": _mounted(root, fixture_root), "files": current, "devices": current_devices,
+            "ldd": dict(ldd_record)}
 
 
 def _input_seal(root: Path, dynamic: Path, static: Path | None, tools: Mapping[str, Any],
@@ -711,9 +806,95 @@ def _link_validate(root: Path, work: Path, product: Path, workload: Path, execut
             "linker": linker}
 
 
-def _run_shell_case(work: Path, root: Path, *, label: str, mode: str, candidate: Path, oracle: Path,
-                    dynamic_product: Path | None, fixture_source: Path, fixture_files: Mapping[str, str],
-                    fixture_records: Mapping[str, Any]) -> dict[str, Any]:
+def _case_spec(case: str) -> tuple[str, tuple[str, ...], bytes, str]:
+    try:
+        shell_case, arguments, expected_stdout, comparison = WORD_EXP_CASES[case]
+    except (KeyError, ValueError) as error:
+        raise EvidenceError(f"unknown wordexp execution case: {case}") from error
+    if (shell_case not in SHELL_CASES or not isinstance(arguments, tuple) or
+            not all(isinstance(argument, str) for argument in arguments) or
+            not isinstance(expected_stdout, bytes) or not isinstance(comparison, str)):
+        fail("wordexp execution case contract is malformed")
+    return shell_case, arguments, expected_stdout, comparison
+
+
+def _result_streams(root: Path, result: Mapping[str, Any], description: str) -> tuple[bytes, bytes, bytes]:
+    try:
+        status = _identity_current(root, result["status"], f"{description} status").read_bytes()
+        stdout = _identity_current(root, result["stdout"], f"{description} stdout").read_bytes()
+        stderr = _identity_current(root, result["stderr"], f"{description} stderr").read_bytes()
+    except (KeyError, TypeError) as error:
+        raise EvidenceError(f"{description} stream record is malformed") from error
+    return status, stdout, stderr
+
+
+def _assert_case_results(root: Path, case: str, oracle: Mapping[str, Any], candidate: Mapping[str, Any],
+                         description: str) -> None:
+    _, _, expected_candidate_stdout, comparison = _case_spec(case)
+    oracle_status, oracle_stdout, oracle_stderr = _result_streams(root, oracle, f"{description} oracle")
+    candidate_status, candidate_stdout, candidate_stderr = _result_streams(root, candidate, f"{description} candidate")
+    if comparison == "source-match":
+        if (oracle_status != b"0\n" or candidate_status != b"0\n" or
+                oracle_stdout != expected_candidate_stdout or candidate_stdout != expected_candidate_stdout or
+                oracle_stderr != candidate_stderr):
+            fail(f"{description} source-control result differs")
+    elif comparison == "quiet-source-red":
+        # The ordinary source workload deliberately carries `one )` through a
+        # no-SHOWERR call. Its pinned-musl stderr is source-control evidence;
+        # POSIX requires the candidate's stream to be empty.
+        if (oracle_status != b"0\n" or candidate_status != b"0\n" or
+                oracle_stdout != expected_candidate_stdout or candidate_stdout != expected_candidate_stdout or
+                not oracle_stderr or candidate_stderr):
+            fail(f"{description} quiet source RED or candidate suppression differs")
+    elif comparison == "posix-quiet-source-red":
+        if (oracle_status != b"84\n" or
+                oracle_stdout != b"owned-wordexp-posix-quiet: SOURCE-RED diagnostic-present\n" or
+                oracle_stderr or candidate_status != b"0\n" or
+                candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} POSIX quiet source RED or candidate result differs")
+    elif comparison == "posix-nocmd-source-red":
+        if (oracle_status != b"113\n" or
+                oracle_stdout != b"owned-wordexp-posix-nocmd: SOURCE-RED parameter-brace-rejected\n" or
+                oracle_stderr or candidate_status != b"0\n" or
+                candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} POSIX parameter-brace source RED or candidate result differs")
+    elif comparison == "posix-nocmd-arithmetic-source-red":
+        if (oracle_status != b"162\n" or
+                oracle_stdout != b"owned-wordexp-posix-nocmd-arithmetic-control: SOURCE-RED parameter-brace-rejected\n" or
+                oracle_stderr or candidate_status != b"0\n" or
+                candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} arithmetic parameter source RED or candidate result differs")
+    elif comparison == "posix-nocmd-arithmetic-delimiter-source-red":
+        if (oracle_status != b"196\n" or
+                oracle_stdout != b"owned-wordexp-posix-nocmd-arithmetic-delimiter-control: SOURCE-RED command-marker-created\n" or
+                oracle_stderr or candidate_status != b"0\n" or
+                candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} arithmetic delimiter source RED or candidate result differs")
+    elif comparison == "posix-nocmd-continuation-source-red":
+        if (oracle_status != b"212\n" or
+                oracle_stdout != b"owned-wordexp-posix-nocmd-continuation-control: SOURCE-RED command-marker-created\n" or
+                oracle_stderr or candidate_status != b"0\n" or
+                candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} continuation source RED or candidate result differs")
+    elif comparison == "posix-nocmd-dollar-single-source-red":
+        if (oracle_status != b"228\n" or
+                oracle_stdout != b"owned-wordexp-posix-nocmd-dollar-single-control: SOURCE-RED command-marker-created\n" or
+                oracle_stderr or candidate_status != b"0\n" or
+                candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} dollar-single source RED or candidate result differs")
+    elif comparison == "undef-source-observation":
+        if (oracle_status != b"0\n" or candidate_status != b"0\n" or
+                oracle_stdout != expected_candidate_stdout or candidate_stdout != expected_candidate_stdout or
+                oracle_stderr or candidate_stderr):
+            fail(f"{description} non-qualifying WRDE_UNDEF source observation differs")
+    else:
+        fail(f"{description} comparison policy is unknown")
+
+
+def _run_wordexp_case(work: Path, root: Path, *, label: str, mode: str, case: str, candidate: Path, oracle: Path,
+                      dynamic_product: Path | None, fixture_source: Path, fixture_files: Mapping[str, str],
+                      fixture_devices: Mapping[str, str]) -> dict[str, Any]:
+    shell_case, arguments, expected_stdout, comparison = _case_spec(case)
     execution = work / "execution" / label
     if dynamic_product is not None:
         product_files, product_aliases = _copy_dynamic_product(dynamic_product, execution)
@@ -723,7 +904,8 @@ def _run_shell_case(work: Path, root: Path, *, label: str, mode: str, candidate:
     consumer_name = MODE_SPECS[mode][2]
     _copy_regular(candidate, execution / consumer_name, "execution candidate")
     _copy_regular(oracle, execution / "oracle", "execution pinned-musl oracle")
-    copied_fixture, replaced_aliases = _copy_fixture(fixture_source, fixture_files, execution, label.rsplit("-", 1)[1])
+    copied_fixture, copied_devices, replaced_aliases = _copy_fixture(
+        fixture_source, fixture_files, fixture_devices, execution, shell_case)
     for alias_name, alias_path in tuple(product_aliases.items()):
         if alias_path in replaced_aliases:
             del product_aliases[alias_name]
@@ -732,37 +914,25 @@ def _run_shell_case(work: Path, root: Path, *, label: str, mode: str, candidate:
     execution_record = record_execution_root(
         execution, product_files=product_files, product_aliases=product_aliases,
         consumers={"candidate": consumer_name, "oracle": "oracle"}, fixture_files=copied_fixture,
+        fixture_devices=copied_devices,
     )
-    shell_case = label.rsplit("-", 1)[1]
-    argument = [] if shell_case == "normal" else ["--shell-unavailable"]
-    command_environment = {"CRABC_WORDEXP": "bar baz"}
     def invocation(program: str, direct: bool) -> list[str]:
         prefix = ["/usr/bin/timeout", "20", "/usr/sbin/chroot", str(execution)]
         if direct:
             prefix += ["/lib/ld-crabc-x86_64.so.1", f"/{program}"]
         else:
             prefix += [f"/{program}"]
-        return prefix + argument
+        return prefix + list(arguments)
     direct = mode.endswith("-direct")
-    oracle_result = _run(work, f"{label}-oracle", invocation("oracle", False), environment=command_environment)
-    candidate_result = _run(work, f"{label}-candidate", invocation(consumer_name, direct), environment=command_environment)
-    _status_zero(root, oracle_result, f"{label} pinned-musl oracle")
-    _status_zero(root, candidate_result, f"{label} candidate")
-    oracle_stdout = _identity_current(root, oracle_result["stdout"], f"{label} oracle stdout")
-    candidate_stdout = _identity_current(root, candidate_result["stdout"], f"{label} candidate stdout")
-    oracle_stderr = _identity_current(root, oracle_result["stderr"], f"{label} oracle stderr")
-    candidate_stderr = _identity_current(root, candidate_result["stderr"], f"{label} candidate stderr")
-    expected = b"owned-wordexp: PASS\n" if shell_case == "normal" else b"owned-wordexp-shell-unavailable: PASS\n"
-    if oracle_stdout.read_bytes() != expected or candidate_stdout.read_bytes() != expected:
-        fail(f"{label} did not produce its exact expected transcript")
-    if oracle_stdout.read_bytes() != candidate_stdout.read_bytes() or oracle_stderr.read_bytes() != candidate_stderr.read_bytes():
-        fail(f"{label} candidate differs from pinned-musl oracle")
+    oracle_result = _run(work, f"{label}-oracle", invocation("oracle", False), environment=CELL_ENVIRONMENT, required=False)
+    candidate_result = _run(work, f"{label}-candidate", invocation(consumer_name, direct), environment=CELL_ENVIRONMENT, required=False)
+    _assert_case_results(root, case, oracle_result, candidate_result, label)
     execution_record["root"] = _mounted(root, execution)
-    return {"mode": mode, "shell_case": shell_case, "execution": execution_record,
+    return {"mode": mode, "case": case, "shell_case": shell_case, "comparison": comparison, "execution": execution_record,
             "consumer_sources": {"candidate": _checkout_identity(root, candidate, "candidate consumer source"),
                                  "oracle": _checkout_identity(root, oracle, "oracle consumer source")},
             "external_alias_overrides": list(replaced_aliases), "oracle": oracle_result,
-            "candidate": candidate_result, "expected_stdout": expected.decode("ascii")}
+            "candidate": candidate_result, "expected_stdout": expected_stdout.decode("ascii")}
 
 
 def _validate_header_trace(root: Path, trace: Path, dynamic: Path) -> dict[str, Any]:
@@ -771,6 +941,8 @@ def _validate_header_trace(root: Path, trace: Path, dynamic: Path) -> dict[str, 
         expected = _mounted(root, dynamic / "usr/include" / header)
         if expected not in text:
             fail(f"installed header trace omitted {header}")
+    if _mounted(root, root / POSIX_PROBE) not in text:
+        fail("installed header trace omitted the POSIX correction cells")
     return _checkout_identity(root, trace, "installed wordexp header trace")
 
 
@@ -799,8 +971,10 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
         tools_before = _installed_tool_roster(dynamic, static)
         oracle_inputs = _capture_oracle_inputs(work)
         expected_native_inputs = expected_native_input_seal(tools_before, oracle_inputs)
-        fixture_source, fixture_files, fixture_records, fixture_ldd = _prepare_fixture_source(work, tools_before["ldd"]["path"])
-        fixture = _fixture_record(ROOT, fixture_source, fixture_files, fixture_records, fixture_ldd)
+        fixture_source, fixture_files, fixture_devices, fixture_records, fixture_device_records, fixture_ldd = _prepare_fixture_source(
+            work, tools_before["ldd"]["path"])
+        fixture = _fixture_record(ROOT, fixture_source, fixture_files, fixture_devices, fixture_records,
+                                  fixture_device_records, fixture_ldd)
         before = _input_seal(ROOT, dynamic, static, tools_before, oracle_inputs, fixture)
 
         dynamic_driver = dynamic / "bin/crabc-cc-dynamic"
@@ -847,11 +1021,12 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
             fail("installed link receipt differs from the pre-sealed linker")
         cells: dict[str, Any] = {}
         for mode, (candidate, dynamic_root) in candidates.items():
-            for shell_case in SHELL_CASES:
-                label = f"{mode}-{shell_case}"
-                cells[label] = _run_shell_case(work, ROOT, label=label, mode=mode, candidate=candidate, oracle=oracle,
-                                                dynamic_product=dynamic_root, fixture_source=fixture_source,
-                                                fixture_files=fixture_files, fixture_records=fixture_records)
+            for case in WORD_EXP_CASES:
+                label = f"{mode}-{case}"
+                cells[label] = _run_wordexp_case(work, ROOT, label=label, mode=mode, case=case,
+                                                  candidate=candidate, oracle=oracle, dynamic_product=dynamic_root,
+                                                  fixture_source=fixture_source, fixture_files=fixture_files,
+                                                  fixture_devices=fixture_devices)
         try:
             qualification.require_live_oracle(work, oracle_inputs["qualification"])
         except qualification.QualificationError as error:
@@ -861,7 +1036,8 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
         if _tool_identity(Path(native_qualification.MUSL_RUNTIME_PATHS["loader"]), "post-run pinned musl loader") != oracle_inputs["loader"]["identity"]:
             fail("pinned musl loader changed during collection")
         after = _input_seal(ROOT, dynamic, static, _installed_tool_roster(dynamic, static), oracle_inputs,
-                            _fixture_record(ROOT, fixture_source, fixture_files, fixture_records, fixture_ldd))
+                            _fixture_record(ROOT, fixture_source, fixture_files, fixture_devices, fixture_records,
+                                            fixture_device_records, fixture_ldd))
         if before != after:
             fail("source, product, tool, oracle, or fixture input changed during wordexp collection")
         report = {
@@ -961,7 +1137,8 @@ def _validate_retained_oracle(root: Path, work: Path, value: object) -> dict[str
 
 
 def _command_record(root: Path, work: Path, label: str, record: object, expected_argv: list[str],
-                    expected_environment: Mapping[str, str], description: str) -> dict[str, Any]:
+                    expected_environment: Mapping[str, str], description: str, *,
+                    allow_nonzero_status: bool = False) -> dict[str, Any]:
     record = _exact_dict(record, {"argv", "environment", "stdout", "stderr", "status"}, description)
     expected_paths = {
         "argv": work / "commands" / f"{label}.argv.json",
@@ -981,14 +1158,14 @@ def _command_record(root: Path, work: Path, label: str, record: object, expected
         raise EvidenceError(f"{description} environment is not JSON") from error
     if environment != dict(expected_environment):
         fail(f"{description} environment differs from its canonical command")
-    if paths["status"].read_bytes() != b"0\n":
+    if not allow_nonzero_status and paths["status"].read_bytes() != b"0\n":
         fail(f"{description} status is not zero")
     return record
 
 
 def _fixture_from_seal(root: Path, work: Path, value: object, tools: Mapping[str, dict[str, Any]],
-                       oracle: Mapping[str, Any]) -> tuple[Path, dict[str, str], dict[str, dict[str, Any]]]:
-    value = _exact_dict(value, {"root", "files", "ldd"}, "wordexp external fixture")
+                       oracle: Mapping[str, Any]) -> tuple[Path, dict[str, str], dict[str, str]]:
+    value = _exact_dict(value, {"root", "files", "devices", "ldd"}, "wordexp external fixture")
     fixture_root = _local_mounted(root, value["root"], "wordexp external fixture root")
     expected_root = _physical(work / "external-shell-fixture", "wordexp expected external fixture root", directory=True)
     if fixture_root != expected_root:
@@ -1006,10 +1183,25 @@ def _fixture_from_seal(root: Path, work: Path, value: object, tools: Mapping[str
         except ValueError as error:
             raise EvidenceError("wordexp external fixture file escapes its root") from error
         paths[name] = relative
-    observed, aliases = _walk_root(fixture_root)
-    if aliases or observed != set(paths.values()) or len(set(paths.values())) != len(paths):
+    devices = value["devices"]
+    if not isinstance(devices, dict) or set(devices) != {NULL_FIXTURE_NAME}:
+        fail("wordexp external fixture device roster differs")
+    device_paths: dict[str, str] = {}
+    for name, identity in devices.items():
+        if name != NULL_FIXTURE_NAME:
+            fail("wordexp external fixture device name differs")
+        if not isinstance(identity, dict) or identity.get("path") != NULL_FIXTURE_PATH:
+            fail("wordexp external fixture device identity differs")
+        current = _null_device_identity(fixture_root, NULL_FIXTURE_PATH,
+                                        "wordexp external fixture null device")
+        if identity != current:
+            fail("wordexp external fixture device drifted")
+        device_paths[name] = NULL_FIXTURE_PATH
+    observed, aliases, observed_devices = _walk_root(fixture_root)
+    if (aliases or observed != set(paths.values()) or observed_devices != set(device_paths.values()) or
+            len(set(paths.values())) != len(paths)):
         fail("wordexp external fixture roster differs")
-    if paths.get("shell") != "bin/sh" or paths.get("null") != "dev/null":
+    if paths.get("shell") != "bin/sh" or device_paths != {NULL_FIXTURE_NAME: NULL_FIXTURE_PATH}:
         fail("wordexp external fixture roles differ")
     dependencies = sorted((name for name in paths if name.startswith("dependency:")),
                           key=lambda name: int(name.removeprefix("dependency:")) if name.removeprefix("dependency:").isdigit() else -1)
@@ -1038,10 +1230,10 @@ def _fixture_from_seal(root: Path, work: Path, value: object, tools: Mapping[str
         raise EvidenceError("wordexp controlled shell ldd output is not text") from error
     if tuple(path.as_posix().lstrip("/") for path in closure) != tuple(paths[name] for name in dependencies):
         fail("wordexp retained fixture differs from the sealed ldd closure")
-    return fixture_root, paths, {name: files[name] for name in paths}
+    return fixture_root, paths, device_paths
 
 
-def _validate_input_seal(root: Path, work: Path, value: object) -> tuple[Path, Path | None, dict[str, Any], tuple[Path, dict[str, str], dict[str, dict[str, Any]]]]:
+def _validate_input_seal(root: Path, work: Path, value: object) -> tuple[Path, Path | None, dict[str, Any], tuple[Path, dict[str, str], dict[str, str]]]:
     value = _exact_dict(value, {"sources", "products", "tools", "oracle", "fixture"}, "wordexp input seal")
     sources = value["sources"]
     if not isinstance(sources, dict) or set(sources) != set(SOURCES):
@@ -1099,8 +1291,9 @@ def _validate_input_seal(root: Path, work: Path, value: object) -> tuple[Path, P
     return dynamic, static, tools, _fixture_from_seal(root, work, value["fixture"], tools, oracle)
 
 
-def _expected_execution_maps(dynamic: Path | None, fixture_paths: Mapping[str, str], shell_case: str,
-                             overrides: object) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+def _expected_execution_maps(dynamic: Path | None, fixture_paths: Mapping[str, str],
+                             fixture_devices: Mapping[str, str], shell_case: str,
+                             overrides: object) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str]]:
     if shell_case not in SHELL_CASES:
         fail("wordexp shell case differs")
     fixture = {name: relative for name, relative in fixture_paths.items() if not (shell_case == "missing" and name == "shell")}
@@ -1124,20 +1317,23 @@ def _expected_execution_maps(dynamic: Path | None, fixture_paths: Mapping[str, s
             fail("wordexp dynamic product has no expected shell-loader alias")
     elif overrides != []:
         fail("wordexp static execution has an external alias override")
-    return product_files, product_aliases, fixture
+    if dict(fixture_devices) != {NULL_FIXTURE_NAME: NULL_FIXTURE_PATH}:
+        fail("wordexp fixture device map differs")
+    return product_files, product_aliases, fixture, dict(fixture_devices)
 
 
 def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, shell_case: str, execution: object,
                                 dynamic_product: Path | None, candidate: Path, oracle: Path,
-                                fixture: tuple[Path, dict[str, str], dict[str, dict[str, Any]]], overrides: object) -> Path:
-    execution = _exact_dict(execution, {"root", "product_files", "product_aliases", "consumers", "fixtures"},
+                                fixture: tuple[Path, dict[str, str], dict[str, str]], overrides: object) -> Path:
+    execution = _exact_dict(execution, {"root", "product_files", "product_aliases", "consumers", "fixtures", "fixture_devices"},
                             f"wordexp cell {label} execution")
     execution_root = _local_mounted(root, execution["root"], f"wordexp cell {label} execution root")
     expected_root = _physical(work / "execution" / label, f"wordexp cell {label} expected execution root", directory=True)
     if execution_root != expected_root:
         fail("wordexp execution root path differs")
-    fixture_root, fixture_paths, fixture_records = fixture
-    product_files, product_aliases, fixture_expected = _expected_execution_maps(dynamic_product, fixture_paths, shell_case, overrides)
+    fixture_root, fixture_paths, fixture_devices = fixture
+    product_files, product_aliases, fixture_expected, device_expected = _expected_execution_maps(
+        dynamic_product, fixture_paths, fixture_devices, shell_case, overrides)
     consumer = MODE_SPECS[mode][2]
     if execution.get("product_files") != {name: {"path": relative, "sha256": _sha(dynamic_product / relative),
                                                         "mode": _mode(dynamic_product / relative)}
@@ -1166,6 +1362,11 @@ def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, s
         expected_fixtures[name] = {"path": relative, "sha256": digest, "mode": mode_value}
     if execution.get("fixtures") != expected_fixtures:
         fail("wordexp execution external fixture binding differs")
+    expected_devices = {name: _null_device_identity(fixture_root, relative,
+                                                     f"wordexp expected fixture device {name}")
+                        for name, relative in device_expected.items()}
+    if execution.get("fixture_devices") != expected_devices:
+        fail("wordexp execution external fixture device binding differs")
     local = dict(execution)
     local["root"] = str(execution_root)
     validate_execution_root(execution_root, local)
@@ -1262,26 +1463,29 @@ def validate_report(root: Path, report_path: Path, expected_native_inputs: objec
     if static is None:
         expected_modes -= {"static-et-exec", "static-pie"}
     cells = report["cells"]
-    expected_cell_labels = {f"{mode}-{shell}" for mode in expected_modes for shell in SHELL_CASES}
+    expected_cell_labels = {f"{mode}-{case}" for mode in expected_modes for case in WORD_EXP_CASES}
     if not isinstance(cells, dict) or set(cells) != expected_cell_labels:
         fail("wordexp execution cell roster differs")
     for mode in sorted(expected_modes):
         link_name = mode if mode.startswith("static") else mode.rsplit("-", 1)[0]
         candidate = _identity_current(root, links[link_name]["executable"], f"wordexp {mode} linked consumer")
         dynamic_product = None if mode.startswith("static") else dynamic
-        for shell_case in SHELL_CASES:
-            label = f"{mode}-{shell_case}"
-            item = _exact_dict(cells[label], {"mode", "shell_case", "execution", "consumer_sources", "external_alias_overrides",
-                                               "oracle", "candidate", "expected_stdout"}, f"wordexp cell {label}")
-            if item["mode"] != mode or item["shell_case"] != shell_case:
-                fail("wordexp cell mode or shell case differs")
+        for case in WORD_EXP_CASES:
+            shell_case, arguments, expected_stdout, comparison = _case_spec(case)
+            label = f"{mode}-{case}"
+            item = _exact_dict(cells[label], {"mode", "case", "shell_case", "comparison", "execution", "consumer_sources",
+                                               "external_alias_overrides", "oracle", "candidate", "expected_stdout"},
+                               f"wordexp cell {label}")
+            if (item["mode"] != mode or item["case"] != case or item["shell_case"] != shell_case or
+                    item["comparison"] != comparison):
+                fail("wordexp cell mode or case differs")
             source_consumers = _exact_dict(item["consumer_sources"], {"candidate", "oracle"}, f"wordexp cell {label} source consumers")
             if source_consumers["candidate"] != links[link_name]["executable"] or source_consumers["oracle"] != report["oracle"]:
                 fail("wordexp cell consumers are not bound to sealed links")
             execution_root = _validate_execution_binding(root, work, label, mode, shell_case, item["execution"], dynamic_product,
                                                          candidate, oracle, fixture, item["external_alias_overrides"])
-            suffix = [] if shell_case == "normal" else ["--shell-unavailable"]
-            environment = {"CRABC_WORDEXP": "bar baz"}
+            suffix = list(arguments)
+            environment = CELL_ENVIRONMENT
             mounted_execution = _mounted(root, execution_root)
             expected_oracle = ["/usr/bin/timeout", "20", "/usr/sbin/chroot", mounted_execution, "/oracle", *suffix]
             program = "/" + MODE_SPECS[mode][2]
@@ -1292,20 +1496,12 @@ def validate_report(root: Path, report_path: Path, expected_native_inputs: objec
                 expected_candidate += [program]
             expected_candidate += suffix
             oracle_command = _command_record(root, work, f"{label}-oracle", item["oracle"], expected_oracle, environment,
-                                             f"wordexp cell {label} oracle")
+                                             f"wordexp cell {label} oracle", allow_nonzero_status=True)
             candidate_command = _command_record(root, work, f"{label}-candidate", item["candidate"], expected_candidate, environment,
-                                                f"wordexp cell {label} candidate")
-            expected_stdout = b"owned-wordexp: PASS\n" if shell_case == "normal" else b"owned-wordexp-shell-unavailable: PASS\n"
+                                                f"wordexp cell {label} candidate", allow_nonzero_status=True)
             if item["expected_stdout"] != expected_stdout.decode("ascii"):
                 fail("wordexp expected transcript differs")
-            oracle_stdout = _identity_current(root, oracle_command["stdout"], f"wordexp cell {label} oracle stdout")
-            candidate_stdout = _identity_current(root, candidate_command["stdout"], f"wordexp cell {label} candidate stdout")
-            oracle_stderr = _identity_current(root, oracle_command["stderr"], f"wordexp cell {label} oracle stderr")
-            candidate_stderr = _identity_current(root, candidate_command["stderr"], f"wordexp cell {label} candidate stderr")
-            if oracle_stdout.read_bytes() != expected_stdout or candidate_stdout.read_bytes() != expected_stdout:
-                fail("wordexp cell transcript differs")
-            if oracle_stderr.read_bytes() != candidate_stderr.read_bytes():
-                fail("wordexp cell oracle/candidate stderr differs")
+            _assert_case_results(root, case, oracle_command, candidate_command, f"wordexp cell {label}")
     return report
 
 

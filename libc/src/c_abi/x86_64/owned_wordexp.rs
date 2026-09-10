@@ -2,13 +2,18 @@
 //!
 //! This is the target-local process/stdio adapter for pinned musl 1.2.6
 //! release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417` (MIT),
-//! `src/misc/wordexp.c::{do_wordexp,wordexp,wordfree}`. The shell argument
-//! protocol, NUL-delimited sentinel/word stream, `WRDE_DOOFFS`, append/reuse,
-//! error returns, word-vector ownership, and `WRDE_NOCMD` preflight follow
-//! that source directly. `owned_wordexp_nocmd.rs` is a private literal
-//! transliteration of the source scanner under musl's MIT license. The
-//! established hardened scanner in `../../wordexp_nocmd.rs` remains owned by
-//! the AArch64 implementation; it is not an x86 musl source oracle.
+//! `src/misc/wordexp.c::{do_wordexp,wordexp,wordfree}` (source SHA-256
+//! `018c97c999cb60966a0376b71f2c8c187179ef31cf5ddde47b959e8f440e08f8`).
+//! The shell argument protocol, NUL-delimited sentinel/word stream,
+//! `WRDE_DOOFFS`, append/reuse, error returns, and word-vector ownership
+//! follow that source directly. Two narrow POSIX corrections are intentional:
+//! a no-`WRDE_SHOWERR` child begins `exec 2>/dev/null;` before the otherwise
+//! unchanged source `eval` script, and `owned_wordexp_nocmd.rs` uses scoped
+//! parameter, pattern, arithmetic, and quote frames so a nested lexical
+//! delimiter cannot contaminate its caller. Pinned musl remains fixed
+//! source-control data for those known-defect cells.
+//! The established hardened scanner in `../../wordexp_nocmd.rs` remains owned
+//! by the AArch64 implementation; it is not imported as an x86 source oracle.
 //!
 //! Musl's raw `pipe2`/signal-mask/`fork`/`execl` child sequence maps here to
 //! the existing `owned_spawn` transaction: a stack-local musl-shaped `dup2`
@@ -62,6 +67,10 @@ const SH: &[u8] = b"/bin/sh\0";
 const SH_ARG0: &[u8] = b"sh\0";
 const SH_C: &[u8] = b"-c\0";
 const WORDEXP_SCRIPT: &[u8] = b"eval \"printf %s\\\\\\\\0 x $1 $2\"\0";
+// Keep the musl `eval` spelling and `$1`/`$2` argv protocol byte-for-byte
+// after this leading shell redirection. The source's `$2` redirection occurs
+// inside eval too late to silence an eval parse error such as `(`.
+const WORDEXP_QUIET_SCRIPT: &[u8] = b"exec 2>/dev/null; eval \"printf %s\\\\\\\\0 x $1 $2\"\0";
 const WORDEXP_DEV_NULL: &[u8] = b"2>/dev/null\0";
 const EMPTY: &[u8] = b"\0";
 const READ_MODE: &[u8] = b"r\0";
@@ -158,6 +167,11 @@ unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) ->
     if flags & WRDE_NOCMD != 0 {
         // SAFETY: the C API supplies a readable NUL-terminated input string.
         let result = unsafe { wordexp_nocmd_check(input) };
+        // The scanner may spill its lexical frame stack through the selected
+        // C allocator. Preserve musl's public `WRDE_NOSPACE` record boundary:
+        // fresh/REUSE calls reset the record, while APPEND retains its prior
+        // vector. Parser classifications still leave the record untouched.
+        if result == WRDE_NOSPACE { return unsafe { no_space(words, flags) }; }
         if result != 0 { return result; }
     }
     // Pinned musl's wordexp source accepts this standardized flag but does
@@ -215,10 +229,12 @@ unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) ->
     let actions = PosixSpawnFileActions {
         _pad0: [0; 2], actions: ptr::addr_of_mut!(action).cast(), _pad: [0; 16],
     };
-    let redirect = if flags & WRDE_SHOWERR != 0 { EMPTY } else { WORDEXP_DEV_NULL };
+    let show_errors = flags & WRDE_SHOWERR != 0;
+    let redirect = if show_errors { EMPTY } else { WORDEXP_DEV_NULL };
+    let script = if show_errors { WORDEXP_SCRIPT } else { WORDEXP_QUIET_SCRIPT };
     let arguments = [
         SH_ARG0.as_ptr().cast::<c_char>(), SH_C.as_ptr().cast::<c_char>(),
-        WORDEXP_SCRIPT.as_ptr().cast::<c_char>(), SH_ARG0.as_ptr().cast::<c_char>(),
+        script.as_ptr().cast::<c_char>(), SH_ARG0.as_ptr().cast::<c_char>(),
         input, redirect.as_ptr().cast::<c_char>(), ptr::null(),
     ];
     // Take musl's one machine-word environment snapshot without creating a

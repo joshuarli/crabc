@@ -6,6 +6,7 @@ readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
 readonly PROBE="$ROOT_DIR/compat/x86_64/owned_wordexp_probe.c"
+readonly POSIX_PROBE="$ROOT_DIR/compat/x86_64/owned_wordexp_posix_probe.c"
 readonly SYMBOLS=(wordexp wordfree)
 
 fail() { printf 'ERROR: x86 owned wordexp: %s\n' "$*" >&2; exit 1; }
@@ -13,8 +14,8 @@ require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in awk cargo chroot chmod cmp cp env find grep id ldd mkdir mktemp nm python3 \
-	readelf realpath rustup sha256sum timeout; do
+for tool in awk cargo chroot chmod cmp cp env find grep id ldd mkdir mktemp mknod nm python3 \
+	readelf realpath rustup sha256sum stat timeout; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -66,10 +67,12 @@ esac
 cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H "$PROBE" \
 	>/dev/null 2>"$trace"
-for header in errno.h wordexp.h stdio.h stdlib.h string.h features.h bits/alltypes.h; do
+for header in errno.h wordexp.h stdio.h stdlib.h string.h unistd.h features.h bits/alltypes.h; do
 	grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
 		fail "fixture did not use project $header"
 done
+grep -Fq "$POSIX_PROBE" "$trace" ||
+	fail "fixture did not include the POSIX correction cells"
 
 # This deliberately pins the semantic oracle to a separately linked musl
 # static ET_EXEC. Pinned-musl static PIE is a known wrapper diagnostic, while
@@ -256,8 +259,8 @@ copy_controlled_shell_dependency() {
 
 # The test root contains the sole `/bin/sh` image seen by both the pinned-musl
 # oracle and candidate. Copy its loader closure as ordinary files, reject
-# symlinks, and provide only a private writable `/dev/null` regular file for
-# musl's `WRDE_SHOWERR`-off shell redirection. No candidate link input comes
+# symlinks, and provide only a private writable Linux char device 1:3 at
+# `/dev/null` for musl's `WRDE_SHOWERR`-off shell redirection. No candidate link input comes
 # from this execution fixture; receipt/trace auditing remains separate.
 make_private_shell_root() {
 	local execution_root="$1"
@@ -276,8 +279,11 @@ make_private_shell_root() {
 	cp -L --preserve=mode "$controlled_shell_source" "$execution_root/bin/sh"
 	cmp -s "$controlled_shell_source" "$execution_root/bin/sh" ||
 		fail "private /bin/sh differs from the controlled shell source"
-	: >"$execution_root/dev/null"
+	mknod "$execution_root/dev/null" c 1 3
 	chmod 666 "$execution_root/dev/null"
+	[ -c "$execution_root/dev/null" ] &&
+		[ "$(stat -c '%t:%T:%a' "$execution_root/dev/null")" = '1:3:666' ] ||
+		fail "private /dev/null is not character device 1:3 mode 666"
 	while IFS= read -r dependency; do
 		[ -n "$dependency" ] || continue
 		copy_controlled_shell_dependency "$execution_root" "$dependency"
@@ -321,11 +327,11 @@ run_private_shell_probe() {
 	local stderr="$5"
 
 	if [ "$shell_case" = normal ]; then
-		timeout 20 env -i CRABC_WORDEXP='bar baz' "$chroot_command" "$execution_root" \
+		timeout 20 env -i CRABC_WORDEXP='bar baz' FOO=field X=left Y=right SET=1 "$chroot_command" "$execution_root" \
 			"/$program" >"$stdout" 2>"$stderr" ||
 			fail "$shell_case private shell $program probe failed"
 	else
-		timeout 20 env -i CRABC_WORDEXP='bar baz' "$chroot_command" "$execution_root" \
+		timeout 20 env -i CRABC_WORDEXP='bar baz' FOO=field X=left Y=right SET=1 "$chroot_command" "$execution_root" \
 			"/$program" --shell-unavailable >"$stdout" 2>"$stderr" ||
 			fail "$shell_case private shell $program probe failed"
 	fi
@@ -347,8 +353,19 @@ run_controlled_shell_cases() {
 			"$execution_root/candidate.stdout" "$execution_root/candidate.stderr"
 		cmp -s "$execution_root/reference.stdout" "$execution_root/candidate.stdout" ||
 			fail "$label $shell_case private-shell output differs from pinned musl"
-		cmp -s "$execution_root/reference.stderr" "$execution_root/candidate.stderr" ||
-			fail "$label $shell_case private-shell stderr differs from pinned musl"
+		if [ "$shell_case" = normal ]; then
+			# The unchanged source workload deliberately sends `one )` through
+			# a non-SHOWERR call. Pinned musl's `$2` redirection occurs too late
+			# for that parse diagnostic; the POSIX correction must leave the
+			# pinned source bytes observable while retaining no candidate bytes.
+			[ -s "$execution_root/reference.stderr" ] ||
+				fail "$label normal pinned-musl quiet source control did not write stderr"
+			[ ! -s "$execution_root/candidate.stderr" ] ||
+				fail "$label normal candidate did not suppress quiet shell stderr"
+		else
+			cmp -s "$execution_root/reference.stderr" "$execution_root/candidate.stderr" ||
+				fail "$label $shell_case private-shell stderr differs from pinned musl"
+		fi
 		case "$shell_case" in
 			normal) expected='owned-wordexp: PASS' ;;
 			*) expected='owned-wordexp-shell-unavailable: PASS' ;;
@@ -377,19 +394,24 @@ run_installed_mode() {
 
 # Compile the ordinary C probe once with the installed static-PIE translation
 # contract. Its exact bytes then link into the pinned-musl ET_EXEC oracle and
-# both selected crabc static modes. This selector ends in the NOCMD scanner,
-# before /bin/sh could make an external shell fixture relevant.
-run_same_object_nocmd_source_case() {
-	local same_root="$work_dir/same-object-nocmd-source"
+# both selected crabc static modes. The source scanner control, POSIX quiet
+# diagnostic, frame-context NOCMD controls, and non-qualifying UNDEF
+# observation all reuse that one installed-header object under the same
+# private shell fixture.
+run_same_object_wordexp_cases() {
+	local same_root="$work_dir/same-object-wordexp"
 	local application="$same_root/probe.o"
 	local oracle="$same_root/musl-static-et-exec"
 	local static_candidate="$same_root/crabc-static-et-exec"
 	local static_receipt="$same_root/crabc-static-et-exec.receipt.json"
 	local pie_candidate="$same_root/crabc-static-pie"
 	local pie_receipt="$same_root/crabc-static-pie.receipt.json"
-	local program
+	local program selector
 	local output
 	local stderr
+	local execution_root
+	local status
+	local failures=0
 
 	mkdir "$same_root"
 	(
@@ -405,27 +427,129 @@ run_same_object_nocmd_source_case() {
 	audit_receipt_and_elf -static same-object-static "$application" "$static_candidate" "$static_receipt"
 	audit_receipt_and_elf -static-pie same-object-static-pie "$application" "$pie_candidate" "$pie_receipt"
 	sha256sum "$application" >"$same_root/workload.sha256"
-	for program in "$oracle" "$static_candidate" "$pie_candidate"; do
-		output="$same_root/$(basename "$program").stdout"
-		stderr="$same_root/$(basename "$program").stderr"
-		timeout 20 env -i "$program" --nocmd-source >"$output" 2>"$stderr" ||
-			fail "same-object NOCMD selector failed: $(basename "$program")"
-		printf 'owned-wordexp-nocmd-source: PASS\n' >"$same_root/expected.stdout"
-		cmp -s "$same_root/expected.stdout" "$output" ||
-			fail "same-object NOCMD selector output drifted: $(basename "$program")"
-		[ ! -s "$stderr" ] || fail "same-object NOCMD selector wrote stderr: $(basename "$program")"
+	for selector in --nocmd-source --posix-quiet --posix-nocmd \
+		--posix-nocmd-escaped-control --posix-nocmd-arithmetic-control \
+		--posix-nocmd-pattern-control --posix-nocmd-arithmetic-delimiter-control \
+		--posix-nocmd-continuation-control --posix-nocmd-dollar-single-control \
+		--undef-source-observation; do
+		for program in "$oracle" "$static_candidate" "$pie_candidate"; do
+			execution_root="$work_dir/execution-same-object-$(basename "$program")-${selector#--}"
+			make_private_shell_root "$execution_root"
+			cp -L --preserve=mode "$program" "$execution_root/consumer"
+			if timeout 20 env -i CRABC_WORDEXP='bar baz' FOO=field X=left Y=right SET=1 \
+				"$chroot_command" "$execution_root" /consumer "$selector" \
+				>"$same_root/$(basename "$program")-${selector#--}.stdout" \
+				2>"$same_root/$(basename "$program")-${selector#--}.stderr"; then
+				status=0
+			else
+				status=$?
+			fi
+			printf '%s\n' "$status" >"$same_root/$(basename "$program")-${selector#--}.status"
+			output="$same_root/$(basename "$program")-${selector#--}.stdout"
+			stderr="$same_root/$(basename "$program")-${selector#--}.stderr"
+			case "$selector:$(basename "$program")" in
+				--nocmd-source:*)
+					printf 'owned-wordexp-nocmd-source: PASS\n' >"$same_root/expected.stdout"
+					if [ "$status" -ne 0 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'same-object source NOCMD control drifted: %s\n' "$(basename "$program")" >&2
+						failures=1
+					fi
+					;;
+				--posix-quiet:musl-static-et-exec)
+					printf 'owned-wordexp-posix-quiet: SOURCE-RED diagnostic-present\n' >"$same_root/expected.stdout"
+					if [ "$status" -ne 84 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'pinned-musl quiet source RED drifted\n' >&2
+						failures=1
+					fi
+					;;
+				--posix-nocmd:musl-static-et-exec)
+					printf 'owned-wordexp-posix-nocmd: SOURCE-RED parameter-brace-rejected\n' >"$same_root/expected.stdout"
+					if [ "$status" -ne 113 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'pinned-musl parameter-brace source RED drifted\n' >&2
+						failures=1
+					fi
+					;;
+				--posix-nocmd-arithmetic-control:musl-static-et-exec)
+					printf 'owned-wordexp-posix-nocmd-arithmetic-control: SOURCE-RED parameter-brace-rejected\n' >"$same_root/expected.stdout"
+					if [ "$status" -ne 162 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'pinned-musl arithmetic parameter source RED drifted\n' >&2
+						failures=1
+					fi
+					;;
+				--posix-nocmd-arithmetic-delimiter-control:musl-static-et-exec)
+					printf 'owned-wordexp-posix-nocmd-arithmetic-delimiter-control: SOURCE-RED command-marker-created\n' >"$same_root/expected.stdout"
+					if [ "$status" -ne 196 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'pinned-musl arithmetic delimiter source RED drifted\n' >&2
+						failures=1
+					fi
+					;;
+				--posix-nocmd-continuation-control:musl-static-et-exec)
+					printf 'owned-wordexp-posix-nocmd-continuation-control: SOURCE-RED command-marker-created\n' >"$same_root/expected.stdout"
+					if [ "$status" -ne 212 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'pinned-musl continuation source RED drifted\n' >&2
+						failures=1
+					fi
+					;;
+				--posix-nocmd-dollar-single-control:musl-static-et-exec)
+					printf 'owned-wordexp-posix-nocmd-dollar-single-control: SOURCE-RED command-marker-created\n' >"$same_root/expected.stdout"
+					if [ "$status" -ne 228 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'pinned-musl dollar-single source RED drifted\n' >&2
+						failures=1
+					fi
+					;;
+				--posix-nocmd-escaped-control:*|--posix-nocmd-pattern-control:*)
+					if [ "$selector" = --posix-nocmd-escaped-control ]; then
+						printf 'owned-wordexp-posix-nocmd-escaped-control: PASS\n' >"$same_root/expected.stdout"
+					else
+						printf 'owned-wordexp-posix-nocmd-pattern-control: PASS\n' >"$same_root/expected.stdout"
+					fi
+					if [ "$status" -ne 0 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'same-object lexical NOCMD control failed: %s %s\n' "$selector" "$(basename "$program")" >&2
+						failures=1
+					fi
+					;;
+				--posix-quiet:*|--posix-nocmd:*|--posix-nocmd-arithmetic-control:*|\
+				--posix-nocmd-arithmetic-delimiter-control:*|--posix-nocmd-continuation-control:*|\
+				--posix-nocmd-dollar-single-control:*)
+					if [ "$status" -ne 0 ] || [ -s "$stderr" ]; then
+						printf 'owned POSIX wordexp cell failed: %s %s\n' "$selector" "$(basename "$program")" >&2
+						failures=1
+					elif [ "$selector" = --posix-quiet ]; then
+						printf 'owned-wordexp-posix-quiet: PASS\n' >"$same_root/expected.stdout"
+						cmp -s "$same_root/expected.stdout" "$output" || failures=1
+					elif [ "$selector" = --posix-nocmd ]; then
+						printf 'owned-wordexp-posix-nocmd: PASS\n' >"$same_root/expected.stdout"
+						cmp -s "$same_root/expected.stdout" "$output" || failures=1
+					elif [ "$selector" = --posix-nocmd-arithmetic-control ]; then
+						printf 'owned-wordexp-posix-nocmd-arithmetic-control: PASS\n' >"$same_root/expected.stdout"
+						cmp -s "$same_root/expected.stdout" "$output" || failures=1
+					elif [ "$selector" = --posix-nocmd-arithmetic-delimiter-control ]; then
+						printf 'owned-wordexp-posix-nocmd-arithmetic-delimiter-control: PASS\n' >"$same_root/expected.stdout"
+						cmp -s "$same_root/expected.stdout" "$output" || failures=1
+					elif [ "$selector" = --posix-nocmd-continuation-control ]; then
+						printf 'owned-wordexp-posix-nocmd-continuation-control: PASS\n' >"$same_root/expected.stdout"
+						cmp -s "$same_root/expected.stdout" "$output" || failures=1
+					else
+						printf 'owned-wordexp-posix-nocmd-dollar-single-control: PASS\n' >"$same_root/expected.stdout"
+						cmp -s "$same_root/expected.stdout" "$output" || failures=1
+					fi
+					;;
+				--undef-source-observation:*)
+					printf 'owned-wordexp-undef-source-observation: SOURCE-RED\n' >"$same_root/expected.stdout"
+					if [ "$status" -ne 0 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'non-qualifying WRDE_UNDEF source observation drifted: %s\n' "$(basename "$program")" >&2
+						failures=1
+					fi
+					;;
+			esac
+		done
 	done
-	cmp -s "$same_root/$(basename "$oracle").stdout" \
-		"$same_root/$(basename "$static_candidate").stdout" ||
-		fail "same-object static NOCMD output differs from pinned musl"
-	cmp -s "$same_root/$(basename "$oracle").stdout" \
-		"$same_root/$(basename "$pie_candidate").stdout" ||
-		fail "same-object static-PIE NOCMD output differs from pinned musl"
+	[ "$failures" -eq 0 ] || fail "same-object POSIX wordexp cells failed; raw status/stdout/stderr retained"
 }
 
 python3 "$BUILDER" --output "$sysroot" >"$work_dir/sysroot-build.json"
+run_same_object_wordexp_cases
 run_installed_mode -static et-exec
 run_installed_mode -static-pie static-pie
-run_same_object_nocmd_source_case
 
-printf 'x86 owned wordexp: PASS (pinned static ET_EXEC oracle; installed ET_EXEC/static PIE shell, source scanner, ownership, cleanup)\n'
+printf 'x86 owned wordexp: PASS (pinned static ET_EXEC source controls and explicit POSIX source REDs; installed ET_EXEC/static PIE shell, source scanner, ownership, cleanup)\n'
