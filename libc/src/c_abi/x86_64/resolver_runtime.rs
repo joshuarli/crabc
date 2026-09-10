@@ -848,8 +848,8 @@ pub unsafe extern "C" fn __res_send(
     let query_id = u16::from_be_bytes([query[0], query[1]]);
     #[cfg(feature = "x86-owned-static-runtime")]
     let (result, masked_errno) = {
-        let outcome = unsafe { super::owned_resolver_transport::exchange(&config, query, query_id, answer) };
-        (outcome.result.map_err(|error| match error {
+        let outcome = unsafe { super::owned_resolver_transport::exchange_question_matched(&config, query, query_id, answer) };
+        (outcome.result.map(|reply| reply.len()).map_err(|error| match error {
             resolver::ExchangeError::Setup(errno) | resolver::ExchangeError::Transport(errno) => errno,
         }), outcome.masked_errno)
     };

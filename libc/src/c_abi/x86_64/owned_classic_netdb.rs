@@ -279,9 +279,8 @@ pub unsafe extern "C" fn getnameinfo(sa: *const CabiSockaddr,sl: c_uint,node: *m
             let mut question = [0u8;80]; let n = reverse_question(&address,&mut question); let mut reply = [0u8;512];
             if let Ok(conf) = unsafe { lookup::configuration() } {
                 if let Ok((len,id)) = unsafe { lookup::query(&conf,&question[..n],12,&mut reply) } {
-                    if let Ok(response) = DnsResponse::parse(&reply[..len],&question[..n],12,id) {
-                        let mut ordinal = 0;
-                        loop { match response.rdata_at(12,ordinal,&mut output) { Ok(Some(n)) if n < 256 => output[n] = 0, Ok(None) => break, _ => { output[0] = 0; break; } } ordinal += 1; }
+                    if DnsResponse::parse(&reply[..len],&question[..n],12,id).is_ok() {
+                        lookup::source_ordered_ptr(&reply[..len], &mut output);
                     }
                 }
             }

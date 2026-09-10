@@ -15,7 +15,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 CASES = ('host-numeric', 'host-local', 'host-buffers', 'host-many', 'host-dns',
-         'dns-record-order', 'search-precedence', 'mixed-family', 'reverse-local', 'reverse-dns', 'services',
+         'dns-record-order', 'dns-record-prefix', 'search-precedence', 'mixed-family', 'reverse-local', 'reverse-dns', 'services',
          'service-buffers', 'open-errors', 'read-errors', 'access-errors',
          'socket-error', 'fcntl-error', 'empty-reporting', 'addrinfo', 'threads-fork', 'allocation')
 PROVIDERS = {'gethostbyaddr', 'gethostbyaddr_r', 'gethostbyname', 'gethostbyname2',
@@ -155,7 +155,12 @@ def run(work: Path, static: Path | None, dynamic: Path) -> None:
                                    ('order-before.example.test.', 1, 'udp'),
                                    ('order-empty.example.test.', 1, 'udp'),
                                    ('order-cap.example.test.', 1, 'udp'),
-                                   ('order-aaaa.example.test.', 28, 'udp')):
+                                   ('order-aaaa.example.test.', 28, 'udp'),
+                                   ('prefix-a.example.test.', 1, 'udp'),
+                                   ('prefix-aaaa.example.test.', 28, 'udp'),
+                                   ('prefix-authority.example.test.', 1, 'udp'),
+                                   ('prefix-tcp.example.test.', 1, 'tcp'),
+                                   ('47.100.51.198.in-addr.arpa.', 12, 'udp')):
         count = sum(event.get('name') == name and event.get('qtype') == qtype and event.get('transport') == transport for event in events)
         if count < arms: raise RuntimeError(f'incomplete DNS event evidence: {name}/{transport}: {count} < {arms}')
     expected = arms * len(CASES)

@@ -5,6 +5,7 @@
 #include <net/if.h>
 #include <netdb.h>
 #include <pthread.h>
+#include <resolv.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -147,6 +148,35 @@ static void dns_record_order(void) {
     CHECK(!gethostbyname2_r("order-aaaa.example.test",AF_INET6,&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
     CHECK(!strcmp(h.h_name,"order-aaaa.example.test"));address(&h,0,AF_INET6,"2001:db8::46");CHECK(!h.h_addr_list[1]);
 }
+static void dns_record_prefix(void) {
+    struct hostent h,*r;char b[4096];int error=97;
+    /* musl accepts this matching UDP response, retains its complete CNAME/A
+       callbacks, then ignores __dns_parse's late physical-RR failure. */
+    CHECK(!gethostbyname_r("prefix-a.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    CHECK(!strcmp(h.h_name,"early.example.test"));address(&h,0,AF_INET,"198.51.100.47");CHECK(!h.h_addr_list[1]);
+    /* The owned modern entry uses the same lookup backend and canonical name. */
+    struct addrinfo hint={.ai_family=AF_INET,.ai_flags=AI_CANONNAME},*ai=(void*)1;
+    CHECK(!getaddrinfo("prefix-a.example.test","80",&hint,&ai)&&ai&&!strcmp(ai->ai_canonname,"early.example.test"));
+    CHECK(((struct sockaddr_in*)ai->ai_addr)->sin_addr.s_addr==inet_addr("198.51.100.47"));freeaddrinfo(ai);
+    unsigned char query[512],answer[512];
+    int query_length=res_mkquery(0,"prefix-a.example.test",C_IN,T_A,0,0,0,query,sizeof query);
+    CHECK(query_length>0&&res_send(query,query_length,answer,sizeof answer)>12&&answer[6]==0&&answer[7]==3);
+    CHECK(res_query("prefix-a.example.test",C_IN,T_A,answer,sizeof answer)>12&&answer[6]==0&&answer[7]==3);
+    error=97;
+    CHECK(!gethostbyname2_r("prefix-aaaa.example.test",AF_INET6,&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    CHECK(!strcmp(h.h_name,"early.example.test"));address(&h,0,AF_INET6,"2001:db8::47");CHECK(!h.h_addr_list[1]);
+    error=97;
+    CHECK(!gethostbyname_r("prefix-authority.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    CHECK(!strcmp(h.h_name,"early.example.test"));address(&h,0,AF_INET,"198.51.100.47");CHECK(!h.h_addr_list[1]);
+    /* TC still takes the established complete TCP-frame path; only the RR
+       tail is physically short. */
+    error=97;
+    CHECK(!gethostbyname_r("prefix-tcp.example.test",&h,b,sizeof b,&r,&error)&&r==&h&&error==97);
+    CHECK(!strcmp(h.h_name,"early.example.test"));address(&h,0,AF_INET,"198.51.100.47");CHECK(!h.h_addr_list[1]);
+    struct sockaddr_in sa={.sin_family=AF_INET};char node[256];
+    CHECK(inet_pton(AF_INET,"198.51.100.47",&sa.sin_addr)==1);
+    CHECK(!getnameinfo((void*)&sa,sizeof sa,node,sizeof node,0,0,NI_NAMEREQD)&&!strcmp(node,"physical.example.test"));
+}
 static void search_precedence(void) {
     struct hostent h,*r;char b[2048];int error=97;
     CHECK(!gethostbyname_r("stop",&h,b,sizeof b,&r,&error)&&!r&&error==NO_DATA);
@@ -286,7 +316,7 @@ static void allocation_failure(void) {
 }
 int main(int argc,char **argv) {
     CHECK(argc==2);setup();const char *s=argv[1];
-    if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"search-precedence"))search_precedence();
+    if(!strcmp(s,"host-numeric"))host_numeric();else if(!strcmp(s,"host-local"))host_local();else if(!strcmp(s,"host-buffers"))host_buffers();else if(!strcmp(s,"host-many"))host_many();else if(!strcmp(s,"host-dns"))host_dns();else if(!strcmp(s,"dns-record-order"))dns_record_order();else if(!strcmp(s,"dns-record-prefix"))dns_record_prefix();else if(!strcmp(s,"search-precedence"))search_precedence();
     else if(!strcmp(s,"mixed-family"))mixed_family_precedence();else if(!strcmp(s,"reverse-local"))reverse_local();else if(!strcmp(s,"reverse-dns"))reverse_dns();else if(!strcmp(s,"services"))services();else if(!strcmp(s,"service-buffers"))service_buffers();else if(!strcmp(s,"empty-reporting"))empty_and_reporting();else if(!strcmp(s,"addrinfo"))addrinfo();else if(!strcmp(s,"threads-fork"))threads_and_fork();else if(!strcmp(s,"allocation"))allocation_failure();else if(!strcmp(s,"socket-error"))socket_error();else if(!strcmp(s,"fcntl-error"))fcntl_error();else io_errors(s);
     puts("classic netdb scenario passed");return 0;
 }

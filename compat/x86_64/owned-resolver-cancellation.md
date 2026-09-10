@@ -113,10 +113,15 @@ MASKED-to-DISABLE state transition around that syscall.
 
 ## Concrete operation signatures and TCP transition
 
-The core entry is `exchange_with_transport(config, query, query_id,
+The strict core entry is `exchange_with_transport(config, query, query_id,
 answer, transport: &mut impl DnsTransport) -> Result<usize, ExchangeError>`.
-The transport supplies these safe methods; all buffer lifetimes are ordinary
-borrowed slices, and the destination is a core-built immutable
+The same owner also calls the private x86
+`exchange_with_transport_question_matched` entry for forward/reverse C lookup
+and `res_send`/`res_query`. Its opaque `QuestionMatchedReply` preserves the
+same exact echoed-question correlation and cancellation/descriptor lifecycle,
+while deferring only late RR framing to the source-shaped C callbacks. Native
+and AArch64 callers keep the strict entry. The transport supplies these safe
+methods; all buffer lifetimes are ordinary borrowed slices, and the destination is a core-built immutable
 `DnsSocketAddress` with family and initialized sockaddr-byte accessors:
 
 ```rust

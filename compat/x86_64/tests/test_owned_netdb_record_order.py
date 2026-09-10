@@ -42,6 +42,26 @@ def answers(packet: bytes) -> list[tuple[int, bytes]]:
     return records
 
 
+def complete_prefix(packet: bytes, answers_count: int, authority_count: int = 0) -> list[tuple[int, bytes]]:
+    """Read the complete callback prefix and retain the deliberately short tail."""
+    assert packet[2] & 2 == 0, "physical prefix packets do not select TCP by TC"
+    assert struct.unpack_from("!H", packet, 6)[0] == answers_count
+    assert struct.unpack_from("!H", packet, 8)[0] == authority_count
+    cursor = 12
+    while packet[cursor]:
+        cursor += packet[cursor] + 1
+    cursor += 5
+    records = []
+    for _ in range(2 if authority_count else answers_count - 1):
+        assert packet[cursor:cursor + 2] == b"\xc0\x0c"
+        rrtype, _class, _ttl, length = struct.unpack_from("!HHIH", packet, cursor + 2)
+        cursor += 12
+        records.append((rrtype, packet[cursor:cursor + length]))
+        cursor += length
+    assert packet[cursor:] == b"\xc0", "the final declared RR is physically incomplete"
+    return records
+
+
 class OwnedNetdbRecordOrderTests(unittest.TestCase):
     def test_selected_address_length_is_complete_but_stops_before_late_cname(self):
         server = server_module()
@@ -64,6 +84,28 @@ class OwnedNetdbRecordOrderTests(unittest.TestCase):
                                               "order-cap.example.test.", 1))
         self.assertEqual(len(capped), 50)
         self.assertEqual([(kind, len(value)) for kind, value in capped[-2:]], [(1, 5), (5, 18)])
+
+    def test_physically_incomplete_late_rrs_leave_a_complete_source_callback_prefix(self):
+        server = server_module()
+        cases = (
+            ("prefix-a.example.test.", 1, "callback-prefix-answer", 3, 0, [(5, 20), (1, 4)]),
+            ("prefix-aaaa.example.test.", 28, "callback-prefix-answer", 3, 0, [(5, 20), (28, 16)]),
+            ("prefix-authority.example.test.", 1, "callback-prefix-authority", 2, 1, [(5, 20), (1, 4)]),
+            ("47.100.51.198.in-addr.arpa.", 12, "callback-prefix-ptr", 2, 0, [(12, 23)]),
+        )
+        for name, qtype, expected_behavior, answer_count, authority_count, expected in cases:
+            with self.subTest(name=name):
+                self.assertEqual(server.RECORDS[(name, qtype)][0], expected_behavior)
+                packet = server.encode_answer(query(name, qtype), 0x5411, name, qtype)
+                self.assertEqual([(kind, len(value)) for kind, value in complete_prefix(packet, answer_count, authority_count)], expected)
+
+    def test_tcp_prefix_uses_tc_only_for_the_udp_transition(self):
+        server = server_module()
+        request = query("prefix-tcp.example.test.", 1)
+        udp = server.encode_answer(request, 0x5411, "prefix-tcp.example.test.", 1)
+        self.assertNotEqual(udp[2] & 2, 0)
+        tcp = server.encode_answer(request, 0x5411, "prefix-tcp.example.test.", 1, complete=True)
+        self.assertEqual([(kind, len(value)) for kind, value in complete_prefix(tcp, 3)], [(5, 20), (1, 4)])
 
 
 if __name__ == "__main__":

@@ -10,7 +10,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crabc_core::resolver::{
-    encode_query, exchange, exchange_with_transport, DnsDatagram, DnsIoResult,
+    encode_query, exchange, exchange_with_transport, exchange_with_transport_question_matched, DnsDatagram, DnsIoResult,
     DnsResponse, DnsSocketAddress, DnsSocketKind, DnsTcpFailure, DnsTcpStart, DnsTransport,
     DnsWait, ExchangeConfig, ExchangeError, NameServer, TYPE_A,
 };
@@ -339,6 +339,84 @@ fn x86_64_all_nameserver_failures_are_bounded() {
         "resolver exceeded its bounded failure budget"
     );
     worker.join().expect("silent fixture completed");
+}
+
+/// One question-matched UDP reply with a complete A callback prefix and a
+/// physically incomplete second RR. The ordinary exchange must continue to
+/// reject it; the private x86 C callback seam returns its opaque length so the
+/// source-shaped parser can stop after the already complete prefix.
+struct PrefixTransport {
+    packet: Vec<u8>,
+    delivered: bool,
+    live_fd: Option<i32>,
+    closes: usize,
+}
+
+impl DnsTransport for PrefixTransport {
+    fn socket_opened(&mut self, fd: i32, _kind: DnsSocketKind) {
+        assert_eq!(self.live_fd.replace(fd), None);
+    }
+    fn close_socket(&mut self, fd: i32) {
+        assert_eq!(self.live_fd.take(), Some(fd));
+        crabc_core::io::close(fd).unwrap();
+        self.closes += 1;
+    }
+    fn wait(&mut self, _fd: i32, _event: DnsWait, _timeout: u32) -> DnsIoResult<bool> {
+        DnsIoResult::Complete(!self.delivered)
+    }
+    fn send(&mut self, _fd: i32, bytes: &[u8], _kind: DnsSocketKind) -> DnsIoResult<usize> {
+        DnsIoResult::Complete(bytes.len())
+    }
+    fn receive_stream(&mut self, _fd: i32, _bytes: &mut [u8]) -> DnsIoResult<usize> {
+        unreachable!("the non-TC fixture cannot start TCP")
+    }
+    fn receive_datagram(&mut self, _fd: i32, bytes: &mut [u8]) -> DnsIoResult<DnsDatagram> {
+        assert!(!self.delivered, "one fixture packet is delivered once");
+        self.delivered = true;
+        bytes[..self.packet.len()].copy_from_slice(&self.packet);
+        DnsIoResult::Complete(DnsDatagram { length: self.packet.len(), truncated: false })
+    }
+    fn start_tcp(&mut self, _fd: i32, _target: &DnsSocketAddress, _query: &[u8], _deadline: i64) -> crabc_core::Result<DnsTcpStart> {
+        unreachable!("the non-TC fixture cannot start TCP")
+    }
+}
+
+#[test]
+fn x86_64_only_the_owned_callback_seam_retains_a_complete_prefix_before_a_late_physical_rr() {
+    let mut query = [0u8; 128];
+    let query_length = encode_query(b"late-prefix.example.test", TYPE_A, 0x4107, &mut query)
+        .expect("encode query");
+    let query = &query[..query_length];
+    let mut packet = dns_answer(query, 0x4107, 0x8180, [198, 51, 100, 47]);
+    packet[6..8].copy_from_slice(&2u16.to_be_bytes());
+    packet.push(0xc0);
+
+    let parsed = DnsResponse::parse(&packet, b"late-prefix.example.test", TYPE_A, 0x4107)
+        .expect("header and exact question remain a valid correlation boundary");
+    let mut address = [0u8; 4];
+    assert_eq!(parsed.rdata_at(TYPE_A, 0, &mut address), Ok(Some(4)));
+    assert_eq!(address, [198, 51, 100, 47]);
+    assert_eq!(parsed.rdata_at(TYPE_A, 1, &mut address), Err(Errno::BADMSG));
+
+    let mut strict_output = [0u8; 512];
+    let mut strict = PrefixTransport { packet: packet.clone(), delivered: false, live_fd: None, closes: 0 };
+    assert_eq!(
+        exchange_with_transport(&one_server_config(53), query, 0x4107, &mut strict_output, &mut strict),
+        Err(ExchangeError::Transport(Errno::TIMEDOUT)),
+        "existing native exchange retains complete-record validation"
+    );
+    assert_eq!(strict.closes, 1);
+    assert!(strict.live_fd.is_none());
+
+    let mut callback_output = [0u8; 512];
+    let mut callback = PrefixTransport { packet: packet.clone(), delivered: false, live_fd: None, closes: 0 };
+    let reply = exchange_with_transport_question_matched(
+        &one_server_config(53), query, 0x4107, &mut callback_output, &mut callback,
+    ).expect("the selected C callback seam retains the complete prefix");
+    assert_eq!(reply.len(), packet.len());
+    assert_eq!(&callback_output[..reply.len()], packet);
+    assert_eq!(callback.closes, 1);
+    assert!(callback.live_fd.is_none());
 }
 
 #[test]

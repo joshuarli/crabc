@@ -69,6 +69,11 @@ RECORDS: dict[tuple[str, int], tuple[str, bytes | None]] = {
     ("order-empty.example.test.", 1): ("callback-order-empty", None),
     ("order-cap.example.test.", 1): ("callback-order-cap", None),
     ("order-aaaa.example.test.", 28): ("callback-order-after", None),
+    ("prefix-a.example.test.", 1): ("callback-prefix-answer", None),
+    ("prefix-aaaa.example.test.", 28): ("callback-prefix-answer", None),
+    ("prefix-authority.example.test.", 1): ("callback-prefix-authority", None),
+    ("prefix-tcp.example.test.", 1): ("callback-prefix-tcp", None),
+    ("47.100.51.198.in-addr.arpa.", 12): ("callback-prefix-ptr", None),
 }
 
 
@@ -209,6 +214,35 @@ def callback_order_answer(
             + question_bytes + b"".join(answers))
 
 
+def callback_prefix_answer(
+    question_bytes: bytes, identifier: int, behavior: str, qtype: int
+) -> bytes:
+    """Emit musl-visible complete callback prefixes ending in one short RR.
+
+    ``__dns_parse`` invokes callbacks for the complete answer prefix and then
+    returns ``-1`` once the declared late record cannot fit.  The source
+    lookup callers deliberately retain that prefix.  These are not the
+    complete, wrong-RDLENGTH records used by ``callback_order_answer``.
+    """
+    cname = lambda label: bytes([len(label)]) + label + b"\x07example\x04test\x00"
+    if behavior == "callback-prefix-ptr":
+        answers = [answer_record(12, cname(b"physical"))]
+        trailing = b"\xc0"
+        return (struct.pack("!HHHHHH", identifier, 0x8180, 1, 2, 0, 0)
+                + question_bytes + b"".join(answers) + trailing)
+    valid = (socket.inet_aton("198.51.100.47") if qtype == 1
+             else socket.inet_pton(socket.AF_INET6, "2001:db8::47"))
+    answers = [answer_record(5, cname(b"early")), answer_record(qtype, valid)]
+    trailing = b"\xc0"
+    if behavior == "callback-prefix-authority":
+        return (struct.pack("!HHHHHH", identifier, 0x8180, 1, len(answers), 1, 0)
+                + question_bytes + b"".join(answers) + trailing)
+    if behavior in ("callback-prefix-answer", "callback-prefix-tcp"):
+        return (struct.pack("!HHHHHH", identifier, 0x8180, 1, len(answers) + 1, 0, 0)
+                + question_bytes + b"".join(answers) + trailing)
+    raise ValueError(f"unknown callback-prefix behavior: {behavior}")
+
+
 def encode_answer(
     question: bytes, identifier: int, name: str, qtype: int, complete: bool = False
 ) -> bytes:
@@ -223,13 +257,15 @@ def encode_answer(
     if behavior == "nodata":
         flags = 0x8180  # response, recursion available, NOERROR/NODATA
         return struct.pack("!HHHHHH", identifier, flags, 1, 0, 0, 0) + question_bytes
-    if behavior == "tc-sequence" and not complete:
+    if behavior in ("tc-sequence", "callback-prefix-tcp") and not complete:
         # UDP callers receive this packet and must retry the same query over
         # TCP.  TCP callers use the complete answer below.
         flags = 0x8380  # response, recursion available, truncation, NOERROR
         return struct.pack("!HHHHHH", identifier, flags, 1, 0, 0, 0) + question_bytes
     if behavior.startswith("callback-order-"):
         return callback_order_answer(question_bytes, identifier, behavior, qtype)
+    if behavior.startswith("callback-prefix-"):
+        return callback_prefix_answer(question_bytes, identifier, behavior, qtype)
     if value is None:
         raise ValueError("answer record has no value")
     flags = 0x8180
@@ -297,7 +333,8 @@ class LoopbackDnsServer:
         if behavior == "timeout":
             return []
         valid = encode_answer(
-            packet, identifier, name, qtype, complete=behavior == "tc-sequence" and transport == "tcp"
+            packet, identifier, name, qtype,
+            complete=behavior in ("tc-sequence", "callback-prefix-tcp") and transport == "tcp",
         )
         if behavior == "malformed-sequence":
             # Three datagrams in one receive order: a short malformed packet,

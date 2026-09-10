@@ -8,14 +8,14 @@
 //! remains scalar. The native transport sends family queries sequentially
 //! instead of musl's parallel msend, retaining the established bounded core
 //! transport contract and independent response validation. Owned C resolver
-//! calls use `owned_resolver_transport::exchange`: its pinned C cleanup record
+//! calls use `owned_resolver_transport::exchange_question_matched`: its pinned C cleanup record
 //! retires the one live descriptor, and its send, receive, and poll syscall
 //! windows are deferred cancellation points that retain source MASKED-to-DISABLE
 //! and final-errno behavior. Native Rust callers retain the raw core exchange
 //! contract. The remaining resolver-family boundary is the deliberate
 //! sequential transport/profile and other unqualified resolver behavior,
-//! including shared rejection of physically incomplete late records; this
-//! module does not claim full source parity or public family closure. The
+//! including the sequential transport profile; this module does not claim full
+//! source parity or public family closure. The
 //! native C lookup path has its own ordered answer callback below: it follows musl's
 //! `__dns_parse` and `dns_parse_callback` stop boundary without changing the
 //! shared `DnsResponse` or transport contract.
@@ -206,9 +206,9 @@ pub(super) unsafe fn query(config: &Config, name: &[u8], kind: u16, answer: &mut
     let id = (time[1] + time[1]/65536) as u16;
     let mut wire = [0u8;280];
     let length = resolver::encode_query(name, kind, id, &mut wire).map_err(|_| 0)?;
-    let outcome = unsafe { super::owned_resolver_transport::exchange(&config.exchange, &wire[..length], id, answer) };
+    let outcome = unsafe { super::owned_resolver_transport::exchange_question_matched(&config.exchange, &wire[..length], id, answer) };
     let result = match outcome.result {
-        Ok(n) => Ok((n,id)),
+        Ok(reply) => Ok((reply.len(),id)),
         Err(ExchangeError::Setup(error)) => { unsafe { errno::set_errno(error.raw()) }; Err(-11) }
         Err(ExchangeError::Transport(_)) => Err(-3),
     };
@@ -256,9 +256,11 @@ unsafe fn dns(out: &mut [Address;MAX_ADDRS], canon: &mut [u8;256], name: &[u8], 
 /// `src/network/lookup_name.c::dns_parse_callback` handles CNAME before the
 /// address cap and selected A/AAAA length check.  A bad selected address
 /// length stops this scan after already completed callbacks, so later CNAMEs
-/// cannot overwrite the retained canonical name.  `DnsResponse::parse` above
-/// keeps the existing shared response/question gate.  The transport continues
-/// to reject a physically incomplete late RR before this private callback path.
+/// cannot overwrite the retained canonical name. `DnsResponse::parse` above
+/// keeps the existing shared response/question gate. The x86-owned transport
+/// may pass a late physically incomplete RR after that gate, so this loop
+/// returns with its completed callback prefix intact exactly at the source
+/// `__dns_parse` boundary.
 fn source_ordered_answers(
     packet: &[u8], selected_type: u16, out: &mut [Address; MAX_ADDRS],
     count: &mut usize, canon: &mut [u8; 256],
@@ -297,6 +299,43 @@ fn source_ordered_answers(
             address.bytes[..length].copy_from_slice(&packet[data..data + length]);
             out[*count] = address;
             *count += 1;
+        }
+        cursor += 10 + length;
+        answers -= 1;
+    }
+}
+
+/// Process PTR responses in the exact source callback order.
+///
+/// musl's `getnameinfo.c::ptr_cb` overwrites the output for every completed
+/// PTR answer, and clears it when `__dn_expand` fails. `__dns_parse` stops on
+/// a physically incomplete late answer after the preceding callbacks, so this
+/// scan returns without changing the retained output at that boundary.
+pub(super) fn source_ordered_ptr(packet: &[u8], output: &mut [u8; 256]) {
+    if packet.len() < 12 || packet[3] & 15 != 0 { return; }
+    let end = packet.len();
+    let mut cursor = 12usize;
+    let mut questions = u16::from_be_bytes([packet[4], packet[5]]);
+    let mut answers = u16::from_be_bytes([packet[6], packet[7]]);
+    while questions != 0 {
+        while cursor < end && packet[cursor].wrapping_sub(1) < 127 { cursor += 1; }
+        if cursor > end - 6 { return; }
+        cursor += 5 + usize::from(packet[cursor] != 0);
+        questions -= 1;
+    }
+    while answers != 0 {
+        while cursor < end && packet[cursor].wrapping_sub(1) < 127 { cursor += 1; }
+        if cursor > end - 12 { return; }
+        cursor += 1 + usize::from(packet[cursor] != 0);
+        let length = u16::from_be_bytes([packet[cursor + 8], packet[cursor + 9]]) as usize;
+        if length + 10 > end - cursor { return; }
+        if packet[cursor + 1] == 12 {
+            let data = cursor + 10;
+            let expanded = unsafe { super::dn_expand::__dn_expand(
+                packet.as_ptr(), packet.as_ptr().wrapping_add(end),
+                packet.as_ptr().wrapping_add(data), output.as_mut_ptr().cast(), output.len() as c_int,
+            ) };
+            if expanded <= 0 { output[0] = 0; }
         }
         cursor += 10 + length;
         answers -= 1;

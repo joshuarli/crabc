@@ -15,7 +15,8 @@
 
 use core::{cell::Cell, ffi::{c_int, c_void}, mem::MaybeUninit, ptr};
 use crabc_core::{Errno, resolver::{self, DnsDatagram, DnsIoResult, DnsSocketAddress,
-    DnsSocketKind, DnsTcpFailure, DnsTcpStart, DnsTransport, DnsWait, ExchangeConfig, ExchangeError}};
+    DnsSocketKind, DnsTcpFailure, DnsTcpStart, DnsTransport, DnsWait, ExchangeConfig, ExchangeError,
+    QuestionMatchedReply}};
 use super::{pthread_cancel, raw_syscall};
 
 const DISABLE: c_int = 1;
@@ -202,11 +203,25 @@ impl DnsTransport for OwnedDnsTransport<'_> {
     }
 }
 
-pub(super) struct ExchangeOutcome {
-    pub result: Result<usize, ExchangeError>,
+pub(super) struct ExchangeOutcome<T> {
+    pub result: Result<T, ExchangeError>,
     /// Present only after actual MASKED consumption. Later syscall errors may
     /// supersede ECANCELED; the caller must preserve this actual final errno.
     pub masked_errno: Option<c_int>,
+}
+
+/// The two fixed C caller domains that share one cancellation transaction.
+/// This is not caller-provided transport policy: ordinary native callers stay
+/// on `Strict`, while only selected x86 C source callbacks receive the opaque
+/// question-matched reply.
+enum ReplyBoundary {
+    Strict,
+    QuestionMatched,
+}
+
+enum OwnedReply {
+    Strict(usize),
+    QuestionMatched(QuestionMatchedReply),
 }
 
 /// Execute shared DNS transport with an explicit owned C cancellation owner.
@@ -214,7 +229,13 @@ pub(super) struct ExchangeOutcome {
 /// The current thread has an initialized owned TCB. Callers hold no lock or
 /// unregistered resource whose retirement requires Rust stack unwinding.
 /// Query/answer storage remains valid until normal return or thread retirement.
-pub(super) unsafe fn exchange(config: &ExchangeConfig, query: &[u8], query_id: u16, answer: &mut [u8]) -> ExchangeOutcome {
+unsafe fn exchange_inner(
+    config: &ExchangeConfig,
+    query: &[u8],
+    query_id: u16,
+    answer: &mut [u8],
+    boundary: ReplyBoundary,
+) -> ExchangeOutcome<OwnedReply> {
     let mut entry_state = DISABLE;
     unsafe { pthread_cancel::pthread_setcancelstate(DISABLE, &mut entry_state); }
     let descriptor = core::pin::pin!(CleanupDescriptor { fd: Cell::new(-1) });
@@ -228,7 +249,14 @@ pub(super) unsafe fn exchange(config: &ExchangeConfig, query: &[u8], query_id: u
         (descriptor as *const CleanupDescriptor).cast_mut().cast()); }
     let mut transport = OwnedDnsTransport { descriptor, entry_state, resume_state: entry_state,
         consumed_masked: false, last_errno: None };
-    let result = resolver::exchange_with_transport(config, query, query_id, answer, &mut transport);
+    let result = match boundary {
+        ReplyBoundary::Strict => resolver::exchange_with_transport(
+            config, query, query_id, answer, &mut transport,
+        ).map(OwnedReply::Strict),
+        ReplyBoundary::QuestionMatched => resolver::exchange_with_transport_question_matched(
+            config, query, query_id, answer, &mut transport,
+        ).map(OwnedReply::QuestionMatched),
+    };
     // Core returned with cancellation disabled and no live descriptor. Pop
     // explicitly, then restore the actual final state rather than entry state.
     unsafe { pthread_cancel::_pthread_cleanup_pop(node_pointer, 0);
@@ -236,4 +264,42 @@ pub(super) unsafe fn exchange(config: &ExchangeConfig, query: &[u8], query_id: u
     ExchangeOutcome { result, masked_errno: if transport.consumed_masked {
         transport.last_errno.map(Errno::raw)
     } else { None } }
+}
+
+/// Execute the strict shared DNS exchange with an explicit owned C
+/// cancellation owner.
+/// # Safety
+/// The current thread has an initialized owned TCB. Callers hold no lock or
+/// unregistered resource whose retirement requires Rust stack unwinding.
+/// Query/answer storage remains valid until normal return or thread retirement.
+pub(super) unsafe fn exchange(
+    config: &ExchangeConfig, query: &[u8], query_id: u16, answer: &mut [u8],
+) -> ExchangeOutcome<usize> {
+    let outcome = unsafe { exchange_inner(config, query, query_id, answer, ReplyBoundary::Strict) };
+    ExchangeOutcome {
+        result: outcome.result.map(|reply| match reply {
+            OwnedReply::Strict(length) => length,
+            OwnedReply::QuestionMatched(_) => unreachable!("strict boundary returned a callback reply"),
+        }),
+        masked_errno: outcome.masked_errno,
+    }
+}
+
+/// Execute the x86 C source-callback DNS exchange with the same explicit
+/// cancellation/descriptor owner. The opaque reply still has the shared
+/// exact-question association; only later RR framing is deferred to the
+/// selected C callback parser.
+/// # Safety
+/// Same thread-state and caller-storage requirements as [`exchange`].
+pub(super) unsafe fn exchange_question_matched(
+    config: &ExchangeConfig, query: &[u8], query_id: u16, answer: &mut [u8],
+) -> ExchangeOutcome<QuestionMatchedReply> {
+    let outcome = unsafe { exchange_inner(config, query, query_id, answer, ReplyBoundary::QuestionMatched) };
+    ExchangeOutcome {
+        result: outcome.result.map(|reply| match reply {
+            OwnedReply::Strict(_) => unreachable!("callback boundary returned a strict reply"),
+            OwnedReply::QuestionMatched(reply) => reply,
+        }),
+        masked_errno: outcome.masked_errno,
+    }
 }

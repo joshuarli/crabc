@@ -166,6 +166,19 @@ enum UdpResponse {
     Truncated,
 }
 
+/// The DNS record framing required after response/question correlation.
+///
+/// The ordinary core exchange keeps complete-record validation. The x86 C
+/// resolver callback seam alone admits a physically complete packet whose
+/// later declared record is incomplete, because musl's `__dns_parse` has
+/// already called its callbacks for the preceding complete answer records.
+/// This is deliberately not a transport configuration surface.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum RecordFraming {
+    Complete,
+    QuestionMatched,
+}
+
 /// Initialized destination for a DNS transport operation. The byte view is
 /// exactly one Linux sockaddr record; callers cannot construct invalid values.
 pub struct DnsSocketAddress {
@@ -876,6 +889,7 @@ fn udp_exchange(
     query_id: u16,
     answer: &mut [u8],
     deadline: i64,
+    framing: RecordFraming,
     transport: &mut impl DnsTransport,
 ) -> Result<UdpResponse> {
     loop {
@@ -907,7 +921,7 @@ fn udp_exchange(
         if packet[2] & 0x02 != 0 {
             return Ok(UdpResponse::Truncated);
         }
-        if !has_complete_records(packet, question_end) {
+        if framing == RecordFraming::Complete && !has_complete_records(packet, question_end) {
             continue;
         }
         return Ok(UdpResponse::Complete(length));
@@ -920,6 +934,7 @@ fn tcp_exchange(
     query_id: u16,
     answer: &mut [u8],
     deadline: i64,
+    framing: RecordFraming,
     transport: &mut impl DnsTransport,
 ) -> Result<usize> {
     if query.len() > u16::MAX as usize || answer.len() < 12 {
@@ -973,7 +988,9 @@ fn tcp_exchange(
         let response = &mut answer[..response_length];
         receive_exact(fd, response, deadline, transport)?;
         let question_end = matching_question_end(response, query, query_id).ok_or_else(malformed)?;
-        if response[2] & 0x02 != 0 || !has_complete_records(response, question_end) {
+        if response[2] & 0x02 != 0
+            || (framing == RecordFraming::Complete && !has_complete_records(response, question_end))
+        {
             return Err(malformed());
         }
         Ok(response_length)
@@ -998,7 +1015,7 @@ pub fn exchange(
     query_id: u16,
     answer: &mut [u8],
 ) -> Result<usize> {
-    exchange_impl(config, query, query_id, answer, false, &mut RawDnsTransport).map_err(|error| match error {
+    exchange_impl(config, query, query_id, answer, false, RecordFraming::Complete, &mut RawDnsTransport).map_err(|error| match error {
         ExchangeError::Setup(errno) | ExchangeError::Transport(errno) => errno,
     })
 }
@@ -1023,7 +1040,7 @@ pub fn exchange_with_setup_error(
     query_id: u16,
     answer: &mut [u8],
 ) -> core::result::Result<usize, ExchangeError> {
-    exchange_impl(config, query, query_id, answer, true, &mut RawDnsTransport)
+    exchange_impl(config, query, query_id, answer, true, RecordFraming::Complete, &mut RawDnsTransport)
 }
 
 /// Performs the shared DNS exchange with an explicit C cancellation/lifetime
@@ -1036,7 +1053,49 @@ pub fn exchange_with_transport(
     answer: &mut [u8],
     transport: &mut impl DnsTransport,
 ) -> core::result::Result<usize, ExchangeError> {
-    exchange_impl(config, query, query_id, answer, true, transport)
+    exchange_impl(config, query, query_id, answer, true, RecordFraming::Complete, transport)
+}
+
+/// Opaque length of a question-correlated DNS reply for the private x86 C
+/// resolver callback seam.
+///
+/// This proves only that the header and exact echoed question matched and that
+/// a complete UDP datagram or complete TCP frame was received. It does not
+/// assert that every declared resource record fits. The selected x86 C lookup,
+/// reverse PTR lookup, and raw resolver callers use their source-shaped
+/// callback parsers to retain a complete answer prefix before a late malformed
+/// record. It deliberately keeps the core's stronger exact-question
+/// correlation, and is not a public DNS parsing interface.
+#[cfg(target_arch = "x86_64")]
+#[doc(hidden)]
+pub struct QuestionMatchedReply {
+    length: usize,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl QuestionMatchedReply {
+    /// Byte length of the received packet in the caller's answer buffer.
+    pub const fn len(&self) -> usize { self.length }
+}
+
+/// Performs the selected x86 C callback exchange through its explicit
+/// cancellation/lifetime owner.
+///
+/// Existing native and AArch64 exchange entrypoints retain complete-record
+/// framing validation. This narrow boundary accepts only a complete transport
+/// reply that passed exact response/question correlation; DNS TC still uses
+/// TCP and an incomplete TCP frame remains an exchange error.
+#[cfg(target_arch = "x86_64")]
+#[doc(hidden)]
+pub fn exchange_with_transport_question_matched(
+    config: &ExchangeConfig,
+    query: &[u8],
+    query_id: u16,
+    answer: &mut [u8],
+    transport: &mut impl DnsTransport,
+) -> core::result::Result<QuestionMatchedReply, ExchangeError> {
+    exchange_impl(config, query, query_id, answer, true, RecordFraming::QuestionMatched, transport)
+        .map(|length| QuestionMatchedReply { length })
 }
 
 fn exchange_impl(
@@ -1045,6 +1104,7 @@ fn exchange_impl(
     query_id: u16,
     answer: &mut [u8],
     preserve_setup_error: bool,
+    framing: RecordFraming,
     transport: &mut impl DnsTransport,
 ) -> core::result::Result<usize, ExchangeError> {
     if config.nameserver_count == 0
@@ -1104,14 +1164,14 @@ fn exchange_impl(
                 index += 1;
                 continue;
             }
-            match udp_exchange(fd, query, query_id, answer, deadline, transport) {
+            match udp_exchange(fd, query, query_id, answer, deadline, framing, transport) {
                 Ok(UdpResponse::Complete(length)) => {
                     transport.close_socket(fd);
                     return Ok(length);
                 }
                 Ok(UdpResponse::Truncated) => {
                     transport.close_socket(fd);
-                    if let Ok(length) = tcp_exchange(&target, query, query_id, answer, deadline, transport)
+                    if let Ok(length) = tcp_exchange(&target, query, query_id, answer, deadline, framing, transport)
                     {
                         return Ok(length);
                     }

@@ -26,7 +26,7 @@ archive SHA-256 is
 | --- | --- |
 | `src/network/lookup_ipliteral.c`: `__lookup_ipliteral` | `owned_netdb_lookup.rs::numeric` and existing inet/interface/integer owners |
 | `src/network/lookup_name.c`: null, numeric, hosts, DNS/search backends and destination policy | `owned_netdb_lookup.rs::{names,hosts,dns,dns_search,sort_addresses}` |
-| `src/network/dns_parse.c`: `__dns_parse`; `src/network/lookup_name.c`: `dns_parse_callback` | `owned_netdb_lookup.rs::source_ordered_answers` for structurally complete x86 C lookup responses |
+| `src/network/dns_parse.c`: `__dns_parse`; `src/network/lookup_name.c`: `dns_parse_callback`; `src/network/getnameinfo.c`: `ptr_cb` | `owned_netdb_lookup.rs::{source_ordered_answers,source_ordered_ptr}` after the typed x86 C matched-reply boundary |
 | `src/network/lookup_serv.c`: `__lookup_serv` | `owned_netdb_lookup.rs::services` |
 | `src/network/resolvconf.c`: `__get_resolv_conf` | `owned_netdb_lookup.rs::configuration` |
 | `src/stdio/{__fopen_rb_ca,__fclose_ca}.c` | `owned_static_stdio.rs::with_readonly_file`, existing non-canceling FILE reader |
@@ -79,18 +79,33 @@ Two established transport/ownership adaptations remain explicit. DNS framing,
 query encoding, bounded retry/failover and TCP fallback use the shared
 `crabc-core::resolver` transport. Family queries run sequentially rather than
 musl's parallel msend; their outcomes retain source interpretation order.
-The existing `DnsResponse::rdata_at` interface extracts address records by
-type and then CNAME records for its existing callers. The owned x86 C lookup
-path instead performs the source's ordered answer callback after that shared
-response/question gate. It handles CNAME before the address cap, retains
-completed address and canonical callbacks when a selected A/AAAA has a
-complete but wrong RDLENGTH, and stops before later records exactly as musl
-does. The contained differential sends valid-prefix A and AAAA records, a
-wrong-length selected address, CNAME-before/after variations, no-address and
-48-address-cap cases through the same installed-header object. A physically
-incomplete later RR remains rejected by the established shared transport
-before this private callback runs; that framing difference is explicit
-resolver-family work, not an assertion of source callback equivalence.
+The existing `DnsResponse::rdata_at` interface and ordinary native
+`exchange` retain complete-record validation for their existing callers. The
+owned x86 C paths instead receive an opaque `QuestionMatchedReply`: it proves
+the response header and exact echoed question, plus a complete UDP datagram or
+length-prefixed TCP frame, but does not assert that every declared RR fits.
+That exact-question association is deliberately stronger than musl's source
+reply association. It is a private C-ABI seam, not a parser or transport
+policy surface. `source_ordered_answers` and `source_ordered_ptr` then walk
+the complete answer prefix in the exact `__dns_parse` callback order. The
+forward callback handles CNAME before the address cap, retains completed
+address/canonical callbacks when a selected A/AAAA has a complete wrong
+RDLENGTH, and stops before later records. The PTR callback overwrites its
+output on every completed PTR and clears it on a failed expansion. A
+physically incomplete late RR therefore retains the preceding callback state,
+as in musl.
+
+The contained differential sends valid-prefix A and AAAA records, answer and
+authority late-RR boundaries, a TC-to-complete-TCP late-RR boundary, and a PTR
+prefix through modern `getaddrinfo`, classic forward/reverse lookup, and
+direct `res_send`/`res_query`, all from the same installed-header object. It
+also retains CNAME-before/after, no-address and 48-address-cap cases. UDP
+datagrams marked `MSG_TRUNC` or exceeding the receive buffer are still ignored;
+only DNS TC starts TCP, and the TCP length-prefixed frame must remain
+physically complete. The unselected non-owned resolver-runtime lookup remains
+on the strict core path by its `x86-owned-static-runtime` cfg boundary. The
+sequential family transport and other resolver behavior remain unqualified;
+this does not claim resolver-family closure.
 The owned adapter distinguishes local socket-creation errno from exhausted
 transport attempts without creating probe sockets. Existing native
 `exchange` keeps its prior timeout behavior. Owned C callers now use the
@@ -108,7 +123,7 @@ Run `./scripts/dev-x86_64.sh owned-classic-netdb [DYNAMIC_SYSROOT]`. Without an
 argument, pinned product preparation precedes network isolation. One ordinary
 installed-header application object links to pinned musl and owned static,
 static-PIE, dynamic PIE and dynamic non-PIE; both dynamic artifacts run through
-kernel and direct interpreter entry. Twenty-one cases run in disposable private
+kernel and direct interpreter entry. Twenty-two cases run in disposable private
 chroots with fixture-owned `/etc`, in a loopback-only network namespace. They
 cover numeric/local/DNS lookup, ordered DNS callback records, buffer bounds,
 large host records, search and mixed-family failure precedence, reverse
