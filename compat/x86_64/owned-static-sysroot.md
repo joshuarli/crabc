@@ -631,3 +631,10 @@ pinned-musl/static/dynamic same-object evidence. [`owned-unix-mechanisms.md`](ow
 records its source mapping, syscall/cancellation boundary, and contained
 privileged-error evidence. It does not select mount policy, STREAMS emulation,
 or a general filesystem or terminal runtime.
+
+The owned AIO provider supplies all eight installed `<aio.h>` entries, with
+`aio_error` replacing only the frozen observation leaf in owned products. Its
+queue, cancellation, notification, close and fork contracts and deliberate
+source corrections are recorded in [owned AIO evidence](../../docs/evidence/x86-owned-aio.md).
+The dynamic qualification catalog replays its installed behavior component
+for each selected product; standalone component passes do not close POSIX.

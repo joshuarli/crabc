@@ -81,6 +81,7 @@ CASES = {
     "passwd": ("run_owned_passwd.sh", None),
     "account-files": ("run_owned_account_files.sh", None),
     "utmpx": ("run_owned_utmpx.sh", None),
+    "aio": ("run_owned_aio.sh", None),
     "locale": ("run_owned_locale.sh", None),
     "stdio": ("run_owned_stdio.sh", None),
     "pattern": ("run_owned_pattern.sh", None),

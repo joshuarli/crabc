@@ -31,6 +31,18 @@ DISPOSITION = load_module("header_callable_disposition_test", SCRIPT)
 
 
 class HeaderCallableDispositionTests(unittest.TestCase):
+    def test_aio_additions_belong_to_the_owned_runtime(self) -> None:
+        primary = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))["primary_disposition"]
+        owned = next(row for row in primary["declared_unverified_feature_archives"]
+                     if row["id"] == "x86-owned-static-runtime")
+        names = {"aio_cancel", "aio_fsync", "aio_read", "aio_return",
+                 "aio_suspend", "aio_write", "lio_listio"}
+        self.assertTrue(names <= set(owned["members"]))
+        self.assertFalse(names & set(primary["default_static"]["members"]))
+        self.assertFalse(names & {name for row in primary["deferred_owner_groups"]
+                                  for name in row["members"]})
+        self.assertIn("aio_error", primary["default_static"]["members"])
+
     def test_account_file_callables_belong_to_the_owned_runtime_provider(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))
         primary = report["primary_disposition"]

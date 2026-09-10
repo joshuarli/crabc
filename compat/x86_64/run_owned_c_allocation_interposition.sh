@@ -4,6 +4,8 @@
 # One installed-header object defines malloc/realloc/free in its executable.
 # It verifies that asprintf gives its caller storage from that provider and
 # that the passwd lookup returns its temporary getline allocation there too.
+# List I/O uses the same public allocator for list state and private libc
+# allocation for the request queues.
 set -euo pipefail
 ulimit -c 0
 
@@ -13,7 +15,7 @@ readonly PROBE="$ROOT/compat/x86_64/owned_c_allocation_interposition_probe.c"
 readonly CRABC_INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly MUSL_INTERPRETER=/lib/ld-musl-x86_64.so.1
 readonly PASSWD_RECORD='crabc:x:64:64:Crabc:/home/crabc:/bin/sh'
-readonly -a scenarios=(asprintf passwd)
+readonly -a scenarios=(asprintf passwd lio)
 
 [ "$#" -le 1 ] || {
     printf 'usage: %s [DYNAMIC_SYSROOT]\n' "$0" >&2
@@ -76,6 +78,23 @@ awk '
     printf 'owned C allocator interposition: passwd public-free tail misses free@plt\n' >&2
     exit 1
 }
+for boundary in malloc free; do
+    name="__crabc_x86_aio_cabi_$boundary"
+    awk -v name="$name" '$4 == "FUNC" && $5 == "LOCAL" && $6 == "HIDDEN" && $8 == name { found = 1 } END { exit !found }' \
+        "$work/provider.symbols" || {
+        printf 'owned C allocator interposition: AIO public %s tail is absent\n' "$boundary" >&2
+        exit 1
+    }
+    awk -v name="$name" -v boundary="$boundary" '
+        $0 ~ "<" name ">:" { in_tail = 1; next }
+        in_tail && $0 ~ "jmp.*<" boundary "@plt>" { found = 1; exit }
+        in_tail && /^[[:xdigit:]]+ <.*>:/ { exit }
+        END { exit !found }
+    ' "$work/provider.disassembly" || {
+        printf 'owned C allocator interposition: AIO public %s tail misses its PLT boundary\n' "$boundary" >&2
+        exit 1
+    }
+done
 
 # Compile once through the installed product, then link that exact object to
 # the musl oracle and both executable kinds of the installed runtime.
@@ -194,4 +213,4 @@ for mode in pie non-pie; do
 done
 
 printf '%s\n' \
-    "owned C allocator interposition: PASS (same installed-header object; pinned musl and installed PIE/non-PIE kernel/direct roots; caller-owned asprintf bytes and passwd temporary getline release retain executable malloc-family ownership); evidence: $work"
+    "owned C allocator interposition: PASS (same installed-header object; pinned musl and installed PIE/non-PIE kernel/direct roots; asprintf, passwd getline cleanup, and lio_listio state retain executable malloc-family ownership; AIO queues stay private); evidence: $work"
