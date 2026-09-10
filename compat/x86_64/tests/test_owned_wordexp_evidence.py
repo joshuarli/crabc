@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import shutil
 import stat
@@ -260,6 +261,39 @@ class OwnedWordexpEnvironmentTests(unittest.TestCase):
         output = (ROOT / Path(record["stdout"]["path"]).relative_to(module.SOURCE_MOUNT)).read_bytes()
         self.assertEqual(output, b"||\n")
         shutil.rmtree(root, ignore_errors=True)
+
+
+class OwnedWordexpExpectedInputTests(unittest.TestCase):
+    def test_external_tool_seal_rejects_matching_report_compiler_mutation(self) -> None:
+        module = load_module()
+        identity = lambda path, digest: {"path": path, "sha256": digest * 64, "mode": 0o755}
+        tools = {
+            "compiler": identity("/tool/compiler", "a"),
+            "linker": identity("/tool/linker", "b"),
+            "oracle-compiler": identity("/usr/local/bin/crabc-x86_64-musl-gcc", "c"),
+            "chroot": identity("/tool/chroot", "d"),
+            "timeout": identity("/tool/timeout", "e"),
+            "ldd": identity("/tool/ldd", "f"),
+            "shell": identity("/tool/shell", "0"),
+        }
+        oracle = {
+            "qualification": {
+                "version": "musl-1.2.6", "runtime_sha256": "1" * 64,
+                "compiler_wrapper_sha256": "2" * 64, "pins_sha256": "3" * 64,
+                "files": {name: ("1" if name == "runtime" else "2" if name == "compiler_wrapper" else "4") * 64
+                          for name in module.qualification.ORACLE_FILES},
+            },
+            "loader": {"source_path": "/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1",
+                       "identity": identity("/opt/musl-1.2.6/lib/libc.so", "1")},
+            "static_libc": {"native": identity("/opt/musl-1.2.6/lib/libc.a", "5"), "retained": {}},
+        }
+        expected = module.expected_native_input_seal(tools, oracle)
+        before, after = copy.deepcopy(tools), copy.deepcopy(tools)
+        for recorded in (before, after):
+            recorded["compiler"]["sha256"] = "9" * 64
+        for recorded in (before, after):
+            with self.assertRaises(module.EvidenceError):
+                module.validate_expected_native_input(expected, recorded, oracle)
 
 
 if __name__ == "__main__":

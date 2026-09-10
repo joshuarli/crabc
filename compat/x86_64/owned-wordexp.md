@@ -65,20 +65,21 @@ candidate entries; the receipt records this exceptional external alias path
 and rejects every other alias change.  Successful and failed
 runs remain under `.work/x86_64` for replay.
 
-`python3 -B compat/x86_64/owned_wordexp_evidence.py validate --report REPORT`
-reconstructs a retained receipt on the host. It requires the fixed
+Run `python3 -B compat/x86_64/owned_wordexp_evidence.py capture-expected-inputs DYNAMIC_SYSROOT` in the pinned native image, adding `--static-sysroot STATIC_SYSROOT` when both product modes are selected. It retains a separate expected native tool/oracle seal; supplied products are validated but never rebuilt. A host replay must provide that independently captured file:
+`python3 -B compat/x86_64/owned_wordexp_evidence.py validate --report REPORT
+--expected-inputs EXPECTED_INPUTS`. It reconstructs a retained receipt on the
+host and requires the fixed
 `/workspace` source-mount translation, current source/product/header/object
 identities, sealed retained pinned-musl inputs, exact retained link receipts
 and ELF observations, and exact execution-tree bytes, modes, aliases, raw
 results, and expected transcripts.  This proves only the bounded
 installed-product component; it does not qualify a family or public support.
 
-The selected installed compiler and linker identities are native producer
-seals: this component records and requires them unchanged across collection,
-but does not claim a separate caller-supplied expected hash for either tool.
-The pinned-musl oracle compiler is different: its exact wrapper bytes are
-checked against `docker/x86_64-musl-oracle-gcc` in the caller checkout, and the
-fixture's `/bin/sh` plus its `/lib/ld-musl-x86_64.so.1` closure are bound to the
-presealed shell tool and to the qualified pinned-musl runtime respectively.
-A coordinator that needs an independent native compiler/linker expectation
-must supply that sealed tool input separately.
+The separate expected-input seal compares the native compiler, linker, oracle
+compiler, shell, timeout, chroot, and `ldd` identities with both retained
+before/after input maps. It also compares the full pinned-musl oracle identity,
+including the qualified loader and static archive. Product drivers remain bound
+to the selected product internally. The caller checkout still checks the
+oracle wrapper against `docker/x86_64-musl-oracle-gcc`; the fixture's `/bin/sh`
+and `/lib/ld-musl-x86_64.so.1` closure remain bound to the sealed shell tool,
+actual `ldd` output, and qualified pinned-musl runtime.

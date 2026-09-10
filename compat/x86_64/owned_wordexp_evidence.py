@@ -32,6 +32,7 @@ import owned_posix_product_evidence as products
 import run_qualification_manifest as native_qualification
 
 SCHEMA = "crabc.x86_64-owned-wordexp-products/v1"
+EXPECTED_INPUT_SCHEMA = "crabc.x86_64-owned-wordexp-expected-native-inputs/v1"
 SOURCE_MOUNT = "/workspace"
 TARGET = "x86_64-unknown-linux-musl"
 PROBE = "compat/x86_64/owned_wordexp_probe.c"
@@ -52,6 +53,7 @@ MODE_SPECS = {
     "dynamic-non-pie-kernel": ("non-pie", "dynamic", "consumer-non-pie"),
     "dynamic-non-pie-direct": ("non-pie", "dynamic", "consumer-non-pie"),
 }
+EXPECTED_NATIVE_TOOLS = ("compiler", "linker", "oracle-compiler", "chroot", "timeout", "ldd", "shell")
 
 
 class EvidenceError(RuntimeError):
@@ -591,6 +593,65 @@ def _input_seal(root: Path, dynamic: Path, static: Path | None, tools: Mapping[s
     }
 
 
+def _qualification_identity(value: object, description: str) -> dict[str, Any]:
+    value = _exact_dict(value, {"version", "runtime_sha256", "compiler_wrapper_sha256", "pins_sha256", "files"}, description)
+    files = value["files"]
+    if value["version"] != "musl-1.2.6" or not isinstance(files, dict) or set(files) != set(qualification.ORACLE_FILES):
+        fail(f"{description} roster differs")
+    if any(not isinstance(digest, str) or len(digest) != 64 for digest in files.values()):
+        fail(f"{description} file identity is malformed")
+    if (value["runtime_sha256"] != files["runtime"]
+            or value["compiler_wrapper_sha256"] != files["compiler_wrapper"]
+            or not isinstance(value["pins_sha256"], str) or len(value["pins_sha256"]) != 64):
+        fail(f"{description} summary differs")
+    return value
+
+
+def _expected_oracle_identity(oracle: Mapping[str, Any]) -> dict[str, Any]:
+    oracle = _exact_dict(oracle, {"qualification", "loader", "static_libc"}, "wordexp oracle input")
+    qualification_input = _qualification_identity(oracle["qualification"], "wordexp pinned oracle identity")
+    loader = _exact_dict(oracle["loader"], {"source_path", "identity"}, "wordexp pinned musl loader")
+    if loader["source_path"] != native_qualification.MUSL_RUNTIME_PATHS["loader"]:
+        fail("wordexp pinned musl loader source path differs")
+    _validate_tool_record(loader["identity"], "wordexp pinned musl loader identity")
+    static_libc = _exact_dict(oracle["static_libc"], {"native", "retained"}, "wordexp static oracle libc")
+    static_native = _validate_tool_record(static_libc["native"], "wordexp static oracle libc native")
+    return {"qualification": qualification_input, "loader": loader, "static_libc": static_native}
+
+
+def expected_native_input_seal(tools: Mapping[str, Any], oracle: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize the independently captured native tool/oracle expectation."""
+    if not isinstance(tools, Mapping) or set(EXPECTED_NATIVE_TOOLS) - set(tools):
+        fail("wordexp expected native tool roster is incomplete")
+    selected = {name: _validate_tool_record(tools[name], f"wordexp expected native tool {name}")
+                for name in EXPECTED_NATIVE_TOOLS}
+    return {"schema": EXPECTED_INPUT_SCHEMA, "target": TARGET, "tools": selected,
+            "oracle": _expected_oracle_identity(oracle)}
+
+
+def validate_expected_native_input(value: object, tools: Mapping[str, Any], oracle: Mapping[str, Any]) -> dict[str, Any]:
+    """Require a caller-supplied native expectation, never a report-derived one."""
+    expected = _exact_dict(value, {"schema", "target", "tools", "oracle"}, "wordexp expected native inputs")
+    if expected["schema"] != EXPECTED_INPUT_SCHEMA or expected["target"] != TARGET:
+        fail("wordexp expected native input contract differs")
+    if not isinstance(expected["tools"], dict) or set(expected["tools"]) != set(EXPECTED_NATIVE_TOOLS):
+        fail("wordexp expected native tool roster differs")
+    for name in EXPECTED_NATIVE_TOOLS:
+        _validate_tool_record(expected["tools"][name], f"wordexp expected native tool {name}")
+    expected_oracle = _exact_dict(expected["oracle"], {"qualification", "loader", "static_libc"},
+                                  "wordexp expected native oracle")
+    _qualification_identity(expected_oracle["qualification"], "wordexp expected pinned oracle identity")
+    loader = _exact_dict(expected_oracle["loader"], {"source_path", "identity"}, "wordexp expected pinned loader")
+    if loader["source_path"] != native_qualification.MUSL_RUNTIME_PATHS["loader"]:
+        fail("wordexp expected pinned loader source path differs")
+    _validate_tool_record(loader["identity"], "wordexp expected pinned loader identity")
+    _validate_tool_record(expected_oracle["static_libc"], "wordexp expected static oracle libc")
+    actual = expected_native_input_seal(tools, oracle)
+    if expected != actual:
+        fail("wordexp retained native tool or oracle input differs from the caller expectation")
+    return expected
+
+
 def _products(dynamic: Path | None, static: Path | None, work: Path) -> tuple[Path, Path | None, bool]:
     built = dynamic is None
     if dynamic is None:
@@ -737,6 +798,7 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
         dynamic, static, built = _products(dynamic, static, work)
         tools_before = _installed_tool_roster(dynamic, static)
         oracle_inputs = _capture_oracle_inputs(work)
+        expected_native_inputs = expected_native_input_seal(tools_before, oracle_inputs)
         fixture_source, fixture_files, fixture_records, fixture_ldd = _prepare_fixture_source(work, tools_before["ldd"]["path"])
         fixture = _fixture_record(ROOT, fixture_source, fixture_files, fixture_records, fixture_ldd)
         before = _input_seal(ROOT, dynamic, static, tools_before, oracle_inputs, fixture)
@@ -813,11 +875,41 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
         }
         report_path = work / "owned-wordexp-products.json"
         _write_json(report_path, report)
-        validate_report(ROOT, report_path)
+        validate_report(ROOT, report_path, expected_native_inputs)
         print(report_path)
         return report_path
     except Exception:
         print(f"owned wordexp products: retained failure evidence at {work}", file=sys.stderr)
+        raise
+
+
+def capture_expected_native_inputs(dynamic: Path, static: Path | None) -> Path:
+    """Capture an external native tool/oracle expectation without running cells."""
+    _native_requirements()
+    work = _work_directory()
+    try:
+        dynamic, static, built = _products(dynamic, static, work)
+        if built:
+            fail("expected native input capture requires a supplied dynamic product")
+        tools = _installed_tool_roster(dynamic, static)
+        oracle = _capture_oracle_inputs(work)
+        expected = expected_native_input_seal(tools, oracle)
+        try:
+            qualification.require_live_oracle(work, oracle["qualification"])
+        except qualification.QualificationError as error:
+            raise EvidenceError(f"pinned musl oracle changed during expected input capture: {error}") from error
+        if _tool_identity(Path("/opt/musl-1.2.6/lib/libc.a"), "post-capture pinned musl static libc") != oracle["static_libc"]["native"]:
+            fail("pinned musl static libc changed during expected input capture")
+        if _tool_identity(Path(native_qualification.MUSL_RUNTIME_PATHS["loader"]), "post-capture pinned musl loader") != oracle["loader"]["identity"]:
+            fail("pinned musl loader changed during expected input capture")
+        if expected != expected_native_input_seal(_installed_tool_roster(dynamic, static), oracle):
+            fail("native tool or oracle input changed during expected input capture")
+        path = work / "expected-native-inputs.json"
+        _write_json(path, expected)
+        print(path)
+        return path
+    except Exception:
+        print(f"owned wordexp expected inputs: retained failure evidence at {work}", file=sys.stderr)
         raise
 
 
@@ -838,11 +930,8 @@ def _validate_retained_oracle(root: Path, work: Path, value: object) -> dict[str
     its checkout explicitly, so an integration reader can replay a worker
     receipt without accidentally consulting the worker module's source tree.
     """
-    oracle = _exact_dict(value, {"version", "runtime_sha256", "compiler_wrapper_sha256", "pins_sha256", "files"},
-                         "wordexp retained pinned oracle")
+    oracle = _qualification_identity(value, "wordexp retained pinned oracle")
     files = oracle["files"]
-    if oracle["version"] != "musl-1.2.6" or not isinstance(files, dict) or set(files) != set(qualification.ORACLE_FILES):
-        fail("wordexp retained pinned oracle roster differs")
     pins_path = _physical(root / "compat/upstreams.toml", "wordexp caller upstream pins", directory=False)
     wrapper_path = _physical(root / "docker/x86_64-musl-oracle-gcc", "wordexp caller oracle wrapper", directory=False)
     if oracle["pins_sha256"] != _sha(pins_path):
@@ -1083,7 +1172,7 @@ def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, s
     return execution_root
 
 
-def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
+def validate_report(root: Path, report_path: Path, expected_native_inputs: object) -> dict[str, Any]:
     root = _physical(root, "checkout root", directory=True)
     report_path = _physical(report_path, "wordexp report", directory=False)
     try:
@@ -1102,6 +1191,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     after_dynamic, after_static, after_tools, after_fixture = _validate_input_seal(root, work, inputs["after"])
     if (dynamic, static, tools, fixture) != (after_dynamic, after_static, after_tools, after_fixture) or inputs["before"] != inputs["after"]:
         fail("wordexp inputs changed after collection")
+    validate_expected_native_input(expected_native_inputs, tools, inputs["before"]["oracle"])
 
     workload = _identity_current(root, report["workload"], "wordexp workload")
     if workload != _physical(work / "workload.o", "wordexp canonical workload", directory=False):
@@ -1218,22 +1308,39 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
                 fail("wordexp cell oracle/candidate stderr differs")
     return report
 
+
+def _load_expected_native_inputs(path: Path) -> dict[str, Any]:
+    path = _physical(path, "wordexp expected native inputs", directory=False)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise EvidenceError("wordexp expected native inputs are not valid JSON") from error
+    return _exact_dict(value, {"schema", "target", "tools", "oracle"}, "wordexp expected native inputs")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
     run = commands.add_parser("run", help="build or consume products and retain the wordexp execution evidence")
     run.add_argument("--static-sysroot", type=Path, help="optional supplied static product; requires dynamic product")
     run.add_argument("dynamic_sysroot", type=Path, nargs="?", help="supplied dynamic product")
+    capture = commands.add_parser("capture-expected-inputs", help="capture an external native tool/oracle expectation")
+    capture.add_argument("--static-sysroot", type=Path, help="optional supplied static product")
+    capture.add_argument("dynamic_sysroot", type=Path, help="supplied dynamic product; never rebuilt")
     validate = commands.add_parser("validate", help="replay retained evidence without executing native tools")
     validate.add_argument("--report", type=Path, required=True)
+    validate.add_argument("--expected-inputs", type=Path, required=True,
+                          help="independently captured native tool/oracle input seal")
     parsed = parser.parse_args()
     try:
         if parsed.action == "run":
             if parsed.static_sysroot is not None and parsed.dynamic_sysroot is None:
                 fail("--static-sysroot requires a supplied dynamic product")
             collect(parsed.dynamic_sysroot, parsed.static_sysroot)
+        elif parsed.action == "capture-expected-inputs":
+            capture_expected_native_inputs(parsed.dynamic_sysroot, parsed.static_sysroot)
         else:
-            validate_report(ROOT, parsed.report)
+            validate_report(ROOT, parsed.report, _load_expected_native_inputs(parsed.expected_inputs))
     except EvidenceError as error:
         print(f"owned wordexp evidence: {error}", file=sys.stderr)
         return 1
