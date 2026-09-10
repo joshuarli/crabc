@@ -34,3 +34,38 @@ including the error code, unchanged errno, and empty word-vector ownership.
 The controlled shell fixture remains a separately recorded execution input;
 this scanner receipt does not claim general shell compatibility or waive an
 oracle shell failure.
+
+`compat/x86_64/run_owned_wordexp.sh` is the separate installed-product
+component receipt.  With no arguments it materializes the selected dynamic
+and static products, translates the ordinary `owned_wordexp_probe.c` once
+through the installed dynamic headers, and links that unchanged object to the
+pinned-musl static ET_EXEC oracle, owned static ET_EXEC/static-PIE, and owned
+dynamic PIE/non-PIE products.  With a supplied dynamic product it does not
+rebuild it; `--static-sysroot` adds the two static modes.  Dynamic PIE and
+non-PIE run through both the kernel interpreter and the installed loader's
+direct entry, making six product modes when both products are selected.
+
+For every mode and each controlled shell state (`normal`, `missing`,
+`inaccessible`, and `invalid`), the receipt retains command argv/status/stdout/stderr,
+requires a zero result and the exact probe transcript, and compares
+both executables with the separately linked pinned-musl oracle.  It seals the
+installed headers, one workload object, link receipts and ELF validation,
+products, compiler/linker inputs, and every regular file and alias in each
+actual execution root.  Those roots contain the exact copied product files,
+the relevant consumer and oracle, and a copied `/bin/sh` loader closure plus
+private `/dev/null`; the shell closure is explicitly an external fixture, not
+an owned runtime provider or a shell-semantics claim.  In the dynamic roots,
+the fixture's pinned-musl `/lib/ld-musl-x86_64.so.1` replaces only the
+product's unused compatibility alias of that same name.  The required
+`/lib/ld-crabc-x86_64.so.1` entry remains the copied product loader for both
+candidate entries; the receipt records this exceptional external alias path
+and rejects every other alias change.  Successful and failed
+runs remain under `.work/x86_64` for replay.
+
+`python3 -B compat/x86_64/owned_wordexp_evidence.py validate --report REPORT`
+reconstructs a retained receipt on the host.  It requires the fixed
+`/workspace` source-mount translation, current source/product/header/object
+identities, sealed retained pinned-musl inputs, exact retained link receipts
+and ELF observations, and exact execution-tree bytes, modes, aliases, raw
+results, and expected transcripts.  This proves only the bounded
+installed-product component; it does not qualify a family or public support.
