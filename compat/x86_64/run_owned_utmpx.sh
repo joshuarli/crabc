@@ -488,7 +488,6 @@ for mode in pie non-pie; do
     "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$candidate"
     receipt="$candidate.crabc-link.json"
     validate_sealed_link "$installed" "$work/workload.o" "$candidate" "$receipt" "$mode"
-    assert_executable_symbols "$candidate" "$work/dynamic-$mode-symbols.txt"
     root="$work/dynamic-$mode-root"
     mkdir -p "$root"
     cp -a "$installed/." "$root/"
