@@ -75,6 +75,8 @@ for raw, family in ((sys.argv[3], 'static'), (sys.argv[4], 'dynamic')):
             raise SystemExit(f'owned aio {family} product must be a checkout .work directory')
 PY
 
+cd "$ROOT"
+
 readonly WORK="$(mktemp -d "$TMPDIR/owned-aio.XXXXXX")"
 chmod a+rx "$WORK"
 printf 'owned aio evidence: %s\n' "$WORK"

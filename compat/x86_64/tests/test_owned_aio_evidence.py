@@ -167,6 +167,37 @@ class OwnedAioBehaviorObservationTests(unittest.TestCase):
             with self.assertRaises(self.evidence.EvidenceError):
                 self.evidence.assert_oracle_fd_reuse(self.root, fd)
 
+    @staticmethod
+    def _fd_reuse_espipe(*, attempt: int, step: str = "wait-pipe-read", regular: int = 3,
+                         pipe_read: int = 3, pipe_write: int = 4,
+                         positioned_return: int = 1) -> bytes:
+        return (
+            f"fd-reuse-failure step={step} attempt={attempt} regular={regular} "
+            f"pipe-read={pipe_read} pipe-write={pipe_write} positioned-submit=0 "
+            f"positioned-error=0 positioned-return={positioned_return} pipe-submit=0 "
+            "pipe-error=29 pipe-return=-1 byte=0 errno=29\n"
+        ).encode("ascii")
+
+    def test_fd_reuse_espipe_requires_the_exact_stale_queue_observation(self) -> None:
+        for attempt in (0, 511):
+            with self.subTest(valid_attempt=attempt):
+                command = self._record(f"fd-valid-{attempt}", b"", self._fd_reuse_espipe(attempt=attempt), b"1\n")
+                with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+                    self.evidence.assert_oracle_fd_reuse(self.root, command)
+        invalid = (
+            {"attempt": 512},
+            {"attempt": 0, "step": "submit-pipe-read"},
+            {"attempt": 0, "positioned_return": 0},
+            {"attempt": 0, "pipe_write": 3},
+            {"attempt": 0, "pipe_read": 4},
+        )
+        for index, kwargs in enumerate(invalid):
+            with self.subTest(invalid=kwargs):
+                command = self._record(f"fd-invalid-{index}", b"", self._fd_reuse_espipe(**kwargs), b"1\n")
+                with unittest.mock.patch.object(self.evidence, "SOURCE_MOUNT", str(self.root)):
+                    with self.assertRaises(self.evidence.EvidenceError):
+                        self.evidence.assert_oracle_fd_reuse(self.root, command)
+
 
 class OwnedAioSuppliedPathTests(unittest.TestCase):
     def test_symlinked_supplied_product_is_rejected_before_product_validation(self) -> None:

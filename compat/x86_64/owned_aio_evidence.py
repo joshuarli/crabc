@@ -64,11 +64,12 @@ STANDARD_TRANSCRIPTS = {
     "suspend-wake": b"aio-suspend wake-all single/list=ok\n",
 }
 FD_REUSE_SUCCESS = b"fd-reuse-regular-to-pipe=ok\n"
+FD_REUSE_ATTEMPTS = 512
 FD_REUSE_ESPIPE = re.compile(
-    rb"fd-reuse-failure step=[A-Za-z0-9-]+ attempt=[1-9][0-9]* regular=[0-9]+ "
-    rb"pipe-read=-?[0-9]+ pipe-write=-?[0-9]+ positioned-submit=-?[0-9]+ "
-    rb"positioned-error=-?[0-9]+ positioned-return=-?[0-9]+ pipe-submit=0 "
-    rb"pipe-error=29 pipe-return=-1 byte=-?[0-9]+ errno=29\n\Z"
+    rb"fd-reuse-failure step=wait-pipe-read attempt=(?P<attempt>[0-9]+) "
+    rb"regular=(?P<regular>[0-9]+) pipe-read=(?P<pipe_read>[0-9]+) "
+    rb"pipe-write=(?P<pipe_write>[0-9]+) positioned-submit=0 positioned-error=0 "
+    rb"positioned-return=1 pipe-submit=0 pipe-error=29 pipe-return=-1 byte=0 errno=29\n\Z"
 )
 SOURCES = tuple(PROBES.values()) + (
     "compat/x86_64/run_owned_aio.sh", "compat/x86_64/owned_aio_evidence.py",
@@ -509,7 +510,14 @@ def assert_oracle_fd_reuse(root: Path, command: Mapping[str, Any]) -> None:
         if stdout != FD_REUSE_SUCCESS or stderr != b"":
             fail("pinned musl fd-reuse success transcript differs")
     elif status == b"1\n":
-        if stdout != b"" or FD_REUSE_ESPIPE.fullmatch(stderr) is None:
+        match = FD_REUSE_ESPIPE.fullmatch(stderr)
+        if stdout != b"" or match is None:
+            fail("pinned musl fd-reuse failure is not the stale-queue ESPIPE observation")
+        attempt = int(match["attempt"])
+        regular = int(match["regular"])
+        pipe_read = int(match["pipe_read"])
+        pipe_write = int(match["pipe_write"])
+        if not (0 <= attempt < FD_REUSE_ATTEMPTS and regular == pipe_read and pipe_write != regular):
             fail("pinned musl fd-reuse failure is not the stale-queue ESPIPE observation")
     else:
         fail("pinned musl fd-reuse status differs")
