@@ -35,8 +35,10 @@ The controlled shell fixture remains a separately recorded execution input;
 this scanner receipt does not claim general shell compatibility or waive an
 oracle shell failure.
 
-`compat/x86_64/run_owned_wordexp.sh` is the separate installed-product
-component receipt.  With no arguments it materializes the selected dynamic
+`./scripts/dev-x86_64.sh owned-wordexp` dispatches
+`compat/x86_64/run_owned_wordexp.sh` as the separate installed-product
+component receipt. The canonical `wordexp` qualification case requires it for
+each installed, second-build and extracted dynamic product.  With no arguments it materializes the selected dynamic
 and static products, translates the ordinary `owned_wordexp_probe.c` once
 through the installed dynamic headers, and links that unchanged object to the
 pinned-musl static ET_EXEC oracle, owned static ET_EXEC/static-PIE, and owned

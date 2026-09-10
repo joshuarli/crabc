@@ -15,7 +15,7 @@ COMMANDS = (
     "owned-kernel-residual", "owned-linux-control", "owned-dynamic-spawn",
     "owned-process-trio", "owned-underscore-fork", "owned-utmpx", "owned-account-files", "owned-syslog", "owned-crypt-runtime", "owned-system-cancellation",
     "owned-signal-helpers", "owned-pthread-signal", "owned-posix-timers",
-    "owned-dynamic-io-cancellation", "project-header-extension-policy", "owned-locale",
+    "owned-dynamic-io-cancellation", "project-header-extension-policy", "owned-locale", "owned-wordexp",
 )
 
 
@@ -72,7 +72,7 @@ class OwnedPosixReplayDispatchTests(unittest.TestCase):
             for arguments in ([], [str(self.dynamic)], ["--static-sysroot", str(self.static)]):
                 with self.subTest(command=command, arguments=arguments):
                     result = self.invoke(command, arguments)
-                    required_missing = (command == "owned-pthread-signal" and arguments != [str(self.dynamic)]) or (command == "owned-locale" and len(arguments) == 2)
+                    required_missing = (command == "owned-pthread-signal" and arguments != [str(self.dynamic)]) or (command in ("owned-locale", "owned-wordexp") and len(arguments) == 2)
                     self.assertEqual(result.returncode, 2 if required_missing else 0, result.stderr)
                     if required_missing:
                         self.assertIn("usage:", result.stderr)

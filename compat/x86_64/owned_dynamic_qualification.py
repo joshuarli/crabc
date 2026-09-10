@@ -84,6 +84,7 @@ CASES = {
     "locale": ("run_owned_locale.sh", None),
     "pattern": ("run_owned_pattern.sh", None),
     "regex": ("run_owned_regex.sh", None),
+    "wordexp": ("run_owned_wordexp.sh", None),
     "wide-calendar": ("run_owned_wcsftime.sh", None),
     "monetary": ("run_owned_strfmon.sh", None),
     "fmtmsg": ("run_owned_fmtmsg.sh", None),

@@ -125,6 +125,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "locale",
                 "pattern",
                 "regex",
+                "wordexp",
                 "wide-calendar",
                 "monetary",
                 "fmtmsg",
