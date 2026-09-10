@@ -1102,8 +1102,11 @@ mod tests {
     extern crate std;
     use super::*;
     use super::super::{ArenaId, ArenaView};
-    use crate::config::{ARENA_SLICE_SIZE, KIB, MIB, VmOption, VmOptions, VmOptionEnvironment};
+    use crate::bootstrap::ExclusiveTheapBootstrap;
+    use crate::config::{ARENA_SLICE_SIZE, KIB, MIB, SMALL_MAX_OBJ_SIZE, VmOption, VmOptions, VmOptionEnvironment};
     use crate::os::{MapAccess, NormalOsAllocation, PageSize, VmPolicy, fault};
+    use crate::page_map::PageMap;
+    use crate::single_thread::ProcessMetadataPageAllocator;
     use crate::statistics::VmStatisticsSnapshot;
     use crate::subproc::MainSubprocess;
     use crabc_core::Errno;
@@ -1121,6 +1124,13 @@ mod tests {
         // preload interval; production transition belongs to process_init.
         policy.finish_preloading();
         VmProcess::new(policy, MainSubprocess::test_static_owner())
+    }
+
+    fn process_with_page_commit_on_demand() -> VmProcess<'static> {
+        let mut options = VmOptions::uninitialized();
+        options.initialize_all(|_| VmOptionEnvironment::Absent);
+        options.set(VmOption::PageCommitOnDemand, 1);
+        process_with_options(options)
     }
 
     fn config() -> MemoryConfig {
@@ -1685,10 +1695,126 @@ mod tests {
         assert_eq!(trace.commits.load(Ordering::Acquire), 1);
     }
 
-    /// One address-free direct `_mi_os_commit` record for the external owner.
-    /// It remains distinct from callback-backed initial page claims: source
-    /// `mi_page_extend_free` validates and commits the later prefix directly.
-    fn m2_external_page_extension_trace(fault: &fault::Guard) -> [usize; 4] {
+    /// Records the external receiver's real `mi_page_extend_free` state.
+    ///
+    /// This must use a `ProcessMetadataPageAllocator` bound to the same
+    /// subprocess backing that owns the external lease. The C differential
+    /// invokes `mi_page_extend_free` on an actual external-heap page, so the
+    /// matching Rust values observe `Page::free`, `capacity`, and
+    /// `slice_pcommitted`, rather than a lower-level arena bitmap alone.
+    fn m2_external_page_extension_trace(fault: &fault::Guard) -> [usize; 3] {
+        let process = process_with_page_commit_on_demand();
+        let backing = process.subprocess().arena_backing();
+        let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
+        let (lease, _) = external_lease(process, ARENA_MIN_SIZE, false, false, trace);
+        let id = install_external(backing, process, ARENA_MIN_SIZE, lease).arena_id();
+        let mut page_map = PageMap::initialize(config(), 0, true)
+            .expect("the isolated external process initializes its page map");
+        let bootstrap = ExclusiveTheapBootstrap::new();
+        let mut bootstrap = core::pin::pin!(bootstrap);
+        bootstrap
+            .as_mut()
+            .bind_detached_for_main_subprocess(process.subprocess())
+            .expect("the isolated process binds its detached metadata image before first demand");
+        let mut allocator = unsafe {
+            ProcessMetadataPageAllocator::activate_process_metadata(
+                bootstrap.as_mut(), process, &page_map,
+            )
+        }
+        .expect("the isolated process metadata session binds its external backing");
+        let request = SMALL_MAX_OBJ_SIZE + 1;
+        let first = allocator
+            .allocate(request, false)
+            .expect("the external source page commits its initial medium prefix");
+        let page = NonNull::new(unsafe { allocator.page_for_block(first) })
+            .expect("the initial external medium page is PageMap-published");
+        let memory = unsafe { page.as_ref().memid() };
+        assert_eq!(
+            memory.arena_memory().map(|arena| arena.arena),
+            Some(id.as_ptr()),
+            "the real source page resolves to the installed external owner",
+        );
+        let owner = unsafe { backing.allocation_for_arena(&*id.as_ptr()) }
+            .expect("the installed external arena retains its terminal owner");
+        assert!(matches!(&owner.allocation, ArenaBacking::External(_)));
+        assert_eq!(
+            crate::size_class::page_kind_for_block_size(unsafe { page.as_ref().block_size() }),
+            Some(crate::types::PageKind::Medium),
+            "the external receiver uses the source medium-page extension shape",
+        );
+        assert!(unsafe { page.as_ref().slice_pcommitted() } != 0);
+        assert!(unsafe { page.as_ref().free_list_head() }.is_null());
+        assert!(
+            trace.commits.load(Ordering::Acquire) > 0,
+            "external metadata and the first page prefix use the real callback before it is cleared",
+        );
+
+        // Pinned `mi_page_extend_free` calls `_mi_os_commit` directly after
+        // that initial callback-backed prefix. Its private Rust receiver must
+        // leave the live Page unchanged when the direct commit faults.
+        trace.clear_observation();
+        let before = process.subprocess().vm_statistics().snapshot();
+        let source_capacity = unsafe { page.as_ref().capacity() };
+        let source_prefix = unsafe { page.as_ref().slice_pcommitted() };
+        let source_free = unsafe { page.as_ref().free_list_head() };
+        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
+        let failure = !allocator.test_extend_on_demand_page_before_allocation(page);
+        let failed = process.subprocess().vm_statistics().snapshot();
+        let failure_consumes_direct_fault_without_callback = failure
+            && failed.commit_calls == before.commit_calls + 1
+            && failed.committed_current == before.committed_current
+            && fault.observed() == 1
+            && trace.commits.load(Ordering::Acquire) == 0;
+        let failure_preserves_unpublished_page_area =
+            unsafe { page.as_ref().capacity() } == source_capacity
+                && unsafe { page.as_ref().slice_pcommitted() } == source_prefix
+                && unsafe { page.as_ref().free_list_head() } == source_free;
+
+        fault.set(fault::Plan::disabled());
+        let retry = allocator.test_extend_on_demand_page_before_allocation(page);
+        let retried = process.subprocess().vm_statistics().snapshot();
+        let retry_prefix = unsafe { page.as_ref().slice_pcommitted() };
+        let requested_direct_commit = usize::from(
+            retry_prefix.checked_sub(source_prefix)
+                .expect("a successful source extension advances its committed prefix"),
+        )
+            * config().page_size().bytes();
+        let retry_commits_directly_without_callback = retry
+            && retried.commit_calls == before.commit_calls + 2
+            && retried.committed_current
+                == before.committed_current + requested_direct_commit as i64
+            && unsafe { page.as_ref().capacity() } > source_capacity
+            && retry_prefix > source_prefix
+            && !unsafe { page.as_ref().free_list_head() }.is_null()
+            && trace.commits.load(Ordering::Acquire) == 0;
+        let reused = allocator
+            .allocate(request, false)
+            .expect("the refilled external page supplies its ordinary retry allocation");
+        let retry_reuses_same_page = unsafe { allocator.page_for_block(reused) } == page.as_ptr();
+        unsafe {
+            allocator.free(first).expect("the first external page block remains freeable");
+            allocator.free(reused).expect("the retried external page block remains freeable");
+        }
+        assert!(allocator.finish().is_ok(), "the external page fixture quiesces its source page");
+        unsafe { page_map.destroy() }
+            .expect("the quiesced isolated page map releases its owned mapping");
+
+        [
+            usize::from(failure_consumes_direct_fault_without_callback),
+            usize::from(failure_preserves_unpublished_page_area),
+            usize::from(retry_commits_directly_without_callback && retry_reuses_same_page),
+        ]
+    }
+
+    #[test]
+    fn external_page_extension_bypasses_callback_and_retries_the_direct_process_commit() {
+        let fault = fault::install(fault::Plan::disabled());
+        assert_eq!(m2_external_page_extension_trace(&fault), [1; 3]);
+    }
+
+    #[test]
+    fn external_direct_page_area_rejects_an_out_of_range_span_before_commit() {
+        let fault = fault::install(fault::Plan::disabled());
         let process = process();
         let backing = backing();
         let trace = Box::leak(Box::new(ExternalCallbackTrace::new()));
@@ -1698,63 +1824,19 @@ mod tests {
             backing.try_find_free(search(id), 1, ARENA_SLICE_SIZE, false)
         }
         .expect("the external arena supplies one uncommitted page-area span");
-        let memory = claim.memory_id();
         let page = config().page_size().bytes();
-        let view = unsafe { ArenaView::from_ptr(id.as_ptr()) }
-            .expect("the external arena remains published for its page extension");
-        let committed = unsafe { view.slices_committed() }
-            .expect("the source complete-slice bitmap remains inspectable");
-        assert_eq!(committed.is_clear_range(claim.slice_index(), 1), Some(true));
-
-        // `mi_page_extend_free` calls `_mi_os_commit` directly: it must not
-        // reenter the external `mi_arena_commit` callback after the initial
-        // page prefix has been established.
         trace.clear_observation();
-        let before = process.subprocess().vm_statistics().snapshot();
-        fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
-        let failure = unsafe { backing.commit_page_area(memory, 0, page) };
-        let failed = process.subprocess().vm_statistics().snapshot();
-        let failure_consumes_direct_fault_without_callback = failure
-            == Err(ArenaPageCommitError::Mapping(Errno::NOMEM))
-            && failed.commit_calls == before.commit_calls + 1
-            && failed.committed_current == before.committed_current
-            && fault.observed() == 1
-            && trace.commits.load(Ordering::Acquire) == 0;
-        let failure_preserves_unpublished_page_area =
-            committed.is_clear_range(claim.slice_index(), 1) == Some(true);
-
-        fault.set(fault::Plan::disabled());
-        let retry = unsafe { backing.commit_page_area(memory, 0, page) };
-        let retried = process.subprocess().vm_statistics().snapshot();
-        let retry_commits_directly_without_callback = retry.is_ok()
-            && retried.commit_calls == before.commit_calls + 2
-            && retried.committed_current == before.committed_current + page as i64
-            && trace.commits.load(Ordering::Acquire) == 0;
-        let partial_commit_leaves_complete_slice_bitmap =
-            committed.is_clear_range(claim.slice_index(), 1) == Some(true);
-
         fault.set(fault::Plan::at(fault::Point::Commit, 1, Errno::NOMEM));
         let before_invalid = process.subprocess().vm_statistics().snapshot();
-        let invalid = unsafe { backing.commit_page_area(memory, ARENA_SLICE_SIZE, page) };
+        let invalid = unsafe {
+            backing.commit_page_area(claim.memory_id(), ARENA_SLICE_SIZE, page)
+        };
         let invalid_area_rejected_before_commit = invalid == Err(ArenaPageCommitError::InvalidPageArea)
             && process.subprocess().vm_statistics().snapshot() == before_invalid
             && fault.observed() == 0
             && trace.commits.load(Ordering::Acquire) == 0;
         fault.set(fault::Plan::disabled());
-        let released = claim.release();
-        [
-            usize::from(failure_consumes_direct_fault_without_callback),
-            usize::from(failure_preserves_unpublished_page_area),
-            usize::from(retry_commits_directly_without_callback
-                && partial_commit_leaves_complete_slice_bitmap),
-            usize::from(invalid_area_rejected_before_commit && released),
-        ]
-    }
-
-    #[test]
-    fn external_page_extension_bypasses_callback_and_retries_the_direct_process_commit() {
-        let fault = fault::install(fault::Plan::disabled());
-        assert_eq!(m2_external_page_extension_trace(&fault), [1; 4]);
+        assert!(invalid_area_rejected_before_commit && claim.release());
     }
 
     #[test]

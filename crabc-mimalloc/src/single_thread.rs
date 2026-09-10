@@ -35270,6 +35270,21 @@ impl<'arena, 'map, Session: TheapPageSession, Backing: crate::page_backing::Page
         unsafe { self.page_map.checked_lookup(block.as_ptr()) }
     }
 
+    /// Invokes the unchanged private `mi_page_extend_free` receiver for one
+    /// already published, exclusively owned on-demand page. This is only a
+    /// focused differential seam: callers keep the complete page lifecycle,
+    /// its PageMap entry, and the process arena backing live while observing
+    /// the source failure/retry state. It grants no page selection, fresh
+    /// allocation, or backing capability.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) fn test_extend_on_demand_page_before_allocation(
+        &mut self,
+        page: NonNull<Page>,
+    ) -> bool {
+        self.extend_on_demand_page_before_allocation(page).is_ok()
+    }
+
     /// Allocates one normal-release ordinary block, optionally clearing its
     /// full source block size.
     ///
