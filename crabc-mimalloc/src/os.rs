@@ -4672,10 +4672,18 @@ pub(crate) mod fault {
     }
 
     impl AdviceRangeCapture<'_> {
+        /// Reports every observed mapping-owned advice call so a source policy
+        /// cell which should skip advice cannot pass merely because no fault
+        /// plan was armed for it.
+        #[inline]
+        pub(crate) fn count(&self) -> usize {
+            ADVICE_RANGE_CAPTURE_COUNT.load(Ordering::Acquire)
+        }
+
         /// Returns the exact raw tuple only if the selected branch made one
         /// mapping-owned advisory call.
         pub(crate) fn range(&self) -> Option<(usize, usize, u32)> {
-            if ADVICE_RANGE_CAPTURE_COUNT.load(Ordering::Acquire) != 1 {
+            if self.count() != 1 {
                 return None;
             }
             Some((
@@ -6634,6 +6642,20 @@ mod tests {
                             let primitive_expected = !negative_delay && contains_page
                                 && (decommit_branch || allow_reset);
                             let expected_recommit = decommit_branch && !contains_page;
+                            // Pinned Unix decommit always selects
+                            // `MADV_DONTNEED`. The reset branch must instead
+                            // use the source-global cache value that it reads
+                            // before this exact call: standalone tests may
+                            // begin at `MADV_FREE`, while the M2 differential
+                            // has already observed the source EINVAL fallback
+                            // and therefore expects `MADV_DONTNEED`.
+                            let expected_advice = primitive_expected.then(|| {
+                                if decommit_branch {
+                                    MADV_DONTNEED
+                                } else {
+                                    RESET_ADVICE.load(Ordering::Acquire) as u32
+                                }
+                            });
                             if primitive_expected {
                                 fault.set(fault::Plan::at(
                                     if decommit_branch {
@@ -6647,8 +6669,11 @@ mod tests {
                             } else {
                                 fault.set(fault::Plan::disabled());
                             }
-                            let advice_capture = primitive_expected
-                                .then(|| fault.capture_advice_range());
+                            // Capture every cell, including source decisions
+                            // that must not reach a raw advice. A disabled
+                            // fault plan alone cannot distinguish that branch
+                            // from an unexpected successful primitive call.
+                            let advice_capture = fault.capture_advice_range();
 
                             assert_eq!(
                                 mapping.purge_for_process(process, offset, length, allow_reset, length),
@@ -6660,16 +6685,18 @@ mod tests {
                                 usize::from(primitive_expected),
                                 "raw advice selection for delay={delay}, purge_decommits={purge_decommits}, preloading={preloading}, allow_reset={allow_reset}, offset={offset}, length={length}"
                             );
-                            if let Some(advice_capture) = advice_capture.as_ref() {
+                            assert_eq!(
+                                advice_capture.count(),
+                                usize::from(primitive_expected),
+                                "raw advice count for delay={delay}, purge_decommits={purge_decommits}, preloading={preloading}, allow_reset={allow_reset}, offset={offset}, length={length}"
+                            );
+                            if primitive_expected {
                                 let (address, advised_length, advice) = advice_capture
                                     .range()
                                     .expect("the selected source policy reaches one normalized raw advice");
                                 assert_eq!(address, base.addr() + advice_offset);
                                 assert_eq!(advised_length, page);
-                                assert!(
-                                    matches!(advice, MADV_FREE | MADV_DONTNEED),
-                                    "the source reset/decommit profile selects one Linux advice"
-                                );
+                                assert_eq!(Some(advice), expected_advice);
                             }
                             assert_eq!(mapping.base(), Ok(base), "the policy result retains its typed mapping owner");
                             let after = subprocess.vm_statistics().snapshot();
