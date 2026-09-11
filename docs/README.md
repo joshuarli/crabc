@@ -54,6 +54,7 @@ them; this router should explain ownership, not duplicate command contracts.
 - [Owned fmtmsg evidence](../compat/x86_64/owned-fmtmsg.md)
 - [Owned utmpx evidence](evidence/x86-owned-utmpx.md)
 - [Owned account-file evidence](../compat/x86_64/owned-account-files.md)
+- [Owned rand/srand dependency and evidence](../compat/x86_64/owned-rand.md)
 - [Owned AIO evidence](evidence/x86-owned-aio.md)
 - [Owned C filename-pattern evidence](../compat/x86_64/owned-pattern.md)
   — source-mapped `fnmatch`/`glob` C ABI slice across owned products; neither

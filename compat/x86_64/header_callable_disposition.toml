@@ -51,7 +51,7 @@ linkage_owner_obligation = "final-callable-provider-archive-closure"
 resolution = "planned-provider"
 provider_target = "future selected C ABI providers in libc.posix-runtime"
 source_oracle = "Pinned musl 1.2.6 public headers and selected x86 callable inventory"
-members = ["initstate", "rand", "random", "setstate", "srand", "srandom"]
+members = ["initstate", "random", "setstate", "srandom"]
 
 [[deferred_owner_group]]
 id = "x86-header-callable-builtin-v1"

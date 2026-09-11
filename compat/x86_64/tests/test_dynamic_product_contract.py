@@ -126,6 +126,7 @@ class DynamicProductContractTests(unittest.TestCase):
                 "locale",
                 "stdio",
                 "numeric-calendar",
+                "rand",
                 "pattern",
                 "regex",
                 "wordexp",

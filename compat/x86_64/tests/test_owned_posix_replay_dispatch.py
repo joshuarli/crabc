@@ -15,7 +15,7 @@ COMMANDS = (
     "owned-kernel-residual", "owned-linux-control", "owned-dynamic-spawn",
     "owned-process-trio", "owned-underscore-fork", "owned-utmpx", "owned-account-files", "owned-syslog", "owned-crypt-runtime", "owned-system-cancellation",
     "owned-signal-helpers", "owned-pthread-signal", "owned-posix-timers",
-    "owned-dynamic-io-cancellation", "project-header-extension-policy", "owned-locale", "owned-wordexp", "owned-stdio", "owned-aio", "owned-numeric-calendar",
+    "owned-dynamic-io-cancellation", "project-header-extension-policy", "owned-locale", "owned-wordexp", "owned-stdio", "owned-aio", "owned-numeric-calendar", "owned-rand",
 )
 
 

@@ -606,6 +606,13 @@ files plus `cuserid`; [`owned-account-files.md`](owned-account-files.md)
 records the opaque hash-field, TCB fallback, source no-op, storage, and
 same-object musl/static/dynamic boundaries.
 
+The owned C `rand` and `srand` pair uses the exact reviewed `rand_pcg` dependency
+for its state transition. `owned-rand` compares one installed-header object
+with musl across static and dynamic modes, including seeding, serialized
+threads, fork and shared-DSO state. [`owned-rand.md`](owned-rand.md) records
+the dependency graph, source mapping and atomic concurrency extension. The
+four BSD `random` state APIs remain unresolved providers.
+
 The installed C filename-pattern entries are qualified by `owned-pattern`.
 [`owned-pattern.md`](owned-pattern.md) records the musl source mapping,
 multibyte/classification, `glob_t` allocation, local passwd lookup, directory,
