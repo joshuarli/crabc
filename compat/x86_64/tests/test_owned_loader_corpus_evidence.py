@@ -304,6 +304,32 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         self.assertEqual(identity["case_count"], len(evidence.LOADER_CASES))
         self.assertEqual(identity["product_manifest_sha256"], sha256(self.product / "share/crabc/manifest.json"))
 
+    def test_loader_shared_sidecar_command_binds_its_soname(self) -> None:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        link = value["cases"]["nested-needed"]["links"][0]
+        search_kind, search_path, hash_style, export_dynamic = evidence._loader_link_settings(
+            "nested-needed", link["kind"], link["output"]
+        )
+        command = evidence._loader_sidecar_command(
+            "/opt/toolchain/ld.lld", ROOT, "/workspace", self.product, link,
+            search_kind, search_path, hash_style, export_dynamic,
+        )
+        self.assertEqual(command[16:18], ["-soname", "libnested_leaf.so"])
+
+    def test_loader_pie_sidecar_command_binds_the_owned_interpreter(self) -> None:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        link = value["cases"]["nested-needed"]["links"][-1]
+        search_kind, search_path, hash_style, export_dynamic = evidence._loader_link_settings(
+            "nested-needed", link["kind"], link["output"]
+        )
+        command = evidence._loader_sidecar_command(
+            "/opt/toolchain/ld.lld", ROOT, "/workspace", self.product, link,
+            search_kind, search_path, hash_style, export_dynamic,
+        )
+        self.assertEqual(command[16:18], ["--dynamic-linker", "/lib/ld-crabc-x86_64.so.1"])
+
     def test_loader_reader_binds_every_sidecar_to_the_sealed_producer_linker(self) -> None:
         report = self._loader_report()
         value = json.loads(report.read_text(encoding="utf-8"))
@@ -313,6 +339,26 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         report.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
         with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "sidecar linker differs from the sealed producer linker"):
             evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
+    def test_loader_hash_format_oracle_link_receipts_are_consumed_once(self) -> None:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        raw = report.parent / "cases" / "hash-formats" / "raw"
+        expected = [
+            str(evidence._loader().ORACLE_CC), "-shared",
+            value["cases"]["hash-formats"]["objects"][0]["object"],
+            "-Wl,--hash-style=gnu", "-o",
+            evidence.recorded_path(ROOT, "/workspace", report.parent / "cases" / "hash-formats" / "oracle-root/usr/lib/libhash_gnu.so"),
+        ]
+        observed = [
+            item for item in (json.loads(path.read_text(encoding="utf-8")) for path in raw.glob("*.json"))
+            if item["argv"] == expected
+        ]
+        self.assertEqual(len(observed), 1)
+        self.assertEqual(
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)["case_count"],
+            21,
+        )
 
     def test_loader_reader_rejects_a_partial_passing_selection(self) -> None:
         report = self._loader_report()

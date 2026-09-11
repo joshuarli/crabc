@@ -21,6 +21,7 @@ import math
 import os
 import pathlib
 import re
+import resource
 import shutil
 import stat
 import subprocess
@@ -310,6 +311,12 @@ def tree_seal(root: pathlib.Path) -> dict[str, object]:
     return {"entries": entries, "sha256": hashlib.sha256(encoded).hexdigest()}
 
 
+def disable_child_core_dumps() -> None:
+    """Keep signal-probe descendants from adding unsealed core files to roots."""
+
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+
 class Recorder:
     def __init__(self, work: pathlib.Path, timeout: float) -> None:
         self.work, self.timeout, self.index = work, timeout, 0
@@ -326,7 +333,9 @@ class Recorder:
         boundary_error: Exception | None = None
         try:
             with qualification.private_admission_subreaper() as descendants:
-                process = subprocess.Popen(rendered, cwd=cwd, env=selected_env or None, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                process = subprocess.Popen(rendered, cwd=cwd, env=selected_env or None, stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE, start_new_session=True,
+                                           preexec_fn=disable_child_core_dumps)
                 descendants.register_private_runner(process)
                 try:
                     stdout, stderr = process.communicate(timeout=timeout_seconds)
@@ -622,7 +631,10 @@ def case_standard(name: str, work: pathlib.Path, product: pathlib.Path, recorder
         if not valid_aslr_pair(reference) or not valid_aslr_pair(candidate_results) or not valid_aslr_pair(direct):
             raise LoaderSyntheticError("ASLR fixture did not retain distinct main and DSO bases across process starts")
         return {"result": "pass", "properties": properties, "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}, "oracle": [item.json() for item in reference], "candidate": [item.json() for item in candidate_results], "candidate_direct": [item.json() for item in direct]}
-    result = {"result": "pass", "properties": properties, "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}, **compare_standard(recorder, name, oracle_root, candidate_root, oracle, candidate, spec.expected, dict(spec.environment))}
+    behavior = compare_standard(recorder, name, oracle_root, candidate_root, oracle, candidate, spec.expected,
+                                dict(spec.environment))
+    result = {"result": "pass", "properties": properties, **behavior,
+              "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}}
     if "structural_error" in properties:
         result.update(result="fail", error=properties["structural_error"])
     return result
@@ -649,7 +661,10 @@ def case_hash_formats(work: pathlib.Path, product: pathlib.Path, recorder: Recor
     spec = Spec("hash_main.c", b"hash=13,29\n")
     oracle = builder.executable("oracle", oracle_root, "consumer", builder.role(FIXTURES / spec.main))
     candidate = builder.executable("candidate", candidate_root, "consumer", builder.role(FIXTURES / spec.main))
-    result = {"result": "pass", "dynamic": observed, "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}, **compare_standard(recorder, "hash-formats", oracle_root, candidate_root, oracle, candidate, spec.expected, {"LD_LIBRARY_PATH": "/usr/lib"})}
+    behavior = compare_standard(recorder, "hash-formats", oracle_root, candidate_root, oracle, candidate,
+                                spec.expected, {"LD_LIBRARY_PATH": "/usr/lib"})
+    result = {"result": "pass", "dynamic": observed, **behavior,
+              "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}}
     if "(GNU_HASH)" not in observed["candidate-gnu"]:
         result.update(result="fail", error="owned dynamic driver did not provide a GNU-hash fixture; recorded actual SysV-only output")
     return result
@@ -673,7 +688,10 @@ def case_hash_many(work: pathlib.Path, product: pathlib.Path, recorder: Recorder
         raise LoaderSyntheticError(f"many-symbol fixture exported {count}, expected 1025")
     oracle = builder.executable("oracle", oracle_root, "consumer", builder.role(FIXTURES / "hash_many_main.c"))
     candidate = builder.executable("candidate", candidate_root, "consumer", builder.role(FIXTURES / "hash_many_main.c"))
-    result = {"result": "pass", "symbol_count": count, "dynamic": tags(dynamic), "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}, **compare_standard(recorder, "hash-many", oracle_root, candidate_root, oracle, candidate, b"hash-many=1024,0\n", {"LD_LIBRARY_PATH": "/usr/lib"})}
+    behavior = compare_standard(recorder, "hash-many", oracle_root, candidate_root, oracle, candidate,
+                                b"hash-many=1024,0\n", {"LD_LIBRARY_PATH": "/usr/lib"})
+    result = {"result": "pass", "symbol_count": count, "dynamic": tags(dynamic), **behavior,
+              "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}}
     if "(GNU_HASH)" not in result["dynamic"] or "(HASH)" not in result["dynamic"]:
         result.update(result="fail", error="owned driver did not provide the frozen GNU+SysV 1025-symbol hash fixture")
     return result
@@ -765,7 +783,10 @@ def case_origin(work: pathlib.Path, product: pathlib.Path, recorder: Recorder, b
     text = tags(dynamic)
     if "(RUNPATH)" not in text or "$ORIGIN" not in text or "liborigin_leaf.so" not in text:
         raise LoaderSyntheticError("candidate origin DSO lost frozen RUNPATH/DT_NEEDED evidence")
-    return {"result": "pass", "dynamic": text, "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}, **compare_standard(recorder, "dso-origin", oracle_root, candidate_root, oracle, candidate, b"origin=18\n")}
+    behavior = compare_standard(recorder, "dso-origin", oracle_root, candidate_root, oracle, candidate,
+                                b"origin=18\n")
+    return {"result": "pass", "dynamic": text, **behavior,
+            "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}}
 
 
 def unsupported_case(name: str, work: pathlib.Path, product: pathlib.Path, recorder: Recorder, builder: FixtureBuilder) -> dict[str, object]:

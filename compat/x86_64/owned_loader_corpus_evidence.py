@@ -740,10 +740,12 @@ def _loader_sidecar_command(linker: str, root: Path, source_mount: str, product:
                "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
                "--allow-shlib-undefined", "--disable-new-dtags" if search_kind == "rpath" else "--enable-new-dtags",
                "-rpath", search_path]
+    if kind == "shared":
+        command.extend(("-soname", Path(link["output"]).name))
     if export_dynamic:
         command.append("--export-dynamic")
     if kind == "executable":
-        command.extend(("--dynamic-linker", "/lib/ld-musl-x86_64.so.1", recorded(library / "Scrt1.o"),
+        command.extend(("--dynamic-linker", "/lib/ld-crabc-x86_64.so.1", recorded(library / "Scrt1.o"),
                         recorded(library / "crabc-dynamic-attach.o")))
     command.extend((recorded(library / "crti.o"), link["object"],
                     *(item["path"] for item in link["dependencies"]), recorded(library / "libc.so"),
@@ -1040,11 +1042,8 @@ def _validate_loader_behavior(name: str, case: Mapping[str, Any], raw_records: _
                  and "(GNU_HASH)" in case["dynamic"]["candidate-gnu"], "loader hash-format tags differ")
         oracle = recorded_path(root, source_mount, work / "oracle-root" / "usr/lib")
         candidate = recorded_path(root, source_mount, work / "candidate-root" / "usr/lib")
-        objects = case["objects"]
-        raw_records.take([str(loader.ORACLE_CC), "-shared", objects[0]["object"], "-Wl,--hash-style=gnu", "-o", oracle + "/libhash_gnu.so"],
-                 recorded_path(root, source_mount, work), {}, "loader hash GNU oracle link")
-        raw_records.take([str(loader.ORACLE_CC), "-shared", objects[1]["object"], "-Wl,--hash-style=sysv", "-o", oracle + "/libhash_sysv.so"],
-                 recorded_path(root, source_mount, work), {}, "loader hash SysV oracle link")
+        # The v2 finite link plan consumes the direct oracle link records.
+        # This branch still binds their retained readelf observations.
         for field, path in (("oracle-gnu", oracle + "/libhash_gnu.so"), ("oracle-sysv", oracle + "/libhash_sysv.so"),
                             ("candidate-gnu", candidate + "/libhash_gnu.so"), ("candidate-sysv", candidate + "/libhash_sysv.so")):
             _loader_readelf(raw_records, root, source_mount, work, ["readelf", "-dW", path], case["dynamic"][field],

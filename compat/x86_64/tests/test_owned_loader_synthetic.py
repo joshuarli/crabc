@@ -73,6 +73,18 @@ print('parent observation', flush=True)
             self.assertEqual(observation["returncode"], 0)
             self.assertFalse(observation["timed_out"])
 
+    def test_recorder_children_disable_core_dumps(self) -> None:
+        module = runner()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            work = pathlib.Path(directory)
+            result = module.Recorder(work, 2).run(
+                "core-limit", [sys.executable, "-c", "import resource; print(resource.getrlimit(resource.RLIMIT_CORE))"],
+                cwd=work,
+            )
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(result.stdout, b"(0, 0)\n")
+            self.assertFalse(result.timed_out)
+
     def test_recorder_timeout_reaps_a_session_escaping_descendant(self) -> None:
         """A timed-out fixture cannot leave a private session alive."""
         module = runner()
@@ -112,6 +124,35 @@ time.sleep(30)
                     os.kill(child, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+
+    def test_standard_case_seals_roots_after_runtime_observations(self) -> None:
+        module = runner()
+        oracle_root = pathlib.Path("/private/work/oracle-root")
+        candidate_root = pathlib.Path("/private/work/candidate-root")
+        observed = False
+
+        def compare(*_args, **_kwargs):
+            nonlocal observed
+            observed = True
+            return {"oracle": {}, "candidate": {}, "candidate_direct": {}}
+
+        def seal(root):
+            self.assertTrue(observed)
+            return {"root": str(root)}
+
+        with (
+            mock.patch.object(module, "copy_root"),
+            mock.patch.object(module, "build_arm", side_effect=[
+                (pathlib.Path("/private/oracle"), {}),
+                (pathlib.Path("/private/candidate"), {}),
+            ]),
+            mock.patch.object(module, "compare_standard", side_effect=compare),
+            mock.patch.object(module, "tree_seal", side_effect=seal),
+        ):
+            result = module.case_standard("main-handle", pathlib.Path("/private/work"),
+                                          pathlib.Path("/private/product"), object(), object())
+        self.assertEqual(result["execution_roots"], {"oracle": {"root": str(oracle_root)},
+                                                       "candidate": {"root": str(candidate_root)}})
 
     def test_roster_is_the_complete_frozen_loader_set(self) -> None:
         module = runner()
