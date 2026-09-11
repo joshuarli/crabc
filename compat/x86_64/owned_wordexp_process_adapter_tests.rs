@@ -14,8 +14,47 @@ use core::{
 };
 use std::{
     collections::VecDeque,
+    io::Read,
+    process::{Command, Stdio},
     sync::{Mutex, OnceLock},
 };
+
+const SIGCHLD: c_int = 17;
+const SIG_IGN: usize = 1;
+const SIG_ERR: usize = usize::MAX;
+
+unsafe extern "C" {
+    #[link_name = "signal"]
+    fn test_signal(signal: c_int, handler: usize) -> usize;
+}
+
+/// Restores the process-wide SIGCHLD disposition after the serial native
+/// control test. The runner deliberately uses one test thread for this.
+struct SigchldRestore {
+    prior: usize,
+}
+
+impl SigchldRestore {
+    fn ignore() -> Self {
+        let prior = unsafe {
+            // SAFETY: this pinned test process serializes the temporary
+            // disposition change and restores the prior handler on drop.
+            test_signal(SIGCHLD, SIG_IGN)
+        };
+        assert_ne!(prior, SIG_ERR, "SIGCHLD must accept SIG_IGN in the native control");
+        Self { prior }
+    }
+}
+
+impl Drop for SigchldRestore {
+    fn drop(&mut self) {
+        unsafe {
+            // SAFETY: `prior` came from this process's preceding signal call.
+            // Keep cleanup best-effort so an unrelated panic cannot double-panic.
+            let _ = test_signal(SIGCHLD, self.prior);
+        }
+    }
+}
 
 mod test_support {
     use super::*;
@@ -396,6 +435,22 @@ fn contains_entry(entries: &[Vec<u8>], expected: &[u8]) -> bool {
     entries.iter().any(|entry| entry.as_slice() == expected)
 }
 
+fn captured_script() -> Vec<u8> {
+    let state = test_support::lock();
+    assert_eq!(state.scripts.len(), 1, "one selected command must spawn once");
+    state.scripts[0].clone()
+}
+
+fn run_captured_script(script: &[u8]) -> std::process::Output {
+    let source = core::str::from_utf8(script)
+        .expect("the focused shell corpus is ASCII source without NUL");
+    Command::new("/bin/sh")
+        .arg("-c")
+        .arg(source)
+        .output()
+        .expect("the pinned native image provides /bin/sh")
+}
+
 #[test]
 fn snapshot_keeps_first_values_empty_ifs_locale_and_nonidentifier_entries() {
     let (mut context, snapshot) = capture(&[
@@ -505,27 +560,61 @@ fn command_retries_eintr_ignores_exit_status_and_applies_showerr_once() {
 }
 
 #[test]
-fn command_uses_backtick_quote_context_without_reparsing_or_changing_dollarparen_bytes() {
-    let (mut context, snapshot) = capture(&[], false);
-    {
-        let mut state = test_support::lock();
-        state.reads.push_back(test_support::ReadStep::Bytes(b"literal\n".to_vec()));
-        state.reads.push_back(test_support::ReadStep::End);
+fn captured_backtick_scripts_follow_pinned_shell_quote_and_line_rules() {
+    struct Case {
+        input: &'static [u8],
+        script: &'static [u8],
+        stdout: &'static [u8],
     }
-    let words = evaluate(b"`printf '%s' \\\"hi\\\"`", &mut context, &snapshot, true).unwrap();
-    assert_words(&words, &[b"literal"]);
-    assert_eq!(test_support::lock().scripts, vec![b"printf '%s' \\\"hi\\\"".to_vec()]);
 
-    let (mut context, snapshot) = capture(&[], false);
-    {
-        let mut state = test_support::lock();
-        state.reads.push_back(test_support::ReadStep::Bytes(b"quoted\n".to_vec()));
-        state.reads.push_back(test_support::ReadStep::End);
+    let cases = [
+        Case {
+            input: b"`printf '%s' \\\"hi\\\"`",
+            script: b"printf '%s' \\\"hi\\\"",
+            stdout: b"\"hi\"",
+        },
+        Case {
+            input: b"\"`printf '%s' \\\"hi\\\"`\"",
+            script: b"printf '%s' \"hi\"",
+            stdout: b"hi",
+        },
+        // A backslash plus a physical newline disappears as one line
+        // continuation. Leaving the newline would turn this into two commands.
+        Case {
+            input: b"`printf fo\\
+o`",
+            script: b"printf foo",
+            stdout: b"foo",
+        },
+        Case {
+            input: b"\"`printf fo\\
+o`\"",
+            script: b"printf foo",
+            stdout: b"foo",
+        },
+    ];
+
+    for case in cases {
+        let (mut context, snapshot) = capture(&[], false);
+        {
+            let mut state = test_support::lock();
+            state.reads.push_back(test_support::ReadStep::Bytes(case.stdout.to_vec()));
+            state.reads.push_back(test_support::ReadStep::End);
+        }
+        let words = evaluate(case.input, &mut context, &snapshot, true).unwrap();
+        assert_words(&words, &[case.stdout]);
+
+        let script = captured_script();
+        assert_eq!(script, case.script);
+        let output = run_captured_script(&script);
+        assert!(output.status.success(), "captured script failed: {script:?}");
+        assert_eq!(output.stdout, case.stdout, "captured script: {script:?}");
+        assert!(output.stderr.is_empty(), "captured script: {script:?}");
     }
-    let words = evaluate(b"\"`printf '%s' \\\"hi\\\"`\"", &mut context, &snapshot, true).unwrap();
-    assert_words(&words, &[b"quoted"]);
-    assert_eq!(test_support::lock().scripts, vec![b"printf '%s' \"hi\"".to_vec()]);
+}
 
+#[test]
+fn dollarparen_body_remains_byte_exact_at_the_process_boundary() {
     let (mut context, snapshot) = capture(&[], false);
     {
         let mut state = test_support::lock();
@@ -534,7 +623,7 @@ fn command_uses_backtick_quote_context_without_reparsing_or_changing_dollarparen
     }
     let words = evaluate(b"\"$(printf '%s' \\\"hi\\\")\"", &mut context, &snapshot, true).unwrap();
     assert_words(&words, &[b"dollar"]);
-    assert_eq!(test_support::lock().scripts, vec![b"printf '%s' \\\"hi\\\"".to_vec()]);
+    assert_eq!(captured_script(), b"printf '%s' \\\"hi\\\"".to_vec());
 }
 
 #[test]
@@ -573,21 +662,42 @@ fn command_output_failures_close_and_kill_then_reap_the_owned_child() {
     }
 
     let (mut context, snapshot) = capture(&[], false);
+    unsafe { errno::set_errno(73); }
     {
         let mut state = test_support::lock();
+        state.reads.push_back(test_support::ReadStep::Bytes(b"observed".to_vec()));
         state.reads.push_back(test_support::ReadStep::End);
-        // An already-reaped child must not make the adapter signal a recycled
-        // PID while reporting the wait boundary to its caller.
+        // SIGCHLD=SIG_IGN or SA_NOCLDWAIT can auto-reap the child before the
+        // post-EOF wait. Command substitution ignores its exit status.
         state.waits.push_back(test_support::WaitStep::Error(10));
     }
-    assert!(matches!(
-        evaluate(b"$(printf x)", &mut context, &snapshot, true),
-        Err(WordexpError::NoSpace),
-    ));
-    assert_eq!(unsafe { errno::get_errno() }, 10);
+    let words = evaluate(b"\"$(printf x)\"", &mut context, &snapshot, true).unwrap();
+    assert_words(&words, &[b"observed"]);
+    assert_eq!(unsafe { errno::get_errno() }, 73);
     let state = test_support::lock();
     assert!(state.kills.is_empty());
     assert_eq!(state.wait_calls, 1);
+}
+
+#[test]
+fn pinned_shell_sigchld_ignore_autoreaps_after_stdout_eof() {
+    let _restore = SigchldRestore::ignore();
+    let mut child = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("printf wordexp-echild")
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn pinned shell control child");
+    let mut stdout = Vec::new();
+    child.stdout
+        .take()
+        .expect("piped stdout")
+        .read_to_end(&mut stdout)
+        .expect("read shell stdout through EOF");
+    assert_eq!(stdout, b"wordexp-echild");
+
+    let error = child.wait().expect_err("SIGCHLD=SIG_IGN auto-reaps the child");
+    assert_eq!(error.raw_os_error(), Some(10));
 }
 
 #[test]

@@ -52,6 +52,9 @@ const EIO: c_int = 5;
 const EINTR: i64 = 4;
 const SIGKILL: i64 = 9;
 const FDOP_DUP2: c_int = 2;
+// `pointer.add` and the C allocation boundary both require a representable
+// signed offset. Keep every private allocation within the same Rust bound.
+const MAX_C_ALLOCATION: usize = isize::MAX as usize;
 
 const SH: &[u8] = b"/bin/sh\0";
 const SH_ARG0: &[u8] = b"sh\0";
@@ -63,6 +66,24 @@ unsafe extern "C" {
     fn wordexp_process_realloc(pointer: *mut c_void, size: usize) -> *mut c_void;
     #[link_name = "free"]
     fn wordexp_process_free(pointer: *mut c_void);
+}
+
+/// Grow one C allocation without allowing either element count or byte size
+/// to cross Rust's signed-offset allocation limit.
+fn grown_c_allocation<T>(
+    capacity: usize,
+    initial_capacity: usize,
+) -> Result<(usize, usize), WordexpError> {
+    let capacity = if capacity == 0 {
+        initial_capacity
+    } else {
+        capacity.checked_mul(2).ok_or(WordexpError::NoSpace)?
+    };
+    let bytes = capacity
+        .checked_mul(size_of::<T>())
+        .ok_or(WordexpError::NoSpace)?;
+    if bytes > MAX_C_ALLOCATION { return Err(WordexpError::NoSpace); }
+    Ok((capacity, bytes))
 }
 
 /// C-allocator-backed growable storage with no Rust allocator dependency.
@@ -86,12 +107,10 @@ impl CBuffer {
 
     fn push(&mut self, byte: u8) -> Result<(), WordexpError> {
         if self.length == self.capacity {
-            let capacity = if self.capacity == 0 { 64 } else {
-                self.capacity.checked_mul(2).ok_or(WordexpError::NoSpace)?
-            };
+            let (capacity, bytes) = grown_c_allocation::<u8>(self.capacity, 64)?;
             let grown = unsafe {
                 // SAFETY: `pointer` is null or this buffer's own C allocation.
-                wordexp_process_realloc(self.pointer.cast(), capacity)
+                wordexp_process_realloc(self.pointer.cast(), bytes)
             }.cast::<u8>();
             if grown.is_null() { return Err(WordexpError::NoSpace); }
             self.pointer = grown;
@@ -161,10 +180,7 @@ impl<T: Copy> CVector<T> {
 
     fn push(&mut self, value: T) -> Result<(), WordexpError> {
         if self.length == self.capacity {
-            let capacity = if self.capacity == 0 { 8 } else {
-                self.capacity.checked_mul(2).ok_or(WordexpError::NoSpace)?
-            };
-            let bytes = capacity.checked_mul(size_of::<T>()).ok_or(WordexpError::NoSpace)?;
+            let (capacity, bytes) = grown_c_allocation::<T>(self.capacity, 8)?;
             let grown = unsafe {
                 // SAFETY: `pointer` is null or this vector's own C allocation.
                 wordexp_process_realloc(self.pointer.cast(), bytes)
@@ -441,7 +457,14 @@ fn append_backtick_body(
         let byte = body[index];
         if byte == b'\\' && index + 1 < body.len() {
             let next = body[index + 1];
-            if matches!(next, b'$' | b'`' | b'\\' | b'\n') ||
+            if next == b'\n' {
+                // A backslash followed by a physical newline is a line
+                // continuation: POSIX removes both bytes before the shell
+                // receives the opaque command body.
+                index += 2;
+                continue;
+            }
+            if matches!(next, b'$' | b'`' | b'\\') ||
                 (double_quoted && next == b'"')
             {
                 script.push(next)?;
@@ -674,16 +697,23 @@ impl WordexpCommandAdapter for WordexpProcessAdapter<'_> {
             }
         }
         unsafe { close(read_descriptor); }
-        if let Err(error) = unsafe { reap(process) } {
-            unsafe {
-                // An external SIGCHLD disposition can consume the child
-                // before this private wait.  ECHILD therefore proves there
-                // is no remaining child to kill; signalling the recycled PID
-                // would be less safe than preserving that errno boundary.
-                if error != ECHILD { kill_and_reap(process); }
-                errno::set_errno(error);
+        match unsafe { reap(process) } {
+            Ok(()) => {}
+            Err(ECHILD) => {
+                // With SIGCHLD ignored or SA_NOCLDWAIT set, POSIX discards
+                // child status and wait reports ECHILD after its stdout pipe
+                // has reached EOF. The selected wordexp reap path likewise
+                // ignores this final result, and this engine intentionally
+                // has no exit-status semantics. Do not signal a recycled PID
+                // or overwrite the caller's errno for this successful output.
             }
-            return Err(WordexpError::NoSpace);
+            Err(error) => {
+                unsafe {
+                    kill_and_reap(process);
+                    errno::set_errno(error);
+                }
+                return Err(WordexpError::NoSpace);
+            }
         }
         // Exit status is deliberately ignored: command substitution uses
         // stdout bytes, and ordinary nonzero command status is not a typed
@@ -732,4 +762,27 @@ fn seen_contains(bytes: &CBuffer, names: &CVector<ByteSpan>, name: &[u8]) -> boo
         index += 1;
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn c_allocation_growth_refuses_signed_offset_overflow_without_reallocating() {
+        let mut bytes = CBuffer {
+            pointer: ptr::null_mut(),
+            length: MAX_C_ALLOCATION,
+            capacity: MAX_C_ALLOCATION,
+        };
+        assert_eq!(bytes.push(b'x'), Err(WordexpError::NoSpace));
+
+        let capacity = MAX_C_ALLOCATION / size_of::<*const c_char>();
+        let mut entries = CVector::<*const c_char> {
+            pointer: ptr::null_mut(),
+            length: capacity,
+            capacity,
+        };
+        assert_eq!(entries.push(ptr::null()), Err(WordexpError::NoSpace));
+    }
 }

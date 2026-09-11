@@ -46,7 +46,9 @@ first-match rule for valid ASCII shell identifiers:
 The production storage uses only the selected C `realloc`/`free` boundary for
 copied bytes, spans, scripts, and pointer vectors. It does not depend on Rust
 `alloc`, mutate `environ`, or call `setenv`, `putenv`, `unsetenv`, or
-`clearenv`.
+`clearenv`. Every growth calculation checks both element arithmetic and its
+resulting byte count against `isize::MAX`, so no allocation can make the
+adapter's later pointer offsets unrepresentable.
 
 For each selected command, the child `envp` consists of those copied raw
 non-identifier entries followed by the engine's current NUL-separated exported
@@ -88,7 +90,9 @@ removes a backslash only before `$`, backquote, backslash, or physical newline;
 when `CommandStyle::Backtick { double_quoted: true }` says the original form
 was within double quotes, a backslash before `"` is also removed. This is
 POSIX shell quote removal, not a second shell parse, preflight, execution, or
-retry. The relevant rules are [Shell Command Language
+retry. A backslash immediately followed by a physical newline is one line
+continuation and therefore removes **both** bytes; it never forwards a newline
+to `/bin/sh`. The relevant rules are [Shell Command Language
 2.6.3](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html#tag_19_06_03)
 and [2.2.3](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html#tag_19_02_03).
 
@@ -104,8 +108,14 @@ the adapter closes only its pipe ends, restores the pre-spawn errno, and
 returns the selected adapter's existing typed `Syntax` boundary. Output NUL or
 append failure closes the read end and kills then reaps the owned child, so a
 child that ignores SIGPIPE cannot hold the transaction indefinitely. A
-post-read `ECHILD` reports that errno without signalling a potentially recycled
-PID. Every other partial path closes each owned descriptor once.
+post-read `ECHILD` is successful output completion: `SIGCHLD=SIG_IGN` and
+`SA_NOCLDWAIT` discard child status and make the final wait fail that way, while
+this engine deliberately does not use an ordinary command status. The selected
+`owned_wordexp.rs` control path likewise retries `EINTR` and ignores its final
+wait result. The adapter neither signals a potentially recycled PID nor changes
+the caller's errno for that completed-output case. This follows POSIX
+[`wait`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/wait.html)'s
+`ECHILD` rule. Every other partial path closes each owned descriptor once.
 
 ## Focused evidence and remaining work
 
@@ -121,9 +131,14 @@ and raw-syscall boundaries. It proves first-match and empty/unset snapshot
 behavior, locale capture, non-identifier `envp` retention, current local and
 export overlays, apostrophe-safe local prefixes, IFS restoration, exactly-one
 spawn, `WRDE_SHOWERR`, ignored nonzero status, quoted/unquoted backtick escape
-removal, `$()` byte preservation, `EINTR`, output/read cleanup, and
-parent/child spawn failure descriptor and errno boundaries. Its runner keeps
-the test binary under `.work/x86_64/wordexp-process-adapter/`.
+removal, physical-newline removal, `$()` byte preservation, `EINTR`,
+isize-bounded growth without allocation, output/read cleanup, post-EOF
+`ECHILD`, and parent/child spawn failure descriptor and errno boundaries. The
+backtick cases execute each captured script through the pinned `/bin/sh`, so
+the unquoted, double-quoted, and physical-newline results are not asserted from
+fake command output alone. A serial native signal control also proves that
+stdout EOF followed by `SIGCHLD=SIG_IGN` yields `ECHILD`. Its runner keeps the
+test binary under `.work/x86_64/wordexp-process-adapter/`.
 
 The existing `./scripts/dev-x86_64.sh libc-owned-wordexp` static feature gate
 also compiles this private module in the real selected x86 owned-runtime graph.
