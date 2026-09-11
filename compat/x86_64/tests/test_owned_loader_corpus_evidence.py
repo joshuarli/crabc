@@ -33,6 +33,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         self.work = Path(self.temporary.name)
         self.product = self.work / "product"
         self._make_product()
+        self.expected_oracle = {"runtime_sha256": "", "compiler_wrapper_sha256": "a" * 64}
 
     def _put(self, relative: str, contents: bytes, *, executable: bool = False) -> Path:
         path = self.product / relative
@@ -69,40 +70,151 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         report_root.mkdir()
         cases: dict[str, dict[str, object]] = {}
         oracle_runtime = b"pinned musl runtime\n"
+        loader = evidence._loader()
         for case in evidence.LOADER_CASES:
-            raw = report_root / "cases" / case / "raw"
+            work = report_root / "cases" / case
+            raw = work / "raw"
             raw.mkdir(parents=True)
-            observation = {
-                "argv": ["/usr/sbin/chroot", "/root", "/case"],
-                "returncode": 0,
-                "stdout_hex": "6f6b0a",
-                "stderr_hex": "",
-                "timed_out": False,
-            }
-            raw_record = {"cwd": str(report_root), "environment": {}, **observation}
-            for index in range(1, 4):
-                stem = f"{index:04d}-observation"
-                (raw / (stem + ".stdout")).write_bytes(bytes.fromhex(observation["stdout_hex"]))
-                (raw / (stem + ".stderr")).write_bytes(b"")
-                (raw / (stem + ".json")).write_text(json.dumps(raw_record), encoding="utf-8")
-            oracle_root = raw.parent / "oracle-root"
+            oracle_root = work / "oracle-root"
             (oracle_root / "lib").mkdir(parents=True)
             (oracle_root / "usr/lib").mkdir(parents=True)
             (oracle_root / "lib/ld-musl-x86_64.so.1").write_bytes(oracle_runtime)
             (oracle_root / "usr/lib/libc.so").write_bytes(oracle_runtime)
-            candidate_root = raw.parent / "candidate-root"
+            candidate_root = work / "candidate-root"
             shutil.copytree(self.product, candidate_root, symlinks=True)
-            value = {
-                "status": "pass",
-                "result": "pass",
-                "raw_directory": evidence.recorded_path(ROOT, "/workspace", raw),
-                "execution_roots": {
-                    "oracle": evidence.loader_tree_seal(oracle_root),
-                    "candidate": evidence.loader_tree_seal(candidate_root),
-                },
-                "behavior": {"oracle": observation, "candidate": dict(observation), "candidate_direct": dict(observation)},
-            }
-            (raw.parent / "case.json").write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+            objects = []
+            object_paths = []
+            for index, (source_name, defines, generated) in enumerate(evidence._loader_object_roles(loader, case)):
+                source = work / source_name if generated else ROOT / "compat/ldso/fixtures" / source_name
+                if generated:
+                    source.write_text("int generated_hash_many;\n", encoding="utf-8")
+                object_path = work / "objects" / f"{index:03d}-{Path(source_name).stem}.o"
+                object_path.parent.mkdir(exist_ok=True)
+                object_path.write_bytes((case + source_name).encode())
+                trace = object_path.with_suffix(".headers.i")
+                trace.write_bytes(b"installed headers\n")
+                objects.append({"source": evidence.recorded_path(ROOT, "/workspace", source), "defines": list(defines),
+                                "header_trace": evidence.recorded_path(ROOT, "/workspace", trace), "header_trace_sha256": sha256(trace),
+                                "object": evidence.recorded_path(ROOT, "/workspace", object_path), "sha256": sha256(object_path)})
+                object_paths.append(object_path)
+            links = []
+            moved_search = {"oracle": 0, "candidate": 0}
+            output_hashes: dict[tuple[str, str], str] = {}
+            for index, ((arm, kind, relative_output), (_object_index, dependencies)) in enumerate(zip(
+                    evidence._loader_link_plan(loader, case), evidence._loader_link_bindings(loader, case))):
+                arm_root = work / f"{arm}-root"
+                output = arm_root / relative_output
+                output.parent.mkdir(parents=True, exist_ok=True)
+                output.write_bytes(f"{case}:{arm}:{index}".encode())
+                output_hash = sha256(output)
+                if case == "search-path" and kind == "shared":
+                    directory = ("environment", "runpath", "rpath")[moved_search[arm]]
+                    moved_search[arm] += 1
+                    target = arm_root / directory / output.name
+                    target.parent.mkdir(exist_ok=True)
+                    output.replace(target)
+                elif case == "dso-origin" and kind == "shared":
+                    target = arm_root / "bundle" / output.name
+                    target.parent.mkdir(exist_ok=True)
+                    output.replace(target)
+                object_path = object_paths[_object_index]
+                links.append({"kind": kind, "arm": arm,
+                              "output": evidence.recorded_path(ROOT, "/workspace", output), "output_sha256": output_hash,
+                              "object": evidence.recorded_path(ROOT, "/workspace", object_path), "object_sha256": sha256(object_path),
+                              "dependencies": [{"path": evidence.recorded_path(ROOT, "/workspace", arm_root / dependency),
+                                                "sha256": output_hashes[(arm, dependency)]}
+                                               for dependency in dependencies]})
+                output_hashes[(arm, relative_output)] = output_hash
+            raw_index = 0
+
+            def append_raw(argv: list[str], cwd: str, environment: dict[str, str], stdout: bytes = b"", stderr: bytes = b"") -> None:
+                nonlocal raw_index
+                raw_index += 1
+                stem = f"{raw_index:04d}-recipe"
+                value = {"argv": argv, "returncode": 0, "stdout_hex": stdout.hex(), "stderr_hex": stderr.hex(), "timed_out": False}
+                (raw / (stem + ".stdout")).write_bytes(stdout)
+                (raw / (stem + ".stderr")).write_bytes(stderr)
+                (raw / (stem + ".json")).write_text(json.dumps({"cwd": cwd, "environment": environment, **value}), encoding="utf-8")
+
+            def observation(arm: str, program: str, direct: bool, stdout: bytes, environment: dict[str, str]) -> dict[str, object]:
+                arm_root = work / f"{arm}-root"
+                argv = ["/usr/sbin/chroot", evidence.recorded_path(ROOT, "/workspace", arm_root)]
+                argv += ["/lib/ld-musl-x86_64.so.1", "/" + program] if direct else ["/" + program]
+                value = {"argv": argv, "returncode": 0, "stdout_hex": stdout.hex(), "stderr_hex": "", "timed_out": False}
+                append_raw(argv, evidence.recorded_path(ROOT, "/workspace", work), environment, stdout)
+                return value
+
+            def triple(stdout: bytes | set[bytes], program: str, environment: dict[str, str]) -> dict[str, object]:
+                payload = next(iter(stdout)) if isinstance(stdout, set) else stdout
+                return {"oracle": observation("oracle", program, False, payload, environment),
+                        "candidate": observation("candidate", program, False, payload, environment),
+                        "candidate_direct": observation("candidate", program, True, payload, environment)}
+
+            value: dict[str, object] = {"result": "pass", "status": "pass", "objects": objects, "links": links,
+                                        "raw_directory": evidence.recorded_path(ROOT, "/workspace", raw)}
+            if case == "search-path":
+                value["dynamic"] = {"candidate-runpath": "(RUNPATH)", "candidate-rpath": "(RPATH)"}
+                value["behavior"] = {
+                    "runpath-environment": triple(b"search=11\n", "consumer-runpath", evidence._loader_environment(loader, case, {"LD_LIBRARY_PATH": "/environment"})),
+                    "runpath-embedded": triple(b"search=22\n", "consumer-runpath", evidence._loader_environment(loader, case)),
+                    "rpath-environment": triple({b"search=11\n"}, "consumer-rpath", evidence._loader_environment(loader, case, {"LD_LIBRARY_PATH": "/environment"})),
+                    "rpath-embedded": triple({b"search=33\n"}, "consumer-rpath", evidence._loader_environment(loader, case)),
+                }
+            elif case == "aslr":
+                value["properties"] = {}
+                for arm, direct, field in (("oracle", False, "oracle"), ("candidate", False, "candidate"), ("candidate", True, "candidate_direct")):
+                    value[field] = [observation(arm, "consumer", direct, f"aslr=7 main=0x{base:x} dso=0x{base + 1:x}\n".encode(), evidence._loader_environment(loader, case))
+                                    for base in ((0x1000, 0x2000) if arm == "oracle" else ((0x3000, 0x4000) if not direct else (0x5000, 0x6000)))]
+            else:
+                if case in loader.SPECS and case != "relocations":
+                    props: dict[str, object] = {}
+                    if case == "initial-tls": props = {"program_headers": " TLS "}
+                    if case == "relro": props = {"program_headers": "GNU_RELRO", "relocations": "R_X86_64_64"}
+                    if case == "visibility": props = {"symbols": "visibility_public"}
+                    if case == "lifecycle": props = {"dynamic": "(INIT_ARRAY) (FINI_ARRAY)"}
+                    if case == "legacy-lifecycle": props = {"dynamic": "(INIT) (FINI) (INIT_ARRAY) (FINI_ARRAY)"}
+                    if case == "dynamic-tls": props = {"relocations": "R_X86_64_DTPMOD64"}
+                    if case == "nested-needed": props = {"middle_needed": ["libnested_leaf.so", "libc.so"]}
+                    if case == "constructor-order": props = {"middle_needed": ["liborder_leaf.so", "libc.so"]}
+                    if case == "weak-strong": props = {"needed": ["libweak_provider.so", "libstrong_provider.so"]}
+                    value["properties"] = props
+                    value.update(triple(loader.SPECS[case].expected, "consumer", evidence._loader_environment(loader, case)))
+                elif case == "hash-formats":
+                    value["dynamic"] = {"oracle-gnu": "(GNU_HASH)", "oracle-sysv": "(HASH)", "candidate-gnu": "(GNU_HASH)", "candidate-sysv": "(HASH)"}
+                    value.update(triple(b"hash=13,29\n", "consumer", evidence._loader_environment(loader, case)))
+                elif case == "hash-many":
+                    value["symbol_count"] = 1025
+                    value["dynamic"] = "(GNU_HASH) (HASH)"
+                    value.update(triple(b"hash-many=1024,0\n", "consumer", evidence._loader_environment(loader, case)))
+                elif case == "relocations":
+                    value.update({"consumer_relocations": "R_X86_64_64 R_X86_64_GLOB_DAT R_X86_64_JUMP_SLOT", "adapter_relocations": "R_X86_64_RELATIVE", "adapter_dynamic": ""})
+                    value.update(triple(b"reloc=42 relative=73\n", "consumer", evidence._loader_environment(loader, case)))
+                else:
+                    value["dynamic"] = "(RUNPATH) $ORIGIN liborigin_leaf.so"
+                    value.update(triple(b"origin=18\n", "consumer", evidence._loader_environment(loader, case)))
+            class Capture:
+                def __init__(self) -> None:
+                    self.calls: list[tuple[list[str], str, dict[str, str], bytes | None, bytes | None, str]] = []
+
+                def take(self, argv: list[str], cwd: str, environment: dict[str, str], description: str,
+                         *, stdout: bytes | None = None, stderr: bytes | None = None) -> dict[str, str]:
+                    if stdout is None and "needed tags" in description:
+                        needed = value["properties"]["middle_needed"] if "middle_needed" in value.get("properties", {}) else value["properties"]["needed"]
+                        stdout = "".join(f"Shared library: [{item}]\n" for item in needed).encode()
+                    if stdout is None and description == "loader hash-many symbols":
+                        stdout = b"".join(f"hash_many_{index}\n".encode() for index in range(1025))
+                    self.calls.append((argv, cwd, environment, stdout, stderr, description))
+                    return {"stdout_hex": (stdout or b"").hex()}
+
+            capture = Capture()
+            evidence._validate_loader_objects(ROOT, "/workspace", work, self.product, case, value, loader, capture)
+            evidence._validate_loader_links(ROOT, "/workspace", work, self.product, case, value, object_paths, loader, capture)
+            evidence._validate_loader_behavior(case, value, capture, ROOT, "/workspace", work, loader)
+            for argv, cwd, environment, stdout, stderr, _description in capture.calls:
+                if argv[0] != "/usr/sbin/chroot":
+                    append_raw(argv, cwd, environment, stdout or b"", stderr or b"")
+            value["execution_roots"] = {"oracle": evidence.loader_tree_seal(oracle_root), "candidate": evidence.loader_tree_seal(candidate_root)}
+            (work / "case.json").write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
             cases[case] = value
         source = evidence.current_loader_source(ROOT)
         product_seal = evidence.loader_tree_seal(self.product)
@@ -112,6 +224,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
             "libc": "/opt/musl-1.2.6/lib/libc.so",
             "libc_sha256": hashlib.sha256(oracle_runtime).hexdigest(),
         }
+        self.expected_oracle["runtime_sha256"] = oracle["libc_sha256"]
         report = {
             "schema": 1,
             "runner": "compat/ldso/run_x86.py",
@@ -134,9 +247,14 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         path.write_text(json.dumps(report, sort_keys=True), encoding="utf-8")
         return path
 
+    def _rewrite_loader_case(self, report: Path, value: dict[str, object], case: str) -> None:
+        work = report.parent / "cases" / case
+        (work / "case.json").write_text(json.dumps(value["cases"][case], sort_keys=True), encoding="utf-8")
+        report.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+
     def test_loader_reader_accepts_full_receipt_and_returns_manifest_identity(self) -> None:
         report = self._loader_report()
-        identity = evidence.validate_loader_report(report, self.product, root=ROOT)
+        identity = evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
         self.assertEqual(identity["case_count"], len(evidence.LOADER_CASES))
         self.assertEqual(identity["product_manifest_sha256"], sha256(self.product / "share/crabc/manifest.json"))
 
@@ -148,7 +266,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         del value["cases"][omitted]
         report.write_text(json.dumps(value), encoding="utf-8")
         with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "roster|selection"):
-            evidence.validate_loader_report(report, self.product, root=ROOT)
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
 
     def test_loader_reader_rejects_summary_without_matching_raw_streams(self) -> None:
         report = self._loader_report()
@@ -156,7 +274,85 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         raw = Path(value["cases"][evidence.LOADER_CASES[0]]["raw_directory"].replace("/workspace", str(ROOT), 1))
         (raw / "0001-observation.stdout").write_bytes(b"changed\n")
         with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "raw"):
-            evidence.validate_loader_report(report, self.product, root=ROOT)
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
+    def test_loader_reader_rejects_missing_gnu_hash_receipt_tag(self) -> None:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        value["cases"]["hash-formats"]["dynamic"]["candidate-gnu"] = "(HASH)"
+        self._rewrite_loader_case(report, value, "hash-formats")
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "hash-format tags"):
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
+    def test_loader_reader_rejects_missing_x86_relocation_type(self) -> None:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        value["cases"]["relocations"]["adapter_relocations"] = "R_X86_64_GLOB_DAT"
+        self._rewrite_loader_case(report, value, "relocations")
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "relocation evidence"):
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
+    def test_loader_reader_rejects_an_extra_generic_behavior_field(self) -> None:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        value["cases"]["auxv"]["behavior"] = {"fabricated": "ok"}
+        report.write_text(json.dumps(value, sort_keys=True), encoding="utf-8")
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "schema"):
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
+    def test_loader_reader_rejects_a_runtime_observation_in_the_wrong_root(self) -> None:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        case = value["cases"]["auxv"]
+        old_argv = case["oracle"]["argv"]
+        case["oracle"]["argv"] = case["candidate"]["argv"]
+        raw = report.parent / "cases" / "auxv" / "raw"
+        for path in raw.glob("*.json"):
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if record["argv"] == old_argv:
+                record["argv"] = case["oracle"]["argv"]
+                path.write_text(json.dumps(record), encoding="utf-8")
+                break
+        else:
+            self.fail("fixture lost its oracle execution receipt")
+        self._rewrite_loader_case(report, value, "auxv")
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "command or status"):
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
+    def test_loader_reader_rejects_an_aslr_pair_without_process_relocation(self) -> None:
+        report = self._loader_report()
+        value = json.loads(report.read_text(encoding="utf-8"))
+        case = value["cases"]["aslr"]
+        old = case["candidate"][1]
+        case["candidate"][1] = dict(case["candidate"][0])
+        raw = report.parent / "cases" / "aslr" / "raw"
+        for path in raw.glob("*.json"):
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if record["argv"] == old["argv"] and record["stdout_hex"] == old["stdout_hex"]:
+                record.update(case["candidate"][1])
+                path.write_text(json.dumps(record), encoding="utf-8")
+                path.with_suffix(".stdout").write_bytes(bytes.fromhex(record["stdout_hex"]))
+                break
+        else:
+            self.fail("fixture lost its second candidate ASLR receipt")
+        self._rewrite_loader_case(report, value, "aslr")
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "bases did not change"):
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
+
+    def test_loader_reader_rejects_missing_compiler_receipt(self) -> None:
+        report = self._loader_report()
+        raw = report.parent / "cases" / "auxv" / "raw"
+        for path in raw.glob("*.json"):
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if "--dynamic-shared-object" in record["argv"] and "-c" in record["argv"]:
+                path.unlink()
+                path.with_suffix(".stdout").unlink()
+                path.with_suffix(".stderr").unlink()
+                break
+        else:
+            self.fail("fixture lost its compiler receipt")
+        with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "compile role"):
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
 
     def test_loader_reader_rejects_stale_current_source(self) -> None:
         report = self._loader_report()
@@ -164,7 +360,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         value["source_after"] = {"entries": [], "sha256": "0" * 64}
         report.write_text(json.dumps(value), encoding="utf-8")
         with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "source"):
-            evidence.validate_loader_report(report, self.product, root=ROOT)
+            evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
 
     def test_loader_reader_accepts_only_the_documented_retained_readability_mode_change(self) -> None:
         report = self._loader_report()
@@ -175,7 +371,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
                     os.chmod(path, mode | 0o555)
                 elif path.is_file() and not path.is_symlink():
                     os.chmod(path, mode | 0o444)
-        identity = evidence.validate_loader_report(report, self.product, root=ROOT)
+        identity = evidence.validate_loader_report(report, self.product, expected_oracle=self.expected_oracle, root=ROOT)
         self.assertEqual(identity["case_count"], 21)
 
     def test_stream_comparison_rejects_false_success_claim(self) -> None:
@@ -198,13 +394,15 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
 
     def test_corpus_reader_accepts_a_full_retained_roster_and_rejects_a_changed_private_root(self) -> None:
         class FixtureCorpus:
-            SCHEMA = "crabc.x86_64-owned-package-corpus/v2"
+            SCHEMA = "crabc.x86_64-owned-package-corpus/v3"
             CANONICAL_INTERPRETER = "/lib/ld-musl-x86_64.so.1"
             CANONICAL_LIBC = "/lib/libc.musl-x86_64.so.1"
             CASE_ENVIRONMENT = {"PATH": "/bin:/usr/bin", "HOME": "/root", "LC_ALL": "C", "LANG": "C", "TZ": "UTC"}
 
             @staticmethod
-            def tree_sha256(root: Path, label: str) -> str:
+            def tree_sha256(root: Path, label: str, *, retention_modes: dict[str, int] | None = None) -> str:
+                if retention_modes:
+                    raise AssertionError("fixture does not normalize modes")
                 digest = hashlib.sha256()
                 for path in sorted(root.rglob("*")):
                     if path.is_dir():
@@ -280,6 +478,7 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
             seal = corpus.tree_sha256(private, "fixture")
             return {"base_fixtures": base, "runtime": {**runtime, "canonical_interpreter": corpus.CANONICAL_INTERPRETER, "canonical_libc": corpus.CANONICAL_LIBC},
                     "execution_tree_before_sha256": seal, "execution_tree_after_sha256": seal,
+                    "retention_modes": {},
                     "executable": {"path": case.path, "sha256": sha256(executable), "interpreter": corpus.CANONICAL_INTERPRETER, "dt_relr": False}}
 
         outcome = []
@@ -303,18 +502,20 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         report = {"schema": corpus.SCHEMA, "source_mount": "/workspace", "passed": True, "source": {"before": source, "after": source},
                   "tools": {"before": tools, "after": tools}, "inputs": inputs, "oracle": {"before": oracle, "after": oracle},
                   "candidate_product": {"before": candidate_product, "after": candidate_product},
-                  "application_payload": {"path": evidence.recorded_path(ROOT, "/workspace", payload), "sha256": corpus.tree_sha256(payload, "fixture"),
+                  "application_payload": {"path": evidence.recorded_path(ROOT, "/workspace", payload), "sha256": corpus.tree_sha256(payload, "fixture"), "retention_modes": {},
                                           "package_library_dirs": ["/usr/lib"], "elf_closure": [{"path": "/bin/payload", "sha256": sha256(payload / "bin/payload"), "search_paths": [], "needed": {}}]},
                   "execution_root": evidence.recorded_path(ROOT, "/workspace", root), "report_path": evidence.recorded_path(ROOT, "/workspace", root / "report.json"),
                   "case_count": len(cases), "outcomes": outcome}
         report_path = root / "report.json"
         report_path.write_text(json.dumps(report), encoding="utf-8")
         with mock.patch.object(evidence, "_corpus", return_value=corpus), mock.patch.object(evidence, "_corpus_cases", return_value=cases):
-            identity = evidence.validate_corpus_report(report_path, self.product, root=ROOT)
+            identity = evidence.validate_corpus_report(report_path, self.product,
+                                                       expected_oracle={"runtime_sha256": oracle_hash, "compiler_wrapper_sha256": "a" * 64}, root=ROOT)
             self.assertEqual(identity["case_count"], 34)
             (root / "case-00-candidate/lib/libc.musl-x86_64.so.1").write_bytes(b"tampered")
             with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "root|libc"):
-                evidence.validate_corpus_report(report_path, self.product, root=ROOT)
+                evidence.validate_corpus_report(report_path, self.product,
+                                                expected_oracle={"runtime_sha256": oracle_hash, "compiler_wrapper_sha256": "a" * 64}, root=ROOT)
 
     def test_container_mount_mapping_is_bounded_to_the_checkout(self) -> None:
         path = self.work / "safe.json"
@@ -325,6 +526,26 @@ class OwnedLoaderCorpusEvidenceTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(evidence.LoaderCorpusEvidenceError, "unsafe|mount|escape"):
             evidence.mounted_path(ROOT, "/workspace", "/workspace/../outside")
+
+    def test_dt_relr_requirement_is_read_from_retained_elf_bytes(self) -> None:
+        def elf(tag: int) -> bytes:
+            value = bytearray(160)
+            value[:6] = b"\x7fELF\x02\x01"
+            value[32:40] = (64).to_bytes(8, "little")
+            value[54:56] = (56).to_bytes(2, "little")
+            value[56:58] = (1).to_bytes(2, "little")
+            value[64:68] = (2).to_bytes(4, "little")  # PT_DYNAMIC
+            value[72:80] = (128).to_bytes(8, "little")
+            value[96:104] = (32).to_bytes(8, "little")
+            value[128:136] = tag.to_bytes(8, "little", signed=True)
+            return bytes(value)
+
+        relr = self.work / "relr.elf"
+        ordinary = self.work / "ordinary.elf"
+        relr.write_bytes(elf(36))
+        ordinary.write_bytes(elf(1))
+        self.assertTrue(evidence._elf_has_dt_relr(relr, "fixture DT_RELR ELF"))
+        self.assertFalse(evidence._elf_has_dt_relr(ordinary, "fixture ordinary ELF"))
 
 
 if __name__ == "__main__":
