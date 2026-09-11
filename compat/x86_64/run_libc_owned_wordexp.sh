@@ -431,6 +431,7 @@ run_same_object_wordexp_cases() {
 		--posix-nocmd-escaped-control --posix-nocmd-arithmetic-control \
 		--posix-nocmd-pattern-control --posix-nocmd-arithmetic-delimiter-control \
 		--posix-nocmd-continuation-control --posix-nocmd-dollar-single-control \
+		--posix-nocmd-comment-control --posix-nocmd-positional \
 		--undef-source-observation; do
 		for program in "$oracle" "$static_candidate" "$pie_candidate"; do
 			execution_root="$work_dir/execution-same-object-$(basename "$program")-${selector#--}"
@@ -497,6 +498,20 @@ run_same_object_wordexp_cases() {
 						failures=1
 					fi
 					;;
+				--posix-nocmd-comment-control:musl-static-et-exec)
+					printf 'owned-wordexp-posix-nocmd-comment-control: SOURCE-RED command-marker-created\n' >"$same_root/expected.stdout"
+					if [ "$status" -ne 244 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'pinned-musl comment source RED drifted\n' >&2
+						failures=1
+					fi
+					;;
+				--posix-nocmd-positional:musl-static-et-exec)
+					printf 'owned-wordexp-posix-nocmd-positional: SOURCE-RED positional-parameter-rejected\n' >"$same_root/expected.stdout"
+					if [ "$status" -ne 137 ] || ! cmp -s "$same_root/expected.stdout" "$output" || [ -s "$stderr" ]; then
+						printf 'pinned-musl positional source RED drifted\n' >&2
+						failures=1
+					fi
+					;;
 				--posix-nocmd-escaped-control:*|--posix-nocmd-pattern-control:*)
 					if [ "$selector" = --posix-nocmd-escaped-control ]; then
 						printf 'owned-wordexp-posix-nocmd-escaped-control: PASS\n' >"$same_root/expected.stdout"
@@ -510,7 +525,8 @@ run_same_object_wordexp_cases() {
 					;;
 				--posix-quiet:*|--posix-nocmd:*|--posix-nocmd-arithmetic-control:*|\
 				--posix-nocmd-arithmetic-delimiter-control:*|--posix-nocmd-continuation-control:*|\
-				--posix-nocmd-dollar-single-control:*)
+				--posix-nocmd-dollar-single-control:*|--posix-nocmd-comment-control:*|\
+				--posix-nocmd-positional:*)
 					if [ "$status" -ne 0 ] || [ -s "$stderr" ]; then
 						printf 'owned POSIX wordexp cell failed: %s %s\n' "$selector" "$(basename "$program")" >&2
 						failures=1
@@ -529,8 +545,14 @@ run_same_object_wordexp_cases() {
 					elif [ "$selector" = --posix-nocmd-continuation-control ]; then
 						printf 'owned-wordexp-posix-nocmd-continuation-control: PASS\n' >"$same_root/expected.stdout"
 						cmp -s "$same_root/expected.stdout" "$output" || failures=1
-					else
+					elif [ "$selector" = --posix-nocmd-dollar-single-control ]; then
 						printf 'owned-wordexp-posix-nocmd-dollar-single-control: PASS\n' >"$same_root/expected.stdout"
+						cmp -s "$same_root/expected.stdout" "$output" || failures=1
+					elif [ "$selector" = --posix-nocmd-comment-control ]; then
+						printf 'owned-wordexp-posix-nocmd-comment-control: PASS\n' >"$same_root/expected.stdout"
+						cmp -s "$same_root/expected.stdout" "$output" || failures=1
+					else
+						printf 'owned-wordexp-posix-nocmd-positional: PASS\n' >"$same_root/expected.stdout"
 						cmp -s "$same_root/expected.stdout" "$output" || failures=1
 					fi
 					;;

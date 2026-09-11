@@ -48,6 +48,9 @@ class OwnedWordexpContracts(unittest.TestCase):
             "posix_nocmd_arithmetic_delimiter_control_case",
             "posix_nocmd_continuation_command_control_case",
             "posix_nocmd_dollar_single_control_case",
+            "posix_nocmd_comment_control_case", "# \\\"\\n",
+            "posix_nocmd_positional_case", "${10}", "${#1}", "${#10}",
+            "portable wordexp transcript",
             "posix_undef_source_observation", "non-qualifying fixed-source observation",
         ):
             self.assertIn(boundary, source)
@@ -74,6 +77,10 @@ class OwnedWordexpContracts(unittest.TestCase):
         self.assertIn("FRAME_ARITHMETIC", scanner)
         self.assertIn("PARAM_PATTERN", scanner)
         self.assertIn("QUOTE_DOLLAR_SINGLE", scanner)
+        self.assertIn("shell_word_start", scanner)
+        self.assertIn("comment_has_physical_newline", scanner)
+        self.assertIn("NAME_POSITIONAL", scanner)
+        self.assertIn("positional_parameter", scanner)
         self.assertIn("logical_next", scanner)
         self.assertIn("skip_line_continuations", scanner)
         self.assertIn("cabi_realloc", scanner)
@@ -113,6 +120,7 @@ class OwnedWordexpContracts(unittest.TestCase):
             "POSIX_PROBE", "FOO=field X=left Y=right", ".status",
             "SET=1", "mknod", "character device 1:3 mode 666",
             "--posix-nocmd-escaped-control", "--posix-nocmd-dollar-single-control",
+            "--posix-nocmd-comment-control", "--posix-nocmd-positional",
             "local audit_root=\"$(dirname \"$candidate\")\"",
         ):
             self.assertIn(boundary, source)
@@ -126,9 +134,11 @@ class OwnedWordexpContracts(unittest.TestCase):
             "WORD_EXP_CASES", "CELL_ENVIRONMENT", "posix-quiet-source-red",
             "posix-nocmd-source-red", "posix-nocmd-arithmetic-source-red",
             "posix-nocmd-continuation-source-red", "posix-nocmd-dollar-single-source-red",
+            "posix-nocmd-comment-source-red", "posix-nocmd-positional-source-red",
             "fixture_devices", "char-device", "_null_device_identity", "undef-source-observation",
             "_assert_case_results", "required=False", "SOURCE-RED diagnostic-present",
-            "SOURCE-RED parameter-brace-rejected", "installed header trace omitted the POSIX correction cells",
+            "SOURCE-RED parameter-brace-rejected", "SOURCE-RED positional-parameter-rejected",
+            "installed header trace omitted the POSIX correction cells",
         ):
             self.assertIn(boundary, source)
 

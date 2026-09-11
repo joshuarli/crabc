@@ -127,6 +127,20 @@ class OwnedWordexpCommandBindingTests(unittest.TestCase):
         broken = record("broken", b"0\n", b"owned-wordexp-posix-quiet: PASS\n", b"")
         with self.assertRaises(module.EvidenceError):
             module._assert_case_results(ROOT, "posix-quiet", broken, candidate, "missing source red")
+
+        comment_oracle = record("comment-oracle", b"244\n",
+                                b"owned-wordexp-posix-nocmd-comment-control: SOURCE-RED command-marker-created\n", b"")
+        comment_candidate = record("comment-candidate", b"0\n",
+                                   b"owned-wordexp-posix-nocmd-comment-control: PASS\n", b"")
+        module._assert_case_results(ROOT, "posix-nocmd-comment-control", comment_oracle,
+                                    comment_candidate, "synthetic comment cell")
+
+        positional_oracle = record("positional-oracle", b"137\n",
+                                   b"owned-wordexp-posix-nocmd-positional: SOURCE-RED positional-parameter-rejected\n", b"")
+        positional_candidate = record("positional-candidate", b"0\n",
+                                      b"owned-wordexp-posix-nocmd-positional: PASS\n", b"")
+        module._assert_case_results(ROOT, "posix-nocmd-positional", positional_oracle,
+                                    positional_candidate, "synthetic positional cell")
         shutil.rmtree(root, ignore_errors=True)
 
     def test_execution_record_defers_a_nonzero_source_red_to_its_exact_policy(self) -> None:

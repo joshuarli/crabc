@@ -70,6 +70,8 @@ WORD_EXP_CASES = {
     "posix-nocmd-arithmetic-delimiter-control": ("normal", ("--posix-nocmd-arithmetic-delimiter-control",), b"owned-wordexp-posix-nocmd-arithmetic-delimiter-control: PASS\n", "posix-nocmd-arithmetic-delimiter-source-red"),
     "posix-nocmd-continuation-control": ("normal", ("--posix-nocmd-continuation-control",), b"owned-wordexp-posix-nocmd-continuation-control: PASS\n", "posix-nocmd-continuation-source-red"),
     "posix-nocmd-dollar-single-control": ("normal", ("--posix-nocmd-dollar-single-control",), b"owned-wordexp-posix-nocmd-dollar-single-control: PASS\n", "posix-nocmd-dollar-single-source-red"),
+    "posix-nocmd-comment-control": ("normal", ("--posix-nocmd-comment-control",), b"owned-wordexp-posix-nocmd-comment-control: PASS\n", "posix-nocmd-comment-source-red"),
+    "posix-nocmd-positional": ("normal", ("--posix-nocmd-positional",), b"owned-wordexp-posix-nocmd-positional: PASS\n", "posix-nocmd-positional-source-red"),
     "undef-source-observation": ("normal", ("--undef-source-observation",), b"owned-wordexp-undef-source-observation: SOURCE-RED\n", "undef-source-observation"),
 }
 CELL_ENVIRONMENT = {"CRABC_WORDEXP": "bar baz", "FOO": "field", "X": "left", "Y": "right", "SET": "1"}
@@ -882,6 +884,18 @@ def _assert_case_results(root: Path, case: str, oracle: Mapping[str, Any], candi
                 oracle_stderr or candidate_status != b"0\n" or
                 candidate_stdout != expected_candidate_stdout or candidate_stderr):
             fail(f"{description} dollar-single source RED or candidate result differs")
+    elif comparison == "posix-nocmd-comment-source-red":
+        if (oracle_status != b"244\n" or
+                oracle_stdout != b"owned-wordexp-posix-nocmd-comment-control: SOURCE-RED command-marker-created\n" or
+                oracle_stderr or candidate_status != b"0\n" or
+                candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} comment source RED or candidate result differs")
+    elif comparison == "posix-nocmd-positional-source-red":
+        if (oracle_status != b"137\n" or
+                oracle_stdout != b"owned-wordexp-posix-nocmd-positional: SOURCE-RED positional-parameter-rejected\n" or
+                oracle_stderr or candidate_status != b"0\n" or
+                candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} positional source RED or candidate result differs")
     elif comparison == "undef-source-observation":
         if (oracle_status != b"0\n" or candidate_status != b"0\n" or
                 oracle_stdout != expected_candidate_stdout or candidate_stdout != expected_candidate_stdout or

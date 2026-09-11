@@ -32,9 +32,13 @@ apostrophe. Physical backslash-newline pairs are joined before the scanner
 recognizes `${`, `$(`, `$((`, or `))`, except inside single and dollar-single
 quotes. This prevents a child parameter or arithmetic token from consuming a
 parent delimiter, while preserving literal escaped/quoted `${...}` and
-rejecting naked unquoted braces and controls. The frame stack spills through
-the selected C allocator, returns `WRDE_NOSPACE` through the source record
-boundary, and has no fixed nesting limit.
+rejecting naked unquoted braces and controls. The shell frame separately
+tracks a true token start: only there can an unquoted `#` begin a raw comment;
+quote-looking and backslash-newline-looking bytes in that comment never alter
+scanner quote state, and a physical comment newline is rejected before a
+following line can reach `/bin/sh`. The frame stack spills through the selected
+C allocator, returns `WRDE_NOSPACE` through the source record boundary, and
+has no fixed nesting limit.
 
 These are bounded conformance corrections against the `WRDE_SHOWERR` and
 `WRDE_NOCMD` obligations in [POSIX.1-2024 `wordexp`](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/functions/wordexp.html)
@@ -55,34 +59,39 @@ diagnostic as `SOURCE-RED`; it does not compare diagnostic wording, because
 the sealed `/bin/sh` fixture controls that wording. Its NOCMD cell proves
 `${FOO}`, `${X} ${Y}`, nested defaults, arithmetic parameter expansions,
 quoted defaults, pattern-local quoting, arithmetic operators, and
-dollar-single quoting. A nine-level parameter default crosses the scanner's
-inline frame storage and proves its selected-allocator spill path without
-setting a private nesting cap. It keeps naked-brace and malformed-arithmetic controls.
-Its marker cases prove that prohibited substitutions do not run through real
-parameter nesting, escaped braces, arithmetic single-quote text, a
-substring-pattern operand, a nested parameter in arithmetic, a joined
-backslash-newline `$(`, or dollar-single quoting.
+dollar-single quoting. It separately accepts `${10}`, `${#1}`, and `${#10}`
+as valid NOCMD parameter syntax without claiming a portable output value for
+the controlled shell's positional arguments. A nine-level parameter default
+crosses the scanner's inline frame storage and proves its selected-allocator
+spill path without setting a private nesting cap. It keeps naked-brace and
+malformed-arithmetic controls. Its marker cases prove that prohibited
+substitutions do not run through real parameter nesting, escaped braces,
+arithmetic single-quote text, a substring-pattern operand, a nested parameter
+in arithmetic, a joined backslash-newline `$(`, dollar-single quoting, or
+quote-looking bytes inside a token-initial shell comment.
 
 Pinned musl records the standard parameter form as
 `SOURCE-RED parameter-brace-rejected`; the arithmetic parameter form retains
-that same source RED. The stale arithmetic-delimiter, joined-continuation, and
-dollar-single cases retain `SOURCE-RED command-marker-created`. Escaped-brace
-and pattern controls remain ordinary source-match cells. A separate
-`WRDE_UNDEF` cell is explicitly a non-qualifying fixed-source observation:
-this batch does not add `set -u`, status remapping, or an evaluator/parser for
-that unresolved error classification.
+that same source RED, as do the positional parameter forms. The stale
+arithmetic-delimiter, joined-continuation, dollar-single, and token-initial
+comment cases retain `SOURCE-RED command-marker-created`. Escaped-brace and
+pattern controls remain ordinary source-match cells. A separate `WRDE_UNDEF`
+cell is explicitly a non-qualifying fixed-source observation: this batch does
+not add `set -u`, status remapping, or an evaluator/parser for that unresolved
+error classification.
 
 Run `./scripts/dev-x86_64.sh libc-owned-wordexp` for the focused static
 evidence. Alongside the existing isolated shell-present and shell-unavailable
 cases, the runner translates one project-header C object with the installed
 static-PIE compiler contract. It links those exact bytes to a pinned-musl
 static ET_EXEC oracle and to the owned static ET_EXEC and static-PIE products.
-It retains raw status/stdout/stderr for the source scanner control, both POSIX
-cells, and the non-qualifying UNDEF observation. The ordinary workload still
-runs its source controls; for its quiet malformed input, pinned-musl stderr is
-a named source RED and the candidate must be empty. The controlled shell
-fixture remains a separately recorded execution input; this receipt does not
-claim general shell compatibility or waive an oracle shell failure.
+It retains raw status/stdout/stderr for the source scanner control, every POSIX
+cell including comment and positional forms, and the non-qualifying UNDEF
+observation. The ordinary workload still runs its source controls; for its
+quiet malformed input, pinned-musl stderr is a named source RED and the
+candidate must be empty. The controlled shell fixture remains a separately
+recorded execution input; this receipt does not claim general shell
+compatibility or waive an oracle shell failure.
 
 `./scripts/dev-x86_64.sh owned-wordexp` dispatches
 `compat/x86_64/run_owned_wordexp.sh` as the separate installed-product
@@ -99,12 +108,13 @@ direct entry, making six product modes when both products are selected.
 For every mode and each controlled shell state (`normal`, `missing`,
 `inaccessible`, and `invalid`), the receipt retains command argv/status/stdout/stderr
 for the ordinary source workload and explicit source scanner control. Its
-normal-shell POSIX cells add the quiet diagnostic, parameter-word, frame and
-continuation controls, and non-qualifying UNDEF observation. Ordinary and
-source-control cells compare with the separately linked pinned-musl oracle.
-The POSIX correction cells retain their exact pinned failures as named source
-RED observations and require the candidate's positive transcript; the UNDEF
-cell remains a source observation rather than a pass claim. It seals the
+normal-shell POSIX cells add the quiet diagnostic, parameter-word, frame,
+comment, positional, and continuation controls, and non-qualifying UNDEF
+observation. Ordinary and source-control cells compare with the separately
+linked pinned-musl oracle. The POSIX correction cells retain their exact pinned
+failures as named source RED observations and require the candidate's positive
+transcript; the UNDEF cell remains a source observation rather than a pass
+claim. It seals the
 installed headers, one workload object, link receipts and ELF validation,
 products, compiler/linker inputs, and every declared regular file, alias, and
 fixture device in each actual execution root. The source, selected products, fixed compiler/linker

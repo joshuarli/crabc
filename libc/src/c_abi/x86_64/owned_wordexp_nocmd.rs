@@ -13,10 +13,14 @@
 // becoming a shell evaluator. A parameter WORD inherits outer double-quote
 // context; a #/##/%/%% pattern owns its own local quote context; an arithmetic
 // expansion owns its own delimiter count; and `$'...'` owns its escaped quote
-// terminator. Thus a child cannot consume a delimiter from its parent. The
-// stack has an inline fast path and spills through the selected C allocator,
-// so valid nesting is not limited by a private fixed depth. It deliberately
-// does not implement `WRDE_UNDEF`, shell expansion, or shell error typing.
+// terminator. Its shell frame also records a true word start, so an unquoted
+// token-initial `#` consumes raw comment bytes rather than letting quote-like
+// text in a comment manufacture scanner state. Thus a child cannot consume a
+// delimiter from its parent and a comment cannot hide later shell controls.
+// The stack has an inline fast path and spills through the selected C
+// allocator, so valid nesting is not limited by a private fixed depth. It
+// deliberately does not implement `WRDE_UNDEF`, shell expansion, or shell
+// error typing.
 //
 // POSIX line continuation is removed before recognition outside single and
 // dollar-single quoting. This is required before looking for `${`, `$(`,
@@ -48,6 +52,7 @@ const NAME_START: u8 = 0;
 const NAME_IDENTIFIER: u8 = 1;
 const NAME_SPECIAL: u8 = 2;
 const NAME_LENGTH_PREFIX: u8 = 3;
+const NAME_POSITIONAL: u8 = 4;
 
 #[derive(Clone, Copy)]
 struct NocmdFrame {
@@ -56,6 +61,10 @@ struct NocmdFrame {
     parameter_phase: u8,
     name_state: u8,
     inherited_double: bool,
+    // Meaningful only for FRAME_SHELL. It is true at the start of the input
+    // and after an unquoted space/tab; quoted, escaped, and expansion content
+    // makes the current shell token nonempty before any child frame starts.
+    shell_word_start: bool,
     arithmetic_depth: usize,
 }
 
@@ -65,6 +74,7 @@ const SHELL_FRAME: NocmdFrame = NocmdFrame {
     parameter_phase: PARAM_NAME,
     name_state: NAME_START,
     inherited_double: false,
+    shell_word_start: true,
     arithmetic_depth: 0,
 };
 
@@ -75,6 +85,7 @@ const fn parameter_frame(inherited_double: bool) -> NocmdFrame {
         parameter_phase: PARAM_NAME,
         name_state: NAME_START,
         inherited_double,
+        shell_word_start: false,
         arithmetic_depth: 0,
     }
 }
@@ -89,6 +100,7 @@ const fn arithmetic_frame() -> NocmdFrame {
         // quoted. In particular, an apostrophe cannot hide `$(` or a
         // backtick command substitution.
         inherited_double: true,
+        shell_word_start: false,
         arithmetic_depth: 0,
     }
 }
@@ -241,7 +253,12 @@ const fn identifier_continue(byte: u8) -> bool {
 
 #[inline]
 const fn special_parameter(byte: u8) -> bool {
-    matches!(byte, b'?' | b'*' | b'@' | b'$' | b'!' | b'-') || byte.is_ascii_digit()
+    matches!(byte, b'?' | b'*' | b'@' | b'$' | b'!' | b'-' | b'#')
+}
+
+#[inline]
+const fn positional_parameter(byte: u8) -> bool {
+    byte.is_ascii_digit()
 }
 
 #[inline]
@@ -282,6 +299,29 @@ const fn double_escape(byte: u8) -> bool {
     matches!(byte, b'$' | b'`' | b'"' | b'\\' | b'\n')
 }
 
+#[inline]
+fn mark_shell_word_content(frame: &mut NocmdFrame) {
+    if frame.kind == FRAME_SHELL {
+        frame.shell_word_start = false;
+    }
+}
+
+/// Scan comment text without line joining or quote interpretation. A physical
+/// newline after a token-initial shell comment is still an unquoted wordexp
+/// control byte, so the caller rejects it before a shell child can execute a
+/// following physical line. A comment reaching NUL has no later input to hide.
+unsafe fn comment_has_physical_newline(input: *const c_char, mut index: usize) -> bool {
+    loop {
+        // SAFETY: callers start after a readable token-initial '#', then walk
+        // only through bytes of the supplied NUL-terminated C string.
+        match unsafe { input_byte(input, index) } {
+            0 => return false,
+            b'\n' => return true,
+            _ => index += 1,
+        }
+    }
+}
+
 unsafe fn parameter_name_step(input: *const c_char, index: usize, frame: &mut NocmdFrame)
     -> Result<usize, c_int>
 {
@@ -302,6 +342,9 @@ unsafe fn parameter_name_step(input: *const c_char, index: usize, frame: &mut No
                 } else if identifier_start(byte) {
                     frame.name_state = NAME_IDENTIFIER;
                     Ok(index + 1)
+                } else if positional_parameter(byte) {
+                    frame.name_state = NAME_POSITIONAL;
+                    Ok(index + 1)
                 } else if special_parameter(byte) {
                     frame.name_state = NAME_SPECIAL;
                     Ok(index + 1)
@@ -313,6 +356,12 @@ unsafe fn parameter_name_step(input: *const c_char, index: usize, frame: &mut No
                 if identifier_start(byte) {
                     frame.name_state = NAME_IDENTIFIER;
                     Ok(index + 1)
+                } else if positional_parameter(byte) {
+                    frame.name_state = NAME_POSITIONAL;
+                    Ok(index + 1)
+                } else if special_parameter(byte) {
+                    frame.name_state = NAME_SPECIAL;
+                    Ok(index + 1)
                 } else {
                     Err(WRDE_SYNTAX)
                 }
@@ -323,6 +372,24 @@ unsafe fn parameter_name_step(input: *const c_char, index: usize, frame: &mut No
                 } else if byte == b'}' {
                     // The outer loop performs the actual pop so the same
                     // delimiter ownership rule is shared by all phases.
+                    Ok(index)
+                } else if byte == b':' {
+                    frame.parameter_phase = PARAM_AFTER_COLON;
+                    Ok(index + 1)
+                } else if matches!(byte, b'-' | b'+' | b'=' | b'?') {
+                    frame.parameter_phase = PARAM_WORD;
+                    Ok(index + 1)
+                } else if matches!(byte, b'#' | b'%') {
+                    frame.parameter_phase = PARAM_PATTERN;
+                    Ok(index + 1)
+                } else {
+                    Err(WRDE_SYNTAX)
+                }
+            }
+            NAME_POSITIONAL => {
+                if positional_parameter(byte) {
+                    Ok(index + 1)
+                } else if byte == b'}' {
                     Ok(index)
                 } else if byte == b':' {
                     frame.parameter_phase = PARAM_AFTER_COLON;
@@ -459,10 +526,28 @@ unsafe fn wordexp_nocmd_check(input: *const c_char) -> c_int {
 
         let in_double = effective_double(frame);
 
+        if frame.kind == FRAME_SHELL && frame.quote == QUOTE_NONE &&
+            !in_double && frame.shell_word_start && byte == b'#'
+        {
+            // A shell comment begins only at a real token start. Do not let
+            // quote-looking or continuation-looking comment bytes enter the
+            // ordinary lexical state machine: the physical line break is the
+            // prohibited unquoted control that stops this public call before
+            // a following line can execute in the child shell.
+            if unsafe { comment_has_physical_newline(input, index + 1) } {
+                finish!(WRDE_BADCHAR);
+            }
+            finish!(0);
+        }
+
         if byte == b'\\' {
             // SAFETY: current non-NUL backslash has a readable successor.
             let escaped = unsafe { input_byte(input, index + 1) };
             if escaped == 0 { finish!(WRDE_SYNTAX); }
+            mark_shell_word_content(&mut frame);
+            // SAFETY: the copied shell frame records that an escape began a
+            // token before this branch consumes its literal successor.
+            unsafe { frames.replace_top(frame); }
             let parameter_inherited_closer = frame.kind == FRAME_PARAMETER &&
                 frame.parameter_phase == PARAM_WORD && frame.inherited_double && escaped == b'}';
             if !in_double || double_escape(escaped) || parameter_inherited_closer {
@@ -474,33 +559,39 @@ unsafe fn wordexp_nocmd_check(input: *const c_char) -> c_int {
         }
 
         if byte == b'\'' {
+            mark_shell_word_content(&mut frame);
             if !in_double && frame.quote == QUOTE_NONE && frame.kind != FRAME_ARITHMETIC {
                 frame.quote = QUOTE_SINGLE;
-                // SAFETY: live top frame update.
-                unsafe { frames.replace_top(frame); }
             }
+            // SAFETY: the quote itself is shell-token content whether it
+            // opens a local quote or is literal under inherited double quotes.
+            unsafe { frames.replace_top(frame); }
             index += 1;
             continue;
         }
 
         if byte == b'"' {
+            mark_shell_word_content(&mut frame);
             if frame.quote == QUOTE_DOUBLE {
                 frame.quote = QUOTE_NONE;
-                // SAFETY: live top frame update.
-                unsafe { frames.replace_top(frame); }
             } else if !in_double && frame.kind != FRAME_ARITHMETIC {
                 frame.quote = QUOTE_DOUBLE;
-                // SAFETY: live top frame update.
-                unsafe { frames.replace_top(frame); }
             }
             // An inner unescaped double quote in an inherited parameter WORD
             // stays ordinary. POSIX leaves that form unspecified; toggling it
             // would incorrectly activate a following apostrophe as a quote.
+            // SAFETY: this records any shell quote/token transition above.
+            unsafe { frames.replace_top(frame); }
             index += 1;
             continue;
         }
 
         if byte == b'$' {
+            mark_shell_word_content(&mut frame);
+            // SAFETY: a dollar begins shell-token content even if its
+            // following bytes do not form one of the scanner's child frames.
+            // Write before a push because that push may move the frame stack.
+            unsafe { frames.replace_top(frame); }
             // SAFETY: logical lookahead performs the same applicable line
             // joining as the outer cursor before token recognition.
             let (next, next_index) = unsafe { logical_next(input, index + 1) };
@@ -544,6 +635,10 @@ unsafe fn wordexp_nocmd_check(input: *const c_char) -> c_int {
         match frame.kind {
             FRAME_SHELL => {
                 if !in_double && unquoted_control(byte) { finish!(WRDE_BADCHAR); }
+                frame.shell_word_start = !in_double && matches!(byte, b' ' | b'\t');
+                // SAFETY: only the shell frame carries the current token
+                // boundary; ordinary raw bytes update it after control checks.
+                unsafe { frames.replace_top(frame); }
                 index += 1;
             }
             FRAME_PARAMETER => {

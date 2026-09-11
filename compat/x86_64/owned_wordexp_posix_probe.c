@@ -187,6 +187,39 @@ static int posix_nocmd_dollar_single_control_case(void)
         "$'a\\'b'; printf marker > /wordexp-nocmd-marker; echo 'x'");
 }
 
+/* A comment starts only at a shell token boundary. Its quote-looking bytes are
+ * not shell quotes: the physical newline ends the comment and makes the
+ * following line active shell input. A lexical preflight that consumes the
+ * quote bytes first can hide this command from WRDE_NOCMD. */
+static int posix_nocmd_comment_control_case(void)
+{
+    return posix_no_marker_badchar_case(
+        "# \"\n"
+        "printf marker > /wordexp-nocmd-marker\n"
+        "# \"");
+}
+
+/* `${10}` and the length forms are valid parameter syntax. Their values depend
+ * on the controlled shell's positional arguments, so this public cell proves
+ * only a successful lexical/public API path and deliberately does not turn
+ * those fixture-specific values into a portable wordexp transcript. */
+static int posix_nocmd_positional_case(void)
+{
+    wordexp_t words = { 0 };
+
+    if (wordexp("${10}", &words, WRDE_NOCMD) != 0)
+        return 1;
+    if (!check_freed(&words))
+        return 2;
+    if (wordexp("${#1}", &words, WRDE_NOCMD) != 0)
+        return 3;
+    if (!check_freed(&words))
+        return 4;
+    if (wordexp("${#10}", &words, WRDE_NOCMD) != 0)
+        return 5;
+    return check_freed(&words) ? 0 : 6;
+}
+
 /* These are the bounded POSIX corrections, deliberately separate from the
  * fixed musl source-control cases in the including probe.  The scanner must
  * recognize only real, nested `${...}` parameter contexts: quoted or escaped

@@ -314,6 +314,26 @@ int main(int argc, char *argv[])
         puts("owned-wordexp-posix-nocmd-dollar-single-control: PASS");
         return 0;
     }
+    if (argc == 2 && strcmp(argv[1], "--posix-nocmd-comment-control") == 0) {
+        result = posix_nocmd_comment_control_case();
+        if (result != 0) {
+            if (result == 4)
+                puts("owned-wordexp-posix-nocmd-comment-control: SOURCE-RED command-marker-created");
+            return 240 + result;
+        }
+        puts("owned-wordexp-posix-nocmd-comment-control: PASS");
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--posix-nocmd-positional") == 0) {
+        result = posix_nocmd_positional_case();
+        if (result != 0) {
+            if (result == 1)
+                puts("owned-wordexp-posix-nocmd-positional: SOURCE-RED positional-parameter-rejected");
+            return 136 + result;
+        }
+        puts("owned-wordexp-posix-nocmd-positional: PASS");
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "--undef-source-observation") == 0) {
         result = posix_undef_source_observation();
         if (result != 0)
