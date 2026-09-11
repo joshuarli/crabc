@@ -18,6 +18,8 @@ import stat
 import subprocess
 from typing import Any, Mapping
 
+import owned_dynamic_receipt as receipt_contract
+
 
 TARGET = "x86_64-unknown-linux-musl"
 STATIC_FORMAT = "crabc-x86-64-sealed-static-driver-v1"
@@ -439,18 +441,16 @@ def _validate_dynamic_receipt(
     root: Path, workload: Path, executable: Path, receipt: Path, linkage: str, manifest: Path
 ) -> str:
     record = _json_object(receipt, "dynamic link receipt")
-    expected_keys = {
-        "schema", "format", "mode", "binding", "runtime_imports", "application_runpath", "output_path",
-        "output_sha256", "manifest_sha256", "application_dsos", "owned_runtime_inputs", "input_receipts",
-        "resolved_linker", "link_command", "link_trace", "campaign_complete",
-    }
-    _require_keys(record, expected_keys, "dynamic link receipt")
+    search = receipt_contract.validate(
+        record, format=DYNAMIC_PRODUCT_FORMAT, label="dynamic link receipt", fail=_fail
+    )
     mode = LINKAGES[linkage]
-    if (record["schema"], record["format"], record["mode"]) != (1, DYNAMIC_PRODUCT_FORMAT, mode["receipt_mode"]):
+    if record["mode"] != mode["receipt_mode"]:
         _fail("dynamic link receipt mode differs from the requested linkage")
     if record["binding"] != "now" or record["runtime_imports"] != [] or record["application_dsos"] != {}:
         _fail("dynamic link receipt admits foreign runtime imports or DSOs")
-    if record["application_runpath"] != "/usr/lib" or record["campaign_complete"] is not False:
+    receipt_contract.require_runpath(search, "/usr/lib", label="dynamic link receipt", fail=_fail)
+    if record["campaign_complete"] is not False:
         _fail("dynamic link receipt search-path or campaign state drifted")
     if record["output_path"] != str(executable):
         _fail("dynamic output path differs from this evidence invocation")
@@ -719,18 +719,16 @@ def _validate_retained_dynamic_receipt(root: Path, source_mount: str, product: P
                                        executable: Path, receipt: Path, linkage: str, manifest: Path,
                                        linker: object) -> str:
     record = _json_object(receipt, "retained dynamic link receipt")
-    expected_keys = {
-        "schema", "format", "mode", "binding", "runtime_imports", "application_runpath", "output_path",
-        "output_sha256", "manifest_sha256", "application_dsos", "owned_runtime_inputs", "input_receipts",
-        "resolved_linker", "link_command", "link_trace", "campaign_complete",
-    }
-    _require_keys(record, expected_keys, "retained dynamic link receipt")
+    search = receipt_contract.validate(
+        record, format=DYNAMIC_PRODUCT_FORMAT, label="retained dynamic link receipt", fail=_fail
+    )
     mode = LINKAGES[linkage]
-    if (record["schema"], record["format"], record["mode"]) != (1, DYNAMIC_PRODUCT_FORMAT, mode["receipt_mode"]):
+    if record["mode"] != mode["receipt_mode"]:
         _fail("retained dynamic link receipt mode differs from requested linkage")
     if record["binding"] != "now" or record["runtime_imports"] != [] or record["application_dsos"] != {}:
         _fail("retained dynamic link receipt admits foreign runtime imports or DSOs")
-    if record["application_runpath"] != "/usr/lib" or record["campaign_complete"] is not False:
+    receipt_contract.require_runpath(search, "/usr/lib", label="retained dynamic link receipt", fail=_fail)
+    if record["campaign_complete"] is not False:
         _fail("retained dynamic link receipt search-path or campaign state drifted")
     if record["output_path"] != _retained_recorded(root, source_mount, executable, "dynamic output"):
         _fail("retained dynamic output path differs")

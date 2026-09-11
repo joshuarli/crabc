@@ -19,6 +19,7 @@ import re
 import shlex
 import tomllib
 
+import owned_dynamic_receipt as receipt_contract
 import owned_differential_evidence as differential
 import owned_signal_process_evidence as signals
 import owned_pthread_stress_source as stress_source
@@ -538,10 +539,17 @@ def _libc_test_link(reader, phase, *, unit, side, objects, contract, product, ou
         receipt_path = Path(str(output) + '.crabc-link.json')
         reader.bind(phase['receipt']['receipt'], receipt_path, 'libc-test sealed receipt')
         receipt = read_json(receipt_path)
-        same([receipt['schema'], receipt['format'], receipt['mode'], receipt['binding'], receipt['runtime_imports'],
+        search = receipt_contract.validate(
+            receipt, format=PRODUCT_FORMAT, label='libc-test sealed receipt',
+            fail=lambda message: require(False, message),
+        )
+        same([receipt['format'], receipt['mode'], receipt['binding'], receipt['runtime_imports'],
               receipt['application_runpath'], receipt['campaign_complete'], receipt['manifest_sha256']],
-             [1, PRODUCT_FORMAT, 'shared' if shared else 'pie', 'now', [], roles['runpath'], False, digest(reader.manifest)],
+             [PRODUCT_FORMAT, 'shared' if shared else 'pie', 'now', [], roles['runpath'], False, digest(reader.manifest)],
              'libc-test sealed receipt contract')
+        receipt_contract.require_runpath(
+            search, roles['runpath'], label='libc-test sealed receipt', fail=lambda message: require(False, message)
+        )
         same([receipt['output_path'], receipt['output_sha256']], [reader.recorded(output), digest(output)], 'libc-test receipt output')
         same(receipt['application_dsos'], {path.name: digest(path) for path in dsos}, 'libc-test initial DSO bindings')
         library = product / 'usr/lib'
@@ -1059,10 +1067,16 @@ def _os_snapshot(value, data=None):
 
 def _os_sealed_link(reader, *, binary, receipt_path, shared, output, workload_path, link_identity, retained_object, product):
     receipt = read_json(receipt_path)
-    same([receipt['schema'], receipt['format'], receipt['mode'], receipt['binding'], receipt['runtime_imports'],
+    search = receipt_contract.validate(
+        receipt, format=PRODUCT_FORMAT, label='os-test sealed receipt', fail=lambda message: require(False, message)
+    )
+    same([receipt['format'], receipt['mode'], receipt['binding'], receipt['runtime_imports'],
           receipt['application_runpath'], receipt['application_dsos'], receipt['campaign_complete'], receipt['manifest_sha256']],
-         [1, PRODUCT_FORMAT, 'shared' if shared else 'pie', 'now', [], '/usr/lib', {}, False, digest(reader.manifest)],
+         [PRODUCT_FORMAT, 'shared' if shared else 'pie', 'now', [], '/usr/lib', {}, False, digest(reader.manifest)],
          'os-test sealed link contract')
+    receipt_contract.require_runpath(
+        search, '/usr/lib', label='os-test sealed receipt', fail=lambda message: require(False, message)
+    )
     same([receipt['output_path'], receipt['output_sha256']], [output, digest(binary)], 'os-test retained link output')
     library = product / 'usr/lib'
     runtime = [library / name for name in ('crti.o', 'libc.so', 'crtn.o')]

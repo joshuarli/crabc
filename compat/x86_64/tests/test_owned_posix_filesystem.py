@@ -172,6 +172,7 @@ class OwnedPosixFilesystemTests(unittest.TestCase):
             "runtime_imports": [],
             "application_dsos": {},
             "application_runpath": "/usr/lib",
+            "campaign_complete": False,
             "resolved_linker": {"path": str(linker), "sha256": auditor.digest(linker)},
             "input_receipts": [
                 {"path": str(path), "sha256": auditor.digest(path)} for path in runtime

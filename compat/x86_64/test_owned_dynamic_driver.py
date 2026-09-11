@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 import crabc_cc_owned_dynamic as driver
 import owned_dynamic_package as package
+import owned_posix_product_evidence as product_evidence
 import io
 import tarfile
 
@@ -65,6 +66,72 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self.assertEqual(plan["application_runpath"], "/app/lib:$ORIGIN/plugins")
         self.assertIn("/app/lib:$ORIGIN/plugins", plan["linker"])
 
+    def _dynamic_receipt(self, *search_arguments):
+        """Generate a receipt through the driver while replacing only external tools."""
+
+        workload = Path(self.temporary.name) / "workload.o"
+        output = Path(self.temporary.name) / "consumer"
+        linker = Path(self.temporary.name) / "ld.lld"
+        workload.write_bytes(b"owned workload object")
+        linker.write_bytes(b"owned linker")
+        linker.chmod(0o755)
+
+        def link(command, temporary):
+            self.assertIn("--trace", command)
+            linked_output = Path(command[command.index("-o") + 1])
+            self.assertEqual(linked_output, output)
+            linked_output.write_bytes(b"owned dynamic executable")
+            library = self.root / "usr/lib"
+            trace = [
+                library / "crti.o", library / "libc.so", library / "crtn.o",
+                library / "Scrt1.o", library / "crabc-dynamic-attach.o", workload,
+                library / "libcrabc-builtins.a",
+            ]
+            return "\n".join(str(path) for path in trace)
+
+        with patch.object(driver.shared, "linker", return_value=str(linker)), \
+             patch.object(driver.shared, "require_x86_64_relocatable_object", return_value=workload), \
+             patch.object(driver, "dynamic_symbols", return_value=(set(), set())), \
+             patch.object(driver, "run", side_effect=link):
+            driver.execute(self.root, ["--dynamic-pie", *search_arguments, str(workload), "-o", str(output)])
+        return workload, output, Path(str(output) + ".crabc-link.json")
+
+    def test_current_driver_receipt_is_schema_two_and_current_posix_reader_accepts_default(self):
+        workload, output, receipt_path = self._dynamic_receipt()
+        receipt = json.loads(receipt_path.read_text())
+        self.assertEqual(receipt["schema"], 2)
+        self.assertEqual(
+            (receipt["application_search_kind"], receipt["application_runpath"],
+             receipt["application_rpath"], receipt["application_hash_style"]),
+            ("runpath", "/usr/lib", None, "sysv"),
+        )
+        product_evidence._validate_dynamic_receipt(
+            self.root, workload, output, receipt_path, "pie", self.root / "share/crabc/manifest.json"
+        )
+
+    def test_rpath_receipt_has_no_runpath_field_and_default_workload_reader_rejects_it(self):
+        workload, output, receipt_path = self._dynamic_receipt("--application-rpath", "/legacy")
+        receipt = json.loads(receipt_path.read_text())
+        self.assertEqual(receipt["schema"], 2)
+        self.assertEqual(
+            (receipt["application_search_kind"], receipt["application_runpath"],
+             receipt["application_rpath"], receipt["application_hash_style"]),
+            ("rpath", None, "/legacy", "sysv"),
+        )
+        with self.assertRaises(product_evidence.ProductEvidenceError):
+            product_evidence._validate_dynamic_receipt(
+                self.root, workload, output, receipt_path, "pie", self.root / "share/crabc/manifest.json"
+            )
+
+    def test_non_sysv_receipt_is_rejected_by_a_sysv_default_workload_reader(self):
+        workload, output, receipt_path = self._dynamic_receipt("--application-hash-style", "gnu")
+        receipt = json.loads(receipt_path.read_text())
+        self.assertEqual(receipt["application_hash_style"], "gnu")
+        with self.assertRaises(product_evidence.ProductEvidenceError):
+            product_evidence._validate_dynamic_receipt(
+                self.root, workload, output, receipt_path, "pie", self.root / "share/crabc/manifest.json"
+            )
+
     def test_hash_style_is_a_sealed_link_choice_not_a_raw_linker_flag(self):
         for style in ("sysv", "gnu", "both"):
             with self.subTest(style=style):
@@ -88,7 +155,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             driver.execute(self.root, ["--dynamic-pie", "--application-rpath", "/legacy", "--print-link-plan"])
         plan = json.loads(output.getvalue())
         self.assertEqual(plan["application_search_kind"], "rpath")
-        self.assertEqual(plan["application_runpath"], "/legacy")
+        self.assertIsNone(plan["application_runpath"])
+        self.assertEqual(plan["application_rpath"], "/legacy")
         self.assertIn("--disable-new-dtags", plan["linker"])
         self.assertNotIn("--enable-new-dtags", plan["linker"])
         source = Path(self.temporary.name) / "consumer.c"
@@ -163,15 +231,25 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         elf[18:20] = (62).to_bytes(2, "little")
         path.write_bytes(elf)
         receipt = Path(str(path) + ".crabc-link.json")
-        valid = {"format": driver.FORMAT, "output_sha256": driver.shared.sha256_file(path),
-                 "application_runpath": "/app/lib", "application_search_kind": "runpath",
-                 "output_path": str(path.resolve())}
+        legacy = {
+            "schema": 1, "format": driver.FORMAT, "mode": "shared", "binding": "now",
+            "runtime_imports": [], "application_runpath": "/app/lib", "output_path": str(path.resolve()),
+            "output_sha256": driver.shared.sha256_file(path), "manifest_sha256": "0" * 64,
+            "application_dsos": {}, "owned_runtime_inputs": [], "input_receipts": [],
+            "resolved_linker": {"path": "/owned/ld.lld", "sha256": "0" * 64}, "link_command": [],
+            "link_trace": [], "campaign_complete": False,
+        }
+        valid = {**legacy, "schema": 2, "application_search_kind": "runpath",
+                 "application_rpath": None, "application_hash_style": "gnu"}
         dynamic = "(SONAME) [plugin.so]\n(RUNPATH) [/app/lib]\n"
+        rpath = {**valid, "application_search_kind": "rpath", "application_runpath": None,
+                 "application_rpath": "/app/lib"}
+        hybrid = {**legacy, "application_search_kind": "runpath"}
         for record in ([], {**valid, "application_runpath": "/wrong"},
-                       {**valid, "output_sha256": "0" * 64}, valid):
+                       {**valid, "output_sha256": "0" * 64}, rpath, hybrid, legacy, valid):
             receipt.write_text(json.dumps(record))
             with self.subTest(record=record), patch.object(driver, "run", side_effect=["", dynamic]):
-                if record == valid:
+                if record in (legacy, valid):
                     self.assertEqual(driver.dso_metadata(path, Path(self.temporary.name)), ("plugin.so", []))
                 else:
                     with self.assertRaises(driver.shared.DriverError):

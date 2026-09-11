@@ -30,6 +30,14 @@ ALIASES = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
 REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
             "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1"}
 APPLICATION_DSO_BASENAME = re.compile(r"[^/\x00]+\.so(?:\.[0-9]+)*\Z")
+RECEIPT_V1_FIELDS = frozenset({
+    "schema", "format", "mode", "binding", "runtime_imports", "application_runpath", "output_path",
+    "output_sha256", "manifest_sha256", "application_dsos", "owned_runtime_inputs", "input_receipts",
+    "resolved_linker", "link_command", "link_trace", "campaign_complete",
+})
+RECEIPT_V2_FIELDS = RECEIPT_V1_FIELDS | {
+    "application_search_kind", "application_rpath", "application_hash_style",
+}
 
 
 def application_dso_basename(path: Path) -> str:
@@ -125,6 +133,37 @@ def run(command: list[str], temporary: Path) -> str:
     return result.stdout
 
 
+def dso_receipt_runpath(record: object, path: Path) -> str:
+    """Return an application DSO's RUNPATH from a closed declared receipt.
+
+    Schema 1 retains its exact historical fields and an implicit SysV hash
+    style. Schema 2 states search kind and hash style explicitly. Application
+    DSOs admit RUNPATH only, so executable-only RPATH cannot authorize them.
+    """
+
+    if not isinstance(record, dict) or type(record.get("schema")) is not int:
+        raise shared.DriverError("application DSO receipt has no declared schema")
+    schema = record["schema"]
+    expected = RECEIPT_V1_FIELDS if schema == 1 else RECEIPT_V2_FIELDS if schema == 2 else None
+    if expected is None or set(record) != expected:
+        raise shared.DriverError("application DSO receipt fields do not match its declared schema")
+    if (record["format"] != FORMAT or record["mode"] != "shared" or record["output_sha256"] != shared.sha256_file(path)
+            or record["output_path"] != str(path.resolve())):
+        raise shared.DriverError("application DSO receipt does not bind this shared object")
+    if schema == 1:
+        runpath = record["application_runpath"]
+        if not isinstance(runpath, str) or not runpath or "\0" in runpath:
+            raise shared.DriverError("application DSO receipt has an invalid legacy RUNPATH")
+        return runpath
+    if (record["application_search_kind"] != "runpath" or record["application_rpath"] is not None
+            or record["application_hash_style"] not in ("sysv", "gnu", "both")):
+        raise shared.DriverError("application DSO receipt does not declare RUNPATH")
+    runpath = record["application_runpath"]
+    if not isinstance(runpath, str) or not runpath or "\0" in runpath:
+        raise shared.DriverError("application DSO receipt has an invalid RUNPATH")
+    return runpath
+
+
 def dso_metadata(path: Path, temporary: Path) -> tuple[str, list[str]]:
     data = path.read_bytes()
     if len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01" or int.from_bytes(data[16:18], "little") != 3 or int.from_bytes(data[18:20], "little") != 62:
@@ -147,10 +186,7 @@ def dso_metadata(path: Path, temporary: Path) -> tuple[str, list[str]]:
             record = json.loads(receipt.read_text())
         except (ValueError, OSError) as error:
             raise shared.DriverError(f"invalid application search path receipt: {error}") from error
-        if (not isinstance(record, dict) or record.get("format") != FORMAT or record.get("output_sha256") != shared.sha256_file(path)
-                or record.get("output_path") != str(path.resolve())
-                or record.get("application_search_kind") != "runpath"
-                or runpaths != [record.get("application_runpath")]):
+        if runpaths != [dso_receipt_runpath(record, path)]:
             raise shared.DriverError("application DSO has an undeclared runtime search path")
     return path.name, needed
 
@@ -274,12 +310,14 @@ def execute(root: Path, arguments: list[str]) -> None:
         index += 1
     if mode is None: raise shared.DriverError("select --dynamic-pie, --dynamic-non-pie or --dynamic-shared-object")
     application_search_kind = "rpath" if application_rpath is not None else "runpath"
-    application_runpath = application_rpath if application_rpath is not None else application_runpath if application_runpath is not None else "/usr/lib"
+    if application_search_kind == "runpath":
+        application_runpath = application_runpath if application_runpath is not None else "/usr/lib"
+    application_search_path = application_rpath if application_search_kind == "rpath" else application_runpath
     binding = binding or "now"
     if runtime_imports and (mode != "shared" or binding != "lazy"):
         raise shared.DriverError("runtime imports require a lazy shared object")
     invocation = shared.parse_invocation(common)
-    if invocation.compile_only and (application_runpath != "/usr/lib" or application_search_kind != "runpath"):
+    if invocation.compile_only and (application_search_path != "/usr/lib" or application_search_kind != "runpath"):
         raise shared.DriverError("compile-only accepts no application RUNPATH")
     if invocation.compile_only and application_hash_style_explicit:
         raise shared.DriverError("compile-only accepts no application hash style")
@@ -303,7 +341,7 @@ def execute(root: Path, arguments: list[str]) -> None:
     library = root / "usr/lib"
     link = [shared.linker(), *(["-shared"] if mode == "shared" else ["-pie"] if mode == "pie" else []), f"--hash-style={application_hash_style}",
             "-z", "relro", "-z", binding, "-z", "noexecstack", "-z", "text", *([] if runtime_imports else ["--no-undefined"]),
-            "--allow-shlib-undefined", "--disable-new-dtags" if application_search_kind == "rpath" else "--enable-new-dtags", "-rpath", application_runpath]
+            "--allow-shlib-undefined", "--disable-new-dtags" if application_search_kind == "rpath" else "--enable-new-dtags", "-rpath", application_search_path]
     if export_dynamic:
         link.append("--export-dynamic")
     entry_object = "Scrt1.o" if mode == "pie" else "crt1.o"
@@ -314,7 +352,8 @@ def execute(root: Path, arguments: list[str]) -> None:
         if dsos: raise shared.DriverError("link plan accepts no application inputs")
         print(json.dumps({"format": FORMAT, "mode": mode, "binding": binding,
                           "runtime_imports": sorted(runtime_imports), "application_runpath": application_runpath,
-                          "application_search_kind": application_search_kind, "application_hash_style": application_hash_style, "linker": link,
+                          "application_rpath": application_rpath, "application_search_kind": application_search_kind,
+                          "application_hash_style": application_hash_style, "linker": link,
                           "campaign_complete": False}, sort_keys=True))
         return
     output = (invocation.output or Path("a.out")).absolute()
@@ -395,9 +434,10 @@ def execute(root: Path, arguments: list[str]) -> None:
             _, output_required = dynamic_symbols(output, temporary)
             if output_required - provided != runtime_imports:
                 raise shared.DriverError("linked runtime imports differ from declared contract")
-        record = {"schema": 1, "format": FORMAT, "mode": mode, "binding": binding,
+        record = {"schema": 2, "format": FORMAT, "mode": mode, "binding": binding,
                   "runtime_imports": sorted(runtime_imports), "application_runpath": application_runpath,
-                  "application_search_kind": application_search_kind, "application_hash_style": application_hash_style,
+                  "application_rpath": application_rpath, "application_search_kind": application_search_kind,
+                  "application_hash_style": application_hash_style,
                   "output_path": str(output.resolve()),
                   "output_sha256": shared.sha256_file(output),
                   "manifest_sha256": shared.sha256_file(root / "share/crabc/manifest.json"),

@@ -141,6 +141,14 @@ class OwnedPosixTimersTests(unittest.TestCase):
             "application_runpath": "/usr/lib",
             "application_dsos": {},
             "campaign_complete": False,
+            "output_path": "/workspace/timer.so",
+            "output_sha256": "0" * 64,
+            "manifest_sha256": "0" * 64,
+            "owned_runtime_inputs": [],
+            "input_receipts": [],
+            "resolved_linker": {"path": "/owned/ld.lld", "sha256": "0" * 64},
+            "link_command": [],
+            "link_trace": [],
         }
         timer_evidence._validate_shared_metadata(record)
         for field, value in (("schema", True), ("schema", 1.0), ("campaign_complete", 0), ("campaign_complete", 0.0)):

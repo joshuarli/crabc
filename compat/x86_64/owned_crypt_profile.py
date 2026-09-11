@@ -22,6 +22,7 @@ import owned_posix_family_execution as family
 import owned_posix_native_observations as native
 import owned_posix_native_dispositions as dispositions
 import owned_crypt_runtime_evidence as copies
+import owned_dynamic_receipt as receipt_contract
 import owned_posix_product_evidence as products
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -29,7 +30,8 @@ SCHEMA = 'crabc.x86_64-owned-crypt-profile/v1'
 ABI_SOURCE = 'compat/x86_64/libc_crypt_probe.c'
 SOURCES = (*dispositions.PROFILE_SOURCES, ABI_SOURCE,
     'compat/x86_64/run_owned_crypt_runtime.sh', 'compat/x86_64/owned_crypt_profile.py',
-    'compat/x86_64/owned_crypt_runtime_evidence.py', 'compat/x86_64/owned_posix_product_evidence.py',
+    'compat/x86_64/owned_crypt_runtime_evidence.py', 'compat/x86_64/owned_dynamic_receipt.py',
+    'compat/x86_64/owned_posix_product_evidence.py',
     'compat/x86_64/owned_posix_native_observations.py', 'compat/x86_64/owned_posix_family_execution.py',
     'compat/x86_64/owned_posix_static_products.py', 'compat/x86_64/owned_libc_test.py',
     'compat/x86_64/run_qualification_manifest.py', 'compat/x86_64/owned_dynamic_qualification.py',
@@ -176,20 +178,21 @@ def link_command(reader, obj, binary, mode, linker):
 
 def collect_link(reader, obj, binary, receipt_path, mode):
     receipt = native.read_json(receipt_path)
-    keys(receipt, ('schema', 'format', 'mode', 'binding', 'runtime_imports', 'application_runpath', 'output_path',
-        'output_sha256', 'manifest_sha256', 'application_dsos', 'owned_runtime_inputs', 'input_receipts',
-        'resolved_linker', 'link_command', 'link_trace', 'campaign_complete'), 'crypt sealed link receipt')
+    search = receipt_contract.validate(
+        receipt, format=native.PRODUCT_FORMAT, label='crypt sealed link receipt', fail=lambda message: require(False, message)
+    )
     library = reader.product / 'usr/lib'
     runtime = [library / name for name in ('crti.o', 'libc.so', 'crtn.o',
                'Scrt1.o' if mode == 'pie' else 'crt1.o', 'crabc-dynamic-attach.o')]
     builtins = library / 'libcrabc-builtins.a'
-    same({key: receipt[key] for key in ('schema','format','mode','binding','runtime_imports','application_runpath',
+    same({key: receipt[key] for key in ('format','mode','binding','runtime_imports','application_runpath',
          'application_dsos','campaign_complete','output_path','output_sha256','manifest_sha256','owned_runtime_inputs','input_receipts')},
-         {'schema': 1, 'format': native.PRODUCT_FORMAT, 'mode': 'pie' if mode == 'pie' else 'exec', 'binding': 'now',
+         {'format': native.PRODUCT_FORMAT, 'mode': 'pie' if mode == 'pie' else 'exec', 'binding': 'now',
           'runtime_imports': [], 'application_runpath': '/usr/lib', 'application_dsos': {}, 'campaign_complete': False,
           'output_path': reader.recorded(binary), 'output_sha256': native.digest(binary), 'manifest_sha256': native.digest(reader.manifest),
           'owned_runtime_inputs': sorted(path.relative_to(reader.product).as_posix() for path in [*runtime,builtins]),
           'input_receipts': [reader.binding(path) for path in [*runtime,obj,builtins]]}, 'crypt canonical source/product link inputs')
+    receipt_contract.require_runpath(search, '/usr/lib', label='crypt sealed link receipt', fail=lambda message: require(False, message))
     linker = keys(receipt['resolved_linker'], ('path', 'sha256'), 'crypt recorded linker')
     require(isinstance(linker['path'], str) and Path(linker['path']).name == 'ld.lld'
             and isinstance(linker['sha256'], str) and re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None, 'crypt linker identity differs')

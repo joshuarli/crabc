@@ -351,6 +351,18 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                     finally:
                         manifest.write_text(original)
 
+    def test_dynamic_receipt_rejects_unversioned_and_schema_one_hybrid_shapes(self) -> None:
+        receipt = self.dynamic_receipt()
+        record = json.loads(receipt.read_text())
+        for changed in (
+            {key: value for key, value in record.items() if key != "schema"},
+            {**record, "application_search_kind": "runpath"},
+        ):
+            with self.subTest(changed=changed):
+                self.write_json(receipt, changed)
+                with self.assertRaisesRegex(evidence.ProductEvidenceError, "schema|fields"):
+                    self.validate("pie", receipt)
+
     def test_dotdot_workload_path_fails_before_normalization(self) -> None:
         receipt = self.dynamic_receipt()
         redirected = self.root / "redirected-work"

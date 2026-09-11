@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 from typing import Any, Mapping
 
+import owned_dynamic_receipt as receipt_contract
+
 
 STATIC_FORMAT = "crabc-x86-64-owned-static-sysroot-v1"
 DYNAMIC_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
@@ -429,18 +431,17 @@ def audit_dynamic_receipt(
     candidate = require_resolved_regular(candidate, "dynamic consumer")
     receipt_path = require_resolved_regular(receipt_path, "dynamic receipt")
     receipt = read_object(receipt_path, "dynamic receipt")
+    search = receipt_contract.validate(receipt, format=DYNAMIC_FORMAT, label="dynamic receipt", fail=fail)
     expected_modes = {"pie": ("pie", "Scrt1.o"), "non-pie": ("exec", "crt1.o")}
     try:
         receipt_mode, crt_name = expected_modes[mode]
     except KeyError:
         fail(f"unknown dynamic mode: {mode}")
-    require_record(receipt, "schema", 1, "dynamic receipt")
-    require_record(receipt, "format", DYNAMIC_FORMAT, "dynamic receipt")
     require_record(receipt, "mode", receipt_mode, "dynamic receipt")
     require_record(receipt, "binding", "now", "dynamic receipt")
     require_record(receipt, "runtime_imports", [], "dynamic receipt")
     require_record(receipt, "application_dsos", {}, "dynamic receipt")
-    require_record(receipt, "application_runpath", "/usr/lib", "dynamic receipt")
+    receipt_contract.require_runpath(search, "/usr/lib", label="dynamic receipt", fail=fail)
     linker = require_linker(receipt.get("resolved_linker"), "dynamic receipt")
     library = root / "usr/lib"
     entry = library / crt_name

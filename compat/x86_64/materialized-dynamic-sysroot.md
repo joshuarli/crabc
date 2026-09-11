@@ -53,6 +53,27 @@ default emitted application RUNPATH; `--application-runpath PATHS` declares and 
 path without adding ambient link inputs. Nondefault DSO paths require a
 matching output receipt.
 
+### Dynamic link receipt versions
+
+The installed driver's current output is schema 2. Every schema-2 receipt has
+an explicit `application_search_kind` of `runpath` or `rpath`, exactly one
+corresponding non-null path (`application_runpath` or `application_rpath`),
+and `application_hash_style` (`sysv`, `gnu`, or `both`). This keeps a
+`DT_RPATH` out of the RUNPATH field. `--application-rpath PATHS` is exclusive
+with `--application-runpath`, remains executable-only, and records only
+`application_rpath`; the default and ordinary `--application-runpath` links
+record only `application_runpath`. `--application-hash-style` makes the
+selected linker hash style explicit and defaults to `sysv`.
+
+Schema 1 remains an explicit read-only compatibility path for retained
+products. It has its historical exact field roster, represents only RUNPATH
+through `application_runpath`, and implies the historical default SysV hash
+style. Readers reject an unversioned receipt and reject schema-1 records that
+carry schema-2 fields. Current workload receipts that require the ordinary
+`/usr/lib` SysV RUNPATH enforce that normalized contract for either declared
+schema. Application DSO sidecars admit either declared version only when they
+declare RUNPATH; DSO RPATH remains unsupported.
+
 The final libc link consumes only classified Rust C ABI objects, the byte-
 matched pinned allocator object and owned compiler helpers. Cargo's stock
 compiler/runtime archive members are excluded. Allocator header dependency

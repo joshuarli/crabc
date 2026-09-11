@@ -15,6 +15,7 @@ import shutil
 import sys
 
 import owned_crypt_profile as sealed
+import owned_dynamic_receipt as receipt_contract
 import owned_crypt_runtime_evidence as copies
 import owned_posix_family_execution as family
 import owned_posix_native_observations as native
@@ -39,6 +40,7 @@ SOURCES = (C_SOURCE, CXX_SOURCE, MAIN_SOURCE, 'include/stdatomic.h',
     'compat/x86_64/owned_posix_native_observations.py',
     'compat/x86_64/owned_posix_native_execution.py',
     'compat/x86_64/owned-posix-native-execution.md',
+    'compat/x86_64/owned_dynamic_receipt.py',
     'compat/x86_64/owned_posix_product_evidence.py',
     'compat/x86_64/owned_crypt_profile.py',
     'compat/x86_64/owned_crypt_runtime_evidence.py',
@@ -205,20 +207,24 @@ def _link_command(reader, objects, binary, mode, linker):
 def _collect_link(reader, objects, binary, mode, tools):
     receipt_path = Path(str(binary) + '.crabc-link.json')
     receipt = native.read_json(receipt_path)
-    keys(receipt, ('schema', 'format', 'mode', 'binding', 'runtime_imports', 'application_runpath', 'output_path',
-        'output_sha256', 'manifest_sha256', 'application_dsos', 'owned_runtime_inputs', 'input_receipts',
-        'resolved_linker', 'link_command', 'link_trace', 'campaign_complete'), 'atomic sealed link receipt')
+    search = receipt_contract.validate(
+        receipt, format=native.PRODUCT_FORMAT, label='atomic sealed link receipt',
+        fail=lambda message: require(False, message),
+    )
     library = reader.product / 'usr/lib'
     runtime = [library / 'crti.o', library / 'libc.so', library / 'crtn.o',
                library / ('Scrt1.o' if mode == 'pie' else 'crt1.o'), library / 'crabc-dynamic-attach.o']
     builtins = library / 'libcrabc-builtins.a'
-    expected = {'schema': 1, 'format': native.PRODUCT_FORMAT, 'mode': 'pie' if mode == 'pie' else 'exec',
+    expected = {'format': native.PRODUCT_FORMAT, 'mode': 'pie' if mode == 'pie' else 'exec',
         'binding': 'now', 'runtime_imports': [], 'application_runpath': '/usr/lib', 'application_dsos': {},
         'campaign_complete': False, 'output_path': reader.recorded(binary), 'output_sha256': native.digest(binary),
         'manifest_sha256': native.digest(reader.manifest),
         'owned_runtime_inputs': sorted(path.relative_to(reader.product).as_posix() for path in [*runtime, builtins]),
         'input_receipts': [reader.binding(path) for path in [*runtime, *objects, builtins]]}
     same({key: receipt[key] for key in expected}, expected, 'atomic canonical installed link inputs')
+    receipt_contract.require_runpath(
+        search, '/usr/lib', label='atomic sealed link receipt', fail=lambda message: require(False, message)
+    )
     linker = keys(receipt['resolved_linker'], ('path', 'sha256'), "atomic linker's identity")
     require(isinstance(linker['path'], str) and Path(linker['path']).name == 'ld.lld'
             and isinstance(linker['sha256'], str) and re.fullmatch('[0-9a-f]{64}', linker['sha256']) is not None,

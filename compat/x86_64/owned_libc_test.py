@@ -23,6 +23,8 @@ import sys
 import tomllib
 from typing import Any, Iterable, Sequence
 
+import owned_dynamic_receipt as receipt_contract
+
 sys.dont_write_bytecode = True
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -857,17 +859,15 @@ def verify_candidate_receipt(
     """
 
     receipt = read_json(receipt_path, "candidate dynamic link receipt")
-    expected_keys = {
-        "schema", "format", "mode", "binding", "runtime_imports", "application_runpath", "output_path",
-        "output_sha256", "manifest_sha256", "application_dsos", "owned_runtime_inputs", "input_receipts",
-        "resolved_linker", "link_command", "link_trace", "campaign_complete",
-    }
-    if set(receipt) != expected_keys:
-        fail("candidate dynamic link receipt fields drifted")
+    search = receipt_contract.validate(
+        receipt, format=PRODUCT_FORMAT, label="candidate dynamic link receipt", fail=fail
+    )
     mode = "shared" if shared_object else "pie"
-    if (receipt["schema"], receipt["format"], receipt["mode"], receipt["binding"], receipt["runtime_imports"],
-            receipt["application_runpath"], receipt["campaign_complete"]) != (1, PRODUCT_FORMAT, mode, "now", [], runpath, False):
+    if (receipt["mode"], receipt["binding"], receipt["runtime_imports"], receipt["campaign_complete"]) != (mode, "now", [], False):
         fail("candidate dynamic link receipt contract drifted")
+    receipt_contract.require_runpath(
+        search, runpath, label="candidate dynamic link receipt", fail=fail
+    )
     if receipt["output_path"] != str(output.resolve()) or receipt["output_sha256"] != digest(output):
         fail("candidate dynamic link receipt output identity drifted")
     manifest = product / "share/crabc/manifest.json"

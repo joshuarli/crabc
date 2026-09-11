@@ -23,6 +23,8 @@ import subprocess
 import sys
 from typing import Any
 
+import owned_dynamic_receipt as receipt_contract
+
 
 ROOT = Path(__file__).resolve().parents[2]
 PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
@@ -353,12 +355,8 @@ def readelf(path: Path, option: str) -> str:
 
 def receipt_record(path: Path) -> dict[str, Any]:
     record = json_object(path, "dynamic link receipt")
-    expected = {
-        "schema", "format", "mode", "binding", "runtime_imports", "application_runpath", "output_path",
-        "output_sha256", "manifest_sha256", "application_dsos", "owned_runtime_inputs", "input_receipts",
-        "resolved_linker", "link_command", "link_trace", "campaign_complete",
-    }
-    return require_keys(record, expected, "dynamic link receipt")
+    receipt_contract.validate(record, format=PRODUCT_FORMAT, label="dynamic link receipt", fail=fail)
+    return record
 
 
 def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path, mode: str,
@@ -366,13 +364,15 @@ def audit_receipt(product: Path, manifest: Path, output: Path, object_path: Path
     output = physical(output, "linked output")
     object_path = physical(object_path, "linked workload object")
     record = receipt_record(Path(str(output) + ".crabc-link.json"))
-    if (record.get("schema"), record.get("format"), record.get("mode")) != (1, PRODUCT_FORMAT, mode):
+    if record["mode"] != mode:
         fail("dynamic producer receipt mode differs from the requested link")
     if mode == "shared" and record.get("mode") != "shared":
         fail("dynamic producer receipt shared mode drifted")
     if record.get("binding") != "now" or record.get("runtime_imports") != []:
         fail("dynamic producer receipt import contract drifted")
-    if record.get("application_runpath") != "/usr/lib" or record.get("campaign_complete") is not False:
+    search = receipt_contract.validate(record, format=PRODUCT_FORMAT, label="dynamic link receipt", fail=fail)
+    receipt_contract.require_runpath(search, "/usr/lib", label="dynamic producer receipt", fail=fail)
+    if record.get("campaign_complete") is not False:
         fail("dynamic producer receipt search or campaign state drifted")
     if record.get("output_path") != str(output):
         fail("dynamic producer receipt output path drifted")

@@ -23,6 +23,7 @@ import subprocess
 import sys
 from typing import Any, Sequence
 
+import owned_dynamic_receipt as receipt_contract
 from owned_posix_product_evidence import (
     DYNAMIC_PRODUCT_FORMAT,
     ProductEvidenceError,
@@ -360,18 +361,19 @@ def _shared_link_command(root: Path, object_path: Path, output: Path, linker: Pa
 
 
 def _validate_shared_metadata(record: dict[str, Any]) -> None:
-    """Require exact JSON scalar types before comparing a sealed receipt."""
+    """Require one exact receipt version for the callback-loaded DSO."""
 
-    if type(record["schema"]) is not int:
-        _fail("timer TLS DSO receipt schema must be an integer")
+    search = receipt_contract.validate(
+        record, format=DYNAMIC_PRODUCT_FORMAT, label="timer TLS DSO receipt", fail=_fail
+    )
     if type(record["campaign_complete"]) is not bool:
         _fail("timer TLS DSO receipt campaign state must be a boolean")
     if (
-        record["schema"], record["format"], record["mode"], record["binding"],
-        record["runtime_imports"], record["application_runpath"], record["application_dsos"],
+        record["mode"], record["binding"], record["runtime_imports"], record["application_dsos"],
         record["campaign_complete"],
-    ) != (1, DYNAMIC_PRODUCT_FORMAT, "shared", "now", [], "/usr/lib", {}, False):
+    ) != ("shared", "now", [], {}, False):
         _fail("timer TLS DSO receipt is not the sealed callback-loaded shared link")
+    receipt_contract.require_runpath(search, "/usr/lib", label="timer TLS DSO receipt", fail=_fail)
 
 
 def _validate_shared_receipt(
@@ -380,14 +382,6 @@ def _validate_shared_receipt(
     receipt = _physical(receipt, "timer TLS DSO receipt")
     output = _physical(output, "timer TLS DSO")
     record = _json(receipt, "timer TLS DSO receipt")
-    fields = {
-        "schema", "format", "mode", "binding", "runtime_imports", "application_runpath",
-        "output_path", "output_sha256", "manifest_sha256", "application_dsos",
-        "owned_runtime_inputs", "input_receipts", "resolved_linker", "link_command",
-        "link_trace", "campaign_complete",
-    }
-    if set(record) != fields:
-        _fail("timer TLS DSO receipt fields drifted")
     _validate_shared_metadata(record)
     if record["output_path"] != str(output):
         _fail("timer TLS DSO receipt output path differs from this evidence invocation")
