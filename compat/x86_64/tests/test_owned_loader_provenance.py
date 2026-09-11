@@ -31,8 +31,10 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
         self.installed_artifact = self.root / "installed" / "lib/ld-crabc-x86_64.so.1"
         self.sources = (
             "scripts/build_x86_64_owned_dynamic_sysroot.py",
+            "scripts/build_x86_64_owned_sysroot.py",
             "Cargo.toml",
             "Cargo.lock",
+            "rust-toolchain.toml",
             ".cargo/config.toml",
             "ldso/Cargo.toml",
             "ldso/build.rs",
@@ -65,6 +67,9 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
         )
 
     def collect(self) -> dict[str, object]:
+        return self.collect_at(self.stage, self.compiler_artifact, self.installed_artifact)
+
+    def collect_at(self, stage: Path, compiler_artifact: Path, installed_artifact: Path) -> dict[str, object]:
         command = [
             "/opt/pinned/rustup",
             "run",
@@ -78,17 +83,17 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             "--target",
             producer.common.TARGET,
             "--target-dir",
-            str(self.stage / "loader"),
+            str(stage / "loader"),
             "--no-default-features",
             "--features",
             producer.LOADER_FEATURE,
         ]
         return producer.loader_provenance(
-            self.stage,
+            stage,
             command,
             "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic",
-            self.compiler_artifact,
-            self.installed_artifact,
+            compiler_artifact,
+            installed_artifact,
         )
 
     def test_compiler_dependencies_bind_selected_sources_and_normalize_build_paths(self) -> None:
@@ -120,11 +125,40 @@ class OwnedLoaderProvenanceTests(unittest.TestCase):
             [entry["path"] for entry in record["configuration"]],
             [
                 "scripts/build_x86_64_owned_dynamic_sysroot.py",
+                "scripts/build_x86_64_owned_sysroot.py",
                 "Cargo.toml",
                 "Cargo.lock",
+                "rust-toolchain.toml",
                 ".cargo/config.toml",
                 "ldso/Cargo.toml",
             ],
+        )
+
+    def test_different_private_stage_paths_produce_identical_provenance(self) -> None:
+        other_stage = self.root / ".work" / "other-loader-product.build"
+        other_compiler = (
+            other_stage / "loader" / producer.common.TARGET / "release" / "libldso.so"
+        )
+        other_installed = self.root / "other-installed" / "lib/ld-crabc-x86_64.so.1"
+        other_compiler.parent.mkdir(parents=True)
+        other_installed.parent.mkdir(parents=True)
+        other_compiler.write_bytes(self.compiler_artifact.read_bytes())
+        other_installed.write_bytes(self.compiler_artifact.read_bytes())
+        other_compiler.chmod(0o755)
+        other_installed.chmod(0o755)
+        other_compiler.with_name("libldso.d").write_text(
+            str(other_compiler)
+            + ": "
+            + " ".join(
+                str(self.root / source)
+                for source in ("ldso/build.rs", "ldso/src/lib.rs", "ldso/src/x86_64_initial_graph.rs")
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(
+            self.collect(),
+            self.collect_at(other_stage, other_compiler, other_installed),
         )
 
     def test_dependency_trace_rejects_missing_required_source_duplicate_foreign_and_swapped_target(self) -> None:

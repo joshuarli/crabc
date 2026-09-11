@@ -165,8 +165,10 @@ def loader_provenance(
         raise common.BuildError("installed loader differs from its compiler artifact")
     configuration = [
         _source_file_identity(ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py", "loader producer"),
+        _source_file_identity(ROOT / "scripts/build_x86_64_owned_sysroot.py", "shared producer configuration"),
         _source_file_identity(ROOT / "Cargo.toml", "workspace Cargo configuration"),
         _source_file_identity(ROOT / "Cargo.lock", "workspace Cargo lock"),
+        _source_file_identity(ROOT / "rust-toolchain.toml", "pinned Rust toolchain configuration"),
         _source_file_identity(ROOT / ".cargo/config.toml", "workspace Cargo configuration"),
         _source_file_identity(ROOT / "ldso/Cargo.toml", "loader Cargo configuration"),
     ]
