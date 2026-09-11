@@ -25,6 +25,10 @@ const NODE_QUOTED: u8 = 1;
 const NODE_SINGLE: u8 = 2;
 const NODE_DOUBLE: u8 = 4;
 const NODE_DOLLAR_SINGLE: u8 = 8;
+// Private syntax provenance for pieces of a `${parameter operator word}`.
+// It preserves the parameter delimiter's special double-quote backslash rule
+// without changing the outer parameter expansion's result quoting.
+const NODE_PARAMETER_WORD: u8 = 16;
 
 const PARAM_IDENTIFIER: u8 = 1;
 const PARAM_POSITIONAL: u8 = 2;
@@ -256,6 +260,27 @@ struct PendingWord {
     source: Span,
     inherited_flags: u8,
     mode: SyntaxMode,
+}
+
+#[derive(Clone, Copy)]
+struct ParameterHeader {
+    name: Span,
+    kind: u8,
+    length: bool,
+    operator: u8,
+    flags: u8,
+    word_start: usize,
+}
+
+impl ParameterHeader {
+    #[inline]
+    const fn is_pattern_operand(self) -> bool {
+        matches!(
+            self.operator,
+            PARAM_REMOVE_PREFIX | PARAM_REMOVE_LONGEST_PREFIX |
+            PARAM_REMOVE_SUFFIX | PARAM_REMOVE_LONGEST_SUFFIX
+        )
+    }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
@@ -537,7 +562,7 @@ impl SyntaxParser<'_> {
             }
             if byte == b'\x60' {
                 let (body, after, contains_command) =
-                    scan_construct(self.syntax, SCAN_BACKTICK, index + 1)?;
+                    scan_construct(self.syntax, SCAN_BACKTICK, index + 1, false)?;
                 if after > range.end { return Err(WordexpError::Syntax); }
                 self.syntax.contains_command |= contains_command;
                 let command = self.syntax.commands.len();
@@ -662,7 +687,7 @@ impl SyntaxParser<'_> {
                     false,
                 )?;
                 let (body, after, contains_command) =
-                    scan_construct(self.syntax, SCAN_BACKTICK, index + 1)?;
+                    scan_construct(self.syntax, SCAN_BACKTICK, index + 1, false)?;
                 if after > range.end { return Err(WordexpError::Syntax); }
                 self.syntax.contains_command |= contains_command;
                 let command = self.syntax.commands.len();
@@ -771,7 +796,7 @@ impl SyntaxParser<'_> {
                     }
                 } else {
                     let (body, after, contains_command) =
-                        scan_construct(self.syntax, SCAN_BACKTICK, index + 1)?;
+                        scan_construct(self.syntax, SCAN_BACKTICK, index + 1, false)?;
                     if after > end { return Err(WordexpError::Syntax); }
                     self.syntax.contains_command |= contains_command;
                     let command = self.syntax.commands.len();
@@ -805,8 +830,15 @@ impl SyntaxParser<'_> {
         // SAFETY: the joined cursor is below the passed end bound.
         let next = unsafe { self.byte(after_dollar) };
         if next == b'{' {
+            let parameter_outer_double = parameter_scan_outer_double(
+                self.syntax,
+                after_dollar + 1,
+                flags & NODE_DOUBLE != 0,
+            )?;
             let (inside, after, contains_command) =
-                scan_construct(self.syntax, SCAN_PARAMETER, after_dollar + 1)?;
+                scan_construct(
+                    self.syntax, SCAN_PARAMETER, after_dollar + 1, parameter_outer_double,
+                )?;
             if after > end { return Err(WordexpError::Syntax); }
             self.syntax.contains_command |= contains_command;
             let parameter = self.parse_parameter(inside, flags, mode)?;
@@ -818,7 +850,7 @@ impl SyntaxParser<'_> {
         if next == b'(' {
             if after_dollar + 1 < end && unsafe { self.byte(after_dollar + 1) } == b'(' {
                 let (body, after, contains_command) =
-                    scan_construct(self.syntax, SCAN_ARITHMETIC, after_dollar + 2)?;
+                    scan_construct(self.syntax, SCAN_ARITHMETIC, after_dollar + 2, false)?;
                 if after > end { return Err(WordexpError::Syntax); }
                 self.syntax.contains_command |= contains_command;
                 let arithmetic = self.syntax.arithmetic.len();
@@ -833,7 +865,7 @@ impl SyntaxParser<'_> {
                 return Ok(after);
             }
             let (body, after, contains_command) =
-                scan_construct(self.syntax, SCAN_COMMAND, after_dollar + 1)?;
+                scan_construct(self.syntax, SCAN_COMMAND, after_dollar + 1, false)?;
             if after > end { return Err(WordexpError::Syntax); }
             self.syntax.contains_command |= contains_command;
             let command = self.syntax.commands.len();
@@ -899,134 +931,189 @@ impl SyntaxParser<'_> {
         inherited_flags: u8,
         mode: SyntaxMode,
     ) -> Result<usize, WordexpError> {
-        if inside.len() == 0 { return Err(WordexpError::Syntax); }
-        let mut index = self.skip_line_continuations(inside.start, inside.end);
-        if index >= inside.end { return Err(WordexpError::Syntax); }
-        // SAFETY: the joined nonempty cursor makes the initial byte readable.
-        let first = unsafe { self.byte(index) };
-        let (name, kind, length);
-        if first == b'#' {
-            index += 1;
-            if index < inside.end && identifier_start(unsafe { self.byte(index) }) {
-                let start = index;
-                index += 1;
-                while index < inside.end && identifier_continue(unsafe { self.byte(index) }) {
-                    index += 1;
-                }
-                name = Span { start, end: index };
-                kind = PARAM_IDENTIFIER;
-                length = true;
-            } else if index < inside.end && unsafe { self.byte(index) }.is_ascii_digit() {
-                let start = index;
-                index += 1;
-                while index < inside.end && unsafe { self.byte(index) }.is_ascii_digit() {
-                    index += 1;
-                }
-                name = Span { start, end: index };
-                kind = PARAM_POSITIONAL;
-                length = true;
-            } else if index < inside.end && special_parameter(unsafe { self.byte(index) }) {
-                name = Span { start: index, end: index + 1 };
-                kind = PARAM_SPECIAL;
-                length = true;
-                index += 1;
-            } else {
-                name = Span { start: inside.start, end: inside.start + 1 };
-                kind = PARAM_SPECIAL;
-                length = true;
-                index = inside.start + 1;
-            }
-        } else if identifier_start(first) {
-            let start = index;
-            index += 1;
-            while index < inside.end && identifier_continue(unsafe { self.byte(index) }) {
-                index += 1;
-            }
-            name = Span { start, end: index };
-            kind = PARAM_IDENTIFIER;
-            length = false;
-        } else if first.is_ascii_digit() {
-            let start = index;
-            index += 1;
-            while index < inside.end && unsafe { self.byte(index) }.is_ascii_digit() {
-                index += 1;
-            }
-            name = Span { start, end: index };
-            kind = PARAM_POSITIONAL;
-            length = false;
-        } else if special_parameter(first) {
-            name = Span { start: index, end: index + 1 };
-            index += 1;
-            kind = PARAM_SPECIAL;
-            length = false;
-        } else {
-            return Err(WordexpError::Syntax);
-        }
-        index = self.skip_line_continuations(index, inside.end);
-        let mut flags = 0u8;
-        if index < inside.end && unsafe { self.byte(index) } == b':' {
-            flags |= PARAM_COLON;
-            index += 1;
-        }
-        index = self.skip_line_continuations(index, inside.end);
-        let mut operator = PARAM_NONE;
-        if index < inside.end {
-            // SAFETY: index is below inside end.
-            operator = match unsafe { self.byte(index) } {
-                b'-' => PARAM_DEFAULT,
-                b'+' => PARAM_ALTERNATE,
-                b'=' => PARAM_ASSIGN,
-                b'?' => PARAM_ERROR,
-                b'#' => {
-                    index += 1;
-                    if index < inside.end && unsafe { self.byte(index) } == b'#' {
-                        index += 1;
-                        PARAM_REMOVE_LONGEST_PREFIX
-                    } else {
-                        PARAM_REMOVE_PREFIX
-                    }
-                }
-                b'%' => {
-                    index += 1;
-                    if index < inside.end && unsafe { self.byte(index) } == b'%' {
-                        index += 1;
-                        PARAM_REMOVE_LONGEST_SUFFIX
-                    } else {
-                        PARAM_REMOVE_SUFFIX
-                    }
-                }
-                _ => return Err(WordexpError::Syntax),
-            };
-            if !matches!(
-                operator,
-                PARAM_REMOVE_PREFIX | PARAM_REMOVE_LONGEST_PREFIX |
-                PARAM_REMOVE_SUFFIX | PARAM_REMOVE_LONGEST_SUFFIX
-            ) {
-                index += 1;
-            }
-        } else if flags != 0 {
-            return Err(WordexpError::Syntax);
-        }
-        index = self.skip_line_continuations(index, inside.end);
+        let header = parse_parameter_header(self.syntax, inside.start, inside.end, true)?;
         let parameter = self.syntax.parameters.len();
         self.syntax.parameters.push(Parameter {
-            name,
+            name: header.name,
             word: NONE,
-            kind,
-            length,
-            operator,
-            flags,
+            kind: header.kind,
+            length: header.length,
+            operator: header.operator,
+            flags: header.flags,
         })?;
-        if operator != PARAM_NONE {
+        if header.operator != PARAM_NONE {
+            // The outer parameter node keeps `inherited_flags` for result
+            // quoting. A substring-pattern operand instead sees ordinary
+            // shell-word syntax, so only quotes written inside its braces
+            // suppress pattern metacharacters.
+            let operand_flags = if header.is_pattern_operand() {
+                (inherited_flags & !(NODE_QUOTED | NODE_DOUBLE)) | NODE_PARAMETER_WORD
+            } else {
+                inherited_flags | NODE_PARAMETER_WORD
+            };
             self.pending_words.push(PendingWord {
                 parameter,
-                source: Span { start: index, end: inside.end },
-                inherited_flags,
-                mode,
+                source: Span { start: header.word_start, end: inside.end },
+                inherited_flags: operand_flags,
+                mode: if header.is_pattern_operand() {
+                    SyntaxMode::ShellWord
+                } else {
+                    mode
+                },
             })?;
         }
         Ok(parameter)
     }
+}
+
+fn skip_parameter_line_continuations(
+    syntax: &WordexpSyntax,
+    mut index: usize,
+    end: usize,
+) -> usize {
+    while index + 1 < end &&
+        // SAFETY: the loop condition bounds both source reads.
+        unsafe { syntax.byte(index) } == b'\\' &&
+        unsafe { syntax.byte(index + 1) } == b'\n'
+    {
+        index += 2;
+    }
+    index
+}
+
+/// Parse only the fixed parameter header. The delimiter scanner uses the
+/// non-strict form before it knows the matching `}` so it can choose the
+/// correct outer-double-quote rule for the operand. The word parser then uses
+/// the strict form on that exact bounded span, keeping header interpretation
+/// in one place.
+fn parse_parameter_header(
+    syntax: &WordexpSyntax,
+    start: usize,
+    end: usize,
+    strict: bool,
+) -> Result<ParameterHeader, WordexpError> {
+    if start >= end { return Err(WordexpError::Syntax); }
+    let mut index = skip_parameter_line_continuations(syntax, start, end);
+    if index >= end { return Err(WordexpError::Syntax); }
+    // SAFETY: index is below the checked source bound.
+    let first = unsafe { syntax.byte(index) };
+    let (name, kind, length);
+    if first == b'#' {
+        index += 1;
+        if index < end && identifier_start(unsafe { syntax.byte(index) }) {
+            let name_start = index;
+            index += 1;
+            while index < end && identifier_continue(unsafe { syntax.byte(index) }) {
+                index += 1;
+            }
+            name = Span { start: name_start, end: index };
+            kind = PARAM_IDENTIFIER;
+            length = true;
+        } else if index < end && unsafe { syntax.byte(index) }.is_ascii_digit() {
+            let name_start = index;
+            index += 1;
+            while index < end && unsafe { syntax.byte(index) }.is_ascii_digit() {
+                index += 1;
+            }
+            name = Span { start: name_start, end: index };
+            kind = PARAM_POSITIONAL;
+            length = true;
+        } else if index < end && special_parameter(unsafe { syntax.byte(index) }) {
+            name = Span { start: index, end: index + 1 };
+            kind = PARAM_SPECIAL;
+            length = true;
+            index += 1;
+        } else {
+            name = Span { start, end: start + 1 };
+            kind = PARAM_SPECIAL;
+            length = true;
+            index = start + 1;
+        }
+    } else if identifier_start(first) {
+        let name_start = index;
+        index += 1;
+        while index < end && identifier_continue(unsafe { syntax.byte(index) }) {
+            index += 1;
+        }
+        name = Span { start: name_start, end: index };
+        kind = PARAM_IDENTIFIER;
+        length = false;
+    } else if first.is_ascii_digit() {
+        let name_start = index;
+        index += 1;
+        while index < end && unsafe { syntax.byte(index) }.is_ascii_digit() {
+            index += 1;
+        }
+        name = Span { start: name_start, end: index };
+        kind = PARAM_POSITIONAL;
+        length = false;
+    } else if special_parameter(first) {
+        name = Span { start: index, end: index + 1 };
+        index += 1;
+        kind = PARAM_SPECIAL;
+        length = false;
+    } else {
+        return Err(WordexpError::Syntax);
+    }
+
+    index = skip_parameter_line_continuations(syntax, index, end);
+    let mut flags = 0u8;
+    if index < end && unsafe { syntax.byte(index) } == b':' {
+        flags |= PARAM_COLON;
+        index += 1;
+    }
+    index = skip_parameter_line_continuations(syntax, index, end);
+    let mut operator = PARAM_NONE;
+    if index < end {
+        // SAFETY: index is below the checked source bound.
+        operator = match unsafe { syntax.byte(index) } {
+            b'-' => PARAM_DEFAULT,
+            b'+' => PARAM_ALTERNATE,
+            b'=' => PARAM_ASSIGN,
+            b'?' => PARAM_ERROR,
+            b'#' => {
+                index += 1;
+                if index < end && unsafe { syntax.byte(index) } == b'#' {
+                    index += 1;
+                    PARAM_REMOVE_LONGEST_PREFIX
+                } else {
+                    PARAM_REMOVE_PREFIX
+                }
+            }
+            b'%' => {
+                index += 1;
+                if index < end && unsafe { syntax.byte(index) } == b'%' {
+                    index += 1;
+                    PARAM_REMOVE_LONGEST_SUFFIX
+                } else {
+                    PARAM_REMOVE_SUFFIX
+                }
+            }
+            _ if strict => return Err(WordexpError::Syntax),
+            _ => PARAM_NONE,
+        };
+        if !matches!(
+            operator,
+            PARAM_NONE | PARAM_REMOVE_PREFIX | PARAM_REMOVE_LONGEST_PREFIX |
+            PARAM_REMOVE_SUFFIX | PARAM_REMOVE_LONGEST_SUFFIX
+        ) {
+            index += 1;
+        }
+    } else if flags != 0 {
+        return Err(WordexpError::Syntax);
+    }
+    let word_start = skip_parameter_line_continuations(syntax, index, end);
+    Ok(ParameterHeader { name, kind, length, operator, flags, word_start })
+}
+
+fn parameter_scan_outer_double(
+    syntax: &WordexpSyntax,
+    body_start: usize,
+    outer_double: bool,
+) -> Result<bool, WordexpError> {
+    if !outer_double { return Ok(false); }
+    let header = parse_parameter_header(syntax, body_start, syntax.source_len(), false)?;
+    Ok(!header.is_pattern_operand())
 }
 
 #[inline]
@@ -1053,6 +1140,9 @@ const fn unquoted_control(byte: u8) -> bool {
 struct ScanFrame {
     kind: u8,
     quote: u8,
+    // An enclosing double quote remains active through an ordinary parameter
+    // operand, but not through a `#`/`%` pattern operand.
+    parameter_outer_double: bool,
     arithmetic_depth: usize,
     scope_start: usize,
     token_start: usize,
@@ -1062,10 +1152,16 @@ struct ScanFrame {
 }
 
 impl ScanFrame {
-    const fn new(kind: u8, heredoc_start: usize, scope_start: usize) -> Self {
+    const fn new(
+        kind: u8,
+        heredoc_start: usize,
+        scope_start: usize,
+        parameter_outer_double: bool,
+    ) -> Self {
         Self {
             kind,
             quote: QUOTE_NONE,
+            parameter_outer_double,
             arithmetic_depth: 0,
             scope_start,
             token_start: NONE,
@@ -1624,6 +1720,7 @@ fn push_scan_frame(
     scopes: &mut HeapVec<CommandScope>,
     kind: u8,
     heredoc_start: usize,
+    parameter_outer_double: bool,
 ) -> Result<(), WordexpError> {
     let scope_start = if kind == SCAN_COMMAND {
         let start = scopes.len();
@@ -1632,11 +1729,25 @@ fn push_scan_frame(
     } else {
         NONE
     };
-    if let Err(error) = frames.push(ScanFrame::new(kind, heredoc_start, scope_start)) {
+    if let Err(error) = frames.push(ScanFrame::new(
+        kind, heredoc_start, scope_start, parameter_outer_double,
+    )) {
         if kind == SCAN_COMMAND { scopes.truncate(scope_start); }
         return Err(error);
     }
     Ok(())
+}
+
+fn nested_parameter_outer_double(
+    syntax: &WordexpSyntax,
+    parent: &ScanFrame,
+    body_start: usize,
+    directly_double_quoted: bool,
+) -> Result<bool, WordexpError> {
+    let outer_double = directly_double_quoted ||
+        (parent.kind == SCAN_PARAMETER && parent.parameter_outer_double) ||
+        parent.kind == SCAN_ARITHMETIC;
+    parameter_scan_outer_double(syntax, body_start, outer_double)
 }
 
 /// Find the complete body of a parameter, arithmetic, command, or backquote
@@ -1646,12 +1757,15 @@ fn scan_construct(
     syntax: &WordexpSyntax,
     initial_kind: u8,
     body_start: usize,
+    parameter_outer_double: bool,
 ) -> Result<(Span, usize, bool), WordexpError> {
     let mut frames = HeapVec::<ScanFrame>::new();
     let mut here_docs = HeapVec::<HereDoc>::new();
     let mut scopes = HeapVec::<CommandScope>::new();
     let mut contains_command = matches!(initial_kind, SCAN_COMMAND | SCAN_BACKTICK);
-    push_scan_frame(&mut frames, &mut scopes, initial_kind, 0)?;
+    push_scan_frame(
+        &mut frames, &mut scopes, initial_kind, 0, parameter_outer_double,
+    )?;
     let mut index = body_start;
     loop {
         if index >= syntax.source_len() { return Err(WordexpError::Syntax); }
@@ -1710,8 +1824,17 @@ fn scan_construct(
                     if matches!(kind, SCAN_COMMAND | SCAN_BACKTICK) {
                         contains_command = true;
                     }
+                    let parameter_outer_double = if kind == SCAN_PARAMETER {
+                        nested_parameter_outer_double(
+                            syntax, &frame, after_open, true,
+                        )?
+                    } else {
+                        false
+                    };
                     unsafe { frames.replace(top, frame); }
-                    push_scan_frame(&mut frames, &mut scopes, kind, here_docs.len())?;
+                    push_scan_frame(
+                        &mut frames, &mut scopes, kind, here_docs.len(), parameter_outer_double,
+                    )?;
                     index = after_open;
                     continue;
                 }
@@ -1720,7 +1843,7 @@ fn scan_construct(
                 contains_command = true;
                 unsafe { frames.replace(top, frame); }
                 push_scan_frame(
-                    &mut frames, &mut scopes, SCAN_BACKTICK, here_docs.len(),
+                    &mut frames, &mut scopes, SCAN_BACKTICK, here_docs.len(), false,
                 )?;
                 index += 1;
                 continue;
@@ -1750,7 +1873,9 @@ fn scan_construct(
                 index += 2;
                 continue;
             }
-            if byte == b'\'' {
+            if byte == b'\'' &&
+                !(frame.kind == SCAN_PARAMETER && frame.parameter_outer_double)
+            {
                 frame.quote = QUOTE_SINGLE;
                 frame.word_start = false;
                 if frame.kind == SCAN_COMMAND && frame.token_start == NONE {
@@ -1790,12 +1915,21 @@ fn scan_construct(
                     if matches!(kind, SCAN_COMMAND | SCAN_BACKTICK) {
                         contains_command = true;
                     }
+                    let parameter_outer_double = if kind == SCAN_PARAMETER {
+                        nested_parameter_outer_double(
+                            syntax, &frame, after_open, false,
+                        )?
+                    } else {
+                        false
+                    };
                     frame.word_start = false;
                     if frame.kind == SCAN_COMMAND && frame.token_start == NONE {
                         frame.token_start = index;
                     }
                     unsafe { frames.replace(top, frame); }
-                    push_scan_frame(&mut frames, &mut scopes, kind, here_docs.len())?;
+                    push_scan_frame(
+                        &mut frames, &mut scopes, kind, here_docs.len(), parameter_outer_double,
+                    )?;
                     index = after_open;
                     continue;
                 }
@@ -1818,7 +1952,7 @@ fn scan_construct(
                 }
                 unsafe { frames.replace(top, frame); }
                 push_scan_frame(
-                    &mut frames, &mut scopes, SCAN_BACKTICK, here_docs.len(),
+                    &mut frames, &mut scopes, SCAN_BACKTICK, here_docs.len(), false,
                 )?;
                 index += 1;
                 continue;
@@ -2831,7 +2965,9 @@ fn append_literal_node(
             continue;
         }
         if node.flags & NODE_DOUBLE != 0 {
-            if matches!(next, b'$' | b'\x60' | b'"' | b'\\') {
+            if matches!(next, b'$' | b'\x60' | b'"' | b'\\') ||
+                (node.flags & NODE_PARAMETER_WORD != 0 && next == b'}')
+            {
                 output.append_in_origin(&input[index + 1..index + 2], flags, false, origin)?;
                 index += 2;
             } else {
@@ -4562,6 +4698,58 @@ mod tests {
         }
     }
 
+    struct PatternOperandPaths {
+        expected: &'static [(u8, bool)],
+        operator: ParameterPatternOperator,
+        calls: usize,
+    }
+
+    impl WordexpPathAdapter for PatternOperandPaths {
+        fn expand_tilde(
+            &mut self,
+            _user: &[u8],
+            _home: Option<&[u8]>,
+            _output: &mut TildeOutput<'_>,
+        ) -> Result<bool, WordexpError> {
+            Ok(false)
+        }
+
+        fn expand_pattern(
+            &mut self,
+            _pattern: &PatternInput<'_>,
+            _output: &mut PathnameMatches<'_>,
+        ) -> Result<bool, WordexpError> {
+            Ok(false)
+        }
+
+        fn remove_parameter_pattern(
+            &mut self,
+            value: &[u8],
+            pattern: &PatternInput<'_>,
+            operator: ParameterPatternOperator,
+            output: &mut ParameterPatternOutput<'_>,
+        ) -> Result<(), WordexpError> {
+            assert_eq!(operator, self.operator);
+            let mut expected = 0usize;
+            let mut index = 0usize;
+            while index < pattern.len() {
+                let atom = pattern.atom(index).ok_or(WordexpError::Syntax)?;
+                if !atom.is_empty_marker() {
+                    assert!(expected < self.expected.len());
+                    assert_eq!(
+                        (atom.byte(), atom.is_pattern_eligible()),
+                        self.expected[expected],
+                    );
+                    expected += 1;
+                }
+                index += 1;
+            }
+            assert_eq!(expected, self.expected.len());
+            self.calls += 1;
+            output.append_bytes(value)
+        }
+    }
+
     fn assert_words(words: &ExpandedWords, expected: &[&[u8]]) {
         assert_eq!(words.len(), expected.len());
         let mut index = 0usize;
@@ -4729,6 +4917,118 @@ mod tests {
         assert_words(&result, &[b"one", b"two"]);
         let result = evaluate(b"\"${A#a}\"", &mut context, &mut commands, &mut nonempty_paths).unwrap();
         assert_words(&result, &[b"one two"]);
+    }
+
+    #[test]
+    fn parameter_pattern_operands_ignore_only_the_enclosing_double_quote() {
+        const ACTIVE_STAR: &[(u8, bool)] = &[(b'*', true)];
+        const QUOTED_STAR: &[(u8, bool)] = &[(b'*', false)];
+        const QUOTED_RANGE_BYTE: &[(u8, bool)] = &[
+            (b'[', true), (b'a', true), (b'-', false), (b'z', true), (b']', true),
+        ];
+        for (input, expected, operator) in [
+            (
+                b"\"${A#*}\"".as_slice(),
+                ACTIVE_STAR,
+                ParameterPatternOperator::RemovePrefix,
+            ),
+            (
+                b"\"${A#'*'}\"".as_slice(),
+                QUOTED_STAR,
+                ParameterPatternOperator::RemovePrefix,
+            ),
+            (
+                b"${A#\"*\"}".as_slice(),
+                QUOTED_STAR,
+                ParameterPatternOperator::RemovePrefix,
+            ),
+            (
+                b"\"${A#[a\"-\"z]}\"".as_slice(),
+                QUOTED_RANGE_BYTE,
+                ParameterPatternOperator::RemovePrefix,
+            ),
+            (
+                b"\"${A#$PATTERN}\"".as_slice(),
+                ACTIVE_STAR,
+                ParameterPatternOperator::RemovePrefix,
+            ),
+            (
+                b"\"${A#\"$PATTERN\"}\"".as_slice(),
+                QUOTED_STAR,
+                ParameterPatternOperator::RemovePrefix,
+            ),
+            (
+                b"${A#${PATTERN}}".as_slice(),
+                ACTIVE_STAR,
+                ParameterPatternOperator::RemovePrefix,
+            ),
+            (
+                b"\"${A#${PATTERN}}\"".as_slice(),
+                ACTIVE_STAR,
+                ParameterPatternOperator::RemovePrefix,
+            ),
+            (
+                b"\"${A##*}\"".as_slice(),
+                ACTIVE_STAR,
+                ParameterPatternOperator::RemoveLongestPrefix,
+            ),
+            (
+                b"\"${A%*}\"".as_slice(),
+                ACTIVE_STAR,
+                ParameterPatternOperator::RemoveSuffix,
+            ),
+            (
+                b"\"${A%%*}\"".as_slice(),
+                ACTIVE_STAR,
+                ParameterPatternOperator::RemoveLongestSuffix,
+            ),
+        ] {
+            let syntax = WordexpSyntax::parse(input).unwrap();
+            let mut context = WordexpContext::new();
+            context.set_initial(b"A", Some(b"abcabc"), false).unwrap();
+            context.set_initial(b"PATTERN", Some(b"*"), false).unwrap();
+            let mut commands = TestCommands::new(b"");
+            let mut paths = PatternOperandPaths { expected, operator, calls: 0 };
+            let words = evaluate_wordexp(&syntax, &mut context, &mut commands, &mut paths)
+                .unwrap();
+            assert_words(&words, &[b"abcabc"]);
+            assert_eq!(paths.calls, 1);
+        }
+
+        let syntax = WordexpSyntax::parse(b"$(( ${A#'*'} ))").unwrap();
+        let mut context = WordexpContext::new();
+        context.set_initial(b"A", Some(b"1"), false).unwrap();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = PatternOperandPaths {
+            expected: QUOTED_STAR,
+            operator: ParameterPatternOperator::RemovePrefix,
+            calls: 0,
+        };
+        let words = evaluate_wordexp(&syntax, &mut context, &mut commands, &mut paths).unwrap();
+        assert_words(&words, &[b"1"]);
+        assert_eq!(paths.calls, 1);
+    }
+
+    #[test]
+    fn parameter_word_delimiters_follow_the_outer_double_quote_rules() {
+        for (input, expected) in [
+            (b"\"${U:-\\}}\"".as_slice(), b"}".as_slice()),
+            (b"\"${U:-\\{}\"".as_slice(), b"\\{".as_slice()),
+            (b"\"${U:-\\a}\"".as_slice(), b"\\a".as_slice()),
+            (b"\"${U:-'}'}\"".as_slice(), b"''}".as_slice()),
+            (b"\"${U:-a'}'b}\"".as_slice(), b"a''b}".as_slice()),
+            (b"\"${U:-\\$A}\"".as_slice(), b"$A".as_slice()),
+            (b"\"${U:-\\`}\"".as_slice(), b"`".as_slice()),
+            (b"${U:-\\}}".as_slice(), b"}".as_slice()),
+            (b"${U:-'}'}".as_slice(), b"}".as_slice()),
+            (b"\"${U:-\\\\}\"".as_slice(), b"\\".as_slice()),
+        ] {
+            let mut context = WordexpContext::new();
+            let mut commands = TestCommands::new(b"");
+            let mut paths = TestPaths::plain();
+            let words = evaluate(input, &mut context, &mut commands, &mut paths).unwrap();
+            assert_words(&words, &[expected]);
+        }
     }
 
     #[test]

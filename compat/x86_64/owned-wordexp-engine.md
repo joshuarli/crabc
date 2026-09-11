@@ -11,8 +11,9 @@ POSIX.1-2024 [`wordexp()`](https://pubs.opengroup.org/onlinepubs/9799919799.2024
 defines `WRDE_BADVAL` for an undefined shell variable with `WRDE_UNDEF`, and
 `WRDE_CMDSUB` when `WRDE_NOCMD` forbids command substitution. The
 [Shell Command Language](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html),
-particularly sections 2.6.1, 2.6.4, and 2.6.5, defines tilde and arithmetic
-expansion and field splitting. Its [general-concepts expression rule](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap01.html#tag_18_01_02_01)
+particularly sections 2.2.3, 2.6.1, 2.6.2, 2.6.4, and 2.6.5, defines quoting,
+tilde and arithmetic expansion, parameter substring patterns, and field
+splitting. Its [general-concepts expression rule](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap01.html#tag_18_01_02_01)
 imports the relevant ISO C expression semantics, including lazy `&&` and
 `||` operands. Issue 8 also defines dollar-single-quoted strings.
 
@@ -126,7 +127,7 @@ record ownership, or C status mapping.
 | Empty fields | IFS white-space and nonwhite delimiters follow the section 2.6.5 delimiter rules. A quoted zero-width atom can preserve an otherwise empty field at its original position; an unquoted unset or empty expansion vanishes even with empty IFS. |
 | Tilde | Bare `~` receives the current call-local `HOME`; named lookup is delegated. A set-empty `HOME` replaces bare `~` with one explicit empty field. Resolved home bytes are quote-protected from both field splitting and pathname expansion. |
 | Special parameters | `wordexp()` leaves their result unspecified. The context supplies finite values; tests use no host positional state. |
-| Parameter WORD | The source is parsed once and evaluated only when selected, under distinct parameter-word, assignment-value, or pattern-operand context. Unselected branches have no command, arithmetic, or assignment side effect. Assignment stores the quote-removed operand but emits the assigned result under the enclosing expansion's quote state. |
+| Parameter WORD | The source is parsed once and evaluated only when selected, under distinct parameter-word, assignment-value, or pattern-operand context. Unselected branches have no command, arithmetic, or assignment side effect. Assignment stores the quote-removed operand but emits the assigned result under the enclosing expansion's quote state. The four `#`/`##`/`%`/`%%` operands ignore an enclosing double quote for pattern syntax while retaining quotes written inside the braces; this applies in arithmetic source too. A shared parameter-header scan chooses that delimiter rule before the matching `}`, so an ordinary outer-double-quoted operand retains literal single quotes and removes `\}` only where POSIX makes that brace escape special. |
 | Parameter pattern result | The pathname adapter emits removal bytes through `ParameterPatternOutput`. An empty result disappears when its outer parameter expansion is unquoted and becomes one explicit empty field when that expansion is quoted; nonempty output retains normal outer splitting and quote rules. |
 | Parameter length | `${#name}` counts bytes in C mode. In C.UTF-8 mode it counts valid UTF-8 scalars; every malformed or incomplete leading byte counts as one character so the operation preserves forward progress on arbitrary stored bytes. |
 | Arithmetic | The envelope is recognized before evaluation. Direct parameter, command, and nested arithmetic expansion completes across the full selected envelope before arithmetic parsing; arithmetic AST branches and assignments then short-circuit. An unset bare arithmetic identifier is numeric zero; direct parameter expansion still observes `WRDE_UNDEF`. Octal and hexadecimal literals are accepted. The implementation supports plain and ten compound assignments (`*=`, `/=`, `%=`, `+=`, `-=`, `<<=`, `>>=`, `&=`, `^=`, `|=`). |
@@ -149,7 +150,10 @@ its outer double-quote context intact, including parameter-word and arithmetic
 source paths. Locale tests cover default C byte behavior, C.UTF-8 parameter
 length, two/three/four-byte IFS delimiters, ASCII/nonwhite delimiter adjacency,
 origin and quote boundaries, set-empty/unset IFS, and malformed-byte
-progression. Opaque-command tests retain quoted controls, here-documents, a
+progression. Parameter tests inspect each removal operand's pattern atom mask
+under enclosing and inner quotes, nested parameters, and arithmetic source;
+they also retain the outer-double-quoted delimiter and backslash cases.
+Opaque-command tests retain quoted controls, here-documents, a
 real `case`, ordinary keyword arguments, for-list data, brace groups,
 subshells, function bodies, and nested case/control paths without changing raw
 body bytes. A set-empty `HOME` tilde
