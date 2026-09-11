@@ -48,11 +48,11 @@ command     := $(opaque-command-body) | `opaque-command-body`
 The parser records literal, quoted, parameter, arithmetic, tilde, and opaque
 command-body nodes. It uses explicit C-allocated parser stacks for nested
 syntax. A command-body delimiter scanner understands quote state, comments,
-nested substitutions, case delimiters, and pending here-documents only far
-enough to retain the exact body span. Its finite lexer tracks command and
-reserved-word positions for `case`, `in`, `esac`, and `for`: ordinary arguments
-and for-list data with those spellings remain data. It does not build a command
-execution AST.
+nested substitutions, pending here-documents, and a finite stack of lexical
+command scopes only far enough to retain the exact body span. The scopes track
+reserved-word positions and compound delimiters for `case`, `for`, brace
+groups, subshells, and function bodies: ordinary arguments and for-list data
+with those spellings remain data. It does not build a command execution AST.
 
 An arithmetic node retains a separate `ArithmeticSource` word. Its parameter,
 command, quote, and nested arithmetic expansions complete first on the same
@@ -150,8 +150,9 @@ source paths. Locale tests cover default C byte behavior, C.UTF-8 parameter
 length, two/three/four-byte IFS delimiters, ASCII/nonwhite delimiter adjacency,
 origin and quote boundaries, set-empty/unset IFS, and malformed-byte
 progression. Opaque-command tests retain quoted controls, here-documents, a
-real `case`, the twelve reported argument/control-position bodies, and nested
-case/control paths without changing raw body bytes. A set-empty `HOME` tilde
+real `case`, ordinary keyword arguments, for-list data, brace groups,
+subshells, function bodies, and nested case/control paths without changing raw
+body bytes. A set-empty `HOME` tilde
 case and all four empty parameter-pattern removals have outer-quote regressions.
 A 64 KiB-thread regression expands 4,000 nested parameter words, 4,000 nested
 arithmetic expansions, and 8,000 arithmetic parentheses while verifying that
