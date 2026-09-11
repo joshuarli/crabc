@@ -213,6 +213,17 @@ unsafe fn run_with_initial_tls(
         rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Discovery);
         return Err(b"graph\n");
     }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    {
+        let selected = match state.graph_and_objects_mut() {
+            Ok((graph, objects)) => unsafe { select_canonical_initial_libc(graph, objects) },
+            Err(_) => None,
+        };
+        if selected.is_none() {
+            rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Discovery);
+            return Err(b"libcidentity\n");
+        }
+    }
     // This is an initial-TLS root, not a second spelling for the non-TLS
     // general graph. Mixed graphs may contain TLS-free objects, but at least
     // one admitted initial PT_TLS image must own the generation-one state.
@@ -302,6 +313,8 @@ unsafe fn run_with_initial_tls(
             return Err(b"ctorplan\n");
         }
     };
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let conventional_main = objects[0].main_crt_mode == MainCrtMode::Conventional;
 
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     unsafe { x86_64_direct_entry::list_and_exit(&objects[..state.object_count()], ldso_base); }
@@ -357,6 +370,18 @@ unsafe fn run_with_initial_tls(
         return Err(b"tlsruntimev1\n");
     }
 
+    // The installed shared libc imports this record in both CRT modes. Only
+    // a conventional main reserves/publishes it; the owned mode resolves the
+    // same exact weak relocation to null and retains its existing handoff.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    if conventional_main && state.reserve_conventional_startup_publication().is_err() {
+        rollback_initial_tls_state(
+            &mut state,
+            GeneralInitialPreparationStage::ConventionalStartupReservation,
+        );
+        return Err(b"conventionalstartup\n");
+    }
+
     let installed = match unsafe { state.materialize_initial_tls() } {
         Ok(installed) => installed,
         Err(_) => {
@@ -376,10 +401,16 @@ unsafe fn run_with_initial_tls(
     // owner.
     #[cfg(not(crabc_general_loader_libc_tls_runtime_v1))]
     unsafe { state.commit(installed) };
-    #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
+    #[cfg(all(crabc_general_loader_libc_tls_runtime_v1, not(feature = "x86_64-owned-dynamic-runtime")))]
     unsafe { state.commit_runtime_v1(installed) };
+    #[cfg(all(crabc_general_loader_libc_tls_runtime_v1, feature = "x86_64-owned-dynamic-runtime"))]
+    let conventional_startup = unsafe { state.commit_runtime_v1(installed) };
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     unsafe { runtime_registry.publish(); }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    if let Some(reservation) = conventional_startup {
+        unsafe { super::x86_64_conventional_startup_v1::publish(reservation, installed); }
+    }
     // Publication made the TLS snapshot durable before the first dependency
     // constructor can observe it. The plan was fully preflighted above, so
     // this is the non-fallible post-publication callback phase.
@@ -502,6 +533,96 @@ unsafe fn rollback_initial_tls_state(
     stage: GeneralInitialPreparationStage,
 ) {
     state.abort(stage, |object| unsafe { unmap_object(object) });
+}
+
+/// The conventional libc startup receiver is never selected by a symbol name
+/// or a mutable first-load pathname. These are the two declared aliases of
+/// the selected installed product: normal materialization uses
+/// `/usr/lib/libc.so`; the finite package corpus copies those same bytes to
+/// musl's ABI name at `/lib/libc.musl-x86_64.so.1`.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+const CANONICAL_LIBC_ALIAS_SUFFIXES: [&[u8]; 2] = [
+    b"/usr/lib/libc.so",
+    b"/lib/libc.musl-x86_64.so.1",
+];
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CanonicalInitialLibc {
+    index: usize,
+    identity: ObjectIdentity,
+}
+
+/// Open each declared installation alias and reduce it to the stable identity
+/// already retained by the initial graph. An absent alias is normal for the
+/// other selected deployment. A present alias outside this graph has no
+/// startup authority; among admitted identities, exactly one is required.
+/// Two distinct admitted identities fail closed.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn select_canonical_initial_libc(
+    graph: &InitialGraphState,
+    objects: &mut [Object; MAX_OBJECTS],
+) -> Option<CanonicalInitialLibc> {
+    let mut aliases = [None; CANONICAL_LIBC_ALIAS_SUFFIXES.len()];
+    for (slot, suffix) in aliases.iter_mut().zip(CANONICAL_LIBC_ALIAS_SUFFIXES) {
+        *slot = unsafe { canonical_libc_alias_identity(suffix) }.ok()?;
+    }
+    let selected = canonical_initial_libc_from_aliases(graph, aliases)?;
+    if objects[..graph.object_count()]
+        .iter()
+        .any(|object| object.canonical_libc_identity.is_some())
+    {
+        return None;
+    }
+    objects.get_mut(selected.index)?.canonical_libc_identity = Some(selected.identity);
+    Some(selected)
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn canonical_libc_alias_identity(
+    suffix: &[u8],
+) -> Result<Option<ObjectIdentity>, ()> {
+    let prefix = unsafe { x86_64_library_search::installation_prefix() };
+    let length = prefix.len().checked_add(suffix.len()).ok_or(())?;
+    if length + 1 > MAX_PATH {
+        return Err(());
+    }
+    let mut path = [0u8; MAX_PATH];
+    path[..prefix.len()].copy_from_slice(prefix);
+    path[prefix.len()..length].copy_from_slice(suffix);
+    let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0x80000, 0) };
+    if fd == -2 {
+        return Ok(None);
+    }
+    if fd < 0 {
+        return Err(());
+    }
+    let identity = unsafe { file_identity_from_fd(fd) }.ok_or(());
+    unsafe { syscall1(SYS_CLOSE, fd) };
+    identity.map(Some)
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+fn canonical_initial_libc_from_aliases(
+    graph: &InitialGraphState,
+    aliases: [Option<ObjectIdentity>; CANONICAL_LIBC_ALIAS_SUFFIXES.len()],
+) -> Option<CanonicalInitialLibc> {
+    let mut selected = None;
+    for identity in aliases.into_iter().flatten() {
+        let Some(index) = graph.find(identity) else {
+            // A compatibility alias may exist in the installation without
+            // being loaded by this process. Only a retained graph identity
+            // can authorize this private libc receiver.
+            continue;
+        };
+        let candidate = CanonicalInitialLibc { index, identity };
+        match selected {
+            None => selected = Some(candidate),
+            Some(existing) if existing == candidate => {}
+            Some(_) => return None,
+        }
+    }
+    selected
 }
 
 /// Discover every initial dependency edge in linker encounter order.
@@ -712,4 +833,54 @@ unsafe fn unmap_object(object: &Object) {
         object.map_span_start as i64,
         object.map_span_byte_len as i64,
     );
+}
+
+#[cfg(all(test, feature = "x86_64-owned-dynamic-runtime"))]
+mod canonical_libc_tests {
+    use super::*;
+
+    const MAIN: ObjectIdentity = ObjectIdentity { device: 1, inode: 1 };
+    const LIBC: ObjectIdentity = ObjectIdentity { device: 1, inode: 2 };
+    const OTHER: ObjectIdentity = ObjectIdentity { device: 1, inode: 3 };
+
+    fn graph() -> InitialGraphState {
+        let mut graph = InitialGraphState::new(MAIN);
+        assert!(matches!(
+            graph.admit_mapped(LIBC),
+            Ok(ObjectAdmission::New { index: 1 })
+        ));
+        assert!(matches!(
+            graph.admit_mapped(OTHER),
+            Ok(ObjectAdmission::New { index: 2 })
+        ));
+        graph
+    }
+
+    #[test]
+    fn canonical_libc_aliases_unify_only_one_retained_identity() {
+        let graph = graph();
+        assert_eq!(
+            canonical_initial_libc_from_aliases(&graph, [Some(LIBC), Some(LIBC)]),
+            Some(CanonicalInitialLibc { index: 1, identity: LIBC }),
+        );
+        assert_eq!(
+            canonical_initial_libc_from_aliases(&graph, [Some(LIBC), Some(OTHER)]),
+            None,
+        );
+        assert_eq!(
+            canonical_initial_libc_from_aliases(
+                &graph,
+                [Some(LIBC), Some(ObjectIdentity { device: 9, inode: 9 })],
+            ),
+            Some(CanonicalInitialLibc { index: 1, identity: LIBC }),
+        );
+        assert_eq!(
+            canonical_initial_libc_from_aliases(
+                &graph,
+                [Some(ObjectIdentity { device: 9, inode: 9 }), None],
+            ),
+            None,
+        );
+        assert_eq!(canonical_initial_libc_from_aliases(&graph, [None, None]), None);
+    }
 }

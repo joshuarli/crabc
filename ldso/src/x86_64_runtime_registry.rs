@@ -214,10 +214,16 @@ impl PreparedInitialRegistry {
                 (*node).link_map.address = objects[index].base as usize;
                 (*node).link_map.dynamic = objects[index].dynamic;
             }
-            if index == 0 { unsafe { (*node).callback_state.store(INITIALIZED, Ordering::Relaxed); } }
-            else {
-                let (init, fini) = lifecycle.callback_plan(index)?;
+            if let Some((init, fini)) = lifecycle.callback_plan(index) {
                 unsafe { (*node).callbacks(init, fini) }?;
+            } else if index == 0 {
+                // The established owned CRT owns its main callbacks. The
+                // conventional musl path has a main plan and therefore never
+                // enters this pre-initialized state.
+                unsafe { (*node).callback_state.store(INITIALIZED, Ordering::Relaxed); }
+            } else {
+                // Every admitted dependency must have a preflighted plan.
+                return None;
             }
         }
         for index in 0..graph.object_count() {
@@ -241,9 +247,14 @@ impl PreparedInitialRegistry {
         registry.initial_tls_count = objects.iter().map(|object| object.tls_module_id).max().unwrap_or(0);
         registry.tls_count = registry.initial_tls_count;
         let plan = graph.dependency_first_plan().ok()?;
-        let mut initial_order = LoaderBuffer::new(plan.indices().len(), core::ptr::null_mut::<RuntimeObject>())?;
+        let conventional_main = lifecycle.callback_plan(0).is_some();
+        let initial_count = plan.indices().len().checked_add(conventional_main as usize)?;
+        let mut initial_order = LoaderBuffer::new(initial_count, core::ptr::null_mut::<RuntimeObject>())?;
         for (slot, &index) in plan.indices().iter().enumerate() {
             initial_order.as_mut_slice()[slot] = by_index.as_slice()[index];
+        }
+        if conventional_main {
+            *initial_order.as_mut_slice().last_mut()? = by_index.as_slice()[0];
         }
         registry.initial_order = Some(initial_order);
         // Initial symbol scope is breadth-first, not depth-first map order.
@@ -856,7 +867,11 @@ unsafe extern "C" fn runtime_address_info(address: usize, output: *mut AddressIn
     let mut best = 0usize;
     let mut best_symbol = core::ptr::null();
     for index in 0..object.symcount {
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let symbol = unsafe { direct_symbol(object, index) }.unwrap_or(core::ptr::null());
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         let symbol = unsafe { object.symtab.add(index * 24) };
+        if symbol.is_null() { return 0; }
         let info = unsafe { *symbol.add(4) };
         let value = unsafe { read_u64(symbol.add(8)) };
         if value == 0 || !matches!(info >> 4, 1 | 2) || !matches!(info & 15, 0 | 1 | 2 | 6) { continue; }

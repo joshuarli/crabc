@@ -96,7 +96,7 @@ impl PreparedRetry {
         for &record in old.map_or(&[][..], |old| old.entries()).iter().chain(new.entries()) {
             let object = objects.get(record.owner)?;
             if !matches!(record.kind, R_X86_64_GLOB_DAT | R_X86_64_JUMP_SLOT) || record.symbol == 0 { return None; }
-            unsafe { write_span(object, record.offset, 8, true) }?;
+            unsafe { write_span(object, record.offset, 8, true, Some(record.symbol)) }?;
             match unsafe { word_resolution(&scope, objects, record.owner, record.kind, record.symbol, record.addend, true) }? {
                 None => prepared.pending.push(record)?,
                 Some(value) => {

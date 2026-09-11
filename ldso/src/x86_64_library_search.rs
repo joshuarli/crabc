@@ -62,6 +62,27 @@ pub(super) unsafe fn interpreter_name() -> &'static [u8] {
     let length = unsafe { bounded_nul(pointer, PATH_CAPACITY) }.unwrap_or(0);
     unsafe { core::slice::from_raw_parts(pointer, length) }
 }
+
+/// The installation prefix already used for system-path discovery.
+///
+/// The selected product's canonical libc aliases are rooted beneath this
+/// prefix too. Keeping that derivation here prevents a startup handoff from
+/// treating an arbitrary search result or an unrelated host path as libc
+/// authority when direct interpreter invocation relocates the product tree.
+pub(super) unsafe fn installation_prefix() -> &'static [u8] {
+    let name = unsafe { interpreter_name() };
+    if !name.starts_with(b"/") {
+        return b"";
+    }
+    let length = name
+        .iter()
+        .enumerate()
+        .filter(|(_, byte)| **byte == b'/')
+        .rev()
+        .nth(1)
+        .map_or(0, |(index, _)| index);
+    &name[..length]
+}
 pub(super) unsafe fn command_path(path: *const u8) { unsafe { ENVIRONMENT_PATH = path; } }
 pub(super) unsafe fn command_preload(path: *const u8) { unsafe { ENVIRONMENT_PRELOAD = path; } }
 
@@ -86,14 +107,11 @@ static SYSTEM_PATH: SystemPathOwner = SystemPathOwner(UnsafeCell::new(SystemPath
 unsafe fn load_system_path() -> SystemPath {
     // musl derives the installation prefix from the second-last slash of
     // an absolute interpreter name. Relative names retain the root prefix.
-    let name = unsafe { interpreter_name() };
-    let prefix_len = if name.starts_with(b"/") {
-        name.iter().enumerate().filter(|(_, byte)| **byte == b'/')
-            .rev().nth(1).map_or(0, |(index, _)| index)
-    } else { 0 };
+    let prefix = unsafe { installation_prefix() };
+    let prefix_len = prefix.len();
     let suffix = b"/etc/ld-musl-x86_64.path\0";
     let mut path = [0u8; PATH_CAPACITY + 32];
-    path[..prefix_len].copy_from_slice(&name[..prefix_len]);
+    path[..prefix_len].copy_from_slice(prefix);
     path[prefix_len..prefix_len + suffix.len()].copy_from_slice(suffix);
     let fd = unsafe { syscall4(SYS_OPENAT, AT_FDCWD, path.as_ptr() as i64, 0x80000, 0) };
     if fd < 0 { return if fd == -2 { SystemPath::Defaults } else { SystemPath::Disabled }; }

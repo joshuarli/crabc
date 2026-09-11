@@ -40,6 +40,264 @@ impl Image {
     }
 }
 
+// The installed product checks every relocation-selected dynsym record
+// against the mapped, file-backed PT_LOAD range.  Keep this image separate
+// from the older structural fixture above: its metadata deliberately lives
+// in one declared mapping, as an ELF loader sees it, rather than in adjacent
+// Rust allocations.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+struct MappedImage {
+    bytes: Box<[u8; 1024]>,
+    count: usize,
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+impl MappedImage {
+    const SYMTAB: usize = 0x100;
+    const STRTAB: usize = 0x180;
+    const RELA: usize = 0x200;
+    const DESTINATION: usize = 0x300;
+
+    fn new() -> Self {
+        let mut image = Self { bytes: Box::new([0; 1024]), count: 0 };
+        // One RWX PT_LOAD covers the synthetic ELF records and relocation
+        // target. The test never executes it; PF_X permits the graph's
+        // ordinary code-range validation to remain faithful to production.
+        image.put_u32(0, PT_LOAD);
+        image.put_u32(4, PF_R | PF_W | PF_X);
+        image.put_u64(16, 0);
+        image.put_u64(32, image.bytes.len() as u64);
+        image.put_u64(40, image.bytes.len() as u64);
+        image.put_u64(48, 4096);
+        image.bytes[Self::STRTAB] = 0;
+        image
+    }
+
+    fn put_u32(&mut self, offset: usize, value: u32) {
+        self.bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn put_u64(&mut self, offset: usize, value: u64) {
+        self.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn symbol(&mut self, index: usize, name: &[u8], kind: u8, binding: u8, visibility: u8, section: u16) {
+        let name_offset = 1usize;
+        self.bytes[Self::STRTAB + name_offset..Self::STRTAB + name_offset + name.len()]
+            .copy_from_slice(name);
+        self.bytes[Self::STRTAB + name_offset + name.len()] = 0;
+        let offset = Self::SYMTAB + index * 24;
+        self.put_u32(offset, name_offset as u32);
+        self.bytes[offset + 4] = kind | binding << 4;
+        self.bytes[offset + 5] = visibility;
+        self.bytes[offset + 6..offset + 8].copy_from_slice(&section.to_le_bytes());
+    }
+
+    fn rela(&mut self, kind: u32, symbol: usize, addend: i64) {
+        self.rela_at(Self::DESTINATION, kind, symbol, addend);
+    }
+
+    fn rela_at(&mut self, destination: usize, kind: u32, symbol: usize, addend: i64) {
+        let offset = Self::RELA + self.count * ELF64_RELA_SIZE;
+        self.put_u64(offset, destination as u64);
+        self.put_u64(offset + 8, kind as u64 | (symbol as u64) << 32);
+        self.put_u64(offset + 16, addend as u64);
+        self.count += 1;
+    }
+
+    fn exact_owned_crt_note(&mut self) {
+        const NOTE: usize = 0x80;
+        self.put_u32(56, PT_NOTE);
+        self.put_u64(56 + 16, NOTE as u64);
+        self.put_u64(56 + 32, 24);
+        self.put_u32(NOTE, OWNED_CRT_NOTE_NAME.len() as u32);
+        self.put_u32(NOTE + 4, 4);
+        self.put_u32(NOTE + 8, OWNED_CRT_NOTE_TYPE);
+        self.bytes[NOTE + 12..NOTE + 12 + OWNED_CRT_NOTE_NAME.len()]
+            .copy_from_slice(OWNED_CRT_NOTE_NAME);
+        self.put_u32(NOTE + 20, OWNED_CRT_NOTE_REVISION);
+    }
+
+    fn object(&self, mapped: bool) -> Object {
+        Object {
+            base: self.bytes.as_ptr() as u64,
+            phdr: self.bytes.as_ptr(),
+            phnum: 2,
+            symtab: unsafe { self.bytes.as_ptr().add(Self::SYMTAB) },
+            strtab: unsafe { self.bytes.as_ptr().add(Self::STRTAB) },
+            strsz: 128,
+            rela: unsafe { self.bytes.as_ptr().add(Self::RELA) },
+            relasz: self.count * ELF64_RELA_SIZE,
+            role: if mapped { ObjectRole::Library } else { ObjectRole::Main },
+            ..EMPTY_OBJECT
+        }
+    }
+
+    fn destination(&self) -> u64 {
+        u64::from_le_bytes(
+            self.bytes[Self::DESTINATION..Self::DESTINATION + 8]
+                .try_into().unwrap(),
+        )
+    }
+
+    fn set_destination(&mut self, value: u64) {
+        self.put_u64(Self::DESTINATION, value);
+    }
+
+    fn word_at(&self, offset: usize) -> u64 {
+        u64::from_le_bytes(self.bytes[offset..offset + 8].try_into().unwrap())
+    }
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
+    let mut owned = MappedImage::new();
+    owned.exact_owned_crt_note();
+    owned.symbol(1, b"__crabc_x86_64_owned_crt_handoff", 1, 2, 0, 0);
+    owned.rela(R_X86_64_GLOB_DAT, 1, 0);
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = owned.object(false);
+    objects[0].main_crt_mode = unsafe {
+        owned_crt_note_mode(objects[0].phdr, objects[0].phnum, objects[0].base)
+    }.expect("exact CRABC note");
+    assert_eq!(objects[0].main_crt_mode, MainCrtMode::Owned);
+    assert!(unsafe { validate_main_crt_mode(&objects) }.is_some());
+
+    // A conventional entry never gains owned lifecycle merely because an
+    // arbitrary main imports the private handoff name.
+    let mut import_only = MappedImage::new();
+    import_only.symbol(1, b"__crabc_x86_64_owned_crt_handoff", 1, 2, 0, 0);
+    import_only.rela(R_X86_64_GLOB_DAT, 1, 0);
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = import_only.object(false);
+    objects[0].main_crt_mode = unsafe {
+        owned_crt_note_mode(objects[0].phdr, objects[0].phnum, objects[0].base)
+    }.expect("absent marker is conventional");
+    assert_eq!(objects[0].main_crt_mode, MainCrtMode::Conventional);
+    assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
+
+    // Conversely a retained owned marker cannot fall back if its exact
+    // private relocation is missing or if its relocation form drifts.
+    let mut note_only = MappedImage::new();
+    note_only.exact_owned_crt_note();
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = note_only.object(false);
+    objects[0].main_crt_mode = MainCrtMode::Owned;
+    assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
+
+    let mut wrong_form = MappedImage::new();
+    wrong_form.exact_owned_crt_note();
+    wrong_form.symbol(1, b"__crabc_x86_64_owned_crt_handoff", 1, 1, 0, 0);
+    wrong_form.rela(R_X86_64_GLOB_DAT, 1, 0);
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = wrong_form.object(false);
+    objects[0].main_crt_mode = MainCrtMode::Owned;
+    assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn conventional_startup_import_requires_canonical_libc_and_keeps_owned_mode_null() {
+    const STARTUP: &[u8] = b"__crabc_x86_64_loader_conventional_startup_v1";
+    let conventional_main = || {
+        let mut main = MappedImage::new();
+        main.rela(R_X86_64_RELATIVE, 0, 0);
+        main
+    };
+    let imported_libc = || {
+        let mut libc = MappedImage::new();
+        libc.set_destination(0xfeed);
+        libc.symbol(1, STARTUP, 1, 2, 0, 0);
+        libc.rela(R_X86_64_GLOB_DAT, 1, 0);
+        libc
+    };
+
+    let main = conventional_main();
+    let libc = imported_libc();
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = main.object(false);
+    objects[1] = libc.object(true);
+    objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
+    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some());
+    assert_eq!(libc.destination(), x86_64_conventional_startup_v1::address());
+
+    // The installed libc retains one exact request. A second otherwise valid
+    // slot is rejected before either relocation write, rather than becoming a
+    // second private receiver.
+    let main = conventional_main();
+    let mut duplicate = imported_libc();
+    duplicate.rela_at(MappedImage::DESTINATION + 8, R_X86_64_GLOB_DAT, 1, 0);
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = main.object(false);
+    objects[1] = duplicate.object(true);
+    objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
+    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none());
+    assert_eq!(duplicate.destination(), 0xfeed);
+    assert_eq!(duplicate.word_at(MappedImage::DESTINATION + 8), 0);
+
+    // A matching name in an unclassified DSO cannot turn importer possession
+    // into private startup authority.
+    let main = conventional_main();
+    let libc = imported_libc();
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = main.object(false);
+    objects[1] = libc.object(true);
+    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none());
+    assert_eq!(libc.destination(), 0xfeed);
+
+    // The shared libc appears in an owned product too. Its exact weak import
+    // remains a null slot; only the note-plus-handoff path owns lifecycle.
+    let mut owned_main = MappedImage::new();
+    owned_main.exact_owned_crt_note();
+    owned_main.symbol(1, b"__crabc_x86_64_owned_crt_handoff", 1, 2, 0, 0);
+    owned_main.rela(R_X86_64_GLOB_DAT, 1, 0);
+    let libc = imported_libc();
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = owned_main.object(false);
+    objects[0].main_crt_mode = unsafe {
+        owned_crt_note_mode(objects[0].phdr, objects[0].phnum, objects[0].base)
+    }.unwrap();
+    objects[1] = libc.object(true);
+    objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
+    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some());
+    assert_eq!(libc.destination(), 0);
+
+    let main = conventional_main();
+    let mut wrong_form = imported_libc();
+    wrong_form.symbol(1, STARTUP, 1, 1, 0, 0);
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = main.object(false);
+    objects[1] = wrong_form.object(true);
+    objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
+    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none());
+    assert_eq!(wrong_form.destination(), 0xfeed);
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[test]
+fn relocation_cannot_mutate_a_later_private_import_record_before_admission() {
+    const STARTUP: &[u8] = b"__crabc_x86_64_loader_conventional_startup_v1";
+    let mut main = MappedImage::new();
+    main.rela(R_X86_64_RELATIVE, 0, 0);
+    let mut libc = MappedImage::new();
+    libc.set_destination(0xfeed);
+    libc.symbol(1, STARTUP, 1, 2, 0, 0);
+    // The first relocation targets symbol 1's metadata. The second uses that
+    // same record for the exact private import. Preflight must reject before
+    // either destination changes, including with an empty GNU export table.
+    libc.rela_at(MappedImage::SYMTAB + 24, R_64, 0, 0);
+    libc.rela(R_X86_64_GLOB_DAT, 1, 0);
+    let symbol_before = libc.word_at(MappedImage::SYMTAB + 24);
+    let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+    objects[0] = main.object(false);
+    objects[1] = libc.object(true);
+    objects[1].canonical_libc_identity = Some(ObjectIdentity { device: 7, inode: 9 });
+    assert!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_none());
+    assert_eq!(libc.word_at(MappedImage::SYMTAB + 24), symbol_before);
+    assert_eq!(libc.destination(), 0xfeed);
+}
+
 fn graph(count: usize) -> InitialGraphState {
     let mut graph = InitialGraphState::new(ObjectIdentity { device: 1, inode: 0 });
     for index in 1..count {
@@ -162,25 +420,23 @@ fn installed_runtime_function_imports_validate_shape_before_any_graph_write() {
             (R_64, 2, 1, 0, 0, 0, false),
             (R_X86_64_GLOB_DAT, 2, 1, 0, 0, 1, false),
         ] {
-            let mut main = Image::new();
-            let mut library = Image::new();
-            main.data[0] = 0xfeed;
-            library.data[0] = 0xbeef;
-            main.rela(0x1000, R_X86_64_RELATIVE, 0, 0x1000);
-            library.symbol(1, kind, binding, visibility, section, 0, 0);
-            library.rela(0x1000, relocation, 1, addend);
+            let mut main = MappedImage::new();
+            let mut library = MappedImage::new();
+            main.set_destination(0xfeed);
+            library.set_destination(0xbeef);
+            main.rela(R_X86_64_RELATIVE, 0, 0);
+            library.symbol(1, &name[1..name.len() - 1], kind, binding, visibility, section);
+            library.rela(relocation, 1, addend);
             let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
             objects[0] = main.object(false);
             objects[1] = library.object(true);
-            objects[1].strtab = name.as_ptr();
-            objects[1].strsz = name.len();
             assert_eq!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some(), admitted);
             if admitted {
-                assert_eq!(main.data[0], main.data.as_ptr() as u64);
-                assert_eq!(library.data[0], x86_64_initial_worker_tls::runtime_function(&name[1..name.len()-1]).unwrap());
+                assert_eq!(main.destination(), main.bytes.as_ptr() as u64);
+                assert_eq!(library.destination(), x86_64_initial_worker_tls::runtime_function(&name[1..name.len()-1]).unwrap());
             } else {
-                assert_eq!(main.data[0], 0xfeed);
-                assert_eq!(library.data[0], 0xbeef);
+                assert_eq!(main.destination(), 0xfeed);
+                assert_eq!(library.destination(), 0xbeef);
             }
         }
     }

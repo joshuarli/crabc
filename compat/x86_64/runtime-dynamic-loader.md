@@ -16,6 +16,84 @@ and `src/ldso/dlinfo.c` provide lookup and introspection behavior. Runtime maps 
 identity and process finalization owns destructors. Failed admission rolls back
 only new maps. Physical close-time unmapping is not the musl parity target.
 
+## Conventional musl main startup
+
+The installed x86 product admits two explicit initial-main owners. Rust
+`Scrt1.o` is selected only by its bounded `CRABC\0` `PT_NOTE` record (type
+`0x43525401`, revision 1) *and* one exact weak undefined object
+`GLOB_DAT` relocation for `__crabc_x86_64_owned_crt_handoff`. A missing half,
+malformed or duplicate CRABC record, or a different relocation fails before a
+write. That existing owned route keeps its 72-byte main-only RuntimeV1
+descriptor and its 32-byte handoff unchanged.
+
+An ordinary musl `crt1.o` has no CRABC note. Its selected libc keeps exactly
+one weak undefined `STT_OBJECT` `R_X86_64_GLOB_DAT`, addend-zero request for
+`__crabc_x86_64_loader_conventional_startup_v1`; no main image, other DSO,
+strong/defined request, different visibility, or other relocation form is an
+admission. The loader opens the declared installation aliases
+`/usr/lib/libc.so` and `/lib/libc.musl-x86_64.so.1`, derives each opened file's
+`(st_dev, st_ino)`, and considers only identities already admitted to the
+initial graph. One admitted identity is required; same-inode aliases unify,
+an unloaded alias has no authority, and distinct admitted aliases reject. The
+pathname, SONAME, and possession of the import never grant this role.
+
+The only conventional wire is the immutable 88-byte
+`__crabc_x86_64_loader_conventional_startup_v1` record:
+
+```text
+u64 magic = 0x43524142435f4331; u32 version = 1; u32 abi_size = 88;
+u32 process_mode = 2; u32 owner = 1; AtomicU8 state; u8 reserved[7];
+const u8 *thread_pointer; const usize *dtv; usize dtv_words; usize module_count;
+u64 generation = 1; usize run_initial; usize process_fini;
+```
+
+Ldso reserves its `PUBLISHING` state before the single `ARCH_SET_FS`, fills it
+from the same retained `InstalledInitialTls` and graph owner as RuntimeV1,
+publishes the RuntimeRegistry, then performs the record's sole release store
+to `READY`. Libc first acquires and validates this complete record, including
+the current TP/DTV prefix, before reading errno or any FS-relative slot. Raw
+callback words become C-ABI `void(void)` callbacks only after that acquire;
+`run_initial` is an explicit C-ABI adapter over the registry's internal Rust
+implementation, and `process_fini` is the registry finalizer.
+
+The loader-controlled GOT slot is the lifecycle selector. A non-null slot
+selects and validates conventional startup, ignoring musl CRT's dummy
+`init`, `fini`, and `rtld_fini` arguments. A null slot selects the owned path,
+which still requires every existing owned callback and cannot fall back to
+the conventional record. The ordinary main is a queued RuntimeRegistry node
+after dependency postorder; its fini node is registered before any constructor
+and finalizes in the same reverse order. Musl `dynlink.c` does not dispatch a
+main `DT_PREINIT_ARRAY`, so this path does not add one.
+
+The ELF source mapping is musl 1.2.6 `ldso/dynlink.c::{decode_dyn,count_syms,
+gnu_lookup_filtered,find_sym,do_init_fini}` and
+`crt/crt1.c` with `src/env/__libc_start_main.c`, under musl's MIT license.
+GNU hash buckets certify only exported lookup candidates; an all-zero GNU
+table has no exports yet may still carry relocation-indexed undefined dynsym
+records. Direct relocations therefore validate each referenced 24-byte dynsym
+record independently. `DT_VERSYM` filters external export candidates only;
+direct/local records and `dladdr` retain their separate bounds. Musl does not
+match requested version names or dereference `VERDEF`/`VERNEED`, so their
+paired bounded tags remain source-inert metadata here rather than a glibc
+version framework. Relocation preflight protects every consumed hash, version,
+and direct-symbol record before the first write, preventing one relocation
+from changing a later import's admission.
+
+The retained Alpine `libcrypto.so.3` consumer carries the exact ordinary-DSO
+set `DT_SYMBOLIC=0`, `DT_FLAGS=DF_SYMBOLIC|DF_BIND_NOW`, and
+`DT_FLAGS_1=DF_1_NOW|DF_1_NODELETE`. Musl `decode_dyn` accepts those values,
+while `prepare_lazy` consults only BIND_NOW/NOW and `do_relocs` still starts
+external lookup at `head` (except `STB_LOCAL`). The installed initial graph
+therefore admits exactly one zero-valued `DT_SYMBOLIC` plus those two inert
+bits on a mapped process-lifetime DSO, retaining BIND_NOW/NOW behavior. It
+does not add self-first lookup, unload policy, or a general flag allowance:
+duplicate/nonzero `DT_SYMBOLIC`, `DT_TEXTREL`, `DF_TEXTREL`, and every other
+unapproved flag still reject. This maps to musl 1.2.6
+`ldso/dynlink.c::{decode_dyn,do_relocs,prepare_lazy}`.
+
+This is an x86 installed-product boundary only. It does not widen the paused
+AArch64 contract or claim the remaining dynamic-loader family complete.
+
 ## Relocation and coherent TLS generations
 
 `x86_64_general_relocation.rs` now takes borrowed slice-sized scope views and

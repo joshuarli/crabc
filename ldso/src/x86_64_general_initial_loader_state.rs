@@ -80,6 +80,7 @@ pub(crate) enum GeneralInitialPreparationStage {
     TlsRegistry,
     PublicationReservation,
     RuntimeV1Reservation,
+    ConventionalStartupReservation,
     TlsMaterialization,
 }
 

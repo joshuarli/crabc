@@ -32,6 +32,10 @@ use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicU8, Ordering};
 
 type GeneralInitialTlsRegistry = InitialTlsRegistry<MAX_OBJECTS, MAX_OBJECTS>;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+type ConventionalStartupReservation = Option<super::x86_64_conventional_startup_v1::Reservation>;
+#[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+type ConventionalStartupReservation = ();
 
 /// The one-way lifecycle of a general initial TLS transaction.
 ///
@@ -62,6 +66,8 @@ pub(crate) enum GeneralInitialTlsStateError {
     Materialization,
     PublicationUnavailable,
     RuntimeV1PublicationUnavailable,
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    ConventionalStartupPublicationUnavailable,
     #[cfg(crabc_general_initial_lifecycle)]
     LifecycleIncomplete,
 }
@@ -104,6 +110,11 @@ pub(crate) struct GeneralInitialTlsState {
     phase: GeneralInitialTlsPhase,
     loader: GeneralInitialLoaderState,
     registry: GeneralInitialTlsRegistry,
+    // The ordinary-musl libc receiver is a third, finite wire. Its reservation
+    // is acquired before `%fs` changes, but its READY publication waits until
+    // RuntimeRegistry has copied the same retained graph into stable nodes.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    conventional_startup: Option<super::x86_64_conventional_startup_v1::Reservation>,
 }
 
 /// Raw-map owner for one initial TLS transaction.
@@ -192,9 +203,13 @@ impl GeneralInitialTlsTransaction {
     /// its initial TLS allocation. No reference obtained through this
     /// transaction may be retained after the call.
     #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
-    pub(crate) unsafe fn commit_runtime_v1(mut self, installed: InstalledInitialTls) {
-        unsafe { core::ptr::read(self.state).commit_runtime_v1(installed) };
+    pub(crate) unsafe fn commit_runtime_v1(
+        mut self,
+        installed: InstalledInitialTls,
+    ) -> ConventionalStartupReservation {
+        let startup = unsafe { core::ptr::read(self.state).commit_runtime_v1(installed) };
         self.release();
+        startup
     }
 }
 
@@ -490,6 +505,11 @@ impl GeneralInitialTlsState {
                 core::ptr::addr_of_mut!((*destination).registry),
                 GeneralInitialTlsRegistry::new(),
             );
+            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+            core::ptr::write(
+                core::ptr::addr_of_mut!((*destination).conventional_startup),
+                None,
+            );
         }
     }
 
@@ -704,6 +724,25 @@ impl GeneralInitialTlsState {
         Ok(())
     }
 
+    /// Reserve the separate ordinary-musl libc startup record before the
+    /// first `ARCH_SET_FS`. This may be called only after the common RuntimeV1
+    /// reservation, and only when the parser selected a conventional main.
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    pub(crate) fn reserve_conventional_startup_publication(
+        &mut self,
+    ) -> Result<(), GeneralInitialTlsStateError> {
+        if self.phase != GeneralInitialTlsPhase::RuntimeV1PublicationReserved
+            || self.conventional_startup.is_some()
+        {
+            return Err(GeneralInitialTlsStateError::InvalidPhase);
+        }
+        self.conventional_startup = Some(
+            super::x86_64_conventional_startup_v1::reserve()
+                .ok_or(GeneralInitialTlsStateError::ConventionalStartupPublicationUnavailable)?,
+        );
+        Ok(())
+    }
+
     /// Materializes the completed initial population after every fallible
     /// object mapping, relocation, protection, and RELRO transition has
     /// succeeded and exclusive private-state publication has been reserved.
@@ -789,7 +828,12 @@ impl GeneralInitialTlsState {
     /// has no error return, validation branch, or CAS: such a successor could
     /// not safely undo the installed `%fs` base.
     #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
-    pub(crate) unsafe fn commit_runtime_v1(mut self, installed: InstalledInitialTls) {
+    pub(crate) unsafe fn commit_runtime_v1(
+        mut self,
+        installed: InstalledInitialTls,
+    ) -> ConventionalStartupReservation {
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let conventional_startup = self.conventional_startup.take();
         self.phase = GeneralInitialTlsPhase::Committed;
         // SAFETY: both pre-FS reservations succeeded. Attach TLS metadata to
         // the common graph/object owner before that owner becomes Ready.
@@ -801,6 +845,10 @@ impl GeneralInitialTlsState {
         // complete before ARCH_SET_FS. The descriptor READY store remains
         // intentionally last, after the shared graph owner is Ready.
         unsafe { publish_reserved_loader_tls_runtime_v1(installed) };
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        return conventional_startup;
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+        ()
     }
 
     /// Rolls back the map-owned portion of an unsuccessful transaction.
@@ -826,6 +874,10 @@ impl GeneralInitialTlsState {
         #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
         if self.phase == GeneralInitialTlsPhase::RuntimeV1PublicationReserved {
             release_loader_tls_runtime_v1_descriptor_reservation();
+        }
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        if let Some(reservation) = self.conventional_startup.take() {
+            super::x86_64_conventional_startup_v1::release(reservation);
         }
         // The common owner performs the exact reverse-order object rollback
         // and, when Reserved, restores its one shared publication word to

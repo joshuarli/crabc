@@ -4,7 +4,9 @@
 //! RELRO finish before this plan is attached to the canonical graph owner.
 //! Callback addresses are copied, so finalization never rereads ELF arrays.
 //! Immutable plans and atomic execution states share that owner's lifetime;
-//! no lock is held across foreign code. The main image remains CRT-owned.
+//! no lock is held across foreign code. The established owned CRT keeps the
+//! main image outside this plan; the installed conventional musl CRT puts its
+//! main object last after the dependency postorder.
 //!
 //! This is process finalization, not dlclose: all initial mappings remain
 //! resident. Recursive or repeated finalization is a no-op once claimed.
@@ -54,6 +56,15 @@ unsafe extern "C" fn owned_dependency_constructors() {
     unsafe { GeneralInitialLoaderState::retained().unwrap().lifecycle().unwrap().initialize() };
 }
 
+/// Conventional musl CRT dispatches this only after libc has acquired the
+/// separate READY snapshot. Keep the exported callback at the C ABI boundary;
+/// [`x86_64_runtime_registry::initialize_initial`] remains an internal Rust
+/// implementation detail shared with the owned CRT adapter above.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+pub(super) unsafe extern "C" fn conventional_dependency_constructors() {
+    unsafe { super::x86_64_runtime_registry::initialize_initial(); }
+}
+
 /// One mapped object's callbacks in forward execution order. Object index
 /// preserves the connection to canonical map/TLS ownership without pointers
 /// into the movable startup transaction.
@@ -79,7 +90,7 @@ impl ObjectLifecycle {
     }
 }
 
-/// The sole execution owner for every dependency's initial process lifecycle.
+/// The sole execution owner for every selected initial process lifecycle.
 /// Atomic claims permit recursive finalizer calls without borrowing mutable
 /// graph state or redispatching a callback already on the stack.
 pub(super) struct GeneralInitialLifecycle {
@@ -113,41 +124,11 @@ impl GeneralInitialLifecycle {
             state: AtomicU8::new(QUEUED),
         };
         for &index in order.indices() {
-            let object = objects.get(index)?;
-            if object.role == ObjectRole::Main || index == 0
-                || object.init_count > MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
-                || object.general_fini_count > MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
-                || (object.init_count != 0 && object.init_array.is_null())
-                || (object.general_fini_count != 0 && object.general_fini_array.is_null())
-            {
-                return None;
-            }
-            let lifecycle = plan.objects.get_mut(plan.count)?;
-            lifecycle.object_index = index;
-            if object.general_init != 0 {
-                unsafe { checked_callback(object, object.general_init)? };
-                lifecycle.initializers[0] = object.general_init;
-                lifecycle.initializer_count = 1;
-            }
-            for offset in 0..object.init_count {
-                let address = unsafe { *object.init_array.add(offset) };
-                unsafe { checked_callback(object, address)? };
-                lifecycle.initializers[lifecycle.initializer_count] = address;
-                lifecycle.initializer_count += 1;
-            }
-            // ELF fini arrays execute backwards, followed by legacy DT_FINI.
-            for offset in (0..object.general_fini_count).rev() {
-                let address = unsafe { *object.general_fini_array.add(offset) };
-                unsafe { checked_callback(object, address)? };
-                lifecycle.finalizers[lifecycle.finalizer_count] = address;
-                lifecycle.finalizer_count += 1;
-            }
-            if object.general_fini != 0 {
-                unsafe { checked_callback(object, object.general_fini)? };
-                lifecycle.finalizers[lifecycle.finalizer_count] = object.general_fini;
-                lifecycle.finalizer_count += 1;
-            }
-            plan.count += 1;
+            unsafe { append_object_lifecycle(&mut plan, objects.get(index)?, index, false) }?;
+        }
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        if objects[0].main_crt_mode == MainCrtMode::Conventional {
+            unsafe { append_object_lifecycle(&mut plan, &objects[0], 0, true) }?;
         }
         Some(plan)
     }
@@ -192,6 +173,52 @@ impl GeneralInitialLifecycle {
         }
         self.state.store(FINALIZED, Ordering::Release);
     }
+}
+
+/// Copy one fully validated object lifecycle.  `main` is explicit so a
+/// conventional CRT cannot accidentally be selected merely by dynamic tags.
+unsafe fn append_object_lifecycle(
+    plan: &mut GeneralInitialLifecycle,
+    object: &Object,
+    index: usize,
+    main: bool,
+) -> Option<()> {
+    if (!main && (object.role == ObjectRole::Main || index == 0))
+        || (main && (object.role != ObjectRole::Main || index != 0))
+        || object.init_count > MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
+        || object.general_fini_count > MAX_GENERAL_INITIAL_DEPENDENCY_INIT_ARRAY_ENTRIES
+        || (object.init_count != 0 && object.init_array.is_null())
+        || (object.general_fini_count != 0 && object.general_fini_array.is_null())
+    {
+        return None;
+    }
+    let lifecycle = plan.objects.get_mut(plan.count)?;
+    lifecycle.object_index = index;
+    if object.general_init != 0 {
+        unsafe { checked_callback(object, object.general_init)? };
+        lifecycle.initializers[0] = object.general_init;
+        lifecycle.initializer_count = 1;
+    }
+    for offset in 0..object.init_count {
+        let address = unsafe { *object.init_array.add(offset) };
+        unsafe { checked_callback(object, address)? };
+        lifecycle.initializers[lifecycle.initializer_count] = address;
+        lifecycle.initializer_count += 1;
+    }
+    // ELF fini arrays execute backwards, followed by legacy DT_FINI.
+    for offset in (0..object.general_fini_count).rev() {
+        let address = unsafe { *object.general_fini_array.add(offset) };
+        unsafe { checked_callback(object, address)? };
+        lifecycle.finalizers[lifecycle.finalizer_count] = address;
+        lifecycle.finalizer_count += 1;
+    }
+    if object.general_fini != 0 {
+        unsafe { checked_callback(object, object.general_fini)? };
+        lifecycle.finalizers[lifecycle.finalizer_count] = object.general_fini;
+        lifecycle.finalizer_count += 1;
+    }
+    plan.count += 1;
+    Some(())
 }
 
 unsafe fn checked_callback(object: &Object, address: usize) -> Option<()> {

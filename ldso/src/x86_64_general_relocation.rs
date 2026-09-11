@@ -83,6 +83,28 @@ pub(super) enum RuntimeSymbol { Address(u64), Tls { module: usize, offset: usize
 /// Every record/table is retained and readable under the loader mutation lock;
 /// indices belong to this snapshot. Returned addresses borrow retained maps.
 pub(super) unsafe fn find_runtime_symbol(objects: &[Object], indices: &[usize], name: &[u8]) -> Option<RuntimeSymbol> {
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    {
+        for &owner in indices {
+            let Some(symbol) = (unsafe { lookup_exported(objects, owner, name) })? else {
+                continue;
+            };
+            if symbol.section == 0 || !matches!(symbol.binding, 1 | 2)
+                || !matches!(symbol.visibility, 0 | 3) || !matches!(symbol.kind, 0 | 1 | 2 | 6)
+            { continue; }
+            if symbol.kind == 6 {
+                let object = objects.get(owner)?;
+                if object.tls_module_id == 0 || symbol.section >= 0xff00
+                    || symbol.value.checked_add(symbol.size)? > object.tls_memsz as u64
+                { return None; }
+                return Some(RuntimeSymbol::Tls { module: object.tls_module_id,
+                    offset: usize::try_from(symbol.value).ok()? });
+            }
+            return Some(RuntimeSymbol::Address(unsafe { ordinary_address(objects, symbol) }?));
+        }
+        return None;
+    }
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
     for &owner in indices {
         let object = objects.get(owner)?;
         for index in 1..object.symcount {
@@ -101,13 +123,20 @@ pub(super) unsafe fn find_runtime_symbol(objects: &[Object], indices: &[usize], 
             return Some(RuntimeSymbol::Address(unsafe { ordinary_address(objects, symbol) }?));
         }
     }
-    None
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+    { None }
 }
 
 unsafe fn definition(objects: &[Object], owner: usize, index: usize) -> Option<Definition> {
     let object = objects.get(owner)?;
-    if index == 0 || index >= object.symcount { return None; }
-    let symbol = unsafe { object.symtab.add(index * 24) };
+    if index == 0 { return None; }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let symbol = unsafe { direct_symbol(object, index) }?;
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+    let symbol = {
+        if index >= object.symcount { return None; }
+        unsafe { object.symtab.add(index * 24) }
+    };
     Some(Definition {
         owner,
         value: unsafe { read_u64(symbol.add(8)) },
@@ -120,12 +149,99 @@ unsafe fn definition(objects: &[Object], owner: usize, index: usize) -> Option<D
 }
 
 unsafe fn symbol_name(object: &Object, index: usize) -> Option<&[u8]> {
-    if index == 0 || index >= object.symcount { return None; }
-    let offset = unsafe { read_u32(object.symtab.add(index * 24)) } as usize;
+    if index == 0 { return None; }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    let symbol = unsafe { direct_symbol(object, index) }?;
+    #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+    let symbol = {
+        if index >= object.symcount { return None; }
+        unsafe { object.symtab.add(index * 24) }
+    };
+    let offset = unsafe { read_u32(symbol) } as usize;
     if offset >= object.strsz { return None; }
     let name = unsafe { object.strtab.add(offset) };
     let length = unsafe { bounded_nul(name, object.strsz - offset) }?;
     Some(unsafe { core::slice::from_raw_parts(name, length) })
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+fn gnu_hash(name: &[u8]) -> u32 {
+    name.iter().fold(5381u32, |hash, byte| {
+        hash.wrapping_mul(33).wrapping_add(*byte as u32)
+    })
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+fn sysv_hash(name: &[u8]) -> u32 {
+    let mut hash = 0u32;
+    for byte in name {
+        hash = hash.wrapping_shl(4).wrapping_add(*byte as u32);
+        let high = hash & 0xf000_0000;
+        if high != 0 { hash ^= high >> 24; }
+        hash &= !high;
+    }
+    hash
+}
+
+/// Lookup one externally visible definition through the table that musl
+/// selects for this object. GNU uses its bloom/bucket/chain proof; SysV uses
+/// its bucket chain. Neither route linearly scans a mapped dynsym tail.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn lookup_exported(
+    objects: &[Object], owner: usize, name: &[u8],
+) -> Option<Option<Definition>> {
+    let object = objects.get(owner)?;
+    let candidate_matches = |index: usize| -> Option<Option<Definition>> {
+        let definition = unsafe { definition(objects, owner, index) }?;
+        if !unsafe { exported_symbol_is_visible(object, index) }? {
+            return Some(None);
+        }
+        if unsafe { symbol_name(object, index) }? == name {
+            Some(Some(definition))
+        } else {
+            Some(None)
+        }
+    };
+    match object.symbol_lookup {
+        SymbolLookupTable::Gnu {
+            bucket_count, symbol_offset, bloom_count, bloom_shift, bloom,
+            buckets, chains, symbol_count,
+        } => {
+            if bucket_count == 0 || bloom_count == 0 { return None; }
+            let hash = gnu_hash(name);
+            let bloom_index = ((hash >> 6) as usize) & (bloom_count - 1);
+            let word = unsafe { read_u64(bloom.add(bloom_index).cast()) };
+            let mask = (1u64 << (hash & 63)) | (1u64 << ((hash >> bloom_shift) & 63));
+            if word & mask != mask { return Some(None); }
+            let mut index = unsafe { read_u32(buckets.add((hash as usize) % bucket_count).cast()) } as usize;
+            if index == 0 { return Some(None); }
+            if index < symbol_offset || index >= symbol_count { return None; }
+            loop {
+                let chain = unsafe { read_u32(chains.add(index.checked_sub(symbol_offset)?).cast()) };
+                if (chain | 1) == (hash | 1) {
+                    if let Some(definition) = candidate_matches(index)? {
+                        return Some(Some(definition));
+                    }
+                }
+                if chain & 1 != 0 { return Some(None); }
+                index = index.checked_add(1)?;
+                if index >= symbol_count { return None; }
+            }
+        }
+        SymbolLookupTable::Sysv { bucket_count, buckets, chains, symbol_count } => {
+            if bucket_count == 0 || symbol_count == 0 { return Some(None); }
+            let mut index = unsafe { read_u32(buckets.add((sysv_hash(name) as usize) % bucket_count).cast()) } as usize;
+            for _ in 0..symbol_count {
+                if index == 0 { return Some(None); }
+                if index >= symbol_count { return None; }
+                if let Some(definition) = candidate_matches(index)? {
+                    return Some(Some(definition));
+                }
+                index = unsafe { read_u32(chains.add(index).cast()) } as usize;
+            }
+            None
+        }
+    }
 }
 
 /// Local and non-preemptible references bind in their own object. Global
@@ -162,6 +278,19 @@ unsafe fn lookup_result(
     if name.is_empty() { return None; }
     for &owner in scope.indices {
         if copy && owner == 0 { continue; }
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        if let Some(found) = unsafe { lookup_exported(objects, owner, name) }? {
+            if found.section == 0 || !matches!(found.binding, 1 | 2)
+                || !matches!(found.visibility, 0 | 3)
+                || (tls && found.kind != 6)
+                || (!tls && !matches!(found.kind, 0 | 1 | 2))
+            { continue; }
+            if (requested.kind == 1 && found.kind == 2)
+                || (requested.kind == 2 && found.kind == 1)
+            { return None; }
+            return Some(SymbolLookup::Defined(found));
+        }
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
         for candidate in 1..objects[owner].symcount {
             let found = unsafe { definition(objects, owner, candidate) }?;
             if found.section == 0 || !matches!(found.binding, 1 | 2)
@@ -229,6 +358,8 @@ fn is_private_runtime_symbol(name: &[u8]) -> bool {
     if name == b"__crabc_x86_64_loader_tls_runtime_v1" { return true; }
     #[cfg(crabc_dynamic_main_thread_runtime_v1)]
     if name == b"__crabc_x86_64_owned_crt_handoff" { return true; }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    if name == b"__crabc_x86_64_loader_conventional_startup_v1" { return true; }
     let _ = name;
     false
 }
@@ -383,7 +514,9 @@ impl Drop for RelocationScratch {
 
 /// Reject writes into every ELF table read again during apply, not just the
 /// relocation tables. COPY may be byte-aligned and larger than a machine word.
-unsafe fn write_span(object: &Object, start: u64, length: u64, word: bool) -> Option<WriteSpan> {
+unsafe fn write_span(
+    object: &Object, start: u64, length: u64, word: bool, symbol_index: Option<usize>,
+) -> Option<WriteSpan> {
     if (word && start & 7 != 0)
         || !unsafe { virtual_range_in_writable_load(object.phdr, object.phnum, start, length) }
     { return None; }
@@ -398,7 +531,97 @@ unsafe fn write_span(object: &Object, start: u64, length: u64, word: bool) -> Op
             return None;
         }
     }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    if unsafe { overlaps_relocation_metadata(object, address, length) }? {
+        return None;
+    }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    if let Some(index) = symbol_index {
+        let symbol = unsafe { direct_symbol(object, index) }?;
+        if ranges_overlap(address, length, symbol as u64, 24)? {
+            return None;
+        }
+        if !object.versym.is_null() {
+            let version_offset = index.checked_mul(2)?;
+            let version = unsafe { object.versym.add(version_offset) };
+            if ranges_overlap(address, length, version as u64, 2)? {
+                return None;
+            }
+        }
+    }
     Some(WriteSpan { start, length })
+}
+
+/// Reject a write into any symbol/hash/version record that a later relocation
+/// can consume. `symcount` is an export-iteration extent, not a dynsym
+/// extent: GNU-hash imports can name records after an all-zero bucket table,
+/// so every relocation-selected record is protected independently as well.
+/// This completes preflight before the first write, preventing one relocation
+/// from changing another relocation's requested symbol shape.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn overlaps_relocation_metadata(
+    object: &Object,
+    address: u64,
+    length: u64,
+) -> Option<bool> {
+    let overlaps = |table: *const u8, bytes: usize| -> Option<bool> {
+        if bytes == 0 { return Some(false); }
+        if table.is_null() { return None; }
+        ranges_overlap(address, length, table as u64, u64::try_from(bytes).ok()?)
+    };
+
+    if overlaps(object.symtab, object.symcount.checked_mul(24)?)? {
+        return Some(true);
+    }
+    if !object.versym.is_null()
+        && overlaps(object.versym, object.symcount.checked_mul(2)?)?
+    {
+        return Some(true);
+    }
+    match object.symbol_lookup {
+        SymbolLookupTable::Sysv { bucket_count, buckets, symbol_count, .. } => {
+            if !(buckets.is_null() && bucket_count == 0 && symbol_count == 0) {
+                // Unit fixtures without an export table still exercise
+                // direct relocation-indexed symbol admission below.
+                let table = (buckets as usize).checked_sub(8)? as *const u8;
+                let words = bucket_count.checked_add(symbol_count)?.checked_add(2)?;
+                if overlaps(table, words.checked_mul(4)?)? { return Some(true); }
+            }
+        }
+        SymbolLookupTable::Gnu {
+            bucket_count, symbol_offset, bloom_count, bloom, symbol_count, ..
+        } => {
+            let table = (bloom as usize).checked_sub(16)? as *const u8;
+            let bytes = 16usize
+                .checked_add(bloom_count.checked_mul(8)?)?
+                .checked_add(bucket_count.checked_mul(4)?)?
+                .checked_add(symbol_count.saturating_sub(symbol_offset).checked_mul(4)?)?;
+            if overlaps(table, bytes)? { return Some(true); }
+        }
+    }
+
+    // Direct dynsym reads deliberately bypass hash iteration. Scan every
+    // relocation request now, while relocation tables are still immutable,
+    // and protect the exact symbol and VERSYM words each later application
+    // may reread. R_NONE is an inert table entry and consumes no symbol.
+    for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
+        if bytes == 0 { continue; }
+        if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
+        for offset in 0..bytes / ELF64_RELA_SIZE {
+            let entry = unsafe { table.add(offset * ELF64_RELA_SIZE) };
+            let info = unsafe { read_u64(entry.add(8)) };
+            if info as u32 == R_NONE { continue; }
+            let index = (info >> 32) as usize;
+            if index == 0 { continue; }
+            let symbol = unsafe { direct_symbol(object, index) }?;
+            if ranges_overlap(address, length, symbol as u64, 24)? { return Some(true); }
+            if !object.versym.is_null() {
+                let version = unsafe { object.versym.add(index.checked_mul(2)?) };
+                if ranges_overlap(address, length, version as u64, 2)? { return Some(true); }
+            }
+        }
+    }
+    Some(false)
 }
 
 unsafe fn preflight_object(scope: &SymbolScope<'_>, objects: &[Object], owner: usize) -> Option<()> {
@@ -421,6 +644,16 @@ unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], 
             let kind = info as u32;
             if kind == R_NONE { continue; }
             let symbol = (info >> 32) as usize;
+            // Reserved runtime wires are imports only through their exact
+            // word-relocation admissions. A COPY relocation would otherwise
+            // bypass that gate through generic symbol lookup. R_NONE above
+            // remains inert and has no import semantics.
+            if symbol != 0
+                && is_private_runtime_symbol(unsafe { symbol_name(object, symbol) }?)
+                && kind == R_COPY
+            {
+                return None;
+            }
             let addend = unsafe { read_i64(entry.add(16)) };
             let length = if kind == R_COPY {
                 if table != object.rela { return None; }
@@ -429,13 +662,15 @@ unsafe fn preflight_object_binding(scope: &SymbolScope<'_>, objects: &[Object], 
                 unsafe { word_resolution(scope, objects, owner, kind, symbol, addend, lazy) }?;
                 8
             };
-            *spans.get_mut(count)? = unsafe { write_span(object, offset, length, kind != R_COPY) }?;
+            *spans.get_mut(count)? = unsafe {
+                write_span(object, offset, length, kind != R_COPY, (symbol != 0).then_some(symbol))
+            }?;
             count += 1;
         }
     }
     let relr_count = unsafe { preflight_relr_table(object, relr_targets, 0) }?;
     for &offset in &relr_targets[..relr_count] {
-        *spans.get_mut(count)? = unsafe { write_span(object, offset, 8, true) }?;
+        *spans.get_mut(count)? = unsafe { write_span(object, offset, 8, true, None) }?;
         count += 1;
     }
     spans[..count].sort_unstable_by_key(|span| span.start);
@@ -471,6 +706,11 @@ unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], ow
 /// table ranges were validated by parsing, destinations remain writable, and
 /// the caller exclusively owns mappings and metadata until this returns.
 pub(super) unsafe fn relocate_initial_graph(graph: &InitialGraphState, objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    {
+        unsafe { validate_main_crt_mode(objects) }?;
+        unsafe { validate_canonical_libc_startup_import(graph, objects) }?;
+    }
     let initial_scope = InitialSymbolScope::from_graph(graph)?;
     let scope = initial_scope.view();
     for owner in 0..scope.indices.len() {
@@ -492,6 +732,99 @@ pub(super) unsafe fn relocate_initial_graph(graph: &InitialGraphState, objects: 
         }
     }
     Some(())
+}
+
+/// The owned note and the one private handoff relocation are independent
+/// proofs of CRT ownership. A note without the exact relocation (or that
+/// relocation without the note) is rejected before any relocation writes.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn validate_main_crt_mode(objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+    let main = objects.first()?;
+    let mut handoffs = 0usize;
+    for (table, bytes) in [(main.rela, main.relasz), (main.jmprel, main.pltrelsz)] {
+        if bytes == 0 { continue; }
+        if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
+        for offset in 0..bytes / ELF64_RELA_SIZE {
+            let entry = unsafe { table.add(offset * ELF64_RELA_SIZE) };
+            let info = unsafe { read_u64(entry.add(8)) };
+            let index = (info >> 32) as usize;
+            if index == 0 { continue; }
+            let symbol = unsafe { direct_symbol(main, index) }?;
+            let name_offset = unsafe { read_u32(symbol) } as usize;
+            if name_offset >= main.strsz { return None; }
+            let name = unsafe { main.strtab.add(name_offset) };
+            let length = unsafe { bounded_nul(name, main.strsz - name_offset) }?;
+            if length != b"__crabc_x86_64_owned_crt_handoff".len()
+                || !unsafe { bytes_eq(name, b"__crabc_x86_64_owned_crt_handoff".as_ptr(), length) }
+            {
+                continue;
+            }
+            handoffs = handoffs.checked_add(1)?;
+            if info as u32 != R_X86_64_GLOB_DAT || unsafe { read_i64(entry.add(16)) } != 0
+                || unsafe { *symbol.add(4) >> 4 } != 2
+                || unsafe { *symbol.add(4) & 15 } != 1
+                || unsafe { *symbol.add(5) & 3 } != 0
+                || unsafe { read_u16(symbol.add(6)) } != 0
+            {
+                return None;
+            }
+        }
+    }
+    match main.main_crt_mode {
+        MainCrtMode::Conventional => (handoffs == 0).then_some(()),
+        MainCrtMode::Owned => (handoffs == 1).then_some(()),
+    }
+}
+
+/// The fixed installed libc has exactly one relocation request for the
+/// ordinary-startup record. Classification has already marked one retained
+/// library by opened-file identity; require that one request before any write
+/// so duplicate private slots cannot turn into a second authority.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn validate_canonical_libc_startup_import(
+    graph: &InitialGraphState,
+    objects: &[Object; MAX_OBJECTS],
+) -> Option<()> {
+    let mut canonical = None;
+    for index in 0..graph.object_count() {
+        if objects.get(index)?.canonical_libc_identity.is_some() {
+            if canonical.replace(index).is_some() { return None; }
+        }
+    }
+    // Structural unit fixtures that do not exercise installed-product
+    // classification retain their independent relocation coverage. A real
+    // product cannot reach this code without the selector's one mark.
+    let Some(canonical) = canonical else { return Some(()); };
+    let mut imports = 0usize;
+    for owner in 0..graph.object_count() {
+        let object = objects.get(owner)?;
+        for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
+            if bytes == 0 { continue; }
+            if table.is_null() || bytes % ELF64_RELA_SIZE != 0 { return None; }
+            for offset in 0..bytes / ELF64_RELA_SIZE {
+                let entry = unsafe { table.add(offset * ELF64_RELA_SIZE) };
+                let info = unsafe { read_u64(entry.add(8)) };
+                let symbol_index = (info >> 32) as usize;
+                if info as u32 == R_NONE || symbol_index == 0 { continue; }
+                if unsafe { symbol_name(object, symbol_index) }?
+                    != b"__crabc_x86_64_loader_conventional_startup_v1"
+                {
+                    continue;
+                }
+                if owner != canonical { return None; }
+                let symbol = unsafe { direct_symbol(object, symbol_index) }?;
+                let exact = info as u32 == R_X86_64_GLOB_DAT
+                    && unsafe { read_i64(entry.add(16)) } == 0
+                    && unsafe { *symbol.add(4) >> 4 } == 2
+                    && unsafe { *symbol.add(4) & 15 } == 1
+                    && unsafe { *symbol.add(5) & 3 } == 0
+                    && unsafe { read_u16(symbol.add(6)) } == 0;
+                if !exact { return None; }
+                imports = imports.checked_add(1)?;
+            }
+        }
+    }
+    (imports == 1).then_some(())
 }
 
 /// Relocate only this transaction's runtime-new suffix. Existing mappings

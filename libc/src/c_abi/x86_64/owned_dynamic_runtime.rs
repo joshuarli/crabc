@@ -10,6 +10,8 @@ use super::{auxv_observation, environment, errno, immediate_termination, startup
 mod process_exit;
 #[path = "dynamic_main_thread_runtime_v1_lifecycle.rs"]
 mod startup;
+#[path = "conventional_startup_v1.rs"]
+mod conventional_startup;
 
 pub(super) unsafe fn prepare(argc: core::ffi::c_int, argv: *const *const core::ffi::c_char) -> bool {
     if !unsafe { super::static_tls::attach_initial_thread() } { return false; }
