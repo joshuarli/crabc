@@ -169,6 +169,39 @@ class NativeVmAssemblyTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(key, producer.TRACE_KEYS)
 
+    def test_aligned_hint_matrix_binds_the_direct_source_definition_and_all_relations(self):
+        """Keep the finite normal-release cursor contract explicit in the ledger."""
+
+        fragment = RUNNER.read_json(RUNNER.M2_X86_64_VM_FRAGMENT)
+        definition = next(
+            definition
+            for definition in fragment["component"]["bounded_source_definitions"]
+            if definition["id"] == "os-aligned-hint-cursor-random-and-cas"
+        )
+        self.assertEqual(
+            definition["source_anchor"],
+            {
+                "member": "src/os.c",
+                "start_line": 110,
+                "end_line": 158,
+                "sha256": "d5855c977e616eca2f5ed2689d566cafedfe3e2743b5b02665db39c9be2043b5",
+            },
+        )
+        self.assertIn(
+            "normal-release-aligned-hint-cursor-random-and-cas-matrix",
+            definition["evidence_check_ids"],
+        )
+        producer = RUNNER._m2_x86_64_vm_producer()
+        for key in (
+            "m2.vm.aligned_hint.cold_missing_default_advances_cursor",
+            "m2.vm.aligned_hint.eligibility_and_geometry",
+            "m2.vm.aligned_hint.initialized_first_randomized_start",
+            "m2.vm.aligned_hint.strict_max_then_wrap_one_draw",
+            "m2.vm.aligned_hint.ignored_cas_failure_second_fetch",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(key, producer.TRACE_KEYS)
+
     def test_transition_fault_trace_schema_requires_source_result_and_retry_relations(self):
         """The normal receiver cannot reduce C primitive failures to success counters."""
 
@@ -201,8 +234,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm = summary["components"][0]
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
-        self.assertEqual(len(vm["checks"]), 24)
-        self.assertEqual(len(vm["bounded_source_definitions"]), 14)
+        self.assertEqual(len(vm["checks"]), 25)
+        self.assertEqual(len(vm["bounded_source_definitions"]), 15)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
             for definition in vm["bounded_source_definitions"]

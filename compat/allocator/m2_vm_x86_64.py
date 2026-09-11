@@ -31,7 +31,7 @@ SCHEMA = "crabc-mimalloc-x86_64-m2-component-evidence"
 TRACE_BEGIN = "CRABC_MI_M2_VM_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_M2_VM_TRACE_END"
 EXPECTED_RUST_TEST_COUNT = 1
-EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-external-page-extension-and-child-policy-arena-fault"
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-external-page-extension-child-policy-and-aligned-hint-cursor-cas-fault"
 
 CHECKS = (
     (
@@ -43,6 +43,11 @@ CHECKS = (
         "source-policy-lazy-environment-retry",
         "rust-unit",
         "os::tests::process_vm_policy_retries_only_unavailable_source_environment_descriptors",
+    ),
+    (
+        "normal-release-aligned-hint-cursor-random-and-cas-matrix",
+        "rust-unit",
+        "os::tests::normal_release_aligned_hint_matrix_preserves_source_cursor_random_and_cas_rules",
     ),
     (
         "process-policy-first-arena-clean-primary-fallback",
@@ -234,6 +239,11 @@ TRACE_KEYS = (
     "m2.vm.external.page_extension.retry_commits_without_callback",
     "m2.vm.numa.count_at_least_one",
     "m2.vm.numa.current_lt_count",
+    "m2.vm.aligned_hint.cold_missing_default_advances_cursor",
+    "m2.vm.aligned_hint.eligibility_and_geometry",
+    "m2.vm.aligned_hint.initialized_first_randomized_start",
+    "m2.vm.aligned_hint.strict_max_then_wrap_one_draw",
+    "m2.vm.aligned_hint.ignored_cas_failure_second_fetch",
     "m2.vm.policy.source_options_applied",
     "m2.vm.policy.first_arena_size",
     "m2.vm.policy.first_arena_initially_committed",

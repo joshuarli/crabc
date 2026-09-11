@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "25d02d62561d94a30bd349aed7570836a7f25e7ce17f7356c50c930f6aea59ab"
+M2_X86_64_VM_FRAGMENT_DIGEST = "77f46a3ca27d0ba224b59425da81b37575886774f8fff39e3daeeed18dff0535"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -12496,7 +12496,7 @@ def _m2_x86_64_vm_check_records(
 ) -> list[dict[str, Any]]:
     """Turn the real fixed-profile C/Rust VM differential into its one receipt.
 
-    The other twenty-three VM receipts are emitted by the aggregate's exact
+    The other twenty-four VM receipts are emitted by the aggregate's exact
     source test batch. This validator binds the differential to the immutable
     fragment, all pinned-C branch anchors, and the component's explicit open
     frontier so a trace count alone can never stand in for VM qualification.

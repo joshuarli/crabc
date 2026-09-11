@@ -21,6 +21,7 @@
 #include <sys/prctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <pthread.h>
 #include <unistd.h>
 
 #include <mimalloc.h>
@@ -30,10 +31,109 @@
 /* Resolved through `-I <pinned-source>/src`; keep each private source body
  * singular by omitting `src/os.c`, `src/arena.c`, `src/init.c`, and
  * `src/page.c` from the ordinary C source list. */
+
+/* `src/os.c:141,151-152` contains exactly the two fetch-add and one
+ * strong-CAS operations in `_mi_os_get_aligned_hint`. Interpose only those
+ * macro uses while directly including that one source body. Each wrapper
+ * delegates to the same C11 AcqRel/Acquire operation; it neither models nor
+ * replaces the source cursor. Capture is disabled except around a selected
+ * direct call below, and no `init.c` or other source atomics are affected. */
+typedef struct aligned_hint_atomic_record_s {
+  bool active;
+  _Atomic(uintptr_t)* cursor;
+  uintptr_t fetch_old[2];
+  uintptr_t fetch_add[2];
+  size_t fetch_count;
+  uintptr_t cas_expected_before;
+  uintptr_t cas_expected_after;
+  uintptr_t cas_desired;
+  size_t cas_count;
+  bool cas_succeeded;
+  bool cursor_consistent;
+} aligned_hint_atomic_record_t;
+
+static aligned_hint_atomic_record_t aligned_hint_atomic_record = {0};
+static pthread_mutex_t aligned_hint_competitor_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t aligned_hint_competitor_ready = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t aligned_hint_competitor_done = PTHREAD_COND_INITIALIZER;
+static bool aligned_hint_competitor_enabled = false;
+static bool aligned_hint_competitor_waiting = false;
+static bool aligned_hint_competitor_finished = false;
+static uintptr_t aligned_hint_competitor_add = 0;
+static uintptr_t aligned_hint_competitor_old = 0;
+
+static uintptr_t m2_aligned_hint_fetch_add(
+    _Atomic(uintptr_t)* cursor, uintptr_t amount);
+static bool m2_aligned_hint_compare_exchange(
+    _Atomic(uintptr_t)* cursor, uintptr_t* expected, uintptr_t desired);
+
+#undef mi_atomic_add_acq_rel
+#undef mi_atomic_cas_strong_acq_rel
+#define mi_atomic_add_acq_rel(p, x) m2_aligned_hint_fetch_add((p), (x))
+#define mi_atomic_cas_strong_acq_rel(p, expected, desired) \
+  m2_aligned_hint_compare_exchange((p), (expected), (desired))
 #include "os.c"
+#undef mi_atomic_add_acq_rel
+#undef mi_atomic_cas_strong_acq_rel
+/* Restore the pinned atomic spellings before directly including the other
+ * private source units. The wrappers above are scoped to `os.c` alone. */
+#define mi_atomic_cas_strong_acq_rel(p, exp, des) \
+  mi_atomic_cas_strong((p), (exp), (des), mi_memory_order(acq_rel), mi_memory_order(acquire))
+#define mi_atomic_add_acq_rel(p, x) \
+  mi_atomic(fetch_add_explicit)((p), (x), mi_memory_order(acq_rel))
 #include "arena.c"
 #include "init.c"
 #include "page.c"
+
+static uintptr_t m2_aligned_hint_fetch_add(
+    _Atomic(uintptr_t)* cursor, uintptr_t amount) {
+  const uintptr_t observed = atomic_fetch_add_explicit(
+      cursor, amount, memory_order_acq_rel);
+  if (!aligned_hint_atomic_record.active) return observed;
+
+  if (aligned_hint_atomic_record.cursor == NULL) {
+    aligned_hint_atomic_record.cursor = cursor;
+  } else if (aligned_hint_atomic_record.cursor != cursor) {
+    aligned_hint_atomic_record.cursor_consistent = false;
+  }
+  if (aligned_hint_atomic_record.fetch_count < 2) {
+    const size_t index = aligned_hint_atomic_record.fetch_count;
+    aligned_hint_atomic_record.fetch_old[index] = observed;
+    aligned_hint_atomic_record.fetch_add[index] = amount;
+  }
+  aligned_hint_atomic_record.fetch_count++;
+
+  if (aligned_hint_competitor_enabled && aligned_hint_atomic_record.fetch_count == 1) {
+    pthread_mutex_lock(&aligned_hint_competitor_lock);
+    aligned_hint_competitor_waiting = true;
+    pthread_cond_signal(&aligned_hint_competitor_ready);
+    while (!aligned_hint_competitor_finished) {
+      pthread_cond_wait(&aligned_hint_competitor_done, &aligned_hint_competitor_lock);
+    }
+    pthread_mutex_unlock(&aligned_hint_competitor_lock);
+  }
+  return observed;
+}
+
+static bool m2_aligned_hint_compare_exchange(
+    _Atomic(uintptr_t)* cursor, uintptr_t* expected, uintptr_t desired) {
+  const uintptr_t expected_before = *expected;
+  const bool swapped = atomic_compare_exchange_strong_explicit(
+      cursor, expected, desired, memory_order_acq_rel, memory_order_acquire);
+  if (!aligned_hint_atomic_record.active) return swapped;
+
+  if (aligned_hint_atomic_record.cursor == NULL) {
+    aligned_hint_atomic_record.cursor = cursor;
+  } else if (aligned_hint_atomic_record.cursor != cursor) {
+    aligned_hint_atomic_record.cursor_consistent = false;
+  }
+  aligned_hint_atomic_record.cas_expected_before = expected_before;
+  aligned_hint_atomic_record.cas_expected_after = *expected;
+  aligned_hint_atomic_record.cas_desired = desired;
+  aligned_hint_atomic_record.cas_succeeded = swapped;
+  aligned_hint_atomic_record.cas_count++;
+  return swapped;
+}
 
 /* The producer links with `--wrap=munmap`.  This controlled one-shot seam
  * reaches the unchanged pinned `_mi_prim_free` call inside `src/prim/unix/prim.c`;
@@ -636,6 +736,266 @@ static size_t read_all(int descriptor, void* buffer, size_t length) {
   return read_count;
 }
 
+/* These direct source receivers form one finite normal-release aligned-hint
+ * matrix. They deliberately execute in short COW children before the parent
+ * starts its own initialized cursor record: the child-only cold/default and
+ * deterministic threshold schedules cannot contaminate the parent's first
+ * live source fetch. No child overwrites a cold Theap; only post-init rows
+ * stage the already initialized source output buffer. */
+static void aligned_hint_capture_begin(void) {
+  aligned_hint_atomic_record = (aligned_hint_atomic_record_t){
+      .active = true,
+      .cursor_consistent = true,
+  };
+}
+
+static void* aligned_hint_capture_call(size_t alignment, size_t size) {
+  aligned_hint_capture_begin();
+  void* const hint = _mi_os_get_aligned_hint(alignment, size);
+  aligned_hint_atomic_record.active = false;
+  return hint;
+}
+
+static size_t aligned_hint_request_size(size_t alignment, size_t size) {
+  size_t request = size + _mi_os_page_size();
+  request += alignment - 1;
+  return _mi_align_up(request, _mi_os_large_page_size());
+}
+
+static bool aligned_hint_record_is_one_initial_randomized_start(
+    void* hint, size_t request, bool require_zero_first_fetch) {
+  return hint != NULL
+      && (uintptr_t)hint >= MI_HINT_BASE
+      && (uintptr_t)hint < MI_HINT_BASE + MI_HINT_AREA
+      && aligned_hint_atomic_record.cursor_consistent
+      && aligned_hint_atomic_record.fetch_count == 2
+      && (!require_zero_first_fetch || aligned_hint_atomic_record.fetch_old[0] == 0)
+      && aligned_hint_atomic_record.fetch_add[0] == request
+      && aligned_hint_atomic_record.cas_count == 1
+      && aligned_hint_atomic_record.cas_succeeded
+      && aligned_hint_atomic_record.cas_expected_before
+          == aligned_hint_atomic_record.fetch_old[0] + request
+      && aligned_hint_atomic_record.fetch_old[1] >= MI_HINT_BASE
+      && aligned_hint_atomic_record.fetch_old[1] < MI_HINT_BASE + MI_HINT_AREA;
+}
+
+static bool stage_initialized_aligned_hint_random(mi_theap_t* theap,
+                                                  uint32_t first, uint32_t second) {
+  if (!mi_theap_is_initialized(theap) || first == 0 || second == 0) return false;
+  for (size_t index = 0; index < sizeof(theap->random.output) / sizeof(theap->random.output[0]); index++) {
+    theap->random.output[index] = 0;
+  }
+  /* `_mi_random_next` reads two source-order words per public uintptr_t. */
+  theap->random.output[0] = 0;
+  theap->random.output[1] = first;
+  theap->random.output[2] = 0;
+  theap->random.output[3] = second;
+  theap->random.output_available = 16;
+  return true;
+}
+
+static bool reap_exact_child(const char* label, pid_t child) {
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  const bool complete = waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  if (!complete) {
+    fprintf(stderr, "%s failed: waited=%ld expected=%ld errno=%d exited=%d status=%d signaled=%d signal=%d\n",
+            label, (long)waited, (long)child, waited < 0 ? errno : 0,
+            waited == child && WIFEXITED(status),
+            waited == child && WIFEXITED(status) ? WEXITSTATUS(status) : -1,
+            waited == child && WIFSIGNALED(status),
+            waited == child && WIFSIGNALED(status) ? WTERMSIG(status) : 0);
+  }
+  return complete;
+}
+
+static int run_aligned_hint_cold_child(void) {
+  const size_t page = _mi_os_page_size();
+  const size_t alignment = 2 * MI_MiB;
+  mi_theap_t* const theap = _mi_theap_default();
+  if (_mi_process_is_initialized || mi_theap_is_initialized(theap)) return 1;
+
+  void* const first = aligned_hint_capture_call(alignment, page);
+  const aligned_hint_atomic_record_t first_record = aligned_hint_atomic_record;
+  if (first != NULL || mi_theap_is_initialized(theap)
+      || first_record.fetch_count != 1 || first_record.fetch_old[0] != 0
+      || first_record.cas_count != 0 || !first_record.cursor_consistent) return 2;
+
+  void* const second = aligned_hint_capture_call(alignment, page);
+  const aligned_hint_atomic_record_t second_record = aligned_hint_atomic_record;
+  return (second != NULL && !mi_theap_is_initialized(theap)
+          && second_record.fetch_count == 1 && second_record.cas_count == 0
+          && second_record.cursor_consistent
+          && second_record.fetch_old[0]
+              == first_record.fetch_old[0] + first_record.fetch_add[0]) ? 0 : 3;
+}
+
+static bool capture_aligned_hint_cold_child(void) {
+  const pid_t child = fork();
+  if (child < 0) return false;
+  if (child == 0) _exit(run_aligned_hint_cold_child());
+  return reap_exact_child("aligned-hint cold child", child);
+}
+
+static int run_aligned_hint_eligibility_child(void) {
+  const size_t page = _mi_os_page_size();
+  const size_t alignment = 2 * MI_MiB;
+  mi_theap_t* const theap = _mi_theap_default();
+  if (!mi_theap_is_initialized(theap)) return 1;
+
+  aligned_hint_capture_call(mi_os_mem_config.alloc_granularity, page);
+  if (aligned_hint_atomic_record.fetch_count != 0) return 2;
+  aligned_hint_capture_call(16 * MI_GiB + page, page);
+  if (aligned_hint_atomic_record.fetch_count != 0) return 3;
+  /* This selected child temporarily supplies the source's low-VA observation
+   * and restores it before any eligible call. It is fixture state only; the
+   * normal parent retains its actual initialized process configuration. */
+  const size_t original_vbits = mi_os_mem_config.virtual_address_bits;
+  mi_os_mem_config.virtual_address_bits = 45;
+  aligned_hint_capture_call(alignment, page);
+  mi_os_mem_config.virtual_address_bits = original_vbits;
+  if (aligned_hint_atomic_record.fetch_count != 0) return 4;
+
+  if (!stage_initialized_aligned_hint_random(theap, 1, 2)) return 5;
+  const size_t request = aligned_hint_request_size(16 * MI_GiB, page);
+  void* const exact_max = aligned_hint_capture_call(16 * MI_GiB, page);
+  return aligned_hint_record_is_one_initial_randomized_start(exact_max, request, true)
+      && theap->random.output_available == 14 ? 0 : 6;
+}
+
+static bool capture_aligned_hint_eligibility_child(void) {
+  const pid_t child = fork();
+  if (child < 0) return false;
+  if (child == 0) _exit(run_aligned_hint_eligibility_child());
+  return reap_exact_child("aligned-hint eligibility child", child);
+}
+
+static int run_aligned_hint_threshold_child(void) {
+  const size_t page = _mi_os_page_size();
+  const size_t alignment = 2 * MI_MiB;
+  const size_t request = aligned_hint_request_size(alignment, page);
+  mi_theap_t* const theap = _mi_theap_default();
+  if (!stage_initialized_aligned_hint_random(theap, 1, 2)) return 1;
+
+  void* const initial = aligned_hint_capture_call(alignment, page);
+  if (!aligned_hint_record_is_one_initial_randomized_start(initial, request, true)
+      || initial != (void*)MI_HINT_BASE || theap->random.output_available != 14) return 2;
+  const uintptr_t cursor_after_initial = atomic_load_explicit(
+      aligned_hint_atomic_record.cursor, memory_order_acquire);
+  if (cursor_after_initial >= MI_HINT_MAX) return 3;
+  const size_t to_max = MI_HINT_MAX - cursor_after_initial;
+  if (to_max <= page + alignment - 1) return 4;
+  const size_t exact_max_size = to_max - page - (alignment - 1);
+  if (aligned_hint_request_size(alignment, exact_max_size) != to_max) return 5;
+
+  if (aligned_hint_capture_call(alignment, exact_max_size) == NULL
+      || aligned_hint_atomic_record.fetch_count != 1
+      || atomic_load_explicit(aligned_hint_atomic_record.cursor, memory_order_acquire) != MI_HINT_MAX) return 6;
+  void* const equality = aligned_hint_capture_call(alignment, page);
+  if (equality != (void*)MI_HINT_MAX || aligned_hint_atomic_record.fetch_count != 1
+      || aligned_hint_atomic_record.fetch_old[0] != MI_HINT_MAX
+      || aligned_hint_atomic_record.cas_count != 0
+      || atomic_load_explicit(aligned_hint_atomic_record.cursor, memory_order_acquire)
+          != MI_HINT_MAX + request) return 7;
+  void* const wrapped = aligned_hint_capture_call(alignment, page);
+  const bool wrapped_valid = wrapped == (void*)MI_HINT_BASE
+      && aligned_hint_record_is_one_initial_randomized_start(wrapped, request, false)
+      && theap->random.output_available == 12;
+  if (!wrapped_valid) {
+    fprintf(stderr,
+            "aligned-hint threshold wrap failed: hint=%p fetches=%zu old0=%#zx old1=%#zx "
+            "cas=%zu cas_ok=%d expected_before=%#zx expected_after=%#zx cursor=%#zx output=%d\n",
+            wrapped, aligned_hint_atomic_record.fetch_count,
+            (size_t)aligned_hint_atomic_record.fetch_old[0],
+            (size_t)aligned_hint_atomic_record.fetch_old[1],
+            aligned_hint_atomic_record.cas_count, aligned_hint_atomic_record.cas_succeeded,
+            (size_t)aligned_hint_atomic_record.cas_expected_before,
+            (size_t)aligned_hint_atomic_record.cas_expected_after,
+            (size_t)atomic_load_explicit(aligned_hint_atomic_record.cursor, memory_order_acquire),
+            theap->random.output_available);
+  }
+  return wrapped_valid ? 0 : 8;
+}
+
+static bool capture_aligned_hint_threshold_child(void) {
+  const pid_t child = fork();
+  if (child < 0) return false;
+  if (child == 0) _exit(run_aligned_hint_threshold_child());
+  return reap_exact_child("aligned-hint threshold child", child);
+}
+
+static void* run_aligned_hint_competitor(void* unused) {
+  (void)unused;
+  pthread_mutex_lock(&aligned_hint_competitor_lock);
+  while (!aligned_hint_competitor_waiting) {
+    pthread_cond_wait(&aligned_hint_competitor_ready, &aligned_hint_competitor_lock);
+  }
+  _Atomic(uintptr_t)* const cursor = aligned_hint_atomic_record.cursor;
+  pthread_mutex_unlock(&aligned_hint_competitor_lock);
+  aligned_hint_competitor_old = atomic_fetch_add_explicit(
+      cursor, aligned_hint_competitor_add, memory_order_acq_rel);
+  pthread_mutex_lock(&aligned_hint_competitor_lock);
+  aligned_hint_competitor_finished = true;
+  pthread_cond_signal(&aligned_hint_competitor_done);
+  pthread_mutex_unlock(&aligned_hint_competitor_lock);
+  return NULL;
+}
+
+static int run_aligned_hint_cas_child(void) {
+  const size_t page = _mi_os_page_size();
+  const size_t alignment = 2 * MI_MiB;
+  const size_t request = aligned_hint_request_size(alignment, page);
+  mi_theap_t* const theap = _mi_theap_default();
+  if (!stage_initialized_aligned_hint_random(theap, 1, 2)) return 1;
+
+  pthread_mutex_lock(&aligned_hint_competitor_lock);
+  aligned_hint_competitor_enabled = true;
+  aligned_hint_competitor_waiting = false;
+  aligned_hint_competitor_finished = false;
+  aligned_hint_competitor_add = request;
+  aligned_hint_competitor_old = 0;
+  pthread_mutex_unlock(&aligned_hint_competitor_lock);
+  pthread_t competitor;
+  if (pthread_create(&competitor, NULL, run_aligned_hint_competitor, NULL) != 0) return 2;
+  void* const hint = aligned_hint_capture_call(alignment, page);
+  if (pthread_join(competitor, NULL) != 0) return 3;
+  aligned_hint_competitor_enabled = false;
+
+  return hint == (void*)(2 * request)
+      && aligned_hint_atomic_record.cursor_consistent
+      && aligned_hint_atomic_record.fetch_count == 2
+      && aligned_hint_atomic_record.fetch_old[0] == 0
+      && aligned_hint_atomic_record.fetch_old[1] == 2 * request
+      && aligned_hint_atomic_record.cas_count == 1
+      && !aligned_hint_atomic_record.cas_succeeded
+      && aligned_hint_atomic_record.cas_expected_before == request
+      && aligned_hint_atomic_record.cas_expected_after == 2 * request
+      && aligned_hint_competitor_old == request
+      && atomic_load_explicit(aligned_hint_atomic_record.cursor, memory_order_acquire)
+          == 3 * request
+      && theap->random.output_available == 14 ? 0 : 4;
+}
+
+static bool capture_aligned_hint_cas_child(void) {
+  const pid_t child = fork();
+  if (child < 0) return false;
+  if (child == 0) _exit(run_aligned_hint_cas_child());
+  return reap_exact_child("aligned-hint CAS child", child);
+}
+
+static bool capture_aligned_hint_initialized_parent(void) {
+  const size_t page = _mi_os_page_size();
+  const size_t alignment = 2 * MI_MiB;
+  mi_theap_t* const theap = _mi_theap_default();
+  if (!mi_theap_is_initialized(theap)) return false;
+  const size_t request = aligned_hint_request_size(alignment, page);
+  void* const hint = aligned_hint_capture_call(alignment, page);
+  return aligned_hint_record_is_one_initial_randomized_start(hint, request, true);
+}
+
 static bool regular_hint_is_fresh_after_large_fallback(void) {
   return captured_policy_large_calls == 2 && captured_policy_regular_calls == 1
       && captured_policy_large_hints[0] != NULL
@@ -743,6 +1103,13 @@ static bool capture_policy_child(policy_child_record_t* record) {
 }
 
 int main(void) {
+  /* This fork is the literal constructor-suppressed source preimage. The
+   * child proves `_mi_os_get_aligned_hint` advances its zero static cursor
+   * before refusing to use `_mi_theap_empty`; all mutations are COW, so the
+   * parent remains cold for the separately selected policy child below. */
+  const bool aligned_hint_cold_missing_default_advances =
+      capture_aligned_hint_cold_child();
+  if (!aligned_hint_cold_missing_default_advances) return 38;
   policy_child_record_t policy_record = {0};
   if (!capture_policy_child(&policy_record)) return 8;
   /* The direct external callback receiver requires the same complete source
@@ -756,6 +1123,22 @@ int main(void) {
   mi_process_init();
   mi_subproc_t* const subproc = _mi_subproc_main();
   if (subproc == NULL) return 10;
+
+  /* Each normal-release row inherits the parent’s initialized Theap and its
+   * still-zero cursor. Their source cursor/rand mutations are COW; only the
+   * final parent receiver consumes the actual live first randomized start. */
+  const bool aligned_hint_eligibility_geometry =
+      capture_aligned_hint_eligibility_child();
+  const bool aligned_hint_strict_threshold_and_one_draw =
+      capture_aligned_hint_threshold_child();
+  const bool aligned_hint_ignored_cas_failure =
+      capture_aligned_hint_cas_child();
+  const bool aligned_hint_initialized_first_start =
+      capture_aligned_hint_initialized_parent();
+  if (!aligned_hint_eligibility_geometry
+      || !aligned_hint_strict_threshold_and_one_draw
+      || !aligned_hint_ignored_cas_failure
+      || !aligned_hint_initialized_first_start) return 39;
 
   const size_t page = _mi_os_page_size();
   const size_t alignment = page * 16;
@@ -1183,6 +1566,16 @@ int main(void) {
       external_callback.page_extension_retry_commits_without_callback);
   U("m2.vm.numa.count_at_least_one", numa_count >= 1);
   U("m2.vm.numa.current_lt_count", numa_current < numa_count);
+  U("m2.vm.aligned_hint.cold_missing_default_advances_cursor",
+      aligned_hint_cold_missing_default_advances);
+  U("m2.vm.aligned_hint.eligibility_and_geometry",
+      aligned_hint_eligibility_geometry);
+  U("m2.vm.aligned_hint.initialized_first_randomized_start",
+      aligned_hint_initialized_first_start);
+  U("m2.vm.aligned_hint.strict_max_then_wrap_one_draw",
+      aligned_hint_strict_threshold_and_one_draw);
+  U("m2.vm.aligned_hint.ignored_cas_failure_second_fetch",
+      aligned_hint_ignored_cas_failure);
   U("m2.vm.policy.source_options_applied", policy_record.source_options_applied);
   U("m2.vm.policy.first_arena_size", policy_record.first_arena_size);
   U("m2.vm.policy.first_arena_initially_committed",

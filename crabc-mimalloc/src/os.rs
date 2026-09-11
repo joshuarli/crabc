@@ -428,6 +428,13 @@ pub(crate) struct VmPolicy {
     // borrowed `VmProcess` pair.
     preloading: AtomicBool,
     aligned_hint_base: AtomicUsize,
+    // This schedule exists only in the direct source-policy tests. It pauses
+    // the exact `_mi_os_get_aligned_hint` translation after its first AcqRel
+    // fetch-add so one real competing AcqRel fetch-add can make the pinned
+    // strong CAS fail. No production policy contains a scheduler, hook, or
+    // alternate atomic operation.
+    #[cfg(test)]
+    aligned_hint_test_phase: AtomicUsize,
     huge_hint_start: AtomicUsize,
     large_page_try_ok: AtomicUsize,
     huge_one_gib_unavailable: AtomicBool,
@@ -647,6 +654,8 @@ impl VmPolicy {
             option_environment,
             preloading: AtomicBool::new(true),
             aligned_hint_base: AtomicUsize::new(0),
+            #[cfg(test)]
+            aligned_hint_test_phase: AtomicUsize::new(0),
             huge_hint_start: AtomicUsize::new(0),
             large_page_try_ok: AtomicUsize::new(0),
             huge_one_gib_unavailable: AtomicBool::new(false),
@@ -673,6 +682,58 @@ impl VmPolicy {
             }
             Err(_) => unreachable!("absent source options resolve every VM descriptor"),
         }
+    }
+
+    /// Arms one test-only competing source-cursor increment.
+    ///
+    /// The caller must arrange for exactly one helper thread to call
+    /// [`Self::test_complete_aligned_hint_competitor`] while the source caller
+    /// is in [`Self::aligned_hint`]. The schedule has no production analogue:
+    /// it only makes the source's ignored strong-CAS failure reproducible.
+    #[cfg(test)]
+    fn test_arm_aligned_hint_competitor(&self) {
+        assert_eq!(
+            self.aligned_hint_test_phase.swap(1, Ordering::AcqRel),
+            0,
+            "the aligned-hint test schedule is single-use"
+        );
+    }
+
+    /// Performs the one actual competing AcqRel source-cursor increment.
+    ///
+    /// The helper may call this only after [`Self::test_arm_aligned_hint_competitor`]
+    /// and while the source caller is paused after its first fetch-add. It
+    /// returns the actual old cursor so the receiver can prove the CAS saw a
+    /// competing advance instead of a fabricated expected value.
+    #[cfg(test)]
+    fn test_complete_aligned_hint_competitor(&self, request_size: usize) -> usize {
+        while self.aligned_hint_test_phase.load(Ordering::Acquire) != 2 {
+            core::hint::spin_loop();
+        }
+        let observed = self
+            .aligned_hint_base
+            .fetch_add(request_size, Ordering::AcqRel);
+        self.aligned_hint_test_phase.store(3, Ordering::Release);
+        observed
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_aligned_hint_cursor(&self) -> usize {
+        self.aligned_hint_base.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_aligned_hint_request_size(
+        config: MemoryConfig,
+        try_alignment: usize,
+        size: usize,
+    ) -> Option<usize> {
+        let request_size = size
+            .checked_add(config.page_size().bytes())?
+            .checked_add(try_alignment.checked_sub(1)?)?;
+        invariants::align_up(request_size, config.large_page_size())
     }
 
     /// Returns a copied descriptor image for source-policy diagnostics.
@@ -855,6 +916,16 @@ impl VmPolicy {
             let random_bits = (random.next() >> 17) & 0x3f_ffff;
             let initial = HINT_BASE.checked_add(MIB.checked_mul(random_bits as usize)? % HINT_AREA)?;
             let expected = hint.wrapping_add(request_size);
+            #[cfg(test)]
+            if self.aligned_hint_test_phase.load(Ordering::Acquire) == 1 {
+                // The source first fetch-add already completed. Publish that
+                // exact point, then wait for the test helper's real AcqRel
+                // fetch-add before executing the unchanged strong CAS.
+                self.aligned_hint_test_phase.store(2, Ordering::Release);
+                while self.aligned_hint_test_phase.load(Ordering::Acquire) != 3 {
+                    core::hint::spin_loop();
+                }
+            }
             let _ = self.aligned_hint_base.compare_exchange(
                 expected,
                 initial,
@@ -5211,6 +5282,227 @@ mod tests {
         );
     }
 
+    /// Exercises the selected normal-release `_mi_os_get_aligned_hint` matrix
+    /// through the real typed policy cursor and initialized Theap random
+    /// image. The C companion uses the same geometry and emits these five
+    /// address-free relations from its direct source body.
+    #[cfg(not(miri))]
+    fn normal_release_aligned_hint_matrix() -> [bool; 5] {
+        std::thread::spawn(|| {
+            let config = MemoryConfig::from_observations(
+                PageSize::new(4 * 1024).expect("four KiB is the selected Linux page size"),
+                0,
+                true,
+                false,
+            );
+            let page = config.page_size().bytes();
+            let alignment = 2 * MIB;
+            let request = VmPolicy::test_aligned_hint_request_size(config, alignment, page)
+                .expect("the bounded source request fits");
+
+            // Preserve the source-valid cold state. `TheapRandomImage::empty_weak`
+            // represents `_mi_theap_empty.random`; no initializer, status write,
+            // or deterministic output staging occurs before these two calls. The
+            // source refuses that default image only on its zero-cursor first
+            // fetch: its second fetch returns the already advanced raw hint.
+            let cold = VmPolicy::defaults_for_test();
+            let mut cold_random = TheapRandomImage::empty_weak();
+            let cold_first = cold.aligned_hint(config, alignment, page, Some(&mut cold_random));
+            let cold_cursor_after_first = cold.test_aligned_hint_cursor();
+            let cold_second = cold.aligned_hint(config, alignment, page, Some(&mut cold_random));
+            let cold_cursor_after_second = cold.test_aligned_hint_cursor();
+            let cold_missing_default_advances = !cold_random.is_initialized()
+                && cold_first.is_none()
+                && cold_cursor_after_first == request
+                && cold_second == Some(request)
+                && cold_cursor_after_second == request * 2;
+
+            // Construct the actual initialized default Theap through its existing
+            // process-static attachment receiver. The dedicated thread owns its
+            // compiler-TLS roots through teardown, while each policy below owns
+            // an independent source cursor. No bare test random image represents
+            // the normal initialized branch.
+            let storage = crate::main_theap::MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+            let mut attachment = unsafe {
+                crate::main_theap::MainStaticTheapAttachment::begin_with_test_storage(
+                    storage, subprocess,
+                )
+            }
+            .expect("the isolated main attachment initializes its source random image");
+            // SAFETY: this direct attachment just completed on its dedicated
+            // test thread. No READY/page session/later attachment exists, the
+            // closure cannot retain the random borrow, and teardown follows.
+            let [eligible_geometry, initialized_first_start, strict_threshold_and_one_draw, ignored_cas_failure] = unsafe {
+                attachment.with_startup_vm_random(|random| {
+                    let random = random.expect("the attached source Theap owns initialized random state");
+
+                    // This ordinary initialized Theap is deliberately not staged.
+                    // Its first source call begins at cursor zero, consumes its live
+                    // random image, and chooses a start in the normal 2--6 TiB range.
+                    let initialized = VmPolicy::defaults_for_test();
+                    let initialized_first = initialized.aligned_hint(
+                        config,
+                        alignment,
+                        page,
+                        Some(random),
+                    );
+                    let initialized_cursor = initialized.test_aligned_hint_cursor();
+                    let initialized_first_start = initialized_first
+                        .map(|hint| {
+                            let source_start = initialized_cursor.checked_sub(request);
+                            source_start
+                                .map(|start| {
+                                    start >= HINT_BASE
+                                        && start < HINT_BASE + HINT_AREA
+                                        && invariants::align_up(start, alignment) == Some(hint)
+                                })
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false);
+
+                    // Every source eligibility rejection returns before the atomic
+                    // cursor. Capture that zero state before the eligible boundary
+                    // call, which separately consumes the same live source image.
+                    let eligibility = VmPolicy::defaults_for_test();
+                    let low_alignment = eligibility.aligned_hint(
+                        config,
+                        config.alloc_granularity(),
+                        page,
+                        Some(random),
+                    );
+                    let excessive_alignment = eligibility.aligned_hint(
+                        config,
+                        16 * GIB + page,
+                        page,
+                        Some(random),
+                    );
+                    let low_vbits_config = MemoryConfig {
+                        virtual_address_bits: 45,
+                        ..config
+                    };
+                    let low_vbits = eligibility.aligned_hint(
+                        low_vbits_config,
+                        alignment,
+                        page,
+                        Some(random),
+                    );
+                    let cursor_after_rejections = eligibility.test_aligned_hint_cursor();
+                    let exact_max_alignment = eligibility.aligned_hint(
+                        config,
+                        16 * GIB,
+                        page,
+                        Some(random),
+                    );
+                    let eligible_geometry = low_alignment.is_none()
+                        && excessive_alignment.is_none()
+                        && low_vbits.is_none()
+                        && cursor_after_rejections == 0
+                        && exact_max_alignment.is_some();
+
+                    // Only after a real initialized-Theap first consumption and
+                    // eligibility record, stage that same source image's output
+                    // buffer. `1` and `2` make these two one-draw paths exact.
+                    random.test_stage_buffered_nexts(1, 2);
+                    let threshold = VmPolicy::defaults_for_test();
+                    let initial = threshold
+                        .aligned_hint(config, alignment, page, Some(random))
+                        .expect("the staged initialized source image chooses its initial hint");
+                    let cursor_after_initial = threshold.test_aligned_hint_cursor();
+                    let to_exact_max = HINT_MAX
+                        .checked_sub(cursor_after_initial)
+                        .expect("the initialized normal hint begins below the max cursor");
+                    let exact_max_size = to_exact_max
+                        .checked_sub(page)
+                        .and_then(|size| size.checked_sub(alignment - 1))
+                        .expect("the bounded source request can reach the strict max cursor");
+                    assert_eq!(
+                        VmPolicy::test_aligned_hint_request_size(config, alignment, exact_max_size),
+                        Some(to_exact_max),
+                        "the source request reaches exactly MI_HINT_MAX without a direct cursor write"
+                    );
+                    let advance_to_max = threshold.aligned_hint(
+                        config,
+                        alignment,
+                        exact_max_size,
+                        Some(random),
+                    );
+                    let cursor_at_max = threshold.test_aligned_hint_cursor();
+                    let equality_hint = threshold.aligned_hint(
+                        config,
+                        alignment,
+                        page,
+                        Some(random),
+                    );
+                    let cursor_after_equality = threshold.test_aligned_hint_cursor();
+                    let wrapped_hint = threshold.aligned_hint(
+                        config,
+                        alignment,
+                        page,
+                        Some(random),
+                    );
+                    let strict_threshold_and_one_draw = initial == HINT_BASE
+                        && advance_to_max.is_some()
+                        && cursor_at_max == HINT_MAX
+                        && equality_hint == Some(HINT_MAX)
+                        && cursor_after_equality == HINT_MAX + request
+                        && wrapped_hint == Some(HINT_BASE)
+                        && random.test_output_available() == 12;
+
+                    // The source deliberately ignores the result of its one strong
+                    // CAS. Reset only this actual initialized image's consumed
+                    // output buffer, then let one helper make the real competing
+                    // AcqRel increment between source fetch and CAS.
+                    random.test_stage_buffered_nexts(1, 2);
+                    let contested = VmPolicy::defaults_for_test();
+                    contested.test_arm_aligned_hint_competitor();
+                    let (contested_hint, competitor_old) = std::thread::scope(|scope| {
+                        let helper = scope.spawn(|| {
+                            contested.test_complete_aligned_hint_competitor(request)
+                        });
+                        let hint = contested.aligned_hint(
+                            config,
+                            alignment,
+                            page,
+                            Some(random),
+                        );
+                        (hint, helper.join().expect("the controlled cursor competitor completes"))
+                    });
+                    let ignored_cas_failure = competitor_old == request
+                        && contested_hint == Some(request * 2)
+                        && contested.test_aligned_hint_cursor() == request * 3
+                        && random.test_output_available() == 14;
+
+                    [
+                        eligible_geometry,
+                        initialized_first_start,
+                        strict_threshold_and_one_draw,
+                        ignored_cas_failure,
+                    ]
+                })
+            };
+            attachment
+                .teardown()
+                .expect("the dedicated source attachment tears down after the matrix");
+
+            [
+                cold_missing_default_advances,
+                eligible_geometry,
+                initialized_first_start,
+                strict_threshold_and_one_draw,
+                ignored_cas_failure,
+            ]
+        })
+        .join()
+        .expect("the isolated aligned-hint matrix thread completes")
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn normal_release_aligned_hint_matrix_preserves_source_cursor_random_and_cas_rules() {
+        assert_eq!(normal_release_aligned_hint_matrix(), [true; 5]);
+    }
+
     #[cfg(not(miri))]
     #[test]
     fn source_aligned_hint_retries_failed_large_mmap_at_null_before_fresh_regular_fallback() {
@@ -7392,6 +7684,21 @@ mod tests {
         let alignment = page
             .checked_mul(16)
             .expect("the fixed trace alignment fits");
+        let [
+            aligned_hint_cold_missing_default_advances,
+            aligned_hint_eligibility_geometry,
+            aligned_hint_initialized_first_start,
+            aligned_hint_strict_threshold_and_one_draw,
+            aligned_hint_ignored_cas_failure,
+        ] = normal_release_aligned_hint_matrix();
+        assert!(
+            aligned_hint_cold_missing_default_advances
+                && aligned_hint_eligibility_geometry
+                && aligned_hint_initialized_first_start
+                && aligned_hint_strict_threshold_and_one_draw
+                && aligned_hint_ignored_cas_failure,
+            "the finite normal-release aligned-hint source matrix must remain complete"
+        );
 
         // Keep the ordinary transition source pair alive through every
         // operation. The C companion drives the same `mi_subproc_t` through
@@ -7913,6 +8220,26 @@ mod tests {
         );
         emit!("m2.vm.numa.count_at_least_one", u8::from(numa_count >= 1));
         emit!("m2.vm.numa.current_lt_count", u8::from(numa_current < numa_count));
+        emit!(
+            "m2.vm.aligned_hint.cold_missing_default_advances_cursor",
+            u8::from(aligned_hint_cold_missing_default_advances)
+        );
+        emit!(
+            "m2.vm.aligned_hint.eligibility_and_geometry",
+            u8::from(aligned_hint_eligibility_geometry)
+        );
+        emit!(
+            "m2.vm.aligned_hint.initialized_first_randomized_start",
+            u8::from(aligned_hint_initialized_first_start)
+        );
+        emit!(
+            "m2.vm.aligned_hint.strict_max_then_wrap_one_draw",
+            u8::from(aligned_hint_strict_threshold_and_one_draw)
+        );
+        emit!(
+            "m2.vm.aligned_hint.ignored_cas_failure_second_fetch",
+            u8::from(aligned_hint_ignored_cas_failure)
+        );
         emit!(
             "m2.vm.policy.source_options_applied",
             u8::from(policy_trace.source_options_applied)

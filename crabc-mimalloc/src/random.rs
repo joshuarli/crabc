@@ -317,6 +317,34 @@ impl TheapRandomImage {
         self.chacha_init(&entropy.key, nonce, entropy.weak);
     }
 
+    /// Stages the next two public draws of an already initialized source image
+    /// for an enclosing source-policy test.
+    ///
+    /// This is deliberately a test-only output-buffer staging seam, not a
+    /// second random implementation or a production seed API. The caller
+    /// must first obtain this image from an actual initialized Theap, then
+    /// use [`Self::next`] to consume the staged values. That makes a selected
+    /// source branch's exact one-draw obligation observable without changing
+    /// the random algorithm or fabricating an initialized owner.
+    #[cfg(test)]
+    pub(crate) fn test_stage_buffered_nexts(&mut self, first: u64, second: u64) {
+        assert!(self.is_initialized(), "the staged buffer belongs to an initialized source image");
+        assert_ne!(first, 0, "the source public random draw retries a zero result");
+        assert_ne!(second, 0, "the source public random draw retries a zero result");
+
+        self.output = [0; OUTPUT_WORDS];
+        self.output[0] = (first >> 32) as u32;
+        self.output[1] = first as u32;
+        self.output[2] = (second >> 32) as u32;
+        self.output[3] = second as u32;
+        self.output_available = OUTPUT_WORDS_I32;
+    }
+
+    /// Returns the source output-buffer count after a test-only staged draw.
+    #[cfg(test)]
+    #[inline]
+    pub(crate) const fn test_output_available(&self) -> i32 { self.output_available }
+
     #[inline]
     fn chacha_init(&mut self, key: &[u8; 32], nonce: u64, weak: bool) {
         self.output_available = 0;
