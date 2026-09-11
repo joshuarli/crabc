@@ -1,6 +1,6 @@
 # Owned resolver cancellation
 
-This slice makes the existing DNS transport a deferred C cancellation point
+This slice makes selected x86 C resolver batches deferred cancellation points
 for owned x86-64 resolver and netdb callers. It does not change the native Rust
 `crabc_core::resolver::exchange` contract, replace the DNS engine, or claim
 general resolver source parity. The C owner covers `res_send`, `res_query`,
@@ -41,7 +41,27 @@ the original entry state, even if an earlier MASKED cancellation had changed
 the running state. Normal function retirement does not restore the entry
 state. Tests must distinguish these two restoration rules.
 
-## Transport boundary
+## Current selected C batch
+
+`libc/src/c_abi/x86_64/owned_resolver_batch.rs` owns one UDP plus up to two TCP
+descriptor Cells and a pinned C cleanup node. It implements the source batch's
+all-server broadcasts, elapsed retry clock, TCP state, and last-syscall errno
+residue. `owned_netdb_lookup` supplies one or two requests; `resolver_runtime`
+uses the same batch for selected `res_send`/`res_query`. Normal retirement
+disables cancellation for cleanup-pop, executes the three-cell cleanup, then
+restores the saved actual post-CP state. Strict core/native and AArch callers
+retain their existing one-descriptor exchange contract.
+
+The installed matrix now has 24 scenarios across six APIs and seven entry arms:
+840 same-object musl/owned executions. It includes dual A/AAAA mixed TCP and
+MASKED cancellation, all descriptor cleanup, and source last-errno residue;
+there are no ordinary-errno exclusions for this batch evidence.
+
+## Legacy strict-core adapter reference
+
+The following describes `owned_resolver_transport.rs`, which remains a
+legacy/native strict-core adapter reference. It does not route current selected
+C lookup or raw resolver calls and does not describe the batch cleanup layout.
 
 The DNS-specific transport boundary in `crabc-core/src/resolver.rs` is used by
 an additional owned-C exchange entry. The existing native exchange entries
@@ -243,8 +263,8 @@ kept in `owned_resolver_cancellation_probe.c`.
 Run `./scripts/dev-x86_64.sh owned-resolver-cancellation [DYNAMIC_SYSROOT]`.
 Without an argument it constructs static and dynamic products before entering
 a network-none container. With a product argument it compiles against that
-supplied tree and does not build a replacement. The standalone matrix is 18
-scenarios across five APIs and seven musl/owned entry arms (630 runs): static
+supplied tree and does not build a replacement. The standalone matrix is 24
+scenarios across six APIs and seven musl/owned entry arms (840 runs): static
 ET_EXEC/static-PIE, and dynamic PIE/non-PIE through both kernel and direct
 interpreter entry. The supplied dynamic matrix has five arms (450 runs).
 

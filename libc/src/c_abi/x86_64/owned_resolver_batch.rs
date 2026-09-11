@@ -138,7 +138,8 @@ fn next_reusable(states: &[SlotState; 2], count: usize, mut next: usize) -> usiz
 
 #[cfg(test)]
 mod scheduler_tests {
-    use super::{common_answer_capacity, next_reusable, SlotState};
+    use super::{next_reusable, slots, BatchRequest, BatchRequests, SlotState};
+    use crabc_core::Errno;
 
     #[test]
     fn tcp_pending_slot_is_not_a_udp_temporary_after_a_completing_a() {
@@ -150,13 +151,19 @@ mod scheduler_tests {
     }
 
     #[test]
-    fn two_slot_copy_requires_the_source_common_answer_capacity() {
-        assert!(!common_answer_capacity(4800, 512));
-        assert!(common_answer_capacity(4800, 4800));
+    fn two_slot_admission_rejects_unequal_real_reply_ranges_before_fds() {
+        let query = [0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1];
+        let mut first = [0u8; 16];
+        let mut second = [0u8; 32];
+        assert_eq!(slots(BatchRequests::two(BatchRequest::new(&query, 1, &mut first),
+                                             BatchRequest::new(&query, 1, &mut second))).map(|_| ()),
+                   Err(Errno::INVAL));
+        let mut equal = [0u8; 16];
+        assert_eq!(slots(BatchRequests::two(BatchRequest::new(&query, 1, &mut first),
+                                             BatchRequest::new(&query, 1, &mut equal))).map(|(_, count)| count),
+                   Ok(2));
     }
 }
-
-fn common_answer_capacity(first: usize, second: usize) -> bool { first == second }
 
 #[derive(Clone, Copy)]
 struct Slot {
@@ -563,7 +570,7 @@ fn slots(requests: BatchRequests<'_>) -> Result<([Slot; 2], usize), Errno> {
             || question_end(request.query, 12).is_none_or(|end| end+4 > request.query.len()) { return Err(Errno::INVAL); }
         let start = request.answer.as_mut_ptr() as usize;
         let end = start.checked_add(request.answer.len()).ok_or(Errno::INVAL)?;
-        if index != 0 && !common_answer_capacity(slots[0].answer_length, request.answer.len()) {
+        if index != 0 && slots[0].answer_length != request.answer.len() {
             // `__res_msend_rc` has one `asize`: its temporary receive buffer
             // can be copied to either source slot.  Reject unequal C buffers
             // before descriptors exist instead of widening the copy contract.
