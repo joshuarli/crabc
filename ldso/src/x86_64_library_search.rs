@@ -65,10 +65,10 @@ pub(super) unsafe fn interpreter_name() -> &'static [u8] {
 
 /// The installation prefix already used for system-path discovery.
 ///
-/// The selected product's canonical libc aliases are rooted beneath this
-/// prefix too. Keeping that derivation here prevents a startup handoff from
-/// treating an arbitrary search result or an unrelated host path as libc
-/// authority when direct interpreter invocation relocates the product tree.
+/// This chooses the path-file location, not a mandatory root for every
+/// configured library directory. Canonical libc identity selection considers
+/// the declared aliases under both this prefix and the process root; it never
+/// grants startup authority to an arbitrary library-search result.
 pub(super) unsafe fn installation_prefix() -> &'static [u8] {
     let name = unsafe { interpreter_name() };
     if !name.starts_with(b"/") {

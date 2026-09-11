@@ -539,7 +539,10 @@ unsafe fn rollback_initial_tls_state(
 /// or a mutable first-load pathname. These are the two declared aliases of
 /// the selected installed product: normal materialization uses
 /// `/usr/lib/libc.so`; the finite package corpus copies those same bytes to
-/// musl's ABI name at `/lib/libc.musl-x86_64.so.1`.
+/// musl's ABI name at `/lib/libc.musl-x86_64.so.1`. Both the process root and
+/// the direct interpreter's installation prefix may contain these aliases.
+/// Moving the interpreter changes its path-file lookup without requiring the
+/// configured absolute library paths to move with it.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 const CANONICAL_LIBC_ALIAS_SUFFIXES: [&[u8]; 2] = [
     b"/usr/lib/libc.so",
@@ -553,36 +556,49 @@ struct CanonicalInitialLibc {
     identity: ObjectIdentity,
 }
 
-/// Open each declared installation alias and reduce it to the stable identity
-/// already retained by the initial graph. An absent alias is normal for the
-/// other selected deployment. A present alias outside this graph has no
-/// startup authority; among admitted identities, exactly one is required.
-/// Two distinct admitted identities fail closed.
+/// Open every declared root/prefix alias and reduce the complete set to the
+/// stable library identities already retained by the initial graph. This is
+/// not another library search: an absent alias or an identity outside this
+/// graph has no startup authority. Neither root takes priority. Exactly one
+/// distinct admitted library identity is required across both roots, so two
+/// loaded libc identities fail closed even when one matches the invocation
+/// prefix. Mark the receiver only after the complete scan succeeds.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn select_canonical_initial_libc(
     graph: &InitialGraphState,
     objects: &mut [Object; MAX_OBJECTS],
 ) -> Option<CanonicalInitialLibc> {
-    let mut aliases = [None; CANONICAL_LIBC_ALIAS_SUFFIXES.len()];
-    for (slot, suffix) in aliases.iter_mut().zip(CANONICAL_LIBC_ALIAS_SUFFIXES) {
-        *slot = unsafe { canonical_libc_alias_identity(suffix) }.ok()?;
+    let invocation_prefix = unsafe { x86_64_library_search::installation_prefix() };
+    let mut aliases = [None; 2 * CANONICAL_LIBC_ALIAS_SUFFIXES.len()];
+    for (root_index, prefix) in [b"".as_slice(), invocation_prefix].into_iter().enumerate() {
+        if root_index == 1 && prefix.is_empty() {
+            continue;
+        }
+        for (alias_index, suffix) in CANONICAL_LIBC_ALIAS_SUFFIXES.into_iter().enumerate() {
+            aliases[root_index * CANONICAL_LIBC_ALIAS_SUFFIXES.len() + alias_index] =
+                unsafe { canonical_libc_alias_identity(prefix, suffix) }.ok()?;
+        }
     }
-    let selected = canonical_initial_libc_from_aliases(graph, aliases)?;
+    let selected = canonical_initial_libc_from_aliases(graph, &aliases)?;
     if objects[..graph.object_count()]
         .iter()
         .any(|object| object.canonical_libc_identity.is_some())
     {
         return None;
     }
-    objects.get_mut(selected.index)?.canonical_libc_identity = Some(selected.identity);
+    let object = objects.get_mut(selected.index)?;
+    if object.role != ObjectRole::Library {
+        return None;
+    }
+    object.canonical_libc_identity = Some(selected.identity);
     Some(selected)
 }
 
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 unsafe fn canonical_libc_alias_identity(
+    prefix: &[u8],
     suffix: &[u8],
 ) -> Result<Option<ObjectIdentity>, ()> {
-    let prefix = unsafe { x86_64_library_search::installation_prefix() };
     let length = prefix.len().checked_add(suffix.len()).ok_or(())?;
     if length + 1 > MAX_PATH {
         return Err(());
@@ -605,16 +621,21 @@ unsafe fn canonical_libc_alias_identity(
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 fn canonical_initial_libc_from_aliases(
     graph: &InitialGraphState,
-    aliases: [Option<ObjectIdentity>; CANONICAL_LIBC_ALIAS_SUFFIXES.len()],
+    aliases: &[Option<ObjectIdentity>],
 ) -> Option<CanonicalInitialLibc> {
     let mut selected = None;
-    for identity in aliases.into_iter().flatten() {
+    for identity in aliases.iter().copied().flatten() {
         let Some(index) = graph.find(identity) else {
             // A compatibility alias may exist in the installation without
             // being loaded by this process. Only a retained graph identity
             // can authorize this private libc receiver.
             continue;
         };
+        if index == 0 {
+            // A canonical alias that names the main executable cannot grant
+            // that executable the private shared-libc receiver role.
+            continue;
+        }
         let candidate = CanonicalInitialLibc { index, identity };
         match selected {
             None => selected = Some(candidate),
@@ -860,27 +881,49 @@ mod canonical_libc_tests {
     fn canonical_libc_aliases_unify_only_one_retained_identity() {
         let graph = graph();
         assert_eq!(
-            canonical_initial_libc_from_aliases(&graph, [Some(LIBC), Some(LIBC)]),
+            canonical_initial_libc_from_aliases(&graph, &[Some(LIBC), Some(LIBC)]),
             Some(CanonicalInitialLibc { index: 1, identity: LIBC }),
         );
         assert_eq!(
-            canonical_initial_libc_from_aliases(&graph, [Some(LIBC), Some(OTHER)]),
+            canonical_initial_libc_from_aliases(&graph, &[Some(LIBC), Some(OTHER)]),
             None,
         );
         assert_eq!(
             canonical_initial_libc_from_aliases(
                 &graph,
-                [Some(LIBC), Some(ObjectIdentity { device: 9, inode: 9 })],
+                &[Some(LIBC), Some(ObjectIdentity { device: 9, inode: 9 })],
             ),
             Some(CanonicalInitialLibc { index: 1, identity: LIBC }),
         );
         assert_eq!(
             canonical_initial_libc_from_aliases(
                 &graph,
-                [Some(ObjectIdentity { device: 9, inode: 9 }), None],
+                &[Some(ObjectIdentity { device: 9, inode: 9 }), None],
             ),
             None,
         );
-        assert_eq!(canonical_initial_libc_from_aliases(&graph, [None, None]), None);
+        assert_eq!(canonical_initial_libc_from_aliases(&graph, &[None, None]), None);
+    }
+
+    #[test]
+    fn canonical_libc_root_and_invocation_aliases_have_no_priority() {
+        let graph = graph();
+        let expected = Some(CanonicalInitialLibc { index: 1, identity: LIBC });
+        let unloaded = ObjectIdentity { device: 9, inode: 9 };
+        for aliases in [
+            [Some(LIBC), None, None, None],
+            [Some(unloaded), None, Some(LIBC), None],
+            [Some(LIBC), None, Some(LIBC), Some(LIBC)],
+            [Some(MAIN), None, Some(LIBC), None],
+        ] {
+            assert_eq!(canonical_initial_libc_from_aliases(&graph, &aliases), expected);
+        }
+        for aliases in [
+            [Some(LIBC), None, Some(OTHER), None],
+            [Some(OTHER), None, Some(LIBC), None],
+            [Some(MAIN), None, Some(unloaded), None],
+        ] {
+            assert_eq!(canonical_initial_libc_from_aliases(&graph, &aliases), None);
+        }
     }
 }

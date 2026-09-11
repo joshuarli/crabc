@@ -38,6 +38,20 @@ path file uses the prefix derived from the second-last slash in an absolute
 interpreter invocation name. Relative names use the root prefix. Listing uses
 the executable's `PT_INTERP` name for this purpose, matching musl.
 
+The path-file prefix does not require configured absolute library directories
+to move. A copied interpreter at `/prefix/lib/loader` can therefore use a
+configuration that selects the installed `/usr/lib/libc.so`. After discovery,
+the private libc startup receiver is identified through the two declared libc
+aliases under both the process root and the invocation prefix. Exact opened
+file identities must match one admitted library across that complete set.
+Hardlinked aliases agree; two distinct admitted canonical libraries reject
+before startup publication. An alias outside the admitted graph and a libc
+copy in an arbitrary search directory confer no authority. Neither root has
+priority, and this check loads no additional library.
+`x86_64_general_initial_graph.rs::select_canonical_initial_libc` owns this
+selection; its exact private-import validation remains a separate condition
+before relocation writes.
+
 `x86_64_initial_graph.rs::_start` owns the relocation-free self-base lookup.
 `x86_64_direct_entry.rs::prepare` follows `__dls3` for command parsing and
 main admission, while `map_elf_for_role` extends the existing checked mapper
