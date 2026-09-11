@@ -35,12 +35,16 @@ MANIFEST = Path(__file__).with_name("manifest-x86_64.toml")
 DEFAULT_INPUT = ROOT / ".work/x86_64/owned-package-corpus-input/apks"
 DEFAULT_INDEX = ROOT / ".work/x86_64/owned-package-corpus-input/index/main-x86_64.APKINDEX.tar.gz"
 DEFAULT_WORK = ROOT / ".work/x86_64/tmp/owned-package-corpus"
+PRIVATE_WORK_ROOT = ROOT / ".work"
 ORACLE_ROOT = Path("/opt/musl-1.2.6")
 APK = Path("/sbin/apk")
 KEYS = Path("/etc/apk/keys")
+ORACLE_SOURCE_MANIFEST = ORACLE_ROOT / ".crabc-oracle"
+LIFETIME_HELPER = ROOT / "compat/x86_64/run_qualification_manifest.py"
+LIFETIME_HELPER_MANIFEST = ROOT / "compat/x86_64/generate_qualification_manifest.py"
 TIERS = ("A", "B", "C", "D")
 TIMEOUT_SECONDS = 12
-SCHEMA = "crabc.x86_64-owned-package-corpus/v1"
+SCHEMA = "crabc.x86_64-owned-package-corpus/v2"
 PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 CANONICAL_INTERPRETER = "/lib/ld-musl-x86_64.so.1"
 CANONICAL_LIBC = "/lib/libc.musl-x86_64.so.1"
@@ -136,6 +140,99 @@ def require_physical_directory(path: Path, label: str) -> Path:
     except OSError as error:
         raise CorpusError(f"{label} is unavailable: {path}") from error
     return absolute
+
+
+def _absolute_lexical_path(path: Path, label: str) -> Path:
+    """Anchor one caller path at this checkout without accepting ``..``."""
+    candidate = path if path.is_absolute() else ROOT / path
+    if ".." in candidate.parts:
+        fail(f"{label} has parent traversal: {path}")
+    return Path(os.path.abspath(candidate))
+
+
+def _reject_symlinked_components(path: Path, label: str) -> None:
+    """Reject every present alias in a lexical state/output path."""
+    current = Path(path.anchor)
+    try:
+        for part in path.parts[1:]:
+            current /= part
+            if os.path.lexists(current) and stat.S_ISLNK(current.lstat().st_mode):
+                fail(f"{label} traverses a symlink: {path}")
+    except OSError as error:
+        raise CorpusError(f"{label} is unavailable: {path}") from error
+
+
+def _private_work_root() -> Path:
+    """Create the sole physical mutable boundary for native corpus evidence."""
+    boundary = _absolute_lexical_path(PRIVATE_WORK_ROOT, "checkout .work")
+    _reject_symlinked_components(boundary, "checkout .work")
+    try:
+        boundary.mkdir(mode=0o755, exist_ok=True)
+    except OSError as error:
+        raise CorpusError(f"cannot create checkout .work: {boundary}") from error
+    return require_physical_directory(boundary, "checkout .work")
+
+
+def _private_directory(path: Path, label: str, *, dedicated: bool) -> Path:
+    """Create a physical mutable directory below the checkout-local boundary."""
+    boundary = _private_work_root()
+    candidate = _absolute_lexical_path(path, label)
+    _reject_symlinked_components(candidate, label)
+    try:
+        relative = candidate.relative_to(boundary)
+    except ValueError as error:
+        raise CorpusError(f"{label} must stay below checkout .work: {candidate}") from error
+    if dedicated and not relative.parts:
+        fail(f"{label} must name a dedicated directory below checkout .work")
+    current = boundary
+    for component in relative.parts:
+        current /= component
+        if os.path.lexists(current):
+            require_physical_directory(current, label)
+            continue
+        try:
+            current.mkdir(mode=0o700)
+        except OSError as error:
+            raise CorpusError(f"cannot create {label}: {current}") from error
+        require_physical_directory(current, label)
+    return require_physical_directory(candidate, label)
+
+
+def private_campaign_parent(path: Path) -> Path:
+    """Admit ``--work`` as the parent for one campaign's retained run roots."""
+    return _private_directory(path, "native corpus work parent", dedicated=True)
+
+
+def prepare_report_destination(path: Path) -> Path:
+    """Admit one fresh report file below ``.work`` without overwriting evidence."""
+    candidate = _absolute_lexical_path(path, "native corpus report")
+    if candidate == _private_work_root() or not candidate.name:
+        fail("native corpus report must name a file below checkout .work")
+    _private_directory(candidate.parent, "native corpus report parent", dedicated=False)
+    _reject_symlinked_components(candidate, "native corpus report")
+    if os.path.lexists(candidate):
+        fail(f"native corpus report already exists: {candidate}")
+    return candidate
+
+
+def write_new_report(path: Path, encoded: str) -> Path:
+    """Create a report exactly once after rechecking its physical destination."""
+    destination = prepare_report_destination(path)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = -1
+    try:
+        descriptor = os.open(destination, flags, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            descriptor = -1
+            stream.write(encoded)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as error:
+        raise CorpusError(f"cannot create native corpus report: {destination}") from error
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+    return destination
 
 
 def require_sha256(value: object, label: str) -> str:
@@ -286,7 +383,10 @@ def select_cases(manifest: ManifestSpec, tiers: Sequence[str], case_ids: Sequenc
     if set(case_ids) - known:
         fail("unknown native corpus case")
     chosen = set(case_ids)
-    return tuple(case for case in manifest.cases if case.tier in requested_tiers and (not chosen or case.id in chosen))
+    result = tuple(case for case in manifest.cases if case.tier in requested_tiers and (not chosen or case.id in chosen))
+    if not result:
+        fail("native corpus selection is empty")
+    return result
 
 
 def safe_archive_name(name: str) -> tuple[str, ...]:
@@ -463,6 +563,64 @@ def apk_identity() -> dict[str, object]:
             "readelf": {"path": str(readelf), "sha256": sha256_file(readelf, "ELF inspector")}}
 
 
+def oracle_source_identity() -> dict[str, object]:
+    """Bind the pinned musl source declaration used by the oracle-side root."""
+    return {
+        "root": str(ORACLE_ROOT),
+        "source_manifest": {
+            "path": str(ORACLE_SOURCE_MANIFEST),
+            "sha256": sha256_file(ORACLE_SOURCE_MANIFEST, "pinned musl oracle source manifest"),
+        },
+    }
+
+
+def _repository_source_identity(path: Path, label: str) -> dict[str, str]:
+    source = _absolute_lexical_path(path, label)
+    try:
+        relative = source.relative_to(ROOT)
+    except ValueError as error:
+        raise CorpusError(f"{label} escapes this checkout: {source}") from error
+    return {"path": relative.as_posix(), "sha256": sha256_file(source, label)}
+
+
+def _module_source(module: Any, expected: Path, label: str) -> Path:
+    source = getattr(module, "__file__", None)
+    if not isinstance(source, str):
+        fail(f"{label} has no source file")
+    try:
+        actual = Path(source).resolve(strict=True)
+    except OSError as error:
+        raise CorpusError(f"{label} source is unavailable") from error
+    if actual != expected:
+        fail(f"{label} source differs from the owned process-lifetime helper")
+    return actual
+
+
+def source_identity(manifest: ManifestSpec) -> dict[str, object]:
+    """Seal every local source actually used before private roots are made.
+
+    ``execute_case`` imports the descendant-lifetime owner on demand.  Import it
+    here as well, prove the exact two local source files it executed, and bind
+    those same bytes before and after the corpus transaction.
+    """
+    qualification = _lifetime_module()
+    helper = _module_source(qualification, LIFETIME_HELPER, "process-lifetime helper")
+    helper_manifest = _module_source(
+        qualification.manifest,
+        LIFETIME_HELPER_MANIFEST,
+        "process-lifetime helper manifest",
+    )
+    return {
+        "runner": _repository_source_identity(Path(__file__), "native corpus runner"),
+        "native_manifest": _repository_source_identity(MANIFEST, "native corpus manifest"),
+        "workload_source": _repository_source_identity(manifest.source_manifest, "workload source manifest"),
+        "process_lifetime_helpers": {
+            "subreaper": _repository_source_identity(helper, "process-lifetime helper"),
+            "manifest": _repository_source_identity(helper_manifest, "process-lifetime helper manifest"),
+        },
+    }
+
+
 def apk_metadata(archive: Path) -> dict[str, str]:
     """Read the signed archive metadata that names this exact payload."""
     try:
@@ -492,7 +650,8 @@ def require_exact_archive_roster(received: Iterable[str], expected: Iterable[str
         fail("APK archive directory does not exactly match the finite native closure")
 
 
-def verify_inputs(manifest: ManifestSpec, archive_dir: Path, index: Path) -> dict[str, object]:
+def input_identity(manifest: ManifestSpec, archive_dir: Path, index: Path) -> dict[str, object]:
+    """Hash the exact finite APK/index source without invoking the verifier."""
     archive_dir = require_physical_directory(archive_dir, "APK archive directory")
     if sha256_file(index, "signed APK index") != manifest.index_sha256:
         fail("signed APK index digest differs from native manifest")
@@ -500,12 +659,27 @@ def verify_inputs(manifest: ManifestSpec, archive_dir: Path, index: Path) -> dic
     if any(entry.is_symlink() or not stat.S_ISREG(entry.lstat().st_mode) for entry in entries):
         fail("APK archive directory contains a non-regular or linked entry")
     require_exact_archive_roster((path.name for path in entries), manifest.archive_roster)
-    verification: dict[str, dict[str, object]] = {}
+    archives: dict[str, dict[str, str]] = {}
     for name, expected in sorted(manifest.archive_roster.items()):
         archive = archive_dir / name
         observed = sha256_file(archive, f"APK archive {name}")
         if observed != expected:
             fail(f"APK archive digest differs: {name}")
+        archives[name] = {"sha256": observed}
+    return {
+        "directory": str(archive_dir),
+        "index": {"path": str(index), "sha256": manifest.index_sha256},
+        "archives": archives,
+    }
+
+
+def verify_inputs(manifest: ManifestSpec, archive_dir: Path, index: Path) -> dict[str, object]:
+    """Verify signatures once, retaining the corresponding raw input identity."""
+    identity = input_identity(manifest, archive_dir, index)
+    archive_dir = Path(identity["directory"])
+    verification: dict[str, dict[str, object]] = {}
+    for name in sorted(manifest.archive_roster):
+        archive = archive_dir / name
         result = subprocess.run([str(APK), "--keys-dir", str(KEYS), "verify", str(archive)], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if result.returncode != 0:
             fail(f"APK archive signature verification failed: {name}")
@@ -513,11 +687,18 @@ def verify_inputs(manifest: ManifestSpec, archive_dir: Path, index: Path) -> dic
         expected_direct_version = manifest.direct_packages.get(metadata["pkgname"])
         if expected_direct_version is not None and metadata["pkgver"] != expected_direct_version:
             fail(f"direct package metadata differs from native manifest: {metadata['pkgname']}")
-        verification[name] = {"sha256": observed, "metadata": metadata, "signature_stdout": result.stdout.decode("utf-8", "strict"), "signature_stderr": result.stderr.decode("utf-8", "strict")}
+        verification[name] = {"metadata": metadata, "signature_stdout": result.stdout.decode("utf-8", "strict"), "signature_stderr": result.stderr.decode("utf-8", "strict")}
     index_result = subprocess.run([str(APK), "--keys-dir", str(KEYS), "verify", str(index)], check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if index_result.returncode != 0:
         fail("APK index signature verification failed")
-    return {"directory": str(archive_dir), "index": {"path": str(index), "sha256": manifest.index_sha256, "signature_stdout": index_result.stdout.decode("utf-8", "strict"), "signature_stderr": index_result.stderr.decode("utf-8", "strict")}, "archives": verification}
+    return {
+        "identity": identity,
+        "index_signature": {
+            "stdout": index_result.stdout.decode("utf-8", "strict"),
+            "stderr": index_result.stderr.decode("utf-8", "strict"),
+        },
+        "archive_signatures": verification,
+    }
 
 
 def stage_application_payload(manifest: ManifestSpec, archive_dir: Path, destination: Path) -> None:
@@ -841,6 +1022,12 @@ def _lifetime_module() -> Any:
         import run_qualification_manifest as qualification
     except ImportError as error:
         raise CorpusError("owned private-root descendant boundary is unavailable") from error
+    _module_source(qualification, LIFETIME_HELPER, "process-lifetime helper")
+    _module_source(
+        qualification.manifest,
+        LIFETIME_HELPER_MANIFEST,
+        "process-lifetime helper manifest",
+    )
     return qualification
 
 
@@ -885,11 +1072,21 @@ def executable_elf_record(root: Path, case: CaseSpec) -> dict[str, object]:
 
 def run(manifest: ManifestSpec, archive_dir: Path, index: Path, dynamic_sysroot: Path, work: Path, cases: Sequence[CaseSpec]) -> dict[str, object]:
     require_native_environment()
-    tools = apk_identity()
-    inputs = verify_inputs(manifest, archive_dir, index)
+    work_parent = private_campaign_parent(work)
+    if not cases:
+        fail("native corpus selection is empty")
+    source_before = source_identity(manifest)
+    tools_before = apk_identity()
+    inputs_before = verify_inputs(manifest, archive_dir, index)
+    oracle_before = oracle_source_identity()
     product_before = validate_product(dynamic_sysroot)
-    work_parent = require_physical_directory(work.parent, "native corpus work parent")
     temporary_root = Path(tempfile.mkdtemp(prefix="owned-package-corpus-", dir=work_parent))
+    try:
+        if temporary_root.parent != work_parent or temporary_root.is_symlink():
+            fail("native corpus private run root escaped its campaign parent")
+        temporary_root = require_physical_directory(temporary_root, "native corpus private run root")
+    except OSError as error:
+        raise CorpusError("native corpus private run root is unavailable") from error
     try:
         payload = temporary_root / "application-payload"
         stage_application_payload(manifest, archive_dir, payload)
@@ -927,29 +1124,56 @@ def run(manifest: ManifestSpec, archive_dir: Path, index: Path, dynamic_sysroot:
     product_after = validate_product(dynamic_sysroot)
     if product_after != product_before:
         fail("supplied owned dynamic product changed during corpus execution")
-    return {"schema": SCHEMA, "passed": all(item["comparison"]["passed"] for item in outcomes), "manifest": {"path": str(MANIFEST.relative_to(ROOT)), "sha256": sha256_file(MANIFEST, "native manifest"), "runner": {"path": str(Path(__file__).relative_to(ROOT)), "sha256": sha256_file(Path(__file__), "native corpus runner")}, "workload_source": {"path": str(manifest.source_manifest.relative_to(ROOT)), "sha256": sha256_file(manifest.source_manifest, "workload source manifest")}, "image": manifest.image}, "tools": tools, "inputs": inputs, "candidate_product": product_before, "application_payload": {"path": str(payload), "sha256": payload_seal, "package_library_dirs": list(manifest.package_library_dirs), "elf_closure": elf_graph}, "execution_root": str(temporary_root), "case_count": len(outcomes), "outcomes": outcomes}
+    source_after = source_identity(manifest)
+    if source_after != source_before:
+        fail("native corpus source changed during execution")
+    tools_after = apk_identity()
+    if tools_after != tools_before:
+        fail("pinned APK tools or key material changed during execution")
+    inputs_after = input_identity(manifest, archive_dir, index)
+    if inputs_after != inputs_before["identity"]:
+        fail("signed APK index or archive source changed during execution")
+    oracle_after = oracle_source_identity()
+    if oracle_after != oracle_before:
+        fail("pinned musl oracle source changed during execution")
+    report_path = temporary_root / "report.json"
+    return {"schema": SCHEMA, "source_mount": str(ROOT), "passed": all(item["comparison"]["passed"] for item in outcomes), "source": {"before": source_before, "after": source_after}, "tools": {"before": tools_before, "after": tools_after}, "inputs": {"verification_before": inputs_before, "after": inputs_after}, "oracle": {"before": oracle_before, "after": oracle_after}, "candidate_product": {"before": product_before, "after": product_after}, "application_payload": {"path": str(payload), "sha256": payload_seal, "package_library_dirs": list(manifest.package_library_dirs), "elf_closure": elf_graph}, "execution_root": str(temporary_root), "report_path": str(report_path), "case_count": len(outcomes), "outcomes": outcomes}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dynamic-sysroot", type=Path, required=True, help="existing owned dynamic product; never rebuilt")
-    parser.add_argument("--archive-dir", type=Path, default=DEFAULT_INPUT)
-    parser.add_argument("--index", type=Path, default=DEFAULT_INDEX)
-    parser.add_argument("--work", type=Path, default=DEFAULT_WORK)
-    parser.add_argument("--report", type=Path)
+    parser.add_argument("--archive-dir", type=Path, default=DEFAULT_INPUT, help="signed exact APK closure")
+    parser.add_argument("--index", type=Path, default=DEFAULT_INDEX, help="signed exact APK index")
+    parser.add_argument("--work", type=Path, default=DEFAULT_WORK, help="private per-campaign parent below checkout .work")
+    parser.add_argument("--report", type=Path, help="fresh retained JSON path below checkout .work")
     parser.add_argument("--quiet", action="store_true", help="write the retained report without duplicating it to stdout")
-    parser.add_argument("--tier", action="append", choices=(*TIERS, "all"), default=["all"])
-    parser.add_argument("--case", action="append", default=[])
+    parser.add_argument("--tier", action="append", choices=(*TIERS, "all"), default=None, help="select a frozen tier; omitted selects all")
+    parser.add_argument("--case", action="append", default=[], help="select one frozen case within the requested tiers")
     arguments = parser.parse_args(argv)
     try:
         manifest = load_manifest()
-        report = run(manifest, arguments.archive_dir, arguments.index, arguments.dynamic_sysroot, arguments.work, select_cases(manifest, arguments.tier, arguments.case))
+        cases = select_cases(manifest, arguments.tier or ("all",), arguments.case)
+        explicit_report = prepare_report_destination(arguments.report) if arguments.report is not None else None
+        report = run(manifest, arguments.archive_dir, arguments.index, arguments.dynamic_sysroot, arguments.work, cases)
         encoded = json.dumps(report, indent=2, sort_keys=True) + "\n"
-        if arguments.report is not None:
-            arguments.report.parent.mkdir(parents=True, exist_ok=True)
-            arguments.report.write_text(encoded, encoding="utf-8")
+        evidence = report.get("execution_root")
+        if not isinstance(evidence, str):
+            fail("native corpus run did not return its retained evidence directory")
+        default_report = report.get("report_path")
+        if explicit_report is None:
+            if not isinstance(default_report, str):
+                fail("native corpus run did not return its retained report path")
+            if Path(default_report) != Path(evidence) / "report.json":
+                fail("native corpus default report is outside its retained evidence directory")
+            destination = write_new_report(Path(default_report), encoded)
+        else:
+            destination = write_new_report(explicit_report, encoded)
         if not arguments.quiet:
             sys.stdout.write(encoded)
+        print(f"owned package corpus evidence: {evidence}", file=sys.stderr)
+        print(f"owned x86_64 package corpus: status: {'pass' if report['passed'] else 'fail'}", file=sys.stderr)
+        print(f"owned x86_64 package corpus: report: {destination}", file=sys.stderr)
         return 0 if report["passed"] else 1
     except CorpusError as error:
         print(f"owned x86_64 package corpus: {error}", file=sys.stderr)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import os
 import sys
 import tarfile
@@ -10,6 +11,7 @@ import tempfile
 import tomllib
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 RUNNER_PATH = Path(__file__).resolve().parents[1] / "run_x86.py"
@@ -170,6 +172,154 @@ class RawOutcomeTests(unittest.TestCase):
         result = RUNNER.compare_results(RUNNER.ProcessResult(0, b"ok\n", b""), RUNNER.ProcessResult(127, b"", b"mainelf\n"))
         self.assertFalse(result["status_match"])
         self.assertFalse(result["passed"])
+
+
+class NativeInvocationBoundaryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.manifest = RUNNER.load_manifest()
+        (RUNNER.ROOT / ".work").mkdir(exist_ok=True)
+
+    def test_run_rejects_a_campaign_parent_outside_checkout_work_before_staging(self) -> None:
+        outside_work = RUNNER.ROOT / "compat/corpus/unsafe-owned-package-corpus-state"
+        staged = mock.Mock(side_effect=AssertionError("outside state reached staging"))
+        with mock.patch.object(RUNNER, "require_native_environment"), \
+             mock.patch.object(RUNNER, "apk_identity", return_value={}), \
+             mock.patch.object(RUNNER, "verify_inputs", return_value={}), \
+             mock.patch.object(RUNNER, "validate_product", return_value={}), \
+             mock.patch.object(RUNNER, "stage_application_payload", staged), \
+             mock.patch.object(RUNNER.tempfile, "mkdtemp", return_value=str(RUNNER.ROOT / ".work/unused")):
+            with self.assertRaisesRegex(RUNNER.CorpusError, "checkout .work"):
+                RUNNER.run(self.manifest, Path("archives"), Path("index"), Path("product"), outside_work, ())
+        staged.assert_not_called()
+
+    def test_explicit_tier_does_not_append_to_the_default_all_selection(self) -> None:
+        captured: list[tuple[str, ...]] = []
+
+        def record(_manifest: object, _archives: Path, _index: Path, _product: Path, _work: Path, cases: object) -> dict[str, object]:
+            captured.append(tuple(case.id for case in cases))
+            root = RUNNER.ROOT / ".work/unused-run"
+            return {"passed": True, "execution_root": str(root), "report_path": str(root / "report.json")}
+
+        with mock.patch.object(RUNNER, "run", side_effect=record), \
+             mock.patch.object(RUNNER, "write_new_report", return_value=Path("retained.json")), \
+             mock.patch.object(sys, "stdout", io.StringIO()):
+            self.assertEqual(RUNNER.main(["--dynamic-sysroot", "product", "--tier", "B", "--quiet"]), 0)
+        self.assertEqual(captured, [tuple(case.id for case in self.manifest.cases if case.tier == "B")])
+
+    def test_disjoint_tier_and_case_selection_fails_before_execution(self) -> None:
+        with mock.patch.object(RUNNER, "run", return_value={"passed": True}) as run, mock.patch.object(sys, "stdout", io.StringIO()):
+            self.assertEqual(
+                RUNNER.main(["--dynamic-sysroot", "product", "--tier", "B", "--case", "tier-a-true", "--quiet"]),
+                2,
+            )
+        run.assert_not_called()
+
+    def test_report_outside_checkout_work_is_rejected_before_execution(self) -> None:
+        report = RUNNER.ROOT / "compat/corpus/unsafe-owned-package-corpus-report.json"
+        with mock.patch.object(RUNNER, "run", return_value={"passed": True}) as run, \
+             mock.patch.object(Path, "write_text") as write, \
+             mock.patch.object(sys, "stdout", io.StringIO()):
+            self.assertEqual(RUNNER.main(["--dynamic-sysroot", "product", "--report", str(report), "--quiet"]), 2)
+        run.assert_not_called()
+        write.assert_not_called()
+
+    def test_report_parent_symlink_is_rejected_before_execution(self) -> None:
+        with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:
+            parent = Path(temporary) / "report-parent"
+            parent.symlink_to(RUNNER.ROOT / "compat/corpus", target_is_directory=True)
+            report = parent / "report.json"
+            with mock.patch.object(RUNNER, "run", return_value={"passed": True}) as run, \
+                 mock.patch.object(Path, "write_text") as write, \
+                 mock.patch.object(sys, "stdout", io.StringIO()):
+                self.assertEqual(RUNNER.main(["--dynamic-sysroot", "product", "--report", str(report), "--quiet"]), 2)
+            run.assert_not_called()
+            write.assert_not_called()
+
+    def test_existing_explicit_report_is_not_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:
+            report = Path(temporary) / "retained.json"
+            report.write_text("prior evidence\n", encoding="utf-8")
+            with mock.patch.object(RUNNER, "run", return_value={"passed": True}) as run, mock.patch.object(sys, "stdout", io.StringIO()):
+                self.assertEqual(RUNNER.main(["--dynamic-sysroot", "product", "--report", str(report), "--quiet"]), 2)
+            run.assert_not_called()
+            self.assertEqual(report.read_text(encoding="utf-8"), "prior evidence\n")
+
+    def test_report_parent_traversal_is_rejected(self) -> None:
+        with self.assertRaisesRegex(RUNNER.CorpusError, "parent traversal"):
+            RUNNER.prepare_report_destination(Path(".work/owned-package-corpus/../report.json"))
+
+    def test_default_report_is_retained_below_the_private_run_root_and_emitted(self) -> None:
+        with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:
+            run_root = Path(temporary) / "run"
+            run_root.mkdir()
+            report = run_root / "report.json"
+            result = {"passed": True, "source_mount": str(RUNNER.ROOT), "execution_root": str(run_root), "report_path": str(report)}
+            stderr = io.StringIO()
+            with mock.patch.object(RUNNER, "run", return_value=result), \
+                 mock.patch.object(sys, "stdout", io.StringIO()), \
+                 mock.patch.object(sys, "stderr", stderr):
+                self.assertEqual(RUNNER.main(["--dynamic-sysroot", "product", "--quiet"]), 0)
+            self.assertEqual(__import__("json").loads(report.read_text(encoding="utf-8")), result)
+            self.assertIn(f"owned package corpus evidence: {run_root}", stderr.getvalue())
+            self.assertIn("owned x86_64 package corpus: status: pass", stderr.getvalue())
+            self.assertIn(str(report), stderr.getvalue())
+
+    def test_fresh_explicit_report_is_created_below_checkout_work(self) -> None:
+        with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:
+            run_root = Path(temporary) / "run"
+            run_root.mkdir()
+            report = Path(temporary) / "explicit.json"
+            result = {"passed": True, "execution_root": str(run_root), "report_path": str(run_root / "report.json")}
+            with mock.patch.object(RUNNER, "run", return_value=result), \
+                 mock.patch.object(sys, "stdout", io.StringIO()), \
+                 mock.patch.object(sys, "stderr", io.StringIO()):
+                self.assertEqual(
+                    RUNNER.main(["--dynamic-sysroot", "product", "--report", str(report), "--quiet"]),
+                    0,
+                )
+            self.assertEqual(__import__("json").loads(report.read_text(encoding="utf-8")), result)
+
+    def test_source_identity_binds_the_actual_process_lifetime_helpers(self) -> None:
+        identity = RUNNER.source_identity(self.manifest)
+        self.assertEqual(identity["runner"]["path"], "compat/corpus/run_x86.py")
+        self.assertEqual(identity["native_manifest"]["path"], "compat/corpus/manifest-x86_64.toml")
+        self.assertEqual(identity["workload_source"]["path"], "compat/corpus/manifest.toml")
+        self.assertEqual(
+            {entry["path"] for entry in identity["process_lifetime_helpers"].values()},
+            {"compat/x86_64/run_qualification_manifest.py", "compat/x86_64/generate_qualification_manifest.py"},
+        )
+
+    def test_run_fails_closed_when_its_source_identity_changes(self) -> None:
+        with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:
+            campaign = Path(temporary) / "campaign"
+            campaign.mkdir()
+            execution = campaign / "owned-package-corpus-fixed"
+            execution.mkdir()
+            before, after = {"source": "before"}, {"source": "after"}
+            inputs = {"identity": {"input": "same"}}
+            case = self.manifest.cases[0]
+            with mock.patch.object(RUNNER, "require_native_environment"), \
+                 mock.patch.object(RUNNER, "private_campaign_parent", return_value=campaign), \
+                 mock.patch.object(RUNNER, "source_identity", side_effect=(before, after)), \
+                 mock.patch.object(RUNNER, "apk_identity", return_value={"tool": "same"}), \
+                 mock.patch.object(RUNNER, "verify_inputs", return_value=inputs), \
+                 mock.patch.object(RUNNER, "oracle_source_identity", return_value={"oracle": "same"}), \
+                 mock.patch.object(RUNNER, "validate_product", return_value={"product": "same"}), \
+                 mock.patch.object(RUNNER, "input_identity", return_value=inputs["identity"]), \
+                 mock.patch.object(RUNNER.tempfile, "mkdtemp", return_value=str(execution)), \
+                 mock.patch.object(RUNNER, "stage_application_payload"), \
+                 mock.patch.object(RUNNER, "audit_application_elf_closure", return_value=[]), \
+                 mock.patch.object(RUNNER, "tree_sha256", return_value="payload-seal"), \
+                 mock.patch.object(RUNNER, "stage_execution_root", return_value={}), \
+                 mock.patch.object(RUNNER, "copy_runtime", return_value={}), \
+                 mock.patch.object(RUNNER, "create_fixture"), \
+                 mock.patch.object(RUNNER, "assert_base_image_fixtures", return_value={}), \
+                 mock.patch.object(RUNNER, "assert_runtime_boundary"), \
+                 mock.patch.object(RUNNER, "executable_elf_record", return_value={}), \
+                 mock.patch.object(RUNNER, "execute_case", return_value=RUNNER.ProcessResult(0, b"", b"")):
+                with self.assertRaisesRegex(RUNNER.CorpusError, "source changed"):
+                    RUNNER.run(self.manifest, Path("archives"), Path("index"), Path("product"), campaign, (case,))
 
 
 if __name__ == "__main__":

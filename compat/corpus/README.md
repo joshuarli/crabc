@@ -101,21 +101,40 @@ A receipt made before this per-root staging rule is a failed fixture
 qualification if its cloned `/dev/null` is a regular file. It remains useful
 only as a preliminary diagnostic; it cannot qualify a package outcome.
 
-Every side/case root is retained under `.work/x86_64/tmp`, with pre/post tree
-seals, product and archive identities, raw stdout/stderr/status, and the full
-ELF dependency witness in its JSON report. A matched nonzero exit or timeout
-is a failure; streams and statuses are never normalized. The chroot leaf
-calls the package executable directly through the kernel with the manifest's
-original `argv[0]`; it never passes the package program to a loader argv.
+Every side/case root is retained under a fresh run directory below the
+checkout-local `.work` boundary, with pre/post tree seals, product and archive
+identities, raw stdout/stderr/status, and the full ELF dependency witness in
+its JSON report. The runner seals its own source, the native and shared
+workload manifests, and the two process-lifetime helper sources it actually
+imports before work starts and rechecks them afterward. It also rechecks the
+APK/index bytes, pinned `apk`/key/readelf material, musl source marker, and
+supplied product after execution; APK signatures are verified before work, not
+repeated during that post-execution identity check. A matched nonzero exit or
+timeout is a failure; streams and statuses are never normalized. The chroot
+leaf calls the package executable directly through the kernel with the
+manifest's original `argv[0]`; it never passes the package program to a
+loader argv.
 
 Inside the pinned native Docker environment, after supplying a dynamic product:
 
 ```sh
-compat/x86_64/run_owned_package_corpus.sh \
+./scripts/dev-x86_64.sh owned-package-corpus \
   --dynamic-sysroot /path/to/dynamic-sysroot \
   --report .work/x86_64/tmp/owned-package-corpus/latest.json
 python3 -B compat/corpus/tests/test_runner_x86.py
 ```
+
+`--work` names the physical parent for this campaign's fresh retained run
+directories. It and an explicit `--report` must remain below this checkout's
+`.work` directory, cannot cross a symlink or `..`, and an explicit report must
+not already exist. Without `--report`, the runner creates `report.json` in its
+fresh private run directory and emits that exact path on stderr, including for
+a candidate mismatch. In quiet mode it separately emits the retained evidence
+directory, pass/fail status, and report path. The JSON records the absolute
+source mount used for those paths, so a host-side reader can remap the
+container receipt deliberately. Omitting `--tier` selects all frozen tiers; an
+explicit `--tier B` selects only B, and a tier/case intersection with no
+workloads is a setup error.
 
 This is one consumer component for the frozen 34 workloads. It does not close
 the wider software-corpus, loader-family, performance, or source-build scope.
