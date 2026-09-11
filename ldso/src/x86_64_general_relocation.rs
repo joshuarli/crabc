@@ -747,6 +747,10 @@ unsafe fn validate_main_crt_mode(objects: &[Object; MAX_OBJECTS]) -> Option<()> 
         for offset in 0..bytes / ELF64_RELA_SIZE {
             let entry = unsafe { table.add(offset * ELF64_RELA_SIZE) };
             let info = unsafe { read_u64(entry.add(8)) };
+            // R_NONE consumes neither destination nor dynsym. In particular,
+            // its high info word is not a symbol index and must not be passed
+            // to the owned-CRT selector's direct-record validator.
+            if info as u32 == R_NONE { continue; }
             let index = (info >> 32) as usize;
             if index == 0 { continue; }
             let symbol = unsafe { direct_symbol(main, index) }?;

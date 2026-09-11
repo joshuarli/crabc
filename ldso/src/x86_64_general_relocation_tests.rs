@@ -1,22 +1,111 @@
 extern crate std;
 use super::*;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 use self::std::boxed::Box;
+use core::ops::{Deref, DerefMut};
 use super::super::x86_64_initial_graph_state::{ObjectAdmission, ObjectIdentity};
 
+const IMAGE_BYTES: usize = 0x2000;
+const IMAGE_SYMTAB: usize = 0x200;
+const IMAGE_STRTAB: usize = 0x300;
+const IMAGE_HASH: usize = 0x380;
+const IMAGE_RELA: usize = 0x400;
+const IMAGE_DATA: usize = 0x1000;
+const IMAGE_METADATA_BYTES: usize = 0x800;
+const IMAGE_DATA_BYTES: usize = 512;
+
+// The structural relocation tests mutate words and records after borrowing
+// `Object`s. Keep those convenient views, but point every view into one
+// declared PT_LOAD rather than putting dynsym, strings and RELA records in
+// unrelated Rust allocations. That is the same physical-address invariant
+// production direct indexed-symbol validation requires.
+pub(super) struct ImageData(*mut [u64; 64]);
+impl Deref for ImageData {
+    type Target = [u64; 64];
+    fn deref(&self) -> &Self::Target { unsafe { &*self.0 } }
+}
+impl DerefMut for ImageData {
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *self.0 } }
+}
+
+struct ImageSymbols(*mut [[u64; 3]; 5]);
+impl Deref for ImageSymbols {
+    type Target = [[u64; 3]; 5];
+    fn deref(&self) -> &Self::Target { unsafe { &*self.0 } }
+}
+impl DerefMut for ImageSymbols {
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *self.0 } }
+}
+
+struct ImageRelocations(*mut [[u64; 3]; 4]);
+impl Deref for ImageRelocations {
+    type Target = [[u64; 3]; 4];
+    fn deref(&self) -> &Self::Target { unsafe { &*self.0 } }
+}
+impl DerefMut for ImageRelocations {
+    fn deref_mut(&mut self) -> &mut Self::Target { unsafe { &mut *self.0 } }
+}
+
 pub(super) struct Image {
-    pub(super) data: Box<[u64; 64]>,
+    // One owned anonymous mapping backs all raw ELF views. It is an explicit
+    // interior-mutability boundary: the typed views below never originate
+    // from a shared whole-image reference, and Drop retires this exact map.
+    // Its isolated data page also lets the deferred-RELRO test protect a
+    // genuine page without involving allocator storage.
+    storage: *mut u8,
+    pub(super) data: ImageData,
+    // This legacy one-header view is only used by the malformed-PHDR case.
+    // `object()` below always points at the real header in `storage`.
     phdr: [u64; 7],
-    symbols: [[u64; 3]; 5],
-    relocations: [[u64; 3]; 4],
+    symbols: ImageSymbols,
+    relocations: ImageRelocations,
     count: usize,
 }
 impl Image {
     pub(super) fn new() -> Self {
-        Self {
-            data: Box::new([0; 64]),
+        let storage = unsafe { syscall6(SYS_MMAP, 0, IMAGE_BYTES as i64,
+            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
+        assert!(!is_linux_error(storage));
+        let base = storage as *mut u8;
+        unsafe { core::ptr::write_bytes(base, 0, IMAGE_BYTES) };
+        let mut image = Self {
+            data: ImageData(unsafe { base.add(IMAGE_DATA).cast() }),
             phdr: [1 | (7 << 32), 0, 0x1000, 0, 512, 512, 4096],
-            symbols: [[0; 3]; 5], relocations: [[0; 3]; 4], count: 0,
-        }
+            symbols: ImageSymbols(unsafe { base.add(IMAGE_SYMTAB).cast() }),
+            relocations: ImageRelocations(unsafe { base.add(IMAGE_RELA).cast() }),
+            storage: base, count: 0,
+        };
+        // The metadata and destination live in distinct declared loads, as
+        // in an ELF image: parser-consumed bytes are file-backed/readable,
+        // while 512 destination bytes remain the bounded writable range.
+        // Tests do not execute either mapping; PF_X preserves ordinary
+        // callable-address validation.
+        image.put_u32(0, PT_LOAD);
+        image.put_u32(4, PF_R | PF_X);
+        image.put_u64(16, 0);
+        image.put_u64(32, IMAGE_METADATA_BYTES as u64);
+        image.put_u64(40, IMAGE_METADATA_BYTES as u64);
+        image.put_u64(48, 4096);
+        image.put_u32(56, PT_LOAD);
+        image.put_u32(60, PF_R | PF_W | PF_X);
+        image.put_u64(56 + 16, IMAGE_DATA as u64);
+        image.put_u64(56 + 32, IMAGE_DATA_BYTES as u64);
+        image.put_u64(56 + 40, IMAGE_DATA_BYTES as u64);
+        image.put_u64(56 + 48, 4096);
+        unsafe { core::ptr::copy_nonoverlapping(b"\0value\0".as_ptr(), base.add(IMAGE_STRTAB), 7) };
+        // One valid SysV bucket exposes index one for the fixture's `value`
+        // name. Direct relocation-indexed accesses remain independently
+        // checked, just as a GNU all-zero export table can retain imports.
+        image.put_u32(IMAGE_HASH, 1);
+        image.put_u32(IMAGE_HASH + 4, 5);
+        image.put_u32(IMAGE_HASH + 8, 1);
+        image
+    }
+    fn put_u32(&mut self, offset: usize, value: u32) {
+        unsafe { core::ptr::copy_nonoverlapping(value.to_le_bytes().as_ptr(), self.storage.cast::<u8>().add(offset), 4) };
+    }
+    fn put_u64(&mut self, offset: usize, value: u64) {
+        unsafe { core::ptr::copy_nonoverlapping(value.to_le_bytes().as_ptr(), self.storage.cast::<u8>().add(offset), 8) };
     }
     pub(super) fn symbol(&mut self, index: usize, kind: u8, binding: u8, visibility: u8, section: u16, value: u64, size: u64) {
         self.symbols[index] = [
@@ -30,13 +119,25 @@ impl Image {
     }
     pub(super) fn object(&self, mapped: bool) -> Object {
         Object {
-            base: self.data.as_ptr() as u64 - 0x1000,
-            phdr: self.phdr.as_ptr().cast(), phnum: 1,
-            symtab: self.symbols.as_ptr().cast(), symcount: self.symbols.len(),
-            strtab: b"\0value\0".as_ptr(), strsz: 7,
-            rela: self.relocations.as_ptr().cast(), relasz: self.count * 24,
+            base: self.storage as u64,
+            phdr: self.storage.cast(), phnum: 2,
+            symtab: unsafe { self.storage.add(IMAGE_SYMTAB) }, symcount: self.symbols.len(),
+            #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+            symbol_lookup: SymbolLookupTable::Sysv {
+                bucket_count: 1,
+                buckets: unsafe { self.storage.add(IMAGE_HASH + 8).cast() },
+                chains: unsafe { self.storage.add(IMAGE_HASH + 12).cast() },
+                symbol_count: self.symbols.len(),
+            },
+            strtab: unsafe { self.storage.add(IMAGE_STRTAB) }, strsz: 7,
+            rela: unsafe { self.storage.add(IMAGE_RELA) }, relasz: self.count * 24,
             role: if mapped { ObjectRole::Library } else { ObjectRole::Main }, ..EMPTY_OBJECT
         }
+    }
+}
+impl Drop for Image {
+    fn drop(&mut self) {
+        unsafe { syscall2(SYS_MUNMAP, self.storage as i64, IMAGE_BYTES as i64); }
     }
 }
 

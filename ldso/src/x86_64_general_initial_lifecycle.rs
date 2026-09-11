@@ -318,8 +318,16 @@ mod tests {
         let mut fini = [0x1030usize, 0x1040];
         let mut state = GeneralInitialLoaderState::new(
             ObjectIdentity { device: 1, inode: 1 },
-            // Main callbacks are CRT-owned and never examined by this plan.
-            Object { general_fini_count: usize::MAX, ..EMPTY_OBJECT },
+            // This fixture is intentionally the existing owned-CRT route,
+            // whose main callbacks remain CRT-owned and outside this plan.
+            // A conventional main is a queued plan node and would instead
+            // require a valid main lifecycle shape.
+            Object {
+                general_fini_count: usize::MAX,
+                #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+                main_crt_mode: MainCrtMode::Owned,
+                ..EMPTY_OBJECT
+            },
         );
         {
             let (graph, objects) = state.discovery_mut().unwrap();

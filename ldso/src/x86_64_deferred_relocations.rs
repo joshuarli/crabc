@@ -250,16 +250,17 @@ mod tests {
     #[test]
     fn relro_retry_abandonment_and_late_permission_failure_restore_without_pointer_writes() {
         let guard = RuntimeGuard::acquire();
-        let mut mapping = LoaderBuffer::new(PAGE as usize / 8, 0xfeedu64).unwrap();
-        let address = mapping.as_mut_slice().as_mut_ptr();
         let main = Image::new();
         let mut plugin = Image::new();
         let mut provider = Image::new();
+        plugin.data[0] = 0xfeed;
+        let address = plugin.data.as_mut_ptr();
         plugin.symbol(1, 1, 1, 0, 0, 0, 0);
         plugin.rela(0x1000, R_X86_64_GLOB_DAT, 1, 0);
         provider.symbol(1, 1, 1, 0, 1, 0x1010, 8);
-        let objects = [main.object(false), Object { base: address as u64 - 0x1000,
-            relro_virtual_address: 0x1000, relro_byte_len: PAGE, ..plugin.object(true) }, provider.object(true)];
+        let objects = [main.object(false), Object {
+            relro_virtual_address: 0x1000, relro_byte_len: PAGE, ..plugin.object(true)
+        }, provider.object(true)];
         let pending = unsafe { relocate_new(&objects[..2], &[0, 1], 1, 0, true) }.unwrap();
         assert!(unsafe { apply_relro(&objects[1]) }.is_some());
         assert!(unsafe { write_faults(address) });
