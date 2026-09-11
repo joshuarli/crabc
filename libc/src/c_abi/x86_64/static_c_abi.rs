@@ -1161,6 +1161,13 @@ mod owned_vm_mechanisms;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_wordexp.rs"]
 mod owned_wordexp;
+// This is a private, unselected deterministic syntax/evaluation candidate.
+// The selected owned_wordexp C ABI provider remains above; integration is a
+// separate review after the core and adapters have focused evidence.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[allow(dead_code)] // The candidate stays intentionally unselected here.
+#[path = "owned_wordexp_engine.rs"]
+mod owned_wordexp_engine;
 // The installed owned-static composition additionally needs Lua's complete
 // binary32/binary64 inverse-trigonometry set. Keep it at this aggregate
 // boundary: the frozen default archive must not acquire any of these entries.
