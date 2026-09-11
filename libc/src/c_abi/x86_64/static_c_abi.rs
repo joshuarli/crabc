@@ -1175,6 +1175,10 @@ mod owned_wordexp_engine;
 #[allow(dead_code)]
 #[path = "owned_wordexp_process.rs"]
 mod owned_wordexp_process;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[allow(dead_code)] // The pathname adapter remains part of the unselected candidate.
+#[path = "owned_wordexp_paths.rs"]
+mod owned_wordexp_paths;
 // The installed owned-static composition additionally needs Lua's complete
 // binary32/binary64 inverse-trigonometry set. Keep it at this aggregate
 // boundary: the frozen default archive must not acquire any of these entries.

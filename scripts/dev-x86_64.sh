@@ -602,6 +602,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-wordexp [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed word expansion across controlled shell states
   wordexp-process-adapter  run the private unselected wordexp process-adapter boundary tests
   wordexp-process-private  run the private actual-spawn wordexp process fixture
+  wordexp-paths-private  run the private wordexp pathname and passwd fixture
   owned-stdio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed byte/wide streams, positioning and format/scan
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
   owned-package-corpus --dynamic-sysroot DYNAMIC_SYSROOT [OPTIONS]  run the frozen native Alpine workloads with supplied package inputs
@@ -6149,7 +6150,7 @@ case "$command" in
     sysmacros-header-source-form) ;;
     ioctl-header-source-form) ;;
     fcntl-event-header-topology) ;;
-    wordexp-process-adapter|wordexp-process-private) ;;
+    wordexp-process-adapter|wordexp-process-private|wordexp-paths-private) ;;
 
     *)
         usage >&2
@@ -7763,6 +7764,11 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "wordexp-process-private takes no arguments"
         ensure_image
         run_in_container bash /workspace/compat/x86_64/run_owned_wordexp_process_private.sh
+        ;;
+    wordexp-paths-private)
+        [ "$#" -eq 0 ] || fail "wordexp-paths-private takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_owned_wordexp_paths_private.sh
         ;;
     facade)
         [ "$#" -eq 0 ] || fail "facade takes no arguments"

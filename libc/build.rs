@@ -8,6 +8,8 @@ fn main() {
     // Focused real-owner evidence admits this fixture bridge only in a
     // disposable private static archive, never an installed product.
     println!("cargo::rustc-check-cfg=cfg(crabc_owned_pattern_private_test)");
+    println!("cargo::rustc-check-cfg=cfg(crabc_owned_wordexp_paths_private_test)");
+    println!("cargo::rustc-check-cfg=cfg(crabc_owned_wordexp_process_private_test)");
     // Rust's cdylib linker otherwise adds the platform crt startup objects.
     // Their linker-generated global `_init`/`_fini` symbols override the
     // musl ABI's weak exports.  libc has no crt entry point of its own, so
