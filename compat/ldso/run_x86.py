@@ -97,6 +97,18 @@ def has_required_relocations(names: set[str]) -> bool:
     return REQUIRED_RELOCATIONS <= names
 
 
+def valid_x86_relocation_fixture(consumer: set[str], local_adapter: set[str]) -> bool:
+    """Keep imported and local relocation roles separate on x86-64.
+
+    ``reloc_consumer.c`` supplies the imported ABS64/GLOB_DAT/JUMP_SLOT
+    behavior.  The target-local adapter supplies the one non-preemptible
+    initialized pointer, which LLD represents as RELATIVE rather than DT_RELR
+    in the current owned product.
+    """
+
+    return {"R_X86_64_64", "R_X86_64_GLOB_DAT", "R_X86_64_JUMP_SLOT"} <= consumer and "R_X86_64_RELATIVE" in local_adapter
+
+
 def sha256(path: pathlib.Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -223,23 +235,25 @@ class FixtureBuilder:
         self.identity.append({"source": str(source), "defines": list(defines), "header_trace": str(trace), "header_trace_sha256": sha256(trace), "object": str(output), "sha256": sha256(output)})
         return output
 
-    def shared(self, arm: str, root: pathlib.Path, name: str, object_file: pathlib.Path, dependencies: Sequence[pathlib.Path] = (), *, runpath: str = "/usr/lib") -> pathlib.Path:
+    def shared(self, arm: str, root: pathlib.Path, name: str, object_file: pathlib.Path, dependencies: Sequence[pathlib.Path] = (), *, runpath: str = "/usr/lib", hash_style: str = "sysv") -> pathlib.Path:
         output = root / "usr/lib" / name
         if arm == "candidate":
-            argv: list[str | pathlib.Path] = [self.driver, "--dynamic-shared-object", "--application-runpath", runpath, object_file]
+            argv: list[str | pathlib.Path] = [self.driver, "--dynamic-shared-object", "--application-hash-style", hash_style, "--application-runpath", runpath, object_file]
             for dependency in dependencies:
                 argv.extend(("--application-dso", dependency))
             argv.extend(("-o", output))
         else:
-            argv = [ORACLE_CC, "-shared", "-Wl,-soname," + name, object_file, *dependencies, "-Wl,-rpath," + runpath, "-o", output]
+            argv = [ORACLE_CC, "-shared", "-Wl,-soname," + name, object_file, *dependencies, "-Wl,--hash-style=" + hash_style, "-Wl,-rpath," + runpath, "-o", output]
         self.recorder.checked(f"{arm}-shared-{name}", argv, cwd=self.work)
         self.links.append({"kind": "shared", "arm": arm, "output": str(output), "output_sha256": sha256(output), "object": str(object_file), "object_sha256": sha256(object_file), "dependencies": [{"path": str(item), "sha256": sha256(item)} for item in dependencies]})
         return output
 
-    def executable(self, arm: str, root: pathlib.Path, name: str, object_file: pathlib.Path, dependencies: Sequence[pathlib.Path] = (), *, export_dynamic: bool = False, runpath: str = "/usr/lib") -> pathlib.Path:
+    def executable(self, arm: str, root: pathlib.Path, name: str, object_file: pathlib.Path, dependencies: Sequence[pathlib.Path] = (), *, export_dynamic: bool = False, runpath: str = "/usr/lib", search_kind: str = "runpath", hash_style: str = "sysv") -> pathlib.Path:
         output = root / name
+        if search_kind not in {"runpath", "rpath"}:
+            raise LoaderSyntheticError(f"unknown owned application search kind: {search_kind}")
         if arm == "candidate":
-            argv: list[str | pathlib.Path] = [self.driver, "--dynamic-pie", "--application-runpath", runpath]
+            argv: list[str | pathlib.Path] = [self.driver, "--dynamic-pie", "--application-hash-style", hash_style, "--application-" + search_kind, runpath]
             if export_dynamic:
                 argv.append("-rdynamic")
             argv.append(object_file)
@@ -247,7 +261,7 @@ class FixtureBuilder:
                 argv.extend(("--application-dso", dependency))
             argv.extend(("-o", output))
         else:
-            argv = [ORACLE_CC, "-fPIE", "-pie", object_file, *dependencies, "-Wl,-rpath," + runpath, "-Wl,-rpath-link," + str(root / "usr/lib"), "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1"]
+            argv = [ORACLE_CC, "-fPIE", "-pie", object_file, *dependencies, "-Wl,--hash-style=" + hash_style, *( ["-Wl,--disable-new-dtags"] if search_kind == "rpath" else []), "-Wl,-rpath," + runpath, "-Wl,-rpath-link," + str(root / "usr/lib"), "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1"]
             if export_dynamic:
                 argv.append("-Wl,--export-dynamic")
             argv.extend(("-o", output))
@@ -305,6 +319,19 @@ def compare_standard(recorder: Recorder, label: str, oracle_root: pathlib.Path, 
             raise LoaderSyntheticError(f"pinned-musl lifecycle omitted a frozen marker or failed: {reference.json()}")
     else:
         exact_reference(reference, expected, label)
+    observed = kernel_run(recorder, "candidate", candidate_root, candidate, environment)
+    direct = kernel_run(recorder, "candidate", candidate_root, candidate, environment, direct=True)
+    if not same_observation(reference, observed) or not same_observation(reference, direct):
+        raise LoaderSyntheticError(f"candidate {label} differs from pinned musl: reference={reference.json()} candidate={observed.json()} direct={direct.json()}")
+    return {"oracle": reference.json(), "candidate": observed.json(), "candidate_direct": direct.json()}
+
+
+def compare_allowed_reference(recorder: Recorder, label: str, oracle_root: pathlib.Path, candidate_root: pathlib.Path, oracle: pathlib.Path, candidate: pathlib.Path, allowed: set[bytes], environment: dict[str, str] | None = None) -> dict[str, object]:
+    """Use musl's exact stream after checking its frozen finite grammar."""
+
+    reference = kernel_run(recorder, "oracle", oracle_root, oracle, environment)
+    if reference.returncode != 0 or reference.timed_out or reference.stderr or reference.stdout not in allowed:
+        raise LoaderSyntheticError(f"pinned-musl {label} did not select a frozen fixture: {reference.json()}")
     observed = kernel_run(recorder, "candidate", candidate_root, candidate, environment)
     direct = kernel_run(recorder, "candidate", candidate_root, candidate, environment, direct=True)
     if not same_observation(reference, observed) or not same_observation(reference, direct):
@@ -454,7 +481,7 @@ def case_hash_formats(work: pathlib.Path, product: pathlib.Path, recorder: Recor
     oracle_sysv = oracle_root / "usr/lib/libhash_sysv.so"
     recorder.checked("oracle-gnu-hash", [ORACLE_CC, "-shared", gnu, "-Wl,--hash-style=gnu", "-o", oracle_gnu], cwd=work)
     recorder.checked("oracle-sysv-hash", [ORACLE_CC, "-shared", sysv, "-Wl,--hash-style=sysv", "-o", oracle_sysv], cwd=work)
-    candidate_gnu = builder.shared("candidate", candidate_root, "libhash_gnu.so", gnu)
+    candidate_gnu = builder.shared("candidate", candidate_root, "libhash_gnu.so", gnu, hash_style="gnu")
     candidate_sysv = builder.shared("candidate", candidate_root, "libhash_sysv.so", sysv)
     observed = {name: tags(recorder.checked("hash-tags-" + name, ["readelf", "-dW", path], cwd=work).stdout) for name, path in (("oracle-gnu", oracle_gnu), ("oracle-sysv", oracle_sysv), ("candidate-gnu", candidate_gnu), ("candidate-sysv", candidate_sysv))}
     if "(GNU_HASH)" not in observed["oracle-gnu"] or "(HASH)" not in observed["oracle-sysv"]:
@@ -478,7 +505,7 @@ def case_hash_many(work: pathlib.Path, product: pathlib.Path, recorder: Recorder
     oracle_image = oracle_root / "usr/lib/libhash_many.so"
     builder.recorder.checked("oracle-hash-many-both", [ORACLE_CC, "-shared", "-Wl,-soname,libhash_many.so", role, "-Wl,--hash-style=both", "-o", oracle_image], cwd=work)
     builder.links.append({"kind": "shared", "arm": "oracle", "output": str(oracle_image), "output_sha256": sha256(oracle_image), "object": str(role), "object_sha256": sha256(role), "dependencies": []})
-    candidate_image = builder.shared("candidate", candidate_root, "libhash_many.so", role)
+    candidate_image = builder.shared("candidate", candidate_root, "libhash_many.so", role, hash_style="both")
     symbols = recorder.checked("hash-many-symbols", ["readelf", "--dyn-syms", "--wide", candidate_image], cwd=work).stdout
     dynamic = recorder.checked("hash-many-tags", ["readelf", "-dW", candidate_image], cwd=work).stdout
     count = sum("hash_many_" in line for line in tags(symbols).splitlines())
@@ -492,8 +519,37 @@ def case_hash_many(work: pathlib.Path, product: pathlib.Path, recorder: Recorder
     return result
 
 
+def case_relocations(work: pathlib.Path, product: pathlib.Path, recorder: Recorder, builder: FixtureBuilder) -> dict[str, object]:
+    """Keep the frozen imported relocations and prove x86 local RELATIVE too."""
+    oracle_root, candidate_root = work / "oracle-root", work / "candidate-root"
+    copy_root(product, candidate_root, candidate=True)
+    copy_root(product, oracle_root, candidate=False)
+    executables: dict[str, pathlib.Path] = {}
+    images: dict[str, dict[str, pathlib.Path]] = {}
+    provider_role = builder.role(FIXTURES / "reloc_provider.c")
+    consumer_role = builder.role(FIXTURES / "reloc_consumer.c")
+    adapter_role = builder.role(FIXTURES / "reloc_relative_x86_adapter.c")
+    companion_role = builder.role(FIXTURES / "reloc_relative_x86_companion.c")
+    for arm, root in (("oracle", oracle_root), ("candidate", candidate_root)):
+        provider = builder.shared(arm, root, "libreloc_provider.so", provider_role)
+        consumer = builder.shared(arm, root, "libreloc_consumer.so", consumer_role, (provider,))
+        adapter = builder.shared(arm, root, "libreloc_relative_x86_adapter.so", adapter_role)
+        executables[arm] = builder.executable(arm, root, "consumer", companion_role, (consumer, adapter, provider))
+        images[arm] = {"provider": provider, "consumer": consumer, "adapter": adapter}
+    consumer_relocations = recorder.checked("relocations-consumer-x86", ["readelf", "-Wr", images["candidate"]["consumer"]], cwd=work).stdout
+    adapter_relocations = recorder.checked("relocations-adapter-x86", ["readelf", "-Wr", images["candidate"]["adapter"]], cwd=work).stdout
+    adapter_dynamic = recorder.checked("relocations-adapter-dynamic", ["readelf", "-dW", images["candidate"]["adapter"]], cwd=work).stdout
+    consumer_names, adapter_names = dynamic_names(consumer_relocations), dynamic_names(adapter_relocations)
+    if not valid_x86_relocation_fixture(consumer_names, adapter_names):
+        raise LoaderSyntheticError(f"x86 relocation roles drifted: consumer={sorted(consumer_names)} adapter={sorted(adapter_names)}")
+    if any("(" + item + ")" in tags(adapter_dynamic) for item in ("RELR", "RELRSZ", "RELRENT")):
+        raise LoaderSyntheticError("x86 local relocation unexpectedly changed from direct RELATIVE to packed RELR")
+    behavior = compare_standard(recorder, "relocations", oracle_root, candidate_root, executables["oracle"], executables["candidate"], b"reloc=42 relative=73\n")
+    return {"result": "pass", "consumer_relocations": tags(consumer_relocations), "adapter_relocations": tags(adapter_relocations), "adapter_dynamic": tags(adapter_dynamic), "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}, **behavior}
+
+
 def case_search_path(work: pathlib.Path, product: pathlib.Path, recorder: Recorder, builder: FixtureBuilder) -> dict[str, object]:
-    """Exercise sealed RUNPATH behavior and retain the missing RPATH parser receipt."""
+    """Exercise both owned DT_RUNPATH and owned legacy DT_RPATH precedence."""
     oracle_root, candidate_root = work / "oracle-root", work / "candidate-root"
     copy_root(product, candidate_root, candidate=True)
     copy_root(product, oracle_root, candidate=False)
@@ -506,17 +562,26 @@ def case_search_path(work: pathlib.Path, product: pathlib.Path, recorder: Record
             receipt = pathlib.Path(str(image) + ".crabc-link.json")
             if receipt.exists():
                 receipt.replace(target / receipt.name)
-    oracle = builder.executable("oracle", oracle_root, "consumer", builder.role(FIXTURES / "search_main.c"), runpath="/runpath")
-    candidate = builder.executable("candidate", candidate_root, "consumer", builder.role(FIXTURES / "search_main.c"), runpath="/runpath")
-    behavior = {
-        "environment": compare_standard(recorder, "search-path/runpath-environment", oracle_root, candidate_root, oracle, candidate, b"search=11\n", {"LD_LIBRARY_PATH": "/environment"}),
-        "embedded": compare_standard(recorder, "search-path/runpath-embedded", oracle_root, candidate_root, oracle, candidate, b"search=22\n"),
+    main = builder.role(FIXTURES / "search_main.c")
+    oracle = builder.executable("oracle", oracle_root, "consumer-runpath", main, runpath="/runpath")
+    candidate = builder.executable("candidate", candidate_root, "consumer-runpath", main, runpath="/runpath")
+    oracle_rpath = builder.executable("oracle", oracle_root, "consumer-rpath", main, runpath="/rpath", search_kind="rpath")
+    candidate_rpath = builder.executable("candidate", candidate_root, "consumer-rpath", main, runpath="/rpath", search_kind="rpath")
+    tags_by_mode = {
+        "candidate-runpath": tags(recorder.checked("search-runpath-tags", ["readelf", "-dW", candidate], cwd=work).stdout),
+        "candidate-rpath": tags(recorder.checked("search-rpath-tags", ["readelf", "-dW", candidate_rpath], cwd=work).stdout),
     }
-    probe = work / "legacy-rpath-probe.so"
-    rejected = recorder.run("sealed-link-surface-search-path", [builder.driver, "--dynamic-shared-object", "-Wl,--disable-new-dtags", builder.role(FIXTURES / "search_main.c"), "-o", probe], cwd=work)
-    if rejected.returncode == 0:
-        raise LoaderSyntheticError("unexpectedly admitted a raw linker escape instead of a sealed legacy RPATH contract")
-    return {"result": "fail", "error": "owned driver rejected the required legacy-RPATH linker surface; raw parser observation retained", "runpath_behavior": behavior, "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}}
+    if "(RUNPATH)" not in tags_by_mode["candidate-runpath"] or "(RPATH)" in tags_by_mode["candidate-runpath"]:
+        raise LoaderSyntheticError("owned RUNPATH executable did not retain exactly its new-dtags form")
+    if "(RPATH)" not in tags_by_mode["candidate-rpath"] or "(RUNPATH)" in tags_by_mode["candidate-rpath"]:
+        raise LoaderSyntheticError("owned RPATH executable did not retain exactly its legacy-dtags form")
+    behavior = {
+        "runpath-environment": compare_standard(recorder, "search-path/runpath-environment", oracle_root, candidate_root, oracle, candidate, b"search=11\n", {"LD_LIBRARY_PATH": "/environment"}),
+        "runpath-embedded": compare_standard(recorder, "search-path/runpath-embedded", oracle_root, candidate_root, oracle, candidate, b"search=22\n"),
+        "rpath-environment": compare_allowed_reference(recorder, "search-path/rpath-environment", oracle_root, candidate_root, oracle_rpath, candidate_rpath, {b"search=11\n", b"search=22\n", b"search=33\n"}, {"LD_LIBRARY_PATH": "/environment"}),
+        "rpath-embedded": compare_allowed_reference(recorder, "search-path/rpath-embedded", oracle_root, candidate_root, oracle_rpath, candidate_rpath, {b"search=11\n", b"search=22\n", b"search=33\n"}),
+    }
+    return {"result": "pass", "dynamic": tags_by_mode, "behavior": behavior, "execution_roots": {"oracle": tree_seal(oracle_root), "candidate": tree_seal(candidate_root)}}
 
 
 def case_origin(work: pathlib.Path, product: pathlib.Path, recorder: Recorder, builder: FixtureBuilder) -> dict[str, object]:
@@ -558,7 +623,9 @@ def run_case(name: str, product: pathlib.Path, root: pathlib.Path, timeout: floa
     recorder = Recorder(work, timeout)
     builder = FixtureBuilder(product, work, recorder)
     try:
-        if name in SPECS:
+        if name == "relocations":
+            result = case_relocations(work, product, recorder, builder)
+        elif name in SPECS:
             result = case_standard(name, work, product, recorder, builder)
         elif name == "hash-formats":
             result = case_hash_formats(work, product, recorder, builder)

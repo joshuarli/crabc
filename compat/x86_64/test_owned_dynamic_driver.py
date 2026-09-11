@@ -65,6 +65,44 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self.assertEqual(plan["application_runpath"], "/app/lib:$ORIGIN/plugins")
         self.assertIn("/app/lib:$ORIGIN/plugins", plan["linker"])
 
+    def test_hash_style_is_a_sealed_link_choice_not_a_raw_linker_flag(self):
+        for style in ("sysv", "gnu", "both"):
+            with self.subTest(style=style):
+                output = io.StringIO()
+                with patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch("sys.stdout", output):
+                    driver.execute(self.root, ["--dynamic-shared-object", "--application-hash-style", style, "--print-link-plan"])
+                plan = json.loads(output.getvalue())
+                self.assertEqual(plan["application_hash_style"], style)
+                self.assertIn("--hash-style=" + style, plan["linker"])
+                self.assertEqual(sum(item.startswith("--hash-style=") for item in plan["linker"]), 1)
+        source = Path(self.temporary.name) / "consumer.c"
+        source.write_text("int value;\n")
+        with patch.object(driver, "run") as run:
+            with self.assertRaisesRegex(driver.shared.DriverError, "hash style"):
+                driver.execute(self.root, ["--dynamic-pie", "--application-hash-style", "gnu", "-c", str(source)])
+            run.assert_not_called()
+
+    def test_main_only_rpath_is_mutually_exclusive_with_runpath(self):
+        output = io.StringIO()
+        with patch.object(driver.shared, "linker", return_value="/owned/ld.lld"), patch("sys.stdout", output):
+            driver.execute(self.root, ["--dynamic-pie", "--application-rpath", "/legacy", "--print-link-plan"])
+        plan = json.loads(output.getvalue())
+        self.assertEqual(plan["application_search_kind"], "rpath")
+        self.assertEqual(plan["application_runpath"], "/legacy")
+        self.assertIn("--disable-new-dtags", plan["linker"])
+        self.assertNotIn("--enable-new-dtags", plan["linker"])
+        source = Path(self.temporary.name) / "consumer.c"
+        source.write_text("int value;\n")
+        for arguments in (
+            ["--dynamic-shared-object", "--application-rpath", "/legacy", "--print-link-plan"],
+            ["--dynamic-pie", "--application-rpath", "/legacy", "--application-runpath", "/new", "--print-link-plan"],
+            ["--dynamic-pie", "--application-rpath", "/legacy", "-c", str(source)],
+        ):
+            with self.subTest(arguments=arguments), patch.object(driver, "run") as run:
+                with self.assertRaises(driver.shared.DriverError):
+                    driver.execute(self.root, arguments)
+                run.assert_not_called()
+
     def test_search_path_rejects_invalid_or_ambiguous_options_before_tools(self):
         for options in (["--application-runpath"], ["--application-runpath", ""],
                         ["--application-runpath", "/a", "--application-runpath", "/b"],
@@ -126,7 +164,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         path.write_bytes(elf)
         receipt = Path(str(path) + ".crabc-link.json")
         valid = {"format": driver.FORMAT, "output_sha256": driver.shared.sha256_file(path),
-                 "application_runpath": "/app/lib", "output_path": str(path.resolve())}
+                 "application_runpath": "/app/lib", "application_search_kind": "runpath",
+                 "output_path": str(path.resolve())}
         dynamic = "(SONAME) [plugin.so]\n(RUNPATH) [/app/lib]\n"
         for record in ([], {**valid, "application_runpath": "/wrong"},
                        {**valid, "output_sha256": "0" * 64}, valid):

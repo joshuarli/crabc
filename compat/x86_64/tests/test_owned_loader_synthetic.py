@@ -91,6 +91,13 @@ class OwnedLoaderSyntheticTests(unittest.TestCase):
         self.assertTrue(module.has_required_relocations(required))
         self.assertFalse(module.has_required_relocations(required - {"R_X86_64_64"}))
 
+    def test_x86_relocation_adapter_keeps_the_original_and_local_classes_distinct(self) -> None:
+        module = runner()
+        original = {"R_X86_64_64", "R_X86_64_GLOB_DAT", "R_X86_64_JUMP_SLOT"}
+        self.assertTrue(module.valid_x86_relocation_fixture(original, {"R_X86_64_RELATIVE"}))
+        self.assertFalse(module.valid_x86_relocation_fixture(original, set()))
+        self.assertFalse(module.valid_x86_relocation_fixture(original - {"R_X86_64_64"}, {"R_X86_64_RELATIVE"}))
+
 
 if __name__ == "__main__":
     unittest.main()
