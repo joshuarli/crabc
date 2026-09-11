@@ -61,7 +61,27 @@ Only these four source boundaries may have a profile disposition:
   unchanged and requires four digits after a `%z` sign. The ordinary source
   cases remain checked by the untouched unit and installed numeric/calendar
   component; this disposition establishes no general locale, time, or glibc
-  extension closure. It admits no `wordexp`, `random`, or math failure.
+  extension closure. It admits no `wordexp`, `random`, or other failure.
+
+## Corrected scalar math pinned-musl oracle defects
+
+Three libc-test entries have a separate, finite source/oracle-defect result;
+they are not compatibility-profile dispositions. `math/fmaf`, `math/fmal`, and
+`math/powf` each retain the exact pinned musl 1.2.6 diagnostic stream and exit
+status 1 after the owned candidate exits 0 with empty stdout and stderr.
+`owned_math_oracle_defects.py` binds the complete pinned libc-test source tree,
+each prepared source and diagnostic header hash, the musl provenance, and the
+fixed correction implementation, generators, probe, and installed-product
+proof sources. It also reconstructs every diagnostic path and byte plus the
+terminal `FAIL /math/... [status 1]` marker.
+
+The resulting nested disposition is explicitly
+`candidate-passed-oracle-defect`: it records a candidate pass and a pinned-musl
+oracle defect, never a candidate limitation or a raw musl pass. A candidate
+failure, an oracle pass, matched raw failure, changed/missing/extra diagnostic,
+source or header drift, timeout, failed link/root, or any unlisted unit fails
+closed. `math/nextafterl` remains an ordinary raw pass; this finite set admits
+neither it nor `wordexp` or `random`.
 
 The bounded adapter parses decimal rounds and normalizes values below 1000 to
 1000 before validating RustCrypto parameters. It rejects excessive or
@@ -93,7 +113,9 @@ The state transition is explicit:
 
 1. An ordinary component has raw success and qualification `passed`.
 2. Only OS-test or libc-test may retain raw exit 1 and raw failure while an
-   independently reconstructed qualification is `profile-qualified`.
+   independently reconstructed qualification is `profile-qualified`. The
+   three scalar-math entries are separate named candidate-pass/pinned-musl-
+   defect records inside the libc-test result; they do not widen that profile.
 3. Missing or invalid required companion evidence, a missing or invalid
    source contract, an unexpected raw outcome, or any other failure stops
    execution and retains `incomplete.json`.

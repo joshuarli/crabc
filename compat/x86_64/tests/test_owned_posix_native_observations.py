@@ -1,4 +1,5 @@
 """Finite native component evidence, with independent physical raw fixtures."""
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -12,6 +13,7 @@ HERE = Path(__file__).resolve().parents[1]
 ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import owned_posix_native_observations as native
+import owned_math_oracle_defects as math_oracle_defects
 import owned_differential_evidence as differential
 import owned_signal_process_evidence as signals
 import owned_pthread_stress_source as profile
@@ -808,7 +810,7 @@ class NativeObservationsTests(unittest.TestCase):
             with self.assertRaises(native.NativeObservationError): validate(altered)
             path.write_bytes(original)
 
-    def libc_test_fixture(self, *, profile=False):
+    def libc_test_fixture(self, *, profile=False, math_defects=False):
         import owned_libc_test as contract
         stage, prepared = self.leaf / 'source-stage', self.leaf / 'source-prepared'
         source_names = [*contract.COMMON_MEMBERS, contract.RUNTIME_HELPER, *contract.DSO_UNITS]
@@ -823,12 +825,22 @@ class NativeObservationsTests(unittest.TestCase):
         if profile:
             source_names[source_names.index('functional/case_065')] = 'functional/crypt'
             source_names[source_names.index('functional/case_064')] = 'functional/strptime'
+        if math_defects:
+            for number, name in enumerate(('fmaf', 'fmal', 'powf', 'nextafterl')):
+                source_names[source_names.index(f'math/case_{number:03d}')] = 'math/' + name
+            source_names[source_names.index('functional/case_063')] = 'functional/wordexp'
         for name in source_names:
             self.put(stage / 'src' / (name + '.c'), ('/* ' + name + ' */\n').encode())
         if profile:
             import owned_posix_native_dispositions as dispositions
             self.put(stage / 'src/functional/crypt.c', (ROOT / dispositions.CRYPT_REFERENCE).read_bytes())
             self.put(stage / 'src/functional/strptime.c', (ROOT / dispositions.STRPTIME_REFERENCE).read_bytes())
+        if math_defects:
+            for definition in math_oracle_defects.ORACLE_DEFECTS.values():
+                source = definition['source']
+                self.put(stage / source, b'fixture math unit\n')
+                for header in definition['headers']:
+                    self.put(stage / header, b'fixture diagnostic header\n')
         self.put(stage / 'src/api/unistd.c', b'C(_PC_TIMESTAMP_RESOLUTION)\nC(_SC_XOPEN_UUCP)\n')
         for number in range(29): self.put(stage / f'src/math/gen/g{number:02d}.c', b'generator\n')
         self.put(stage / 'src/musl/pleval.c', b'excluded upstream target\n')
@@ -1032,6 +1044,11 @@ class NativeObservationsTests(unittest.TestCase):
                             path = self.leaf / 'execution' / name / (side + '.stdout')
                             self.put(path, output)
                             record.update(exit_status=1, stdout=self.binding(path))
+                        if math_defects and name in math_oracle_defects.ORACLE_DEFECTS and side == 'oracle':
+                            output = math_oracle_defects.expected_oracle_stdout(name, self.recorded(prepared))
+                            path = self.leaf / 'execution' / name / (side + '.stdout')
+                            self.put(path, output)
+                            record.update(exit_status=1, stdout=self.binding(path))
                         status = self.put(self.leaf / 'execution' / name / (side + '.status.json'), record)
                         copied_files = [
                             {'destination': '/runtest', 'sha256': self.binding(self.leaf / 'links' / side / 'common/runtest.exe')['sha256']},
@@ -1081,13 +1098,18 @@ class NativeObservationsTests(unittest.TestCase):
                 unit['runtime']['oracle']['status'] = 'failed'
                 unit['runtime']['candidate']['status'] = 'failed'
                 unit['runtime']['comparison'] = {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
+            if math_defects and name in math_oracle_defects.ORACLE_DEFECTS:
+                unit['status'] = 'runtime-failed'
+                unit['runtime']['oracle']['status'] = 'failed'
+                unit['runtime']['comparison'] = {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
+                report.update(status='incomplete', counts={'passed': 429, 'runtime-failed': 5})
             report['units'].append(unit)
         self.put(self.leaf / 'libc-test.json', report)
         return report
 
     def profile_companions(self):
         import owned_posix_native_dispositions as dispositions
-        for path in dispositions.PROFILE_SOURCES:
+        for path in (*dispositions.PROFILE_SOURCES, *math_oracle_defects.PROOF_SOURCES):
             self.copy_source(path)
         return {'credentials': {'receipt': {'path': '.work/family/execution.json', 'sha256': 'b'*64},
                     'selected_dynamic_entries': {mode: {} for mode in MODES}},
@@ -1144,6 +1166,130 @@ class NativeObservationsTests(unittest.TestCase):
             with self.assertRaises(native.NativeObservationError):
                 native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                root=self.root, profile_inputs=inputs)
+
+    def test_native_libc_observer_keeps_corrected_math_as_candidate_passed_oracle_defects(self):
+        report = self.libc_test_fixture(profile=True, math_defects=True)
+        proof = self.profile_companions()
+        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
+                  'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
+        expected_hashes = {name: {key: hashlib.sha256(value).hexdigest() for key, value in {
+            'source': b'fixture math unit\n', 'header': b'fixture diagnostic header\n'}.items()}
+            for name in math_oracle_defects.ORACLE_DEFECTS}
+        fixture_defects = copy.deepcopy(math_oracle_defects.ORACLE_DEFECTS)
+        for name, definition in fixture_defects.items():
+            definition['source_sha256'] = expected_hashes[name]['source']
+            definition['headers'] = {path: expected_hashes[name]['header'] for path in definition['headers']}
+        with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', fixture_defects):
+            with patch.object(native, '_load_profile_companions', return_value=proof):
+                result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
+                                        root=self.root, profile_inputs=inputs)
+        defects = [entry for entry in result['qualification']['dispositions'] if entry['unit'].startswith('math/')]
+        self.assertEqual([entry['unit'] for entry in defects], ['math/fmaf', 'math/fmal', 'math/powf'])
+        self.assertTrue(all(entry['status'] == 'candidate-passed-oracle-defect' for entry in defects))
+        self.assertTrue(all(entry['candidate']['passed'] and not entry['oracle']['passed'] for entry in defects))
+        for name in math_oracle_defects.ORACLE_DEFECTS:
+            self.assertEqual((self.leaf / 'execution' / name / 'candidate.stdout').read_bytes(), b'')
+            self.assertEqual((self.leaf / 'execution' / name / 'candidate.stderr').read_bytes(), b'')
+            self.assertEqual((self.leaf / 'execution' / name / 'oracle.stdout').read_bytes(),
+                             math_oracle_defects.expected_oracle_stdout(name, self.recorded(self.leaf / 'source-prepared')))
+            self.assertEqual((self.leaf / 'execution' / name / 'oracle.stderr').read_bytes(), b'')
+        self.assertEqual(report['counts'], {'passed': 429, 'runtime-failed': 5})
+
+    def test_native_libc_math_oracle_defect_rejects_changed_stream_source_and_unlisted_failures(self):
+        report = self.libc_test_fixture(profile=True, math_defects=True)
+        proof = self.profile_companions()
+        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
+                  'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
+        expected_hashes = {name: {key: hashlib.sha256(value).hexdigest() for key, value in {
+            'source': b'fixture math unit\n', 'header': b'fixture diagnostic header\n'}.items()}
+            for name in math_oracle_defects.ORACLE_DEFECTS}
+        fixture_defects = copy.deepcopy(math_oracle_defects.ORACLE_DEFECTS)
+        for name, definition in fixture_defects.items():
+            definition['source_sha256'] = expected_hashes[name]['source']
+            definition['headers'] = {path: expected_hashes[name]['header'] for path in definition['headers']}
+        def collect():
+            with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', fixture_defects):
+                with patch.object(native, '_load_profile_companions', return_value=proof):
+                    return native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
+                                          root=self.root, profile_inputs=inputs)
+        original_report = (self.leaf / 'libc-test.json').read_bytes()
+
+        candidate = self.leaf / 'execution/math/fmaf/candidate.stdout'
+        candidate_before = candidate.read_bytes()
+        status_path = self.leaf / 'execution/math/fmaf/candidate.status.json'
+        status_before = status_path.read_bytes()
+        changed = json.loads(original_report)
+        unit = next(item for item in changed['units'] if item['id'] == 'math/fmaf')
+        self.put(candidate, b'unexpected candidate diagnostic\n')
+        unit['runtime']['candidate']['record']['stdout'] = self.binding(candidate)
+        self.put(status_path, unit['runtime']['candidate']['record'])
+        unit['runtime']['candidate']['status_record'] = self.binding(status_path)
+        self.put(self.leaf / 'libc-test.json', changed)
+        with self.assertRaises(native.NativeObservationError, msg='candidate output is not an oracle-defect waiver'):
+            collect()
+        self.put(candidate, candidate_before)
+        self.put(status_path, status_before)
+
+        oracle = self.leaf / 'execution/math/fmaf/oracle.stdout'
+        oracle_before = oracle.read_bytes()
+        status_path = self.leaf / 'execution/math/fmaf/oracle.status.json'
+        status_before = status_path.read_bytes()
+        changed = json.loads(original_report)
+        unit = next(item for item in changed['units'] if item['id'] == 'math/fmaf')
+        self.put(oracle, oracle_before + b'unexpected oracle diagnostic\n')
+        unit['runtime']['oracle']['record']['stdout'] = self.binding(oracle)
+        self.put(status_path, unit['runtime']['oracle']['record'])
+        unit['runtime']['oracle']['status_record'] = self.binding(status_path)
+        self.put(self.leaf / 'libc-test.json', changed)
+        with self.assertRaises(native.NativeObservationError, msg='changed pinned-musl diagnostics are rejected'):
+            collect()
+        self.put(oracle, oracle_before)
+        self.put(status_path, status_before)
+
+        header = self.leaf / 'source-prepared/src/math/special/fmaf.h'
+        header_before = header.read_bytes()
+        header.write_bytes(header_before + b'changed header\n')
+        self.put(self.leaf / 'libc-test.json', original_report)
+        with self.assertRaises(native.NativeObservationError, msg='prepared diagnostic-header drift is rejected'):
+            collect()
+        header.write_bytes(header_before)
+
+        proof_source = self.root / 'compat/x86_64/math_scalar_corrections.py'
+        proof_before = proof_source.read_bytes()
+        proof_source.write_bytes(proof_before + b'\n# changed proof source\n')
+        self.put(self.leaf / 'libc-test.json', original_report)
+        with self.assertRaises(native.NativeObservationError, msg='correction proof source drift is rejected'):
+            collect()
+        proof_source.write_bytes(proof_before)
+
+        for name in ('math/nextafterl', 'functional/wordexp'):
+            with self.subTest(unit=name):
+                output = self.leaf / 'execution' / name / 'oracle.stdout'
+                output_before = output.read_bytes()
+                status_path = self.leaf / 'execution' / name / 'oracle.status.json'
+                status_before = status_path.read_bytes()
+                changed = json.loads(original_report)
+                unit = next(item for item in changed['units'] if item['id'] == name)
+                self.put(output, b'FAIL /' + name.encode() + b' [status 1]\n')
+                unit['status'] = 'runtime-failed'
+                unit['runtime']['oracle']['status'] = 'failed'
+                unit['runtime']['comparison'] = {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
+                unit['runtime']['oracle']['record'].update(exit_status=1, stdout=self.binding(output))
+                self.put(status_path, unit['runtime']['oracle']['record'])
+                unit['runtime']['oracle']['status_record'] = self.binding(status_path)
+                changed['status'] = 'incomplete'
+                changed['counts'] = {'passed': 428, 'runtime-failed': 6}
+                self.put(self.leaf / 'libc-test.json', changed)
+                with self.assertRaises(native.NativeObservationError, msg='unlisted runtime failure cannot gain a math disposition'):
+                    collect()
+                self.put(output, output_before)
+                self.put(status_path, status_before)
+
+        changed = json.loads(original_report)
+        changed['candidate_link_blocker'] = {'unit': 'functional/random'}
+        self.put(self.leaf / 'libc-test.json', changed)
+        with self.assertRaises(native.NativeObservationError, msg='random link blocker cannot be hidden by math accounting'):
+            collect()
 
     def test_libc_test_preserves_graph_roles_and_rejects_tampered_or_incomplete_evidence(self):
         report = self.libc_test_fixture()

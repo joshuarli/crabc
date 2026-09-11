@@ -23,6 +23,7 @@ import owned_posix_family_observations as family_observations
 import owned_posix_native_observations as native
 import owned_crypt_profile as crypt
 import owned_atomic_addressable_profile as atomic
+import owned_math_oracle_defects as math_oracle
 import owned_posix_native_dispositions as dispositions
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -62,11 +63,13 @@ COMPONENTS = (
         ('compat/x86_64/owned_libc_test.py',), (), '', 'owned-libc-test.'),
 )
 SHARED_SOURCES = (*crypt.SOURCES, *atomic.SOURCES,
+    'compat/x86_64/owned_math_oracle_defects.py', *math_oracle.PROOF_SOURCES,
     'compat/x86_64/owned_posix_native_dispositions.py',
     'compat/x86_64/owned-posix-native-dispositions.md',
     'compat/x86_64/owned_posix_native_execution.py',
     'compat/x86_64/owned-posix-native-execution.md',
     'compat/x86_64/owned_posix_native_observations.py',
+    'compat/x86_64/README.md',
     'compat/x86_64/owned_posix_family_execution.py',
     'compat/x86_64/owned_posix_family_observations.py',
     'compat/x86_64/owned_posix_static_products.py',

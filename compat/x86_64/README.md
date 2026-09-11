@@ -29,6 +29,13 @@ The focused [native scalar math corrections](math-scalar-corrections.md) retain
 independent exact numerical expectations and raw fixed-musl defects. Run
 `./scripts/dev-x86_64.sh math-scalar-corrections` for their pure ABI proof and
 existing family corpora; the linked document separates installed-product evidence.
+The native libc-test observer separately records only `math/fmaf`, `math/fmal`,
+and `math/powf` as source-bound candidate-pass/pinned-musl-oracle-defect
+dispositions. It requires the exact complete source graph, prepared
+source/header hashes, correction proof sources, and retained oracle diagnostic
+bytes; it does not classify `nextafterl`, `wordexp`, or `random` this way. This
+finite accounting does not close the dynamic aggregate, whose `wordexp` and
+`random` blockers remain.
 
 ## Campaign commands
 
