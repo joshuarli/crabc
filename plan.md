@@ -41,10 +41,19 @@ under `.work/x86_64/{libc-test-measurement-04c4cbd3,os-measurement-04c4cbd3}/`.
 Finite crypt, atomic, credential, and `strptime` dispositions retain their
 original raw outcomes. The same-product crypt and atomic companions pass;
 these dispositions admit no BSD random or word-expansion failure. The latter
-still requires the owned private expansion engine. The selected adapter's
+still requires qualifying and selecting the owned private expansion engine. The selected adapter's
 literal parameter-word brace correction has separate installed static/dynamic
 evidence; it does not establish complete expansion semantics. See
 [`owned-posix-native-dispositions.md`](compat/x86_64/owned-posix-native-dispositions.md).
+
+`9d2d5d36` adds the private, unselected word-expansion core. Integrated checks
+pass 23 focused tests, the 30 earlier regression comparisons, 905 further
+exact pinned-shell comparisons, and two POSIX/C arithmetic cases where the
+pinned shell incorrectly evaluates skipped assignments. All 188 injected
+allocation-failure points reclaim core storage. Production selection still
+requires C.UTF-8 semantics, concrete runtime adapters, and direct C ABI
+evidence; the current shell-based provider remains selected. See
+[`owned-wordexp-engine.md`](compat/x86_64/owned-wordexp-engine.md).
 
 `024b1563` corrects demonstrated `fmaf`, `fmal`, `powf`, and `nextafterl`
 defects while preserving the pinned numerical algorithms. The integrated
