@@ -4,7 +4,8 @@
 This coordinator does not run a loader, rebuild a product, or turn an inventory
 into runtime evidence.  It joins one complete three-product dynamic
 qualification with the corresponding three retained loader inventories.  The
-qualification remains the semantic owner of all 69 dynamic cases (including
+qualification remains the semantic owner of its complete current dynamic-case
+roster (including
 all 21 synthetic and 34 frozen package-corpus cases); the inventories bind the
 installed loader, libc, source provenance, retained musl capture, and readelf
 capture for each exact product.
@@ -49,13 +50,13 @@ NONPROMOTING_FLAGS = {
 # full qualification and makes a stale behavior roster reject until reviewed.
 EXPECTED_ROWS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("entry-and-initial-graph", "runtime.loader", ("cycle", "cli")),
-    ("search-mapping-protection", "runtime.loader", ("cli",)),
-    ("relocation-symbol-scope-relr", "runtime.loader", ("elf-scope-alias", "lazy-pie", "lazy-non-pie")),
-    ("runtime-v1-tls-thread", "runtime.private-facades", ("dlopen-pie", "dlopen-non-pie", "pthread-exit", "pthread-signal")),
-    ("constructor-finalization", "runtime.loader", ("constructor-exit",)),
+    ("search-mapping-protection", "runtime.loader", ("cli", "lazy-pie", "lazy-non-pie", "loader-synthetic")),
+    ("relocation-symbol-scope-relr", "runtime.loader", ("elf-scope-alias", "lazy-pie", "lazy-non-pie", "loader-synthetic")),
+    ("runtime-v1-tls-thread", "runtime.private-facades", ("cycle", "dlopen-pie", "dlopen-non-pie", "pthread-exit", "pthread-signal", "loader-synthetic")),
+    ("constructor-finalization", "runtime.loader", ("constructor-exit", "dlopen-pie", "dlopen-non-pie")),
     ("dlfcn-basic", "loader.dlfcn-basic", ("dlopen-pie", "dlopen-non-pie", "lazy-pie", "lazy-non-pie")),
     ("dlfcn-introspection", "loader.dlfcn-introspection", ("dlopen-pie", "dlopen-non-pie")),
-    ("fork-callback-rollback", "runtime.private-facades", ("fork", "signal-handler-fork", "atfork-registry", "cli", "constructor-exit")),
+    ("fork-callback-rollback", "runtime.private-facades", ("fork", "signal-handler-fork", "atfork-registry", "dlopen-pie", "dlopen-non-pie", "lazy-pie", "lazy-non-pie")),
     ("synthetic-loader-catalog", "runtime.loader", ("loader-synthetic",)),
     ("frozen-package-corpus", "runtime.loader", ("package-corpus",)),
 )
@@ -70,6 +71,14 @@ def require(condition: bool, message: str) -> None:
         raise LoaderFamilyError(message)
 
 
+def same_json(left: object, right: object) -> bool:
+    """Compare retained JSON without Python's bool/int or int/float aliases."""
+
+    return json.dumps(left, sort_keys=True, separators=(",", ":"), allow_nan=False) == json.dumps(
+        right, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    )
+
+
 def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -77,6 +86,10 @@ def _pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise LoaderFamilyError(f"JSON object repeats {key!r}")
         result[key] = value
     return result
+
+
+def _invalid_constant(value: str) -> None:
+    raise LoaderFamilyError(f"non-finite JSON constant: {value}")
 
 
 def _digest(path: Path, description: str) -> str:
@@ -122,7 +135,7 @@ def _identity(root: Path, path: Path, description: str) -> dict[str, Any]:
 def _read(root: Path, path: Path, description: str) -> dict[str, Any]:
     path = _physical_under(root, path, description, directory=False)
     try:
-        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_pairs)
+        value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_pairs, parse_constant=_invalid_constant)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise LoaderFamilyError(f"{description} is not valid JSON") from error
     require(isinstance(value, dict), f"{description} must be an object")
@@ -293,7 +306,8 @@ def _qualification_case_identity(root: Path, qualification_record: Mapping[str, 
 
 
 def _inventory(root: Path, qualification_record: Mapping[str, Any], qualification_work: Path,
-               prepared_oracle: Mapping[str, Any], product: str, selection: Mapping[str, Path]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+               prepared_oracle: Mapping[str, Any], product: str,
+               selection: Mapping[str, Path]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     product_root = _physical_under(root, qualification_work / product, f"{product} qualification product", directory=True)
     try:
         record = inventory.validate_receipt(selection["receipt"], product_root, selection["oracle_capture"], selection["readelf_capture"])
@@ -309,28 +323,28 @@ def _inventory(root: Path, qualification_record: Mapping[str, Any], qualificatio
             and record.get("runtime_verified") is False,
             "inventory runtime boundary differs")
     capture = record.get("capture")
-    require(isinstance(capture, dict) and capture.get("before") == capture.get("after"),
+    require(isinstance(capture, dict) and same_json(capture.get("before"), capture.get("after")),
             "inventory capture boundary differs")
     before = capture["before"]
     require(isinstance(before, dict) and set(before) == {"product", "source", "oracle", "readelf"},
             "inventory capture fields differ")
     product_snapshot = before["product"]
     require(isinstance(product_snapshot, dict)
-            and product_snapshot.get("root") == product_root.relative_to(root).as_posix()
-            and product_snapshot.get("manifest_sha256") == qualification_record["products"][product],
+            and same_json(product_snapshot.get("root"), product_root.relative_to(root).as_posix())
+            and same_json(product_snapshot.get("manifest_sha256"), qualification_record["products"][product]),
             "inventory selects another qualification product")
     source = before["source"]
-    require(isinstance(source, dict) and source.get("source_sha256") == qualification_record["source_sha256"],
+    require(isinstance(source, dict) and same_json(source.get("source_sha256"), qualification_record["source_sha256"]),
             "inventory source differs from qualification")
     oracle = oracle_capture["identity"].get("oracle") if isinstance(oracle_capture.get("identity"), dict) else None
-    require(oracle == prepared_oracle and before["oracle"] == oracle_capture,
+    require(same_json(oracle, prepared_oracle) and same_json(before["oracle"], oracle_capture),
             "inventory oracle differs from independently prepared qualification oracle")
     readelf = readelf_capture["identity"].get("readelf") if isinstance(readelf_capture.get("identity"), dict) else None
-    require(before["readelf"] == readelf_capture and isinstance(readelf, dict),
+    require(same_json(before["readelf"], readelf_capture) and isinstance(readelf, dict),
             "inventory readelf capture differs")
     inputs = {field: _identity(root, selection[field], f"{product} inventory {field}")
               for field in ("receipt", "oracle_capture", "readelf_capture")}
-    return inputs, product_snapshot, readelf
+    return record, inputs, product_snapshot, readelf
 
 
 def _input_snapshot(root: Path, qualification_path: Path, selections: Mapping[str, Mapping[str, Path]]) -> dict[str, Any]:
@@ -361,16 +375,16 @@ def collect(root: Path, work: Path) -> dict[str, Any]:
     require(qualification_record["source_sha256"] == source_before, "source changed before loader family collection")
 
     inventories: dict[str, dict[str, Any]] = {}
-    readelf_identity: dict[str, Any] | None = None
+    readelf_before: dict[str, Any] | None = None
     for product in PRODUCTS:
-        inputs, product_snapshot, readelf = _inventory(
+        inventory_record, inputs, product_snapshot, readelf = _inventory(
             root, qualification_record, qualification_work, prepared_oracle, product, selections[product],
         )
-        if readelf_identity is None:
-            readelf_identity = readelf
-        require(readelf == readelf_identity, "inventories use different readelf tools")
-        inventories[product] = {"product": product_snapshot, "inputs": inputs}
-    require(readelf_identity is not None, "loader family has no readelf identity")
+        if readelf_before is None:
+            readelf_before = readelf
+        require(same_json(readelf, readelf_before), "inventories use different readelf tools")
+        inventories[product] = {"record": inventory_record, "product": product_snapshot, "inputs": inputs}
+    require(readelf_before is not None, "loader family has no readelf identity")
 
     coverage: dict[str, Any] = {}
     for row in roster["required"]:
@@ -389,12 +403,36 @@ def collect(root: Path, work: Path) -> dict[str, Any]:
             "synthetic_cases": row["synthetic_cases"], "package_cases": row["package_cases"], "cells": cells,
         }
 
+    # A receipt hash alone cannot seal its reached tree.  Reuse each owner at
+    # the end, so a changed case log, package payload, raw readelf stream or
+    # product file cannot survive merely because its outer JSON was untouched.
+    qualification_after, qualification_work_after, prepared_oracle_after = _qualification(root, qualification_path)
+    require(same_json(qualification_record, qualification_after)
+            and qualification_work == qualification_work_after
+            and same_json(prepared_oracle, prepared_oracle_after),
+            "dynamic qualification changed during loader family collection")
+    readelf_after: dict[str, Any] | None = None
+    for product in PRODUCTS:
+        record_after, inputs_after_inventory, product_after, tool_after = _inventory(
+            root, qualification_after, qualification_work_after, prepared_oracle_after, product, selections[product],
+        )
+        initial = inventories[product]
+        require(same_json(initial["record"], record_after)
+                and same_json(initial["inputs"], inputs_after_inventory)
+                and same_json(initial["product"], product_after),
+                f"{product} inventory changed during loader family collection")
+        if readelf_after is None:
+            readelf_after = tool_after
+        require(same_json(tool_after, readelf_after), "inventories use different readelf tools after collection")
+    require(readelf_after is not None and same_json(readelf_before, readelf_after),
+            "readelf tool changed during loader family collection")
+
     source_after = qualification.source_digest()
     request_after = _identity(root, request_path, "loader family request")
     inputs_after = _input_snapshot(root, qualification_path, selections)
-    require(source_before == source_after, "source changed during loader family collection")
-    require(request_before == request_after, "request changed during loader family collection")
-    require(inputs_before == inputs_after, "input changed during loader family collection")
+    require(same_json(source_before, source_after), "source changed during loader family collection")
+    require(same_json(request_before, request_after), "request changed during loader family collection")
+    require(same_json(inputs_before, inputs_after), "input changed during loader family collection")
     return {
         "schema": SCHEMA,
         "status": "installed-loader-component-verified",
@@ -404,7 +442,7 @@ def collect(root: Path, work: Path) -> dict[str, Any]:
         "source": {"before": source_before, "after": source_after},
         "inputs": {"before": inputs_before, "after": inputs_after},
         "oracle": prepared_oracle,
-        "tools": {"before": readelf_identity, "after": readelf_identity},
+        "tools": {"before": readelf_before, "after": readelf_after},
         "coverage": coverage,
         **NONPROMOTING_FLAGS,
     }
@@ -415,7 +453,7 @@ def _write_new(root: Path, path: Path, value: dict[str, Any]) -> None:
     require(path.name == "receipt.json" and not path.exists() and not path.is_symlink(),
             "loader family receipt must be a fresh receipt.json")
     with path.open("x", encoding="utf-8") as output:
-        json.dump(value, output, indent=2, sort_keys=True)
+        json.dump(value, output, indent=2, sort_keys=True, allow_nan=False)
         output.write("\n")
     path.chmod(0o444)
 
@@ -431,7 +469,7 @@ def validate_receipt(root: Path, path: Path) -> dict[str, Any]:
     path = _physical_under(root, path, "loader family receipt", directory=False)
     require(path.name == "receipt.json", "loader family receipt must be named receipt.json")
     observed = collect(root, path.parent)
-    require(_read(root, path, "loader family receipt") == observed, "loader family receipt changed")
+    require(same_json(_read(root, path, "loader family receipt"), observed), "loader family receipt changed")
     return observed
 
 

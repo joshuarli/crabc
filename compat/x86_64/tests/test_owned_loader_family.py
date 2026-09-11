@@ -38,6 +38,7 @@ class LoaderFamilyContractTests(unittest.TestCase):
         self.qualification_work.mkdir()
         self.manifests = {product: (str(index + 1) * 64) for index, product in enumerate(family.PRODUCTS)}
         self.paths: dict[str, dict[str, Path]] = {}
+        self.inventory_child_hashes: dict[str, str] = {}
         for product in family.PRODUCTS:
             (self.qualification_work / product).mkdir()
             directory = self.qualification_work / "qualification-cases" / product
@@ -50,6 +51,10 @@ class LoaderFamilyContractTests(unittest.TestCase):
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("{}\n", encoding="utf-8")
                 inputs[field] = path
+            raw_child = inputs["receipt"].parent / (inputs["receipt"].name + ".raw/candidate-loader.header.txt")
+            raw_child.parent.mkdir(parents=True)
+            raw_child.write_text(product + " raw readelf stream\n", encoding="utf-8")
+            self.inventory_child_hashes[product] = family._digest(raw_child, "fixture inventory raw stream")
             self.paths[product] = inputs
         preparation = self.qualification_work / "qualification-prepare.json"
         preparation.write_text(json.dumps({
@@ -93,9 +98,12 @@ class LoaderFamilyContractTests(unittest.TestCase):
         self.oracle_override: object | None = None
         self.readelf_override: dict[str, object] | None = None
         self.mutate_input_during_inventory = False
+        self.mutate_inventory_child_after_initial_validation = False
+        self.qualification_validations = 0
+        self.inventory_validations = {product: 0 for product in family.PRODUCTS}
         self.patchers = [
             patch.object(family.qualification, "source_digest", return_value=SOURCE),
-            patch.object(family.qualification, "validate_receipt", side_effect=lambda _: self.qualification),
+            patch.object(family.qualification, "validate_receipt", side_effect=self._validate_qualification),
             patch.object(family.qualification, "validate_oracle", return_value={}),
             patch.object(family.inventory, "validate_receipt", side_effect=self._validate_inventory),
             patch.object(family.inventory, "supplied_oracle_capture", side_effect=self._oracle_capture),
@@ -127,8 +135,21 @@ class LoaderFamilyContractTests(unittest.TestCase):
             readelf = self.readelf_override
         return {**identity, "identity": {"readelf": readelf}}
 
+    def _validate_qualification(self, path: Path) -> dict[str, object]:
+        self.qualification_validations += 1
+        if path != self.qualification_path:
+            raise family.qualification.QualificationError("fixture qualification path differs")
+        for relative, expected in self.qualification["cases"].items():
+            if family._identity(ROOT, ROOT / relative, "fixture qualification case")["sha256"] != expected:
+                raise family.qualification.QualificationError("fixture qualification child differs")
+        return self.qualification
+
     def _validate_inventory(self, receipt: Path, product_root: Path, oracle: Path, readelf: Path) -> dict[str, object]:
         product = product_root.name
+        self.inventory_validations[product] += 1
+        raw_child = receipt.parent / (receipt.name + ".raw/candidate-loader.header.txt")
+        if family._digest(raw_child, "fixture inventory raw stream") != self.inventory_child_hashes[product]:
+            raise family.inventory.InventoryError("fixture inventory raw stream differs")
         selected_product = self.product_override or product
         selected_root = self.qualification_work / selected_product
         oracle_capture = self._oracle_capture(oracle)
@@ -163,6 +184,13 @@ class LoaderFamilyContractTests(unittest.TestCase):
         if self.mutate_input_during_inventory:
             self.mutate_input_during_inventory = False
             receipt.write_text('{"changed-during-collection":true}\n', encoding="utf-8")
+        if (self.mutate_inventory_child_after_initial_validation and product == "extracted"
+                and self.inventory_validations[product] == 1):
+            self.mutate_inventory_child_after_initial_validation = False
+            installed = self.paths["installed"]["receipt"]
+            (installed.parent / (installed.name + ".raw/candidate-loader.header.txt")).write_text(
+                "changed raw readelf stream\n", encoding="utf-8",
+            )
         return result
 
     def test_component_declares_the_four_loader_capabilities(self) -> None:
@@ -222,8 +250,8 @@ class LoaderFamilyContractTests(unittest.TestCase):
         redirected = self.work / "redirected.toml"
         redirected.write_text(
             text.replace(
-                'qualification_cases = ["elf-scope-alias", "lazy-pie", "lazy-non-pie"]',
-                'qualification_cases = ["elf-scope-alias", "lazy-pie"]',
+                'qualification_cases = ["elf-scope-alias", "lazy-pie", "lazy-non-pie", "loader-synthetic"]',
+                'qualification_cases = ["elf-scope-alias", "lazy-pie", "loader-synthetic"]',
                 1,
             ),
             encoding="utf-8",
@@ -236,8 +264,8 @@ class LoaderFamilyContractTests(unittest.TestCase):
         duplicate_mode = self.work / "duplicate-mode.toml"
         duplicate_mode.write_text(
             text.replace(
-                'qualification_cases = ["elf-scope-alias", "lazy-pie", "lazy-non-pie"]',
-                'qualification_cases = ["elf-scope-alias", "lazy-pie", "lazy-pie", "lazy-non-pie"]',
+                'qualification_cases = ["elf-scope-alias", "lazy-pie", "lazy-non-pie", "loader-synthetic"]',
+                'qualification_cases = ["elf-scope-alias", "lazy-pie", "lazy-pie", "lazy-non-pie", "loader-synthetic"]',
                 1,
             ),
             encoding="utf-8",
@@ -254,6 +282,8 @@ class LoaderFamilyContractTests(unittest.TestCase):
 
     def test_collect_binds_all_three_products_and_reconstructs_immutable_receipt(self) -> None:
         report = family.collect(ROOT, self.work)
+        self.assertEqual(self.qualification_validations, 2)
+        self.assertEqual(self.inventory_validations, {product: 2 for product in family.PRODUCTS})
         self.assertEqual(report["tools"]["before"], READELF)
         self.assertEqual(report["oracle"], ORACLE)
         self.assertEqual(set(report["coverage"]), {row[0] for row in family.EXPECTED_ROWS})
@@ -290,8 +320,40 @@ class LoaderFamilyContractTests(unittest.TestCase):
     def test_collect_rejects_changed_sealed_qualification_case_input(self) -> None:
         path = self.qualification_work / "qualification-cases/installed/cycle.json"
         path.write_text('{"changed":true}\n', encoding="utf-8")
-        with self.assertRaisesRegex(family.LoaderFamilyError, "case input differs"):
+        with self.assertRaisesRegex(family.LoaderFamilyError, "dynamic qualification differs"):
             family.collect(ROOT, self.work)
+
+    def test_collect_revalidates_a_transitive_qualification_child_at_the_end(self) -> None:
+        child = self.qualification_work / "qualification-cases/installed/account-files.json"
+        initial_receipt = self.qualification_path.read_bytes()
+        expected_calls = len(family.PRODUCTS) * sum(len(cases) for _, _, cases in family.EXPECTED_ROWS)
+        calls = 0
+        original = family._qualification_case_identity
+
+        def mutate_after_initial_coverage(*args: object) -> dict[str, object]:
+            nonlocal calls
+            result = original(*args)
+            calls += 1
+            if calls == expected_calls:
+                child.write_text('{"changed-after-initial-validation":true}\n', encoding="utf-8")
+            return result
+
+        with patch.object(family, "_qualification_case_identity", side_effect=mutate_after_initial_coverage):
+            with self.assertRaisesRegex(family.LoaderFamilyError, "dynamic qualification differs"):
+                family.collect(ROOT, self.work)
+        self.assertEqual(calls, expected_calls)
+        self.assertEqual(self.qualification_path.read_bytes(), initial_receipt)
+        self.assertGreaterEqual(self.qualification_validations, 2)
+
+    def test_collect_revalidates_a_transitive_inventory_child_at_the_end(self) -> None:
+        initial_receipt = self.paths["installed"]["receipt"].read_bytes()
+        self.mutate_inventory_child_after_initial_validation = True
+        with self.assertRaisesRegex(family.LoaderFamilyError, "installed inventory differs"):
+            family.collect(ROOT, self.work)
+        self.assertEqual(self.paths["installed"]["receipt"].read_bytes(), initial_receipt)
+        self.assertEqual(self.inventory_validations["installed"], 2)
+        self.assertEqual(self.inventory_validations["second"], 1)
+        self.assertEqual(self.inventory_validations["extracted"], 1)
 
     def test_collect_rejects_an_inventory_input_changed_after_its_preimage(self) -> None:
         self.mutate_input_during_inventory = True
@@ -310,6 +372,34 @@ class LoaderFamilyContractTests(unittest.TestCase):
         path.write_text(json.dumps(report), encoding="utf-8")
         with self.assertRaisesRegex(family.LoaderFamilyError, "receipt changed"):
             family.validate_receipt(ROOT, path)
+
+    def test_validate_receipt_rejects_json_scalar_aliases(self) -> None:
+        path = family.execute(ROOT, self.work)
+        path.chmod(0o644)
+        original = json.loads(path.read_text(encoding="utf-8"))
+        for name, replacement in {
+            "component_complete": 1,
+            "family_completion": 0,
+            "promotion_ready": 0,
+            "public_support": 0,
+        }.items():
+            forged = copy.deepcopy(original)
+            forged[name] = replacement
+            path.write_text(json.dumps(forged, allow_nan=False), encoding="utf-8")
+            with self.assertRaisesRegex(family.LoaderFamilyError, "receipt changed"):
+                family.validate_receipt(ROOT, path)
+        forged = copy.deepcopy(original)
+        forged["request"]["before"]["size"] = float(forged["request"]["before"]["size"])
+        path.write_text(json.dumps(forged, allow_nan=False), encoding="utf-8")
+        with self.assertRaisesRegex(family.LoaderFamilyError, "receipt changed"):
+            family.validate_receipt(ROOT, path)
+
+    def test_read_rejects_nonfinite_json_constants(self) -> None:
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            path = self.work / (constant.replace("-", "negative-") + ".json")
+            path.write_text('{"number":' + constant + '}', encoding="utf-8")
+            with self.assertRaisesRegex(family.LoaderFamilyError, "non-finite JSON constant"):
+                family._read(ROOT, path, "nonfinite fixture")
 
 
 if __name__ == "__main__":

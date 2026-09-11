@@ -22,34 +22,34 @@ behavior = "Interpreter process entry, main discovery, arbitrary initial DT_NEED
 [[required]]
 id = "search-mapping-protection"
 capability = "runtime.loader"
-qualification_cases = ["cli"]
+qualification_cases = ["cli", "lazy-pie", "lazy-non-pie", "loader-synthetic"]
 synthetic_cases = []
 package_cases = []
-behavior = "Selected search and RUNPATH/RPATH policy, file admission, load bias, mapped-segment protections, RELRO, and fail-closed command-path rejection."
+behavior = "Selected search and RUNPATH/RPATH policy, file admission, load bias, mapped-segment protections, explicit lazy GOT/RELRO restoration, and fail-closed command-path rejection. The current synthetic catalog also retains its selected mapping/protection cases."
 
 [[required]]
 id = "relocation-symbol-scope-relr"
 capability = "runtime.loader"
-qualification_cases = ["elf-scope-alias", "lazy-pie", "lazy-non-pie"]
+qualification_cases = ["elf-scope-alias", "lazy-pie", "lazy-non-pie", "loader-synthetic"]
 synthetic_cases = []
 package_cases = []
-behavior = "Selected RELA and RELR relocation processing, weak/global/protected scope, interpreter aliases, and declared lazy versus NOW binding across both installed executable modes."
+behavior = "Selected RELA and RELR relocation processing, weak/global/protected scope, interpreter aliases, and declared lazy versus NOW binding across both installed executable modes; the synthetic catalog retains the remaining selected relocation encodings."
 
 [[required]]
 id = "runtime-v1-tls-thread"
 capability = "runtime.private-facades"
-qualification_cases = ["dlopen-pie", "dlopen-non-pie", "pthread-exit", "pthread-signal"]
+qualification_cases = ["cycle", "dlopen-pie", "dlopen-non-pie", "pthread-exit", "pthread-signal", "loader-synthetic"]
 synthetic_cases = []
 package_cases = []
-behavior = "Loader-owned graph state and RuntimeV1 publication; initial and runtime TLS, DTV growth, worker integration, errno, and DSO-boundary pthread/signal interaction."
+behavior = "Loader-owned graph state and RuntimeV1 publication; initial and initial-exec TLS for admitted initial modules, runtime general-dynamic TLS/DTV growth, worker integration, errno, and DSO-boundary pthread/signal interaction. The runtime-load runner retains the selected new initial-exec rejection differential; it does not claim runtime initial-exec admission."
 
 [[required]]
 id = "constructor-finalization"
 capability = "runtime.loader"
-qualification_cases = ["constructor-exit"]
+qualification_cases = ["constructor-exit", "dlopen-pie", "dlopen-non-pie"]
 synthetic_cases = []
 package_cases = []
-behavior = "Main, dependency, and runtime-loaded constructor/destructor order, process finalization, retained dlclose mappings, reopen state, and exit-only DSO finalization."
+behavior = "Main, dependency, and runtime-loaded constructor/destructor order, incomplete-constructor exit, retained dlclose mappings, reopen/NOLOAD/NODELETE state, and process-exit DSO finalization."
 
 [[required]]
 id = "dlfcn-basic"
@@ -70,10 +70,10 @@ behavior = "Selected dladdr, dlinfo, and dl_iterate_phdr observations over the r
 [[required]]
 id = "fork-callback-rollback"
 capability = "runtime.private-facades"
-qualification_cases = ["fork", "signal-handler-fork", "atfork-registry", "cli", "constructor-exit"]
+qualification_cases = ["fork", "signal-handler-fork", "atfork-registry", "dlopen-pie", "dlopen-non-pie", "lazy-pie", "lazy-non-pie"]
 synthetic_cases = []
 package_cases = []
-behavior = "Locking and callback boundaries, admitted reentrancy, selected fork repair, malformed/missing/stale/cyclic input rejection, and cleanup of failed load transactions."
+behavior = "Locking and callback boundaries, admitted reentrancy, selected fork repair, concurrent once-only runtime construction, five pre-callback runtime-load rollback cases, and lazy relocation abandonment without retained scope, TLS, or GOT mutation."
 
 [[required]]
 id = "synthetic-loader-catalog"

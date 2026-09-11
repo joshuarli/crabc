@@ -19,8 +19,17 @@ The synthetic catalog row is the current full 21-case roster from
 `compat/ldso/run_x86.py`; the package row is the current full 34-case roster
 from `compat/corpus/manifest.toml`. The roster parser compares both ordered
 lists to their current owners. The qualification reader still validates its
-complete current 69-case matrix for every product, so a catalog change cannot
+complete current case matrix for every product, so a catalog change cannot
 become an unobserved partial selection.
+
+Each `qualification_cases` list is an exact case-ID link through
+`owned_dynamic_qualification.CASES`, rather than a claim inferred from a row
+name. In particular, the `dlopen-*` cases own runtime general-dynamic TLS,
+NOLOAD/NODELETE close/reopen, concurrent construction, and the five
+pre-callback rollback observations; `lazy-*` owns deferred GOT/RELRO and lazy
+rollback; and `loader-synthetic` owns the remaining frozen selected loader
+encodings. New runtime initial-exec TLS remains a recorded rejection
+differential, not an unclaimed successful mode.
 
 Prepare a physical fresh directory below this checkout's `.work` with an
 immutable request file:
@@ -68,8 +77,12 @@ Collection creates only `.work/.../receipt.json` and fails if that name already
 exists. The receipt seals request and input identities before and after replay,
 the current source digest before and after, the complete prepared oracle, the
 common readelf identity, the roster identity, every selected qualification case
-receipt, and every inventory input. Validation reconstructs that value and
-requires exact JSON equality.
+receipt, and every inventory input. It invokes the qualification and all three
+inventory validators again at the end before writing: a changed reached case
+artifact, product payload, package tree, or raw readelf stream therefore fails
+even if the enclosing JSON receipt bytes did not change. Validation
+reconstructs that value and requires exact JSON equality including scalar
+types; non-finite JSON constants are rejected on read.
 
 A successful receipt sets `component_complete=true`, because every required
 artifact was replayed. It always retains `family_completion=false`,
