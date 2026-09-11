@@ -62,7 +62,55 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 / "x86_64/m2-vm-primitives/m2-vm-primitives-oracle"
             ),
         ]
+        profile_c_commands = []
+        for profile_id, flags, _ in producer.ALIGNED_HINT_PROFILE_C_CONFIGS:
+            profile_c_commands.append(
+                {
+                    "id": profile_id,
+                    "command": [
+                        "musl-gcc",
+                        "-std=c11",
+                        "-fPIC",
+                        "-ftls-model=initial-exec",
+                        "-DMI_SHARED_LIB",
+                        "-DMI_SHARED_LIB_EXPORT",
+                        "-DMI_LIBC_MUSL=1",
+                        "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+                        "-I",
+                        "/pinned/include",
+                        "-I",
+                        "/pinned/src",
+                        *flags,
+                        str(RUNNER.ALLOCATOR_ROOT / "m2_vm_x86_64.c"),
+                        *(f"/pinned/{path}" for path in RUNNER.M2_X86_64_VM_C_ORACLE_SOURCES),
+                        "-Wl,--wrap=munmap",
+                        "-Wl,--wrap=mmap",
+                        "-Wl,--wrap=madvise",
+                        "-Wl,--wrap=mprotect",
+                        "-pthread",
+                        "-o",
+                        str(
+                            RUNNER.ARTIFACT_ROOT
+                            / f"x86_64/m2-vm-primitives/m2-vm-primitives-{profile_id}-oracle"
+                        ),
+                    ],
+                }
+            )
         return {
+            "aligned_hint_profile_c_commands": profile_c_commands,
+            "aligned_hint_profile_comparison": {
+                "compared_value_count": len(producer.ALIGNED_HINT_PROFILE_TRACE_KEYS),
+                "status": "matched",
+            },
+            "aligned_hint_profile_rust_command": [
+                str(rust_binary),
+                "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace",
+                "--exact",
+                "--test-threads=1",
+                "--nocapture",
+            ],
+            "aligned_hint_profile_rust_passed_test_count": 1,
+            "aligned_hint_profile_trace_sha256": "e" * 64,
             "architecture": "x86_64",
             "c_command": c_command,
             "c_source_files": [
@@ -202,6 +250,54 @@ class NativeVmAssemblyTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(key, producer.TRACE_KEYS)
 
+        direct = next(
+            definition
+            for definition in fragment["component"]["bounded_source_definitions"]
+            if definition["id"] == "unix-aligned-hint-direct-caller"
+        )
+        self.assertEqual(
+            direct["source_anchor"],
+            {
+                "member": "src/prim/unix/prim.c",
+                "start_line": 342,
+                "end_line": 358,
+                "sha256": "bf1982a2c4259cfcf911ccd53d8adb7754155b71147a86f2c51628372d3b32ca",
+            },
+        )
+        self.assertEqual(
+            producer.ALIGNED_HINT_PROFILE_TRACE_KEYS,
+            (
+                "m2.vm.aligned_hint.profile.debug_without_default_random",
+                "m2.vm.aligned_hint.profile.secure_requires_default_random",
+                "m2.vm.aligned_hint.profile.secure_oversized_skips_cursor_and_random",
+                "m2.vm.aligned_hint.profile.secure_exact_boundary_randomizes",
+                "m2.vm.aligned_hint.profile.wrapped_direct_caller_hint_then_null_without_owner",
+            ),
+        )
+        profile_trace = "\n".join(
+            [
+                producer.ALIGNED_HINT_PROFILE_TRACE_BEGIN,
+                *(f"{key}=1" for key in producer.ALIGNED_HINT_PROFILE_TRACE_KEYS),
+                producer.ALIGNED_HINT_PROFILE_TRACE_END,
+            ]
+        )
+        self.assertEqual(
+            producer.parse_aligned_hint_profile_trace(
+                profile_trace,
+                source="test",
+                expected_keys=producer.ALIGNED_HINT_PROFILE_TRACE_KEYS,
+            ),
+            {key: 1 for key in producer.ALIGNED_HINT_PROFILE_TRACE_KEYS},
+        )
+        with self.assertRaises(ValueError):
+            producer.parse_aligned_hint_profile_trace(
+                profile_trace.replace(
+                    "m2.vm.aligned_hint.profile.secure_exact_boundary_randomizes=1\n", "", 1
+                ),
+                source="test",
+                expected_keys=producer.ALIGNED_HINT_PROFILE_TRACE_KEYS,
+            )
+
     def test_transition_fault_trace_schema_requires_source_result_and_retry_relations(self):
         """The normal receiver cannot reduce C primitive failures to success counters."""
 
@@ -234,8 +330,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm = summary["components"][0]
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
-        self.assertEqual(len(vm["checks"]), 25)
-        self.assertEqual(len(vm["bounded_source_definitions"]), 15)
+        self.assertEqual(len(vm["checks"]), 26)
+        self.assertEqual(len(vm["bounded_source_definitions"]), 16)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
             for definition in vm["bounded_source_definitions"]
@@ -299,8 +395,9 @@ class NativeVmAssemblyTests(unittest.TestCase):
         records = RUNNER._m2_x86_64_vm_check_records(
             self.summary(), self.vm_evidence(self.summary())
         )
-        self.assertEqual(len(records), 1)
+        self.assertEqual(len(records), 2)
         self.assertEqual(records[0]["id"], "native-vm-fixed-lifecycle-differential")
+        self.assertEqual(records[1]["id"], "aligned-hint-source-profile-and-direct-caller-matrix")
 
     def test_vm_producer_receipt_requires_the_exact_c_and_rust_producers(self):
         summary = self.summary()
@@ -314,6 +411,13 @@ class NativeVmAssemblyTests(unittest.TestCase):
         wrong_source["c_command"].append("/pinned/src/os.c")
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, wrong_source)
+
+        wrong_profile = self.vm_evidence(summary)
+        wrong_profile["aligned_hint_profile_c_commands"][1]["command"].remove(
+            "-DMI_SECURE=1"
+        )
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, wrong_profile)
 
         for case, extra_arguments in {
             "extra-debug-macro": ["-DMI_DEBUG=1"],

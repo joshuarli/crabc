@@ -95,7 +95,26 @@
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
-          "normal-release-aligned-hint-cursor-random-and-cas-matrix"
+          "normal-release-aligned-hint-cursor-random-and-cas-matrix",
+          "aligned-hint-source-profile-and-direct-caller-matrix"
+        ]
+      },
+      {
+        "id": "unix-aligned-hint-direct-caller",
+        "source_anchor": {
+          "member": "src/prim/unix/prim.c",
+          "start_line": 342,
+          "end_line": 358,
+          "sha256": "bf1982a2c4259cfcf911ccd53d8adb7754155b71147a86f2c51628372d3b32ca"
+        },
+        "required_definitions": [
+          "static void* unix_mmap_prim_aligned",
+          "_mi_os_get_aligned_hint",
+          "unix_mmap_prim(hint, size, protect_flags, flags, fd)",
+          "unix_mmap_prim(addr, size, protect_flags, flags, fd)"
+        ],
+        "evidence_check_ids": [
+          "aligned-hint-source-profile-and-direct-caller-matrix"
         ]
       },
       {
@@ -520,22 +539,29 @@
       {
         "id": "aligned-hint-random-state",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:110-158 atomic aligned-hint range, virtual-address eligibility, normal-release default-Theap random state, strict wrap threshold, and ignored strong-CAS result. The bounded direct-C/Rust matrix proves a constructor-suppressed cold child advances cursor zero then refuses its uninitialized default Theap; an explicitly initialized parent has first fetch zero and randomized 2--6-TiB start; Rust obtains that image from an isolated real MainStaticTheapAttachment while its startup-only borrow remains valid; eligible/ineligible alignment and VA geometry; exact MI_HINT_MAX no-wrap then greater-than wrap with one staged public random draw; and a controlled real AcqRel competing fetch between source fetch and source CAS, followed by the source second fetch without retry.",
+        "source_scope": "src/os.c:110-158 atomic aligned-hint range, virtual-address eligibility, fixed normal-release default-Theap random state, debug-only fixed-base selection, secure request bound/default-Theap random state, strict wrap threshold, unsigned request arithmetic, and ignored strong-CAS result; plus src/prim/unix/prim.c:342-358 direct source hinted-mmap diagnostic/fallback ordering. The bounded direct-C/Rust matrix proves a constructor-suppressed normal-release cold child advances cursor zero then refuses its uninitialized default Theap; an explicitly initialized parent has first fetch zero and randomized 2--6-TiB start; Rust obtains that image from an isolated real MainStaticTheapAttachment while its startup-only borrow remains valid; eligible/ineligible alignment and VA geometry; exact MI_HINT_MAX no-wrap then greater-than wrap with one staged public random draw; and a controlled real AcqRel competing fetch between source fetch and source CAS, followed by the source second fetch without retry. Separate pinned-C source-profile binaries compile the debug-only fixed-base and secure branches; the secure record proves missing default random after the first cursor fetch, pre-atomic >32-GiB rejection, and exact 32-GiB initialized randomization. The release direct-caller record passes the largest page-multiple through `_mi_prim_alloc`, observes the wrapped source request and real pinned hinted-then-null mmap order, and proves failure leaves no address owner.",
         "source_anchors": [
           {
             "member": "src/os.c",
             "start_line": 110,
             "end_line": 158,
             "sha256": "d5855c977e616eca2f5ed2689d566cafedfe3e2743b5b02665db39c9be2043b5"
+          },
+          {
+            "member": "src/prim/unix/prim.c",
+            "start_line": 342,
+            "end_line": 358,
+            "sha256": "bf1982a2c4259cfcf911ccd53d8adb7754155b71147a86f2c51628372d3b32ca"
           }
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
           "normal-release-aligned-hint-cursor-random-and-cas-matrix",
-          "process-policy-ticket-zero-live-random"
+          "process-policy-ticket-zero-live-random",
+          "aligned-hint-source-profile-and-direct-caller-matrix"
         ],
         "missing_conditions": [
-          "The selected normal-release direct receiver does not qualify MI_SECURE or MI_DEBUG profiles, arithmetic-overflow/error diagnostics, ambient process attachment/options, every hint caller, or contention beyond the one controlled cursor/CAS schedule."
+          "The selected debug/secure compilations are source-profile evidence only and do not qualify secure/debug runtime configuration, ambient process attachment/options, every hint caller, source warning/error reporting, or contention beyond the one controlled cursor/CAS schedule. The remaining arena and page callers require their real default-Theap/attachment owners; no random image is fabricated for them."
         ]
       },
       {
@@ -551,10 +577,11 @@
           }
         ],
         "evidence_check_ids": [
-          "native-vm-fixed-lifecycle-differential"
+          "native-vm-fixed-lifecycle-differential",
+          "aligned-hint-source-profile-and-direct-caller-matrix"
         ],
         "missing_conditions": [
-          "The bounded first-arena record compares one source high-hint MAP_HUGETLB failure, null-hint retry, regular hinted fallback, and ignored MADV_HUGEPAGE error. Large-page success, retry-suppression lifetime, MAP_HUGE_1GB modes, option/error diagnostics, and every caller remain unqualified."
+          "The bounded first-arena record compares one source high-hint MAP_HUGETLB failure, null-hint retry, regular hinted fallback, and ignored MADV_HUGEPAGE error. The separate release direct-caller record forces its hinted raw map to fail before the unchanged source null retry for an admitted wrapped request and proves no mapping owner is returned. Large-page success, retry-suppression lifetime, MAP_HUGE_1GB modes, option/error diagnostics, and every other caller remain unqualified."
         ]
       },
       {
@@ -715,6 +742,12 @@
         "expected_passed_test_count": 1
       },
       {
+        "id": "aligned-hint-source-profile-and-direct-caller-matrix",
+        "kind": "c-rust-vm-primitives-source-profile-matrix",
+        "target": "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace",
+        "expected_passed_test_count": 1
+      },
+      {
         "id": "process-policy-first-arena-clean-primary-fallback",
         "kind": "rust-unit",
         "target": "process_arena::tests::process_default_os_arena_retries_the_source_smaller_policy_arena_after_clean_primary_failure",
@@ -850,7 +883,7 @@
     "remaining_conditions": [
       "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, and one child-isolated 128-MiB first-arena large-page fallback, including pinned-C failure ownership and retry evidence for every source branch.",
       "Complete the aligned-overmap substrate beyond the selected direct/prefix/suffix retained-map owners and one first-arena high-hint fallback: every receiving allocator caller, callback/counter/error path, and native cleanup failure/retry differential remains required.",
-      "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, and one controlled CAS schedule: secure/debug default-Theap random state, arithmetic-overflow and diagnostic paths, ambient source options, every caller, and broader contention; also Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success and retry-state behavior, and their native differential evidence.",
+      "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success and retry-state behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
       "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers."
     ]

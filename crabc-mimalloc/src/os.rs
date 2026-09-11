@@ -94,6 +94,58 @@ const HUGE_HINT_BASE: usize = 32 << 40;
 const HUGE_PAGE_SIZE: usize = GIB;
 const LARGE_PAGE_FAILED_RETRY_COUNT: usize = 8;
 
+/// The two compile-time predicates selected by
+/// `src/os.c:_mi_os_get_aligned_hint`.
+///
+/// The port has one fixed normal-release production profile. This private
+/// value keeps that selection adjacent to the translated function while
+/// letting source-profile tests name the two unselected C preprocessor
+/// branches without turning them into allocator options or a runtime
+/// configuration surface.
+#[derive(Clone, Copy)]
+struct AlignedHintSourceProfile {
+    secure: bool,
+    debug: bool,
+}
+
+impl AlignedHintSourceProfile {
+    const FIXED_NORMAL_RELEASE: Self = Self {
+        secure: crate::config::SECURE_LEVEL >= 1,
+        debug: crate::config::DEBUG_LEVEL != 0,
+    };
+
+    #[inline]
+    const fn requires_default_random(self) -> bool { self.secure || !self.debug }
+
+    #[inline]
+    const fn rejects_request_size(self, request_size: usize) -> bool {
+        self.secure && request_size > 32 * GIB
+    }
+
+    #[cfg(test)]
+    const fn source_test(secure: bool, debug: bool) -> Self { Self { secure, debug } }
+}
+
+/// Mirrors `include/mimalloc/internal.h:_mi_align_up`'s unsigned arithmetic.
+///
+/// The aligned-hint source computes this request before a raw mmap rejects an
+/// oversized client length. Keep it distinct from the checked alignment
+/// helpers used by Rust-owned ranges: this function produces only an opaque
+/// mmap hint and cannot establish an owned address range.
+#[inline]
+fn source_align_up_wrapping(value: usize, alignment: usize) -> Option<usize> {
+    if alignment == 0 {
+        return None;
+    }
+    let mask = alignment - 1;
+    let sum = value.wrapping_add(mask);
+    if alignment & mask == 0 {
+        Some(sum & !mask)
+    } else {
+        Some((sum / alignment).wrapping_mul(alignment))
+    }
+}
+
 // `src/prim/unix/prim.c:_mi_prim_numa_node_count` probes node entries one at
 // a time instead of allocating or parsing a topology file. It starts after
 // the implicit node zero, scans the source's half-open 1..256 range, and
@@ -897,24 +949,58 @@ impl VmPolicy {
         size: usize,
         default_random: Option<&mut TheapRandomImage>,
     ) -> Option<usize> {
+        self.aligned_hint_for_source_profile(
+            config,
+            try_alignment,
+            size,
+            default_random,
+            AlignedHintSourceProfile::FIXED_NORMAL_RELEASE,
+        )
+    }
+
+    /// Translates the selected source body after its compile-time predicates
+    /// have been fixed. The sole production caller supplies
+    /// [`AlignedHintSourceProfile::FIXED_NORMAL_RELEASE`]; test-only source
+    /// profile records use the same body to compare the debug and secure C
+    /// preprocessor branches without creating a mutable runtime setting.
+    fn aligned_hint_for_source_profile(
+        &self,
+        config: MemoryConfig,
+        try_alignment: usize,
+        size: usize,
+        mut default_random: Option<&mut TheapRandomImage>,
+        source_profile: AlignedHintSourceProfile,
+    ) -> Option<usize> {
         if try_alignment <= config.alloc_granularity()
             || try_alignment > 16 * GIB
             || config.virtual_address_bits() < 46
         {
             return None;
         }
-        let request_size = size
-            .checked_add(config.page_size().bytes())?
-            .checked_add(try_alignment.checked_sub(1)?)?;
-        let request_size = invariants::align_up(request_size, config.large_page_size())?;
+        // `src/os.c:134-136` uses unsigned `size_t` addition and
+        // `_mi_align_up`, both of which wrap. This helper runs before the raw
+        // mmap attempt, so preserving that cursor/random side effect matters
+        // even when Linux later rejects the supplied mapping length.
+        let request_size = source_align_up_wrapping(
+            size.wrapping_add(config.page_size().bytes())
+                .wrapping_add(try_alignment.wrapping_sub(1)),
+            config.large_page_size(),
+        )?;
+        if source_profile.rejects_request_size(request_size) {
+            return None;
+        }
         let mut hint = self.aligned_hint_base.fetch_add(request_size, Ordering::AcqRel);
         if hint == 0 || hint > HINT_MAX {
-            let random = default_random?;
-            if !random.is_initialized() {
-                return None;
-            }
-            let random_bits = (random.next() >> 17) & 0x3f_ffff;
-            let initial = HINT_BASE.checked_add(MIB.checked_mul(random_bits as usize)? % HINT_AREA)?;
+            let initial = if source_profile.requires_default_random() {
+                let random = default_random.as_deref_mut()?;
+                if !random.is_initialized() {
+                    return None;
+                }
+                let random_bits = (random.next() >> 17) & 0x3f_ffff;
+                HINT_BASE.wrapping_add(MIB.wrapping_mul(random_bits as usize) % HINT_AREA)
+            } else {
+                HINT_BASE
+            };
             let expected = hint.wrapping_add(request_size);
             #[cfg(test)]
             if self.aligned_hint_test_phase.load(Ordering::Acquire) == 1 {
@@ -937,12 +1023,11 @@ impl VmPolicy {
                 return None;
             }
         }
-        let aligned = invariants::align_up(hint, try_alignment)?;
-        let request_end = hint.checked_add(request_size)?;
-        if aligned.checked_add(size)? >= request_end {
-            return None;
-        }
-        Some(aligned)
+        // The source's final relation is `mi_assert_internal` only. In the
+        // fixed release profile it returns the wrapped aligned pointer, whose
+        // null representation remains the caller's no-hint result.
+        let aligned = source_align_up_wrapping(hint, try_alignment)?;
+        (aligned != 0).then_some(aligned)
     }
 
     /// Claims the source high-address range used for one-or-more 1-GiB huge
@@ -5501,6 +5586,262 @@ mod tests {
     #[test]
     fn normal_release_aligned_hint_matrix_preserves_source_cursor_random_and_cas_rules() {
         assert_eq!(normal_release_aligned_hint_matrix(), [true; 5]);
+    }
+
+    /// Covers the two compile-time source selections that the fixed release
+    /// build does not execute. They remain private source-profile evidence:
+    /// this crate neither exposes nor claims a secure/debug runtime mode.
+    #[cfg(not(miri))]
+    fn aligned_hint_source_profile_matrix() -> [bool; 4] {
+        std::thread::spawn(|| {
+            let config = MemoryConfig::from_observations(
+                PageSize::new(4 * 1024).expect("four KiB is the selected Linux page size"),
+                0,
+                true,
+                false,
+            );
+            let page = config.page_size().bytes();
+            let alignment = 2 * MIB;
+            let request = VmPolicy::test_aligned_hint_request_size(config, alignment, page)
+                .expect("the selected profile request fits");
+
+            // `MI_SECURE=0, MI_DEBUG=1` compiles out the source's default
+            // Theap/random block. It still makes the first atomic initialize
+            // at HINT_BASE, so supplying no image is an observable contract.
+            let debug = VmPolicy::defaults_for_test();
+            let debug_hint = debug.aligned_hint_for_source_profile(
+                config,
+                alignment,
+                page,
+                None,
+                AlignedHintSourceProfile::source_test(false, true),
+            );
+            let fixed_debug_without_random = debug_hint == Some(HINT_BASE)
+                && debug.test_aligned_hint_cursor() == HINT_BASE + request;
+
+            // Security overrides debug: an uninitialized/missing default
+            // image consumes the first cursor increment then returns no hint,
+            // just like the normal release random branch.
+            let secure_cold = VmPolicy::defaults_for_test();
+            let secure_cold_hint = secure_cold.aligned_hint_for_source_profile(
+                config,
+                alignment,
+                page,
+                None,
+                AlignedHintSourceProfile::source_test(true, true),
+            );
+            let secure_debug_requires_random = secure_cold_hint.is_none()
+                && secure_cold.test_aligned_hint_cursor() == request;
+
+            // The secure bound is before the atomic/random branch. Choose
+            // exact inputs for which source wrapping/alignment produces the
+            // 32-GiB boundary and then exceeds it by one base page.
+            let secure_boundary_size = 32 * GIB - alignment - page;
+            let secure_boundary_request = VmPolicy::test_aligned_hint_request_size(
+                config,
+                alignment,
+                secure_boundary_size,
+            );
+            let secure_oversized = VmPolicy::defaults_for_test();
+            let secure_oversized_hint = secure_oversized.aligned_hint_for_source_profile(
+                config,
+                alignment,
+                secure_boundary_size + page,
+                None,
+                AlignedHintSourceProfile::source_test(true, false),
+            );
+            let secure_oversized_skips_cursor_and_random = secure_boundary_request == Some(32 * GIB)
+                && secure_oversized_hint.is_none()
+                && secure_oversized.test_aligned_hint_cursor() == 0;
+
+            let storage = crate::main_theap::MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+            let mut attachment = unsafe {
+                crate::main_theap::MainStaticTheapAttachment::begin_with_test_storage(
+                    storage, subprocess,
+                )
+            }
+            .expect("the isolated main attachment initializes its source random image");
+            // SAFETY: the dedicated thread owns this just-created attachment,
+            // has not published READY/page state, retains no random alias,
+            // and tears the attachment down immediately after this operation.
+            let secure_boundary_randomizes = unsafe {
+                attachment.with_startup_vm_random(|random| {
+                    let random = random.expect("the source attachment owns initialized random state");
+                    random.test_stage_buffered_nexts(1, 2);
+                    let secure = VmPolicy::defaults_for_test();
+                    let hint = secure.aligned_hint_for_source_profile(
+                        config,
+                        alignment,
+                        secure_boundary_size,
+                        Some(random),
+                        AlignedHintSourceProfile::source_test(true, true),
+                    );
+                    hint == Some(HINT_BASE)
+                        && secure.test_aligned_hint_cursor() == HINT_BASE + 32 * GIB
+                        && random.test_output_available() == 14
+                })
+            };
+            attachment
+                .teardown()
+                .expect("the source-profile attachment tears down on its dedicated thread");
+
+            [
+                fixed_debug_without_random,
+                secure_debug_requires_random,
+                secure_oversized_skips_cursor_and_random,
+                secure_boundary_randomizes,
+            ]
+        })
+        .join()
+        .expect("the isolated source-profile matrix thread completes")
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn aligned_hint_source_profiles_preserve_debug_and_secure_compile_predicates() {
+        assert_eq!(aligned_hint_source_profile_matrix(), [true; 4]);
+        assert!(AlignedHintSourceProfile::FIXED_NORMAL_RELEASE.requires_default_random());
+        assert!(!AlignedHintSourceProfile::FIXED_NORMAL_RELEASE.rejects_request_size(usize::MAX));
+    }
+
+    /// A normal typed map admits a page-multiple length whose source hint
+    /// request wraps. The source still advances/randomizes and hands its
+    /// opaque hint to Unix mmap before Linux rejects that impossible map.
+    /// Keep that pre-mmap cursor behavior instead of treating checked Rust
+    /// arithmetic as proof that the direct source caller rejected the input.
+    #[cfg(not(miri))]
+    fn aligned_hint_wrapped_direct_caller_matrix() -> bool {
+        std::thread::spawn(|| {
+            let fault = fault::install(fault::Plan::disabled());
+            let config = MemoryConfig::from_observations(
+                PageSize::new(4 * 1024).expect("four KiB is the selected Linux page size"),
+                0,
+                true,
+                false,
+            );
+            let page = config.page_size().bytes();
+            let alignment = 2 * MIB;
+            let length = usize::MAX & !(page - 1);
+            assert_eq!(length.wrapping_add(page), 0, "the direct caller receives a page-multiple wrap witness");
+            assert_eq!(
+                source_align_up_wrapping(
+                    length.wrapping_add(page).wrapping_add(alignment - 1),
+                    config.large_page_size(),
+                ),
+                Some(alignment),
+                "the source request wraps to one large-page cursor increment"
+            );
+
+            let policy = VmPolicy::defaults_for_test();
+            let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+            let process = VmProcess::new(&policy, subprocess);
+            let storage = crate::main_theap::MainStaticAttachmentStorage::test_static_owner();
+            let mut attachment = unsafe {
+                crate::main_theap::MainStaticTheapAttachment::begin_with_test_storage(
+                    storage, subprocess,
+                )
+            }
+            .expect("the isolated attachment owns the direct caller random image");
+            // SAFETY: this direct source attachment is current on the test
+            // thread and has not reached READY/page publication. The closure
+            // retains no random alias; the map has no owner on its expected
+            // raw mmap failure and teardown follows immediately.
+            let (mapping_failed, cursor, output_available, attempts) = unsafe {
+                attachment.with_startup_vm_random(|random| {
+                    let random = random.expect("the attached default Theap is initialized");
+                    random.test_stage_buffered_nexts(1, 2);
+                    let capture = fault.capture_policy_mmaps();
+                    let result = Mapping::map_for_process(
+                        process,
+                        config,
+                        length,
+                        alignment,
+                        MapAccess::Reserved,
+                        false,
+                        Some(random),
+                    );
+                    let attempts = capture.attempts();
+                    (
+                        result.is_err(),
+                        policy.test_aligned_hint_cursor(),
+                        random.test_output_available(),
+                        attempts,
+                    )
+                })
+            };
+            attachment
+                .teardown()
+                .expect("the direct caller attachment tears down after raw mmap failure");
+
+            let (attempts, count) = attempts.expect("the bounded Unix mmap capture stays complete");
+            assert!(mapping_failed, "Linux rejects the impossible mapping after the source hint side effect");
+            assert_eq!(cursor, HINT_BASE + alignment);
+            assert_eq!(output_available, 14, "one source public random draw feeds the wrapped initial cursor");
+            assert_eq!(count, 2, "a failed source-hinted mmap retries the pinned null-address mmap");
+            assert_eq!(attempts[0].hint, Some(HINT_BASE));
+            assert_eq!(attempts[1].hint, None);
+        })
+        .join()
+        .expect("the wrapped direct-caller fixture remains current-thread local");
+        true
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn aligned_hint_wrapping_request_reaches_the_typed_unix_caller_before_map_failure() {
+        assert!(aligned_hint_wrapped_direct_caller_matrix());
+    }
+
+    /// Emits the finite preprocessor-selected aligned-hint source profile
+    /// records. The private profile predicate above is only a translation
+    /// seam: this test does not enable a debug or secure runtime mode.
+    #[cfg(not(miri))]
+    #[test]
+    fn emit_m2_aligned_hint_source_profile_c_rust_trace() {
+        let [
+            debug_without_default_random,
+            secure_requires_default_random,
+            secure_oversized_skips_cursor_and_random,
+            secure_exact_boundary_randomizes,
+        ] = aligned_hint_source_profile_matrix();
+        let wrapped_direct_caller_hint_then_null_without_owner =
+            aligned_hint_wrapped_direct_caller_matrix();
+        assert!(
+            debug_without_default_random
+                && secure_requires_default_random
+                && secure_oversized_skips_cursor_and_random
+                && secure_exact_boundary_randomizes
+                && wrapped_direct_caller_hint_then_null_without_owner,
+            "the C/Rust source-profile matrix requires every selected source relation"
+        );
+        macro_rules! emit {
+            ($key:literal, $value:expr) => {
+                std::println!("{}={}", $key, u8::from($value));
+            };
+        }
+        std::println!("CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_BEGIN");
+        emit!(
+            "m2.vm.aligned_hint.profile.debug_without_default_random",
+            debug_without_default_random
+        );
+        emit!(
+            "m2.vm.aligned_hint.profile.secure_requires_default_random",
+            secure_requires_default_random
+        );
+        emit!(
+            "m2.vm.aligned_hint.profile.secure_oversized_skips_cursor_and_random",
+            secure_oversized_skips_cursor_and_random
+        );
+        emit!(
+            "m2.vm.aligned_hint.profile.secure_exact_boundary_randomizes",
+            secure_exact_boundary_randomizes
+        );
+        emit!(
+            "m2.vm.aligned_hint.profile.wrapped_direct_caller_hint_then_null_without_owner",
+            wrapped_direct_caller_hint_then_null_without_owner
+        );
+        std::println!("CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_END");
     }
 
     #[cfg(not(miri))]

@@ -30,8 +30,10 @@ FIXTURE = Path(__file__).with_suffix(".c")
 SCHEMA = "crabc-mimalloc-x86_64-m2-component-evidence"
 TRACE_BEGIN = "CRABC_MI_M2_VM_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_M2_VM_TRACE_END"
+ALIGNED_HINT_PROFILE_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_BEGIN"
+ALIGNED_HINT_PROFILE_TRACE_END = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_END"
 EXPECTED_RUST_TEST_COUNT = 1
-EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-external-page-extension-child-policy-and-aligned-hint-cursor-cas-fault"
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-external-page-extension-child-policy-and-aligned-hint-source-profile-cursor-cas-fault"
 
 CHECKS = (
     (
@@ -48,6 +50,11 @@ CHECKS = (
         "normal-release-aligned-hint-cursor-random-and-cas-matrix",
         "rust-unit",
         "os::tests::normal_release_aligned_hint_matrix_preserves_source_cursor_random_and_cas_rules",
+    ),
+    (
+        "aligned-hint-source-profile-and-direct-caller-matrix",
+        "c-rust-vm-primitives-source-profile-matrix",
+        "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace",
     ),
     (
         "process-policy-first-arena-clean-primary-fallback",
@@ -275,6 +282,46 @@ TRACE_FALSE_KEYS = frozenset(
         "m2.vm.config.has_transparent_huge_pages",
         "m2.vm.reserved.initially_committed",
     }
+)
+
+# These fixed compiler selections compile the pinned `src/os.c` body under
+# its own MI_DEBUG/MI_SECURE preprocessor branches. They are source-profile
+# oracles only: the crate remains the single normal-release production build.
+ALIGNED_HINT_PROFILE_C_CONFIGS = (
+    (
+        "debug",
+        (
+            "-O3", "-DNDEBUG", "-DMI_BUILD_RELEASE=1", "-DMI_DEBUG=1",
+            "-DMI_STAT=0", "-DMI_SECURE=0", "-DMI_GUARDED=0",
+            "-DCRABC_M2_ALIGNED_HINT_SOURCE_PROFILE=1",
+        ),
+        ("m2.vm.aligned_hint.profile.debug_without_default_random",),
+    ),
+    (
+        "secure-debug",
+        (
+            "-O3", "-DNDEBUG", "-DMI_BUILD_RELEASE=1", "-DMI_DEBUG=1",
+            "-DMI_STAT=0", "-DMI_SECURE=1", "-DMI_GUARDED=0",
+            "-DCRABC_M2_ALIGNED_HINT_SOURCE_PROFILE=2",
+        ),
+        (
+            "m2.vm.aligned_hint.profile.secure_requires_default_random",
+            "m2.vm.aligned_hint.profile.secure_oversized_skips_cursor_and_random",
+            "m2.vm.aligned_hint.profile.secure_exact_boundary_randomizes",
+        ),
+    ),
+    (
+        "release-direct-caller",
+        (
+            "-O3", "-DNDEBUG", "-DMI_BUILD_RELEASE=1", "-DMI_DEBUG=0",
+            "-DMI_STAT=0", "-DMI_SECURE=0", "-DMI_GUARDED=0",
+            "-DCRABC_M2_ALIGNED_HINT_SOURCE_PROFILE=3",
+        ),
+        ("m2.vm.aligned_hint.profile.wrapped_direct_caller_hint_then_null_without_owner",),
+    ),
+)
+ALIGNED_HINT_PROFILE_TRACE_KEYS = tuple(
+    key for _, _, keys in ALIGNED_HINT_PROFILE_C_CONFIGS for key in keys
 )
 
 BRANCH_IDS = (
@@ -581,6 +628,49 @@ def parse_trace(output: str, *, source: str) -> dict[str, int]:
     return values
 
 
+def parse_aligned_hint_profile_trace(
+    output: str, *, source: str, expected_keys: Sequence[str],
+) -> dict[str, int]:
+    """Parse one finite selected-source-profile record.
+
+    Each pinned-C binary is compiled under exactly one source preprocessor
+    selection, so its record intentionally contains only that selection's
+    keys. The Rust witness executes all three private translation selections
+    and therefore supplies their complete union.
+    """
+
+    if (
+        output.count(ALIGNED_HINT_PROFILE_TRACE_BEGIN) != 1
+        or output.count(ALIGNED_HINT_PROFILE_TRACE_END) != 1
+    ):
+        raise ValueError(f"{source} aligned-hint profile trace did not emit exactly one marker pair")
+    start = output.index(ALIGNED_HINT_PROFILE_TRACE_BEGIN) + len(ALIGNED_HINT_PROFILE_TRACE_BEGIN)
+    end = output.index(ALIGNED_HINT_PROFILE_TRACE_END)
+    if end <= start:
+        raise ValueError(f"{source} aligned-hint profile trace markers are reversed")
+    expected = set(expected_keys)
+    values: dict[str, int] = {}
+    for line in output[start:end].strip().splitlines():
+        if line.count("=") != 1:
+            raise ValueError(f"{source} aligned-hint profile trace has a malformed observation")
+        key, raw_value = line.split("=", 1)
+        if (
+            key in values
+            or key not in expected
+            or not raw_value.isascii()
+            or not raw_value.isdecimal()
+        ):
+            raise ValueError(f"{source} aligned-hint profile trace has an invalid observation: {line}")
+        values[key] = int(raw_value)
+    missing = sorted(expected.difference(values))
+    unexpected = sorted(set(values).difference(expected))
+    if missing or unexpected or any(value != 1 for value in values.values()):
+        raise ValueError(
+            f"{source} aligned-hint profile trace changed: missing {missing}; unexpected {unexpected}"
+        )
+    return values
+
+
 def _validate_trace_values(trace: Mapping[str, int], *, source: str) -> None:
     page = trace["m2.vm.config.page_size"]
     large = trace["m2.vm.config.large_page_size"]
@@ -639,6 +729,40 @@ def _trace_check(fragment: Mapping[str, Any], test_program: Mapping[str, Any]) -
     return check
 
 
+def _aligned_hint_profile_check(
+    fragment: Mapping[str, Any], test_program: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    if not isinstance(test_program, Mapping) or not isinstance(test_program.get("path"), Path):
+        raise _error("aggregate did not supply its prepared native Rust test program")
+    check = next(
+        check
+        for check in fragment["component"]["checks"]
+        if check["id"] == "aligned-hint-source-profile-and-direct-caller-matrix"
+    )
+    if (
+        check["target"] != "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace"
+        or check["expected_passed_test_count"] != EXPECTED_RUST_TEST_COUNT
+    ):
+        raise _error("aligned-hint source-profile trace check changed")
+    return check
+
+
+def _compare_aligned_hint_profile_trace(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int], harness: Any
+) -> dict[str, Any]:
+    mismatches = [
+        f"{key} (C={c_trace[key]}, Rust={rust_trace[key]})"
+        for key in ALIGNED_HINT_PROFILE_TRACE_KEYS
+        if c_trace[key] != rust_trace[key]
+    ]
+    if mismatches:
+        raise harness.HarnessError(
+            "native x86 M2 aligned-hint source-profile matrix differs from pinned C: "
+            + "; ".join(mismatches)
+        )
+    return {"compared_value_count": len(ALIGNED_HINT_PROFILE_TRACE_KEYS), "status": "matched"}
+
+
 def run_evidence(
     harness: Any,
     *,
@@ -658,6 +782,7 @@ def run_evidence(
         raise harness.HarnessError("native x86 M2 VM Rust test-program provenance changed")
     fragment = load_fragment(contract_fragment)
     check = _trace_check(fragment, test_program)
+    profile_check = _aligned_hint_profile_check(fragment, test_program)
     pin = harness.load_pin()
     upstream = fragment["upstream"]
     if upstream["revision"] != pin["revision"] or upstream["archive_sha256"] != pin["sha256"]:
@@ -699,6 +824,51 @@ def run_evidence(
         c_run = harness.command_record([str(binary)], cwd=source, timeout_seconds=180)
         harness.require_success(c_run, "pinned C native x86 M2 VM oracle")
         c_trace = parse_trace(str(c_run["stdout"]), source="pinned C")
+        profile_commands: list[dict[str, Any]] = []
+        c_profile_trace: dict[str, int] = {}
+        for profile_id, flags, profile_keys in ALIGNED_HINT_PROFILE_C_CONFIGS:
+            profile_binary = artifacts / f"m2-vm-primitives-{profile_id}-oracle"
+            profile_command = [
+                compiler,
+                "-std=c11",
+                "-fPIC",
+                "-ftls-model=initial-exec",
+                "-DMI_SHARED_LIB",
+                "-DMI_SHARED_LIB_EXPORT",
+                "-DMI_LIBC_MUSL=1",
+                "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+                "-I",
+                str(source / "include"),
+                "-I",
+                str(source / "src"),
+                *flags,
+                str(FIXTURE),
+                *(str(source / item) for item in harness.M2_X86_64_VM_C_ORACLE_SOURCES),
+                "-Wl,--wrap=munmap",
+                "-Wl,--wrap=mmap",
+                "-Wl,--wrap=madvise",
+                "-Wl,--wrap=mprotect",
+                "-pthread",
+                "-o",
+                str(profile_binary),
+            ]
+            profile_build = harness.command_record(profile_command, cwd=source, timeout_seconds=300)
+            harness.require_success(
+                profile_build, f"pinned C native x86 M2 aligned-hint {profile_id} profile build"
+            )
+            profile_run = harness.command_record([str(profile_binary)], cwd=source, timeout_seconds=180)
+            harness.require_success(
+                profile_run, f"pinned C native x86 M2 aligned-hint {profile_id} profile"
+            )
+            profile_values = parse_aligned_hint_profile_trace(
+                str(profile_run["stdout"]), source=f"pinned C {profile_id}", expected_keys=profile_keys
+            )
+            if set(c_profile_trace).intersection(profile_values):
+                raise harness.HarnessError("pinned C aligned-hint source profile keys overlap")
+            c_profile_trace.update(profile_values)
+            profile_commands.append({"id": profile_id, "command": profile_command})
+        if set(c_profile_trace) != set(ALIGNED_HINT_PROFILE_TRACE_KEYS):
+            raise harness.HarnessError("pinned C aligned-hint source profile record is incomplete")
         source_files = harness.source_file_records(source, SOURCE_UNITS)
 
     rust, rust_output = harness._x86_64_run_exact_program_check(
@@ -714,8 +884,32 @@ def run_evidence(
         raise harness.HarnessError("native x86 M2 VM Rust witness binary changed during execution")
     rust_trace = parse_trace(rust_output, source="Rust")
     comparison = _compare(c_trace, rust_trace, harness)
+    profile_rust, profile_rust_output = harness._x86_64_run_exact_program_check(
+        test_program,
+        profile_check,
+        nocapture=True,
+        gate_name="native x86 M2 aligned-hint source-profile",
+    )
+    profile_rust_command = profile_rust["command"]
+    profile_rust_count = profile_rust["passed_test_count"]
+    if profile_rust_command[0] != str(rust_binary):
+        raise harness.HarnessError("native x86 M2 aligned-hint Rust witness binary changed during execution")
+    rust_profile_trace = parse_aligned_hint_profile_trace(
+        profile_rust_output, source="Rust", expected_keys=ALIGNED_HINT_PROFILE_TRACE_KEYS
+    )
+    profile_comparison = _compare_aligned_hint_profile_trace(
+        c_profile_trace, rust_profile_trace, harness
+    )
     trace_payload = json.dumps(c_trace, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    profile_trace_payload = json.dumps(
+        c_profile_trace, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
     report = {
+        "aligned_hint_profile_c_commands": profile_commands,
+        "aligned_hint_profile_comparison": profile_comparison,
+        "aligned_hint_profile_rust_command": profile_rust_command,
+        "aligned_hint_profile_rust_passed_test_count": profile_rust_count,
+        "aligned_hint_profile_trace_sha256": hashlib.sha256(profile_trace_payload).hexdigest(),
         "architecture": "x86_64",
         "c_command": command,
         "c_source_files": source_files,

@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "77f46a3ca27d0ba224b59425da81b37575886774f8fff39e3daeeed18dff0535"
+M2_X86_64_VM_FRAGMENT_DIGEST = "1605a0bf0cc4d3253cf2ecb17c8cbe22938afe042dad71ee90a362eb5da893d4"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -12043,6 +12043,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-page-map-cold-init-differential",
                     "c-rust-native-bitmaps",
                     "c-rust-vm-primitives-fixed-lifecycle",
+                    "c-rust-vm-primitives-source-profile-matrix",
                 }
                 or not isinstance(raw_check.get("target"), str)
                 or type(raw_check.get("expected_passed_test_count")) is not int
@@ -12383,8 +12384,10 @@ def _m2_x86_64_vm_test_program_is_bound(test_program: object) -> bool:
     )
 
 
-def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
-    """Require the direct-source C oracle's one complete positional command.
+def _m2_x86_64_vm_c_command_is_bound(
+    command: object, producer: Any, *, aligned_hint_profile: str | None = None,
+) -> bool:
+    """Require one direct-source VM C oracle's complete positional command.
 
     The M2 fixture directly includes pinned `src/os.c`, `src/arena.c`,
     `src/init.c`, and `src/page.c`, so its ordinary source input list must
@@ -12415,9 +12418,22 @@ def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
         # the explicit source startup sequence in main.
         "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
     )
+    if aligned_hint_profile is None:
+        configuration = CONFIGURATION_PROFILES["release"]
+        output_name = "m2-vm-primitives-oracle"
+    else:
+        profiles = {
+            profile_id: tuple(flags)
+            for profile_id, flags, _ in producer.ALIGNED_HINT_PROFILE_C_CONFIGS
+        }
+        configuration = profiles.get(aligned_hint_profile)
+        if configuration is None:
+            return False
+        output_name = f"m2-vm-primitives-{aligned_hint_profile}-oracle"
+
     fixture = relative(producer.FIXTURE)
     expected_sources = tuple(M2_X86_64_VM_C_ORACLE_SOURCES)
-    fixture_position = 1 + len(fixed_prefix) + 4 + len(CONFIGURATION_PROFILES["release"])
+    fixture_position = 1 + len(fixed_prefix) + 4 + len(configuration)
     first_source_position = fixture_position + 1
     if len(command) <= first_source_position:
         return False
@@ -12433,7 +12449,7 @@ def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
         return False
     output = command[-1]
     expected_output = relative(
-        ARTIFACT_ROOT / "x86_64/m2-vm-primitives/m2-vm-primitives-oracle"
+        ARTIFACT_ROOT / "x86_64/m2-vm-primitives" / output_name
     )
     if not _m2_x86_64_vm_command_path_matches(output, expected_output):
         return False
@@ -12445,7 +12461,7 @@ def _m2_x86_64_vm_c_command_is_bound(command: object, producer: Any) -> bool:
         f"{source_root}/include",
         "-I",
         f"{source_root}/src",
-        *CONFIGURATION_PROFILES["release"],
+        *configuration,
         fixture_argument,
         *(f"{source_root}/{source}" for source in expected_sources),
         "-Wl,--wrap=munmap",
@@ -12491,6 +12507,27 @@ def _m2_x86_64_vm_rust_receipt_is_bound(
     return True
 
 
+def _m2_x86_64_vm_aligned_hint_profile_c_commands_are_bound(
+    commands: object, producer: Any
+) -> bool:
+    """Bind every selected C preprocessor profile to its one direct oracle."""
+
+    expected_profiles = [profile_id for profile_id, _, _ in producer.ALIGNED_HINT_PROFILE_C_CONFIGS]
+    if not isinstance(commands, list) or len(commands) != len(expected_profiles):
+        return False
+    for record, profile_id in zip(commands, expected_profiles):
+        if (
+            not isinstance(record, Mapping)
+            or set(record) != {"command", "id"}
+            or record.get("id") != profile_id
+            or not _m2_x86_64_vm_c_command_is_bound(
+                record.get("command"), producer, aligned_hint_profile=profile_id
+            )
+        ):
+            return False
+    return True
+
+
 def _m2_x86_64_vm_check_records(
     summary: Mapping[str, Any], evidence: object
 ) -> list[dict[str, Any]]:
@@ -12504,7 +12541,14 @@ def _m2_x86_64_vm_check_records(
 
     component = next(item for item in summary["components"] if item["id"] == "vm-primitives")
     producer = _m2_x86_64_vm_producer()
-    trace_check = component["checks"][0]
+    trace_check = next(
+        check for check in component["checks"]
+        if check["id"] == "native-vm-fixed-lifecycle-differential"
+    )
+    profile_check = next(
+        check for check in component["checks"]
+        if check["id"] == "aligned-hint-source-profile-and-direct-caller-matrix"
+    )
     expected_anchor_rows: list[Mapping[str, Any]] = []
     seen_anchors: set[tuple[object, object, object]] = set()
     for definition in component["bounded_source_definitions"]:
@@ -12535,14 +12579,23 @@ def _m2_x86_64_vm_check_records(
         != {"compared_value_count": len(producer.TRACE_KEYS), "status": "matched"}
         or type(evidence.get("compared_value_count")) is not int
         or evidence.get("compared_value_count") != len(producer.TRACE_KEYS)
+        or evidence.get("aligned_hint_profile_comparison")
+        != {"compared_value_count": len(producer.ALIGNED_HINT_PROFILE_TRACE_KEYS), "status": "matched"}
         or evidence.get("rust_passed_test_count") != trace_check["expected_passed_test_count"]
+        or evidence.get("aligned_hint_profile_rust_passed_test_count")
+        != profile_check["expected_passed_test_count"]
         or evidence.get("nonclaims") != component["remaining_conditions"]
         or not isinstance(evidence.get("trace_sha256"), str)
         or re.fullmatch(r"[0-9a-f]{64}", str(evidence.get("trace_sha256"))) is None
+        or not isinstance(evidence.get("aligned_hint_profile_trace_sha256"), str)
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(evidence.get("aligned_hint_profile_trace_sha256"))
+        ) is None
     ):
         raise HarnessError("native x86 M2 VM producer result is missing or invalid")
     command = evidence.get("rust_command")
     c_command = evidence.get("c_command")
+    profile_command = evidence.get("aligned_hint_profile_rust_command")
     if (
         not _m2_x86_64_vm_rust_receipt_is_bound(
             evidence.get("rust_build_command"),
@@ -12552,6 +12605,16 @@ def _m2_x86_64_vm_check_records(
             target=trace_check["target"],
         )
         or not _m2_x86_64_vm_c_command_is_bound(c_command, producer)
+        or not _m2_x86_64_vm_rust_receipt_is_bound(
+            evidence.get("rust_build_command"),
+            evidence.get("rust_execution"),
+            profile_command,
+            evidence.get("rust_test_binary"),
+            target=profile_check["target"],
+        )
+        or not _m2_x86_64_vm_aligned_hint_profile_c_commands_are_bound(
+            evidence.get("aligned_hint_profile_c_commands"), producer
+        )
     ):
         raise HarnessError("native x86 M2 VM producer command provenance is invalid")
     fixture = evidence.get("fixture")
@@ -12600,7 +12663,16 @@ def _m2_x86_64_vm_check_records(
             "id": trace_check["id"],
             "passed_test_count": trace_check["expected_passed_test_count"],
             "target": trace_check["target"],
-        }
+        },
+        {
+            "comparison_status": "matched",
+            "component": "vm-primitives",
+            "command": list(profile_command),
+            "evidence_scope": "bounded-selected-source-profile-c-rust-aligned-hint-differential",
+            "id": profile_check["id"],
+            "passed_test_count": profile_check["expected_passed_test_count"],
+            "target": profile_check["target"],
+        },
     ]
 
 

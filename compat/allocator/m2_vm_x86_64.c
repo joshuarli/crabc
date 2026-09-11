@@ -191,6 +191,18 @@ static size_t captured_policy_regular_calls = 0;
 static void* captured_policy_regular_hint = NULL;
 static size_t captured_policy_thp_calls = 0;
 
+/* This is deliberately separate from the first-arena policy record above.
+ * It calls the pinned `_mi_prim_alloc` receiver with the largest page-multiple
+ * length, after `_mi_os_get_aligned_hint`'s unsigned request arithmetic wraps.
+ * The wrapper retains the two raw Unix attempts: the source-derived hint must
+ * fail before the source's null-address fallback. There is no successful map
+ * to release on this diagnostic path, so `addr == NULL` is the ownership
+ * result rather than an unowned failed pointer. */
+static bool capture_aligned_hint_direct_caller = false;
+static size_t captured_aligned_hint_direct_calls = 0;
+static void* captured_aligned_hint_direct_addresses[2];
+static size_t captured_aligned_hint_direct_lengths[2];
+
 typedef struct policy_child_record_s {
   bool source_options_applied;
   size_t first_arena_size;
@@ -226,6 +238,20 @@ int __wrap_munmap(void* address, size_t length) {
 
 void* __wrap_mmap(void* address, size_t length, int protection, int flags,
                   int descriptor, off_t offset) {
+  if (capture_aligned_hint_direct_caller) {
+    if (captured_aligned_hint_direct_calls < 2) {
+      const size_t index = captured_aligned_hint_direct_calls;
+      captured_aligned_hint_direct_addresses[index] = address;
+      captured_aligned_hint_direct_lengths[index] = length;
+    }
+    captured_aligned_hint_direct_calls++;
+    /* Force the source hinted branch to reach its literal null retry. The
+     * second raw map remains a real Linux rejection of the impossible length. */
+    if (captured_aligned_hint_direct_calls == 1 && address != NULL) {
+      errno = ENOMEM;
+      return MAP_FAILED;
+    }
+  }
   if (capture_policy_mapping) {
     if ((flags & MAP_HUGETLB) != 0) {
       if (captured_policy_large_calls < 2) {
@@ -812,6 +838,16 @@ static bool reap_exact_child(const char* label, pid_t child) {
   return complete;
 }
 
+static bool capture_aligned_hint_child(const char* label, int (*child_body)(void)) {
+  const pid_t child = fork();
+  if (child < 0) {
+    fprintf(stderr, "%s fork failed: errno=%d\n", label, errno);
+    return false;
+  }
+  if (child == 0) _exit(child_body());
+  return reap_exact_child(label, child);
+}
+
 static int run_aligned_hint_cold_child(void) {
   const size_t page = _mi_os_page_size();
   const size_t alignment = 2 * MI_MiB;
@@ -1102,6 +1138,176 @@ static bool capture_policy_child(policy_child_record_t* record) {
   return captured;
 }
 
+#if defined(CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE)
+
+#define ALIGNED_HINT_SOURCE_PROFILE_BEGIN \
+  "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_BEGIN"
+#define ALIGNED_HINT_SOURCE_PROFILE_END \
+  "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_END"
+
+/* These are separate profile binaries rather than a fixture-owned option
+ * setting. The source preprocessor has already selected MI_DEBUG/MI_SECURE
+ * before this file enters `_mi_os_get_aligned_hint`; the fixture only observes
+ * that exact selected body. `MI_PRIM_HAS_PROCESS_ATTACH=1` leaves startup
+ * explicit, so profile children start from the same zero static cursor and
+ * default-Theap preimage as the normal-release cold receiver. */
+static void aligned_hint_profile_trace_begin(void) {
+  puts(ALIGNED_HINT_SOURCE_PROFILE_BEGIN);
+}
+
+static void aligned_hint_profile_trace_end(void) {
+  puts(ALIGNED_HINT_SOURCE_PROFILE_END);
+}
+
+static int run_aligned_hint_debug_profile(void) {
+  _mi_os_init();
+  const size_t page = _mi_os_page_size();
+  const size_t alignment = 2 * MI_MiB;
+  mi_theap_t* const theap = _mi_theap_default();
+  if (_mi_process_is_initialized || mi_theap_is_initialized(theap)) return 1;
+
+  const size_t request = aligned_hint_request_size(alignment, page);
+  void* const hint = aligned_hint_capture_call(alignment, page);
+  const bool no_default_random = hint == (void*)MI_HINT_BASE
+      && !mi_theap_is_initialized(theap)
+      && aligned_hint_atomic_record.cursor_consistent
+      && aligned_hint_atomic_record.fetch_count == 2
+      && aligned_hint_atomic_record.fetch_old[0] == 0
+      && aligned_hint_atomic_record.fetch_add[0] == request
+      && aligned_hint_atomic_record.cas_count == 1
+      && aligned_hint_atomic_record.cas_succeeded
+      && aligned_hint_atomic_record.fetch_old[1] == MI_HINT_BASE;
+  if (!no_default_random) return 2;
+
+  aligned_hint_profile_trace_begin();
+  U("m2.vm.aligned_hint.profile.debug_without_default_random", no_default_random);
+  aligned_hint_profile_trace_end();
+  return 0;
+}
+
+static int run_aligned_hint_secure_cold_child(void) {
+  const size_t page = _mi_os_page_size();
+  const size_t alignment = 2 * MI_MiB;
+  mi_theap_t* const theap = _mi_theap_default();
+  if (_mi_process_is_initialized || mi_theap_is_initialized(theap)) return 1;
+  void* const hint = aligned_hint_capture_call(alignment, page);
+  return hint == NULL && !mi_theap_is_initialized(theap)
+      && aligned_hint_atomic_record.cursor_consistent
+      && aligned_hint_atomic_record.fetch_count == 1
+      && aligned_hint_atomic_record.fetch_old[0] == 0
+      && aligned_hint_atomic_record.cas_count == 0 ? 0 : 2;
+}
+
+static int run_aligned_hint_secure_oversized_child(void) {
+  const size_t page = _mi_os_page_size();
+  const size_t alignment = 2 * MI_MiB;
+  const size_t exact_boundary = 32 * MI_GiB - alignment - page;
+  mi_theap_t* const theap = _mi_theap_default();
+  if (_mi_process_is_initialized || mi_theap_is_initialized(theap)
+      || aligned_hint_request_size(alignment, exact_boundary) != 32 * MI_GiB) return 1;
+  void* const hint = aligned_hint_capture_call(alignment, exact_boundary + page);
+  return hint == NULL && !mi_theap_is_initialized(theap)
+      && aligned_hint_atomic_record.fetch_count == 0
+      && aligned_hint_atomic_record.cas_count == 0
+      && aligned_hint_atomic_record.cursor == NULL ? 0 : 2;
+}
+
+static int run_aligned_hint_secure_boundary_child(void) {
+  const size_t page = _mi_os_page_size();
+  const size_t alignment = 2 * MI_MiB;
+  const size_t exact_boundary = 32 * MI_GiB - alignment - page;
+  mi_process_init();
+  mi_theap_t* const theap = _mi_theap_default();
+  if (!stage_initialized_aligned_hint_random(theap, 1, 2)) return 1;
+  const size_t request = aligned_hint_request_size(alignment, exact_boundary);
+  void* const hint = aligned_hint_capture_call(alignment, exact_boundary);
+  return request == 32 * MI_GiB
+      && aligned_hint_record_is_one_initial_randomized_start(hint, request, true)
+      && theap->random.output_available == 14 ? 0 : 2;
+}
+
+static int run_aligned_hint_secure_profile(void) {
+  _mi_os_init();
+  const bool cold_requires_random = capture_aligned_hint_child(
+      "secure aligned-hint cold default", run_aligned_hint_secure_cold_child);
+  const bool oversized_skips_cursor_and_random = capture_aligned_hint_child(
+      "secure aligned-hint oversized request", run_aligned_hint_secure_oversized_child);
+  const bool exact_boundary_randomizes = capture_aligned_hint_child(
+      "secure aligned-hint exact boundary", run_aligned_hint_secure_boundary_child);
+  if (!cold_requires_random || !oversized_skips_cursor_and_random || !exact_boundary_randomizes) {
+    return 1;
+  }
+
+  aligned_hint_profile_trace_begin();
+  U("m2.vm.aligned_hint.profile.secure_requires_default_random", cold_requires_random);
+  U("m2.vm.aligned_hint.profile.secure_oversized_skips_cursor_and_random",
+      oversized_skips_cursor_and_random);
+  U("m2.vm.aligned_hint.profile.secure_exact_boundary_randomizes",
+      exact_boundary_randomizes);
+  aligned_hint_profile_trace_end();
+  return 0;
+}
+
+static int run_aligned_hint_wrapped_direct_caller_child(void) {
+  _mi_os_init();
+  mi_process_init();
+  const size_t page = _mi_os_page_size();
+  const size_t alignment = 2 * MI_MiB;
+  const size_t length = SIZE_MAX & ~(page - 1);
+  mi_theap_t* const theap = _mi_theap_default();
+  if (!stage_initialized_aligned_hint_random(theap, 1, 2)
+      || length + page != 0
+      || aligned_hint_request_size(alignment, length) != alignment) return 1;
+
+  captured_aligned_hint_direct_calls = 0;
+  captured_aligned_hint_direct_addresses[0] = NULL;
+  captured_aligned_hint_direct_addresses[1] = NULL;
+  captured_aligned_hint_direct_lengths[0] = 0;
+  captured_aligned_hint_direct_lengths[1] = 0;
+  bool is_large = true;
+  bool is_zero = false;
+  void* result = (void*)1;
+  aligned_hint_capture_begin();
+  capture_aligned_hint_direct_caller = true;
+  const int error = _mi_prim_alloc(NULL, length, alignment, false, false,
+                                   &is_large, &is_zero, &result);
+  capture_aligned_hint_direct_caller = false;
+  aligned_hint_atomic_record.active = false;
+  const bool failed_without_owner = error != 0 && result == NULL && !is_large && is_zero;
+  const bool hint_then_null = captured_aligned_hint_direct_calls == 2
+      && captured_aligned_hint_direct_addresses[0] == (void*)MI_HINT_BASE
+      && captured_aligned_hint_direct_addresses[1] == NULL
+      && captured_aligned_hint_direct_lengths[0] == length
+      && captured_aligned_hint_direct_lengths[1] == length;
+  const bool source_cursor = aligned_hint_record_is_one_initial_randomized_start(
+      (void*)MI_HINT_BASE, alignment, true) && theap->random.output_available == 14;
+  return failed_without_owner && hint_then_null && source_cursor ? 0 : 2;
+}
+
+static int run_aligned_hint_wrapped_direct_caller_profile(void) {
+  const bool hinted_then_null_without_owner = capture_aligned_hint_child(
+      "wrapped aligned-hint direct caller", run_aligned_hint_wrapped_direct_caller_child);
+  if (!hinted_then_null_without_owner) return 1;
+  aligned_hint_profile_trace_begin();
+  U("m2.vm.aligned_hint.profile.wrapped_direct_caller_hint_then_null_without_owner",
+      hinted_then_null_without_owner);
+  aligned_hint_profile_trace_end();
+  return 0;
+}
+
+int main(void) {
+#if CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE == 1
+  return run_aligned_hint_debug_profile();
+#elif CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE == 2
+  return run_aligned_hint_secure_profile();
+#elif CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE == 3
+  return run_aligned_hint_wrapped_direct_caller_profile();
+#else
+#error "CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE must select debug, secure, or release direct caller"
+#endif
+}
+
+#else
 int main(void) {
   /* This fork is the literal constructor-suppressed source preimage. The
    * child proves `_mi_os_get_aligned_hint` advances its zero static cursor
@@ -1589,3 +1795,4 @@ int main(void) {
   puts("CRABC_MI_M2_VM_TRACE_END");
   return 0;
 }
+#endif  /* CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE */
