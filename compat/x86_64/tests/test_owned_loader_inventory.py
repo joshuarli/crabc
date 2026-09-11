@@ -55,11 +55,17 @@ class OwnedLoaderInventoryTests(unittest.TestCase):
             "  print('  Number of program headers:         2')\n"
             "  print('  Number of section headers:         4')\n"
             "elif argument == '-lW':\n"
+            "  print('Elf file type is DYN (Shared object file)')\n"
+            "  print('Entry point 0x1000')\n"
+            "  print('There are 2 program headers, starting at offset 64')\n"
             "  print('Program Headers:')\n"
             "  print('  Type           Offset             VirtAddr           PhysAddr           FileSiz            MemSiz              Flg       Align')\n"
             "  print('  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000 0x0000000000000200 0x0000000000000200 R E 0x1000')\n"
+            "  print('  GNU_PROPERTY   0x0000000000000200 0x0000000000000200 0x0000000000000200 0x0000000000000020 0x0000000000000020 R 0x8')\n"
             "  print(' Section to Segment mapping:')\n"
             "elif argument == '-dW':\n"
+            "  print('Dynamic section at offset 0x200 contains 1 entry:')\n"
+            "  print('  Tag        Type                         Name/Value')\n"
             "  print(' 0x0000000000000005 (STRTAB)             0x200')\n"
             "elif argument == '-rW':\n"
             "  print('There are no relocations in this file.')\n"
@@ -195,6 +201,76 @@ class OwnedLoaderInventoryTests(unittest.TestCase):
                     self.collect("bad-" + mode + ".json")
         self.assertFalse(self.receipt_path("bad-empty.json").exists())
         self.assertFalse(self.receipt_path("bad-wrong-architecture.json").exists())
+
+    @staticmethod
+    def program_header_stream(types: list[str]) -> str:
+        rows = [
+            "  " + kind + "  0x000000 0x0000000000000000 0x0000000000000000 "
+            "0x000020 0x000020 R 0x8"
+            for kind in types
+        ]
+        return "\n".join([
+            "Elf file type is DYN (Shared object file)",
+            "Entry point 0x1000",
+            f"There are {len(types)} program headers, starting at offset 64",
+            "",
+            "Program Headers:",
+            "  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align",
+            *rows,
+            "",
+            " Section to Segment mapping:",
+        ]) + "\n"
+
+    def test_program_header_parser_retains_actual_gnu_property_and_closes_counts(self) -> None:
+        actual_musl_types = [
+            "LOAD", "LOAD", "LOAD", "LOAD", "DYNAMIC", "NOTE", "NOTE", "GNU_PROPERTY",
+            "GNU_EH_FRAME", "GNU_STACK", "GNU_RELRO",
+        ]
+        parsed = inventory.parse_program_headers(self.program_header_stream(actual_musl_types))
+        self.assertEqual(parsed["declared_entries"], 11)
+        self.assertEqual(parsed["observed_entries"], 11)
+        self.assertEqual(parsed["entries"][7]["type"], "GNU_PROPERTY")
+        self.assertEqual(
+            inventory.parse_program_headers(self.program_header_stream(["LOOS+0x1234"]))["entries"][0]["type"],
+            "LOOS+0x1234",
+        )
+        with self.assertRaisesRegex(inventory.InventoryError, "truncated"):
+            inventory.parse_program_headers(self.program_header_stream(actual_musl_types[:-1]).replace(
+                "There are 10 program headers", "There are 11 program headers"
+            ))
+        with self.assertRaisesRegex(inventory.InventoryError, "malformed"):
+            inventory.parse_program_headers(self.program_header_stream(["LOAD"]).replace(
+                "  LOAD  0x000000", "  LOAD  not-an-offset"
+            ))
+
+    def test_shape_rejects_program_header_count_mismatch_and_dynamic_truncation(self) -> None:
+        streams = {
+            "header": "\n".join([
+                "  Class: ELF64", "  Data: 2's complement, little endian", "  Version: 1 (current)",
+                "  OS/ABI: UNIX - System V", "  Type: DYN", "  Machine: Advanced Micro Devices X86-64",
+                "  Entry point address: 0x1000", "  Start of program headers: 64", "  Size of program headers: 56",
+                "  Number of program headers: 10", "  Number of section headers: 4",
+            ]),
+            "program_headers": self.program_header_stream(["LOAD"]),
+            "dynamic": "\n".join([
+                "Dynamic section at offset 0x200 contains 1 entry:", "  Tag        Type                         Name/Value",
+                " 0x0000000000000005 (STRTAB)             0x200",
+            ]),
+            "relocations": "There are no relocations in this file.\n",
+            "dynamic_symbols": "\n".join([
+                "Symbol table '.dynsym' contains 1 entry:", "   Num:    Value          Size Type    Bind   Vis      Ndx Name",
+                "     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND ",
+            ]),
+        }
+        with self.assertRaisesRegex(inventory.InventoryError, "program-header counts"):
+            inventory.shape(streams)
+        with self.assertRaisesRegex(inventory.InventoryError, "truncated"):
+            inventory.parse_dynamic("\n".join([
+                "Dynamic section at offset 0x200 contains 2 entries:", "  Tag        Type                         Name/Value",
+                " 0x0000000000000005 (STRTAB)             0x200",
+            ]))
+        with self.assertRaisesRegex(inventory.InventoryError, "malformed"):
+            inventory.parse_dynamic("Dynamic section at offset 0x200 contains 0 entries:\nnot a tag\n")
 
     def test_relocation_and_symbol_parsers_reject_truncated_streams_but_admit_relr(self) -> None:
         self.assertEqual(

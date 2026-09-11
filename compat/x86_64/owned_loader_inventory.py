@@ -57,9 +57,6 @@ RAW_STREAMS = (
 SUBJECTS = ("musl-loader", "candidate-loader", "candidate-libc")
 MUSL_LOADER_PATH = "lib/ld-musl-x86_64.so.1"
 
-_PROGRAM_TYPES = {
-    "LOAD", "DYNAMIC", "INTERP", "NOTE", "PHDR", "TLS", "GNU_EH_FRAME", "GNU_STACK", "GNU_RELRO",
-}
 _RELOC_SECTION = re.compile(r"^Relocation section '([^']+)'[^\n]*contains (\d+) entr(?:y|ies):")
 _RELOC_TYPE = re.compile(r"\b(R_[A-Z0-9_]+)\b")
 _RELR_ENTRY = re.compile(r"^\s*(?:0x)?[0-9a-fA-F]+\b")
@@ -69,6 +66,10 @@ _DYNSYM_COUNT = re.compile(r"^Symbol table '([^']+)' contains (\d+) entr(?:y|ies
 _RELOC_HEADER = re.compile(r"^\s*Offset\s+Info\s+Type\b")
 _DYNSYM_HEADER = re.compile(r"^\s*Num:\s+Value\s+Size\s+Type\s+Bind\s+Vis\s+Ndx\s+Name\s*$")
 _DYNSYM_ROW = re.compile(r"^\s*\d+:\s+")
+_PROGRAM_HEADER_COUNT = re.compile(r"^There are (\d+) program headers, starting at offset \d+$")
+_PROGRAM_HEADER_TABLE = re.compile(r"^\s*Type\s+Offset\s+VirtAddr\s+PhysAddr\s+FileSiz\s+MemSiz\s+Flg\s+Align\s*$")
+_DYNAMIC_SECTION = re.compile(r"^Dynamic section at offset 0x[0-9a-fA-F]+ contains (\d+) entr(?:y|ies):$")
+_DYNAMIC_TABLE = re.compile(r"^\s*Tag\s+Type\s+Name/Value\s*$")
 
 
 class InventoryError(RuntimeError):
@@ -344,37 +345,75 @@ def parse_header(output: str) -> dict[str, str | None]:
     return values
 
 
-def parse_program_headers(output: str) -> list[dict[str, str]]:
+def parse_program_headers(output: str) -> dict[str, Any]:
+    """Retain every parseable program-header type and close the readelf table."""
+
+    declared_entries: int | None = None
     headers: list[dict[str, str]] = []
     in_table = False
+    table_header = False
+    section_mapping = False
     for line in output.splitlines():
+        if (match := _PROGRAM_HEADER_COUNT.match(line)) is not None:
+            require(declared_entries is None and not in_table, "readelf program-header stream has duplicate counts")
+            declared_entries = int(match.group(1))
+            continue
         if line.strip() == "Program Headers:":
+            require(declared_entries is not None and not in_table, "readelf program-header stream is malformed")
             in_table = True
             continue
-        if in_table and line.strip().startswith("Section to Segment mapping"):
-            break
+        if in_table and line.strip() == "Section to Segment mapping:":
+            require(table_header, "readelf program-header table has no header")
+            in_table = False
+            section_mapping = True
+            continue
         if not in_table:
             continue
-        parts = line.split()
-        if len(parts) < 8 or parts[0] not in _PROGRAM_TYPES or not all(part.startswith("0x") for part in parts[1:6]):
+        if not line.strip():
             continue
+        if _PROGRAM_HEADER_TABLE.match(line):
+            require(not table_header, "readelf program-header table has duplicate headers")
+            table_header = True
+            continue
+        require(table_header, "readelf program-header table has an unscoped row")
+        parts = line.split()
+        require(len(parts) >= 7 and all(re.fullmatch(r"0x[0-9a-fA-F]+", part) is not None for part in parts[1:6])
+                and re.fullmatch(r"(?:0x[0-9a-fA-F]+|\d+)", parts[-1]) is not None,
+                "readelf program-header row is malformed")
         headers.append({
             "type": parts[0], "offset": parts[1], "virtual_address": parts[2], "physical_address": parts[3],
             "file_size": parts[4], "memory_size": parts[5], "flags": "".join(parts[6:-1]), "alignment": parts[-1],
         })
-    require(headers, "readelf produced no program headers")
-    return headers
+    require(declared_entries is not None and table_header and section_mapping,
+            "readelf program-header stream is incomplete")
+    require(declared_entries == len(headers), "readelf program-header stream is truncated")
+    return {"declared_entries": declared_entries, "observed_entries": len(headers), "entries": headers}
 
 
-def parse_dynamic(output: str) -> list[dict[str, str]]:
-    tags = []
+def parse_dynamic(output: str) -> dict[str, Any]:
+    """Parse exactly the rows declared by GNU readelf's dynamic-table header."""
+
+    declared_entries: int | None = None
+    table_header = False
+    tags: list[dict[str, str]] = []
     for line in output.splitlines():
+        if (section := _DYNAMIC_SECTION.match(line)) is not None:
+            require(declared_entries is None, "readelf dynamic stream has duplicate counts")
+            declared_entries = int(section.group(1))
+            continue
+        if not line.strip():
+            continue
+        if _DYNAMIC_TABLE.match(line):
+            require(declared_entries is not None and not table_header, "readelf dynamic stream is malformed")
+            table_header = True
+            continue
         match = _DYNAMIC.match(line)
-        if match is not None:
-            value, name, detail = match.groups()
-            tags.append({"tag": name, "tag_value": value, "value": detail.strip()})
-    require(tags, "readelf produced no dynamic tags")
-    return tags
+        require(match is not None and table_header, "readelf dynamic stream is malformed")
+        value, name, detail = match.groups()
+        tags.append({"tag": name, "tag_value": value, "value": detail.strip()})
+    require(declared_entries is not None and table_header, "readelf dynamic stream is incomplete")
+    require(declared_entries == len(tags), "readelf dynamic stream is truncated")
+    return {"declared_entries": declared_entries, "observed_entries": len(tags), "tags": tags}
 
 
 def parse_relocations(output: str) -> dict[str, Any]:
@@ -461,16 +500,25 @@ def parse_dynamic_symbols(output: str) -> dict[str, Any]:
 
 def shape(streams: Mapping[str, str]) -> dict[str, Any]:
     require(set(streams) == {name for name, _ in RAW_STREAMS}, "readelf stream roster differs")
+    header = parse_header(streams["header"])
     program_headers = parse_program_headers(streams["program_headers"])
     dynamic = parse_dynamic(streams["dynamic"])
+    require(re.fullmatch(r"\d+", str(header["program_header_count"])) is not None
+            and int(str(header["program_header_count"])) == program_headers["declared_entries"],
+            "ELF and readelf program-header counts differ")
     return {
-        "header": parse_header(streams["header"]),
+        "header": header,
         "program_headers": program_headers,
         "program_header_types": {
-            name: sum(header["type"] == name for header in program_headers)
-            for name in sorted({header["type"] for header in program_headers})
+            name: sum(entry["type"] == name for entry in program_headers["entries"])
+            for name in sorted({entry["type"] for entry in program_headers["entries"]})
         },
-        "dynamic": {"tags": dynamic, "tag_names": [tag["tag"] for tag in dynamic]},
+        "dynamic": {
+            "declared_entries": dynamic["declared_entries"],
+            "observed_entries": dynamic["observed_entries"],
+            "tags": dynamic["tags"],
+            "tag_names": [tag["tag"] for tag in dynamic["tags"]],
+        },
         "relocations": parse_relocations(streams["relocations"]),
         "dynamic_symbols": parse_dynamic_symbols(streams["dynamic_symbols"]),
     }
