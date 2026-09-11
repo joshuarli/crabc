@@ -67,11 +67,15 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                 self.put(name + ".stdout", output)
                 self.put(name + ".crabc-link.json", {
                     "schema": 1, "format": driver.FORMAT, "runtime_imports": [],
+                    "application_runpath": "/usr/lib", "application_dsos": {},
                     "output_path": str(self.work / name),
                     "output_sha256": qualification.digest(self.work / name),
                     "manifest_sha256": self.manifest,
                     "mode": "exec" if name.startswith("non-pie-") else "pie",
                     "campaign_complete": False, "binding": "now",
+                    "input_receipts": [],
+                    "resolved_linker": {"path": "/owned/ld.lld", "sha256": "0" * 64},
+                    "link_command": [],
                     "link_trace": ["declared input"],
                     "owned_runtime_inputs": sorted("usr/lib/" + entry for entry in
                         (("crt1.o" if name.startswith("non-pie-") else "Scrt1.o"),
@@ -441,6 +445,51 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             path.write_text(json.dumps({**original, key: value}))
             with self.assertRaisesRegex(qualification.QualificationError, "base driver"):
                 qualification.collect(self.work)
+
+    def test_base_evidence_accepts_a_closed_schema_two_default_receipt(self):
+        path = self.work / "installed-consumer.crabc-link.json"
+        original = qualification.read(path)
+        path.write_text(json.dumps({
+            **original, "schema": 2, "application_search_kind": "runpath",
+            "application_rpath": None, "application_hash_style": "sysv",
+        }))
+        result = qualification.base_evidence(
+            self.work, {product: self.manifest for product in qualification.PRODUCTS}
+        )
+        self.assertIn(qualification.relative(path), result)
+
+    def test_base_evidence_rejects_invalid_schema_two_search_and_shape(self):
+        path = self.work / "installed-consumer.crabc-link.json"
+        original = qualification.read(path)
+        valid = {
+            **original, "schema": 2, "application_search_kind": "runpath",
+            "application_rpath": None, "application_hash_style": "sysv",
+        }
+        invalid_search = {
+            **valid, "application_search_kind": "rpath", "application_runpath": None,
+            "application_rpath": "/usr/lib",
+        }
+        invalid_shape = {**valid, "application_rpath": "/extra"}
+        for changed in (invalid_search, invalid_shape):
+            with self.subTest(changed=changed):
+                path.write_text(json.dumps(changed))
+                with self.assertRaisesRegex(qualification.QualificationError, "search|RPATH|RUNPATH"):
+                    qualification.base_evidence(
+                        self.work, {product: self.manifest for product in qualification.PRODUCTS}
+                    )
+
+    def test_base_evidence_rejects_missing_or_hybrid_legacy_receipts(self):
+        path = self.work / "installed-consumer.crabc-link.json"
+        original = qualification.read(path)
+        missing = {key: value for key, value in original.items() if key != "link_trace"}
+        hybrid = {**original, "application_hash_style": "sysv"}
+        for changed in (missing, hybrid, {**original, "schema": True}):
+            with self.subTest(changed=changed):
+                path.write_text(json.dumps(changed))
+                with self.assertRaisesRegex(qualification.QualificationError, "schema|fields"):
+                    qualification.base_evidence(
+                        self.work, {product: self.manifest for product in qualification.PRODUCTS}
+                    )
 
     def test_missing_oracle_identity_and_stale_pins_are_rejected(self):
         path = self.work / "qualification-prepare.json"

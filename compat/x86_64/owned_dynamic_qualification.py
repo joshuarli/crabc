@@ -493,20 +493,14 @@ def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:
             runtime = sorted("usr/lib/" + entry for entry in
                              (("crt1.o" if name.startswith("non-pie-") else "Scrt1.o"),
                               "crabc-dynamic-attach.o", "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o"))
-            if receipt.get("schema") == 1:
-                require(not ({"application_search_kind", "application_rpath", "application_hash_style"} & set(receipt))
-                        and receipt.get("application_runpath", "/usr/lib") == "/usr/lib",
-                        "base legacy driver search contract drifted")
-            elif receipt.get("schema") == 2:
-                search = receipt_contract.validate(
-                    receipt, format="crabc-x86-64-owned-dynamic-sysroot-v1", label="base dynamic link receipt",
-                    fail=require,
-                )
-                receipt_contract.require_runpath(
-                    search, "/usr/lib", label="base dynamic link receipt", fail=require
-                )
-            else:
-                require(False, "base driver receipt schema differs")
+            search = receipt_contract.validate(
+                receipt, format="crabc-x86-64-owned-dynamic-sysroot-v1", label="base dynamic link receipt",
+                fail=lambda message: require(False, message),
+            )
+            receipt_contract.require_runpath(
+                search, "/usr/lib", label="base dynamic link receipt",
+                fail=lambda message: require(False, message),
+            )
             require(receipt.get("format") == "crabc-x86-64-owned-dynamic-sysroot-v1"
                     and receipt.get("runtime_imports") == [] and receipt.get("output_path") == expected_path
                     and receipt.get("owned_runtime_inputs") == runtime, "base driver path or purity contract drifted")
