@@ -89,11 +89,17 @@ may name only that declared package library directory. Python's standard
 library, file magic database, Git templates, terminfo data, and the pinned
 `/etc/alpine-release` fixture are part of the retained payload.
 
-The private base also carries the pinned image's sealed `/etc/passwd` and
-`/etc/group` bytes and metadata, plus private `/tmp`, `/root`, and a real
-`/dev/null` character device (major 1, minor 3). No account record, device, or
-directory is inherited from the host. Tree seals encode the device kind,
+Each private execution root carries the pinned image's sealed `/etc/passwd`
+and `/etc/group` bytes and metadata, plus private `/tmp`, `/root`, and a real
+`/dev/null` character device (major 1, minor 3). The runner clones only the
+ordinary application payload, then stages and checks those base fixtures in
+each case/side root; it never copies a device node. No account record, device,
+or directory is inherited from the host. Tree seals encode the device kind,
 major/minor, and mode as well as regular files and symlinks.
+
+A receipt made before this per-root staging rule is a failed fixture
+qualification if its cloned `/dev/null` is a regular file. It remains useful
+only as a preliminary diagnostic; it cannot qualify a package outcome.
 
 Every side/case root is retained under `.work/x86_64/tmp`, with pre/post tree
 seals, product and archive identities, raw stdout/stderr/status, and the full

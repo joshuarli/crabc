@@ -141,6 +141,20 @@ class PrivatePayloadTests(unittest.TestCase):
             self.assertEqual(record["device"]["kind"], "character")
             self.assertEqual(len(RUNNER.tree_sha256(root, "private root")), 64)
 
+    @unittest.skipUnless(os.geteuid() == 0, "private character devices require root")
+    def test_each_execution_root_restages_the_private_null_device(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            payload = Path(temporary) / "application-payload"
+            payload.mkdir()
+            (payload / "bin").mkdir()
+            (payload / "bin/program").write_bytes(b"application bytes")
+            execution = Path(temporary) / "execution-root"
+            RUNNER.stage_execution_root(RUNNER.load_manifest(), payload, execution)
+            node = (execution / "dev/null").lstat()
+            self.assertTrue(__import__("stat").S_ISCHR(node.st_mode))
+            self.assertEqual((node.st_mode & 0o777, os.major(node.st_rdev), os.minor(node.st_rdev)), (0o666, 1, 3))
+            self.assertFalse((payload / "dev/null").exists())
+
 
 class RawOutcomeTests(unittest.TestCase):
     def test_dynamic_tag_match_does_not_accept_a_longer_tag(self) -> None:

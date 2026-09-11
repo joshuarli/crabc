@@ -585,6 +585,55 @@ def stage_base_image_fixtures(manifest: ManifestSpec, destination: Path) -> dict
             "device": {"path": "/dev/null", "kind": "character", "mode": 0o666, "major": 1, "minor": 3}}
 
 
+def assert_base_image_fixtures(manifest: ManifestSpec, destination: Path) -> dict[str, object]:
+    """Prove one private execution root retained every approved base fixture."""
+    copied: dict[str, dict[str, object]] = {}
+    for virtual_path, expected in manifest.base_image_files.items():
+        target = destination / virtual_path.lstrip("/")
+        try:
+            metadata = target.lstat()
+        except OSError as error:
+            raise CorpusError(f"private base image file is unavailable: {virtual_path}") from error
+        observed = {"sha256": sha256_file(target, f"private base image {virtual_path}"), "mode": stat.S_IMODE(metadata.st_mode), "uid": metadata.st_uid, "gid": metadata.st_gid}
+        if target.is_symlink() or observed != expected:
+            fail(f"private base image file identity differs: {virtual_path}")
+        copied[virtual_path] = observed
+    directories: dict[str, dict[str, int]] = {}
+    for virtual_path, mode in (("/tmp", 0o1777), ("/root", 0o700), ("/dev", 0o755)):
+        target = destination / virtual_path.lstrip("/")
+        try:
+            metadata = target.lstat()
+        except OSError as error:
+            raise CorpusError(f"private base directory is unavailable: {virtual_path}") from error
+        if target.is_symlink() or not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != mode:
+            fail(f"private base directory identity differs: {virtual_path}")
+        directories[virtual_path] = {"mode": mode}
+    null = destination / "dev/null"
+    try:
+        metadata = null.lstat()
+    except OSError as error:
+        raise CorpusError("private /dev/null fixture is unavailable") from error
+    if not stat.S_ISCHR(metadata.st_mode) or (stat.S_IMODE(metadata.st_mode), os.major(metadata.st_rdev), os.minor(metadata.st_rdev)) != (0o666, 1, 3):
+        fail("private /dev/null fixture is not the expected character device")
+    return {"image_files": copied, "directories": directories,
+            "device": {"path": "/dev/null", "kind": "character", "mode": 0o666, "major": 1, "minor": 3}}
+
+
+def stage_execution_root(manifest: ManifestSpec, payload: Path, destination: Path) -> dict[str, object]:
+    """Clone ordinary application bytes, then create base nodes in this root.
+
+    ``copytree`` intentionally treats special files as ordinary files.  The
+    shared application payload contains only files, directories, and links
+    admitted from the APK closure; every execution root gets its own pinned
+    base records and its own character device after that copy.
+    """
+    shutil.copytree(payload, destination, symlinks=True)
+    staged = stage_base_image_fixtures(manifest, destination)
+    if assert_base_image_fixtures(manifest, destination) != staged:
+        fail("private base fixture receipt changed while staging execution root")
+    return staged
+
+
 def audit_application_elf_closure(
     root: Path, library_dirs: Sequence[str], runtime: Mapping[str, object] | None = None,
 ) -> list[dict[str, object]]:
@@ -844,7 +893,6 @@ def run(manifest: ManifestSpec, archive_dir: Path, index: Path, dynamic_sysroot:
     try:
         payload = temporary_root / "application-payload"
         stage_application_payload(manifest, archive_dir, payload)
-        base_fixtures = stage_base_image_fixtures(manifest, payload)
         elf_graph = audit_application_elf_closure(payload, manifest.package_library_dirs)
         payload_seal = tree_sha256(payload, "finite application payload")
         outcomes: list[dict[str, object]] = []
@@ -853,17 +901,21 @@ def run(manifest: ManifestSpec, archive_dir: Path, index: Path, dynamic_sysroot:
             roots: dict[str, dict[str, object]] = {}
             for side in ("oracle", "candidate"):
                 root = temporary_root / f"{case.id}-{side}"
-                shutil.copytree(payload, root, symlinks=True)
+                base_fixtures = stage_execution_root(manifest, payload, root)
                 runtime = copy_runtime(root, side, dynamic_sysroot if side == "candidate" else None)
                 create_fixture(root, case)
+                if assert_base_image_fixtures(manifest, root) != base_fixtures:
+                    fail(f"{case.id} {side} private base fixture changed before execution")
                 assert_runtime_boundary(root, runtime)
                 audit_application_elf_closure(root, manifest.package_library_dirs, runtime)
                 before = tree_sha256(root, f"{case.id} {side} pre-execution root")
                 elf = executable_elf_record(root, case)
                 side_results[side] = execute_case(root, case)
+                if assert_base_image_fixtures(manifest, root) != base_fixtures:
+                    fail(f"{case.id} {side} private base fixture changed during execution")
                 assert_runtime_boundary(root, runtime)
                 after = tree_sha256(root, f"{case.id} {side} post-execution root")
-                roots[side] = {"runtime": runtime, "execution_tree_before_sha256": before, "execution_tree_after_sha256": after, "executable": elf}
+                roots[side] = {"base_fixtures": base_fixtures, "runtime": runtime, "execution_tree_before_sha256": before, "execution_tree_after_sha256": after, "executable": elf}
             comparison = compare_results(side_results["oracle"], side_results["candidate"])
             outcomes.append({"id": case.id, "tier": case.tier, "package": case.package, "path": case.path, "argv": list(case.argv), "environment": CASE_ENVIRONMENT, "stateful": case.stateful, "requires_dt_relr": case.requires_dt_relr, "roots": roots, "comparison": comparison})
         if tree_sha256(payload, "finite application payload") != payload_seal:
@@ -875,7 +927,7 @@ def run(manifest: ManifestSpec, archive_dir: Path, index: Path, dynamic_sysroot:
     product_after = validate_product(dynamic_sysroot)
     if product_after != product_before:
         fail("supplied owned dynamic product changed during corpus execution")
-    return {"schema": SCHEMA, "passed": all(item["comparison"]["passed"] for item in outcomes), "manifest": {"path": str(MANIFEST.relative_to(ROOT)), "sha256": sha256_file(MANIFEST, "native manifest"), "runner": {"path": str(Path(__file__).relative_to(ROOT)), "sha256": sha256_file(Path(__file__), "native corpus runner")}, "workload_source": {"path": str(manifest.source_manifest.relative_to(ROOT)), "sha256": sha256_file(manifest.source_manifest, "workload source manifest")}, "image": manifest.image}, "tools": tools, "inputs": inputs, "candidate_product": product_before, "application_payload": {"path": str(payload), "sha256": payload_seal, "base_fixtures": base_fixtures, "package_library_dirs": list(manifest.package_library_dirs), "elf_closure": elf_graph}, "execution_root": str(temporary_root), "case_count": len(outcomes), "outcomes": outcomes}
+    return {"schema": SCHEMA, "passed": all(item["comparison"]["passed"] for item in outcomes), "manifest": {"path": str(MANIFEST.relative_to(ROOT)), "sha256": sha256_file(MANIFEST, "native manifest"), "runner": {"path": str(Path(__file__).relative_to(ROOT)), "sha256": sha256_file(Path(__file__), "native corpus runner")}, "workload_source": {"path": str(manifest.source_manifest.relative_to(ROOT)), "sha256": sha256_file(manifest.source_manifest, "workload source manifest")}, "image": manifest.image}, "tools": tools, "inputs": inputs, "candidate_product": product_before, "application_payload": {"path": str(payload), "sha256": payload_seal, "package_library_dirs": list(manifest.package_library_dirs), "elf_closure": elf_graph}, "execution_root": str(temporary_root), "case_count": len(outcomes), "outcomes": outcomes}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
