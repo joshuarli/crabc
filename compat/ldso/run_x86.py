@@ -297,8 +297,11 @@ class Recorder:
                 descendants.register_private_runner(process)
                 try:
                     stdout, stderr = process.communicate(timeout=timeout_seconds)
-                    descendants.reject_unexpected_descendants()
                     result = ProcessResult(rendered, process.returncode, stdout, stderr, False)
+                    # A normally exited parent can still leave an unexpected
+                    # descendant. Preserve its actual streams and status even
+                    # when that separate lifetime check rejects the fixture.
+                    descendants.reject_unexpected_descendants()
                 except subprocess.TimeoutExpired:
                     descendants.terminate_and_reap(process)
                     stdout, stderr = process.communicate()

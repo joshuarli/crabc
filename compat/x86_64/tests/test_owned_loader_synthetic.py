@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import math
 import os
 import pathlib
@@ -38,6 +39,38 @@ def qualification():
 
 
 class OwnedLoaderSyntheticTests(unittest.TestCase):
+    def test_normal_exit_with_orphan_retains_observation_before_rejection(self) -> None:
+        module = runner()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            work = pathlib.Path(directory)
+            pid_path = work / "orphan.pid"
+            program = """\
+import os
+import pathlib
+import sys
+import time
+child = os.fork()
+if child == 0:
+    os.setsid()
+    os.close(1)
+    os.close(2)
+    pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+    time.sleep(30)
+    os._exit(0)
+while not pathlib.Path(sys.argv[1]).exists():
+    time.sleep(0.01)
+print('parent observation', flush=True)
+"""
+            with self.assertRaisesRegex(module.LoaderSyntheticError, "descendant boundary"):
+                module.Recorder(work, 2).run(
+                    "normal-orphan", [sys.executable, "-c", program, pid_path], cwd=work
+                )
+            self.assertFalse(pathlib.Path(f"/proc/{int(pid_path.read_text())}").exists())
+            self.assertEqual((work / "raw/0001-normal-orphan.stdout").read_bytes(), b"parent observation\n")
+            observation = json.loads((work / "raw/0001-normal-orphan.json").read_text())
+            self.assertEqual(observation["returncode"], 0)
+            self.assertFalse(observation["timed_out"])
+
     def test_recorder_timeout_reaps_a_session_escaping_descendant(self) -> None:
         """A timed-out fixture cannot leave a private session alive."""
         module = runner()
