@@ -11,9 +11,11 @@
 use core::{
     ffi::{c_char, c_int, c_uint, c_void},
     mem::size_of,
-    ptr,
+    ptr, slice,
 };
 
+use super::{ShellGlob, ShellGlobError, ShellGlobOutcome, ShellPattern};
+use super::owned_fnmatch::{self, PatternMode};
 use super::super::{
     directory_streams, environment, errno, owned_passwd, process_context, stat_compat,
 };
@@ -270,6 +272,148 @@ unsafe fn report_error(error: ErrorFunction, path: *const c_char, code: c_int, f
     (unsafe { error(path, code) }) != 0 || flags & GLOB_ERR != 0
 }
 
+/// Consume literal shell units into glob's existing source-shaped pathname
+/// buffer. The matcher remains the token authority: this only copies the
+/// literal bytes before its first active star, question, or valid bracket.
+/// A protected backslash is copied as a filename byte; an eligible raw one
+/// removes itself while quoting its following literal byte outside brackets.
+unsafe fn copy_shell_literal_prefix(
+    buffer: &mut [u8; PATH_MAX],
+    position: &mut usize,
+    entry_type: &mut u8,
+    pattern: &mut *mut c_char,
+    flags: c_int,
+    mode: PatternMode<'_>,
+) -> bool {
+    let mut cursor = 0usize;
+    let mut written = 0usize;
+    loop {
+        let current_pattern = unsafe { (*pattern).add(cursor) };
+        let current = unsafe { byte(current_pattern) };
+        if current == 0 {
+            let Some(end) = position.checked_add(written) else {
+                return false;
+            };
+            if end >= PATH_MAX {
+                return false;
+            }
+            *position = end;
+            *pattern = current_pattern;
+            return true;
+        }
+        if current == b'/' {
+            let Some(next_written) = written.checked_add(1) else {
+                return false;
+            };
+            let Some(end) = position.checked_add(next_written) else {
+                return false;
+            };
+            if end >= PATH_MAX {
+                return false;
+            }
+            buffer[*position + written] = b'/';
+            *position = end;
+            *entry_type = 0;
+            *pattern = unsafe { current_pattern.add(1) };
+            cursor = 0;
+            written = 0;
+            continue;
+        }
+
+        let mut step = 0usize;
+        let fnmatch_flags = if flags & GLOB_NOESCAPE != 0 { FNM_NOESCAPE } else { 0 };
+        let token = unsafe {
+            owned_fnmatch::pat_next(current_pattern, usize::MAX, &mut step, fnmatch_flags, mode)
+        };
+        if matches!(token, owned_fnmatch::STAR | owned_fnmatch::QUESTION | owned_fnmatch::BRACKET) {
+            // Like musl's i/j loop, retain the component start as `pattern`
+            // until fnmatch consumes the literal prefix and active suffix as
+            // one filename pattern. The copied bytes become live only if this
+            // component later turns out to be wholly literal.
+            return true;
+        }
+
+        // Slash is a pathname boundary even when its quote map cell is set.
+        // The raw backslash case retains musl's escape removal before that
+        // separator, while a protected backslash was copied by the ordinary
+        // branch and therefore remains in the preceding pathname component.
+        if current == b'\\'
+            && !mode.protected_at(current_pattern)
+            && step > 1
+            && unsafe { byte(current_pattern.add(1)) } == b'/'
+        {
+            let Some(next_written) = written.checked_add(1) else {
+                return false;
+            };
+            let Some(end) = position.checked_add(next_written) else {
+                return false;
+            };
+            if end >= PATH_MAX {
+                return false;
+            }
+            buffer[*position + written] = b'/';
+            *position = end;
+            *entry_type = 0;
+            *pattern = unsafe { current_pattern.add(2) };
+            cursor = 0;
+            written = 0;
+            continue;
+        }
+
+        let (source, length) = if current == b'\\' && !mode.protected_at(current_pattern) && step > 1 {
+            (unsafe { current_pattern.add(1) }, step - 1)
+        } else {
+            (current_pattern, if step == 0 { 1 } else { step })
+        };
+        let Some(end) = written.checked_add(length) else {
+            return false;
+        };
+        let Some(buffer_end) = position.checked_add(end) else {
+            return false;
+        };
+        if buffer_end >= PATH_MAX {
+            return false;
+        }
+        unsafe {
+            ptr::copy_nonoverlapping(
+                source.cast::<u8>(),
+                buffer.as_mut_ptr().add(*position + written),
+                length,
+            );
+        }
+        written = end;
+        *entry_type = 0;
+        cursor = match cursor.checked_add(if step == 0 { 1 } else { step }) {
+            Some(cursor) => cursor,
+            None => return false,
+        };
+    }
+}
+
+/// Return the next pathname boundary in a private shell pattern. A raw
+/// backslash immediately before slash takes musl's escaped-separator route;
+/// protection on that backslash instead keeps it in the filename component.
+unsafe fn shell_separator(pattern: *mut c_char, mode: PatternMode<'_>) -> (*mut c_char, u8) {
+    let mut cursor = pattern;
+    loop {
+        let current = unsafe { byte(cursor) };
+        if current == 0 {
+            return (ptr::null_mut(), b'/');
+        }
+        if current == b'/' {
+            return (cursor, b'/');
+        }
+        if current == b'\\' && !mode.protected_at(cursor) && unsafe { byte(cursor.add(1)) } != 0 {
+            if unsafe { byte(cursor.add(1)) } == b'/' {
+                return (cursor, b'\\');
+            }
+            cursor = unsafe { cursor.add(2) };
+        } else {
+            cursor = unsafe { cursor.add(1) };
+        }
+    }
+}
+
 /// Recursive `do_glob` translation. The stack buffer remains one source-owned
 /// PATH_MAX pathname and each recursive level mutates only its current suffix.
 unsafe fn do_glob(
@@ -280,6 +424,7 @@ unsafe fn do_glob(
     flags: c_int,
     error: ErrorFunction,
     tail: &mut *mut Match,
+    mode: PatternMode<'_>,
 ) -> c_int {
     if entry_type == 0 && flags & GLOB_MARK == 0 {
         entry_type = DT_REG;
@@ -293,64 +438,79 @@ unsafe fn do_glob(
         pattern = unsafe { pattern.add(1) };
     }
 
-    // This loop intentionally follows musl's i/j reset around each literal
-    // slash. In particular, an escaped slash is copied once while the
-    // recursive pattern starts immediately after it.
-    let mut i: isize = 0;
-    let mut j: isize = 0;
-    let mut in_bracket = false;
-    let mut overflow = false;
-    while unsafe { byte(pattern.offset(i)) } != b'*'
-        && unsafe { byte(pattern.offset(i)) } != b'?'
-        && (!in_bracket || unsafe { byte(pattern.offset(i)) } != b']')
-    {
-        let current = unsafe { byte(pattern.offset(i)) };
-        if current == 0 {
-            if overflow {
-                return 0;
-            }
-            pattern = unsafe { pattern.offset(i) };
-            position += j as usize;
-            i = 0;
-            j = 0;
-            break;
-        }
-        if current == b'[' {
-            in_bracket = true;
-        } else if current == b'\\' && flags & GLOB_NOESCAPE == 0 {
-            if in_bracket && unsafe { byte(pattern.offset(i + 1)) } == b']' {
-                break;
-            }
-            if unsafe { byte(pattern.offset(i + 1)) } == 0 {
-                return 0;
-            }
-            i += 1;
-        }
-        if unsafe { byte(pattern.offset(i)) } == b'/' {
-            if overflow {
-                return 0;
-            }
-            in_bracket = false;
-            pattern = unsafe { pattern.offset(i + 1) };
-            i = -1;
-            position += (j + 1) as usize;
-            j = -1;
-        }
-        let end = position as isize + j + 1;
-        if end >= 0 && (end as usize) < PATH_MAX {
-            let output = position as isize + j;
-            debug_assert!(output >= 0);
-            buffer[output as usize] = unsafe { byte(pattern.offset(i)) };
-            j += 1;
-        } else if in_bracket {
-            overflow = true;
-        } else {
+    if mode.is_shell() {
+        if !unsafe {
+            copy_shell_literal_prefix(
+                buffer,
+                &mut position,
+                &mut entry_type,
+                &mut pattern,
+                flags,
+                mode,
+            )
+        } {
             return 0;
         }
-        // Once this source loop has consumed any component character, a
-        // caller-provided `d_type` no longer describes the constructed path.
-        entry_type = 0;
-        i += 1;
+    } else {
+        // This C-mode loop intentionally follows musl's i/j reset around each
+        // literal slash. In particular, an escaped slash is copied once while
+        // the recursive pattern starts immediately after it.
+        let mut i: isize = 0;
+        let mut j: isize = 0;
+        let mut in_bracket = false;
+        let mut overflow = false;
+        while unsafe { byte(pattern.offset(i)) } != b'*'
+            && unsafe { byte(pattern.offset(i)) } != b'?'
+            && (!in_bracket || unsafe { byte(pattern.offset(i)) } != b']')
+        {
+            let current = unsafe { byte(pattern.offset(i)) };
+            if current == 0 {
+                if overflow {
+                    return 0;
+                }
+                pattern = unsafe { pattern.offset(i) };
+                position += j as usize;
+                i = 0;
+                j = 0;
+                break;
+            }
+            if current == b'[' {
+                in_bracket = true;
+            } else if current == b'\\' && flags & GLOB_NOESCAPE == 0 {
+                if in_bracket && unsafe { byte(pattern.offset(i + 1)) } == b']' {
+                    break;
+                }
+                if unsafe { byte(pattern.offset(i + 1)) } == 0 {
+                    return 0;
+                }
+                i += 1;
+            }
+            if unsafe { byte(pattern.offset(i)) } == b'/' {
+                if overflow {
+                    return 0;
+                }
+                in_bracket = false;
+                pattern = unsafe { pattern.offset(i + 1) };
+                i = -1;
+                position += (j + 1) as usize;
+                j = -1;
+            }
+            let end = position as isize + j + 1;
+            if end >= 0 && (end as usize) < PATH_MAX {
+                let output = position as isize + j;
+                debug_assert!(output >= 0);
+                buffer[output as usize] = unsafe { byte(pattern.offset(i)) };
+                j += 1;
+            } else if in_bracket {
+                overflow = true;
+            } else {
+                return 0;
+            }
+            // Once this source loop has consumed any component character, a
+            // caller-provided `d_type` no longer describes the constructed path.
+            entry_type = 0;
+            i += 1;
+        }
     }
     buffer[position] = 0;
 
@@ -392,18 +552,23 @@ unsafe fn do_glob(
         };
     }
 
-    let mut separator = unsafe { find_byte(pattern, b'/') };
-    let mut saved_separator = b'/';
-    if !separator.is_null() && flags & GLOB_NOESCAPE == 0 {
-        let mut cursor = separator;
-        while cursor != pattern && unsafe { byte(cursor.sub(1)) } == b'\\' {
-            cursor = unsafe { cursor.sub(1) };
+    let (separator, saved_separator) = if mode.is_shell() {
+        unsafe { shell_separator(pattern, mode) }
+    } else {
+        let mut separator = unsafe { find_byte(pattern, b'/') };
+        let mut saved_separator = b'/';
+        if !separator.is_null() && flags & GLOB_NOESCAPE == 0 {
+            let mut cursor = separator;
+            while cursor != pattern && unsafe { byte(cursor.sub(1)) } == b'\\' {
+                cursor = unsafe { cursor.sub(1) };
+            }
+            if unsafe { separator.offset_from(cursor) } % 2 != 0 {
+                separator = unsafe { separator.sub(1) };
+                saved_separator = b'\\';
+            }
         }
-        if unsafe { separator.offset_from(cursor) } % 2 != 0 {
-            separator = unsafe { separator.sub(1) };
-            saved_separator = b'\\';
-        }
-    }
+        (separator, saved_separator)
+    };
     let directory = if position != 0 {
         buffer.as_ptr().cast()
     } else {
@@ -450,13 +615,13 @@ unsafe fn do_glob(
         }
         let fnmatch_flags = if flags & GLOB_NOESCAPE != 0 { FNM_NOESCAPE } else { 0 }
             | if flags & GLOB_PERIOD == 0 { FNM_PERIOD } else { 0 };
-        if unsafe { super::owned_fnmatch::fnmatch(pattern, entry.bytes, fnmatch_flags) } != 0 {
+        if unsafe { owned_fnmatch::fnmatch_with_mode(pattern, entry.bytes, fnmatch_flags, mode) } != 0 {
             continue;
         }
         if !separator.is_null() && flags & GLOB_PERIOD != 0 && unsafe { byte(entry.bytes) } == b'.'
             && (unsafe { byte(entry.bytes.add(1)) } == 0
                 || unsafe { byte(entry.bytes.add(1)) } == b'.' && unsafe { byte(entry.bytes.add(2)) } == 0)
-            && unsafe { super::owned_fnmatch::fnmatch(pattern, entry.bytes, fnmatch_flags | FNM_PERIOD) } != 0
+            && unsafe { owned_fnmatch::fnmatch_with_mode(pattern, entry.bytes, fnmatch_flags | FNM_PERIOD, mode) } != 0
         {
             continue;
         }
@@ -464,15 +629,24 @@ unsafe fn do_glob(
         if !separator.is_null() {
             unsafe { separator.write(saved_separator as c_char) };
         }
-        let remainder = if separator.is_null() {
-            EMPTY.as_ptr().cast_mut().cast()
+        let (remainder, remainder_mode) = if separator.is_null() {
+            (EMPTY.as_ptr().cast_mut().cast(), PatternMode::c())
         } else {
             // Source recurses from p2 itself; do_glob consumes the separator
             // in its leading-slash loop before matching the next component.
-            separator
+            (separator, mode)
         };
         let result = unsafe {
-            do_glob(buffer, position + length, entry.entry_type, remainder, flags, error, tail)
+            do_glob(
+                buffer,
+                position + length,
+                entry.entry_type,
+                remainder,
+                flags,
+                error,
+                tail,
+                remainder_mode,
+            )
         };
         if result != 0 {
             let _ = unsafe { directory_streams::closedir(stream) };
@@ -500,6 +674,137 @@ unsafe fn duplicate_string(source: *const c_char) -> *mut c_char {
         unsafe { ptr::copy_nonoverlapping(source, copy, size) };
     }
     copy
+}
+
+/// Duplicate one checked quote-removed pattern without deriving its length
+/// from a temporary separator write. The map is then rebased once onto this
+/// allocation and stays valid until `do_glob` returns.
+unsafe fn duplicate_shell_pattern(pattern: ShellPattern<'_>) -> *mut c_char {
+    let copy = unsafe { cabi_malloc(pattern.byte_len()).cast::<c_char>() };
+    if !copy.is_null() {
+        unsafe {
+            ptr::copy_nonoverlapping(pattern.pointer(), copy, pattern.byte_len());
+        }
+    }
+    copy
+}
+
+/// Private shell glob entry. It shares musl's directory traversal, match-list
+/// allocations, sorting, and release protocol with C `glob`, but has no C
+/// flags, tilde lookup, `glob_t` exposure, or fallback substitution rule.
+pub(super) fn shell_glob(pattern: ShellPattern<'_>) -> Result<ShellGlobOutcome, ShellGlobError> {
+    if !owned_fnmatch::shell_has_active_pattern(pattern) {
+        return Ok(ShellGlobOutcome::NoActivePattern);
+    }
+
+    let copy = unsafe { duplicate_shell_pattern(pattern) };
+    if copy.is_null() {
+        return Err(ShellGlobError::NoSpace);
+    }
+    let mode = unsafe { pattern.rebased_mode(copy, pattern.byte_len()) };
+    let mut head = Match { next: ptr::null_mut() };
+    let mut tail: *mut Match = &mut head;
+    let mut buffer = [0u8; PATH_MAX];
+    let glob_error = unsafe {
+        do_glob(
+            &mut buffer,
+            0,
+            0,
+            copy,
+            0,
+            ignore_error,
+            &mut tail,
+            mode,
+        )
+    };
+    unsafe { cabi_free(copy.cast()) };
+
+    let mut count = 0usize;
+    let mut record = head.next;
+    while !record.is_null() {
+        let Some(next_count) = count.checked_add(1) else {
+            unsafe { free_list(&mut head) };
+            return Err(ShellGlobError::NoSpace);
+        };
+        count = next_count;
+        record = unsafe { (*record).next };
+    }
+    if glob_error == GLOB_NOSPACE {
+        unsafe { free_list(&mut head) };
+        return Err(ShellGlobError::NoSpace);
+    }
+    if glob_error == GLOB_ABORTED {
+        unsafe { free_list(&mut head) };
+        return Err(ShellGlobError::Aborted);
+    }
+    if count == 0 {
+        return Ok(ShellGlobOutcome::NoMatch);
+    }
+
+    let Some(vector_count) = count.checked_add(1) else {
+        unsafe { free_list(&mut head) };
+        return Err(ShellGlobError::NoSpace);
+    };
+    let Some(vector_bytes) = vector_count.checked_mul(size_of::<*mut c_char>()) else {
+        unsafe { free_list(&mut head) };
+        return Err(ShellGlobError::NoSpace);
+    };
+    if vector_bytes > isize::MAX as usize {
+        unsafe { free_list(&mut head) };
+        return Err(ShellGlobError::NoSpace);
+    }
+    let vector = unsafe { cabi_malloc(vector_bytes).cast::<*mut c_char>() };
+    if vector.is_null() {
+        unsafe { free_list(&mut head) };
+        return Err(ShellGlobError::NoSpace);
+    }
+    let result = Glob {
+        path_count: count,
+        path_vector: vector,
+        offsets: 0,
+        _dummy1: 0,
+        _dummy2: [ptr::null_mut(); 5],
+    };
+    record = head.next;
+    for index in 0..count {
+        unsafe {
+            vector.add(index).write(match_name(record));
+            record = (*record).next;
+        }
+    }
+    unsafe {
+        vector.add(count).write(ptr::null_mut());
+        cabi_qsort(vector.cast(), count, size_of::<*mut c_char>(), sort);
+    }
+    Ok(ShellGlobOutcome::Matches(ShellGlob::from_result(result)))
+}
+
+#[inline]
+pub(super) fn shell_result_len(result: &Glob) -> usize {
+    result.path_count
+}
+
+pub(super) fn shell_result_path(result: &Glob, index: usize) -> Option<&[u8]> {
+    if index >= result.path_count {
+        return None;
+    }
+    let path = unsafe { result.path_vector.add(result.offsets + index).read() };
+    if path.is_null() {
+        return None;
+    }
+    let length = unsafe { string_length(path) };
+    // SAFETY: glob's vector owns this NUL-terminated flexible-array pathname
+    // until `ShellGlob::drop`; the returned view borrows that owner.
+    Some(unsafe { slice::from_raw_parts(path.cast(), length) })
+}
+
+/// Release the private RAII result through the exact existing glob protocol.
+///
+/// # Safety
+///
+/// `result` must be the one successful private result wrapped by `ShellGlob`.
+pub(super) unsafe fn free_shell_result(result: &mut Glob) {
+    unsafe { globfree(result) }
 }
 
 /// Expand a C pathname pattern with musl's result-vector ownership protocol.
@@ -543,7 +848,18 @@ pub unsafe extern "C" fn glob(
             }
         }
         if glob_error == 0 {
-            glob_error = unsafe { do_glob(&mut buffer, position, 0, walk_pattern, flags, error, &mut tail) };
+            glob_error = unsafe {
+                do_glob(
+                    &mut buffer,
+                    position,
+                    0,
+                    walk_pattern,
+                    flags,
+                    error,
+                    &mut tail,
+                    PatternMode::c(),
+                )
+            };
         }
         unsafe { cabi_free(copy.cast()) };
     }
