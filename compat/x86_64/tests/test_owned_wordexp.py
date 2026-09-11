@@ -39,6 +39,10 @@ class OwnedWordexpContracts(unittest.TestCase):
             "posix_quiet_case", "pipe(diagnostics)", "dup2", "read_count",
             "WRDE_SYNTAX", "ERANGE", "posix_nocmd_case", "${FOO}",
             "${X} ${Y}", "${UNSET_X-${UNSET_Y-default}}", "deeply_nested",
+            "literal_open_brace", "WORDEXP_NOCMD_LITERAL_OPEN",
+            "${WORDEXP_NOCMD_LITERAL_OPEN-{}",
+            "{; printf marker > /wordexp-nocmd-marker",
+            "${WORDEXP_NOCMD_LITERAL_OPEN-{}$(printf marker > /wordexp-nocmd-marker)",
             "private lexical depth limit",
             "$(( ${UNSET_X-2} + ${UNSET_Y-3} ))", "\\\\${FOO}",
             "WORDEXP_NOCMD_MARKER", "WRDE_CMDSUB", "WRDE_BADCHAR",
@@ -83,6 +87,7 @@ class OwnedWordexpContracts(unittest.TestCase):
         self.assertIn("positional_parameter", scanner)
         self.assertIn("logical_next", scanner)
         self.assertIn("skip_line_continuations", scanner)
+        self.assertIn("byte == b'{' && frame.parameter_phase == PARAM_WORD", scanner)
         self.assertIn("cabi_realloc", scanner)
         self.assertIn("WRDE_NOSPACE", scanner)
         self.assertIn("next == b'{'", scanner)
@@ -138,6 +143,8 @@ class OwnedWordexpContracts(unittest.TestCase):
             "fixture_devices", "char-device", "_null_device_identity", "undef-source-observation",
             "_assert_case_results", "required=False", "SOURCE-RED diagnostic-present",
             "SOURCE-RED parameter-brace-rejected", "SOURCE-RED positional-parameter-rejected",
+            "MODULE = \"libc/src/c_abi/x86_64/owned_wordexp.rs\"",
+            "NOCMD_SCANNER = \"libc/src/c_abi/x86_64/owned_wordexp_nocmd.rs\"",
             "installed header trace omitted the POSIX correction cells",
         ):
             self.assertIn(boundary, source)

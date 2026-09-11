@@ -230,6 +230,7 @@ static int posix_nocmd_case(void)
     static const char *const field[] = { "field" };
     static const char *const pair[] = { "left", "right" };
     static const char *const default_word[] = { "default" };
+    static const char *const literal_open_brace[] = { "{" };
     static const char *const deeply_nested[] = { "end" };
     static const char *const arithmetic[] = { "5" };
     static const char *const literal_parameter[] = { "${FOO}" };
@@ -245,48 +246,61 @@ static int posix_nocmd_case(void)
         return 2;
     if (posix_check_words("${UNSET_X-${UNSET_Y-default}}", default_word, 1) != 0)
         return 3;
+    if (unsetenv("WORDEXP_NOCMD_LITERAL_OPEN") != 0)
+        return 4;
+    /* POSIX parameter expansion closes on its matching right brace. An
+     * opening brace in the parameter WORD is ordinary word text. */
+    if (posix_check_words("${WORDEXP_NOCMD_LITERAL_OPEN-{}",
+            literal_open_brace, 1) != 0)
+        return 5;
     /* This crosses the scanner's inline frame storage and proves that valid
      * parameter nesting spills through the selected C allocator rather than
      * acquiring a private lexical depth limit. */
     if (posix_check_words("${U-${U-${U-${U-${U-${U-${U-${U-${U-end}}}}}}}}}",
             deeply_nested, 1) != 0)
-        return 4;
+        return 6;
     if (posix_check_words("$(( ${UNSET_X-2} + ${UNSET_Y-3} ))", arithmetic, 1) != 0)
-        return 5;
+        return 7;
     if (posix_check_words("$(( (1 << 1) | 1 ))", arithmetic_controls, 1) != 0 ||
         posix_check_words("$(( 7 & 3 ))", arithmetic_controls, 1) != 0 ||
         posix_check_words("$((1 +\n2))", arithmetic_controls, 1) != 0)
-        return 6;
+        return 8;
     if (posix_check_words("${UNSET_X-\"literal } text\"}", quoted_default, 1) != 0)
-        return 7;
+        return 9;
     if (posix_check_words("${U-'}'}", closing_brace, 1) != 0 ||
         posix_check_words("${U-\"}\"}", closing_brace, 1) != 0)
-        return 8;
+        return 10;
     if (posix_check_words("\"${U-a;b}\"", semicolon_word, 1) != 0 ||
         posix_check_words("${U-\"a;b\"}", semicolon_word, 1) != 0)
-        return 9;
+        return 11;
 
     if (posix_check_words("'${FOO}'", literal_parameter, 1) != 0)
-        return 10;
-    if (posix_check_words("\"\\${FOO}\"", literal_parameter, 1) != 0)
-        return 11;
-    if (posix_check_words("\\$\\{FOO\\}", literal_parameter, 1) != 0)
         return 12;
-    if (posix_check_words("$'a\\'b'", dollar_single, 1) != 0)
+    if (posix_check_words("\"\\${FOO}\"", literal_parameter, 1) != 0)
         return 13;
+    if (posix_check_words("\\$\\{FOO\\}", literal_parameter, 1) != 0)
+        return 14;
+    if (posix_check_words("$'a\\'b'", dollar_single, 1) != 0)
+        return 15;
 
     if (!check_initial_error("{", WRDE_NOCMD, WRDE_BADCHAR) ||
         !check_initial_error("}", WRDE_NOCMD, WRDE_BADCHAR) ||
         !check_initial_error("one; two", WRDE_NOCMD, WRDE_BADCHAR) ||
         !check_initial_error("$(echo x)", WRDE_NOCMD, WRDE_CMDSUB))
-        return 14;
+        return 16;
 
     if (posix_no_marker_command_case(
             "${UNSET_X-${UNSET_Y-$(printf marker > /wordexp-nocmd-marker)}}") != 0)
-        return 15;
+        return 17;
     if (posix_no_marker_command_case(
             "${UNSET_X-${UNSET_Y-default}}$(printf marker > /wordexp-nocmd-marker)") != 0)
-        return 16;
+        return 18;
+    if (posix_no_marker_badchar_case(
+            "{; printf marker > /wordexp-nocmd-marker") != 0)
+        return 19;
+    if (posix_no_marker_command_case(
+            "${WORDEXP_NOCMD_LITERAL_OPEN-{}$(printf marker > /wordexp-nocmd-marker)") != 0)
+        return 20;
     return 0;
 }
 

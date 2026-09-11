@@ -37,11 +37,13 @@ SOURCE_MOUNT = "/workspace"
 TARGET = "x86_64-unknown-linux-musl"
 PROBE = "compat/x86_64/owned_wordexp_probe.c"
 POSIX_PROBE = "compat/x86_64/owned_wordexp_posix_probe.c"
+MODULE = "libc/src/c_abi/x86_64/owned_wordexp.rs"
+NOCMD_SCANNER = "libc/src/c_abi/x86_64/owned_wordexp_nocmd.rs"
 DOC = "compat/x86_64/owned-wordexp.md"
 RUNNER = "compat/x86_64/run_owned_wordexp.sh"
 LEGACY_RUNNER = "compat/x86_64/run_libc_owned_wordexp.sh"
 HEADERS = ("errno.h", "wordexp.h", "stdio.h", "stdlib.h", "string.h", "unistd.h", "features.h", "bits/alltypes.h")
-SOURCES = (PROBE, POSIX_PROBE, DOC, RUNNER, LEGACY_RUNNER, "compat/x86_64/owned_wordexp_evidence.py",
+SOURCES = (PROBE, POSIX_PROBE, MODULE, NOCMD_SCANNER, DOC, RUNNER, LEGACY_RUNNER, "compat/x86_64/owned_wordexp_evidence.py",
            "compat/x86_64/owned_dynamic_receipt.py",
            "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
            "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",

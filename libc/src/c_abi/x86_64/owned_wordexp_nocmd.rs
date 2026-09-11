@@ -649,6 +649,14 @@ unsafe fn wordexp_nocmd_check(input: *const c_char) -> c_int {
                     index += 1;
                     continue;
                 }
+                // POSIX parameter expansion closes on an unquoted right
+                // brace. A left brace in its WORD is ordinary word text, so
+                // only this parameter phase bypasses the top-level control
+                // classification below.
+                if byte == b'{' && frame.parameter_phase == PARAM_WORD {
+                    index += 1;
+                    continue;
+                }
                 if !in_double && unquoted_control(byte) { finish!(WRDE_BADCHAR); }
                 index += 1;
             }

@@ -32,7 +32,9 @@ apostrophe. Physical backslash-newline pairs are joined before the scanner
 recognizes `${`, `$(`, `$((`, or `))`, except inside single and dollar-single
 quotes. This prevents a child parameter or arithmetic token from consuming a
 parent delimiter, while preserving literal escaped/quoted `${...}` and
-rejecting naked unquoted braces and controls. The shell frame separately
+accepting an opening brace as ordinary text in a parameter WORD; only its
+unquoted closing brace ends that parameter frame. A naked unquoted brace and
+other unquoted controls remain `WRDE_BADCHAR`. The shell frame separately
 tracks a true token start: only there can an unquoted `#` begin a raw comment;
 quote-looking and backslash-newline-looking bytes in that comment never alter
 scanner quote state, and a physical comment newline is rejected before a
@@ -59,7 +61,11 @@ diagnostic as `SOURCE-RED`; it does not compare diagnostic wording, because
 the sealed `/bin/sh` fixture controls that wording. Its NOCMD cell proves
 `${FOO}`, `${X} ${Y}`, nested defaults, arithmetic parameter expansions,
 quoted defaults, pattern-local quoting, arithmetic operators, and
-dollar-single quoting. It separately accepts `${10}`, `${#1}`, and `${#10}`
+dollar-single quoting. It also proves that an unset fresh variable expands
+`${WORDEXP_NOCMD_LITERAL_OPEN-{}` to one literal opening brace, while a naked
+opening brace remains `WRDE_BADCHAR` and an actual command substitution after
+that parameter WORD remains rejected without creating its marker. It
+separately accepts `${10}`, `${#1}`, and `${#10}`
 as valid NOCMD parameter syntax without claiming a portable output value for
 the controlled shell's positional arguments. A nine-level parameter default
 crosses the scanner's inline frame storage and proves its selected-allocator
