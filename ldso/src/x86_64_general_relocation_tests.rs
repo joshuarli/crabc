@@ -1,7 +1,5 @@
 extern crate std;
 use super::*;
-#[cfg(feature = "x86_64-owned-dynamic-runtime")]
-use self::std::boxed::Box;
 use core::ops::{Deref, DerefMut};
 use super::super::x86_64_initial_graph_state::{ObjectAdmission, ObjectIdentity};
 
@@ -141,14 +139,13 @@ impl Drop for Image {
     }
 }
 
-// The installed product checks every relocation-selected dynsym record
-// against the mapped, file-backed PT_LOAD range.  Keep this image separate
-// from the older structural fixture above: its metadata deliberately lives
-// in one declared mapping, as an ELF loader sees it, rather than in adjacent
-// Rust allocations.
+// Private-wire cases need a compact one-load image. Like `Image`, this owns
+// an explicit mapping; its raw ELF pointers are never derived from a shared
+// byte-array borrow. The larger `Image` models separated metadata/data loads
+// and RELRO, while this one keeps exact byte/range wire cases small.
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 struct MappedImage {
-    bytes: Box<[u8; 1024]>,
+    storage: *mut u8,
     count: usize,
 }
 
@@ -158,40 +155,57 @@ impl MappedImage {
     const STRTAB: usize = 0x180;
     const RELA: usize = 0x200;
     const DESTINATION: usize = 0x300;
+    const BYTES: usize = 1024;
 
     fn new() -> Self {
-        let mut image = Self { bytes: Box::new([0; 1024]), count: 0 };
+        let storage = unsafe { syscall6(SYS_MMAP, 0, PAGE as i64,
+            PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) };
+        assert!(!is_linux_error(storage));
+        let mut image = Self { storage: storage as *mut u8, count: 0 };
+        unsafe { core::ptr::write_bytes(image.storage, 0, PAGE as usize) };
         // One RWX PT_LOAD covers the synthetic ELF records and relocation
         // target. The test never executes it; PF_X permits the graph's
         // ordinary code-range validation to remain faithful to production.
         image.put_u32(0, PT_LOAD);
         image.put_u32(4, PF_R | PF_W | PF_X);
         image.put_u64(16, 0);
-        image.put_u64(32, image.bytes.len() as u64);
-        image.put_u64(40, image.bytes.len() as u64);
+        image.put_u64(32, Self::BYTES as u64);
+        image.put_u64(40, Self::BYTES as u64);
         image.put_u64(48, 4096);
-        image.bytes[Self::STRTAB] = 0;
         image
     }
 
     fn put_u32(&mut self, offset: usize, value: u32) {
-        self.bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        assert!(offset.checked_add(4).is_some_and(|end| end <= Self::BYTES));
+        unsafe { core::ptr::copy_nonoverlapping(value.to_le_bytes().as_ptr(), self.storage.add(offset), 4) };
     }
 
     fn put_u64(&mut self, offset: usize, value: u64) {
-        self.bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        assert!(offset.checked_add(8).is_some_and(|end| end <= Self::BYTES));
+        unsafe { core::ptr::copy_nonoverlapping(value.to_le_bytes().as_ptr(), self.storage.add(offset), 8) };
+    }
+
+    fn put_bytes(&mut self, offset: usize, bytes: &[u8]) {
+        assert!(offset.checked_add(bytes.len()).is_some_and(|end| end <= Self::BYTES));
+        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.storage.add(offset), bytes.len()) };
+    }
+
+    fn put_byte(&mut self, offset: usize, value: u8) {
+        assert!(offset < Self::BYTES);
+        unsafe { self.storage.add(offset).write(value) };
     }
 
     fn symbol(&mut self, index: usize, name: &[u8], kind: u8, binding: u8, visibility: u8, section: u16) {
         let name_offset = 1usize;
-        self.bytes[Self::STRTAB + name_offset..Self::STRTAB + name_offset + name.len()]
-            .copy_from_slice(name);
-        self.bytes[Self::STRTAB + name_offset + name.len()] = 0;
-        let offset = Self::SYMTAB + index * 24;
+        self.put_bytes(Self::STRTAB + name_offset, name);
+        self.put_byte(Self::STRTAB + name_offset + name.len(), 0);
+        let offset = Self::SYMTAB.checked_add(index.checked_mul(24).expect("symbol offset"))
+            .expect("symbol offset");
+        assert!(offset.checked_add(24).is_some_and(|end| end <= Self::BYTES));
         self.put_u32(offset, name_offset as u32);
-        self.bytes[offset + 4] = kind | binding << 4;
-        self.bytes[offset + 5] = visibility;
-        self.bytes[offset + 6..offset + 8].copy_from_slice(&section.to_le_bytes());
+        self.put_byte(offset + 4, kind | binding << 4);
+        self.put_byte(offset + 5, visibility);
+        self.put_bytes(offset + 6, &section.to_le_bytes());
     }
 
     fn rela(&mut self, kind: u32, symbol: usize, addend: i64) {
@@ -199,7 +213,9 @@ impl MappedImage {
     }
 
     fn rela_at(&mut self, destination: usize, kind: u32, symbol: usize, addend: i64) {
-        let offset = Self::RELA + self.count * ELF64_RELA_SIZE;
+        let offset = Self::RELA.checked_add(self.count.checked_mul(ELF64_RELA_SIZE).expect("RELA offset"))
+            .expect("RELA offset");
+        assert!(offset.checked_add(ELF64_RELA_SIZE).is_some_and(|end| end <= Self::BYTES));
         self.put_u64(offset, destination as u64);
         self.put_u64(offset + 8, kind as u64 | (symbol as u64) << 32);
         self.put_u64(offset + 16, addend as u64);
@@ -214,20 +230,19 @@ impl MappedImage {
         self.put_u32(NOTE, OWNED_CRT_NOTE_NAME.len() as u32);
         self.put_u32(NOTE + 4, 4);
         self.put_u32(NOTE + 8, OWNED_CRT_NOTE_TYPE);
-        self.bytes[NOTE + 12..NOTE + 12 + OWNED_CRT_NOTE_NAME.len()]
-            .copy_from_slice(OWNED_CRT_NOTE_NAME);
+        self.put_bytes(NOTE + 12, OWNED_CRT_NOTE_NAME);
         self.put_u32(NOTE + 20, OWNED_CRT_NOTE_REVISION);
     }
 
     fn object(&self, mapped: bool) -> Object {
         Object {
-            base: self.bytes.as_ptr() as u64,
-            phdr: self.bytes.as_ptr(),
+            base: self.storage as u64,
+            phdr: self.storage,
             phnum: 2,
-            symtab: unsafe { self.bytes.as_ptr().add(Self::SYMTAB) },
-            strtab: unsafe { self.bytes.as_ptr().add(Self::STRTAB) },
+            symtab: unsafe { self.storage.add(Self::SYMTAB) },
+            strtab: unsafe { self.storage.add(Self::STRTAB) },
             strsz: 128,
-            rela: unsafe { self.bytes.as_ptr().add(Self::RELA) },
+            rela: unsafe { self.storage.add(Self::RELA) },
             relasz: self.count * ELF64_RELA_SIZE,
             role: if mapped { ObjectRole::Library } else { ObjectRole::Main },
             ..EMPTY_OBJECT
@@ -235,10 +250,7 @@ impl MappedImage {
     }
 
     fn destination(&self) -> u64 {
-        u64::from_le_bytes(
-            self.bytes[Self::DESTINATION..Self::DESTINATION + 8]
-                .try_into().unwrap(),
-        )
+        unsafe { read_u64(self.storage.add(Self::DESTINATION)) }
     }
 
     fn set_destination(&mut self, value: u64) {
@@ -246,7 +258,18 @@ impl MappedImage {
     }
 
     fn word_at(&self, offset: usize) -> u64 {
-        u64::from_le_bytes(self.bytes[offset..offset + 8].try_into().unwrap())
+        assert!(offset.checked_add(8).is_some_and(|end| end <= Self::BYTES));
+        unsafe { read_u64(self.storage.add(offset)) }
+    }
+
+    fn base(&self) -> u64 {
+        self.storage as u64
+    }
+}
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+impl Drop for MappedImage {
+    fn drop(&mut self) {
+        unsafe { syscall2(SYS_MUNMAP, self.storage as i64, PAGE as i64); }
     }
 }
 
@@ -533,7 +556,7 @@ fn installed_runtime_function_imports_validate_shape_before_any_graph_write() {
             objects[1] = library.object(true);
             assert_eq!(unsafe { relocate_initial_graph(&graph(2), &objects) }.is_some(), admitted);
             if admitted {
-                assert_eq!(main.destination(), main.bytes.as_ptr() as u64);
+                assert_eq!(main.destination(), main.base());
                 assert_eq!(library.destination(), x86_64_initial_worker_tls::runtime_function(&name[1..name.len()-1]).unwrap());
             } else {
                 assert_eq!(main.destination(), 0xfeed);
