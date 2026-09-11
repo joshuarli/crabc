@@ -406,17 +406,21 @@ assert_dynamic_receipt_and_elf() {
     readelf -hW "$consumer" >"${consumer}.header"
     readelf -lW "$consumer" >"${consumer}.segments"
     readelf -dW "$consumer" >"${consumer}.dynamic"
-    python3 -B - "$product" "$consumer" "$mode" "$object" "$receipt" <<'PY'
+    python3 -B - "$ROOT" "$product" "$consumer" "$mode" "$object" "$receipt" <<'PY'
 from hashlib import sha256
 import json
 from pathlib import Path
 import sys
 
-root = Path(sys.argv[1]).resolve()
-consumer = Path(sys.argv[2]).resolve()
-mode = sys.argv[3]
-object_path = Path(sys.argv[4]).resolve()
-receipt_path = Path(sys.argv[5]).resolve()
+source_root = Path(sys.argv[1])
+sys.path.insert(0, str(source_root / "compat/x86_64"))
+import owned_dynamic_receipt as receipt_contract
+
+root = Path(sys.argv[2]).resolve()
+consumer = Path(sys.argv[3]).resolve()
+mode = sys.argv[4]
+object_path = Path(sys.argv[5]).resolve()
+receipt_path = Path(sys.argv[6]).resolve()
 digest = lambda path: sha256(path.read_bytes()).hexdigest()
 receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
 manifest = root / "share/crabc/manifest.json"
@@ -424,8 +428,18 @@ expected_runtime = sorted("usr/lib/" + entry for entry in (
     "Scrt1.o" if mode == "pie" else "crt1.o",
     "crabc-dynamic-attach.o", "crti.o", "libc.so", "libcrabc-builtins.a", "crtn.o",
 ))
-if receipt.get("schema") != 1 or receipt.get("format") != "crabc-x86-64-owned-dynamic-sysroot-v1":
-    raise SystemExit("process-control dynamic receipt schema drifted")
+if not isinstance(receipt, dict):
+    raise SystemExit("process-control dynamic receipt is not an object")
+def require(condition, message):
+    if not condition:
+        raise SystemExit("process-control dynamic receipt " + message)
+search = receipt_contract.validate(
+    receipt, format="crabc-x86-64-owned-dynamic-sysroot-v1", label="process-control dynamic receipt",
+    fail=lambda message: require(False, message),
+)
+receipt_contract.require_runpath(
+    search, "/usr/lib", label="process-control dynamic receipt", fail=lambda message: require(False, message),
+)
 if receipt.get("mode") != ("pie" if mode == "pie" else "exec") or receipt.get("binding") != "now":
     raise SystemExit("process-control dynamic receipt mode drifted")
 if receipt.get("runtime_imports") != [] or receipt.get("application_dsos") != {}:
@@ -437,11 +451,13 @@ if receipt.get("manifest_sha256") != digest(manifest):
 if receipt.get("owned_runtime_inputs") != expected_runtime or not receipt.get("link_trace"):
     raise SystemExit("process-control dynamic runtime roster or trace drifted")
 records = receipt.get("input_receipts")
-if not isinstance(records, list) or not any(Path(record.get("path", "")).resolve() == object_path for record in records):
+if (not isinstance(records, list) or not all(isinstance(record, dict) and isinstance(record.get("path"), str)
+                                              and isinstance(record.get("sha256"), str) for record in records)
+        or not any(Path(record["path"]).resolve() == object_path for record in records)):
     raise SystemExit("process-control dynamic receipt omits the one workload object")
 for record in records:
-    path = Path(record.get("path", ""))
-    if not path.is_file() or record.get("sha256") != digest(path):
+    path = Path(record["path"])
+    if not path.is_file() or record["sha256"] != digest(path):
         raise SystemExit("process-control dynamic receipt input identity drifted")
 header = Path(str(consumer) + ".header").read_text(encoding="utf-8")
 segments = Path(str(consumer) + ".segments").read_text(encoding="utf-8")

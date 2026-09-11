@@ -28,6 +28,9 @@ import run as LUA
 
 
 ROOT = LUA.ROOT
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+import owned_dynamic_receipt as receipt_contract
+
 FIXTURES = LUA.FIXTURES
 MANIFEST = LUA.MANIFEST
 CACHE = LUA.CACHE
@@ -300,13 +303,24 @@ def audit_dynamic_receipt(
         decoded = json.loads(receipt.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise LUA.RunnerError(f"sealed dynamic link receipt is unreadable: {receipt}") from error
-    if not isinstance(decoded, dict) or (
-        decoded.get("schema"),
+    if not isinstance(decoded, dict):
+        raise LUA.RunnerError(f"sealed dynamic {output.name} receipt is not an object")
+
+    def reject(message: str) -> None:
+        raise LUA.RunnerError(f"sealed dynamic {output.name} receipt {message}")
+
+    search = receipt_contract.validate(
+        decoded, format=FORMAT, label=f"sealed dynamic {output.name} receipt", fail=reject,
+    )
+    receipt_contract.require_runpath(
+        search, "/usr/lib", label=f"sealed dynamic {output.name} receipt", fail=reject,
+    )
+    if (
         decoded.get("format"),
         decoded.get("mode"),
         decoded.get("output_path"),
         decoded.get("output_sha256"),
-    ) != (1, FORMAT, mode, str(output.resolve()), LUA.sha256_file(output)):
+    ) != (FORMAT, mode, str(output.resolve()), LUA.sha256_file(output)):
         raise LUA.RunnerError(f"sealed dynamic {output.name} receipt drifted")
     if decoded.get("manifest_sha256") != LUA.sha256_file(sysroot / "share/crabc/manifest.json"):
         raise LUA.RunnerError("sealed dynamic receipt does not bind its installed sysroot")

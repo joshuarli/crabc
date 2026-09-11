@@ -121,14 +121,18 @@ audit_consumer() {
     readelf -dW "$candidate" >"$candidate.dynamic"
     readelf -sW "$candidate" >"$candidate.symbols"
     readelf -sW "$provider" >"$candidate.provider-symbols"
-    python3 -B - "$family" "$mode" "$candidate" "$receipt" "$candidate.provider-symbols" <<'PY'
+    python3 -B - "$ROOT" "$family" "$mode" "$candidate" "$receipt" "$candidate.provider-symbols" <<'PY'
 import hashlib
 import json
 import re
 import sys
 from pathlib import Path
 
-family, mode, candidate_text, receipt_text, provider_symbols_text = sys.argv[1:]
+source_root, family, mode, candidate_text, receipt_text, provider_symbols_text = sys.argv[1:]
+if family == 'dynamic':
+    sys.path.insert(0, str(Path(source_root) / 'compat/x86_64'))
+    import owned_dynamic_receipt as receipt_contract
+
 candidate = Path(candidate_text)
 receipt = json.loads(Path(receipt_text).read_text())
 
@@ -140,8 +144,18 @@ expected_format = (
     'crabc-x86-64-owned-dynamic-sysroot-v1'
     if family == 'dynamic' else 'crabc-x86-64-sealed-static-driver-v1'
 )
-require(receipt.get('schema') == 1 and receipt.get('format') == expected_format,
-        'sealed driver receipt')
+if family == 'dynamic':
+    require(isinstance(receipt, dict), 'dynamic receipt is not an object')
+    search = receipt_contract.validate(
+        receipt, format=expected_format, label='owned error-reporting dynamic receipt',
+        fail=lambda message: require(False, message),
+    )
+    receipt_contract.require_runpath(
+        search, '/usr/lib', label='owned error-reporting dynamic receipt', fail=lambda message: require(False, message),
+    )
+else:
+    require(receipt.get('schema') == 1 and receipt.get('format') == expected_format,
+            'sealed driver receipt')
 output_hash = receipt.get('output_sha256') if family == 'dynamic' else receipt.get('output', {}).get('sha256')
 require(output_hash == hashlib.sha256(candidate.read_bytes()).hexdigest(),
         'output receipt hash')

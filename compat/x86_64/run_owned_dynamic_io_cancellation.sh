@@ -112,13 +112,16 @@ audit_dynamic_consumer() {
     readelf -lW "$candidate" >"$candidate.segments"
     readelf -dW "$candidate" >"$candidate.dynamic"
     readelf --dyn-syms -W "$candidate" >"$candidate.symbols"
-    python3 -B - "$installed" "$mode" "$candidate" "$interpreter" <<'PY'
+    python3 -B - "$ROOT" "$installed" "$mode" "$candidate" "$interpreter" <<'PY'
 import hashlib
 import json
 import re
 import sys
 from pathlib import Path
-root, mode, candidate_text, interpreter = sys.argv[1:]
+source_root, root, mode, candidate_text, interpreter = sys.argv[1:]
+sys.path.insert(0, str(Path(source_root) / "compat/x86_64"))
+import owned_dynamic_receipt as receipt_contract
+
 root, candidate = Path(root), Path(candidate_text)
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -126,7 +129,15 @@ def require(condition, message):
     if not condition:
         raise SystemExit('dynamic cancellation audit: ' + message)
 receipt = json.loads(Path(str(candidate) + '.crabc-link.json').read_text())
-require(receipt.get('schema') == 1 and receipt.get('format') == 'crabc-x86-64-owned-dynamic-sysroot-v1', 'receipt format')
+require(isinstance(receipt, dict), 'receipt is not an object')
+search = receipt_contract.validate(
+    receipt, format='crabc-x86-64-owned-dynamic-sysroot-v1', label='dynamic cancellation receipt',
+    fail=lambda message: require(False, message),
+)
+receipt_contract.require_runpath(
+    search, '/usr/lib', label='dynamic cancellation receipt',
+    fail=lambda message: require(False, message),
+)
 require(receipt.get('mode') == ('pie' if mode == 'pie' else 'exec') and receipt.get('binding') == 'now', 'entry or binding mode')
 require(receipt.get('runtime_imports') == [] and receipt.get('application_dsos') == {}, 'unexpected application dependency')
 require(receipt.get('output_path') == str(candidate.resolve()) and receipt.get('output_sha256') == digest(candidate), 'consumer identity')
@@ -134,8 +145,13 @@ require(receipt.get('manifest_sha256') == digest(root / 'share/crabc/manifest.js
 entry = 'Scrt1.o' if mode == 'pie' else 'crt1.o'
 expected = sorted('usr/lib/' + name for name in (entry, 'crabc-dynamic-attach.o', 'crti.o', 'libc.so', 'libcrabc-builtins.a', 'crtn.o'))
 require(receipt.get('owned_runtime_inputs') == expected, 'runtime input roster')
-for record in receipt['input_receipts']:
-    require(record['sha256'] == digest(Path(record['path'])), 'link input identity')
+records = receipt.get('input_receipts')
+require(isinstance(records, list), 'link input receipt roster')
+for record in records:
+    require(isinstance(record, dict) and isinstance(record.get('path'), str)
+            and isinstance(record.get('sha256'), str), 'link input receipt type')
+    path = Path(record['path'])
+    require(path.is_file() and record['sha256'] == digest(path), 'link input identity')
 header = Path(str(candidate) + '.header').read_text()
 require('Advanced Micro Devices X86-64' in header, 'machine')
 require(re.search(r'Type:\s+' + ('DYN' if mode == 'pie' else 'EXEC') + r'\s', header), 'ELF type')

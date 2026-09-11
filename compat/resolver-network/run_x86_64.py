@@ -30,6 +30,9 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+import owned_dynamic_receipt as receipt_contract
+
 MUSL_ROOT = Path("/opt/musl-1.2.6")
 MUSL_COMPILER = Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 SOURCE = ROOT / "compat/resolver-network/workload.c"
@@ -449,10 +452,21 @@ def dynamic_receipt_audit(sysroot: Path, mode: str, object_file: Path, output: P
     except (OSError, json.JSONDecodeError) as error:
         raise RunnerError(f"dynamic {mode} receipt is unreadable") from error
     selected = {"--dynamic-pie": ("pie", "Scrt1.o"), "--dynamic-non-pie": ("exec", "crt1.o")}[mode]
-    if not isinstance(data, dict) or (
-        data.get("schema"), data.get("format"), data.get("mode"), data.get("binding"), data.get("runtime_imports"), data.get("application_runpath"),
+    if not isinstance(data, dict):
+        raise RunnerError(f"dynamic {mode} receipt is not an object")
+
+    def reject(message: str) -> None:
+        raise RunnerError(f"dynamic {mode} receipt {message}")
+
+    search = receipt_contract.validate(data, format=DYNAMIC_FORMAT, label=f"dynamic {mode} receipt", fail=reject)
+    receipt_contract.require_runpath(
+        search, "/usr/lib", label=f"dynamic {mode} receipt", fail=reject,
+    )
+    if (
+        data.get("format"), data.get("mode"), data.get("binding"), data.get("runtime_imports"),
         data.get("output_path"), data.get("output_sha256"), data.get("manifest_sha256"), data.get("application_dsos")
-    ) != (1, DYNAMIC_FORMAT, selected[0], "now", [], "/usr/lib", str(output.resolve()), sha256_file(output), sha256_file(sysroot / "share/crabc/manifest.json"), {}):
+    ) != (DYNAMIC_FORMAT, selected[0], "now", [], str(output.resolve()), sha256_file(output),
+          sha256_file(sysroot / "share/crabc/manifest.json"), {}):
         raise RunnerError(f"dynamic {mode} receipt contract drifted")
     library = sysroot / "usr/lib"
     runtime = [library / "crti.o", library / "libc.so", library / "crtn.o", library / selected[1], library / "crabc-dynamic-attach.o"]

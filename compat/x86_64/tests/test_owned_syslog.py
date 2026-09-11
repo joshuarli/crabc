@@ -209,6 +209,88 @@ class OwnedSyslogTests(unittest.TestCase):
                     translation,
                 )
 
+    def test_installed_dynamic_compiler_contract_binds_default_translation_shape(self) -> None:
+        """The header witness replays the installed driver's empty option plan."""
+        import importlib.util
+
+        specification = importlib.util.spec_from_file_location(
+            "owned_syslog_evidence_compiler_contract_test", EVIDENCE_MODULE
+        )
+        assert specification is not None and specification.loader is not None
+        evidence = importlib.util.module_from_spec(specification)
+        sys.modules[specification.name] = evidence
+        specification.loader.exec_module(evidence)
+
+        scratch = ROOT / ".work" / "x86_64" / "tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="owned-syslog-compiler-contract.", dir=scratch
+        ) as temporary:
+            installed = Path(temporary) / "installed"
+            driver = installed / "bin" / "crabc-cc-dynamic"
+            helper = installed / "share" / "crabc" / "crabc_cc_static.py"
+            driver.parent.mkdir(parents=True)
+            helper.parent.mkdir(parents=True)
+            dynamic_driver = (
+                ROOT / "compat" / "x86_64" / "crabc_cc_owned_dynamic.py"
+            ).read_text(encoding="utf-8")
+            driver.write_text(dynamic_driver, encoding="utf-8")
+            helper.write_text(
+                "def compiler():\n    return '/bin/true'\n"
+                "def clean_environment():\n    return {}\n",
+                encoding="utf-8",
+            )
+
+            _, observed_driver, observed_helper = evidence._installed_compiler_contract(
+                installed
+            )
+            self.assertEqual(observed_driver, driver.resolve())
+            self.assertEqual(observed_helper, helper.resolve())
+
+            source = Path(temporary) / "probe.c"
+            workload = Path(temporary) / "workload.o"
+            header_trace = Path(temporary) / "header.trace"
+            translation = Path(temporary) / "translation.json"
+            source.write_text("#include <syslog.h>\n", encoding="utf-8")
+            evidence.capture_installed_header_translation(
+                installed, source, workload, header_trace, translation
+            )
+            record = json.loads(translation.read_text(encoding="utf-8"))
+            self.assertEqual(
+                record["source_translation_command"],
+                [
+                    "/bin/true",
+                    "-nostdinc",
+                    "-isystem",
+                    str(installed / "usr/include"),
+                    "-ffreestanding",
+                    "-fno-builtin",
+                    "-fstack-protector-strong",
+                    "-std=c11",
+                    "-fno-builtin",
+                    "-fno-stack-protector",
+                    "-fPIE",
+                    "-c",
+                    str(source),
+                    "-o",
+                    str(workload),
+                ],
+            )
+
+            driver.write_text(
+                dynamic_driver.replace(
+                    '*(item for directory in quote_include_dirs for item in ("-iquote", str(directory))),',
+                    "*(),",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                evidence.WorkloadBindingError,
+                "installed dynamic compiler composition drifted",
+            ):
+                evidence._installed_compiler_contract(installed)
+
     def test_replay_products_must_stay_below_the_checkout_work_boundary(self) -> None:
         scratch = ROOT / ".work" / "x86_64" / "tmp"
         scratch.mkdir(parents=True, exist_ok=True)

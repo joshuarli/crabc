@@ -125,16 +125,29 @@ readelf --dyn-syms -W "$work/export-main" >"$work/export-main.dynsym"
 awk '$5 == "GLOBAL" && $6 == "DEFAULT" && $7 != "UND" && $8 == "owned_driver_exported_main_value" { found = 1 }
      END { exit !found }' "$work/export-main.dynsym"
 
-python3 -B - "$work/export-main.crabc-link.json" "$work/export-main" <<'PY'
+python3 -B - "$ROOT" "$work/export-main.crabc-link.json" "$work/export-main" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
 
-receipt_path, executable_path = map(Path, sys.argv[1:])
+source_root, receipt_path, executable_path = map(Path, sys.argv[1:])
+sys.path.insert(0, str(source_root / "compat/x86_64"))
+import owned_dynamic_receipt as receipt_contract
+
 receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-if receipt.get("schema") != 1 or receipt.get("format") != "crabc-x86-64-owned-dynamic-sysroot-v1":
-    raise SystemExit("dynamic driver export receipt identity drifted")
+if not isinstance(receipt, dict):
+    raise SystemExit("dynamic driver export receipt is not an object")
+def require(condition, message):
+    if not condition:
+        raise SystemExit("dynamic driver export receipt " + message)
+search = receipt_contract.validate(
+    receipt, format="crabc-x86-64-owned-dynamic-sysroot-v1", label="dynamic driver export receipt",
+    fail=lambda message: require(False, message),
+)
+receipt_contract.require_runpath(
+    search, "/usr/lib", label="dynamic driver export receipt", fail=lambda message: require(False, message),
+)
 if receipt.get("output_path") != str(executable_path.resolve()):
     raise SystemExit("dynamic driver export receipt output path drifted")
 if receipt.get("output_sha256") != hashlib.sha256(executable_path.read_bytes()).hexdigest():

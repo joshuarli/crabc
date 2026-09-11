@@ -189,9 +189,16 @@ def _installed_compiler_contract(installed: Path) -> tuple[Any, Path, Path]:
     source = driver.read_text(encoding="utf-8")
     fragments = (
         "import crabc_cc_static as shared",
-        'run([shared.compiler(), "-nostdinc", "-isystem", str(root / "usr/include"),',
+        "quote_include_inputs = []",
+        "rounding_math = False",
+        "quote_include_dirs = []",
+        "for path in quote_include_inputs:",
+        'run([shared.compiler(), "-nostdinc",',
+        '*(item for directory in quote_include_dirs for item in ("-iquote", str(directory))),',
+        '"-isystem", str(root / "usr/include"),',
         '"-ffreestanding", "-fno-builtin", "-fstack-protector-strong",',
-        '*invocation.compiler_flags, "-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",',
+        '*invocation.compiler_flags, *(["-frounding-math"] if rounding_math else []),',
+        '"-fPIC" if mode == "shared" else "-fPIE" if mode == "pie" else "-fno-pie",',
     )
     if not all(fragment in source for fragment in fragments):
         _fail("owned syslog installed dynamic compiler composition drifted")
@@ -249,15 +256,23 @@ def capture_installed_header_translation(
         _fail("owned syslog installed compiler environment drifted")
     compiler = _executable_identity(Path(selected_compiler), "installed compiler")
     caller_flags = ["-std=c11", "-fno-builtin", "-fno-stack-protector"]
+    quote_include_dirs: tuple[Path, ...] = ()
+    rounding_math = False
     prefix = [
         selected_compiler,
         "-nostdinc",
+        *(
+            item
+            for directory in quote_include_dirs
+            for item in ("-iquote", str(directory))
+        ),
         "-isystem",
         str(installed_root / "usr/include"),
         "-ffreestanding",
         "-fno-builtin",
         "-fstack-protector-strong",
         *caller_flags,
+        *(["-frounding-math"] if rounding_math else []),
         "-fPIE",
     ]
     translation_command = [

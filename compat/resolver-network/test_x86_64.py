@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import io
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -163,6 +164,78 @@ class NativeResolverNetworkRunnerTests(unittest.TestCase):
             self.assertTrue((root / "artifacts/static-et-exec").is_dir())
             self.assertTrue((root / "artifacts/dynamic-non-pie").is_dir())
             self.assertEqual(command.call_args_list[0].args[0][3], "link.receipt.json")
+
+    def test_dynamic_receipt_audit_accepts_closed_schema_one_and_schema_two(self) -> None:
+        with tempfile.TemporaryDirectory(dir=runner.ROOT / ".work") as directory:
+            root = Path(directory)
+            product = root / "dynamic"
+            library = product / "usr/lib"
+            library.mkdir(parents=True)
+            runtime = []
+            for name in ("crti.o", "libc.so", "crtn.o", "Scrt1.o", "crabc-dynamic-attach.o", "libcrabc-builtins.a"):
+                path = library / name
+                path.write_bytes((name + "\n").encode())
+                runtime.append(path)
+            manifest = product / "share/crabc/manifest.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_bytes(b"owned manifest\n")
+            object_file = root / "workload.o"
+            object_file.write_bytes(b"workload\n")
+            output = root / "consumer"
+            output.write_bytes(b"consumer\n")
+            selected = runtime[:5]
+            archive = runtime[-1]
+            base = {
+                "format": runner.DYNAMIC_FORMAT,
+                "mode": "pie",
+                "binding": "now",
+                "runtime_imports": [],
+                "application_runpath": "/usr/lib",
+                "output_path": str(output.resolve()),
+                "output_sha256": runner.sha256_file(output),
+                "manifest_sha256": runner.sha256_file(manifest),
+                "application_dsos": {},
+                "owned_runtime_inputs": sorted(path.relative_to(product).as_posix() for path in [*selected, archive]),
+                "input_receipts": [
+                    {"path": str(path), "sha256": runner.sha256_file(path)}
+                    for path in [*selected, object_file.resolve(), archive]
+                ],
+                "resolved_linker": {"path": "/owned/ld.lld", "sha256": "0" * 64},
+                "link_command": ["/owned/ld.lld"],
+                "link_trace": [*(str(path) for path in selected), str(object_file.resolve())],
+                "campaign_complete": False,
+            }
+
+            def audit(record):
+                receipt = root / "consumer.crabc-link.json"
+                receipt.write_text(json.dumps(record), encoding="utf-8")
+                return runner.dynamic_receipt_audit(product, "--dynamic-pie", object_file, output, receipt)
+
+            for schema in (1, 2):
+                with self.subTest(schema=schema):
+                    record = {**base, "schema": schema}
+                    if schema == 2:
+                        record.update({
+                            "application_search_kind": "runpath",
+                            "application_rpath": None,
+                            "application_hash_style": "sysv",
+                        })
+                    self.assertEqual(audit(record)["input_count"], 7)
+
+            valid = {
+                **base, "schema": 2, "application_search_kind": "runpath",
+                "application_rpath": None, "application_hash_style": "sysv",
+            }
+            for changed in (
+                {key: value for key, value in valid.items() if key != "schema"},
+                {**base, "schema": 1, "application_search_kind": "runpath"},
+                {**valid, "application_hash_style": "gnu"},
+                {**valid, "application_search_kind": "rpath", "application_runpath": None,
+                 "application_rpath": "/usr/lib"},
+            ):
+                with self.subTest(changed=changed):
+                    with self.assertRaisesRegex(runner.RunnerError, "schema|fields|search-path"):
+                        audit(changed)
 
 
 prepare_spec = importlib.util.spec_from_file_location("resolver_network_x86_prepare", HERE / "prepare_x86_64.py")
