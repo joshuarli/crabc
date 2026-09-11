@@ -71,8 +71,9 @@ class PthreadFamilyContractTests(unittest.TestCase):
             "family_execution": ".work/posix/execution.json",
         }
         with patch.object(family.family, "validate_receipt", return_value={"fixture": True}) as validate:
-            selected = family.validate_request(self.root, request)
+            selected, matrix = family.validate_request(self.root, request)
         self.assertEqual(selected, self.receipt)
+        self.assertEqual(matrix, {"fixture": True})
         validate.assert_called_once_with(self.root, self.receipt)
 
         for bad in (
@@ -159,6 +160,74 @@ class PthreadFamilyCoverageTests(unittest.TestCase):
                  "case": "pthread-mutex", "modes": ["installed:dynamic-pie-kernel"], "behavior": "fixture"}
         with self.assertRaisesRegex(family.PthreadFamilyError, "missing dynamic qualification case"):
             family.dynamic_qualification_cells(self.root, {"work": ".work/missing", "cases": {}}, entry)
+
+    def _collection_fixture(self) -> tuple[Path, Path, dict[str, object], Path]:
+        roster = self.root / "compat/x86_64/pthread-family.toml"
+        roster.parent.mkdir(parents=True)
+        shutil.copyfile(ROOT / "compat/x86_64/pthread-family.toml", roster)
+        matrix_path = self.root / ".work/posix/execution.json"
+        matrix_path.parent.mkdir(parents=True)
+        matrix_path.write_text("{}\n", encoding="utf-8")
+        matrix = {
+            "schema": family.family.SCHEMA,
+            "status": "workload-matrix-verified",
+            "family": "libc.posix-runtime",
+            "native_aggregate_complete": False,
+            "family_completion": False,
+            "public_support": False,
+            "request": {"fixture": "request"},
+            "inputs": {
+                "source": {"fixture": "source"},
+                "oracle": {"fixture": "oracle"},
+                "dynamic_qualification": {"fixture": "dynamic"},
+            },
+        }
+        work = self.root / ".work/collection"
+        work.mkdir()
+        (work / "request.json").write_text(json.dumps({
+            "schema": family.SCHEMA,
+            "family_execution": ".work/posix/execution.json",
+        }), encoding="utf-8")
+        return work, matrix_path, matrix, roster
+
+    def _collect_with_mocked_prerequisites(self, work: Path, matrix_path: Path,
+                                           matrix: dict[str, object], roster: Path) -> dict[str, object]:
+        loaded_roster = family.load_roster
+
+        def fixture_cells(*arguments: object) -> dict[str, dict[str, str]]:
+            required = arguments[-1]
+            return {mode: {"kind": "fixture"} for mode in required["modes"]}
+
+        with patch.object(family, "ROSTER_PATH", roster), \
+                patch.object(family, "load_roster", side_effect=lambda: loaded_roster(roster)), \
+                patch.object(family, "validate_request", return_value=(matrix_path, matrix)), \
+                patch.object(family, "matrix_request", return_value=({}, matrix["inputs"], {})), \
+                patch.object(family, "_dynamic_qualification", return_value={}), \
+                patch.object(family, "matrix_cells", side_effect=fixture_cells), \
+                patch.object(family, "dynamic_qualification_cells", side_effect=fixture_cells), \
+                patch.object(family, "composition_cells", side_effect=fixture_cells):
+            return family.collect(self.root, work)
+
+    def test_collection_seals_a_tracked_roster_outside_mutable_evidence(self) -> None:
+        work, matrix_path, matrix, roster = self._collection_fixture()
+        record = self._collect_with_mocked_prerequisites(work, matrix_path, matrix, roster)
+        self.assertEqual(record["roster"], {
+            "path": "compat/x86_64/pthread-family.toml",
+            "sha256": family.family.digest(roster),
+            "size": roster.stat().st_size,
+        })
+
+    def test_collection_rejects_a_symlink_or_external_roster(self) -> None:
+        work, matrix_path, matrix, roster = self._collection_fixture()
+        symlink = self.root / "compat/x86_64/pthread-family-link.toml"
+        symlink.symlink_to(roster)
+        external = self.root.parent / (self.root.name + "-external-roster.toml")
+        shutil.copyfile(roster, external)
+        self.addCleanup(lambda: external.unlink(missing_ok=True))
+        for name, candidate in (("symlink", symlink), ("external", external)):
+            with self.subTest(name=name), self.assertRaisesRegex(family.PthreadFamilyError,
+                                                                  "physical checkout file"):
+                self._collect_with_mocked_prerequisites(work, matrix_path, matrix, candidate)
 
     def test_matrix_request_retains_the_native_source_mount_for_relocated_replay(self) -> None:
         request_path = self.root / ".work/matrix/request.json"

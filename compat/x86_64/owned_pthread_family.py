@@ -167,14 +167,14 @@ def _relative_physical(root: Path, value: object, name: str) -> Path:
     return path
 
 
-def validate_request(root: Path, request: object) -> Path:
+def validate_request(root: Path, request: object) -> tuple[Path, dict[str, Any]]:
     require(isinstance(request, dict) and set(request) == {"schema", "family_execution"},
             "pthread family request fields differ")
     require(request["schema"] == SCHEMA, "pthread family request schema differs")
     path = _relative_physical(root, request["family_execution"], "family execution")
     require(path.name == "execution.json", "pthread family requires a POSIX execution.json receipt")
-    family.validate_receipt(root, path)
-    return path
+    matrix = family.validate_receipt(root, path)
+    return path, matrix
 
 
 def matrix_request(root: Path, matrix: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, dict[str, Path]]]:
@@ -310,6 +310,16 @@ def _current_identity(root: Path, value: object, description: str) -> dict[str, 
     actual = family.file_identity(root, path)
     require(family.same_json(actual, value), f"{description} changed")
     return actual
+
+
+def _source_file_identity(root: Path, path: Path, description: str) -> dict[str, Any]:
+    """Seal a tracked regular file outside mutable evidence work."""
+
+    path = path.absolute()
+    require(path.is_file() and not path.is_symlink() and path.resolve() == path
+            and path.is_relative_to(root), f"{description} must be a physical checkout file")
+    return {"path": path.relative_to(root).as_posix(), "sha256": family.digest(path),
+            "size": path.stat().st_size}
 
 
 def _checkout_identity(root: Path, value: object, description: str) -> dict[str, Any]:
@@ -636,8 +646,7 @@ def _dynamic_qualification(root: Path, matrix: dict[str, Any]) -> dict[str, Any]
 def collect(root: Path, work: Path) -> dict[str, Any]:
     work = family.physical(root, work)
     request = family.read(work / "request.json")
-    matrix_path = validate_request(root, request)
-    matrix = family.validate_receipt(root, matrix_path)
+    matrix_path, matrix = validate_request(root, request)
     require(matrix.get("schema") == family.SCHEMA and matrix.get("status") == "workload-matrix-verified"
             and matrix.get("family") == "libc.posix-runtime", "pthread family requires the POSIX product matrix")
     require(all(matrix.get(name) is False for name in ("native_aggregate_complete", "family_completion", "public_support")),
@@ -665,7 +674,7 @@ def collect(root: Path, work: Path) -> dict[str, Any]:
     }
     return {
         "schema": SCHEMA, "status": "installed-behavior-component-verified", "family": "libc.pthread-tls",
-        "inputs": inputs, "roster": family.file_identity(root, ROSTER_PATH), "coverage": coverage,
+        "inputs": inputs, "roster": _source_file_identity(root, ROSTER_PATH, "pthread family roster"), "coverage": coverage,
         **NONPROMOTING_FLAGS,
     }
 
@@ -685,8 +694,7 @@ def _fresh_work(root: Path, value: Path) -> Path:
 def execute(root: Path, family_execution: Path, output: Path, jobs: int) -> Path:
     receipt = family.physical(root, family_execution)
     request = {"schema": SCHEMA, "family_execution": receipt.relative_to(root).as_posix()}
-    matrix_path = validate_request(root, request)
-    matrix = family.validate_receipt(root, matrix_path)
+    matrix_path, matrix = validate_request(root, request)
     roster = load_roster()
     composition = next(entry for entry in roster["required"] if entry["kind"] == "composition")
     work = _fresh_work(root, output)
