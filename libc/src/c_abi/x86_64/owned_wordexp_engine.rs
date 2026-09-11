@@ -66,6 +66,9 @@ const COMMAND_SCOPE_BRACE: u8 = 3;
 const COMMAND_SCOPE_CASE: u8 = 4;
 const COMMAND_SCOPE_FOR: u8 = 5;
 const COMMAND_SCOPE_FUNCTION: u8 = 6;
+const COMMAND_SCOPE_IF: u8 = 7;
+const COMMAND_SCOPE_WHILE: u8 = 8;
+const COMMAND_SCOPE_UNTIL: u8 = 9;
 
 const COMMAND_PHASE_BODY: u8 = 0;
 const CASE_PHASE_WORD: u8 = 1;
@@ -77,7 +80,11 @@ const FOR_PHASE_AFTER_NAME: u8 = 6;
 const FOR_PHASE_WORDS: u8 = 7;
 const FOR_PHASE_BODY: u8 = 8;
 const FUNCTION_PHASE_CLOSE: u8 = 9;
-const FUNCTION_PHASE_BRACE: u8 = 10;
+const FUNCTION_PHASE_COMPOUND_BODY: u8 = 10;
+const IF_PHASE_CONDITION: u8 = 11;
+const IF_PHASE_BODY: u8 = 12;
+const LOOP_PHASE_CONDITION: u8 = 13;
+const LOOP_PHASE_BODY: u8 = 14;
 
 /// Candidate-local semantic failures. The C ABI mapping remains a later
 /// provider-integration decision.
@@ -1179,7 +1186,10 @@ struct CommandScope {
     command_position: bool,
     for_list_boundary: bool,
     case_after_delimiter: bool,
-    function_name_end: usize,
+    case_pattern_started: bool,
+    // The offset is a sentinel-backed candidate, retained across blanks so
+    // `name ()` is recognized as the same function definition as `name()`.
+    function_name_candidate_end: usize,
 }
 
 impl CommandScope {
@@ -1190,7 +1200,8 @@ impl CommandScope {
             command_position,
             for_list_boundary: false,
             case_after_delimiter: false,
-            function_name_end: NONE,
+            case_pattern_started: false,
+            function_name_candidate_end: NONE,
         }
     }
 
@@ -1216,6 +1227,18 @@ impl CommandScope {
 
     const fn function() -> Self {
         Self::new(COMMAND_SCOPE_FUNCTION, FUNCTION_PHASE_CLOSE, false)
+    }
+
+    const fn if_command() -> Self {
+        Self::new(COMMAND_SCOPE_IF, IF_PHASE_CONDITION, true)
+    }
+
+    const fn while_loop() -> Self {
+        Self::new(COMMAND_SCOPE_WHILE, LOOP_PHASE_CONDITION, true)
+    }
+
+    const fn until_loop() -> Self {
+        Self::new(COMMAND_SCOPE_UNTIL, LOOP_PHASE_CONDITION, true)
     }
 }
 
@@ -1255,6 +1278,22 @@ fn scan_dollar_single(
 #[inline]
 const fn command_boundary(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'<' | b'>' | b'(' | b')')
+}
+
+// `{` and `}` are reserved words only when the scanner sees a whole lexical
+// token. In particular, `{missing` starts an ordinary command word instead of
+// a brace group. `word_start` proves the preceding boundary; this lookahead
+// proves the following boundary without retaining a command AST.
+fn brace_control_word(
+    syntax: &WordexpSyntax,
+    frame: &ScanFrame,
+    index: usize,
+) -> bool {
+    if !frame.word_start { return false; }
+    let after = index + 1;
+    if after >= syntax.source_len() { return true; }
+    // SAFETY: the preceding length check bounds this one-byte lookahead.
+    command_boundary(unsafe { syntax.byte(after) })
 }
 
 fn assignment_word(bytes: &[u8]) -> bool {
@@ -1300,9 +1339,44 @@ fn current_command_scope(
 
 #[inline]
 const fn scope_accepts_commands(scope: CommandScope) -> bool {
-    matches!(scope.kind, COMMAND_SCOPE_ROOT | COMMAND_SCOPE_SUBSHELL | COMMAND_SCOPE_BRACE) ||
+    matches!(
+        scope.kind,
+        COMMAND_SCOPE_ROOT |
+        COMMAND_SCOPE_SUBSHELL |
+        COMMAND_SCOPE_BRACE |
+        COMMAND_SCOPE_IF |
+        COMMAND_SCOPE_WHILE |
+        COMMAND_SCOPE_UNTIL
+    ) ||
     (scope.kind == COMMAND_SCOPE_CASE && scope.phase == CASE_PHASE_BODY) ||
     (scope.kind == COMMAND_SCOPE_FOR && scope.phase == FOR_PHASE_BODY)
+}
+
+// Begin a compound command only at a reserved-word position. A function
+// definition is different: after `name ()`, its body is itself one compound
+// command, so the pending function marker becomes that body's delimiter scope
+// instead of becoming its parent. This remains lexical bookkeeping; no command
+// or redirection tree is retained.
+fn begin_compound_command(
+    scopes: &mut HeapVec<CommandScope>,
+    frame: &ScanFrame,
+    child: CommandScope,
+) -> Result<(), WordexpError> {
+    let (scope_index, mut scope) = current_command_scope(scopes, frame)?;
+    if scope.kind == COMMAND_SCOPE_FUNCTION {
+        if scope.phase != FUNCTION_PHASE_COMPOUND_BODY { return Err(WordexpError::Syntax); }
+        // SAFETY: scope_index identifies the pending function-body marker.
+        unsafe { scopes.replace(scope_index, child); }
+        return Ok(());
+    }
+    if !scope_accepts_commands(scope) || !scope.command_position {
+        return Err(WordexpError::Syntax);
+    }
+    scope.command_position = false;
+    scope.function_name_candidate_end = NONE;
+    // SAFETY: scope_index identifies the command containing the child scope.
+    unsafe { scopes.replace(scope_index, scope); }
+    scopes.push(child)
 }
 
 fn complete_command_scope(
@@ -1318,7 +1392,7 @@ fn complete_command_scope(
     let mut parent = unsafe { scopes.get(parent_index) };
     if !scope_accepts_commands(parent) { return Err(WordexpError::Syntax); }
     parent.command_position = false;
-    parent.function_name_end = NONE;
+    parent.function_name_candidate_end = NONE;
     // SAFETY: parent_index is below the current live scope length.
     unsafe { scopes.replace(parent_index, parent); }
     Ok(())
@@ -1336,7 +1410,7 @@ fn command_separator(
         if matches!(byte, b';' | b'\n') { scope.for_list_boundary = true; }
     } else if scope_accepts_commands(scope) {
         scope.command_position = true;
-        scope.function_name_end = NONE;
+        scope.function_name_candidate_end = NONE;
     }
     // SAFETY: scope_index identifies the current top lexical scope.
     unsafe { scopes.replace(scope_index, scope); }
@@ -1354,7 +1428,8 @@ fn begin_case_pattern(
     scope.phase = CASE_PHASE_PATTERN;
     scope.command_position = true;
     scope.case_after_delimiter = true;
-    scope.function_name_end = NONE;
+    scope.case_pattern_started = false;
+    scope.function_name_candidate_end = NONE;
     // SAFETY: scope_index identifies the current top lexical scope.
     unsafe { scopes.replace(scope_index, scope); }
     Ok(true)
@@ -1385,17 +1460,23 @@ fn finish_command_token(
                 if bytes != b"in" { return Err(WordexpError::Syntax); }
                 scope.phase = CASE_PHASE_PATTERN;
                 scope.command_position = true;
+                scope.case_after_delimiter = false;
+                scope.case_pattern_started = false;
                 // SAFETY: scope_index identifies the current top lexical scope.
                 unsafe { scopes.replace(scope_index, scope); }
                 return Ok(());
             }
             CASE_PHASE_PATTERN => {
-                // After a final `;;`, POSIX permits `esac` directly. The
-                // delimiter bit distinguishes that terminator from a pattern
-                // named `esac` or an ordinary body argument named `esac`.
-                if scope.case_after_delimiter && bytes == b"esac" {
+                // `esac` ends an empty case immediately after `in`, and it
+                // ends the case after a final `;;`. Once a pattern has begun,
+                // the same bytes remain pattern data; an optional leading `(`
+                // records that distinction before its token is scanned.
+                if bytes == b"esac" &&
+                    (!scope.case_pattern_started || scope.case_after_delimiter)
+                {
                     return complete_command_scope(scopes, frame);
                 }
+                scope.case_pattern_started = true;
                 scope.case_after_delimiter = false;
                 // SAFETY: scope_index identifies the current top lexical scope.
                 unsafe { scopes.replace(scope_index, scope); }
@@ -1436,7 +1517,7 @@ fn finish_command_token(
                 if bytes == b"do" && scope.for_list_boundary {
                     scope.phase = FOR_PHASE_BODY;
                     scope.command_position = true;
-                    scope.function_name_end = NONE;
+                    scope.function_name_candidate_end = NONE;
                 }
                 // SAFETY: scope_index identifies the current top lexical scope.
                 unsafe { scopes.replace(scope_index, scope); }
@@ -1451,33 +1532,86 @@ fn finish_command_token(
         }
     }
 
+    if scope.kind == COMMAND_SCOPE_IF && scope.command_position {
+        match bytes {
+            b"then" => {
+                scope.phase = IF_PHASE_BODY;
+                scope.function_name_candidate_end = NONE;
+                // SAFETY: scope_index identifies the current top lexical scope.
+                unsafe { scopes.replace(scope_index, scope); }
+                return Ok(());
+            }
+            b"elif" => {
+                scope.phase = IF_PHASE_CONDITION;
+                scope.function_name_candidate_end = NONE;
+                // SAFETY: scope_index identifies the current top lexical scope.
+                unsafe { scopes.replace(scope_index, scope); }
+                return Ok(());
+            }
+            b"else" => {
+                scope.phase = IF_PHASE_BODY;
+                scope.function_name_candidate_end = NONE;
+                // SAFETY: scope_index identifies the current top lexical scope.
+                unsafe { scopes.replace(scope_index, scope); }
+                return Ok(());
+            }
+            b"fi" => return complete_command_scope(scopes, frame),
+            _ => {}
+        }
+    }
+
+    if matches!(scope.kind, COMMAND_SCOPE_WHILE | COMMAND_SCOPE_UNTIL) &&
+        scope.command_position
+    {
+        if bytes == b"do" {
+            scope.phase = LOOP_PHASE_BODY;
+            scope.function_name_candidate_end = NONE;
+            // SAFETY: scope_index identifies the current top lexical scope.
+            unsafe { scopes.replace(scope_index, scope); }
+            return Ok(());
+        }
+        if bytes == b"done" && scope.phase == LOOP_PHASE_BODY {
+            return complete_command_scope(scopes, frame);
+        }
+    }
+
+    if scope.kind == COMMAND_SCOPE_FUNCTION {
+        let body = match bytes {
+            b"case" => CommandScope::case(),
+            b"for" => CommandScope::for_loop(),
+            b"if" => CommandScope::if_command(),
+            b"while" => CommandScope::while_loop(),
+            b"until" => CommandScope::until_loop(),
+            _ => return Err(WordexpError::Syntax),
+        };
+        return begin_compound_command(scopes, frame, body);
+    }
+
     if !scope_accepts_commands(scope) { return Err(WordexpError::Syntax); }
     if !scope.command_position {
-        scope.function_name_end = NONE;
+        scope.function_name_candidate_end = NONE;
         // SAFETY: scope_index identifies the current top lexical scope.
         unsafe { scopes.replace(scope_index, scope); }
         return Ok(());
     }
     if bytes == b"case" {
-        scope.command_position = false;
-        scope.function_name_end = NONE;
-        // SAFETY: scope_index identifies the current top lexical scope.
-        unsafe { scopes.replace(scope_index, scope); }
-        scopes.push(CommandScope::case())?;
+        begin_compound_command(scopes, frame, CommandScope::case())?;
     } else if bytes == b"for" {
-        scope.command_position = false;
-        scope.function_name_end = NONE;
-        // SAFETY: scope_index identifies the current top lexical scope.
-        unsafe { scopes.replace(scope_index, scope); }
-        scopes.push(CommandScope::for_loop())?;
+        begin_compound_command(scopes, frame, CommandScope::for_loop())?;
+    } else if bytes == b"if" {
+        begin_compound_command(scopes, frame, CommandScope::if_command())?;
+    } else if bytes == b"while" {
+        begin_compound_command(scopes, frame, CommandScope::while_loop())?;
+    } else if bytes == b"until" {
+        begin_compound_command(scopes, frame, CommandScope::until_loop())?;
     } else if bytes == b"!" || command_control_word(bytes) || assignment_word(bytes) {
         scope.command_position = true;
-        scope.function_name_end = NONE;
+        scope.function_name_candidate_end = NONE;
         // SAFETY: scope_index identifies the current top lexical scope.
         unsafe { scopes.replace(scope_index, scope); }
     } else {
         scope.command_position = false;
-        scope.function_name_end = if identifier_word(bytes) { end } else { NONE };
+        scope.function_name_candidate_end = if identifier_word(bytes) { end } else { NONE };
         // SAFETY: scope_index identifies the current top lexical scope.
         unsafe { scopes.replace(scope_index, scope); }
     }
@@ -1487,16 +1621,31 @@ fn finish_command_token(
 fn open_command_parenthesis(
     scopes: &mut HeapVec<CommandScope>,
     frame: &ScanFrame,
-    index: usize,
 ) -> Result<(), WordexpError> {
-    let (_, scope) = current_command_scope(scopes, frame)?;
+    let (scope_index, mut scope) = current_command_scope(scopes, frame)?;
     if scope.kind == COMMAND_SCOPE_CASE && scope.phase == CASE_PHASE_PATTERN {
         // POSIX permits an optional opening parenthesis before each case
         // pattern. It is a pattern delimiter, not a subshell opener.
+        scope.case_pattern_started = true;
+        scope.case_after_delimiter = false;
+        // SAFETY: scope_index identifies the current top lexical scope.
+        unsafe { scopes.replace(scope_index, scope); }
         return Ok(());
     }
-    if scope.function_name_end == index {
+    if scope.function_name_candidate_end != NONE {
         scopes.push(CommandScope::function())?;
+    } else if scope.kind == COMMAND_SCOPE_FUNCTION &&
+        scope.phase == FUNCTION_PHASE_COMPOUND_BODY
+    {
+        // A function body may be a subshell compound command. Replace the
+        // pending function marker so this matching `)` completes the body and
+        // returns directly to the surrounding command scope.
+        scope.kind = COMMAND_SCOPE_SUBSHELL;
+        scope.phase = COMMAND_PHASE_BODY;
+        scope.command_position = true;
+        scope.function_name_candidate_end = NONE;
+        // SAFETY: scope_index identifies the pending function-body marker.
+        unsafe { scopes.replace(scope_index, scope); }
     } else if scope.kind != COMMAND_SCOPE_FUNCTION {
         // Retaining a parenthesized lexical scope is deliberately more
         // permissive than command validation. This scanner owns delimiters,
@@ -1513,11 +1662,11 @@ fn open_command_brace(
     frame: &ScanFrame,
 ) -> Result<bool, WordexpError> {
     let (scope_index, mut scope) = current_command_scope(scopes, frame)?;
-    if scope.kind == COMMAND_SCOPE_FUNCTION && scope.phase == FUNCTION_PHASE_BRACE {
+    if scope.kind == COMMAND_SCOPE_FUNCTION && scope.phase == FUNCTION_PHASE_COMPOUND_BODY {
         scope.kind = COMMAND_SCOPE_BRACE;
         scope.phase = COMMAND_PHASE_BODY;
         scope.command_position = true;
-        scope.function_name_end = NONE;
+        scope.function_name_candidate_end = NONE;
         // SAFETY: scope_index identifies the current top lexical scope.
         unsafe { scopes.replace(scope_index, scope); }
         return Ok(true);
@@ -1526,7 +1675,7 @@ fn open_command_brace(
         return Ok(false);
     }
     scope.command_position = false;
-    scope.function_name_end = NONE;
+    scope.function_name_candidate_end = NONE;
     // SAFETY: scope_index identifies the current top lexical scope.
     unsafe { scopes.replace(scope_index, scope); }
     scopes.push(CommandScope::brace())?;
@@ -1980,7 +2129,8 @@ fn scan_construct(
                 index = after;
                 continue;
             }
-            let brace_control = matches!(byte, b'{' | b'}') && frame.word_start;
+            let brace_control = matches!(byte, b'{' | b'}') &&
+                brace_control_word(syntax, &frame, index);
             if command_boundary(byte) || brace_control {
                 let at_word_start = frame.word_start;
                 finish_command_token(syntax, &mut frame, &mut scopes, index)?;
@@ -2050,7 +2200,7 @@ fn scan_construct(
                 }
             }
             SCAN_COMMAND if byte == b'(' => {
-                open_command_parenthesis(&mut scopes, &frame, index)?;
+                open_command_parenthesis(&mut scopes, &frame)?;
                 unsafe { frames.replace(top, frame); }
                 index += 1;
             }
@@ -2063,7 +2213,7 @@ fn scan_construct(
                 } else if scope.kind == COMMAND_SCOPE_CASE && scope.phase == CASE_PHASE_PATTERN {
                     scope.phase = CASE_PHASE_BODY;
                     scope.command_position = true;
-                    scope.function_name_end = NONE;
+                    scope.function_name_candidate_end = NONE;
                     let scope_index = scopes.len() - 1;
                     // SAFETY: scope_index identifies the current top lexical scope.
                     unsafe { scopes.replace(scope_index, scope); }
@@ -2072,7 +2222,7 @@ fn scan_construct(
                 } else if scope.kind == COMMAND_SCOPE_FUNCTION &&
                     scope.phase == FUNCTION_PHASE_CLOSE
                 {
-                    scope.phase = FUNCTION_PHASE_BRACE;
+                    scope.phase = FUNCTION_PHASE_COMPOUND_BODY;
                     let scope_index = scopes.len() - 1;
                     // SAFETY: scope_index identifies the current top lexical scope.
                     unsafe { scopes.replace(scope_index, scope); }
@@ -5454,8 +5604,8 @@ mod tests {
                 b"case x in x) printf '%s' in;; y) printf y;; esac".as_slice(),
             ),
             (
-                b"$(case esac in esac) printf yes;; esac)".as_slice(),
-                b"case esac in esac) printf yes;; esac".as_slice(),
+                b"$(case esac in (esac) printf yes;; esac)".as_slice(),
+                b"case esac in (esac) printf yes;; esac".as_slice(),
             ),
             (b"$(printf '%s' 'case in')".as_slice(), b"printf '%s' 'case in'".as_slice()),
             (b"$(case x in x) printf yes;; esac)".as_slice(), b"case x in x) printf yes;; esac".as_slice()),
@@ -5564,6 +5714,62 @@ mod tests {
             (
                 b"$(for v in x do case; do printf \"%s\" \"$v\"; done)".as_slice(),
                 b"for v in x do case; do printf \"%s\" \"$v\"; done".as_slice(),
+            ),
+        ] {
+            let syntax = WordexpSyntax::parse(input).unwrap();
+            assert_eq!(syntax.commands.len(), 1);
+            // SAFETY: the single command record belongs to this syntax object.
+            let command = unsafe { syntax.command(0) };
+            // SAFETY: the recorded body span is inside the copied source.
+            assert_eq!(unsafe { syntax.bytes(command.body) }, body);
+
+            let mut context = WordexpContext::new();
+            let mut commands = TestCommands::new(b"ok");
+            commands.expected_body = Some(body);
+            let mut paths = TestPaths::plain();
+            let words = evaluate(input, &mut context, &mut commands, &mut paths).unwrap();
+            assert_words(&words, &[b"ok"]);
+            assert_eq!(commands.calls, 1);
+        }
+    }
+
+    #[test]
+    fn opaque_command_scanner_tracks_function_compound_bodies_and_whole_brace_words() {
+        // These are lexer-boundary regressions. The deterministic command
+        // adapter observes the body verbatim; it does not execute shell code.
+        for (input, body) in [
+            (
+                b"$(f () { case x in x) printf yes;; esac; }; f)".as_slice(),
+                b"f () { case x in x) printf yes;; esac; }; f".as_slice(),
+            ),
+            (
+                b"$(f() (case x in x) printf yes;; esac); f)".as_slice(),
+                b"f() (case x in x) printf yes;; esac); f".as_slice(),
+            ),
+            (
+                b"$(f() if true; then case x in x) printf yes;; esac; fi; f)".as_slice(),
+                b"f() if true; then case x in x) printf yes;; esac; fi; f".as_slice(),
+            ),
+            (
+                b"$(f() for v in x; do case \"$v\" in x) printf yes;; esac; done; f)".as_slice(),
+                b"f() for v in x; do case \"$v\" in x) printf yes;; esac; done; f".as_slice(),
+            ),
+            (
+                b"$(f() while false; do case x in x) printf yes;; esac; done; f)".as_slice(),
+                b"f() while false; do case x in x) printf yes;; esac; done; f".as_slice(),
+            ),
+            (
+                b"$(f() until true; do case x in x) printf yes;; esac; done; f)".as_slice(),
+                b"f() until true; do case x in x) printf yes;; esac; done; f".as_slice(),
+            ),
+            (b"$(case x in esac)".as_slice(), b"case x in esac".as_slice()),
+            (
+                b"$(case esac in (esac) printf yes;; esac)".as_slice(),
+                b"case esac in (esac) printf yes;; esac".as_slice(),
+            ),
+            (
+                b"$( {missing argument; printf yes)".as_slice(),
+                b" {missing argument; printf yes".as_slice(),
             ),
         ] {
             let syntax = WordexpSyntax::parse(input).unwrap();

@@ -15,7 +15,10 @@ particularly sections 2.2.3, 2.6.1, 2.6.2, 2.6.4, and 2.6.5, defines quoting,
 tilde and arithmetic expansion, parameter substring patterns, and field
 splitting. Its [general-concepts expression rule](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap01.html#tag_18_01_02_01)
 imports the relevant ISO C expression semantics, including lazy `&&` and
-`||` operands. Issue 8 also defines dollar-single-quoted strings.
+`||` operands. Its [reserved-word positions](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html#tag_19_04),
+[compound-command delimiters](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html#tag_19_09_04),
+and [function definition](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html#tag_19_09_05)
+rules bound the opaque delimiter scanner. Issue 8 also defines dollar-single-quoted strings.
 
 Musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`,
 `src/misc/wordexp.c` (MIT; SHA-256
@@ -51,9 +54,12 @@ command-body nodes. It uses explicit C-allocated parser stacks for nested
 syntax. A command-body delimiter scanner understands quote state, comments,
 nested substitutions, pending here-documents, and a finite stack of lexical
 command scopes only far enough to retain the exact body span. The scopes track
-reserved-word positions and compound delimiters for `case`, `for`, brace
-groups, subshells, and function bodies: ordinary arguments and for-list data
-with those spellings remain data. It does not build a command execution AST.
+reserved-word positions and compound delimiters for `case`, `for`, `if`,
+`while`, `until`, brace groups, subshells, and every POSIX compound form that
+can be a function body. A brace group starts only when `{` or `}` is a whole
+lexical token, so `{missing` remains an ordinary command word. Ordinary
+arguments and for-list data with those spellings remain data. It does not build
+a command execution AST.
 
 An arithmetic node retains a separate `ArithmeticSource` word. Its parameter,
 command, quote, and nested arithmetic expansions complete first on the same
@@ -155,8 +161,9 @@ under enclosing and inner quotes, nested parameters, and arithmetic source;
 they also retain the outer-double-quoted delimiter and backslash cases.
 Opaque-command tests retain quoted controls, here-documents, a
 real `case`, ordinary keyword arguments, for-list data, brace groups,
-subshells, function bodies, and nested case/control paths without changing raw
-body bytes. A set-empty `HOME` tilde
+subshells, all function-body compound forms, empty-case and optional-pattern
+boundaries, whole-token brace recognition, and nested case/control paths
+without changing raw body bytes. A set-empty `HOME` tilde
 case and all four empty parameter-pattern removals have outer-quote regressions.
 A 64 KiB-thread regression expands 4,000 nested parameter words, 4,000 nested
 arithmetic expansions, and 8,000 arithmetic parentheses while verifying that
