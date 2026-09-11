@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -238,6 +239,38 @@ def oracle_seal() -> dict[str, object]:
         sealed[name] = str(path)
         sealed[name + "_sha256"] = sha256(path)
     return sealed
+
+
+def installed_driver_shared(product: pathlib.Path):
+    """Load the installed driver's sealed linker selector without PATH input."""
+
+    source = product / "share/crabc/crabc_cc_static.py"
+    if source.is_symlink() or not source.is_file() or not stat.S_ISREG(source.stat().st_mode):
+        raise LoaderSyntheticError("installed dynamic product lacks its physical shared driver")
+    specification = importlib.util.spec_from_file_location("_owned_loader_installed_shared", source)
+    if specification is None or specification.loader is None:
+        raise LoaderSyntheticError("installed dynamic product shared driver is not importable")
+    module = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = module
+    specification.loader.exec_module(module)
+    return module
+
+
+def producer_linker_seal(product: pathlib.Path) -> dict[str, str]:
+    """Seal the exact pinned LLD selected by the installed dynamic driver."""
+
+    shared = installed_driver_shared(product)
+    try:
+        selected = pathlib.Path(shared.linker())
+        resolved = selected.resolve(strict=True)
+        metadata = resolved.lstat()
+    except (OSError, shared.DriverError) as error:
+        raise LoaderSyntheticError("installed dynamic driver linker is unavailable") from error
+    if not selected.is_absolute() or resolved.is_symlink() or not stat.S_ISREG(metadata.st_mode) or not metadata.st_mode & 0o111:
+        raise LoaderSyntheticError("installed dynamic driver linker is not a physical executable")
+    if resolved.name != "ld.lld":
+        raise LoaderSyntheticError("installed dynamic driver selected a non-LLD linker")
+    return {"path": str(resolved), "sha256": sha256(resolved)}
 
 
 def preflight(dynamic_sysroot: pathlib.Path, requested: Sequence[str] | None, timeout: float) -> tuple[pathlib.Path, tuple[str, ...], float, pathlib.Path]:
@@ -605,7 +638,9 @@ def case_hash_formats(work: pathlib.Path, product: pathlib.Path, recorder: Recor
     oracle_gnu = oracle_root / "usr/lib/libhash_gnu.so"
     oracle_sysv = oracle_root / "usr/lib/libhash_sysv.so"
     recorder.checked("oracle-gnu-hash", [ORACLE_CC, "-shared", gnu, "-Wl,--hash-style=gnu", "-o", oracle_gnu], cwd=work)
+    builder.links.append({"kind": "shared", "arm": "oracle", "output": str(oracle_gnu), "output_sha256": sha256(oracle_gnu), "object": str(gnu), "object_sha256": sha256(gnu), "dependencies": []})
     recorder.checked("oracle-sysv-hash", [ORACLE_CC, "-shared", sysv, "-Wl,--hash-style=sysv", "-o", oracle_sysv], cwd=work)
+    builder.links.append({"kind": "shared", "arm": "oracle", "output": str(oracle_sysv), "output_sha256": sha256(oracle_sysv), "object": str(sysv), "object_sha256": sha256(sysv), "dependencies": []})
     candidate_gnu = builder.shared("candidate", candidate_root, "libhash_gnu.so", gnu, hash_style="gnu")
     candidate_sysv = builder.shared("candidate", candidate_root, "libhash_sysv.so", sysv)
     observed = {name: tags(recorder.checked("hash-tags-" + name, ["readelf", "-dW", path], cwd=work).stdout) for name, path in (("oracle-gnu", oracle_gnu), ("oracle-sysv", oracle_sysv), ("candidate-gnu", candidate_gnu), ("candidate-sysv", candidate_sysv))}
@@ -790,14 +825,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     report_root = pathlib.Path(tempfile.mkdtemp(prefix="owned-loader-synthetic.", dir=scratch))
     try:
         before_source, before_product, before_oracle = source_seal(), tree_seal(product), oracle_seal()
+        before_linker = producer_linker_seal(product)
         cases = {name: run_case(name, product, report_root, timeout) for name in selected}
         after_source, after_product, after_oracle = source_seal(), tree_seal(product), oracle_seal()
-        if before_source != after_source or before_product != after_product or before_oracle != after_oracle:
-            raise LoaderSyntheticError("source, supplied product, or pinned musl oracle changed while evidence was collected")
+        after_linker = producer_linker_seal(product)
+        if before_source != after_source or before_product != after_product or before_oracle != after_oracle or before_linker != after_linker:
+            raise LoaderSyntheticError("source, supplied product, pinned linker, or pinned musl oracle changed while evidence was collected")
         selected_ok = selected_passed(cases)
-        report = {"schema": 1, "runner": "compat/ldso/run_x86.py", "architecture": "x86_64", "source_mount": str(ROOT), "selected_passed": selected_ok, "component_complete": selected_ok and exact_component_selection(selected), "family_complete": False, "selected": list(selected), "source_before": before_source, "source_after": after_source, "product_before": before_product, "product_after": after_product, "oracle_before": before_oracle, "oracle_after": after_oracle, "cases": cases, "elapsed_seconds": time.time() - started}
+        report = {"schema": 2, "runner": "compat/ldso/run_x86.py", "architecture": "x86_64", "source_mount": str(ROOT), "selected_passed": selected_ok, "component_complete": selected_ok and exact_component_selection(selected), "family_complete": False, "selected": list(selected), "source_before": before_source, "source_after": after_source, "product_before": before_product, "product_after": after_product, "oracle_before": before_oracle, "oracle_after": after_oracle, "producer_linker_before": before_linker, "producer_linker_after": after_linker, "cases": cases, "elapsed_seconds": time.time() - started}
     except (LoaderSyntheticError, OSError) as error:
-        report = {"schema": 1, "runner": "compat/ldso/run_x86.py", "component_complete": False, "family_complete": False, "error": str(error), "elapsed_seconds": time.time() - started}
+        report = {"schema": 2, "runner": "compat/ldso/run_x86.py", "component_complete": False, "family_complete": False, "error": str(error), "elapsed_seconds": time.time() - started}
     path = report_root / "report.json"
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     print(*summary_lines(bool(report.get("component_complete")), report_root, path), sep="\n")

@@ -205,6 +205,10 @@ def _product_reader() -> Any:
     return _load_module("_owned_loader_corpus_product", "compat/x86_64/owned_posix_product_evidence.py")
 
 
+def _dynamic_receipt() -> Any:
+    return _load_module("_owned_loader_corpus_dynamic_receipt", "compat/x86_64/owned_dynamic_receipt.py")
+
+
 def _loader_cases() -> tuple[str, ...]:
     cases = tuple(_loader().CASES)
     _require(len(cases) == 21 and len(set(cases)) == len(cases), "current loader roster drifted")
@@ -306,14 +310,20 @@ def _validate_retained_loader_tree(path: Path, seal: object, description: str) -
             _require(expected[name] == observed[name], f"{description} entry {expected['path']} differs")
 
 
-def _hash_within(root: Path, relative: str, description: str) -> str:
+def _resolved_file_within(root: Path, relative: str, description: str) -> Path:
+    """Resolve a payload alias only when its physical target remains private."""
+
     candidate = root / relative
     try:
         resolved = candidate.resolve(strict=True)
     except OSError as error:
         raise LoaderCorpusEvidenceError(f"{description} is unavailable") from error
     _require(resolved.is_relative_to(root.resolve()), f"{description} escapes its retained root")
-    return _sha256(resolved)
+    return _physical_file(resolved, description)
+
+
+def _hash_within(root: Path, relative: str, description: str) -> str:
+    return _sha256(_resolved_file_within(root, relative, description))
 
 
 def _process(value: object, description: str) -> tuple[str, int, bytes, bytes, bool]:
@@ -467,7 +477,8 @@ def _loader_link_plan(loader: Any, name: str) -> list[tuple[str, str, str]]:
             plan.append((arm, "executable", "consumer"))
         return plan
     if name == "hash-formats":
-        return [("candidate", "shared", "usr/lib/libhash_gnu.so"), ("candidate", "shared", "usr/lib/libhash_sysv.so"),
+        return [("oracle", "shared", "usr/lib/libhash_gnu.so"), ("oracle", "shared", "usr/lib/libhash_sysv.so"),
+                ("candidate", "shared", "usr/lib/libhash_gnu.so"), ("candidate", "shared", "usr/lib/libhash_sysv.so"),
                 ("oracle", "executable", "consumer"), ("candidate", "executable", "consumer")]
     if name == "hash-many":
         return [(arm, kind, output) for arm, kind, output in (("oracle", "shared", "usr/lib/libhash_many.so"), ("candidate", "shared", "usr/lib/libhash_many.so"), ("oracle", "executable", "consumer"), ("candidate", "executable", "consumer"))]
@@ -547,7 +558,7 @@ def _loader_link_bindings(loader: Any, name: str) -> list[tuple[int, tuple[str, 
                    (3, ("usr/lib/libreloc_consumer.so", "usr/lib/libreloc_relative_x86_adapter.so", "usr/lib/libreloc_provider.so"))]
         return one_arm * 2
     if name == "hash-formats":
-        return [(0, ()), (1, ()), (2, ()), (2, ())]
+        return [(0, ()), (1, ()), (0, ()), (1, ()), (2, ()), (2, ())]
     if name == "hash-many":
         return [(0, ()), (0, ()), (1, ()), (1, ())]
     if name == "search-path":
@@ -573,6 +584,13 @@ def _validate_loader_objects(root: Path, source_mount: str, work: Path, product:
                  and item["header_trace"] == recorded_path(root, source_mount, trace_path)
                  and item["object"] == recorded_path(root, source_mount, object_path),
                  f"loader case {name} object recipe differs")
+        if generated:
+            expected_source = "\n".join(
+                f"int hash_many_{item}(void) {{ return {item}; }}" for item in range(1025)
+            ) + "\n"
+            _require(_physical_file(source, f"loader case {name} generated source").read_bytes()
+                     == expected_source.encode("utf-8"),
+                     f"loader case {name} generated source differs")
         _require(_digest(item["header_trace_sha256"], f"loader case {name} header trace") == _sha256(trace_path)
                  and _digest(item["sha256"], f"loader case {name} object") == _sha256(object_path),
                  f"loader case {name} object bytes differ")
@@ -586,6 +604,20 @@ def _validate_loader_objects(root: Path, source_mount: str, work: Path, product:
     return retained
 
 
+def _loader_link_settings(name: str, kind: str, output: str) -> tuple[str, str, str, bool]:
+    """Return the declared search/hash/export state for one frozen link."""
+
+    output_name = Path(output).name
+    hash_style = "both" if name == "hash-many" and kind == "shared" else (
+        "gnu" if name == "hash-formats" and output_name == "libhash_gnu.so" else "sysv"
+    )
+    search_kind = "rpath" if name == "search-path" and output_name == "consumer-rpath" else "runpath"
+    search_path = ("$ORIGIN" if name == "dso-origin" and output_name == "liborigin_mid.so" else
+                   "/rpath" if search_kind == "rpath" else
+                   "/runpath" if name == "search-path" and kind == "executable" else "/usr/lib")
+    return search_kind, search_path, hash_style, name == "main-handle" and kind == "executable"
+
+
 def _loader_link_argv(loader: Any, name: str, link: Mapping[str, Any], product: Path,
                      root: Path, source_mount: str, work: Path) -> list[str]:
     """Reconstruct one exact finite producer linker invocation."""
@@ -594,20 +626,16 @@ def _loader_link_argv(loader: Any, name: str, link: Mapping[str, Any], product: 
     output, object_file = link["output"], link["object"]
     dependencies = [item["path"] for item in link["dependencies"]]
     output_name = Path(output).name
-    hash_style = "both" if name == "hash-many" and kind == "shared" else ("gnu" if name == "hash-formats" and output_name == "libhash_gnu.so" else "sysv")
-    runpath = "$ORIGIN" if name == "dso-origin" and output_name == "liborigin_mid.so" else "/usr/lib"
-    if kind == "executable" and name == "search-path":
-        runpath = "/rpath" if output_name == "consumer-rpath" else "/runpath"
+    search_kind, runpath, hash_style, export_dynamic = _loader_link_settings(name, kind, output)
     driver = recorded_path(root, source_mount, product / "bin/crabc-cc-dynamic")
     if arm == "candidate":
         if kind == "shared":
             argv = [driver, "--dynamic-shared-object", "--application-hash-style", hash_style,
                     "--application-runpath", runpath, object_file]
         else:
-            search_kind = "rpath" if name == "search-path" and output_name == "consumer-rpath" else "runpath"
             argv = [driver, "--dynamic-pie", "--application-hash-style", hash_style,
                     "--application-" + search_kind, runpath]
-            if name == "main-handle":
+            if export_dynamic:
                 argv.append("-rdynamic")
             argv.append(object_file)
         for dependency in dependencies:
@@ -616,16 +644,18 @@ def _loader_link_argv(loader: Any, name: str, link: Mapping[str, Any], product: 
     if name == "hash-many" and kind == "shared":
         return [str(loader.ORACLE_CC), "-shared", "-Wl,-soname,libhash_many.so", object_file,
                 "-Wl,--hash-style=both", "-o", output]
+    if name == "hash-formats" and kind == "shared":
+        return [str(loader.ORACLE_CC), "-shared", object_file, "-Wl,--hash-style=" + hash_style, "-o", output]
     if kind == "shared":
         return [str(loader.ORACLE_CC), "-shared", "-Wl,-soname," + output_name, object_file, *dependencies,
                 "-Wl,--hash-style=" + hash_style, "-Wl,-rpath," + runpath, "-o", output]
     argv = [str(loader.ORACLE_CC), "-fPIE", "-pie", object_file, *dependencies, "-Wl,--hash-style=" + hash_style]
-    if name == "search-path" and output_name == "consumer-rpath":
+    if search_kind == "rpath":
         argv.append("-Wl,--disable-new-dtags")
     argv.extend(("-Wl,-rpath," + runpath,
                  "-Wl,-rpath-link," + recorded_path(root, source_mount, work / (arm + "-root") / "usr/lib"),
                  "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1"))
-    if name == "main-handle":
+    if export_dynamic:
         argv.append("-Wl,--export-dynamic")
     return argv + ["-o", output]
 
@@ -677,6 +707,200 @@ def _validate_loader_links(root: Path, source_mount: str, work: Path, product: P
     _require(dict(observed_counts) == counts, f"loader case {name} link arm roster differs")
 
 
+def _loader_retained_output(name: str, arm: str, kind: str, original: str,
+                            search_shared_index: int | None) -> str:
+    """Name the final retained location of one finite link artifact."""
+
+    if name == "search-path" and kind == "shared":
+        _require(search_shared_index is not None and 0 <= search_shared_index < 3,
+                 "loader search-path link plan drifted")
+        return ("environment", "runpath", "rpath")[search_shared_index] + "/libsearch.so"
+    if name == "dso-origin" and kind == "shared":
+        return "bundle/" + Path(original).name
+    return original
+
+
+def _loader_dynamic_runtime(product: Path, kind: str) -> tuple[Path, ...]:
+    library = product / "usr/lib"
+    runtime = [library / "crti.o", library / "libc.so", library / "crtn.o"]
+    if kind == "executable":
+        runtime.extend((library / "Scrt1.o", library / "crabc-dynamic-attach.o"))
+    return tuple(runtime)
+
+
+def _loader_sidecar_command(linker: str, root: Path, source_mount: str, product: Path, link: Mapping[str, Any],
+                            search_kind: str, search_path: str, hash_style: str,
+                            export_dynamic: bool) -> list[str]:
+    """Rebuild the owned driver's finite LLD argv recorded by a sidecar."""
+
+    kind = link["kind"]
+    library = product / "usr/lib"
+    recorded = lambda path: recorded_path(root, source_mount, path)
+    command = [linker, "-shared" if kind == "shared" else "-pie", "--hash-style=" + hash_style,
+               "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text", "--no-undefined",
+               "--allow-shlib-undefined", "--disable-new-dtags" if search_kind == "rpath" else "--enable-new-dtags",
+               "-rpath", search_path]
+    if export_dynamic:
+        command.append("--export-dynamic")
+    if kind == "executable":
+        command.extend(("--dynamic-linker", "/lib/ld-musl-x86_64.so.1", recorded(library / "Scrt1.o"),
+                        recorded(library / "crabc-dynamic-attach.o")))
+    command.extend((recorded(library / "crti.o"), link["object"],
+                    *(item["path"] for item in link["dependencies"]), recorded(library / "libc.so"),
+                    recorded(library / "libcrabc-builtins.a"), recorded(library / "crtn.o"), "-o", link["output"]))
+    return command
+
+
+def _validate_loader_sidecar(root: Path, source_mount: str, product: Path, name: str,
+                             link: Mapping[str, Any], path: Path, producer_linker: Mapping[str, str]) -> None:
+    """Bind a candidate artifact to its v2 owned-driver link receipt."""
+
+    receipt = _json(path, f"loader case {name} dynamic link sidecar")
+    contract = _dynamic_receipt()
+    product_reader = _product_reader()
+    search = contract.validate(receipt, format=product_reader.DYNAMIC_PRODUCT_FORMAT,
+                               label=f"loader case {name} dynamic link sidecar", fail=_fail)
+    _require(search.schema == 2, f"loader case {name} dynamic link sidecar is not schema 2")
+    kind = link["kind"]
+    search_kind, search_path, hash_style, export_dynamic = _loader_link_settings(name, kind, link["output"])
+    _require((receipt["mode"], receipt["binding"], receipt["runtime_imports"], receipt["campaign_complete"])
+             == ("shared" if kind == "shared" else "pie", "now", [], False),
+             f"loader case {name} dynamic link sidecar mode differs")
+    _require((search.kind, search.path, search.hash_style) == (search_kind, search_path, hash_style),
+             f"loader case {name} dynamic link sidecar search contract differs")
+    _require(receipt["output_path"] == link["output"]
+             and _digest(receipt["output_sha256"], f"loader case {name} sidecar output") == link["output_sha256"],
+             f"loader case {name} dynamic link sidecar output differs")
+    manifest = product / "share/crabc/manifest.json"
+    _require(_digest(receipt["manifest_sha256"], f"loader case {name} sidecar manifest") == _sha256(manifest),
+             f"loader case {name} dynamic link sidecar manifest differs")
+    dependencies = link["dependencies"]
+    expected_dsos = {Path(item["path"]).name: item["sha256"] for item in dependencies}
+    _require(receipt["application_dsos"] == expected_dsos,
+             f"loader case {name} dynamic link sidecar DSO roster differs")
+    runtime = _loader_dynamic_runtime(product, kind)
+    archive = product / "usr/lib/libcrabc-builtins.a"
+    _require(receipt["owned_runtime_inputs"] == sorted(
+        path.relative_to(product).as_posix() for path in (*runtime, archive)),
+             f"loader case {name} dynamic link sidecar runtime roster differs")
+    expected_inputs = [
+        *((recorded_path(root, source_mount, path), _sha256(path)) for path in runtime),
+        (link["object"], link["object_sha256"]),
+        *((item["path"], item["sha256"]) for item in dependencies),
+        (recorded_path(root, source_mount, archive), _sha256(archive)),
+    ]
+    inputs = receipt["input_receipts"]
+    _require(isinstance(inputs, list) and len(inputs) == len(expected_inputs),
+             f"loader case {name} dynamic link sidecar input roster differs")
+    for item, (expected_path, expected_sha256) in zip(inputs, expected_inputs):
+        record = _keys(item, {"path", "sha256"}, f"loader case {name} sidecar input")
+        _require(record["path"] == expected_path
+                 and _digest(record["sha256"], f"loader case {name} sidecar input") == expected_sha256,
+                 f"loader case {name} dynamic link sidecar input differs")
+    linker = _keys(receipt["resolved_linker"], {"path", "sha256"}, f"loader case {name} sidecar linker")
+    _require(linker == producer_linker,
+             f"loader case {name} dynamic link sidecar linker differs from the sealed producer linker")
+    _require(receipt["link_command"] == _loader_sidecar_command(
+        linker["path"], root, source_mount, product, link, search_kind, search_path, hash_style, export_dynamic
+    ), f"loader case {name} dynamic link sidecar command differs")
+    trace = receipt["link_trace"]
+    direct = {recorded_path(root, source_mount, path) for path in runtime}
+    direct.add(link["object"])
+    direct.update(item["path"] for item in dependencies)
+    recorded_archive = recorded_path(root, source_mount, archive)
+    _require(isinstance(trace, list) and all(isinstance(item, str) for item in trace)
+             and direct <= set(trace)
+             and all(item in direct or item == recorded_archive
+                     or item.startswith(recorded_archive + "(") and item.endswith(")") for item in trace),
+             f"loader case {name} dynamic link sidecar trace differs")
+
+
+def _loader_root_entries(root: Path) -> dict[str, dict[str, object]]:
+    entries = _loader_tree_entries(root)
+    result = {entry["path"]: entry for entry in entries}
+    _require(len(result) == len(entries), "retained loader root has duplicate paths")
+    return result
+
+
+def _loader_add_parent_directories(expected: dict[str, str], path: str) -> None:
+    current = PurePosixPath(path).parent
+    while current.parts:
+        name = current.as_posix()
+        prior = expected.setdefault(name, "directory")
+        _require(prior == "directory", "loader root generated path conflicts with a file")
+        current = current.parent
+
+
+def _loader_require_file(entries: Mapping[str, Mapping[str, object]], relative: str, digest: str | None,
+                         description: str) -> None:
+    entry = entries.get(relative)
+    _require(entry is not None and entry.get("kind") == "file", f"{description} is missing or not a file")
+    if digest is not None:
+        _require(entry.get("sha256") == digest, f"{description} bytes differ")
+
+
+def _validate_loader_execution_root(checkout: Path, execution_root: Path, source_mount: str, product: Path, oracle: Mapping[str, Any],
+                                    producer_linker: Mapping[str, str], name: str, case: Mapping[str, Any], loader: Any, arm: str) -> None:
+    """Require the exact recipe-derived root, rather than trusting its seal.
+
+    The producer seal proves that retained bytes did not change after it was
+    written.  This second check proves what those bytes were allowed to be:
+    the supplied product for the candidate, the pinned musl runtime for the
+    oracle, and only the finite link artifacts/sidecars made by this case.
+    """
+
+    entries = _loader_root_entries(execution_root)
+    expected: dict[str, str] = {}
+    product_entries = {entry["path"]: entry for entry in loader_tree_seal(product)["entries"]}
+    if arm == "candidate":
+        for relative, product_entry in product_entries.items():
+            retained = entries.get(relative)
+            _require(retained is not None and retained.get("kind") == product_entry.get("kind"),
+                     f"loader case {name} candidate product entry {relative} differs")
+            _require(_normalised_mode(product_entry["mode"], retained["mode"], str(product_entry["kind"])),
+                     f"loader case {name} candidate product mode {relative} differs")
+            for field in set(product_entry) - {"mode"}:
+                _require(retained.get(field) == product_entry[field],
+                         f"loader case {name} candidate product entry {relative} differs")
+            expected[relative] = str(product_entry["kind"])
+    else:
+        expected.update({"lib": "directory", "usr": "directory", "usr/lib": "directory",
+                         "lib/ld-musl-x86_64.so.1": "file", "usr/lib/libc.so": "file"})
+        _loader_require_file(entries, "lib/ld-musl-x86_64.so.1", oracle["libc_sha256"],
+                             f"loader case {name} oracle loader")
+        _loader_require_file(entries, "usr/lib/libc.so", oracle["libc_sha256"],
+                             f"loader case {name} oracle libc")
+
+    search_indexes = {"oracle": 0, "candidate": 0}
+    plan = _loader_link_plan(loader, name)
+    links = case["links"]
+    for link, (link_arm, kind, original) in zip(links, plan):
+        if link_arm != arm:
+            continue
+        ordinal = search_indexes[arm] if name == "search-path" and kind == "shared" else None
+        if ordinal is not None:
+            search_indexes[arm] += 1
+        retained = _loader_retained_output(name, arm, kind, original, ordinal)
+        _require(retained not in expected, f"loader case {name} generated artifact replaces a sealed root entry")
+        expected[retained] = "file"
+        _loader_add_parent_directories(expected, retained)
+        _loader_require_file(entries, retained, link["output_sha256"],
+                             f"loader case {name} {arm} linked artifact {retained}")
+        if arm == "candidate":
+            sidecar = (original + ".crabc-link.json" if name == "dso-origin" and kind == "shared"
+                       else retained + ".crabc-link.json")
+            _require(sidecar not in expected, f"loader case {name} sidecar conflicts with a sealed root entry")
+            expected[sidecar] = "file"
+            _loader_add_parent_directories(expected, sidecar)
+            sidecar_path = execution_root / sidecar
+            _loader_require_file(entries, sidecar, None, f"loader case {name} candidate sidecar {sidecar}")
+            _validate_loader_sidecar(checkout, source_mount, product, name, link, sidecar_path, producer_linker)
+    _require(set(entries) == set(expected), f"loader case {name} {arm} root contains an unexpected or missing entry")
+    for relative, kind in expected.items():
+        _require(entries[relative]["kind"] == kind,
+                 f"loader case {name} {arm} root entry type differs: {relative}")
+
+
 def _loader_runtime_observation(root: Path, source_mount: str, work: Path, raw_records: _RawMatcher,
                                 value: object, arm: str, program: str, direct: bool, environment: Mapping[str, str],
                                 description: str, expected: bytes | set[bytes] | None, lifecycle: bool = False) -> bytes:
@@ -703,7 +927,7 @@ def _loader_environment(loader: Any, name: str, extra: Mapping[str, str] | None 
     environment = {"PATH": "/usr/bin:/bin"}
     if name in loader.SPECS:
         environment.update(dict(loader.SPECS[name].environment))
-    if name == "hash-many":
+    if name in {"hash-formats", "hash-many"}:
         environment["LD_LIBRARY_PATH"] = "/usr/lib"
     if extra:
         environment.update(extra)
@@ -855,7 +1079,7 @@ def _validate_loader_behavior(name: str, case: Mapping[str, Any], raw_records: _
 
 
 def _validate_loader_case(root: Path, source_mount: str, report_root: Path, product: Path,
-                          product_files: Mapping[str, str], oracle: Mapping[str, Any],
+                          product_files: Mapping[str, str], oracle: Mapping[str, Any], producer_linker: Mapping[str, str],
                           name: str, value: object) -> None:
     loader = _loader()
     case = _require_case(value, name, loader)
@@ -872,6 +1096,7 @@ def _validate_loader_case(root: Path, source_mount: str, report_root: Path, prod
     for arm in ("oracle", "candidate"):
         retained_root = report_root / "cases" / name / (arm + "-root")
         _validate_retained_loader_tree(retained_root, roots[arm], f"loader case {name} {arm} root")
+        _validate_loader_execution_root(root, retained_root, source_mount, product, oracle, producer_linker, name, case, loader, arm)
     _require(_hash_within(report_root / "cases" / name / "oracle-root", "lib/ld-musl-x86_64.so.1", "loader oracle") == oracle["libc_sha256"],
              f"loader case {name} oracle loader differs")
     _require(_hash_within(report_root / "cases" / name / "oracle-root", "usr/lib/libc.so", "loader oracle") == oracle["libc_sha256"],
@@ -891,6 +1116,14 @@ def _require_case(value: object, name: str, loader: Any) -> dict[str, Any]:
     return value
 
 
+def _loader_producer_linker(value: object) -> dict[str, str]:
+    linker = _keys(value, {"path", "sha256"}, "synthetic-loader producer linker")
+    _require(isinstance(linker["path"], str) and Path(linker["path"]).is_absolute()
+             and ".." not in Path(linker["path"]).parts and Path(linker["path"]).name == "ld.lld",
+             "synthetic-loader producer linker path differs")
+    return {"path": linker["path"], "sha256": _digest(linker["sha256"], "synthetic-loader producer linker")}
+
+
 def validate_loader_report(report_path: Path, dynamic_product: Path, *, expected_oracle: Mapping[str, object],
                            root: Path = ROOT) -> dict[str, object]:
     """Validate one complete retained 21-case synthetic-loader report."""
@@ -902,9 +1135,9 @@ def validate_loader_report(report_path: Path, dynamic_product: Path, *, expected
     report = _json(report_path, "synthetic-loader report")
     required = {"schema", "runner", "architecture", "source_mount", "selected_passed", "component_complete",
                 "family_complete", "selected", "source_before", "source_after", "product_before", "product_after",
-                "oracle_before", "oracle_after", "cases", "elapsed_seconds"}
+                "oracle_before", "oracle_after", "producer_linker_before", "producer_linker_after", "cases", "elapsed_seconds"}
     _keys(report, required, "synthetic-loader report")
-    _require((report["schema"], report["runner"], report["architecture"]) == (1, "compat/ldso/run_x86.py", "x86_64"),
+    _require((report["schema"], report["runner"], report["architecture"]) == (2, "compat/ldso/run_x86.py", "x86_64"),
              "synthetic-loader report identity differs")
     source_mount = _safe_mount(report["source_mount"])
     _require(report["selected_passed"] is True and report["component_complete"] is True and report["family_complete"] is False,
@@ -930,8 +1163,12 @@ def validate_loader_report(report_path: Path, dynamic_product: Path, *, expected
              "synthetic-loader product seal does not bind its manifest")
     oracle = _oracle_seal(report["oracle_before"], expected_oracle)
     _require(report["oracle_after"] == oracle, "synthetic-loader pinned oracle changed during execution")
+    producer_linker = _loader_producer_linker(report["producer_linker_before"])
+    _require(report["producer_linker_after"] == producer_linker,
+             "synthetic-loader pinned producer linker changed during execution")
     for name in LOADER_CASES:
-        _validate_loader_case(checkout, source_mount, report_root, dynamic_product, product_files, oracle, name, report["cases"][name])
+        _validate_loader_case(checkout, source_mount, report_root, dynamic_product, product_files, oracle, producer_linker,
+                              name, report["cases"][name])
     return {"component": "synthetic-loader", "case_count": len(LOADER_CASES),
             "product_manifest": str(manifest), "product_manifest_sha256": manifest_sha256,
             "family_complete": False}
@@ -1104,21 +1341,261 @@ def _elf_has_dt_relr(path: Path, description: str) -> bool:
     return False
 
 
+def _corpus_root_entries(root: Path) -> dict[str, dict[str, object]]:
+    """Enumerate the bounded private-root entry types admitted by corpus v3."""
+
+    root = _physical_directory(root, "package-corpus retained root")
+    entries: dict[str, dict[str, object]] = {}
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            children = sorted(directory.iterdir(), key=lambda child: child.name, reverse=True)
+        except OSError as error:
+            raise LoaderCorpusEvidenceError(f"package-corpus retained root is unreadable: {directory}") from error
+        for child in children:
+            relative = child.relative_to(root).as_posix()
+            try:
+                metadata = child.lstat()
+            except OSError as error:
+                raise LoaderCorpusEvidenceError(f"package-corpus retained root entry is unreadable: {relative}") from error
+            mode = metadata.st_mode
+            item: dict[str, object] = {"mode": stat.S_IMODE(mode)}
+            if stat.S_ISREG(mode):
+                item.update(kind="file", sha256=_sha256(child), size=metadata.st_size)
+            elif stat.S_ISDIR(mode):
+                item["kind"] = "directory"
+                pending.append(child)
+            elif stat.S_ISLNK(mode):
+                item.update(kind="symlink", target=os.readlink(child))
+            elif stat.S_ISCHR(mode) and relative == "dev/null":
+                item.update(kind="character", major=os.major(metadata.st_rdev), minor=os.minor(metadata.st_rdev))
+            else:
+                _fail(f"package-corpus retained root has an unsupported entry: {relative}")
+            _require(relative not in entries, "package-corpus retained root has duplicate entries")
+            entries[relative] = item
+    return entries
+
+
+def _corpus_add_parent_directories(expected: dict[str, str], relative: str) -> None:
+    current = PurePosixPath(relative).parent
+    while current.parts:
+        parent = current.as_posix()
+        prior = expected.setdefault(parent, "directory")
+        _require(prior == "directory", "package-corpus root entry conflicts with a parent directory")
+        current = current.parent
+
+
+def _corpus_expected_entry(expected: dict[str, str], relative: str, kind: str) -> None:
+    prior = expected.setdefault(relative, kind)
+    _require(prior == kind, f"package-corpus root entry type conflicts: {relative}")
+    _corpus_add_parent_directories(expected, relative)
+
+
+def _corpus_original_mode(entry: Mapping[str, object], relative: str, kind: str,
+                          retention_modes: Mapping[str, int], description: str) -> int:
+    """Recover a file or directory's producer-time mode without mutating it."""
+
+    observed = entry.get("mode")
+    _require(type(observed) is int, f"{description} mode is absent")
+    original = retention_modes.get(relative)
+    if original is None:
+        return observed
+    added = 0o444 if kind == "file" else 0o555 if kind == "directory" else 0
+    _require(added and observed != original and observed == original | added,
+             f"{description} retained mode differs")
+    return original
+
+
+def _corpus_retained_mode(entry: Mapping[str, object], expected: int, relative: str,
+                          kind: str, retention_modes: Mapping[str, int], description: str) -> None:
+    _require(_corpus_original_mode(entry, relative, kind, retention_modes, description) == expected,
+             f"{description} mode differs")
+
+
+# ``stateful`` is the frozen Tier B--D coverage marker, rather than a claim
+# that a workload leaves its private root unchanged.  The finite plans below
+# bind the exact frozen argv that create, remove, or rewrite private paths.
+# Their absence is the retained-root immutability contract for all other cases.
+_CORPUS_MUTATION_PLANS: dict[str, tuple[tuple[str, ...], dict[str, object]]] = {
+    "tier-a-mkdir": (("mkdir", "-p", "/tmp/crabc-corpus-mkdir"),
+                      {"created": {"tmp/crabc-corpus-mkdir": ("directory", None)}}),
+    "tier-a-cp": (("cp", "/tmp/crabc-corpus-input", "/tmp/crabc-corpus-output"),
+                   {"created": {"tmp/crabc-corpus-output": ("file", b"input\n")}}),
+    "tier-a-mv": (("mv", "/tmp/crabc-corpus-input", "/tmp/crabc-corpus-moved"),
+                   {"removed": {"tmp/crabc-corpus-input"},
+                    "created": {"tmp/crabc-corpus-moved": ("file", b"input\n")}}),
+    "tier-a-rm": (("rm", "/tmp/crabc-corpus-input"),
+                   {"removed": {"tmp/crabc-corpus-input"}}),
+    "tier-b-sed-in-place": (("sed", "-i", "s/old/new/", "/tmp/crabc-corpus-sed-state"),
+                              {"replaced": {"tmp/crabc-corpus-sed-state": b"new\n"}}),
+    "tier-b-tar-create": (("tar", "-cf", "/tmp/crabc-corpus-tar-output.tar", "-C", "/tmp", "crabc-corpus-tar-input"),
+                            {"created": {"tmp/crabc-corpus-tar-output.tar": ("file", None)}}),
+    "tier-b-sqlite-state": (("sqlite3", "/tmp/crabc-corpus-sqlite.db", "CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT); INSERT INTO items(value) VALUES ('state'); SELECT id || ':' || value FROM items;"),
+                            {"created": {"tmp/crabc-corpus-sqlite.db": ("file", None)}}),
+    "tier-d-git-init": (("git", "init", "--quiet", "/tmp/crabc-corpus-git-repository"),
+                         {"subtrees": {"tmp/crabc-corpus-git-repository"}}),
+    "tier-d-python-file-state": (("python3", "-c", r"from pathlib import Path; p = Path('/tmp/crabc-corpus-python-state'); p.write_text('python payload\n'); print(p.read_text(), end='')"),
+                                 {"replaced": {"tmp/crabc-corpus-python-state": b"python payload\n"}}),
+}
+
+
+def _corpus_mutation_plan(case: Any) -> Mapping[str, object] | None:
+    item = _CORPUS_MUTATION_PLANS.get(case.id)
+    if item is None:
+        return None
+    argv, plan = item
+    _require(tuple(case.argv) == argv, f"package-corpus {case.id} frozen mutation argv differs")
+    return plan
+
+
+def _corpus_entry_bytes(entry: Mapping[str, object], contents: bytes, description: str) -> None:
+    _require(entry.get("kind") == "file"
+             and entry.get("sha256") == hashlib.sha256(contents).hexdigest()
+             and entry.get("size") == len(contents),
+             f"{description} bytes differ")
+
+
+def _validate_corpus_base_fixtures(root: Path, record: Mapping[str, Any], manifest: Any,
+                                    retention_modes: Mapping[str, int], description: str) -> None:
+    """Recheck retained base bytes, ownership, device identity, and normalized modes."""
+
+    base = _keys(record["base_fixtures"], {"image_files", "directories", "device"}, description + " base fixture")
+    _require(base == _base_fixtures(manifest), f"{description} base fixture differs")
+    for virtual, expected in manifest.base_image_files.items():
+        relative = virtual.lstrip("/")
+        candidate = _physical_file(root / relative, f"{description} base image {virtual}")
+        metadata = candidate.lstat()
+        observed = {"sha256": _sha256(candidate), "mode": stat.S_IMODE(metadata.st_mode),
+                    "uid": metadata.st_uid, "gid": metadata.st_gid}
+        _require(observed["sha256"] == expected["sha256"]
+                 and observed["uid"] == expected["uid"] and observed["gid"] == expected["gid"],
+                 f"{description} base image {virtual} differs")
+        _corpus_retained_mode(observed, expected["mode"], relative, "file", retention_modes,
+                              f"{description} base image {virtual}")
+    for virtual, expected in base["directories"].items():
+        relative = virtual.lstrip("/")
+        candidate = _without_symlink_components(root / relative, f"{description} base directory {virtual}")
+        metadata = candidate.lstat()
+        _require(stat.S_ISDIR(metadata.st_mode), f"{description} base directory {virtual} differs")
+        _corpus_retained_mode({"mode": stat.S_IMODE(metadata.st_mode)}, expected["mode"], relative,
+                              "directory", retention_modes, f"{description} base directory {virtual}")
+    device = base["device"]
+    candidate = _without_symlink_components(root / device["path"].lstrip("/"), description + " base device")
+    metadata = candidate.lstat()
+    _require(stat.S_ISCHR(metadata.st_mode)
+             and stat.S_IMODE(metadata.st_mode) == device["mode"]
+             and os.major(metadata.st_rdev) == device["major"] and os.minor(metadata.st_rdev) == device["minor"],
+             f"{description} base device differs")
+
+
+def _validate_corpus_root_layout(payload: Path, root: Path, expected_case: Any, arm: str,
+                                  manifest: Any, corpus: Any, payload_retention_modes: Mapping[str, int],
+                                  retention_modes: Mapping[str, int]) -> None:
+    """Bind every immutable root entry and the finite argv-derived mutations."""
+
+    payload_entries = _corpus_root_entries(payload)
+    root_entries = _corpus_root_entries(root)
+    expected: dict[str, str] = {}
+    for relative, entry in payload_entries.items():
+        _corpus_expected_entry(expected, relative, str(entry["kind"]))
+        observed = root_entries.get(relative)
+        _require(observed is not None and observed.get("kind") == entry.get("kind"),
+                 f"package-corpus {expected_case.id} {arm} package payload entry {relative} differs")
+        for field in ("sha256", "size", "target"):
+            if field in entry:
+                _require(observed.get(field) == entry[field],
+                         f"package-corpus {expected_case.id} {arm} package payload entry {relative} differs")
+        if entry["kind"] in {"file", "directory"}:
+            payload_mode = _corpus_original_mode(entry, relative, str(entry["kind"]), payload_retention_modes,
+                                                  f"package-corpus payload entry {relative}")
+            root_mode = _corpus_original_mode(observed, relative, str(entry["kind"]), retention_modes,
+                                               f"package-corpus {expected_case.id} {arm} package payload entry {relative}")
+            _require(root_mode == payload_mode,
+                     f"package-corpus {expected_case.id} {arm} package payload entry {relative} mode differs")
+
+    for virtual in manifest.base_image_files:
+        _corpus_expected_entry(expected, virtual.lstrip("/"), "file")
+    for virtual in ("/tmp", "/root", "/dev"):
+        _corpus_expected_entry(expected, virtual.lstrip("/"), "directory")
+    _corpus_expected_entry(expected, "dev/null", "character")
+    for relative in (corpus.CANONICAL_INTERPRETER.lstrip("/"), corpus.CANONICAL_LIBC.lstrip("/")):
+        _corpus_expected_entry(expected, relative, "file")
+
+    plan = _corpus_mutation_plan(expected_case)
+    removed = set(plan.get("removed", set())) if plan is not None else set()
+    replaced = dict(plan.get("replaced", {})) if plan is not None else {}
+    for setup in expected_case.setup:
+        relative = setup.path.lstrip("/")
+        if relative in removed:
+            _require(relative not in root_entries,
+                     f"package-corpus {expected_case.id} {arm} removed setup {setup.path} remains")
+            continue
+        _corpus_expected_entry(expected, relative, "file")
+        observed = root_entries.get(relative)
+        _require(observed is not None and observed.get("kind") == "file",
+                 f"package-corpus {expected_case.id} {arm} setup {setup.path} differs")
+        contents = replaced.get(relative, setup.contents)
+        _corpus_entry_bytes(observed, contents, f"package-corpus {expected_case.id} {arm} setup {setup.path}")
+        if relative not in replaced:
+            _corpus_retained_mode(observed, 0o600, relative, "file", retention_modes,
+                                  f"package-corpus {expected_case.id} {arm} setup {setup.path}")
+
+    created = dict(plan.get("created", {})) if plan is not None else {}
+    for relative, (kind, contents) in created.items():
+        _corpus_expected_entry(expected, relative, kind)
+        observed = root_entries.get(relative)
+        _require(observed is not None and observed.get("kind") == kind,
+                 f"package-corpus {expected_case.id} {arm} created output {relative} differs")
+        if contents is not None:
+            _corpus_entry_bytes(observed, contents,
+                                f"package-corpus {expected_case.id} {arm} created output {relative}")
+
+    cwd = expected_case.cwd.lstrip("/")
+    _corpus_expected_entry(expected, cwd, "directory")
+    observed_cwd = root_entries.get(cwd)
+    _require(observed_cwd is not None and observed_cwd.get("kind") == "directory",
+             f"package-corpus {expected_case.id} {arm} cwd differs")
+    subtrees = set(plan.get("subtrees", set())) if plan is not None else set()
+    for subtree in subtrees:
+        _corpus_expected_entry(expected, subtree, "directory")
+        observed = root_entries.get(subtree)
+        _require(observed is not None and observed.get("kind") == "directory",
+                 f"package-corpus {expected_case.id} {arm} mutable subtree {subtree} differs")
+
+    permitted_mutable = tuple(subtree + "/" for subtree in subtrees)
+    for relative, entry in root_entries.items():
+        kind = entry["kind"]
+        if relative in expected:
+            _require(kind == expected[relative], f"package-corpus {expected_case.id} {arm} root entry type differs: {relative}")
+            continue
+        _require(kind in {"file", "directory", "symlink"}
+                 and any(relative.startswith(prefix) for prefix in permitted_mutable),
+                 f"package-corpus {expected_case.id} {arm} has an unsealed root entry: {relative}")
+
+
 def _validate_corpus_root(root: Path, value: object, expected_case: Any, arm: str, product: Path,
+
                           product_files: Mapping[str, str], oracle: Mapping[str, Any], source_mount: str,
-                          checkout: Path, corpus: Any) -> None:
+                          checkout: Path, corpus: Any, payload: Path, manifest: Any,
+                          payload_retention_modes: Mapping[str, int]) -> None:
     record = _keys(value, {"base_fixtures", "runtime", "execution_tree_before_sha256", "execution_tree_after_sha256", "retention_modes", "executable"},
                    f"package-corpus {expected_case.id} {arm} root")
-    _require(record["base_fixtures"] == _base_fixtures(corpus.load_manifest()),
-             f"package-corpus {expected_case.id} {arm} base fixture differs")
     before = _digest(record["execution_tree_before_sha256"], "package-corpus execution tree before")
     after = _digest(record["execution_tree_after_sha256"], "package-corpus execution tree after")
     retention_modes = _retention_modes(record["retention_modes"], f"package-corpus {expected_case.id} {arm}")
+    _validate_corpus_base_fixtures(root, record, manifest, retention_modes,
+                                   f"package-corpus {expected_case.id} {arm}")
+    _validate_corpus_root_layout(payload, root, expected_case, arm, manifest, corpus,
+                                  payload_retention_modes, retention_modes)
     try:
         current = _corpus_tree_sha256(corpus, root, f"package-corpus {expected_case.id} {arm} retained root", retention_modes)
     except Exception as error:
         raise LoaderCorpusEvidenceError(f"package-corpus {expected_case.id} {arm} retained root is unreadable: {error}") from error
     _require(current == after, f"package-corpus {expected_case.id} {arm} retained root differs from its after seal")
+    if _corpus_mutation_plan(expected_case) is None:
+        _require(before == after,
+                 f"package-corpus {expected_case.id} {arm} immutable root changed during execution")
     runtime = _keys(record["runtime"], {"loader", "libc", "canonical_interpreter", "canonical_libc"},
                     f"package-corpus {expected_case.id} {arm} runtime")
     _require(runtime["canonical_interpreter"] == corpus.CANONICAL_INTERPRETER and runtime["canonical_libc"] == corpus.CANONICAL_LIBC,
@@ -1154,7 +1631,8 @@ def _validate_corpus_root(root: Path, value: object, expected_case: Any, arm: st
              and type(executable["dt_relr"]) is bool,
              f"package-corpus {expected_case.id} {arm} executable contract differs")
     _digest(executable["sha256"], f"package-corpus {expected_case.id} {arm} executable")
-    executable_path = root / expected_case.path.lstrip("/")
+    executable_path = _resolved_file_within(root, expected_case.path.lstrip("/"),
+                                             f"package-corpus {expected_case.id} {arm} executable")
     _require(_hash_within(root, expected_case.path.lstrip("/"), f"package-corpus {expected_case.id} {arm} executable") == executable["sha256"],
              f"package-corpus {expected_case.id} {arm} retained executable differs")
     if expected_case.requires_dt_relr:
@@ -1241,9 +1719,11 @@ def validate_corpus_report(report_path: Path, dynamic_product: Path, *, expected
     payload_path = _retained_directory(checkout, source_mount, report["application_payload"]["path"], "package-corpus application payload")
     _require(payload_path == execution_root / "application-payload", "package-corpus application payload path differs")
     _validate_corpus_payload(payload_path, report["application_payload"], manifest, corpus)
+    payload_retention_modes = _retention_modes(report["application_payload"]["retention_modes"],
+                                               "package-corpus application payload")
     try:
         _require(_corpus_tree_sha256(corpus, payload_path, "package-corpus retained application payload",
-                                     _retention_modes(report["application_payload"]["retention_modes"], "package-corpus application payload")) == report["application_payload"]["sha256"],
+                                     payload_retention_modes) == report["application_payload"]["sha256"],
                  "package-corpus retained application payload differs")
     except LoaderCorpusEvidenceError:
         raise
@@ -1270,7 +1750,7 @@ def validate_corpus_report(report_path: Path, dynamic_product: Path, *, expected
         for arm in ("oracle", "candidate"):
             private_root = execution_root / f"{case_id}-{arm}"
             _validate_corpus_root(private_root, roots[arm], expected, arm, dynamic_product, product_files, oracle,
-                                  source_mount, checkout, corpus)
+                                  source_mount, checkout, corpus, payload_path, manifest, payload_retention_modes)
     _require(observed_ids == set(expected_cases), "package-corpus outcome roster differs from frozen manifest")
     return {"component": "package-corpus", "case_count": len(expected_cases),
             "product_manifest": str(manifest_path), "product_manifest_sha256": manifest_sha256,

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import math
@@ -14,6 +15,7 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest import mock
 
 
@@ -138,6 +140,73 @@ time.sleep(30)
         for value in (0.0, -1.0, math.inf, -math.inf, math.nan):
             with self.subTest(timeout=value), self.assertRaises(module.LoaderSyntheticError):
                 module.checked_timeout(value)
+
+    def test_installed_driver_linker_identity_seals_selected_physical_lld(self) -> None:
+        module = runner()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            root = pathlib.Path(directory)
+            linker = root / "ld.lld"
+            linker.write_bytes(b"pinned linker bytes\n")
+            linker.chmod(0o755)
+            shared = SimpleNamespace(linker=lambda: str(linker))
+            with mock.patch.object(module, "installed_driver_shared", return_value=shared):
+                self.assertEqual(module.producer_linker_seal(root), {
+                    "path": str(linker), "sha256": module.sha256(linker),
+                })
+            linker.write_bytes(b"replaced linker bytes\n")
+            with mock.patch.object(module, "installed_driver_shared", return_value=shared):
+                self.assertNotEqual(module.producer_linker_seal(root)["sha256"],
+                                    hashlib.sha256(b"pinned linker bytes\n").hexdigest())
+
+    def test_hash_formats_seals_both_direct_oracle_shared_outputs(self) -> None:
+        module = runner()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            work = pathlib.Path(directory)
+
+            class Recorder:
+                def checked(self, name, argv, *, cwd):
+                    if "-o" in argv:
+                        output = pathlib.Path(argv[argv.index("-o") + 1])
+                        output.parent.mkdir(parents=True, exist_ok=True)
+                        output.write_bytes(name.encode())
+                    tags = b"(GNU_HASH)" if name.endswith("gnu") else b"(HASH)"
+                    return module.ProcessResult(tuple(map(str, argv)), 0, tags, b"", False)
+
+            class Builder:
+                def __init__(self):
+                    self.links = []
+                    self.role_index = 0
+
+                def role(self, source, *defines):
+                    output = work / f"role-{self.role_index}.o"
+                    self.role_index += 1
+                    output.write_bytes(str(source).encode())
+                    return output
+
+                def shared(self, arm, root, name, object_file, *, hash_style="sysv", runpath="/usr/lib"):
+                    output = root / "usr/lib" / name
+                    output.write_bytes((arm + name).encode())
+                    return output
+
+                def executable(self, arm, root, name, object_file, **kwargs):
+                    output = root / name
+                    output.write_bytes((arm + name).encode())
+                    return output
+
+            def stage(_product, target, *, candidate):
+                (target / "usr/lib").mkdir(parents=True)
+
+            builder = Builder()
+            with mock.patch.object(module, "copy_root", side_effect=stage), \
+                 mock.patch.object(module, "compare_standard", return_value={"oracle": {}, "candidate": {}, "candidate_direct": {}}):
+                module.case_hash_formats(work, work / "product", Recorder(), builder)
+            self.assertEqual([(entry["arm"], entry["kind"], pathlib.Path(entry["output"]).name)
+                              for entry in builder.links],
+                             [("oracle", "shared", "libhash_gnu.so"),
+                              ("oracle", "shared", "libhash_sysv.so")])
+            self.assertEqual([entry["output_sha256"] for entry in builder.links],
+                             [module.sha256(work / "oracle-root/usr/lib/libhash_gnu.so"),
+                              module.sha256(work / "oracle-root/usr/lib/libhash_sysv.so")])
 
     def test_invalid_product_is_rejected_before_checkout_work_is_created(self) -> None:
         module = runner()
