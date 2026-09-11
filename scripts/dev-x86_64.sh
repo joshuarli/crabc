@@ -5339,7 +5339,9 @@ run_owned_resolver_network_probe() {
 }
 
 run_lua_dynamic_source_build_probe() {
-    run_in_container python3 -B /workspace/compat/lua/run_x86_dynamic.py \
+    # The dynamic candidate enters its copied product root through the kernel
+    # interpreter and needs only chroot authority for that private execution.
+    run_in_chroot_cap_container python3 -B /workspace/compat/lua/run_x86_dynamic.py \
         --jobs "${CRABC_X86_64_LUA_JOBS:-4}" \
         --timeout "${CRABC_X86_64_LUA_TIMEOUT:-180}"
 }

@@ -11,18 +11,20 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
-import contextlib
 import json
 import math
 import os
 import platform
 import re
+import select
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import run as LUA
 
@@ -42,6 +44,16 @@ DYNAMIC_SYSROOT_BUILDER = ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py"
 DYNAMIC_PACKAGE_TOOL = ROOT / "compat/x86_64/owned_dynamic_package.py"
 CANONICAL_INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+CHROOT = "/usr/sbin/chroot"
+_SHELL_COMPAT_ALIAS = "lib/ld-musl-x86_64.so.1"
+_APPLICATION_PAYLOAD = (
+    ("lua", "application/bin/lua"),
+    ("luac", "application/bin/luac"),
+    ("liblua", "application/lib/liblua.so.5.4"),
+    ("probe", "application/lib/crabc_probe.so"),
+    ("failure", "application/lib/crabc_fail.so"),
+    ("missing_symbol", "application/lib/crabc_missing.so"),
+)
 
 
 def require_native_x86_64() -> None:
@@ -701,169 +713,742 @@ def build_reference(
     }
 
 
-@contextlib.contextmanager
-def staged_canonical_loader(loader: Path) -> Iterator[None]:
-    """Temporarily expose only the owned canonical interpreter for candidate execution."""
+def _entry_record(path: Path, description: str) -> dict[str, object]:
+    """Describe one physical root entry without resolving a fixture alias."""
 
-    target = Path(CANONICAL_INTERPRETER)
-    if target.exists() or target.is_symlink():
-        raise LUA.RunnerError(f"native canonical loader path is already occupied: {target}")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(loader, target)
     try:
-        if LUA.sha256_file(target) != LUA.sha256_file(loader):
-            raise LUA.RunnerError("staged native canonical loader hash drifted")
-        yield
-    finally:
-        if target.is_file() and not target.is_symlink():
-            target.unlink()
+        metadata = path.lstat()
+    except OSError as error:
+        raise LUA.RunnerError(f"{description} is absent: {path}") from error
+    mode = stat.S_IMODE(metadata.st_mode)
+    if stat.S_ISREG(metadata.st_mode):
+        return {
+            "type": "regular",
+            "mode": mode,
+            "sha256": LUA.sha256_file(path),
+            "byte_length": metadata.st_size,
+        }
+    if stat.S_ISDIR(metadata.st_mode):
+        return {"type": "directory", "mode": mode}
+    if stat.S_ISLNK(metadata.st_mode):
+        try:
+            target = os.readlink(path)
+        except OSError as error:
+            raise LUA.RunnerError(f"{description} has an unreadable symlink: {path}") from error
+        return {"type": "symlink", "target": target}
+    raise LUA.RunnerError(f"{description} has an unsupported file type: {path}")
 
 
-def verify_candidate_maps(maps: str, runtime: Mapping[str, Path], libraries: Path) -> dict[str, object]:
-    expected = {
-        "owned_loader": runtime["loader"],
-        "owned_libc": runtime["libc.so"],
-        "liblua": libraries / "liblua.so.5.4",
-        "probe": libraries / "crabc_probe.so",
+def _tree_entries(root: Path, description: str) -> dict[str, dict[str, object]]:
+    """Return a complete non-following regular-directory-symlink tree roster."""
+
+    root = LUA.require_physical_directory(root, description)
+    entries: dict[str, dict[str, object]] = {}
+    for parent, directories, files in os.walk(root, topdown=True, followlinks=False):
+        physical_parent = Path(parent)
+        names = sorted([*directories, *files])
+        for name in names:
+            entry = physical_parent / name
+            relative = entry.relative_to(root).as_posix()
+            record = _entry_record(entry, f"{description} entry {relative}")
+            entries[relative] = record
+            if record["type"] == "symlink" and name in directories:
+                directories.remove(name)
+    return entries
+
+
+def _copy_regular(source: Path, destination: Path, description: str) -> dict[str, object]:
+    source = require_regular(source, description)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, destination)
+    source_record = _entry_record(source, description)
+    destination_record = _entry_record(destination, f"copied {description}")
+    if source_record != destination_record:
+        raise LUA.RunnerError(f"copied {description} drifted")
+    return source_record
+
+
+def _mkdir_exact(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=False)
+    path.chmod(0o755)
+
+
+def _relative_root_path(relative: str, description: str) -> Path:
+    candidate = Path(relative)
+    if candidate.is_absolute() or not candidate.parts or any(part in {"", ".", ".."} for part in candidate.parts):
+        raise LUA.RunnerError(f"{description} is not a safe relative root path: {relative}")
+    return candidate
+
+
+def _shell_ldd_closure(text: str) -> tuple[str, ...]:
+    """Accept only the one physical loader pathname needed by image ``/bin/sh``."""
+
+    closure: list[str] = []
+    for line in text.splitlines():
+        fields = line.split()
+        path = (
+            fields[0] if fields and fields[0].startswith("/") else
+            fields[2] if len(fields) >= 3 and fields[1] == "=>" and fields[2].startswith("/") else
+            None
+        )
+        if path is None:
+            if fields and fields[0].startswith("linux-vdso"):
+                continue
+            raise LUA.RunnerError(f"external shell ldd output has an unsealed dependency: {line!r}")
+        if path not in closure:
+            closure.append(path)
+    if tuple(closure) != ("/lib/ld-musl-x86_64.so.1",):
+        raise LUA.RunnerError("external shell ldd closure differs from its single pinned loader fixture")
+    return tuple(closure)
+
+
+def qualified_shell_loader_fixture(work: Path, shell: Path, timeout: float) -> tuple[Path, dict[str, object]]:
+    """Bind the image shell pathname to qualified musl bytes before copying it."""
+
+    ldd = shutil.which("ldd")
+    if ldd is None:
+        raise LUA.RunnerError("external shell ldd is unavailable")
+    record = LUA.command_record(
+        [ldd, str(shell)],
+        cwd=work,
+        environment=dynamic_environment(work / "shell-closure"),
+        timeout=timeout,
+    )
+    require_success(record, "external shell ldd closure")
+    stdout = record["stdout"]
+    assert isinstance(stdout, Mapping)
+    text = stdout.get("text")
+    if not isinstance(text, str):
+        raise LUA.RunnerError("external shell ldd output is not text")
+    closure = _shell_ldd_closure(text)
+    try:
+        physical = (MUSL_ROOT / "lib/ld-musl-x86_64.so.1").resolve(strict=True)
+    except OSError as error:
+        raise LUA.RunnerError("qualified musl shell loader fixture is unavailable") from error
+    loader = require_regular(physical, "qualified musl shell loader fixture")
+    return loader, {
+        "command": record,
+        "closure": list(closure),
+        "required_in_root_path": _SHELL_COMPAT_ALIAS,
+        "qualified_loader": LUA.artifact_record(loader),
+        "role": "external /bin/sh fixture dependency; never candidate runtime input",
     }
-    identities = [{"path": str(path), "sha256": LUA.sha256_file(path)} for path in LUA.mapped_files(maps)]
+
+
+def prepare_candidate_execution_root(
+    *,
+    sysroot: Path,
+    runtime: Mapping[str, Path],
+    candidate: Mapping[str, Path],
+    script: Path,
+    execution_root: Path,
+    shell: Path,
+    shell_loader: Path,
+    shell_loader_closure: Mapping[str, object],
+) -> dict[str, object]:
+    """Copy the finite candidate graph into a root owned by its kernel loader.
+
+    The crabc loader deliberately finds its first libc through aliases below
+    the process root.  Staging only the interpreter at the container root
+    therefore cannot prove that the selected libc was the supplied product.
+    This root keeps that alias lookup private while preserving the executable's
+    canonical PT_INTERP entry point.  The one non-product alias is the musl
+    loader needed by the separately copied external shell used by ``io.popen``.
+    """
+
+    source_root = LUA.require_physical_directory(sysroot, "candidate execution product")
+    source_root_entry = _entry_record(source_root, "candidate execution product root")
+    expected_product = _tree_entries(source_root, "candidate execution product")
+    alias = expected_product.get(_SHELL_COMPAT_ALIAS)
+    if alias != {"type": "symlink", "target": "ld-crabc-x86_64.so.1"}:
+        raise LUA.RunnerError("candidate execution product lacks the canonical shell compatibility alias")
+    for relative in ("bin/sh", "application", "application/bin", "application/lib", "work"):
+        if relative in expected_product:
+            raise LUA.RunnerError(f"candidate execution product conflicts with private root path: /{relative}")
+    if execution_root.exists() or os.path.lexists(execution_root):
+        raise LUA.RunnerError(f"candidate execution root already exists: {execution_root}")
+    LUA.reject_symlinked_components(execution_root.parent, "candidate execution root parent")
+    shutil.copytree(source_root, execution_root, symlinks=True, copy_function=shutil.copy2)
+    root = LUA.require_physical_directory(execution_root, "candidate execution root")
+    if _entry_record(root, "candidate execution root") != source_root_entry:
+        raise LUA.RunnerError("candidate execution root mode drifted while copying the supplied product")
+
+    for name in ("loader", "libc.so"):
+        source = require_regular(runtime[name], f"candidate execution runtime {name}")
+        try:
+            relative = source.relative_to(source_root)
+        except ValueError as error:
+            raise LUA.RunnerError(f"candidate execution runtime escapes its supplied product: {name}") from error
+        if _entry_record(root / relative, f"candidate execution runtime copy {name}") != _entry_record(source, f"candidate execution runtime {name}"):
+            raise LUA.RunnerError(f"candidate execution runtime copy drifted: {name}")
+
+    alias_path = root / _SHELL_COMPAT_ALIAS
+    if not alias_path.is_symlink() or os.readlink(alias_path) != "ld-crabc-x86_64.so.1":
+        raise LUA.RunnerError("candidate execution root did not preserve its initial shell compatibility alias")
+    closure_loader = shell_loader_closure.get("qualified_loader")
+    closure_command = shell_loader_closure.get("command")
+    if (
+        shell_loader_closure.get("closure") != ["/lib/ld-musl-x86_64.so.1"]
+        or shell_loader_closure.get("required_in_root_path") != _SHELL_COMPAT_ALIAS
+        or not isinstance(closure_loader, Mapping)
+        or closure_loader.get("sha256") != LUA.sha256_file(require_regular(shell_loader, "qualified musl shell loader fixture"))
+        or not isinstance(closure_command, Mapping)
+        or closure_command.get("status") != 0
+    ):
+        raise LUA.RunnerError("candidate execution root lacks the sealed external shell loader closure")
+    alias_path.unlink()
+    shell_loader_record = _copy_regular(shell_loader, alias_path, "qualified musl shell loader fixture")
+    shell_record = _copy_regular(shell, root / "bin/sh", "external shell fixture")
+
+    _mkdir_exact(root / "application")
+    _mkdir_exact(root / "application/bin")
+    _mkdir_exact(root / "application/lib")
+    source_payload = {
+        "lua": candidate.get("lua"),
+        "luac": candidate.get("luac"),
+        "liblua": Path(candidate["libraries"]) / "liblua.so.5.4",
+        "probe": Path(candidate["libraries"]) / "crabc_probe.so",
+        "failure": Path(candidate["libraries"]) / "crabc_fail.so",
+        "missing_symbol": Path(candidate["libraries"]) / "crabc_missing.so",
+    }
+    payload: dict[str, dict[str, object]] = {}
+    for name, relative in _APPLICATION_PAYLOAD:
+        source = source_payload[name]
+        if not isinstance(source, Path):
+            raise LUA.RunnerError(f"candidate execution application payload is absent: {name}")
+        payload[name] = {
+            "source": str(require_regular(source, f"candidate application payload {name}")),
+            "destination": f"/{relative}",
+            "entry": _copy_regular(source, root / relative, f"candidate application payload {name}"),
+        }
+
+    _mkdir_exact(root / "work")
+    script_record = _copy_regular(script, root / "work/exercise.lua", "Lua workload fixture")
+
+    expected_entries = dict(expected_product)
+    expected_entries[_SHELL_COMPAT_ALIAS] = shell_loader_record
+    expected_entries["bin/sh"] = shell_record
+    for relative in ("application", "application/bin", "application/lib", "work"):
+        expected_entries[relative] = _entry_record(root / relative, f"candidate execution root {relative}")
+    for _, relative in _APPLICATION_PAYLOAD:
+        expected_entries[relative] = _entry_record(root / relative, f"candidate execution root {relative}")
+    expected_entries["work/exercise.lua"] = script_record
+
+    record: dict[str, object] = {
+        "status": "prepared",
+        "root": str(root),
+        "root_entry": source_root_entry,
+        "kernel_luac_command": [CHROOT, str(root), "/application/bin/luac"],
+        "kernel_lua_command": [CHROOT, str(root), "/application/bin/lua"],
+        "product": {"source_root": str(source_root), "entries": expected_product},
+        "application_payload": payload,
+        "workload_script": {
+            "source": str(require_regular(script, "Lua workload fixture")),
+            "destination": "/work/exercise.lua",
+            "entry": script_record,
+        },
+        "external_shell": {
+            "source": str(require_regular(shell, "external shell fixture")),
+            "destination": "/bin/sh",
+            "entry": shell_record,
+            "loader_source": str(require_regular(shell_loader, "qualified musl shell loader fixture")),
+            "loader_destination": f"/{_SHELL_COMPAT_ALIAS}",
+            "loader_entry": shell_loader_record,
+            "ldd_closure": dict(shell_loader_closure),
+            "alias_exception": "only /lib/ld-musl-x86_64.so.1 replaces the copied product symlink",
+        },
+        "immutable_entries": expected_entries,
+        "mutable_root": "/work",
+        "mutable_entry_policy": "regular files and directories only; fixture aliases are forbidden",
+    }
+    audit_candidate_execution_root(record)
+    return record
+
+
+class ExecutionRootAuditError(LUA.RunnerError):
+    """Expose the observed root roster when an immutable execution root drifts."""
+
+    def __init__(self, message: str, audit: Mapping[str, object]):
+        super().__init__(message)
+        self.audit = dict(audit)
+
+
+def audit_candidate_execution_root(record: Mapping[str, object]) -> dict[str, object]:
+    """Require every copied input to remain exact while permitting only /work output."""
+
+    root_text = record.get("root")
+    expected_root = record.get("root_entry")
+    expected = record.get("immutable_entries")
+    if not isinstance(root_text, str) or not isinstance(expected_root, Mapping) or not isinstance(expected, dict):
+        raise LUA.RunnerError("candidate execution-root record is malformed")
+    root = LUA.require_physical_directory(Path(root_text), "candidate execution root")
+    observed_root = _entry_record(root, "candidate execution root")
+    observed = _tree_entries(root, "candidate execution root")
+
+    def rejected(message: str, errors: Sequence[str]) -> ExecutionRootAuditError:
+        return ExecutionRootAuditError(message, {
+            "status": "rejected",
+            "root": str(root),
+            "root_entry": observed_root,
+            "entries": observed,
+            "mutable_root": "/work",
+            "errors": list(errors),
+        })
+
+    if observed_root != expected_root:
+        raise rejected("candidate execution root mode drifted", ["."])
+    expected_entries: dict[str, Mapping[str, object]] = {}
+    for relative, entry in expected.items():
+        if not isinstance(relative, str) or not isinstance(entry, Mapping):
+            raise rejected("candidate execution-root seal is malformed", ["record"])
+        _relative_root_path(relative, "candidate execution-root seal")
+        expected_entries[relative] = entry
+    errors: list[str] = []
+    for relative, entry in expected_entries.items():
+        if observed.get(relative) != entry:
+            errors.append(relative)
+    for relative, entry in observed.items():
+        if relative in expected_entries:
+            continue
+        candidate = _relative_root_path(relative, "candidate execution-root entry")
+        if candidate.parts[0] != "work" or entry.get("type") not in {"regular", "directory"}:
+            errors.append(relative)
+    if errors:
+        raise rejected(
+            "candidate execution root immutable application payload or roster drifted: "
+            + ", ".join(sorted(errors)), sorted(errors)
+        )
+    return {
+        "status": "passed",
+        "root": str(root),
+        "root_entry": observed_root,
+        "entries": observed,
+        "immutable_entry_count": len(expected_entries),
+        "mutable_root": "/work",
+    }
+
+
+def _chroot_environment(*, maps_wait: bool) -> dict[str, str]:
+    """Keep candidate execution inside the private root, including its temp state."""
+
+    environment = LUA.sanitize_environment(
+        home=Path("/work/home"), temporary_directory=Path("/work/tmp")
+    )
+    environment.update({
+        "LD_LIBRARY_PATH": "/application/lib",
+        "CRABC_LUA_ENV": "owned-sysroot",
+        "CRABC_LUA_DYNAMIC_MODULES": "1",
+        "TZ": "UTC",
+    })
+    if maps_wait:
+        environment["CRABC_LUA_MAPS_WAIT"] = "1"
+    return environment
+
+
+def _chroot_command(root: Path, program: str, *arguments: str) -> list[str]:
+    if os.geteuid() != 0:
+        raise LUA.RunnerError("candidate Lua execution root requires root in the disposable native container")
+    helper = Path(CHROOT)
+    try:
+        helper_target = helper.resolve(strict=True)
+    except OSError as error:
+        raise LUA.RunnerError("native chroot helper is unavailable") from error
+    require_regular(helper_target, "native chroot helper")
+    if program not in {"/application/bin/lua", "/application/bin/luac"}:
+        raise LUA.RunnerError(f"candidate Lua execution program is not sealed: {program}")
+    # Busybox exposes chroot through this conventional symlink in the pinned
+    # image.  Preserve that command spelling in the receipt while checking the
+    # physical target rather than silently accepting an unavailable helper.
+    return [str(helper), str(root), program, *arguments]
+
+
+def _process_chroot_root(process: subprocess.Popen[bytes], execution_root: Path) -> Path:
+    """Bind the map snapshot to the live process root before it resumes."""
+
+    proc_root = Path(f"/proc/{process.pid}/root")
+    try:
+        observed = proc_root.resolve(strict=True)
+    except OSError as error:
+        raise LUA.RunnerError("candidate Lua process root is unavailable while map evidence is captured") from error
+    expected = execution_root.resolve(strict=True)
+    if observed != expected:
+        raise LUA.RunnerError(
+            f"candidate Lua process root drifted: expected {expected}, observed {observed}"
+        )
+    return observed
+
+
+def _read_chroot_ready_line(process: subprocess.Popen[bytes], timeout: float) -> tuple[bytes, bytes, bool]:
+    """Read exactly one readiness line without letting buffered I/O defeat timeout."""
+
+    assert process.stdout is not None
+    deadline = time.monotonic() + timeout
+    ready = bytearray()
+    descriptor = process.stdout.fileno()
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return bytes(ready), b"", True
+        readable, _, _ = select.select([descriptor], [], [], remaining)
+        if not readable:
+            return bytes(ready), b"", True
+        chunk = os.read(descriptor, 4096)
+        if not chunk:
+            return bytes(ready), b"", False
+        ready.extend(chunk)
+        line_end = ready.find(b"\n")
+        if line_end >= 0:
+            return bytes(ready[:line_end + 1]), bytes(ready[line_end + 1:]), False
+
+
+def run_chroot_lua(
+    *,
+    execution_root: Path,
+    program: str,
+    script: str,
+    fixture: str,
+    timeout: float,
+    capture_maps: bool,
+) -> tuple[LUA.ProcessResult, str | None, Path | None]:
+    """Run one candidate Lua workload and retain maps before stdin releases it."""
+
+    root = LUA.require_physical_directory(execution_root, "candidate execution root")
+    arguments = _chroot_command(root, program, script, "/application/lib", fixture)
+    process: subprocess.Popen[bytes] | None = None
+    try:
+        process = subprocess.Popen(
+            arguments,
+            cwd=root,
+            env=_chroot_environment(maps_wait=True),
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            close_fds=True,
+            start_new_session=True,
+        )
+    except OSError as error:
+        return LUA.ProcessResult(f"EXEC_ERROR:{error.errno or 'unknown'}", b"", str(error).encode()), None, None
+    assert process.stdin is not None and process.stdout is not None
+    ready = b""
+    maps: str | None = None
+    process_root: Path | None = None
+    try:
+        ready, prefetched, readiness_timed_out = _read_chroot_ready_line(process, timeout)
+        if readiness_timed_out:
+            stdout, stderr = LUA.stop_owned_process_group(process)
+            return LUA.ProcessResult("TIMEOUT", ready + prefetched + stdout, stderr, True), None, None
+        if ready != b"maps-ready\n":
+            stdout, stderr = LUA.stop_owned_process_group(process)
+            return LUA.ProcessResult("PROTOCOL_ERROR", ready + prefetched + stdout, stderr), None, None
+        if capture_maps:
+            process_root = _process_chroot_root(process, root)
+            maps = Path(f"/proc/{process.pid}/maps").read_text(encoding="utf-8")
+        process.stdin.write(b"continue\n")
+        process.stdin.flush()
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        stdout, stderr = LUA.stop_owned_process_group(process)
+        return LUA.ProcessResult("TIMEOUT", ready + prefetched + stdout, stderr, True), maps, process_root
+    except BaseException:
+        LUA.stop_owned_process_group(process)
+        raise
+    if LUA.owned_group_has_live_members(process.pid):
+        stdout, stderr = LUA.stop_owned_process_group(process)
+        return LUA.ProcessResult("PROCESS_GROUP_LEAK", ready + prefetched + stdout, stderr), maps, process_root
+    return LUA.ProcessResult(process.returncode, ready + prefetched + stdout, stderr), maps, process_root
+
+
+def _mapped_execution_files(maps: str, execution_root: Path) -> list[dict[str, str]]:
+    """Translate absolute chroot map names through a live sealed process root."""
+
+    root = LUA.require_physical_directory(execution_root, "candidate execution root")
+    entries = _tree_entries(root, "candidate execution root")
+    identities: list[dict[str, str]] = []
+    seen: set[str] = set()
+    root_text = str(root)
+    for line in maps.splitlines():
+        fields = line.split(maxsplit=5)
+        if len(fields) != 6 or not fields[5].startswith("/"):
+            continue
+        raw_path = fields[5]
+        if raw_path.endswith(" (deleted)"):
+            raise LUA.RunnerError(f"candidate map references a deleted execution-root file: {raw_path}")
+        # /proc is observed from the container's original mount namespace, so
+        # Linux reports the physical host spelling even after chroot.  Some
+        # kernels/tools expose the process-root spelling instead.  Admit only
+        # those two forms and translate each to the sealed chroot path.
+        if raw_path.startswith(root_text + "/"):
+            relative = raw_path[len(root_text) + 1:]
+        else:
+            relative = raw_path.removeprefix("/")
+        candidate = _relative_root_path(relative, "candidate map path")
+        if relative not in entries or entries[relative].get("type") != "regular":
+            raise LUA.RunnerError(
+                f"candidate map is outside the private execution root payload: {raw_path}"
+            )
+        path = root / candidate
+        require_regular(path, f"candidate mapped execution-root file {raw_path}")
+        if raw_path in seen:
+            continue
+        seen.add(raw_path)
+        identities.append(
+            {
+                "chroot_path": f"/{relative}",
+                "path": str(path),
+                "sha256": LUA.sha256_file(path),
+            }
+        )
+    return identities
+
+
+def verify_candidate_maps(
+    maps: str,
+    runtime: Mapping[str, Path],
+    libraries: Path,
+    *,
+    execution_root: Path,
+    process_root: Path | None = None,
+) -> dict[str, object]:
+    """Prove live candidate maps resolve to exact files in its private root."""
+
+    root = LUA.require_physical_directory(execution_root, "candidate execution root")
+    if process_root is not None and process_root.resolve(strict=True) != root:
+        raise LUA.RunnerError("candidate map snapshot does not belong to its selected private execution root")
+    expected = {
+        "owned_loader": ("/lib/ld-crabc-x86_64.so.1", runtime["loader"]),
+        "owned_libc": ("/usr/lib/libc.so", runtime["libc.so"]),
+        "liblua": ("/application/lib/liblua.so.5.4", libraries / "liblua.so.5.4"),
+        "probe": ("/application/lib/crabc_probe.so", libraries / "crabc_probe.so"),
+    }
+    identities = _mapped_execution_files(maps, root)
     records: dict[str, object] = {}
     missing: list[str] = []
-    for name, path in expected.items():
-        digest = LUA.sha256_file(path)
-        mapped = any(item["sha256"] == digest for item in identities)
-        records[name] = {"path": str(path), "sha256": digest, "mapped": mapped}
+    for name, (inside_path, source) in expected.items():
+        digest = LUA.sha256_file(require_regular(source, f"candidate map source {name}"))
+        mapped = any(
+            item["chroot_path"] == inside_path and item["sha256"] == digest
+            for item in identities
+        )
+        records[name] = {
+            "source_path": str(source),
+            "chroot_path": inside_path,
+            "sha256": digest,
+            "mapped": mapped,
+        }
         if not mapped:
             missing.append(name)
-    forbidden = ("/opt/musl-1.2.6", "libc.so.6", "ld-linux", "libc.musl-", "ld-musl-")
-    foreign = [item for item in identities if any(marker in item["path"] for marker in forbidden)]
     return {
-        "status": "passed" if not missing and not foreign else "rejected",
+        "status": "passed" if not missing else "rejected",
         "path": "/proc/<candidate>/maps",
+        "process_root": str(root),
         "text": maps,
         "mapped_files": identities,
         "expected_artifacts": records,
-        "errors": {"missing_expected_artifacts": missing, "foreign_runtime_identities": foreign},
+        "errors": {"missing_expected_artifacts": missing},
     }
+
+
+class DynamicWorkloadFailure(LUA.RunnerError):
+    """Keep completed workload records when a later candidate step rejects."""
+
+    def __init__(self, message: str, workloads: Mapping[str, object]):
+        super().__init__(message)
+        self.workloads = dict(workloads)
+
+
+def fail_workload(
+    message: str, workloads: dict[str, object], execution: Mapping[str, object]
+) -> None:
+    """Retain the command failure even when its changed root also rejects."""
+
+    try:
+        workloads["execution_root_after_failure"] = audit_candidate_execution_root(execution)
+    except ExecutionRootAuditError as error:
+        workloads["execution_root_after_failure"] = error.audit
+    except LUA.RunnerError as error:
+        workloads["execution_root_after_failure"] = {"status": "rejected", "error": str(error)}
+    raise DynamicWorkloadFailure(message, workloads)
+
+
+def chroot_syscall_diagnostic(
+    *, execution_root: Path, fixture: str, trace: Path, timeout: float
+) -> dict[str, object]:
+    """Retain the normal candidate syscall trace without exposing host paths."""
+
+    if shutil.which("strace") is None:
+        return {"status": "unsupported", "reason": "strace unavailable", "diagnostic": True, "timing": False}
+    trace.parent.mkdir(parents=True, exist_ok=True)
+    command_line = [
+        "strace", "-f", "-qq", "-o", str(trace),
+        *_chroot_command(execution_root, "/application/bin/lua", "/work/exercise.lua", "/application/lib", fixture),
+    ]
+    record = LUA.command_record(
+        command_line,
+        cwd=execution_root,
+        environment=_chroot_environment(maps_wait=False),
+        timeout=timeout,
+    )
+    result: dict[str, object] = {
+        "diagnostic": True,
+        "timing": False,
+        "command": record,
+        "status": record["status"],
+    }
+    if trace.is_file() and not trace.is_symlink():
+        result.update(LUA.syscall_summary(trace.read_text(encoding="utf-8", errors="replace")))
+    return result
 
 
 def run_workloads(
     candidate: Mapping[str, Path],
     reference: Mapping[str, Path],
     runtime: Mapping[str, Path],
+    sysroot: Path,
     work: Path,
     timeout: float,
 ) -> dict[str, object]:
-    """Run source and bytecode modules in distinct candidate and musl processes."""
+    """Run source and bytecode modules in separate sealed candidate/oracle roots."""
 
-    script = FIXTURES / "exercise.lua"
-    candidate_libraries = candidate["libraries"]
-    reference_libraries = reference["libraries"]
-    candidate_runtime = f"{runtime['libc.so'].parent}:{candidate_libraries}"
+    script = require_regular(FIXTURES / "exercise.lua", "Lua workload fixture")
+    candidate_libraries = Path(candidate["libraries"])
+    reference_libraries = Path(reference["libraries"])
     reference_runtime = str(reference_libraries)
     fixture_root = work / "fixture-state"
     fixture_root.mkdir(parents=True, exist_ok=False)
     bytecode = work / "bytecode"
     bytecode.mkdir(parents=True, exist_ok=False)
-    candidate_bytecode = bytecode / "candidate.luac"
     reference_bytecode = bytecode / "reference.luac"
-
-    def command_with_runtime(
-        arguments: Sequence[str], *, runtime_path: str, state: Path, label: str
-    ) -> dict[str, object]:
-        environment = dynamic_environment(state)
-        environment["LD_LIBRARY_PATH"] = runtime_path
-        record = LUA.command_record(arguments, cwd=work, environment=environment, timeout=timeout)
-        require_success(record, label)
-        return record
-
-    for name in ("source-reference", "source-candidate", "bytecode-reference", "bytecode-candidate", "diagnostic"):
+    shell = require_regular(Path("/bin/sh").resolve(strict=True), "external shell fixture")
+    shell_loader, shell_loader_closure = qualified_shell_loader_fixture(work, shell, timeout)
+    execution = prepare_candidate_execution_root(
+        sysroot=sysroot,
+        runtime=runtime,
+        candidate=candidate,
+        script=script,
+        execution_root=work / "candidate-execution-root",
+        shell=shell,
+        shell_loader=shell_loader,
+        shell_loader_closure=shell_loader_closure,
+    )
+    execution_root = Path(str(execution["root"]))
+    candidate_bytecode = execution_root / "work/candidate.luac"
+    for name in ("source-reference", "bytecode-reference", "diagnostic"):
         (fixture_root / name).mkdir()
-    with staged_canonical_loader(runtime["loader"]):
-        candidate_luac = command_with_runtime(
-            [str(candidate["luac"]), "-o", str(candidate_bytecode), str(script)],
-            runtime_path=candidate_runtime,
-            state=work / "candidate-luac",
-            label="candidate dynamic luac bytecode build",
+    for name in ("source-candidate", "bytecode-candidate", "diagnostic"):
+        (execution_root / "work/fixture-state" / name).mkdir(parents=True, exist_ok=False)
+
+    workloads: dict[str, object] = {"execution_root": execution}
+    candidate_luac = LUA.command_record(
+        _chroot_command(
+            execution_root, "/application/bin/luac", "-o", "/work/candidate.luac", "/work/exercise.lua"
+        ),
+        cwd=execution_root,
+        environment=_chroot_environment(maps_wait=False),
+        timeout=timeout,
+    )
+    workloads["candidate_luac"] = candidate_luac
+    if candidate_luac.get("status") != 0:
+        fail_workload(
+            f"candidate dynamic luac bytecode build failed: {candidate_luac.get('status')}", workloads, execution
         )
-        reference_luac = command_with_runtime(
-            [str(reference["luac"]), "-o", str(reference_bytecode), str(script)],
-            runtime_path=reference_runtime,
-            state=work / "reference-luac",
-            label="pinned-musl dynamic luac bytecode build",
+    reference_luac_environment = dynamic_environment(work / "reference-luac")
+    reference_luac_environment["LD_LIBRARY_PATH"] = reference_runtime
+    reference_luac = LUA.command_record(
+        [str(reference["luac"]), "-o", str(reference_bytecode), str(script)],
+        cwd=work,
+        environment=reference_luac_environment,
+        timeout=timeout,
+    )
+    workloads["reference_luac"] = reference_luac
+    if reference_luac.get("status") != 0:
+        fail_workload(
+            f"pinned-musl dynamic luac bytecode build failed: {reference_luac.get('status')}", workloads, execution
         )
-        if not candidate_bytecode.is_file() or not reference_bytecode.is_file():
-            raise LUA.RunnerError("dynamic luac did not produce both bytecode artifacts")
-        source_reference, _ = LUA.run_lua(
-            [str(MUSL_ROOT / "lib/ld-musl-x86_64.so.1"), str(reference["lua"])],
-            script,
-            reference_libraries,
-            reference_runtime,
-            fixture_root / "source-reference",
-            timeout,
-            False,
-        )
-        source_candidate, maps = LUA.run_lua(
-            [str(candidate["lua"])],
-            script,
-            candidate_libraries,
-            candidate_runtime,
-            fixture_root / "source-candidate",
-            timeout,
-            True,
-        )
-        bytecode_reference, _ = LUA.run_lua(
-            [str(MUSL_ROOT / "lib/ld-musl-x86_64.so.1"), str(reference["lua"])],
-            reference_bytecode,
-            reference_libraries,
-            reference_runtime,
-            fixture_root / "bytecode-reference",
-            timeout,
-            False,
-        )
-        bytecode_candidate, _ = LUA.run_lua(
-            [str(candidate["lua"])],
-            candidate_bytecode,
-            candidate_libraries,
-            candidate_runtime,
-            fixture_root / "bytecode-candidate",
-            timeout,
-            False,
-        )
-        if maps is None:
-            raise LUA.RunnerError("candidate dynamic Lua process did not provide map evidence")
-        maps_record = verify_candidate_maps(maps, runtime, candidate_libraries)
-        trace = LUA.syscall_diagnostic(
-            [str(candidate["lua"])],
-            script,
-            candidate_libraries,
-            candidate_runtime,
-            fixture_root / "diagnostic",
-            work / "traces/normal.strace",
-            timeout,
-        )
+    if not candidate_bytecode.is_file() or candidate_bytecode.is_symlink() or not reference_bytecode.is_file():
+        fail_workload("dynamic luac did not produce both bytecode artifacts", workloads, execution)
+
+    source_reference, _ = LUA.run_lua(
+        [str(MUSL_ROOT / "lib/ld-musl-x86_64.so.1"), str(reference["lua"])],
+        script,
+        reference_libraries,
+        reference_runtime,
+        fixture_root / "source-reference",
+        timeout,
+        False,
+    )
+    source_candidate, maps, process_root = run_chroot_lua(
+        execution_root=execution_root,
+        program="/application/bin/lua",
+        script="/work/exercise.lua",
+        fixture="/work/fixture-state/source-candidate",
+        timeout=timeout,
+        capture_maps=True,
+    )
+    bytecode_reference, _ = LUA.run_lua(
+        [str(MUSL_ROOT / "lib/ld-musl-x86_64.so.1"), str(reference["lua"])],
+        reference_bytecode,
+        reference_libraries,
+        reference_runtime,
+        fixture_root / "bytecode-reference",
+        timeout,
+        False,
+    )
+    bytecode_candidate, _, _ = run_chroot_lua(
+        execution_root=execution_root,
+        program="/application/bin/lua",
+        script="/work/candidate.luac",
+        fixture="/work/fixture-state/bytecode-candidate",
+        timeout=timeout,
+        capture_maps=False,
+    )
     source = LUA.result_comparison(source_reference, source_candidate)
     bytecode_result = LUA.result_comparison(bytecode_reference, bytecode_candidate)
-    if maps_record["status"] != "passed":
-        raise LUA.RunnerError(f"candidate dynamic Lua map isolation failed: {maps_record['errors']}")
-    if source["passed"] is not True or bytecode_result["passed"] is not True:
-        raise LUA.RunnerError("dynamic Lua source or bytecode differs from the pinned-musl oracle")
-    return {
-        "candidate_luac": candidate_luac,
-        "reference_luac": reference_luac,
-        "bytecode_artifacts": {
-            "candidate": LUA.artifact_record(candidate_bytecode),
-            "reference": LUA.artifact_record(reference_bytecode),
-        },
-        "source": source,
-        "bytecode": bytecode_result,
-        "candidate_maps": maps_record,
-        "syscalls": trace,
-        "module_boundary": {
-            "runtime_dso_loading": "required: Lua loads success, failure, and missing-symbol C-module paths",
-            "io_popen": "required by both source and bytecode workloads",
-        },
+    workloads.update({"source": source, "bytecode": bytecode_result})
+    if maps is None or process_root is None:
+        fail_workload("candidate dynamic Lua process did not provide live map evidence", workloads, execution)
+    try:
+        maps_record = verify_candidate_maps(
+            maps, runtime, candidate_libraries, execution_root=execution_root, process_root=process_root
+        )
+    except LUA.RunnerError as error:
+        fail_workload(f"candidate dynamic Lua map isolation failed: {error}", workloads, execution)
+    workloads["candidate_maps"] = maps_record
+    trace = chroot_syscall_diagnostic(
+        execution_root=execution_root,
+        fixture="/work/fixture-state/diagnostic",
+        trace=work / "traces/normal.strace",
+        timeout=timeout,
+    )
+    workloads["syscalls"] = trace
+    workloads["bytecode_artifacts"] = {
+        "candidate": LUA.artifact_record(candidate_bytecode),
+        "reference": LUA.artifact_record(reference_bytecode),
     }
+    try:
+        workloads["execution_root_after"] = audit_candidate_execution_root(execution)
+    except ExecutionRootAuditError as error:
+        workloads["execution_root_after"] = error.audit
+        raise DynamicWorkloadFailure(
+            f"candidate dynamic Lua execution-root seal failed after workload: {error}", workloads
+        )
+    except LUA.RunnerError as error:
+        workloads["execution_root_after"] = {"status": "rejected", "error": str(error)}
+        raise DynamicWorkloadFailure(
+            f"candidate dynamic Lua execution-root seal failed after workload: {error}", workloads
+        )
+    workloads["module_boundary"] = {
+        "runtime_dso_loading": "required: Lua loads success, failure, and missing-symbol C-module paths",
+        "io_popen": "required by both source and bytecode workloads through the sealed /bin/sh fixture",
+    }
+    if maps_record["status"] != "passed":
+        raise DynamicWorkloadFailure(
+            f"candidate dynamic Lua map isolation failed: {maps_record['errors']}", workloads
+        )
+    if source["passed"] is not True or bytecode_result["passed"] is not True:
+        raise DynamicWorkloadFailure(
+            "dynamic Lua source or bytecode differs from the pinned-musl oracle", workloads
+        )
+    return workloads
 
 
 def run_dynamic_lane(
@@ -906,17 +1491,22 @@ def run_dynamic_lane(
         assert isinstance(lua, dict)
         source = LUA.safe_extract(archive, lane / "source", str(lua["archive_root"]))
         candidate = build_candidate(source, sysroot, wrapper, runtime, lane / "candidate", timeout, jobs)
+        # The build graph itself is evidence even if its first execution child
+        # fails.  Store it before workload commands can raise.
+        report["candidate"] = candidate["records"]
         support = source / "src"
         reference = build_reference(source, support, lane / "oracle", timeout)
+        report["reference"] = reference["records"]
         candidate_paths = candidate["paths"]
         reference_paths = reference["paths"]
         assert isinstance(candidate_paths, dict) and isinstance(reference_paths, dict)
-        workloads = run_workloads(candidate_paths, reference_paths, runtime, lane, timeout)
-        report["candidate"] = candidate["records"]
-        report["reference"] = reference["records"]
+        workloads = run_workloads(candidate_paths, reference_paths, runtime, sysroot, lane, timeout)
         report["workloads"] = workloads
         report["passed"] = True
         report["result"] = "pass"
+    except DynamicWorkloadFailure as error:
+        report["workloads"] = error.workloads
+        report["error"] = str(error)
     except LUA.RunnerError as error:
         report["error"] = str(error)
     return report

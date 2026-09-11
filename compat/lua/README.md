@@ -44,10 +44,14 @@ header selection, every static link receipt/map/trace, and ELF facts. The
 dynamic lane additionally records candidate `/proc/<pid>/maps` hashes for the
 owned loader/libc, `liblua`, and loaded probe extension.
 
-Candidate execution temporarily stages the otherwise-absent canonical
-`/lib/ld-crabc-aarch64.so.1` or `/lib/ld-crabc-x86_64.so.1`, according to the
-lane, only inside the disposable native container. It is hash-checked and
-removed after execution.
+The native dynamic candidate enters a fresh private execution root through its
+unchanged canonical `/lib/ld-crabc-x86_64.so.1` kernel interpreter. That root
+contains an exact copy of the supplied product, the finite Lua application
+payload, and the fixture script; only `/work` may change during a workload.
+The `/lib/ld-musl-x86_64.so.1` compatibility alias alone is replaced with the
+pinned musl loader required by the separately copied `/bin/sh` fixture used by
+`io.popen`. Candidate map evidence is translated through the live
+`/proc/<pid>/root` and must identify the copied owned loader/libc and Lua DSOs.
 
 ## Musl oracle lanes
 
