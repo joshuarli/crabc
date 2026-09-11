@@ -236,12 +236,13 @@ pub(super) struct WordexpResultTransaction {
     vector: *mut *mut c_char,
     capacity: usize,
     offsets: usize,
-    old_count: usize,
+    // This count starts with borrowed append words and advances only after a
+    // fully validated new C string and sentinel have been accepted.
+    word_count: usize,
     old_vector: *mut *mut c_char,
     append: bool,
     first_new_slot: usize,
     next_word_slot: usize,
-    appended_count: usize,
 }
 
 impl WordexpResultTransaction {
@@ -333,12 +334,11 @@ impl WordexpResultTransaction {
             vector,
             capacity: initial_capacity,
             offsets,
-            old_count,
+            word_count: old_count,
             old_vector,
             append,
             first_new_slot,
             next_word_slot: first_new_slot,
-            appended_count: 0,
         })
     }
 
@@ -396,7 +396,7 @@ impl WordexpResultTransaction {
         let Some(next_word_slot) = self.next_word_slot.checked_add(1) else {
             return Err(WordexpResultError::NoSpace);
         };
-        let Some(next_count) = self.appended_count.checked_add(1) else {
+        let Some(next_word_count) = self.word_count.checked_add(1) else {
             return Err(WordexpResultError::NoSpace);
         };
         // Reserve both the current string pointer slot and the following null
@@ -445,11 +445,11 @@ impl WordexpResultTransaction {
             ptr::write(self.vector.add(next_word_slot), ptr::null_mut());
         }
         self.next_word_slot = next_word_slot;
-        self.appended_count = next_count;
+        self.word_count = next_word_count;
         Ok(())
     }
 
-    /// Publish the completed staged prefix without allocating.
+    /// Publish the completed staged prefix infallibly and without allocating.
     ///
     /// # Safety
     /// The caller selects this only after a successful evaluation or an error
@@ -457,16 +457,13 @@ impl WordexpResultTransaction {
     /// must drop this transaction instead, which retains an append record
     /// byte-for-byte and frees only newly owned storage. The record pointer and
     /// old append allocations must remain exclusively owned until this returns.
-    pub(super) unsafe fn commit_completed(mut self) -> Result<(), WordexpResultError> {
-        let Some(word_count) = self.old_count.checked_add(self.appended_count) else {
-            return Err(WordexpResultError::NoSpace);
-        };
-
+    pub(super) unsafe fn commit_completed(mut self) {
         // First publish the replacement vector, whose old string pointers are
         // already copied. Only then retire the old vector allocation; there is
-        // no allocation or fallible operation between these steps.
+        // no allocation or fallible operation between these steps. word_count
+        // was checked at each accepted word, so publishing cannot fail.
         unsafe {
-            (*self.record).word_count = word_count;
+            (*self.record).word_count = self.word_count;
             (*self.record).offsets = self.offsets;
             (*self.record).words = self.vector;
         }
@@ -477,7 +474,6 @@ impl WordexpResultTransaction {
             // published vector, leaving the old vector itself solely owned.
             unsafe { self.allocator.deallocate(old_vector.cast()); }
         }
-        Ok(())
     }
 
     unsafe fn discard_staging(&mut self) {
@@ -521,13 +517,9 @@ pub(super) unsafe fn release_wordexp_result_record(
     let vector = unsafe { (*record).words };
     let word_count = unsafe { (*record).word_count };
     let offsets = unsafe { (*record).offsets };
-    if vector.is_null() {
-        if word_count == 0 {
-            // SAFETY: a fresh `NoSpace` zero record is safe to release again.
-            unsafe { ptr::write(record, WordexpResultRecord::zero()); }
-        }
-        return;
-    }
+    // Match the selected `wordfree`: a null vector is inert, including the
+    // fresh `WRDE_NOSPACE` zero record, so caller-supplied offsets survive.
+    if vector.is_null() { return; }
     let Some(word_end) = checked_word_end(offsets, word_count) else {
         // A caller violating the unsafe record contract must not make this
         // helper perform unchecked pointer arithmetic or discard ownership.
@@ -543,6 +535,10 @@ pub(super) unsafe fn release_wordexp_result_record(
     }
     // SAFETY: the vector is the record's final selected-domain allocation.
     unsafe { allocator.deallocate(vector.cast()); }
-    // Make a second release inert and do not retain stale caller offsets.
-    unsafe { ptr::write(record, WordexpResultRecord::zero()); }
+    // Match selected wordfree by retiring ownership fields while retaining
+    // caller-supplied offsets for a later REUSE + DOOFFS call.
+    unsafe {
+        (*record).words = ptr::null_mut();
+        (*record).word_count = 0;
+    }
 }

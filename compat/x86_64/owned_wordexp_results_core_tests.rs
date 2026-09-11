@@ -164,7 +164,7 @@ fn append(transaction: &mut WordexpResultTransaction, bytes: &[u8]) -> Result<()
 fn commit(transaction: WordexpResultTransaction) {
     // SAFETY: the tests call this only for the successful or `NoSpace`
     // completion states that POSIX permits the caller to publish.
-    unsafe { transaction.commit_completed().unwrap(); }
+    unsafe { transaction.commit_completed(); }
 }
 
 fn release(record: &mut WordexpResultRecord) {
@@ -289,8 +289,45 @@ fn fresh_zero_word_success_owns_an_allocated_sentinel_vector() {
     assert!(!record.words.is_null());
     unsafe { assert_releasable_record(&record); }
     release(&mut record);
-    // The helper clears the record, making an accidental second wordfree inert.
+    // The helper clears words/count, retains caller offsets, and makes a
+    // second wordfree inert.
     release(&mut record);
+    assert_allocator_clean();
+}
+
+#[test]
+fn wordfree_retains_offsets_for_successful_partial_and_zero_nospace_records() {
+    // The selected `owned_wordexp.rs::wordfree` is the source control: after
+    // a non-null vector it clears only words/count, and its null-vector path
+    // returns without changing the record. REUSE can therefore reuse we_offs.
+    reset_allocator(None);
+    let mut successful = make_record(3, &[b"complete"]);
+    release(&mut successful);
+    assert_eq!(unsafe { record_snapshot(&successful) }, (0, 0, 3));
+    release(&mut successful);
+    assert_eq!(unsafe { record_snapshot(&successful) }, (0, 0, 3));
+    assert_allocator_clean();
+
+    reset_allocator(None);
+    let mut partial = WordexpResultRecord::zero();
+    let mut transaction = begin(&mut partial, fresh_mode(3));
+    append(&mut transaction, b"completed-prefix").unwrap();
+    fail_next_allocation();
+    assert_eq!(append(&mut transaction, b"unaccepted"), Err(WordexpResultError::NoSpace));
+    commit(transaction);
+    assert_eq!(partial.word_count, 1);
+    release(&mut partial);
+    assert_eq!(unsafe { record_snapshot(&partial) }, (0, 0, 3));
+    assert_allocator_clean();
+
+    reset_allocator(Some(1));
+    let mut zero_nospace = WordexpResultRecord::zero();
+    let result = unsafe {
+        WordexpResultTransaction::begin(&mut zero_nospace, fresh_mode(3), allocator())
+    };
+    assert_eq!(result.err(), Some(WordexpResultError::NoSpace));
+    release(&mut zero_nospace);
+    assert_eq!(unsafe { record_snapshot(&zero_nospace) }, (0, 0, 3));
     assert_allocator_clean();
 }
 

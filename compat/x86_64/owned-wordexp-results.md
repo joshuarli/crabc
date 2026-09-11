@@ -56,8 +56,11 @@ Fresh setup failure writes `{ word_count: 0, words: NULL, offsets }`, so its
 old record. A fresh zero-word success still owns an allocated vector with its
 leading null offsets and final sentinel. `release_wordexp_result_record()` is
 the private `wordfree` helper for successful and partial-prefix records; it
-frees every published C string and vector, then clears the record so a second
-release is inert.
+frees every published C string and vector, then clears only `words` and
+`word_count`. This deliberately matches selected `wordfree`: `offsets`
+survives both a non-null-vector release and a null-vector fresh `NoSpace`
+record, so a later `WRDE_REUSE | WRDE_DOOFFS` call retains the caller's
+`we_offs`; a second release remains inert.
 
 ## Linear result input and unsafe boundary
 
@@ -78,8 +81,9 @@ exclusively owned, and allocated by the same `WordexpResultAllocator` domain.
 semantics, including preserving a live allocation when `realloc` returns
 null. `commit_completed()` is unsafe because its caller alone knows whether
 the final engine status is success/`WRDE_NOSPACE`; all other statuses must use
-Drop. The private release helper has the corresponding valid-record and
-matching-allocator obligations.
+Drop. It is otherwise infallible: the total count is checked with each word
+acceptance, and publication performs no allocation. The private release helper
+has the corresponding valid-record and matching-allocator obligations.
 
 ## Focused evidence
 
