@@ -1168,6 +1168,13 @@ mod owned_wordexp;
 #[allow(dead_code)] // The candidate stays intentionally unselected here.
 #[path = "owned_wordexp_engine.rs"]
 mod owned_wordexp_engine;
+// The sibling process/environment adapter is also private and unselected. It
+// is compiled only with the owned runtime so its typed boundary cannot drift
+// from the selected spawn, environment, locale, and allocator owners.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[allow(dead_code)]
+#[path = "owned_wordexp_process.rs"]
+mod owned_wordexp_process;
 // The installed owned-static composition additionally needs Lua's complete
 // binary32/binary64 inverse-trigonometry set. Keep it at this aggregate
 // boundary: the frozen default archive must not acquire any of these entries.
