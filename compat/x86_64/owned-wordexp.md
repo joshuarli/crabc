@@ -104,6 +104,8 @@ dynamic PIE/non-PIE products.  With a supplied dynamic product it does not
 rebuild it; `--static-sysroot` adds the two static modes.  Dynamic PIE and
 non-PIE run through both the kernel interpreter and the installed loader's
 direct entry, making six product modes when both products are selected.
+After validating the report, the runner prints its retained directory with the
+catalog's `evidence:` marker, followed by the report path on the final line.
 
 For every mode and each controlled shell state (`normal`, `missing`,
 `inaccessible`, and `invalid`), the receipt retains command argv/status/stdout/stderr

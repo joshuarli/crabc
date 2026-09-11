@@ -978,6 +978,14 @@ def _capture_oracle_inputs(work: Path) -> dict[str, Any]:
                             "retained": _checkout_identity(ROOT, retained, "retained pinned musl static libc")}}
 
 
+def _publish_report(report_path: Path, report: dict, expected_native_inputs: dict) -> None:
+    """Publish only a validated report; keep its machine-readable path last."""
+    _write_json(report_path, report)
+    validate_report(ROOT, report_path, expected_native_inputs)
+    print(f"owned wordexp products: evidence: {report_path.parent}")
+    print(report_path)
+
+
 def collect(dynamic: Path | None, static: Path | None) -> Path:
     _native_requirements()
     work = _work_directory()
@@ -1065,9 +1073,7 @@ def collect(dynamic: Path | None, static: Path | None) -> Path:
             "links": links, "cells": cells,
         }
         report_path = work / "owned-wordexp-products.json"
-        _write_json(report_path, report)
-        validate_report(ROOT, report_path, expected_native_inputs)
-        print(report_path)
+        _publish_report(report_path, report, expected_native_inputs)
         return report_path
     except Exception:
         print(f"owned wordexp products: retained failure evidence at {work}", file=sys.stderr)

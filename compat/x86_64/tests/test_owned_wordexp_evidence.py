@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import importlib.util
+import io
+import json
 import shutil
 import unittest
 import unittest.mock
@@ -22,6 +25,44 @@ def load_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+class OwnedWordexpPublicationTests(unittest.TestCase):
+    def test_validated_report_is_discoverable_by_dynamic_qualification(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        root.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(shutil.rmtree, root)
+        work = root / "evidence"
+        work.mkdir()
+        report = work / "owned-wordexp-products.json"
+        output = io.StringIO()
+
+        def validate(checkout, path, expected):
+            self.assertEqual((checkout, path, expected), (ROOT, report, {"sealed": "inputs"}))
+            self.assertEqual(json.loads(path.read_text()), {"retained": "report"})
+            self.assertEqual(output.getvalue(), "")
+
+        with contextlib.redirect_stdout(output), unittest.mock.patch.object(module, "validate_report", side_effect=validate):
+            module._publish_report(report, {"retained": "report"}, {"sealed": "inputs"})
+        self.assertEqual(output.getvalue().splitlines()[-1], str(report))
+        log = root / "leaf.log"
+        log.write_text(output.getvalue(), encoding="utf-8")
+        snapshot = module.qualification.artifact_snapshot(log, str(ROOT))
+        self.assertEqual(set(snapshot), {work.relative_to(ROOT).as_posix()})
+        self.assertEqual(set(snapshot[work.relative_to(ROOT).as_posix()]), {report.name})
+
+    def test_rejected_report_does_not_publish_a_success_marker(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        root.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(shutil.rmtree, root)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), unittest.mock.patch.object(
+                module, "validate_report", side_effect=module.EvidenceError("rejected")):
+            with self.assertRaises(module.EvidenceError):
+                module._publish_report(root / "owned-wordexp-products.json", {}, {})
+        self.assertEqual(output.getvalue(), "")
 
 
 class OwnedWordexpExecutionRootTests(unittest.TestCase):
