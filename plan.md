@@ -51,8 +51,17 @@ defects while preserving the pinned numerical algorithms. The integrated
 `math-scalar-corrections` proof passes 25,632 exact-dyadic cases and accounts
 for all 9,064 existing family records. The fixed musl oracle's failures remain
 separate. Complete untouched upstream units also pass against the corrected
-installed static product. This does not replace the full dynamic libc-test
-aggregate; its finite oracle-defect accounting must require candidate success.
+installed static product. A fresh full dynamic libc-test run at `111a96b3`
+confirms candidate success with empty output for all three formerly failing
+math units, while preserving the fixed musl diagnostic streams. The raw
+aggregate still reports 427 passes, one random link blocker, and six failed
+comparisons; the three math comparisons fail because the oracle fails.
+`5cd0f0fb` and `0c2d4b40` add finite accounting that requires those exact
+candidate passes, pinned oracle failures, and 39 unchanged proof sources.
+It rejects candidate failures and any changed or unlisted outcome. This does
+not close the aggregate's remaining word-expansion or random blockers.
+The dynamic measurement is retained at
+`.work/x86_64/libc-test-math-111a96b3/tmp/owned-libc-test.EeqmUv/libc-test.json`.
 Source mappings, numerical arguments, and reproduction commands are in
 [`math-scalar-corrections.md`](compat/x86_64/math-scalar-corrections.md).
 
