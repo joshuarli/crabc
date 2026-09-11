@@ -1,58 +1,76 @@
 # Combined native x86-64 completion goal
 
-## Active integration — 2026-09-05
+## Active integration — 2026-09-11
 
-At `730cafc1`, the complete 50-case dynamic gate passed for both independent
-builds and the extracted package: 150 case receipts, identical product
-manifests and byte-identical packages. Host validation and explicit local
-publication passed for
-`.work/x86_64/tmp/materialized-dynamic.sDElBH/qualification.json`; log
-`.work/x86_64/owned-dynamic-posix-matrix.log`. The same revision passed static
-preparation with two reproducible builds, extraction and host validation:
-`.work/x86_64/posix-static-products-matrix/preparation.json`.
+At `04c4cbd3`, the complete 70-case dynamic product gate passed across two
+independent builds and the extracted package: 210 case receipts, identical
+product manifests and byte-identical packages. Host replay and explicit local
+publication passed. All 21 synthetic loader cases and all 34 frozen package
+corpus cases passed on each product. Evidence paths below are relative to
+`.work/worktrees/owned_posix_evidence_integration/` unless stated otherwise.
+The retained dynamic receipt is
+`.work/x86_64/tmp/materialized-dynamic.oVccqA/qualification.json`.
 
-The complete POSIX workload matrix then passed at that revision, including
-host validation: `.work/x86_64/posix-family-matrix/execution.json`; log
-`.work/x86_64/posix-family-matrix.log`. All eighteen workloads ran for each
-product pair. The receipt binds all 149 frozen spellings to six static and
-twelve dynamic cells and checks identical bytes for all 34 object roles
-across the three replays.
+The same revision passed reproducible static preparation and all eighteen
+POSIX workloads across all three static/dynamic product pairs. The matrix
+binds all 149 selected spellings to six static and twelve dynamic execution
+cells. Static preparation, the POSIX matrix, and the installed-loader component
+also passed host reconstruction:
 
-The required native aggregate remains open. Supplied-product differential,
-signal/process, source-correct pthread stress, full OS-test and libc-test
-runners, and their independent observation collectors are integrated.
-The full 434-unit libc-test run against the clean `bc911f5d` product records
-427 passes, one missing-provider link (`random`) and six runtime failures:
-`functional/crypt`, `functional/strptime`, `functional/wordexp`, `math/fmaf`,
-`math/fmal` and `math/powf`. The last five have identical candidate and musl
-failure observations. The exact two `strptime` diagnostics now have a finite
-source-and-POSIX disposition; the raw unit remains failed. `wordexp` and the
-three math failures remain unresolved. Equal failure alone is never a
-qualification. See
+- `.work/x86_64/posix-static-products-04c4cbd3/preparation.json`
+- `.work/x86_64/posix-family-04c4cbd3/execution.json`
+- `.work/x86_64/loader-family-04c4cbd3/receipt.json`
+
+These are component measurements; family and promotion flags remain false.
+The pthread component's three composition runs passed, but final collection
+failed because it treated the tracked roster as a mutable evidence path.
+`41c892cc` corrects source identity handling and removes duplicate validation
+within each coordinator phase. Eighteen focused tests pass. The retained run
+has no valid receipt; fresh execution and host reconstruction remain required.
+
+The full native libc-test measurement at `04c4cbd3` records 427 of 434 units
+passing, one missing-provider link (`functional/random`), and six runtime
+failures: `functional/crypt`, `functional/strptime`, `functional/wordexp`,
+`math/fmaf`, `math/fmal`, and `math/powf`. Its full OS-test measurement passes
+eight of ten suites. Include retains ten differences: four missing BSD random
+state APIs and six atomic addressability extensions. Basic retains eight:
+the same four BSD APIs and four selected credential aliases. Earlier AIO,
+utmp, account-file, and `rand`/`srand` gaps are repaired. Both raw reports remain
+under `.work/x86_64/{libc-test-measurement-04c4cbd3,os-measurement-04c4cbd3}/`.
+
+Finite crypt, atomic, credential, and `strptime` dispositions retain their
+original raw outcomes. The same-product crypt and atomic companions pass;
+these dispositions admit no BSD random or word-expansion failure. The latter
+still requires the owned private expansion engine. The selected adapter's
+literal parameter-word brace correction has separate installed static/dynamic
+evidence; it does not establish complete expansion semantics. See
 [`owned-posix-native-dispositions.md`](compat/x86_64/owned-posix-native-dispositions.md).
-The report is
-`.work/worktrees/aio_native_aggregate/.work/x86_64/libc-test-measurement/tmp/owned-libc-test.a0vxiq/libc-test.json`.
-The same product's full ten-suite OS-test run passes eight suites. Include
-retains twelve differences: six missing PRNG APIs and six atomic addressability
-extensions. Basic retains ten: the same six PRNG APIs and four selected
-credential aliases. The report is
-`.work/worktrees/aio_native_aggregate/.work/x86_64/os-measurement/tmp/owned-os-test.6n_4lh1h/os-test.json`.
-The credential, atomic and crypt profile dispositions still require their
-same-product companions. The finite `strptime` disposition checks its exact
-prepared source, both raw statuses and both complete diagnostic streams;
-none of these dispositions accounts for the PRNG, `wordexp`, or math failures.
-These retained results do not satisfy aggregate acceptance. The composite execution owner is now
-implemented through `owned-posix-native`; passing full native results and a
-fresh prerequisite matrix remain required.
-The pthread component preserves the original fixture and failed observations;
-its exact two-call native adaptation requires complementary same-product
-I/O-cancellation evidence. See `compat/x86_64/owned-posix-runtime.md` for the
-aggregate boundary. The later component and driver integrations invalidate the
-earlier source selection. The recorded matrix is a measurement at `730cafc1`,
-not current family closure or public x86 support.
 
-The combined goal remains active and incomplete. Continue the sequence below;
-the historical pause does not instruct current work to stop.
+`024b1563` corrects demonstrated `fmaf`, `fmal`, `powf`, and `nextafterl`
+defects while preserving the pinned numerical algorithms. The integrated
+`math-scalar-corrections` proof passes 25,632 exact-dyadic cases and accounts
+for all 9,064 existing family records. The fixed musl oracle's failures remain
+separate. Complete untouched upstream units also pass against the corrected
+installed static product. This does not replace the full dynamic libc-test
+aggregate; its finite oracle-defect accounting must require candidate success.
+Source mappings, numerical arguments, and reproduction commands are in
+[`math-scalar-corrections.md`](compat/x86_64/math-scalar-corrections.md).
+
+The dynamic Lua source-build runner now isolates the candidate in a private
+execution root with copied owned runtime/application files, an explicit shell
+fixture, sealed root inventories, and live mapping identities. Full installed
+and extracted source/bytecode/module execution and reproducibility pass at
+worker `8021735b`, integrated as `e82b9c51`; its report is
+`.work/worktrees/owned_lua_runtime_root/.work/x86_64/lua-dynamic-source-build/run-nne_tr29/report.json`
+relative to the main checkout. This remains separate component evidence.
+
+Later source changes invalidate the preceding product selection. Preserve
+these receipts as exact-revision measurements. The composite owner remains
+`owned-posix-native`; fresh prerequisites and passing complete native results
+are necessary for family acceptance. The combined goal remains active and
+incomplete: public x86 support is false, C mimalloc remains selected, native
+allocator M2 remains partial, and the restrictions below remain unresolved.
+Continue the sequence below; the historical pause does not instruct work to stop.
 
 ## Historical handoff — 2026-09-05
 
