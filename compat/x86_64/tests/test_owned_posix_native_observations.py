@@ -1118,6 +1118,16 @@ class NativeObservationsTests(unittest.TestCase):
                 'atomic': {'receipt': {'path': '.work/atomic/atomic-addressable-profile.json', 'sha256': 'd'*64},
                     'selected_dynamic_entries': {mode: {} for mode in MODES}}}
 
+    def fixture_math_oracle_defects(self):
+        expected_hashes = {name: {key: hashlib.sha256(value).hexdigest() for key, value in {
+            'source': b'fixture math unit\n', 'header': b'fixture diagnostic header\n'}.items()}
+            for name in math_oracle_defects.ORACLE_DEFECTS}
+        definitions = copy.deepcopy(math_oracle_defects.ORACLE_DEFECTS)
+        for name, definition in definitions.items():
+            definition['source_sha256'] = expected_hashes[name]['source']
+            definition['headers'] = {path: expected_hashes[name]['header'] for path in definition['headers']}
+        return definitions
+
     def test_native_os_profile_preserves_exact_ten_raw_failures(self):
         report = self.os_test_fixture(profile=True)
         proof = self.profile_companions()
@@ -1139,23 +1149,28 @@ class NativeObservationsTests(unittest.TestCase):
                 native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                root=self.root, profile_inputs=inputs)
 
-    def test_native_libc_profile_preserves_only_crypt_and_strptime_failed_units(self):
-        report = self.libc_test_fixture(profile=True)
+    def test_native_libc_profile_preserves_crypt_strptime_and_math_oracle_defect_units(self):
+        report = self.libc_test_fixture(profile=True, math_defects=True)
         proof = self.profile_companions()
         inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
                   'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
         with self.assertRaises(native.NativeObservationError): self.collect('libc-test')
-        with patch.object(native, '_load_profile_companions', return_value=proof):
+        with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', self.fixture_math_oracle_defects()), \
+             patch.object(native, '_load_profile_companions', return_value=proof):
             result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                     root=self.root, profile_inputs=inputs)
-            self.assertEqual(report['counts'], {'passed': 432, 'runtime-failed': 2})
+            self.assertEqual(report['counts'], {'passed': 429, 'runtime-failed': 5})
             self.assertEqual(len(result['observations']), 434)
             self.assertEqual(result['qualification']['status'], 'profile-qualified')
-            self.assertEqual(len(result['qualification']['dispositions']), 2)
+            self.assertEqual(len(result['qualification']['dispositions']), 5)
             self.assertEqual(len(result['qualification']['dispositions'][0]['differences']), 28)
             self.assertEqual(result['qualification']['dispositions'][1]['unit'], 'functional/strptime')
+            self.assertEqual([entry['unit'] for entry in result['qualification']['dispositions'][2:]],
+                             ['math/fmaf', 'math/fmal', 'math/powf'])
+            self.assertTrue(all(entry['status'] == 'candidate-passed-oracle-defect'
+                                for entry in result['qualification']['dispositions'][2:]))
             count_changed = json.loads(json.dumps(report))
-            count_changed['counts']['runtime-failed'] = 1
+            count_changed['counts']['runtime-failed'] = 4
             self.put(self.leaf / 'libc-test.json', count_changed)
             with self.assertRaises(native.NativeObservationError):
                 native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
@@ -1172,14 +1187,7 @@ class NativeObservationsTests(unittest.TestCase):
         proof = self.profile_companions()
         inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
                   'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
-        expected_hashes = {name: {key: hashlib.sha256(value).hexdigest() for key, value in {
-            'source': b'fixture math unit\n', 'header': b'fixture diagnostic header\n'}.items()}
-            for name in math_oracle_defects.ORACLE_DEFECTS}
-        fixture_defects = copy.deepcopy(math_oracle_defects.ORACLE_DEFECTS)
-        for name, definition in fixture_defects.items():
-            definition['source_sha256'] = expected_hashes[name]['source']
-            definition['headers'] = {path: expected_hashes[name]['header'] for path in definition['headers']}
-        with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', fixture_defects):
+        with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', self.fixture_math_oracle_defects()):
             with patch.object(native, '_load_profile_companions', return_value=proof):
                 result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                         root=self.root, profile_inputs=inputs)
@@ -1200,13 +1208,7 @@ class NativeObservationsTests(unittest.TestCase):
         proof = self.profile_companions()
         inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
                   'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
-        expected_hashes = {name: {key: hashlib.sha256(value).hexdigest() for key, value in {
-            'source': b'fixture math unit\n', 'header': b'fixture diagnostic header\n'}.items()}
-            for name in math_oracle_defects.ORACLE_DEFECTS}
-        fixture_defects = copy.deepcopy(math_oracle_defects.ORACLE_DEFECTS)
-        for name, definition in fixture_defects.items():
-            definition['source_sha256'] = expected_hashes[name]['source']
-            definition['headers'] = {path: expected_hashes[name]['header'] for path in definition['headers']}
+        fixture_defects = self.fixture_math_oracle_defects()
         def collect():
             with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', fixture_defects):
                 with patch.object(native, '_load_profile_companions', return_value=proof):
