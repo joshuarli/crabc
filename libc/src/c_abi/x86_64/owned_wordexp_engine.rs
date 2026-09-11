@@ -207,12 +207,13 @@ struct Command {
 }
 
 /// The spelling that introduced an opaque command substitution. The process
-/// adapter receives it as syntax provenance only; it must not reinterpret the
-/// command body.
+/// adapter receives the raw body plus the outer double-quote context needed
+/// for POSIX backtick backslash handling; it must not reinterpret or preflight
+/// the command body.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CommandStyle {
     DollarParen,
-    Backtick,
+    Backtick { double_quoted: bool },
 }
 
 /// The four POSIX parameter substring-pattern operations. Keeping this
@@ -517,7 +518,12 @@ impl SyntaxParser<'_> {
                 if after > range.end { return Err(WordexpError::Syntax); }
                 self.syntax.contains_command |= contains_command;
                 let command = self.syntax.commands.len();
-                self.syntax.commands.push(Command { body, style: CommandStyle::Backtick })?;
+                self.syntax.commands.push(Command {
+                    body,
+                    style: CommandStyle::Backtick {
+                        double_quoted: inherited_flags & NODE_DOUBLE != 0,
+                    },
+                })?;
                 self.append_node(word, SyntaxNode {
                     kind: NODE_COMMAND, flags: inherited_flags, span: body,
                     payload: command, next: NONE,
@@ -637,7 +643,11 @@ impl SyntaxParser<'_> {
                 if after > range.end { return Err(WordexpError::Syntax); }
                 self.syntax.contains_command |= contains_command;
                 let command = self.syntax.commands.len();
-                self.syntax.commands.push(Command { body, style: CommandStyle::Backtick })?;
+                self.syntax.commands.push(Command {
+                    body,
+                    // Arithmetic source is parsed as if double-quoted.
+                    style: CommandStyle::Backtick { double_quoted: true },
+                })?;
                 self.append_node(word, SyntaxNode {
                     kind: NODE_COMMAND,
                     flags,
@@ -742,7 +752,10 @@ impl SyntaxParser<'_> {
                     if after > end { return Err(WordexpError::Syntax); }
                     self.syntax.contains_command |= contains_command;
                     let command = self.syntax.commands.len();
-                    self.syntax.commands.push(Command { body, style: CommandStyle::Backtick })?;
+                    self.syntax.commands.push(Command {
+                        body,
+                        style: CommandStyle::Backtick { double_quoted: true },
+                    })?;
                     self.append_node(word, SyntaxNode {
                         kind: NODE_COMMAND, flags, span: body, payload: command, next: NONE,
                     })?;
@@ -2232,10 +2245,12 @@ impl CommandOutput<'_> {
     }
 }
 
-/// The eventual process adapter receives an opaque command body and the
-/// already-quoted assignment prefix plus the current NUL-separated exported
-/// entries. It must execute the body exactly once; this core never asks it to
-/// parse, preflight, or classify stderr/status.
+/// The eventual process adapter receives an opaque command body, its spelling
+/// context, the already-quoted assignment prefix, and the current
+/// NUL-separated exported entries. For a backtick body it applies only the
+/// POSIX backslash rule selected by `CommandStyle::Backtick`, then executes
+/// that body exactly once. This core never asks it to parse, preflight, or
+/// classify stderr/status.
 pub(super) trait WordexpCommandAdapter {
     fn execute(
         &mut self,
@@ -3976,6 +3991,7 @@ mod tests {
     struct TestCommands {
         calls: usize,
         expected_body: Option<&'static [u8]>,
+        expected_style: Option<CommandStyle>,
         expected_prefix: Option<&'static [u8]>,
         expected_exports: Option<&'static [u8]>,
         result: &'static [u8],
@@ -3986,6 +4002,7 @@ mod tests {
             Self {
                 calls: 0,
                 expected_body: None,
+                expected_style: None,
                 expected_prefix: None,
                 expected_exports: None,
                 result,
@@ -3997,7 +4014,7 @@ mod tests {
         fn execute(
             &mut self,
             body: &[u8],
-            _style: CommandStyle,
+            style: CommandStyle,
             assignment_prefix: &[u8],
             exported_entries: &[u8],
             output: &mut CommandOutput<'_>,
@@ -4005,6 +4022,9 @@ mod tests {
             self.calls += 1;
             if let Some(expected) = self.expected_body {
                 assert_eq!(body, expected);
+            }
+            if let Some(expected) = self.expected_style {
+                assert_eq!(style, expected);
             }
             if let Some(expected) = self.expected_prefix {
                 assert_eq!(assignment_prefix, expected);
@@ -4723,5 +4743,65 @@ mod tests {
             &mut paths,
         ).unwrap();
         assert_words(&words, &[b"2", b"a", b"b"]);
+    }
+
+    #[test]
+    fn backtick_style_preserves_its_outer_double_quote_context_for_the_adapter() {
+        const BODY: &[u8] = b"printf '%s' \\\"hi\\\"";
+        for (input, reply, expected, double_quoted) in [
+            (b"`printf '%s' \\\"hi\\\"`".as_slice(), b"word\n".as_slice(), b"word".as_slice(), false),
+            (b"\"`printf '%s' \\\"hi\\\"`\"".as_slice(), b"word\n".as_slice(), b"word".as_slice(), true),
+            (b"${U:-`printf '%s' \\\"hi\\\"`}".as_slice(), b"word\n".as_slice(), b"word".as_slice(), false),
+            (b"\"${U:-`printf '%s' \\\"hi\\\"`}\"".as_slice(), b"word\n".as_slice(), b"word".as_slice(), true),
+            (b"$((`printf '%s' \\\"hi\\\"`))".as_slice(), b"1\n".as_slice(), b"1".as_slice(), true),
+        ] {
+            let mut context = WordexpContext::new();
+            let mut commands = TestCommands::new(reply);
+            commands.expected_body = Some(BODY);
+            commands.expected_style = Some(CommandStyle::Backtick { double_quoted });
+            let mut paths = TestPaths::plain();
+            let words = evaluate(input, &mut context, &mut commands, &mut paths).unwrap();
+            assert_words(&words, &[expected]);
+            assert_eq!(commands.calls, 1);
+        }
+    }
+
+    #[test]
+    fn deep_nesting_uses_heap_parser_and_evaluator_stacks() {
+        const PARAMETER_DEPTH: usize = 4_000;
+        const ARITHMETIC_DEPTH: usize = 4_000;
+        const PARENTHESIS_DEPTH: usize = 8_000;
+        std::thread::Builder::new()
+            .stack_size(64 * 1024)
+            .spawn(|| {
+                let mut parameter = std::vec::Vec::new();
+                for _ in 0..PARAMETER_DEPTH { parameter.extend_from_slice(b"${U:-"); }
+                parameter.push(b'x');
+                for _ in 0..PARAMETER_DEPTH { parameter.push(b'}'); }
+                let mut context = WordexpContext::new();
+                let mut commands = TestCommands::new(b"");
+                let mut paths = TestPaths::plain();
+                let words = evaluate(&parameter, &mut context, &mut commands, &mut paths).unwrap();
+                assert_words(&words, &[b"x"]);
+
+                let mut arithmetic = std::vec::Vec::new();
+                for _ in 0..ARITHMETIC_DEPTH { arithmetic.extend_from_slice(b"$(("); }
+                arithmetic.push(b'1');
+                for _ in 0..ARITHMETIC_DEPTH { arithmetic.extend_from_slice(b"))"); }
+                let words = evaluate(&arithmetic, &mut context, &mut commands, &mut paths).unwrap();
+                assert_words(&words, &[b"1"]);
+
+                let mut parentheses = std::vec::Vec::new();
+                parentheses.extend_from_slice(b"$((");
+                for _ in 0..PARENTHESIS_DEPTH { parentheses.push(b'('); }
+                parentheses.push(b'1');
+                for _ in 0..PARENTHESIS_DEPTH { parentheses.push(b')'); }
+                parentheses.extend_from_slice(b"))");
+                let words = evaluate(&parentheses, &mut context, &mut commands, &mut paths).unwrap();
+                assert_words(&words, &[b"1"]);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

@@ -87,7 +87,7 @@ engine's C-allocated vectors, syntax nodes, or atom flags.
 | `WordexpSyntax::parse` | Copies a NUL-free source slice and returns parsed node/span ownership. |
 | `WordexpContext` | Holds call-local variable state, export attributes, special-parameter values, IFS, flags, and explicit `WordexpLocaleMode`. `set_initial` distinguishes unset from set-empty. |
 | `evaluate_wordexp` | Consumes immutable syntax plus mutable context and deterministic command/path adapters, returning owned result-word views. |
-| `WordexpCommandAdapter::execute` | Receives an opaque body, typed `CommandStyle` (`DollarParen` or `Backtick`), a safely quoted local-assignment prefix, current NUL-separated exported entries, and a `CommandOutput` sink. |
+| `WordexpCommandAdapter::execute` | Receives an opaque body, typed `CommandStyle`, a safely quoted local-assignment prefix, current NUL-separated exported entries, and a `CommandOutput` sink. `CommandStyle::Backtick { double_quoted }` retains the outer quote context needed for the POSIX backtick backslash rule; the body bytes themselves stay unchanged. |
 | `WordexpPathAdapter::expand_tilde` | Receives a user spelling, the current call-local `HOME` for bare `~`, and a `TildeOutput` sink. A home replacement is marked quoted, so it cannot split or glob. |
 | `WordexpPathAdapter::expand_pattern` | Receives `PatternInput` atoms with only pattern eligibility and empty-marker information, then emits copied paths through `PathnameMatches`. |
 | `WordexpPathAdapter::remove_parameter_pattern` | Receives an evaluated pattern plus typed `ParameterPatternOperator`, avoiding duplicated private parser tags. |
@@ -98,12 +98,15 @@ call-local copied source. Valid nesting has no fixed private depth cap and no
 parser or evaluator path uses Rust call-stack recursion.
 
 The later command adapter will invoke `/bin/sh` through `owned_spawn` exactly
-once, with no preflight or shadow execution. It will receive current exported
-context values as `envp` overlays. Assignment-created locals remain unexported
-and are serialized as safely single-quoted standalone assignment commands,
-each followed by a newline before the byte-exact command body. They are never
-silently promoted into `envp`, and child assignments never mutate the parent
-context.
+once, with no preflight or shadow execution. It receives the byte-exact opaque
+body. For a backtick form, it may apply only the normative backslash removal
+selected by `CommandStyle::Backtick { double_quoted }` before that one child
+invocation; it must not reinterpret the result as shell source itself. It will
+receive current exported context values as `envp` overlays. Assignment-created
+locals remain unexported and are serialized as safely single-quoted standalone
+assignment commands, each followed by a newline before the byte-exact command
+body. They are never silently promoted into `envp`, and child assignments never
+mutate the parent context.
 
 The later pathname adapter uses `owned_pattern` and copies strings before
 `globfree`; named tilde lookup uses `owned_passwd`; environment snapshotting
@@ -138,9 +141,14 @@ prefix/export visibility; source scanner progress and line joining; ordered
 empty-quote field splitting; quote and pattern preservation; current-HOME
 tilde handling; opaque-command delimiters; command exactly-once selection; and
 the three-phase arithmetic route, range policy, assignments, and `WRDE_NOCMD`
-precheck. Locale tests cover default C byte behavior, C.UTF-8 parameter length,
-two/three/four-byte IFS delimiters, ASCII/nonwhite delimiter adjacency, origin
-and quote boundaries, set-empty/unset IFS, and malformed-byte progression.
+precheck. It also proves that a raw backtick body reaches the later adapter with
+its outer double-quote context intact, including parameter-word and arithmetic
+source paths. Locale tests cover default C byte behavior, C.UTF-8 parameter
+length, two/three/four-byte IFS delimiters, ASCII/nonwhite delimiter adjacency,
+origin and quote boundaries, set-empty/unset IFS, and malformed-byte
+progression. A 64 KiB-thread regression expands 4,000 nested parameter words,
+4,000 nested arithmetic expansions, and 8,000 arithmetic parentheses to retain
+the heap-stack contract.
 
 A retained independent pinned-shell corpus is useful as a comparison, not a
 selection gate. Its two observed rows that set `V=9` in a skipped `&&` or `||`
