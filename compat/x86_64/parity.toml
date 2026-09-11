@@ -20226,10 +20226,10 @@ depends_on = ["oracle.musl-toolchain", "ldso.dynamic-runtime", "compat.abi-diffe
 category = "compatibility-gate"
 description = "Synthetic loader differential and real software corpus evidence through the selected x86 loader/libc pair."
 aarch64_gates = ["ldso", "loader-inventory", "corpus"]
-source_owners = ["compat/ldso", "compat/loader", "compat/corpus", "ldso/src/loader.rs"]
+source_owners = ["compat/ldso", "compat/loader", "compat/corpus", "compat/x86_64/run_owned_loader_synthetic.sh", "compat/x86_64/run_owned_package_corpus.sh", "ldso/src/loader.rs", "ldso/src/x86_64_initial_graph.rs"]
 x86_abi_prerequisites = ["x86 dynamic linking, relocations, TLS, symbol scope, DT_RELR, and interpreter execution"]
 x86_header_prerequisites = ["Candidate applications and corpus binaries must resolve against the owned x86 sysroot/runtime, never an ambient loader or libc."]
-native_evidence = [{ state = "required", command = "Define native x86 synthetic ldso, loader-inventory, and corpus gates", scope = "A source-only relative-relocation unit suite is insufficient." }]
+native_evidence = [{ state = "required", command = "./scripts/dev-x86_64.sh owned-loader-synthetic DYNAMIC_SYSROOT", scope = "All 21 frozen synthetic loader workloads must construct their required ELF forms and pass against pinned musl through one supplied installed product, retaining kernel and direct entry, identical application objects, raw outcomes, and the frozen ASLR relation. Partial selections and fixture construction alone do not qualify the component." }, { state = "required", command = "./scripts/dev-x86_64.sh owned-package-corpus --dynamic-sysroot DYNAMIC_SYSROOT", scope = "All 34 unchanged Alpine workload cases, including stateful and DT_RELR obligations, must pass with the separate native x86 archive snapshot and complete non-libc closure. Both sides execute unmodified package programs in private roots with sealed runtime and fixture identities; matched nonzero results never pass." }, { state = "required", command = "Define native x86 loader-inventory gate", scope = "The inventory must describe the actual selected x86 loader source and installed artifact and pinned-musl runtime shape. Source markers and test names do not prove runtime execution." }]
 oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 loader and libc", role = "Loader/runtime behavior oracle." }, { kind = "external-corpus", source = "Pinned Alpine corpus manifest", role = "End-to-end application evidence." }]
 capabilities = []
 status = "planned"

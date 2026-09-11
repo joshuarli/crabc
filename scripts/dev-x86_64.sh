@@ -601,6 +601,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-wordexp [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed word expansion across controlled shell states
   owned-stdio [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed byte/wide streams, positioning and format/scan
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
+  owned-package-corpus --dynamic-sysroot DYNAMIC_SYSROOT [OPTIONS]  run the frozen native Alpine workloads with supplied package inputs
+  owned-loader-synthetic DYNAMIC_SYSROOT  run all 21 frozen loader workloads through the supplied installed product
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
   owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
@@ -2989,15 +2991,21 @@ run_in_network_none_container() {
         "$IMAGE" "$@"
 }
 
-# Only the process-root-change evidence needs this privilege. Keeping it off
-# the shared runner makes each additional authority explicit at its one call
-# site rather than widening every native x86 command.
+# These evidence callers enter private process roots. Each caller selects
+# this helper explicitly; other native commands retain the default authority.
 run_in_chroot_cap_container() {
+    # Loader and package workloads consume local fixtures or a prepared
+    # archive closure and an explicit runtime. Their roots need no network.
+    local -a execution_network=()
+    case "$command" in
+        owned-package-corpus|owned-loader-synthetic) execution_network+=(--network none) ;;
+    esac
     prepare_work_dir
     docker run --rm --init \
         "${GIT_METADATA_MOUNT[@]}" \
         --platform "$PLATFORM" \
         --cap-add=SYS_CHROOT \
+        "${execution_network[@]}" \
         --workdir /workspace \
         --env CARGO_HOME=/workspace/.work/x86_64/cargo \
         --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
@@ -5986,6 +5994,7 @@ case "$command" in
     owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation) ;;
+    owned-package-corpus|owned-loader-synthetic) ;;
     owned-dynamic-io-cancellation) ;;
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
@@ -8110,6 +8119,16 @@ case "$command" in
     owned-numeric-calendar)
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_numeric_calendar.sh "$@"
+        ;;
+    owned-package-corpus)
+        [ "$#" -ge 2 ] || [ "${1:-}" = --help ] || fail "owned-package-corpus requires --dynamic-sysroot PATH"
+        ensure_image
+        run_in_chroot_cap_container sh /workspace/compat/x86_64/run_owned_package_corpus.sh "$@"
+        ;;
+    owned-loader-synthetic)
+        [ "$#" -eq 1 ] && [ -n "$1" ] || fail "owned-loader-synthetic requires one dynamic sysroot"
+        ensure_image
+        run_in_chroot_cap_container sh /workspace/compat/x86_64/run_owned_loader_synthetic.sh "$@"
         ;;
     owned-posix-composition)
         ensure_image
