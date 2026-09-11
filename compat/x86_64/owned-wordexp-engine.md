@@ -11,8 +11,8 @@ POSIX.1-2024 [`wordexp()`](https://pubs.opengroup.org/onlinepubs/9799919799.2024
 defines `WRDE_BADVAL` for an undefined shell variable with `WRDE_UNDEF`, and
 `WRDE_CMDSUB` when `WRDE_NOCMD` forbids command substitution. The
 [Shell Command Language](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html),
-particularly sections 2.6.4 and 2.6.5, defines arithmetic expansion and field
-splitting. Its [general-concepts expression rule](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap01.html#tag_18_01_02_01)
+particularly sections 2.6.1, 2.6.4, and 2.6.5, defines tilde and arithmetic
+expansion and field splitting. Its [general-concepts expression rule](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap01.html#tag_18_01_02_01)
 imports the relevant ISO C expression semantics, including lazy `&&` and
 `||` operands. Issue 8 also defines dollar-single-quoted strings.
 
@@ -49,8 +49,10 @@ The parser records literal, quoted, parameter, arithmetic, tilde, and opaque
 command-body nodes. It uses explicit C-allocated parser stacks for nested
 syntax. A command-body delimiter scanner understands quote state, comments,
 nested substitutions, case delimiters, and pending here-documents only far
-enough to retain the exact body span. It does not build a command execution
-AST.
+enough to retain the exact body span. Its finite lexer tracks command and
+reserved-word positions for `case`, `in`, `esac`, and `for`: ordinary arguments
+and for-list data with those spellings remain data. It does not build a command
+execution AST.
 
 An arithmetic node retains a separate `ArithmeticSource` word. Its parameter,
 command, quote, and nested arithmetic expansions complete first on the same
@@ -120,11 +122,12 @@ record ownership, or C status mapping.
 | --- | --- |
 | Initial variables | The adapter supplies one call-local snapshot of valid shell identifiers, values, and export attributes. The core never reads ambient `environ`. A selected process adapter must also preserve raw non-identifier `envp` entries outside this identifier map. |
 | Locale mode | `WordexpLocaleMode::C` is the explicit default and also represents POSIX byte-locale behavior. `CUtf8` is a call-local mode, not a read of process-global locale state. A later adapter must snapshot the selected C or C.UTF-8 LC_CTYPE state into this mode. |
-| IFS | Unset means space/tab/newline; set-empty disables splitting; set versus unset shares the ordinary `IFS` variable record so `${IFS:=:}` affects later fields. Only unquoted parameter, command, and arithmetic atoms split. C mode preserves byte delimiters. C.UTF-8 mode scans IFS as UTF-8 character byte sequences and matches a complete sequence only inside one unquoted expansion origin. Invalid or incomplete UTF-8 in IFS advances as a one-byte delimiter; invalid or incomplete field bytes advance as ordinary one-byte data, so arbitrary input is retained. Only ASCII space, tab, and newline are classified as IFS white space; other Unicode IFS characters are deliberately nonwhite, an implementation-defined choice permitted by POSIX. |
+| IFS | Unset means space/tab/newline; set-empty disables splitting; set versus unset shares the ordinary `IFS` variable record so `${IFS:=:}` affects later fields. Only unquoted parameter, command, and arithmetic atoms split. C mode preserves byte delimiters. C.UTF-8 mode scans IFS as UTF-8 character byte sequences and matches a complete sequence only inside one unquoted expansion origin. Direct adjacent expansions cannot synthesize an IFS character. Preserving inner WORD origins through nested `${...:-WORD}` and `${...:+WORD}` is the current narrow candidate interpretation, rather than a specifically adjudicated POSIX/Austin result. Invalid or incomplete UTF-8 in IFS advances as a one-byte delimiter; invalid or incomplete field bytes advance as ordinary one-byte data, so arbitrary input is retained. Only ASCII space, tab, and newline are classified as IFS white space; other Unicode IFS characters are deliberately nonwhite, an implementation-defined choice permitted by POSIX. |
 | Empty fields | IFS white-space and nonwhite delimiters follow the section 2.6.5 delimiter rules. A quoted zero-width atom can preserve an otherwise empty field at its original position; an unquoted unset or empty expansion vanishes even with empty IFS. |
-| Tilde | Bare `~` receives the current call-local `HOME`; named lookup is delegated. Resolved home bytes are quote-protected from both field splitting and pathname expansion. |
+| Tilde | Bare `~` receives the current call-local `HOME`; named lookup is delegated. A set-empty `HOME` replaces bare `~` with one explicit empty field. Resolved home bytes are quote-protected from both field splitting and pathname expansion. |
 | Special parameters | `wordexp()` leaves their result unspecified. The context supplies finite values; tests use no host positional state. |
 | Parameter WORD | The source is parsed once and evaluated only when selected, under distinct parameter-word, assignment-value, or pattern-operand context. Unselected branches have no command, arithmetic, or assignment side effect. Assignment stores the quote-removed operand but emits the assigned result under the enclosing expansion's quote state. |
+| Parameter pattern result | The pathname adapter emits removal bytes through `ParameterPatternOutput`. An empty result disappears when its outer parameter expansion is unquoted and becomes one explicit empty field when that expansion is quoted; nonempty output retains normal outer splitting and quote rules. |
 | Parameter length | `${#name}` counts bytes in C mode. In C.UTF-8 mode it counts valid UTF-8 scalars; every malformed or incomplete leading byte counts as one character so the operation preserves forward progress on arbitrary stored bytes. |
 | Arithmetic | The envelope is recognized before evaluation. Direct parameter, command, and nested arithmetic expansion completes across the full selected envelope before arithmetic parsing; arithmetic AST branches and assignments then short-circuit. An unset bare arithmetic identifier is numeric zero; direct parameter expansion still observes `WRDE_UNDEF`. Octal and hexadecimal literals are accepted. The implementation supports plain and ten compound assignments (`*=`, `/=`, `%=`, `+=`, `-=`, `<<=`, `>>=`, `&=`, `^=`, `|=`). |
 | Arithmetic range | Arithmetic uses checked signed 64-bit values. Overflow and divide/modulo by zero are typed errors. Shift counts must be 0 through 63; left shift is checked signed scaling, allowing `0 << 63` and `-1 << 63` when exactly representable while rejecting lost high bits such as `1 << 63`. This is an explicit finite candidate policy where POSIX does not settle every overflow edge. |
@@ -146,9 +149,13 @@ its outer double-quote context intact, including parameter-word and arithmetic
 source paths. Locale tests cover default C byte behavior, C.UTF-8 parameter
 length, two/three/four-byte IFS delimiters, ASCII/nonwhite delimiter adjacency,
 origin and quote boundaries, set-empty/unset IFS, and malformed-byte
-progression. A 64 KiB-thread regression expands 4,000 nested parameter words,
-4,000 nested arithmetic expansions, and 8,000 arithmetic parentheses to retain
-the heap-stack contract.
+progression. Opaque-command tests retain quoted controls, here-documents, a
+real `case`, the twelve reported argument/control-position bodies, and nested
+case/control paths without changing raw body bytes. A set-empty `HOME` tilde
+case and all four empty parameter-pattern removals have outer-quote regressions.
+A 64 KiB-thread regression expands 4,000 nested parameter words, 4,000 nested
+arithmetic expansions, and 8,000 arithmetic parentheses while verifying that
+parser and evaluator stacks use heap storage.
 
 A retained independent pinned-shell corpus is useful as a comparison, not a
 selection gate. Its two observed rows that set `V=9` in a skipped `&&` or `||`

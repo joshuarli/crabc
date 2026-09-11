@@ -52,6 +52,18 @@ const QUOTE_SINGLE: u8 = 1;
 const QUOTE_DOUBLE: u8 = 2;
 const QUOTE_DOLLAR_SINGLE: u8 = 3;
 
+// The opaque command scanner needs only enough command-language position to
+// decide whether case grammar hides a `)` that would otherwise close `$()`.
+// These are lexer states, not a command execution AST.
+const CASE_PREFIX_NONE: u8 = 0;
+const CASE_PREFIX_WORD: u8 = 1;
+const CASE_PREFIX_IN: u8 = 2;
+
+const FOR_PREFIX_NONE: u8 = 0;
+const FOR_PREFIX_NAME: u8 = 1;
+const FOR_PREFIX_IN_OR_DO: u8 = 2;
+const FOR_PREFIX_LIST: u8 = 3;
+
 /// Candidate-local semantic failures. The C ABI mapping remains a later
 /// provider-integration decision.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1033,9 +1045,12 @@ struct ScanFrame {
     arithmetic_depth: usize,
     command_depth: usize,
     case_depth: usize,
-    pending_case: usize,
+    case_prefix: u8,
+    case_pattern: bool,
+    for_prefix: u8,
     token_start: usize,
     word_start: bool,
+    command_position: bool,
     heredoc_start: usize,
     heredoc_next: usize,
 }
@@ -1048,9 +1063,12 @@ impl ScanFrame {
             arithmetic_depth: 0,
             command_depth: 0,
             case_depth: 0,
-            pending_case: 0,
+            case_prefix: CASE_PREFIX_NONE,
+            case_pattern: false,
+            for_prefix: FOR_PREFIX_NONE,
             token_start: NONE,
             word_start: true,
+            command_position: true,
             heredoc_start,
             heredoc_next: heredoc_start,
         }
@@ -1095,6 +1113,23 @@ const fn command_boundary(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'<' | b'>' | b'(' | b')')
 }
 
+fn assignment_word(bytes: &[u8]) -> bool {
+    if bytes.is_empty() || !identifier_start(bytes[0]) { return false; }
+    let mut index = 1usize;
+    while index < bytes.len() && identifier_continue(bytes[index]) {
+        index += 1;
+    }
+    index < bytes.len() && bytes[index] == b'='
+}
+
+fn command_control_word(bytes: &[u8]) -> bool {
+    matches!(
+        bytes,
+        b"if" | b"then" | b"elif" | b"else" | b"fi" | b"while" | b"until" |
+        b"do" | b"done"
+    )
+}
+
 fn finish_command_token(
     syntax: &WordexpSyntax,
     frame: &mut ScanFrame,
@@ -1105,13 +1140,61 @@ fn finish_command_token(
     frame.token_start = NONE;
     // SAFETY: token starts and ends at the current bounded command source.
     let bytes = unsafe { syntax.bytes(token) };
-    if bytes == b"case" {
-        frame.pending_case = frame.pending_case.checked_add(1).ok_or(WordexpError::Syntax)?;
-    } else if bytes == b"in" && frame.pending_case != 0 {
-        frame.pending_case -= 1;
-        frame.case_depth = frame.case_depth.checked_add(1).ok_or(WordexpError::Syntax)?;
-    } else if bytes == b"esac" && frame.case_depth != 0 {
+    if frame.for_prefix == FOR_PREFIX_NAME {
+        frame.for_prefix = FOR_PREFIX_IN_OR_DO;
+        return Ok(());
+    }
+    if frame.for_prefix == FOR_PREFIX_IN_OR_DO {
+        if bytes == b"in" { frame.for_prefix = FOR_PREFIX_LIST; }
+        if bytes == b"do" {
+            frame.for_prefix = FOR_PREFIX_NONE;
+            frame.command_position = true;
+        }
+        return Ok(());
+    }
+    if frame.for_prefix == FOR_PREFIX_LIST {
+        if bytes == b"do" {
+            frame.for_prefix = FOR_PREFIX_NONE;
+            frame.command_position = true;
+        }
+        return Ok(());
+    }
+
+    if frame.case_prefix == CASE_PREFIX_WORD {
+        frame.case_prefix = CASE_PREFIX_IN;
+        return Ok(());
+    }
+    if frame.case_prefix == CASE_PREFIX_IN {
+        frame.case_prefix = CASE_PREFIX_NONE;
+        if bytes == b"in" {
+            frame.case_depth = frame.case_depth.checked_add(1).ok_or(WordexpError::Syntax)?;
+            frame.case_pattern = true;
+            frame.command_position = true;
+        } else {
+            frame.command_position = false;
+        }
+        return Ok(());
+    }
+
+    if frame.case_depth != 0 && frame.command_position && bytes == b"esac" {
         frame.case_depth -= 1;
+        // A directly nested case can only have appeared in the outer body.
+        frame.case_pattern = false;
+        frame.command_position = true;
+        return Ok(());
+    }
+    if frame.case_depth != 0 && frame.case_pattern {
+        return Ok(());
+    }
+    if !frame.command_position { return Ok(()); }
+    if bytes == b"case" {
+        frame.case_prefix = CASE_PREFIX_WORD;
+    } else if bytes == b"for" {
+        frame.for_prefix = FOR_PREFIX_NAME;
+    } else if command_control_word(bytes) || assignment_word(bytes) {
+        frame.command_position = true;
+    } else {
+        frame.command_position = false;
     }
     Ok(())
 }
@@ -1381,6 +1464,11 @@ fn scan_construct(
             }
             if byte == b'\\' {
                 if index + 1 >= syntax.source_len() { return Err(WordexpError::Syntax); }
+                if frame.kind == SCAN_COMMAND {
+                    frame.word_start = false;
+                    if frame.token_start == NONE { frame.token_start = index; }
+                    unsafe { frames.replace(top, frame); }
+                }
                 index += 2;
                 continue;
             }
@@ -1472,6 +1560,7 @@ fn scan_construct(
             if byte == b'\n' {
                 finish_command_token(syntax, &mut frame, index)?;
                 frame.word_start = true;
+                frame.command_position = true;
                 let after = consume_here_docs(syntax, &here_docs, &mut frame, index + 1)?;
                 unsafe { frames.replace(top, frame); }
                 index = after;
@@ -1480,6 +1569,18 @@ fn scan_construct(
             if command_boundary(byte) {
                 finish_command_token(syntax, &mut frame, index)?;
                 frame.word_start = true;
+                if matches!(byte, b';' | b'|' | b'&') {
+                    frame.command_position = true;
+                }
+                if byte == b';' && frame.case_depth != 0 && !frame.case_pattern &&
+                    index + 1 < syntax.source_len() && unsafe { syntax.byte(index + 1) } == b';'
+                {
+                    frame.case_pattern = true;
+                    frame.command_position = true;
+                    unsafe { frames.replace(top, frame); }
+                    index += 2;
+                    continue;
+                }
             } else {
                 if frame.token_start == NONE { frame.token_start = index; }
                 frame.word_start = false;
@@ -1522,17 +1623,23 @@ fn scan_construct(
             SCAN_COMMAND if byte == b'(' => {
                 frame.command_depth = frame.command_depth
                     .checked_add(1).ok_or(WordexpError::Syntax)?;
+                frame.command_position = true;
                 unsafe { frames.replace(top, frame); }
                 index += 1;
             }
             SCAN_COMMAND if byte == b')' => {
                 if frame.command_depth != 0 {
                     frame.command_depth -= 1;
+                    frame.command_position = false;
+                    unsafe { frames.replace(top, frame); }
+                    index += 1;
+                } else if frame.case_depth != 0 && frame.case_pattern {
+                    frame.case_pattern = false;
+                    frame.command_position = true;
                     unsafe { frames.replace(top, frame); }
                     index += 1;
                 } else if frame.case_depth != 0 {
-                    unsafe { frames.replace(top, frame); }
-                    index += 1;
+                    return Err(WordexpError::Syntax);
                 } else {
                     if let Some(done) = close_scan_frame(
                         &mut frames, &mut here_docs, index, index + 1, body_start,
@@ -2107,8 +2214,9 @@ pub(super) struct TildeOutput<'a> {
 impl TildeOutput<'_> {
     pub(super) fn append_home(&mut self, bytes: &[u8]) -> Result<(), WordexpError> {
         // POSIX treats a tilde replacement as quoted. In particular, bytes in
-        // HOME must neither form fields nor become pathname metacharacters.
-        self.word.append(bytes, ATOM_QUOTED, false)
+        // HOME must neither form fields nor become pathname metacharacters. An
+        // empty HOME still replaces bare `~` with one explicit empty field.
+        self.word.append(bytes, ATOM_QUOTED, bytes.is_empty())
     }
 }
 
@@ -2143,7 +2251,9 @@ pub(super) struct ParameterPatternOutput<'a> {
 
 impl ParameterPatternOutput<'_> {
     pub(super) fn append_bytes(&mut self, bytes: &[u8]) -> Result<(), WordexpError> {
-        self.word.append(bytes, 0, bytes.is_empty())
+        // The evaluator decides whether an empty removal result survives from
+        // the outer parameter quote state after the adapter has finished.
+        self.word.append(bytes, 0, false)
     }
 }
 
@@ -3959,7 +4069,21 @@ fn finish_parameter(
                 parameter_pattern_operator(parameter.operator)?,
                 &mut output,
             )?;
-            unsafe { (*task.target).append_parameter_result(&removed, task.node_flags) }
+            if removed.atoms.is_empty() {
+                if task.node_flags & NODE_QUOTED != 0 {
+                    // An unquoted empty removal result vanishes; a quoted one
+                    // is an explicit empty field, like other parameter output.
+                    unsafe {
+                        (*task.target).append(
+                            &[], expansion_atom_flags(task.node_flags), true,
+                        )
+                    }
+                } else {
+                    Ok(())
+                }
+            } else {
+                unsafe { (*task.target).append_parameter_result(&removed, task.node_flags) }
+            }
         }
         PARAM_DEFAULT | PARAM_ALTERNATE => unsafe {
             (*task.target).append_parameter_result(&*task.temporary, task.node_flags)
@@ -4039,15 +4163,32 @@ mod tests {
     struct TestPaths {
         pattern_calls: usize,
         match_patterns: bool,
+        empty_parameter_pattern_result: bool,
     }
 
     impl TestPaths {
         const fn plain() -> Self {
-            Self { pattern_calls: 0, match_patterns: false }
+            Self {
+                pattern_calls: 0,
+                match_patterns: false,
+                empty_parameter_pattern_result: false,
+            }
         }
 
         const fn matching() -> Self {
-            Self { pattern_calls: 0, match_patterns: true }
+            Self {
+                pattern_calls: 0,
+                match_patterns: true,
+                empty_parameter_pattern_result: false,
+            }
+        }
+
+        const fn empty_parameter_pattern_result() -> Self {
+            Self {
+                pattern_calls: 0,
+                match_patterns: false,
+                empty_parameter_pattern_result: true,
+            }
         }
     }
 
@@ -4107,7 +4248,11 @@ mod tests {
             _operator: ParameterPatternOperator,
             output: &mut ParameterPatternOutput<'_>,
         ) -> Result<(), WordexpError> {
-            output.append_bytes(value)
+            if self.empty_parameter_pattern_result {
+                output.append_bytes(b"")
+            } else {
+                output.append_bytes(value)
+            }
         }
     }
 
@@ -4234,6 +4379,50 @@ mod tests {
         let words = evaluate(b"~", &mut context, &mut commands, &mut paths).unwrap();
         assert_words(&words, &[b"star*"]);
         assert_eq!(paths.pattern_calls, 0);
+    }
+
+    #[test]
+    fn empty_home_keeps_bare_tilde_as_one_explicit_empty_field() {
+        let mut context = WordexpContext::new();
+        context.set_initial(b"HOME", Some(b""), false).unwrap();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::matching();
+        let words = evaluate(b"~", &mut context, &mut commands, &mut paths).unwrap();
+        assert_words(&words, &[b""]);
+        assert_eq!(paths.pattern_calls, 0);
+    }
+
+    #[test]
+    fn empty_parameter_pattern_results_follow_the_outer_quote_state() {
+        let mut context = WordexpContext::new();
+        context.set_initial(b"A", Some(b"a"), false).unwrap();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::empty_parameter_pattern_result();
+        for input in [
+            b"${A#a}".as_slice(),
+            b"${A##a}".as_slice(),
+            b"${A%a}".as_slice(),
+            b"${A%%a}".as_slice(),
+        ] {
+            let result = evaluate(input, &mut context, &mut commands, &mut paths).unwrap();
+            assert_words(&result, &[]);
+        }
+        for input in [
+            b"\"${A#a}\"".as_slice(),
+            b"\"${A##a}\"".as_slice(),
+            b"\"${A%a}\"".as_slice(),
+            b"\"${A%%a}\"".as_slice(),
+        ] {
+            let result = evaluate(input, &mut context, &mut commands, &mut paths).unwrap();
+            assert_words(&result, &[b""]);
+        }
+
+        context.set_initial(b"A", Some(b"one two"), false).unwrap();
+        let mut nonempty_paths = TestPaths::plain();
+        let result = evaluate(b"${A#a}", &mut context, &mut commands, &mut nonempty_paths).unwrap();
+        assert_words(&result, &[b"one", b"two"]);
+        let result = evaluate(b"\"${A#a}\"", &mut context, &mut commands, &mut nonempty_paths).unwrap();
+        assert_words(&result, &[b"one two"]);
     }
 
     #[test]
@@ -4640,6 +4829,71 @@ mod tests {
             unsafe { syntax.bytes(command.body) },
             b"case \"$(echo inner)\" in x) cat <<'EOF'\n$(not a substitution)\nEOF\n;; esac # )\n",
         );
+    }
+
+    #[test]
+    fn opaque_command_scanner_reserves_case_keywords_only_at_lexical_positions() {
+        for (input, body) in [
+            (b"$(printf '%s' case in)".as_slice(), b"printf '%s' case in".as_slice()),
+            (b"$(printf '%s' case x in)".as_slice(), b"printf '%s' case x in".as_slice()),
+            (b"$(printf '%s' 'a << b')".as_slice(), b"printf '%s' 'a << b'".as_slice()),
+            (b"$(printf \"%s\" \"a << b\")".as_slice(), b"printf \"%s\" \"a << b\"".as_slice()),
+            (b"$(printf '%s' case; printf '%s' in)".as_slice(), b"printf '%s' case; printf '%s' in".as_slice()),
+            (
+                b"$(case x in x) printf '%s' esac;; y) printf y;; esac)".as_slice(),
+                b"case x in x) printf '%s' esac;; y) printf y;; esac".as_slice(),
+            ),
+            (
+                b"$(case x in x) printf '%s' in;; y) printf y;; esac)".as_slice(),
+                b"case x in x) printf '%s' in;; y) printf y;; esac".as_slice(),
+            ),
+            (b"$(printf '%s' 'case in')".as_slice(), b"printf '%s' 'case in'".as_slice()),
+            (b"$(case x in x) printf yes;; esac)".as_slice(), b"case x in x) printf yes;; esac".as_slice()),
+            (
+                b"$(if true; then printf '%s' case in; fi)".as_slice(),
+                b"if true; then printf '%s' case in; fi".as_slice(),
+            ),
+            (
+                b"$(for value in case in; do printf '%s' \"$value\"; done)".as_slice(),
+                b"for value in case in; do printf '%s' \"$value\"; done".as_slice(),
+            ),
+            (b"$(printf '%s' 'a ) b')".as_slice(), b"printf '%s' 'a ) b'".as_slice()),
+            (
+                b"$(case outer in outer) case inner in inner) printf nested;; esac;; esac)".as_slice(),
+                b"case outer in outer) case inner in inner) printf nested;; esac;; esac".as_slice(),
+            ),
+            (
+                b"$(case x in (x) printf '%s' esac;; y) printf y;; esac)".as_slice(),
+                b"case x in (x) printf '%s' esac;; y) printf y;; esac".as_slice(),
+            ),
+            (
+                b"$(case x in (x) (printf yes);; esac)".as_slice(),
+                b"case x in (x) (printf yes);; esac".as_slice(),
+            ),
+            (
+                b"$(if true; then case x in x) printf yes;; esac; fi)".as_slice(),
+                b"if true; then case x in x) printf yes;; esac; fi".as_slice(),
+            ),
+            (
+                b"$(for value in x; do case $value in x) printf yes;; esac; done)".as_slice(),
+                b"for value in x; do case $value in x) printf yes;; esac; done".as_slice(),
+            ),
+        ] {
+            let syntax = WordexpSyntax::parse(input).unwrap();
+            assert_eq!(syntax.commands.len(), 1);
+            // SAFETY: the single command record belongs to this syntax object.
+            let command = unsafe { syntax.command(0) };
+            // SAFETY: the recorded body span is inside the copied source.
+            assert_eq!(unsafe { syntax.bytes(command.body) }, body);
+
+            let mut context = WordexpContext::new();
+            let mut commands = TestCommands::new(b"ok");
+            commands.expected_body = Some(body);
+            let mut paths = TestPaths::plain();
+            let words = evaluate(input, &mut context, &mut commands, &mut paths).unwrap();
+            assert_words(&words, &[b"ok"]);
+            assert_eq!(commands.calls, 1);
+        }
     }
 
     #[test]
