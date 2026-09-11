@@ -1,0 +1,96 @@
+# Finite installed loader-family behavior map.  Every row is replayed for the
+# qualification's installed, second, and extracted products.  The two catalog
+# rows intentionally spell the full current frozen synthetic/package rosters;
+# `owned_loader_family.py` rejects a stale, reordered, or partial list.
+schema = "crabc.x86_64-owned-loader-family-roster/v1"
+family = "ldso.dynamic-runtime"
+capabilities = [
+  "runtime.loader",
+  "runtime.private-facades",
+  "loader.dlfcn-basic",
+  "loader.dlfcn-introspection",
+]
+
+[[required]]
+id = "entry-and-initial-graph"
+capability = "runtime.loader"
+qualification_cases = ["cycle", "cli"]
+synthetic_cases = []
+package_cases = []
+behavior = "Interpreter process entry, main discovery, arbitrary initial DT_NEEDED traversal, repeated dependencies, and admitted cycles through both installed executable modes."
+
+[[required]]
+id = "search-mapping-protection"
+capability = "runtime.loader"
+qualification_cases = ["cli"]
+synthetic_cases = []
+package_cases = []
+behavior = "Selected search and RUNPATH/RPATH policy, file admission, load bias, mapped-segment protections, RELRO, and fail-closed command-path rejection."
+
+[[required]]
+id = "relocation-symbol-scope-relr"
+capability = "runtime.loader"
+qualification_cases = ["elf-scope-alias", "lazy-pie", "lazy-non-pie"]
+synthetic_cases = []
+package_cases = []
+behavior = "Selected RELA and RELR relocation processing, weak/global/protected scope, interpreter aliases, and declared lazy versus NOW binding across both installed executable modes."
+
+[[required]]
+id = "runtime-v1-tls-thread"
+capability = "runtime.private-facades"
+qualification_cases = ["dlopen-pie", "dlopen-non-pie", "pthread-exit", "pthread-signal"]
+synthetic_cases = []
+package_cases = []
+behavior = "Loader-owned graph state and RuntimeV1 publication; initial and runtime TLS, DTV growth, worker integration, errno, and DSO-boundary pthread/signal interaction."
+
+[[required]]
+id = "constructor-finalization"
+capability = "runtime.loader"
+qualification_cases = ["constructor-exit"]
+synthetic_cases = []
+package_cases = []
+behavior = "Main, dependency, and runtime-loaded constructor/destructor order, process finalization, retained dlclose mappings, reopen state, and exit-only DSO finalization."
+
+[[required]]
+id = "dlfcn-basic"
+capability = "loader.dlfcn-basic"
+qualification_cases = ["dlopen-pie", "dlopen-non-pie", "lazy-pie", "lazy-non-pie"]
+synthetic_cases = []
+package_cases = []
+behavior = "Selected dlopen, dlsym, dlclose, and dlerror behavior for initial and runtime-loaded dependency closures in both installed modes."
+
+[[required]]
+id = "dlfcn-introspection"
+capability = "loader.dlfcn-introspection"
+qualification_cases = ["dlopen-pie", "dlopen-non-pie"]
+synthetic_cases = []
+package_cases = []
+behavior = "Selected dladdr, dlinfo, and dl_iterate_phdr observations over the retained installed object graph."
+
+[[required]]
+id = "fork-callback-rollback"
+capability = "runtime.private-facades"
+qualification_cases = ["fork", "signal-handler-fork", "atfork-registry", "cli", "constructor-exit"]
+synthetic_cases = []
+package_cases = []
+behavior = "Locking and callback boundaries, admitted reentrancy, selected fork repair, malformed/missing/stale/cyclic input rejection, and cleanup of failed load transactions."
+
+[[required]]
+id = "synthetic-loader-catalog"
+capability = "runtime.loader"
+qualification_cases = ["loader-synthetic"]
+synthetic_cases = [
+  "nested-needed", "nested-dlopen", "search-path", "dso-origin", "initial-tls", "dlerror", "hash-formats", "hash-many", "relro", "auxv", "legacy-lifecycle", "lookup-scope", "visibility", "constructor-order", "main-handle", "lifecycle", "preload", "aslr", "dynamic-tls", "relocations", "weak-strong",
+]
+package_cases = []
+behavior = "All 21 frozen malformed/adversarial synthetic loader workloads, including exact pinned-musl observations, retained ELF evidence, kernel and direct entry, and source/product/oracle seals."
+
+[[required]]
+id = "frozen-package-corpus"
+capability = "runtime.loader"
+qualification_cases = ["package-corpus"]
+synthetic_cases = []
+package_cases = [
+  "tier-a-true", "tier-a-echo", "tier-a-cat", "tier-a-mkdir", "tier-a-cp", "tier-a-mv", "tier-a-rm", "tier-a-printf", "tier-a-env", "tier-a-sleep", "tier-b-grep", "tier-b-grep-count", "tier-b-sed", "tier-b-sed-in-place", "tier-b-file", "tier-b-file-created-input", "tier-b-tar", "tier-b-tar-create", "tier-b-gzip", "tier-b-gzip-compress", "tier-b-zstd", "tier-b-zstd-compress", "tier-b-sqlite", "tier-b-sqlite-state", "tier-c-curl", "tier-c-curl-file", "tier-c-openssl", "tier-c-openssl-digest", "tier-c-ssh-version", "tier-c-ssh-config", "tier-d-git", "tier-d-git-init", "tier-d-python", "tier-d-python-file-state",
+]
+behavior = "All 34 frozen real Alpine package invocations with byte-identical non-libc payloads, exact raw pinned-musl comparisons, and no ambient loader or libc fallback."
