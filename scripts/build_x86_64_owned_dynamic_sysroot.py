@@ -12,6 +12,7 @@ import argparse
 import os
 from pathlib import Path
 import shlex
+import stat
 import sys
 import re
 
@@ -20,6 +21,10 @@ import build_x86_64_owned_sysroot as common
 
 ROOT = common.ROOT
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
+LOADER_PROVENANCE_SCHEMA = "crabc.x86_64-owned-loader-provenance/v1"
+LOADER_FEATURE = "x86_64-owned-dynamic-runtime"
+LOADER_ARTIFACT = "lib/ld-crabc-x86_64.so.1"
+LOADER_DEPENDENCY_ARTIFACT = "libldso.so"
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import crabc_cc_owned_dynamic as installed_driver
 import owned_static_sysroot_package as shared_package
@@ -38,6 +43,149 @@ def audit_shared_elf(path: Path) -> dict[str, str]:
     if "GNU_RELRO" not in segments or not re.search(r"GNU_STACK.* RW +", segments):
         raise common.BuildError(f"owned shared ELF lacks RELRO or non-executable stack: {path}")
     return {"dynamic": dynamic, "relocations": relocations, "segments": segments}
+
+
+def _source_file_identity(path: Path, description: str) -> dict[str, object]:
+    """Record one physical source input by checkout-relative identity."""
+
+    try:
+        details = path.lstat()
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise common.BuildError(f"{description} is missing or unsafe: {path}") from error
+    source_root = ROOT.resolve()
+    if (not stat.S_ISREG(details.st_mode) or path.is_symlink() or resolved != path
+            or not resolved.is_relative_to(source_root)):
+        raise common.BuildError(f"{description} is not a physical checkout file: {path}")
+    return {
+        "path": resolved.relative_to(source_root).as_posix(),
+        "sha256": common.sha256_file(resolved),
+        "mode": stat.S_IMODE(details.st_mode),
+    }
+
+
+def _normalized_loader_argument(argument: str, stage: Path) -> str:
+    """Replace build-local prefixes without changing an arbitrary argument."""
+
+    for physical, replacement in ((stage.resolve(), "$BUILD"), (ROOT.resolve(), "$SOURCE")):
+        spelling = str(physical)
+        if argument == spelling:
+            return replacement
+        if argument.startswith(spelling + os.sep):
+            return replacement + argument[len(spelling):]
+    return argument
+
+
+def loader_dependency_provenance(dependencies: Path, artifact: Path) -> list[dict[str, object]]:
+    """Translate Cargo's one compiler dep-info rule into selected source inputs.
+
+    Cargo emits this file beside the final cdylib.  It is the compiler's
+    actual source closure for this artifact, rather than a guessed walk of
+    ``ldso/src`` or a collection of source markers.
+    """
+
+    try:
+        details = dependencies.lstat()
+        text = dependencies.read_text(encoding="utf-8")
+    except OSError as error:
+        raise common.BuildError(f"loader compiler dependency trace is missing: {dependencies}") from error
+    if not stat.S_ISREG(details.st_mode) or dependencies.is_symlink():
+        raise common.BuildError("loader compiler dependency trace is not a regular file")
+    lines = [line for line in text.replace("\\\n", " ").splitlines() if line.strip()]
+    if len(lines) != 1:
+        raise common.BuildError("loader compiler dependency trace must contain one rule")
+    target, separator, inputs = lines[0].partition(":")
+    if not separator or ":" in inputs:
+        raise common.BuildError("loader compiler dependency trace has an invalid rule")
+    try:
+        targets = shlex.split(target)
+        sources = shlex.split(inputs)
+    except ValueError as error:
+        raise common.BuildError("loader compiler dependency trace cannot be parsed") from error
+    if len(targets) != 1 or not sources:
+        raise common.BuildError("loader compiler dependency trace has an incomplete rule")
+    target_path = Path(targets[0])
+    try:
+        target_details = target_path.lstat()
+        resolved_target = target_path.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise common.BuildError("loader compiler dependency target is missing or unsafe") from error
+    if (not target_path.is_absolute() or not stat.S_ISREG(target_details.st_mode)
+            or target_path.is_symlink() or resolved_target != target_path):
+        raise common.BuildError("loader compiler dependency target is not a physical artifact")
+    try:
+        expected_target = artifact.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise common.BuildError(f"loader artifact is missing or unsafe: {artifact}") from error
+    if resolved_target != expected_target:
+        raise common.BuildError("loader compiler dependency target does not bind the installed artifact")
+
+    records: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for spelling in sources:
+        path = Path(spelling)
+        if not path.is_absolute():
+            raise common.BuildError("loader compiler dependency source is not absolute")
+        record = _source_file_identity(path, "loader compiler dependency source")
+        name = record["path"]
+        if not isinstance(name, str) or not name.startswith("ldso/"):
+            raise common.BuildError("loader compiler dependency source is outside ldso")
+        if name in seen:
+            raise common.BuildError("loader compiler dependency trace has duplicate sources")
+        seen.add(name)
+        records.append(record)
+    records.sort(key=lambda record: str(record["path"]))
+    required = {"ldso/build.rs", "ldso/src/lib.rs"}
+    if not required <= seen:
+        raise common.BuildError("loader compiler dependency trace lacks build.rs or lib.rs")
+    return records
+
+
+def loader_provenance(
+    stage: Path,
+    command: list[str],
+    rustflags: str,
+    compiler_artifact: Path,
+    installed_artifact: Path,
+) -> dict[str, object]:
+    """Bind the installed loader to Cargo's selected source closure and config."""
+
+    dependencies = stage / "loader" / common.TARGET / "release" / "libldso.d"
+    expected_dependency_artifact = dependencies.with_name(LOADER_DEPENDENCY_ARTIFACT)
+    if compiler_artifact != expected_dependency_artifact:
+        raise common.BuildError("loader artifact does not have the expected Cargo dependency location")
+    try:
+        compiler_details = compiler_artifact.lstat()
+        installed_details = installed_artifact.lstat()
+    except OSError as error:
+        raise common.BuildError("loader compiler or installed artifact is missing") from error
+    if (not stat.S_ISREG(compiler_details.st_mode) or compiler_artifact.is_symlink()
+            or not stat.S_ISREG(installed_details.st_mode) or installed_artifact.is_symlink()
+            or common.sha256_file(compiler_artifact) != common.sha256_file(installed_artifact)):
+        raise common.BuildError("installed loader differs from its compiler artifact")
+    configuration = [
+        _source_file_identity(ROOT / "scripts/build_x86_64_owned_dynamic_sysroot.py", "loader producer"),
+        _source_file_identity(ROOT / "Cargo.toml", "workspace Cargo configuration"),
+        _source_file_identity(ROOT / "Cargo.lock", "workspace Cargo lock"),
+        _source_file_identity(ROOT / ".cargo/config.toml", "workspace Cargo configuration"),
+        _source_file_identity(ROOT / "ldso/Cargo.toml", "loader Cargo configuration"),
+    ]
+    installed = {
+        "path": LOADER_ARTIFACT,
+        "sha256": common.sha256_file(installed_artifact),
+        "mode": stat.S_IMODE(installed_details.st_mode),
+    }
+    return {
+        "schema": LOADER_PROVENANCE_SCHEMA,
+        "target": common.TARGET,
+        "artifact": installed,
+        "cargo": {
+            "argv": [_normalized_loader_argument(argument, stage) for argument in command],
+            "rustflags": rustflags,
+        },
+        "compiler_dependencies": loader_dependency_provenance(dependencies, compiler_artifact),
+        "configuration": configuration,
+    }
 
 
 def build(output: Path) -> None:
@@ -157,11 +305,13 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     common.copy_artifact(builtins, library / builtins.name)
     loader_env = common.deterministic_environment()
     loader_env["RUSTFLAGS"] = "-C link-dead-code -C target-feature=-crt-static -C relocation-model=pic"
-    run([*cargo, "build", "--locked", "-p", "crabc-ldso", "--release", "--target", common.TARGET,
-         "--target-dir", str(stage / "loader"), "--no-default-features", "--features",
-         "x86_64-owned-dynamic-runtime"], environment=loader_env)
+    loader_command = [*cargo, "build", "--locked", "-p", "crabc-ldso", "--release", "--target", common.TARGET,
+                      "--target-dir", str(stage / "loader"), "--no-default-features", "--features",
+                      LOADER_FEATURE]
+    run(loader_command, environment=loader_env)
     interpreter = output / "lib/ld-crabc-x86_64.so.1"
-    common.copy_artifact(stage / "loader" / common.TARGET / "release/libldso.so", interpreter)
+    loader_artifact = stage / "loader" / common.TARGET / "release/libldso.so"
+    common.copy_artifact(loader_artifact, interpreter)
     interpreter.chmod(0o755)
     libc_elf = audit_shared_elf(library / "libc.so")
     loader_elf = audit_shared_elf(interpreter)
@@ -174,6 +324,10 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     common.write_json(metadata / "producer-tools.json", tools)
     common.write_json(metadata / "libc-shared.elf.json", libc_elf)
     common.write_json(metadata / "loader.elf.json", loader_elf)
+    common.write_json(
+        metadata / "loader.provenance.json",
+        loader_provenance(stage, loader_command, loader_env["RUSTFLAGS"], loader_artifact, interpreter),
+    )
     for source, name in ((ROOT / "compat/x86_64/crabc_cc_owned_dynamic.py", "bin/crabc-cc-dynamic"),
                          (ROOT / "compat/x86_64/crabc_cc_static.py", "share/crabc/crabc_cc_static.py")):
         common.copy_artifact(source, output / name)
