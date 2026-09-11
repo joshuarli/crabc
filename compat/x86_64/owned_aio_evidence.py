@@ -81,6 +81,7 @@ FD_REUSE_ESPIPE = re.compile(
 )
 SOURCES = tuple(PROBES.values()) + (
     "compat/x86_64/run_owned_aio.sh", "compat/x86_64/owned_aio_evidence.py",
+    "compat/x86_64/owned_dynamic_receipt.py",
     "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
     "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",
     "compat/upstreams.toml", "docker/x86_64-musl-oracle-gcc", "docs/evidence/x86-owned-aio.md",

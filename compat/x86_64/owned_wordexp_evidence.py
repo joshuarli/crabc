@@ -42,6 +42,7 @@ RUNNER = "compat/x86_64/run_owned_wordexp.sh"
 LEGACY_RUNNER = "compat/x86_64/run_libc_owned_wordexp.sh"
 HEADERS = ("errno.h", "wordexp.h", "stdio.h", "stdlib.h", "string.h", "unistd.h", "features.h", "bits/alltypes.h")
 SOURCES = (PROBE, POSIX_PROBE, DOC, RUNNER, LEGACY_RUNNER, "compat/x86_64/owned_wordexp_evidence.py",
+           "compat/x86_64/owned_dynamic_receipt.py",
            "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
            "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",
            "compat/upstreams.toml", "docker/x86_64-musl-oracle-gcc")
