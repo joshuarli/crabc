@@ -25,6 +25,11 @@ large prior status narrative is preserved in
 [historical-evidence.md](historical-evidence.md); its instructions and
 checkpoint statuses are historical, not a live queue.
 
+The focused [native scalar math corrections](math-scalar-corrections.md) retain
+independent exact numerical expectations and raw fixed-musl defects. Run
+`./scripts/dev-x86_64.sh math-scalar-corrections` for their pure ABI proof and
+existing family corpora; the linked document separates installed-product evidence.
+
 ## Campaign commands
 
 Run from the repository root in the pinned native environment:

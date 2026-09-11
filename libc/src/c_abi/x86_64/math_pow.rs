@@ -8,6 +8,11 @@
 //! source-tree digest and pinned GCC 15.2.0 input before writing fixed
 //! assembly. The Rust build never invokes a C compiler.
 //!
+//! Native conformance corrections are explicit in
+//! `compat/x86_64/math_scalar_corrections.py` and justified in
+//! `compat/x86_64/math-scalar-corrections.md`. These corrected bodies are not
+//! byte-identical upstream translations; the fixed musl oracle stays unchanged.
+//!
 //! ## Exact source map and closure
 //!
 //! - `src/math/pow.c` and `src/math/powf.c` retain musl's distinct binary64/

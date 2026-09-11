@@ -8,6 +8,11 @@
 //! observable `__signgam`/weak-`signgam` state required by `lgamma*`; that data
 //! does not select the broader process-environment capability.
 //!
+//! The native `nextafterl` exponent-sign correction is explicit in
+//! `compat/x86_64/math_scalar_corrections.py` and justified by
+//! `compat/x86_64/math-scalar-corrections.md`. Its binary80 body deliberately
+//! differs from pinned musl; the independent source oracle remains unchanged.
+//!
 //! ## Fixed source and license provenance
 //!
 //! `math_special_musl_x86_64.S` is an owned assembly translation of pinned

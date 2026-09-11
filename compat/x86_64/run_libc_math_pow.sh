@@ -47,7 +47,7 @@ assert_selected_c_abi_surface() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sort wc; do
+for tool in ar awk cargo cmp diff grep mkdir mktemp nm objdump readelf rustup sort wc python3; do
 	require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
@@ -181,9 +181,6 @@ if grep -Eq 'vfmadd|vfnmadd|vfmsub|vfnmsub' "$disassembly"; then
 fi
 
 "$candidate" >"$candidate_output" || fail "freestanding pow/powf fixture failed"
-if ! cmp -s "$reference_output" "$candidate_output"; then
-	cmp -l "$reference_output" "$candidate_output" | sed -n '1,120p' >&2 || true
-	fail "candidate pow/powf record stream differs from pinned musl"
-fi
+python3 "$ROOT_DIR/compat/x86_64/verify_math_pow_records.py" "$reference_output" "$candidate_output"
 
 printf 'x86 static libc pow/powf: PASS (%s records)\n' "$record_count"

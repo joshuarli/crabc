@@ -61,6 +61,12 @@
 //! loader, sysroot, family completion, x86 promotion, full parity, or public
 //! x86 support.
 
+//! Native conformance corrections are explicit in
+//! `compat/x86_64/math_scalar_corrections.py` and justified in
+//! `compat/x86_64/math-scalar-corrections.md`. These corrected bodies are not
+//! byte-identical upstream translations; the fixed musl oracle stays unchanged.
+//!
+
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the math.elementary-long-double leaf requires little-endian Linux/x86-64");
 

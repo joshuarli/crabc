@@ -8,13 +8,19 @@
 //! source-tree digest and pinned GCC 15.2.0 wrapper before it writes the fixed
 //! PIC assembly. Rust's build never invokes a C compiler or links host libm.
 //!
+//! Native conformance corrections are explicit in
+//! `compat/x86_64/math_scalar_corrections.py` and justified in
+//! `compat/x86_64/math-scalar-corrections.md`. These corrected bodies are not
+//! byte-identical upstream translations; the fixed musl oracle stays unchanged.
+//!
 //! ## Exact source map and closure
 //!
 //! - `src/math/x86_64/{fma,fmaf}.c` map to musl's generic
 //!   `src/math/{fma,fmaf}.c` paths because the generator forbids FMA3/FMA4.
 //!   `fma` retains its exact integer-product/alignment calculation and one
 //!   localized `src/math/scalbn.c` provider. `fmaf` preserves musl's binary64
-//!   intermediate, half-way correction, and existing fenv calls.
+//!   intermediate and residual repair, with corrected subnormal midpoint
+//!   classification and existing fenv calls.
 //! - `src/math/{hypot,hypotf}.c` retain their independent scaling and
 //!   split-square paths. They call only the existing scalar `sqrt`/`sqrtf`
 //!   owners, exactly as musl source does; no second root provider is copied.

@@ -877,6 +877,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   libc-math-complex-complete  run the complete static x86 math.complex capability
   libc-elementary-sqrt-fenv  run the static x86 sqrt/sqrtf/sqrtl fenv-sensitive slice
   libc-fenv-rounding  run the static x86 rint/nearbyint fenv-sensitive slice
+  math-scalar-corrections  run exact native fmaf/fmal/powf regressions with retained oracle defects
   libc-owned-scalar-math  run installed x86 fma/fmaf, hypot/hypotf, and log1p/log1pf scalar completion
   libc-owned-binary80-math  run installed x86 fmal, hypotl, and log1pl binary80 completion
   libc-math-long-double-completion  run the private x86 binary80 fdiml/exp10l/pow10l closure
@@ -5974,6 +5975,7 @@ case "$command" in
     libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser) ;;
     ldso-target-root) ;;
     libc-fenv-rounding) ;;
+    math-scalar-corrections) ;;
     libc-owned-scalar-math) ;;
     libc-owned-binary80-math) ;;
     libc-math-minmax) ;;
@@ -9758,6 +9760,11 @@ PY
         [ "$#" -eq 0 ] || fail "libc-fenv takes no arguments"
         ensure_image
         run_libc_fenv_probe
+        ;;
+    math-scalar-corrections)
+        [ "$#" -eq 0 ] || fail "math-scalar-corrections takes no arguments"
+        ensure_image
+        run_in_container bash /workspace/compat/x86_64/run_math_scalar_corrections.sh
         ;;
     libc-owned-scalar-math)
         [ "$#" -eq 0 ] || fail "libc-owned-scalar-math takes no arguments"
