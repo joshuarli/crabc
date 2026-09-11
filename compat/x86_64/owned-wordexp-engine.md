@@ -71,8 +71,10 @@ the command adapter exactly once.
 `ExpandedWord` carries ordered byte atoms. Each atom records split eligibility,
 pathname-pattern eligibility, quote or escape protection, a zero-width explicit
 empty marker, and an expansion origin. Ordered empty markers preserve the
-position of `""` around IFS delimiters. Nested output is copied as data and is
-not reparsed.
+position of `""` around IFS delimiters. In C.UTF-8 mode an IFS character can
+only use consecutive eligible bytes from one origin, so adjacent expansions or
+quoted/literal boundaries cannot synthesize a delimiter. Nested output is
+copied as data and is not reparsed.
 
 ## Private interfaces
 
@@ -83,7 +85,7 @@ engine's C-allocated vectors, syntax nodes, or atom flags.
 | Boundary | Input and output contract |
 | --- | --- |
 | `WordexpSyntax::parse` | Copies a NUL-free source slice and returns parsed node/span ownership. |
-| `WordexpContext` | Holds call-local variable state, export attributes, special-parameter values, IFS, and flags. `set_initial` distinguishes unset from set-empty. |
+| `WordexpContext` | Holds call-local variable state, export attributes, special-parameter values, IFS, flags, and explicit `WordexpLocaleMode`. `set_initial` distinguishes unset from set-empty. |
 | `evaluate_wordexp` | Consumes immutable syntax plus mutable context and deterministic command/path adapters, returning owned result-word views. |
 | `WordexpCommandAdapter::execute` | Receives an opaque body, typed `CommandStyle` (`DollarParen` or `Backtick`), a safely quoted local-assignment prefix, current NUL-separated exported entries, and a `CommandOutput` sink. |
 | `WordexpPathAdapter::expand_tilde` | Receives a user spelling, the current call-local `HOME` for bare `~`, and a `TildeOutput` sink. A home replacement is marked quoted, so it cannot split or glob. |
@@ -114,11 +116,13 @@ record ownership, or C status mapping.
 | Topic | Candidate policy |
 | --- | --- |
 | Initial variables | The adapter supplies one call-local snapshot of valid shell identifiers, values, and export attributes. The core never reads ambient `environ`. A selected process adapter must also preserve raw non-identifier `envp` entries outside this identifier map. |
-| IFS | Unset means space/tab/newline; set-empty disables splitting; set versus unset shares the ordinary `IFS` variable record so `${IFS:=:}` affects later fields. Only unquoted parameter, command, and arithmetic atoms split. The current matcher is byte-oriented. POSIX C.UTF-8 character-delimiter matching, including keeping a multi-byte delimiter inside one atom origin, remains a required integration-stage implementation and test; the retained BusyBox bytewise behavior is not its oracle. |
+| Locale mode | `WordexpLocaleMode::C` is the explicit default and also represents POSIX byte-locale behavior. `CUtf8` is a call-local mode, not a read of process-global locale state. A later adapter must snapshot the selected C or C.UTF-8 LC_CTYPE state into this mode. |
+| IFS | Unset means space/tab/newline; set-empty disables splitting; set versus unset shares the ordinary `IFS` variable record so `${IFS:=:}` affects later fields. Only unquoted parameter, command, and arithmetic atoms split. C mode preserves byte delimiters. C.UTF-8 mode scans IFS as UTF-8 character byte sequences and matches a complete sequence only inside one unquoted expansion origin. Invalid or incomplete UTF-8 in IFS advances as a one-byte delimiter; invalid or incomplete field bytes advance as ordinary one-byte data, so arbitrary input is retained. Only ASCII space, tab, and newline are classified as IFS white space; other Unicode IFS characters are deliberately nonwhite, an implementation-defined choice permitted by POSIX. |
 | Empty fields | IFS white-space and nonwhite delimiters follow the section 2.6.5 delimiter rules. A quoted zero-width atom can preserve an otherwise empty field at its original position; an unquoted unset or empty expansion vanishes even with empty IFS. |
 | Tilde | Bare `~` receives the current call-local `HOME`; named lookup is delegated. Resolved home bytes are quote-protected from both field splitting and pathname expansion. |
 | Special parameters | `wordexp()` leaves their result unspecified. The context supplies finite values; tests use no host positional state. |
 | Parameter WORD | The source is parsed once and evaluated only when selected, under distinct parameter-word, assignment-value, or pattern-operand context. Unselected branches have no command, arithmetic, or assignment side effect. Assignment stores the quote-removed operand but emits the assigned result under the enclosing expansion's quote state. |
+| Parameter length | `${#name}` counts bytes in C mode. In C.UTF-8 mode it counts valid UTF-8 scalars; every malformed or incomplete leading byte counts as one character so the operation preserves forward progress on arbitrary stored bytes. |
 | Arithmetic | The envelope is recognized before evaluation. Direct parameter, command, and nested arithmetic expansion completes across the full selected envelope before arithmetic parsing; arithmetic AST branches and assignments then short-circuit. An unset bare arithmetic identifier is numeric zero; direct parameter expansion still observes `WRDE_UNDEF`. Octal and hexadecimal literals are accepted. The implementation supports plain and ten compound assignments (`*=`, `/=`, `%=`, `+=`, `-=`, `<<=`, `>>=`, `&=`, `^=`, `|=`). |
 | Arithmetic range | Arithmetic uses checked signed 64-bit values. Overflow and divide/modulo by zero are typed errors. Shift counts must be 0 through 63; left shift is checked signed scaling, allowing `0 << 63` and `-1 << 63` when exactly representable while rejecting lost high bits such as `1 << 63`. This is an explicit finite candidate policy where POSIX does not settle every overflow edge. |
 | Dollar-single quotes | POSIX.1-2024 Issue 8 dollar-single-quoted literals are parsed and their defined byte escapes decoded. |
@@ -134,7 +138,9 @@ prefix/export visibility; source scanner progress and line joining; ordered
 empty-quote field splitting; quote and pattern preservation; current-HOME
 tilde handling; opaque-command delimiters; command exactly-once selection; and
 the three-phase arithmetic route, range policy, assignments, and `WRDE_NOCMD`
-precheck.
+precheck. Locale tests cover default C byte behavior, C.UTF-8 parameter length,
+two/three/four-byte IFS delimiters, ASCII/nonwhite delimiter adjacency, origin
+and quote boundaries, set-empty/unset IFS, and malformed-byte progression.
 
 A retained independent pinned-shell corpus is useful as a comparison, not a
 selection gate. Its two observed rows that set `V=9` in a skipped `&&` or `||`
@@ -147,5 +153,5 @@ x86 support.
 Before selection, a separate change must bind these interfaces to
 `environment_runtime`, `owned_pattern`, `owned_passwd`, and `owned_spawn`;
 preserve raw `envp` entries, C cancellation, pipe/wait cleanup, and result
-record semantics; complete C.UTF-8 IFS handling; and add direct C ABI plus
-musl/POSIX evidence for every claimed behavior.
+record semantics; bind the selected LC_CTYPE snapshot to the context; and add
+direct C ABI plus musl/POSIX evidence for every claimed behavior.

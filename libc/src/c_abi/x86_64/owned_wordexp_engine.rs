@@ -1550,6 +1550,15 @@ const VARIABLE_SET: u8 = 1;
 const VARIABLE_INITIAL: u8 = 1;
 const VARIABLE_ASSIGNMENT: u8 = 2;
 
+/// The call-local character interpretation used by the private expression
+/// core. `C` also represents POSIX's byte-oriented locale behavior; it is the
+/// explicit default until a later C ABI adapter supplies its locale snapshot.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum WordexpLocaleMode {
+    C,
+    CUtf8,
+}
+
 const ATOM_SPLIT: u8 = 1;
 const ATOM_PATTERN: u8 = 2;
 const ATOM_EMPTY: u8 = 4;
@@ -1586,6 +1595,7 @@ pub(super) struct WordexpContext {
     bytes: HeapVec<u8>,
     variables: HeapVec<Variable>,
     specials: HeapVec<Variable>,
+    locale_mode: WordexpLocaleMode,
     undefined_is_error: bool,
     no_command_substitution: bool,
 }
@@ -1596,6 +1606,7 @@ impl WordexpContext {
             bytes: HeapVec::new(),
             variables: HeapVec::new(),
             specials: HeapVec::new(),
+            locale_mode: WordexpLocaleMode::C,
             undefined_is_error: false,
             no_command_substitution: false,
         }
@@ -1607,6 +1618,16 @@ impl WordexpContext {
 
     pub(super) fn set_no_command_substitution(&mut self, value: bool) {
         self.no_command_substitution = value;
+    }
+
+    /// Select the call-local C/POSIX byte mode or C.UTF-8 character mode.
+    /// This candidate deliberately does not read process-global locale state.
+    pub(super) fn set_locale_mode(&mut self, value: WordexpLocaleMode) {
+        self.locale_mode = value;
+    }
+
+    pub(super) const fn locale_mode(&self) -> WordexpLocaleMode {
+        self.locale_mode
     }
 
     fn store(&mut self, bytes: &[u8]) -> Result<Span, WordexpError> {
@@ -1861,9 +1882,8 @@ fn valid_identifier(bytes: &[u8]) -> bool {
 struct ExpandedAtom {
     byte: u8,
     flags: u8,
-    // One semantic expansion run. Multi-byte IFS matching must eventually
-    // stay inside one run so bytes from adjacent expansions cannot synthesize
-    // an IFS character.
+    // One semantic expansion run. C.UTF-8 IFS matching stays inside one run
+    // so bytes from adjacent expansions cannot synthesize an IFS character.
     origin: usize,
 }
 
@@ -2521,65 +2541,164 @@ fn word_has_content(word: &ExpandedWord) -> bool {
     !word.atoms.is_empty()
 }
 
-fn ifs_contains(ifs: &[u8], byte: u8) -> bool {
+/// Return the next valid UTF-8 scalar byte length, or one for an invalid or
+/// incomplete lead byte. This is the same forward-progress choice as musl's
+/// C.UTF-8 `fnmatch` scanner: malformed input remains ordinary byte data and
+/// cannot make a word-expansion scan reject or stall.
+fn utf8_unit_len(bytes: &[u8], index: usize) -> usize {
+    debug_assert!(index < bytes.len());
+    let first = bytes[index];
+    let tail = &bytes[index + 1..];
+    let continuation = |offset: usize| match tail.get(offset) {
+        Some(byte) => *byte & 0xc0 == 0x80,
+        None => false,
+    };
+    match first {
+        0x00..=0x7f => 1,
+        0xc2..=0xdf if continuation(0) => 2,
+        0xe0 if matches!(tail.first().copied(), Some(0xa0..=0xbf)) && continuation(1) => 3,
+        0xe1..=0xec | 0xee..=0xef if continuation(0) && continuation(1) => 3,
+        0xed if matches!(tail.first().copied(), Some(0x80..=0x9f)) && continuation(1) => 3,
+        0xf0 if matches!(tail.first().copied(), Some(0x90..=0xbf)) &&
+            continuation(1) && continuation(2) => 4,
+        0xf1..=0xf3 if continuation(0) && continuation(1) && continuation(2) => 4,
+        0xf4 if matches!(tail.first().copied(), Some(0x80..=0x8f)) &&
+            continuation(1) && continuation(2) => 4,
+        _ => 1,
+    }
+}
+
+fn character_count(bytes: &[u8], locale_mode: WordexpLocaleMode) -> usize {
+    if locale_mode == WordexpLocaleMode::C { return bytes.len(); }
+    let mut count = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        index += utf8_unit_len(bytes, index);
+        count += 1;
+    }
+    count
+}
+
+fn ifs_contains_byte(ifs: &[u8], byte: u8) -> bool {
     ifs.iter().any(|candidate| *candidate == byte)
 }
 
-const IFS_NONE: u8 = 0;
 const IFS_WHITE: u8 = 1;
 const IFS_NONWHITE: u8 = 2;
 
-fn ifs_atom_kind(atom: ExpandedAtom, ifs: &[u8]) -> u8 {
-    if atom.flags & (ATOM_SPLIT | ATOM_EMPTY) != ATOM_SPLIT ||
-        !ifs_contains(ifs, atom.byte)
-    {
-        return IFS_NONE;
-    }
-    if matches!(atom.byte, b' ' | b'\t' | b'\n') {
+#[derive(Clone, Copy)]
+struct IfsDelimiter {
+    after: usize,
+    kind: u8,
+}
+
+fn atom_is_splittable(atom: ExpandedAtom) -> bool {
+    atom.flags & (ATOM_SPLIT | ATOM_EMPTY | ATOM_QUOTED) == ATOM_SPLIT
+}
+
+fn ifs_delimiter_kind(bytes: &[u8]) -> u8 {
+    if bytes.len() == 1 && matches!(bytes[0], b' ' | b'\t' | b'\n') {
         IFS_WHITE
     } else {
+        // POSIX permits implementations to classify additional locale white
+        // space. This private core deliberately treats only portable ASCII
+        // space, tab, and newline as IFS white space.
         IFS_NONWHITE
     }
+}
+
+/// Match one leading IFS delimiter in an expansion result. In C.UTF-8 mode an
+/// IFS character is matched as its complete byte sequence and every byte must
+/// belong to the same unquoted expansion origin. This implements the POSIX
+/// 2.6.5 rule that a candidate character sequence cannot combine bytes from
+/// separate expansion results or non-expansion source.
+fn ifs_delimiter_at(
+    atoms: &[ExpandedAtom],
+    index: usize,
+    ifs: &[u8],
+    locale_mode: WordexpLocaleMode,
+) -> Option<IfsDelimiter> {
+    let first = *atoms.get(index)?;
+    if !atom_is_splittable(first) { return None; }
+    if locale_mode == WordexpLocaleMode::C {
+        if !ifs_contains_byte(ifs, first.byte) { return None; }
+        return Some(IfsDelimiter {
+            after: index + 1,
+            kind: ifs_delimiter_kind(&[first.byte]),
+        });
+    }
+
+    let origin = first.origin;
+    let mut ifs_index = 0usize;
+    while ifs_index < ifs.len() {
+        let length = utf8_unit_len(ifs, ifs_index);
+        let Some(after) = index.checked_add(length) else { return None; };
+        if after <= atoms.len() {
+            let mut offset = 0usize;
+            while offset < length {
+                let atom = atoms[index + offset];
+                if !atom_is_splittable(atom) || atom.origin != origin ||
+                    atom.byte != ifs[ifs_index + offset]
+                {
+                    break;
+                }
+                offset += 1;
+            }
+            if offset == length {
+                return Some(IfsDelimiter {
+                    after,
+                    kind: ifs_delimiter_kind(&ifs[ifs_index..ifs_index + length]),
+                });
+            }
+        }
+        ifs_index += length;
+    }
+    None
 }
 
 /// Consume one POSIX field-delimiter unit. An IFS white-space run is absorbed
 /// with an adjacent non-white IFS delimiter, while adjacent non-white
 /// delimiters remain distinct and therefore retain their empty field between
-/// them. ExpandedAtom origin is retained for the future UTF-8 IFS matcher:
-/// a multi-byte delimiter must stay in one origin rather than bridge two
-/// independent expansions.
+/// them.
 fn consume_ifs_delimiter(
     atoms: &[ExpandedAtom],
     mut index: usize,
     ifs: &[u8],
+    locale_mode: WordexpLocaleMode,
 ) -> (usize, bool) {
-    let kind = ifs_atom_kind(atoms[index], ifs);
-    debug_assert!(kind != IFS_NONE);
-    if kind == IFS_NONWHITE {
-        index += 1;
-        while index < atoms.len() && ifs_atom_kind(atoms[index], ifs) == IFS_WHITE {
-            index += 1;
+    let Some(delimiter) = ifs_delimiter_at(atoms, index, ifs, locale_mode) else {
+        return (index, false);
+    };
+    if delimiter.kind == IFS_NONWHITE {
+        index = delimiter.after;
+        while let Some(white) = ifs_delimiter_at(atoms, index, ifs, locale_mode) {
+            if white.kind != IFS_WHITE { break; }
+            index = white.after;
         }
         return (index, true);
     }
-    while index < atoms.len() && ifs_atom_kind(atoms[index], ifs) == IFS_WHITE {
-        index += 1;
+    while let Some(white) = ifs_delimiter_at(atoms, index, ifs, locale_mode) {
+        if white.kind != IFS_WHITE { break; }
+        index = white.after;
     }
-    if index < atoms.len() && ifs_atom_kind(atoms[index], ifs) == IFS_NONWHITE {
-        index += 1;
-        while index < atoms.len() && ifs_atom_kind(atoms[index], ifs) == IFS_WHITE {
-            index += 1;
+    if let Some(nonwhite) = ifs_delimiter_at(atoms, index, ifs, locale_mode) {
+        if nonwhite.kind == IFS_NONWHITE {
+            index = nonwhite.after;
+            while let Some(white) = ifs_delimiter_at(atoms, index, ifs, locale_mode) {
+                if white.kind != IFS_WHITE { break; }
+                index = white.after;
+            }
+            return (index, true);
         }
-        (index, true)
-    } else {
-        (index, false)
     }
+    (index, false)
 }
 
 fn split_root_word(
     scratch: &mut ScratchWords,
     root: *mut ExpandedWord,
     ifs: &[u8],
+    locale_mode: WordexpLocaleMode,
     output: &mut ExpandedWords,
 ) -> Result<(), WordexpError> {
     if ifs.is_empty() {
@@ -2598,14 +2717,13 @@ fn split_root_word(
     let atoms = unsafe { (*root).atoms.as_slice() };
     while index < atoms.len() {
         let atom = atoms[index];
-        let kind = ifs_atom_kind(atom, ifs);
-        if kind == IFS_NONE {
+        if ifs_delimiter_at(atoms, index, ifs, locale_mode).is_none() {
             // SAFETY: current is a scratch-owned live word.
             unsafe { (*current).append_atom(atom)?; }
             index += 1;
             continue;
         }
-        let (after, nonwhite) = consume_ifs_delimiter(atoms, index, ifs);
+        let (after, nonwhite) = consume_ifs_delimiter(atoms, index, ifs, locale_mode);
         if word_has_content(unsafe { &*current }) || nonwhite {
             output.push(current)?;
             scratch.release(current);
@@ -2827,6 +2945,7 @@ fn run_evaluation_tasks(
                     scratch,
                     task.temporary,
                     context.ifs_bytes(),
+                    context.locale_mode(),
                     results,
                 )?;
             }
@@ -3665,7 +3784,11 @@ fn start_parameter(
         if !value.is_set() && context.undefined_is_error {
             return Err(WordexpError::UndefinedVariable);
         }
-        let length = if value.is_set() { value.bytes.len() } else { 0 };
+        let length = if value.is_set() {
+            character_count(context.value_bytes(value), context.locale_mode())
+        } else {
+            0
+        };
         append_decimal(length, output_flags, unsafe { &mut *task.target })?;
         tasks.push(EvaluationTask::word(task.word, next, task.target, task.context))?;
         return Ok(());
@@ -4497,5 +4620,108 @@ mod tests {
             unsafe { syntax.bytes(command.body) },
             b"case \"$(echo inner)\" in x) cat <<'EOF'\n$(not a substitution)\nEOF\n;; esac # )\n",
         );
+    }
+
+    #[test]
+    fn locale_mode_controls_parameter_character_length() {
+        let mut context = WordexpContext::new();
+        context.set_initial(
+            b"TEXT",
+            Some(b"\xc3\xa9\xce\xbb\xe2\x82\xac\xf0\x9f\x98\x80"),
+            false,
+        ).unwrap();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+
+        assert_eq!(context.locale_mode(), WordexpLocaleMode::C);
+        let words = evaluate(b"${#TEXT}", &mut context, &mut commands, &mut paths).unwrap();
+        assert_words(&words, &[b"11"]);
+
+        context.set_locale_mode(WordexpLocaleMode::CUtf8);
+        let words = evaluate(b"${#TEXT}", &mut context, &mut commands, &mut paths).unwrap();
+        assert_words(&words, &[b"4"]);
+    }
+
+    #[test]
+    fn c_utf8_ifs_matches_complete_characters_within_one_expansion_origin() {
+        let mut context = WordexpContext::new();
+        context.set_locale_mode(WordexpLocaleMode::CUtf8);
+        context.set_ifs(Some(b"\xc3\xa9")).unwrap();
+        context.set_initial(b"SAME", Some(b"a\xc3\xa9b"), false).unwrap();
+        context.set_initial(b"FIRST", Some(b"\xc3"), false).unwrap();
+        context.set_initial(b"SECOND", Some(b"\xa9"), false).unwrap();
+        context.set_initial(b"NY", Some(b"a\xc3\xb1b"), false).unwrap();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let words = evaluate(
+            b"$SAME $FIRST$SECOND $FIRST\"\"$SECOND $FIRST\xa9 $NY",
+            &mut context,
+            &mut commands,
+            &mut paths,
+        ).unwrap();
+        assert_words(
+            &words,
+            &[b"a", b"b", b"\xc3\xa9", b"\xc3\xa9", b"\xc3\xa9", b"a\xc3\xb1b"],
+        );
+    }
+
+    #[test]
+    fn c_mode_retains_byte_ifs_matching() {
+        let mut context = WordexpContext::new();
+        context.set_ifs(Some(b"\xc3\xa9")).unwrap();
+        context.set_initial(b"VALUE", Some(b"a\xc3\xa9b"), false).unwrap();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let words = evaluate(b"$VALUE", &mut context, &mut commands, &mut paths).unwrap();
+        assert_words(&words, &[b"a", b"", b"b"]);
+    }
+
+    #[test]
+    fn c_utf8_ifs_handles_three_four_byte_and_mixed_delimiters() {
+        let mut context = WordexpContext::new();
+        context.set_locale_mode(WordexpLocaleMode::CUtf8);
+        context.set_ifs(Some(b" \xe2\x82\xac\xf0\x9f\x98\x80")).unwrap();
+        context.set_initial(b"THREE", Some(b"a\xe2\x82\xacb"), false).unwrap();
+        context.set_initial(b"FOUR", Some(b"a\xf0\x9f\x98\x80b"), false).unwrap();
+        context.set_initial(b"MIXED", Some(b"a \xe2\x82\xac b"), false).unwrap();
+        context.set_initial(b"ADJACENT", Some(b"\xe2\x82\xac\xf0\x9f\x98\x80"), false).unwrap();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let words = evaluate(
+            b"$THREE $FOUR $MIXED $ADJACENT",
+            &mut context,
+            &mut commands,
+            &mut paths,
+        ).unwrap();
+        assert_words(&words, &[b"a", b"b", b"a", b"b", b"a", b"b", b"", b""]);
+    }
+
+    #[test]
+    fn c_utf8_empty_unset_and_invalid_ifs_bytes_have_defined_progress() {
+        let mut context = WordexpContext::new();
+        context.set_locale_mode(WordexpLocaleMode::CUtf8);
+        context.set_initial(b"TEXT", Some(b"a b"), false).unwrap();
+        context.set_initial(b"EMPTY", Some(b""), false).unwrap();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+
+        context.set_ifs(None).unwrap();
+        let words = evaluate(b"$TEXT", &mut context, &mut commands, &mut paths).unwrap();
+        assert_words(&words, &[b"a", b"b"]);
+
+        context.set_ifs(Some(b"")).unwrap();
+        let words = evaluate(b"$TEXT $EMPTY \"$EMPTY\"", &mut context, &mut commands, &mut paths).unwrap();
+        assert_words(&words, &[b"a b", b""]);
+
+        context.set_initial(b"BAD", Some(b"\xff\xc3"), false).unwrap();
+        context.set_initial(b"INVALID_IFS", Some(b"a\xc3b"), false).unwrap();
+        context.set_ifs(Some(b"\xc3")).unwrap();
+        let words = evaluate(
+            b"${#BAD} $INVALID_IFS",
+            &mut context,
+            &mut commands,
+            &mut paths,
+        ).unwrap();
+        assert_words(&words, &[b"2", b"a", b"b"]);
     }
 }
