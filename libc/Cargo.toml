@@ -58,6 +58,7 @@ x86-owned-static-runtime = [
     "x86-legacy-misc",
     "x86-a64l",
     "x86-memory-special",
+    "dep:rand_pcg",
 ]
 # Share the owned leaf roster; process linkage is selected independently in
 # the target root. This does not select the static startup or TLS owner.
@@ -199,6 +200,7 @@ libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["e
 # to the separately evidenced x86 `x86-crypt` leaf.
 base64ct = { version = "1.8", default-features = false, optional = true }
 sha-crypt = { version = "0.6", default-features = false, features = ["alloc", "password-hash"], optional = true }
+rand_pcg = { version = "=0.10.2", default-features = false, optional = true }
 
 # The repository-level C and loader fixtures remain in ../tests so their
 # evidence paths are stable. Explicit targets make crabc-libc their owner

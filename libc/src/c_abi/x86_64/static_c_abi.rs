@@ -324,6 +324,12 @@ mod ffs;
 mod random_entropy;
 #[path = "rand_r.rs"]
 mod rand_r;
+// rand/srand are process-global C ABI compatibility state. They are selected
+// only by the installed owned product, leaving the default archive's selected
+// random surface at caller-owned rand_r and the independent rand48 family.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "owned_rand.rs"]
+mod owned_rand;
 #[path = "lrand48.rs"]
 mod lrand48;
 #[path = "fenv.rs"]
