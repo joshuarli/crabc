@@ -131,6 +131,16 @@ not already exist. The runner always creates `report.json` in its fresh private
 run directory and emits that exact path on stderr, including for a candidate
 mismatch. `--report` requests an additional identical copy. The oracle seal
 binds both the source marker and the actual libc bytes and interpreter alias.
+Version 3 records sparse `retention_modes` for the private payload and each
+execution root. After native checks finish, only regular-file read bits and
+directory read/traverse bits are added for host inspection. Each entry records
+the original mode. `tree_sha256(..., retention_modes=...)` verifies that exact
+addition and reconstructs the original execution hash; it rejects changed
+bytes, other permission changes, absent paths, and symlink/device overrides.
+Stateful workloads may have different before/after execution hashes; retained
+validation reconstructs the after hash. Newly created evidence parents use
+mode 0755; existing parent permissions remain the caller's choice. Fresh run
+roots stay private until the native checks and retention step finish.
 In quiet mode it separately emits the retained evidence
 directory, pass/fail status, and report path. The JSON records the absolute
 source mount used for those paths, so a host-side reader can remap the

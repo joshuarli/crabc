@@ -57,6 +57,77 @@ class NativeManifestTests(unittest.TestCase):
 
 
 class PrivatePayloadTests(unittest.TestCase):
+    def test_created_evidence_parents_are_readable_without_changing_existing_private_parents(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            boundary = Path(temporary) / ".work"
+            boundary.mkdir()
+            private = boundary / "existing"
+            private.mkdir(mode=0o700)
+            private.chmod(0o700)
+            with mock.patch.object(RUNNER, "PRIVATE_WORK_ROOT", boundary):
+                work = RUNNER.private_campaign_parent(boundary / "new/campaign")
+                RUNNER.prepare_report_destination(boundary / "reports/latest.json")
+                RUNNER.private_campaign_parent(private)
+            self.assertEqual(work.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(work.parent.stat().st_mode & 0o777, 0o755)
+            self.assertEqual((boundary / "reports").stat().st_mode & 0o777, 0o755)
+            self.assertEqual(private.stat().st_mode & 0o777, 0o700)
+
+    def test_retained_readability_preserves_the_execution_tree_seal(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "root"
+            root.mkdir(mode=0o700)
+            root.chmod(0o700)
+            directory = root / "private"
+            directory.mkdir(mode=0o700)
+            directory.chmod(0o700)
+            output = directory / "output"
+            output.write_bytes(b"state after application execution\n")
+            output.chmod(0o600)
+            before_retention = RUNNER.tree_sha256(root, "completed execution tree")
+
+            modes = RUNNER.make_tree_readable(root)
+
+            self.assertEqual(modes, {"private": 0o700, "private/output": 0o600})
+            self.assertEqual(root.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(directory.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(output.stat().st_mode & 0o777, 0o644)
+            self.assertNotEqual(RUNNER.tree_sha256(root, "readable tree"), before_retention)
+            self.assertEqual(RUNNER.tree_sha256(root, "retained execution tree", retention_modes=modes), before_retention)
+            output.write_bytes(b"changed retained execution bytes\n")
+            self.assertNotEqual(RUNNER.tree_sha256(root, "changed tree", retention_modes=modes), before_retention)
+
+    def test_retention_modes_cannot_hide_unrelated_permission_or_path_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "root"
+            root.mkdir()
+            data = root / "data"
+            data.write_bytes(b"retained")
+            data.chmod(0o644)
+            (root / "alias").symlink_to("data")
+            for modes in ({"../data": 0o600}, {"/data": 0o600}, {"missing": 0o600},
+                          {"alias": 0o600}, {"data": 0o644}, {"data": True}, {"data": 0o700}):
+                with self.subTest(modes=modes), self.assertRaises(RUNNER.CorpusError):
+                    RUNNER.tree_sha256(root, "invalid retained tree", retention_modes=modes)
+
+    def test_retention_does_not_follow_private_tree_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            outside = Path(temporary) / "outside"
+            outside.mkdir(mode=0o700)
+            secret = outside / "secret"
+            secret.write_bytes(b"unrelated")
+            secret.chmod(0o600)
+            root = Path(temporary) / "root"
+            root.mkdir(mode=0o700)
+            (root / "outside").symlink_to(outside, target_is_directory=True)
+            before = RUNNER.tree_sha256(root, "symlink tree")
+
+            self.assertEqual(RUNNER.make_tree_readable(root), {})
+
+            self.assertEqual(outside.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(secret.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(RUNNER.tree_sha256(root, "retained symlink tree", retention_modes={}), before)
+
     def test_archive_members_reject_traversal_before_extraction(self) -> None:
         with self.assertRaises(RUNNER.CorpusError):
             RUNNER.safe_archive_members(["../outside"])
@@ -294,6 +365,8 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
                     "--dynamic-sysroot", "product", "--report", str(exported), "--quiet",
                 ]), 0)
             self.assertEqual(primary.read_bytes(), exported.read_bytes())
+            self.assertEqual(primary.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(exported.stat().st_mode & 0o777, 0o644)
 
     def test_oracle_identity_changes_when_runtime_changes_but_source_marker_does_not(self) -> None:
         with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:

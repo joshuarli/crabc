@@ -44,7 +44,7 @@ LIFETIME_HELPER = ROOT / "compat/x86_64/run_qualification_manifest.py"
 LIFETIME_HELPER_MANIFEST = ROOT / "compat/x86_64/generate_qualification_manifest.py"
 TIERS = ("A", "B", "C", "D")
 TIMEOUT_SECONDS = 12
-SCHEMA = "crabc.x86_64-owned-package-corpus/v2"
+SCHEMA = "crabc.x86_64-owned-package-corpus/v3"
 PRODUCT_FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 CANONICAL_INTERPRETER = "/lib/ld-musl-x86_64.so.1"
 CANONICAL_LIBC = "/lib/libc.musl-x86_64.so.1"
@@ -174,7 +174,11 @@ def _private_work_root() -> Path:
 
 
 def _private_directory(path: Path, label: str, *, dedicated: bool) -> Path:
-    """Create a physical mutable directory below the checkout-local boundary."""
+    """Create readable evidence parents inside the checkout-local boundary.
+
+    Each fresh execution root is separately private until its run ends.
+    Existing parent permissions belong to the caller and are not changed.
+    """
     boundary = _private_work_root()
     candidate = _absolute_lexical_path(path, label)
     _reject_symlinked_components(candidate, label)
@@ -191,7 +195,7 @@ def _private_directory(path: Path, label: str, *, dedicated: bool) -> Path:
             require_physical_directory(current, label)
             continue
         try:
-            current.mkdir(mode=0o700)
+            current.mkdir(mode=0o755)
         except OSError as error:
             raise CorpusError(f"cannot create {label}: {current}") from error
         require_physical_directory(current, label)
@@ -226,6 +230,9 @@ def write_new_report(path: Path, encoded: str) -> Path:
             descriptor = -1
             stream.write(encoded)
             stream.flush()
+            # Publish host-readable evidence only after its complete bytes
+            # have reached the owned descriptor. Partial writes stay private.
+            os.fchmod(stream.fileno(), 0o644)
             os.fsync(stream.fileno())
     except OSError as error:
         raise CorpusError(f"cannot create native corpus report: {destination}") from error
@@ -497,16 +504,69 @@ def extract_archive(archive: Path, root: Path) -> None:
         raise CorpusError(f"cannot safely extract archive {archive.name}") from error
 
 
-def tree_sha256(root: Path, label: str) -> str:
+def make_tree_readable(root: Path) -> dict[str, int]:
+    """Retain a completed private tree while recording only changed modes.
+
+    Runtime and base-fixture checks precede this operation. Read/traverse bits
+    make the evidence inspectable by the host; the sparse original modes let
+    its reader reconstruct the exact execution-time hash. Symlinks and device
+    nodes keep their modes, and symlink targets are never traversed.
+    """
+    root = require_physical_directory(root, "retained corpus tree")
+    original_modes: dict[str, int] = {}
+    pending = [root]
+    while pending:
+        path = pending.pop()
+        mode = path.lstat().st_mode
+        if stat.S_ISDIR(mode):
+            readable = stat.S_IMODE(mode) | 0o555
+            pending.extend(path.iterdir())
+        elif stat.S_ISREG(mode):
+            readable = stat.S_IMODE(mode) | 0o444
+        else:
+            continue
+        if readable != stat.S_IMODE(mode):
+            if path != root:
+                original_modes[path.relative_to(root).as_posix()] = stat.S_IMODE(mode)
+            os.chmod(path, readable, follow_symlinks=False)
+    return original_modes
+
+
+def tree_sha256(root: Path, label: str, *, retention_modes: Mapping[str, int] | None = None) -> str:
+    """Hash a tree, optionally reconstructing its pre-retention permissions.
+
+    Only an exact recorded read/traverse-bit addition can be reconstructed.
+    Missing paths, symlink/device overrides, unchanged modes, or any other
+    permission change fail instead of hiding drift in retained evidence.
+    """
     root = require_physical_directory(root, label)
+    if retention_modes is None:
+        retention_modes = {}
+    if not isinstance(retention_modes, dict):
+        fail(f"{label} retained modes are not an object")
+    for path, mode in retention_modes.items():
+        if (not isinstance(path, str) or "\0" in path
+                or any(part in {"", ".", ".."} for part in path.split("/"))
+                or type(mode) is not int or not 0 <= mode <= 0o7777):
+            fail(f"{label} has an invalid retained mode entry")
+    observed_modes: set[str] = set()
     digest = hashlib.sha256()
     pending = [root]
     while pending:
         directory = pending.pop()
         for child in sorted(directory.iterdir(), key=lambda value: value.name, reverse=True):
-            relative = child.relative_to(root).as_posix().encode("utf-8")
+            relative_path = child.relative_to(root).as_posix()
+            relative = relative_path.encode("utf-8")
             mode = child.lstat().st_mode
-            digest.update(relative + b"\0" + str(stat.S_IMODE(mode)).encode("ascii") + b"\0")
+            permissions = stat.S_IMODE(mode)
+            if relative_path in retention_modes:
+                original = retention_modes[relative_path]
+                addition = 0o555 if stat.S_ISDIR(mode) else 0o444 if stat.S_ISREG(mode) else 0
+                if addition == 0 or original == permissions or permissions != original | addition:
+                    fail(f"{label} retained permissions differ: {relative_path}")
+                observed_modes.add(relative_path)
+                permissions = original
+            digest.update(relative + b"\0" + str(permissions).encode("ascii") + b"\0")
             if stat.S_ISREG(mode):
                 digest.update(b"regular\0" + bytes.fromhex(sha256_file(child, label)))
             elif stat.S_ISDIR(mode):
@@ -518,6 +578,8 @@ def tree_sha256(root: Path, label: str) -> str:
                 digest.update(b"char-device\0" + str(os.major(child.stat().st_rdev)).encode("ascii") + b":" + str(os.minor(child.stat().st_rdev)).encode("ascii"))
             else:
                 fail(f"{label} has an unsupported payload type: {child}")
+    if observed_modes != set(retention_modes):
+        fail(f"{label} retained modes name an absent path")
     return digest.hexdigest()
 
 
@@ -1147,8 +1209,18 @@ def run(manifest: ManifestSpec, archive_dir: Path, index: Path, dynamic_sysroot:
     oracle_after = oracle_source_identity()
     if oracle_after != oracle_before:
         fail("pinned musl oracle source changed during execution")
+    # Preserve the runtime-time hashes above. A stateful workload may change
+    # its private tree; retention only adds host-readable permission bits
+    # after all native checks and never changes the application or product.
+    for outcome in outcomes:
+        for side in ("oracle", "candidate"):
+            outcome["roots"][side]["retention_modes"] = make_tree_readable(
+                temporary_root / f"{outcome['id']}-{side}"
+            )
+    payload_retention_modes = make_tree_readable(payload)
+    os.chmod(temporary_root, stat.S_IMODE(temporary_root.stat().st_mode) | 0o555)
     report_path = temporary_root / "report.json"
-    return {"schema": SCHEMA, "source_mount": str(ROOT), "passed": all(item["comparison"]["passed"] for item in outcomes), "source": {"before": source_before, "after": source_after}, "tools": {"before": tools_before, "after": tools_after}, "inputs": {"verification_before": inputs_before, "after": inputs_after}, "oracle": {"before": oracle_before, "after": oracle_after}, "candidate_product": {"before": product_before, "after": product_after}, "application_payload": {"path": str(payload), "sha256": payload_seal, "package_library_dirs": list(manifest.package_library_dirs), "elf_closure": elf_graph}, "execution_root": str(temporary_root), "report_path": str(report_path), "case_count": len(outcomes), "outcomes": outcomes}
+    return {"schema": SCHEMA, "source_mount": str(ROOT), "passed": all(item["comparison"]["passed"] for item in outcomes), "source": {"before": source_before, "after": source_after}, "tools": {"before": tools_before, "after": tools_after}, "inputs": {"verification_before": inputs_before, "after": inputs_after}, "oracle": {"before": oracle_before, "after": oracle_after}, "candidate_product": {"before": product_before, "after": product_after}, "application_payload": {"path": str(payload), "sha256": payload_seal, "retention_modes": payload_retention_modes, "package_library_dirs": list(manifest.package_library_dirs), "elf_closure": elf_graph}, "execution_root": str(temporary_root), "report_path": str(report_path), "case_count": len(outcomes), "outcomes": outcomes}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
