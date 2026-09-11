@@ -8128,7 +8128,7 @@ case "$command" in
     owned-loader-synthetic)
         [ "$#" -eq 1 ] && [ -n "$1" ] || fail "owned-loader-synthetic requires one dynamic sysroot"
         ensure_image
-        run_in_chroot_cap_container sh /workspace/compat/x86_64/run_owned_loader_synthetic.sh "$@"
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_loader_synthetic.sh "$@"
         ;;
     owned-posix-composition)
         ensure_image

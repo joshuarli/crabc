@@ -52,6 +52,9 @@ class OwnedLoaderCorpusDispatchTests(unittest.TestCase):
             self.assertEqual(len(invocations), 1, "supplied corpus products must not trigger a build")
             invocation = invocations[0]
             leaf = "/workspace/compat/x86_64/" + script
+            if command_name == "owned-loader-synthetic":
+                self.assertEqual(invocation[invocation.index(leaf) - 1], "bash",
+                    "the synthetic wrapper uses BASH_SOURCE and requires Bash")
             self.assertEqual(invocation[invocation.index(leaf) + 1:], arguments)
             self.assertIn("--cap-add=SYS_CHROOT", invocation)
             self.assertEqual(invocation[invocation.index("--network") + 1], "none")
