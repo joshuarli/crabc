@@ -137,6 +137,8 @@ class DynamicProductContractTests(unittest.TestCase):
                 "unix-mechanisms",
                 "posix-composition",
                 "resolver-cancellation",
+                "loader-synthetic",
+                "package-corpus",
             ],
         )
         self.assertEqual(report["status"], "implemented-unqualified")

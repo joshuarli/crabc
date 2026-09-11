@@ -98,7 +98,13 @@ CASES = {
     "unix-mechanisms": ("run_owned_unix_mechanisms.sh", None),
     "posix-composition": ("run_owned_posix_composition.sh", None),
     "resolver-cancellation": ("run_owned_resolver_cancellation.sh", None),
+    "loader-synthetic": ("run_owned_loader_synthetic.sh", None),
+    "package-corpus": ("run_owned_package_corpus.sh", None),
 }
+# Both native corpus components consume the caller's exact installed product
+# and the complete frozen roster. Their private network has no interfaces up;
+# unlike DNS fixtures these applications need no live loopback service.
+LOADER_CORPUS_CASES = frozenset({"loader-synthetic", "package-corpus"})
 # These finite DNS leaves alone require private live loopback. The legacy
 # classic helper remains its fixed entry; new resolver work uses the shared
 # resolver namespace helper with an exact leaf/environment binding.
@@ -379,7 +385,11 @@ def artifact_snapshot(log: Path, source_mount: str) -> dict:
 def case_command(work: Path, product: str, case: str, source_mount: str | None = None) -> list[str]:
     mount = Path(source_mount) if source_mount is not None else ROOT
     script, _ = CASES[case]
-    leaf = ["bash", str(mount / "compat/x86_64" / script), str(mount / work.relative_to(ROOT) / product)]
+    product_argument = str(mount / work.relative_to(ROOT) / product)
+    leaf = ["bash", str(mount / "compat/x86_64" / script),
+            *(["--dynamic-sysroot"] if case == "package-corpus" else []), product_argument]
+    if case in LOADER_CORPUS_CASES:
+        return ["unshare", "--net", "--", *leaf]
     if case not in DNS_CASES:
         return leaf
     return ["unshare", "--user", "--map-root-user", "--net", "python3", "-B",
@@ -414,6 +424,37 @@ def validate_dns_isolation(log: Path, source_mount: str, temporary: Path) -> Non
             "DNS namespace proof does not establish isolated live loopback")
 
 
+def validate_loader_corpus_case(work: Path, product: str, case: str, log: Path,
+                               source_mount: str, manifest: str) -> None:
+    """Require full native corpus evidence for the exact supplied product.
+
+    A successful subprocess and a sealed artifact tree do not establish that
+    every frozen workload ran. The component reader reconstructs the native
+    roster and observations again during collection and retained validation.
+    """
+    import owned_loader_corpus_evidence as native
+
+    require(case in LOADER_CORPUS_CASES, "unknown native loader or corpus case")
+    directories = leaf_evidence_directories(log, source_mount)
+    require(len(directories) == 1, "native loader or corpus case requires one evidence root")
+    supplied = evidence_path(work / product)
+    require(digest(supplied / "share/crabc/manifest.json") == manifest,
+            "native loader or corpus product differs from the selected manifest")
+    report = next(iter(directories)) / "report.json"
+    digest(report)
+    oracle = read(work / "qualification-prepare.json").get("oracle")
+    oracle_keys = ("runtime_sha256", "compiler_wrapper_sha256")
+    require(isinstance(oracle, dict) and all(isinstance(oracle.get(key), str)
+            and re.fullmatch(r"[0-9a-f]{64}", oracle[key]) for key in oracle_keys),
+            "native loader or corpus case lacks the independent prepared oracle")
+    expected_oracle = {key: oracle[key] for key in oracle_keys}
+    validate = native.validate_loader_report if case == "loader-synthetic" else native.validate_corpus_report
+    try:
+        validate(report, supplied, root=ROOT, expected_oracle=expected_oracle)
+    except native.LoaderCorpusEvidenceError as error:
+        raise QualificationError(f"{case} evidence rejected: {error}") from error
+
+
 def run_case(work: Path, product: str, case: str) -> None:
     require(product in PRODUCTS and case in CASES, "unknown product or coverage case")
     work = evidence_path(work)
@@ -444,11 +485,15 @@ def run_case(work: Path, product: str, case: str) -> None:
     require_live_oracle(work, oracle)
     require(source_digest() == source and product_identity(work / product) == manifest,
             "source or installed product changed during coverage case")
+    if case in LOADER_CORPUS_CASES:
+        validate_loader_corpus_case(work, product, case, log, str(ROOT), manifest)
     isolation = {}
     if case in DNS_CASES:
         validate_dns_isolation(log, str(ROOT), temporary)
         isolation["isolation_command"] = command
         isolation["isolation_temporary"] = str(temporary)
+    elif case in LOADER_CORPUS_CASES:
+        isolation["isolation_command"] = command
     write_new(destination / (case + ".json"), {
         **isolation,
         "schema": SCHEMA, "product": product, "case": case, "script": script,
@@ -468,6 +513,9 @@ def validate_case(record: dict, product: str, case: str, source: str, manifest: 
         expected["isolation_command"] = case_command(work, product, case, record.get("source_mount"))
         temporary = work / "qualification-scratch" / product / case
         expected["isolation_temporary"] = str(Path(record["source_mount"]) / temporary.relative_to(ROOT))
+    elif case in LOADER_CORPUS_CASES:
+        work = (ROOT / record.get("log", "")).parents[2]
+        expected["isolation_command"] = case_command(work, product, case, record.get("source_mount"))
     require(set(record) == set(expected) | {"log", "log_sha256", "source_mount", "artifacts"}, "coverage record fields drifted")
     require(all(record.get(key) == value for key, value in expected.items()), "stale or mismatched coverage record")
     log = evidence_path(ROOT / record["log"])
@@ -475,6 +523,8 @@ def validate_case(record: dict, product: str, case: str, source: str, manifest: 
     require(artifact_snapshot(log, record["source_mount"]) == record["artifacts"], "leaf artifact evidence changed")
     if case in DNS_CASES:
         validate_dns_isolation(log, record["source_mount"], temporary)
+    elif case in LOADER_CORPUS_CASES:
+        validate_loader_corpus_case(work, product, case, log, record["source_mount"], manifest)
 
 
 def base_evidence(work: Path, manifests: dict[str, str]) -> dict[str, str]:

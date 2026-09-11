@@ -405,6 +405,19 @@ runs the same leaf roster for all three. The integrated gate passed at the
 `.work/x86_64/tmp/materialized-dynamic.uyzJLv`. This measurement predates the dedicated
 dynamic cancellation composition and current publication receipts.
 
+The current catalog also requires `loader-synthetic` and `package-corpus`
+for each supplied product. They execute all 21 synthetic loader workloads
+and all 34 pinned package workloads in a fresh network namespace with no
+active interfaces. Package inputs come from the separate byte-pinned cache
+declared in `compat/corpus/manifest-x86_64.toml`; this execution step neither
+downloads inputs nor constructs a replacement runtime. Both the initial
+collection and retained validation invoke
+`owned_loader_corpus_evidence.py` on the sole retained `report.json`, checking
+the complete roster and its native observations against the exact product.
+A passing subset, matching nonzero exit, or successful runner exit without
+complete component evidence cannot qualify a product. These component
+requirements do not declare the loader/corpus family complete.
+
 Installed and extracted products run `run_owned_pthread_cond_cancel.sh` for
 main and worker pending/blocked condition cancellation, cleanup with the mutex
 reacquired, condition reuse, disabled/MASKED states, and consumed-signal

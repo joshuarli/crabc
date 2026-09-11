@@ -148,5 +148,17 @@ container receipt deliberately. Omitting `--tier` selects all frozen tiers; an
 explicit `--tier B` selects only B, and a tier/case intersection with no
 workloads is a setup error.
 
+The dynamic-product catalog's `package-corpus` entry always selects all 34
+workloads for each supplied product. Its reader in
+`compat/x86_64/owned_loader_corpus_evidence.py` rejects missing or duplicate
+cases, changed inputs, mismatched products and incomplete native outcomes
+during collection and retained qualification validation. The catalog leaf
+has a fresh network namespace with no active interfaces; prepare the pinned
+APK cache before running it.
+
+Both curl workloads and both git workloads currently fail on strong
+`rand`/`srand` imports. These absent libc providers require a reviewed PRNG
+dependency under `SCOPE.md`. All 34 workloads remain required for completion.
+
 This is one consumer component for the frozen 34 workloads. It does not close
 the wider software-corpus, loader-family, performance, or source-build scope.

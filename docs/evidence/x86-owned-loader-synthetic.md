@@ -29,6 +29,11 @@ a loader-family qualification.
 A selected subset can record `selected_passed`, but it cannot set
 `component_complete`.  Completion requires a successful, duplicate-free
 selection of the exact 21-name frozen roster; `family_complete` remains false.
+The three-product catalog registers this complete component as
+`loader-synthetic`. It rechecks the retained report through
+`compat/x86_64/owned_loader_corpus_evidence.py` during both collection and
+publication validation, including the supplied product and recorded native
+observations.
 
 The installed dynamic driver owns three hash styles through
 `--application-hash-style sysv|gnu|both`; the default remains `sysv`.  It also

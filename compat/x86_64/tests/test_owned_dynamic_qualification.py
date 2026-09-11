@@ -51,6 +51,10 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
             mock.patch.object(qualification, "contract_digests", return_value={"contracts": "c" * 64}),
             mock.patch.object(qualification, "product_identity", return_value=self.manifest),
             mock.patch.object(qualification, "require_clean_source", return_value="clean-revision"),
+            # These tests exercise the catalog's transaction and publication
+            # contract. Native component semantics have their own retained
+            # report tests; the small catalog fixture is not a native run.
+            mock.patch.object(qualification, "validate_loader_corpus_case"),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -95,6 +99,8 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
                     })
                     isolation["isolation_command"] = qualification.case_command(self.work, product, case)
                     isolation["isolation_temporary"] = str(artifact.parent.parent)
+                elif case in qualification.LOADER_CORPUS_CASES:
+                    isolation["isolation_command"] = qualification.case_command(self.work, product, case)
                 self.put(f"qualification-cases/{product}/{case}.json", {
                     **isolation,
                     "schema": qualification.SCHEMA, "product": product, "case": case, "script": script,
@@ -364,6 +370,37 @@ class OwnedDynamicQualificationTests(unittest.TestCase):
         record = qualification.read(self.work / "qualification-cases/installed/cycle.json")
         qualification.validate_case(record, "installed", "cycle", self.source, self.manifest)
         self.assertNotIn("outside-directory/secret", record["artifacts"][qualification.relative(leaf)])
+
+    def test_successful_corpus_exit_cannot_publish_a_rejected_native_report(self):
+        case = "package-corpus"
+        record = self.work / "qualification-cases/installed" / (case + ".json")
+        log = record.with_suffix(".log")
+        record.unlink()
+        log.unlink()
+        leaf = self.work / "leaf-artifacts/installed-package-corpus"
+
+        def execute(command, **arguments):
+            self.assertEqual(command, qualification.case_command(self.work, "installed", case))
+            arguments["stdout"].write(f"evidence: {leaf}\n".encode())
+            return subprocess.CompletedProcess(command, 0)
+
+        with mock.patch.object(qualification.subprocess, "run", side_effect=execute), \
+             mock.patch.object(qualification, "require_live_oracle"), \
+             mock.patch.object(qualification, "validate_loader_corpus_case",
+                 side_effect=qualification.QualificationError("partial corpus receipt")) as validate:
+            with self.assertRaisesRegex(qualification.QualificationError, "partial corpus"):
+                qualification.run_case(self.work, "installed", case)
+            validate.assert_called_once_with(self.work, "installed", case, log, str(self.root), self.manifest)
+        self.assertFalse(record.exists())
+        self.assertTrue(log.is_file())
+
+    def test_retained_corpus_report_is_rechecked_during_collection(self):
+        record = qualification.read(self.work / "qualification-cases/installed/package-corpus.json")
+        with mock.patch.object(qualification, "validate_loader_corpus_case",
+                side_effect=qualification.QualificationError("changed corpus report")) as validate:
+            with self.assertRaisesRegex(qualification.QualificationError, "changed corpus"):
+                qualification.validate_case(record, "installed", "package-corpus", self.source, self.manifest)
+            validate.assert_called_once()
 
     def test_retention_policy_refuses_a_discovered_root_outside_checkout_work(self):
         outside = self.root / "unrelated"

@@ -603,6 +603,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-numeric-calendar [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed numeric conversions and clock/calendar behavior
   owned-package-corpus --dynamic-sysroot DYNAMIC_SYSROOT [OPTIONS]  run the frozen native Alpine workloads with supplied package inputs
   owned-loader-synthetic DYNAMIC_SYSROOT  run all 21 frozen loader workloads through the supplied installed product
+  owned-loader-inventory DYNAMIC_SYSROOT OUTPUT_JSON  retain compiler-selected source and native loader ELF inventory
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
   owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
@@ -5994,7 +5995,7 @@ case "$command" in
     owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation) ;;
-    owned-package-corpus|owned-loader-synthetic) ;;
+    owned-package-corpus|owned-loader-synthetic|owned-loader-inventory) ;;
     owned-dynamic-io-cancellation) ;;
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
@@ -8129,6 +8130,14 @@ case "$command" in
         [ "$#" -eq 1 ] && [ -n "$1" ] || fail "owned-loader-synthetic requires one dynamic sysroot"
         ensure_image
         run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_loader_synthetic.sh "$@"
+        ;;
+    owned-loader-inventory)
+        [ "$#" -eq 2 ] || fail "owned-loader-inventory requires a dynamic sysroot and fresh output JSON path"
+        inventory_product="$(translate_owned_posix_product "$1")" || exit 2
+        inventory_output="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
+        ensure_image
+        run_in_container python3 -B /workspace/compat/x86_64/owned_loader_inventory.py collect \
+            --product "$inventory_product" --output "$inventory_output"
         ;;
     owned-posix-composition)
         ensure_image
