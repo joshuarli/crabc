@@ -99,6 +99,49 @@ Traversal, absolute names, duplicate entries, unexpected links and replacement
 of an existing output are rejected. Package extraction never follows archive
 links. All build, extraction and private-chroot state stays under `.work`.
 
+### Native loader inventory
+
+The materialized producer installs `share/crabc/loader.provenance.json`. It
+records the normalized Cargo command and `RUSTFLAGS` used for the installed
+loader, hashes the producer/Cargo/toolchain configuration sources, and records
+the compiler-generated `libldso.d` dependency closure with each selected
+source's path, hash, and mode. That closure is the source-selection authority:
+the inventory does not infer active x86 loader code from every file under
+`ldso/`. It includes `ldso/build.rs` and `ldso/src/lib.rs`, rejects duplicate,
+symlinked, outside-checkout, or mismatched dependencies, and binds the copied
+installed loader to the Cargo artifact bytes.
+
+`owned_loader_inventory.py` requires one supplied, current installed product
+and the pinned musl 1.2.6 preparation contract. The native dispatcher is:
+
+```bash
+./scripts/dev-x86_64.sh owned-loader-inventory DYNAMIC_SYSROOT OUTPUT_JSON
+```
+
+It records the musl loader-to-libc alias and hash, then retains raw
+`readelf -hW`, `-lW`, `-dW`, `-rW`, and
+`--dyn-syms --wide` streams for the musl loader, installed loader, and
+installed libc. It parses the saved streams into ELF header, program-header,
+dynamic-tag, relocation, and dynamic-symbol shapes. Before and after capture,
+it binds the supplied product, selected sources, oracle, and `readelf` binary
+identity. Outputs are physical files below `.work`:
+
+```bash
+python3 -B compat/x86_64/owned_loader_inventory.py validate \
+  --receipt OUTPUT_JSON --product DYNAMIC_SYSROOT \
+  --oracle-capture OUTPUT_JSON.inputs/oracle-capture.json \
+  --readelf-capture OUTPUT_JSON.inputs/readelf-capture.json
+```
+
+The host `validate` command rehashes the retained product, selected source,
+oracle capture, raw streams, and `readelf` identity capture, then reparses the
+saved text. It neither opens the host `/opt` oracle nor executes `readelf`, the
+candidate loader, or an application. Candidate
+feature rows bind compiler-selected source records to existing targets, but
+each keeps `runtime_test_executed` and `verified` false. The receipt's sole
+completion claim is `inventory_complete`; it is not dynamic-loader runtime,
+family, promotion, or public-support evidence.
+
 ### Source-local application inputs
 
 The installed `bin/crabc-cc-dynamic` has three deliberately narrow source-build
