@@ -16,6 +16,7 @@ import argparse
 import dataclasses
 import hashlib
 import json
+import math
 import os
 import pathlib
 import re
@@ -32,6 +33,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "compat" / "ldso" / "fixtures"
 ORACLE_CC = pathlib.Path("/usr/local/bin/crabc-x86_64-musl-gcc")
 ORACLE_LIBC = pathlib.Path("/opt/musl-1.2.6/lib/libc.so")
+LIFECYCLE_DIRECTORY = ROOT / "compat" / "x86_64"
+LIFECYCLE_HELPER = LIFECYCLE_DIRECTORY / "run_qualification_manifest.py"
+LIFECYCLE_MANIFEST_HELPER = LIFECYCLE_DIRECTORY / "generate_qualification_manifest.py"
+MAX_TIMEOUT_SECONDS = 120.0
 CASES = (
     "nested-needed", "nested-dlopen", "search-path", "dso-origin",
     "initial-tls", "dlerror", "hash-formats", "hash-many", "relro",
@@ -117,8 +122,28 @@ def sha256(path: pathlib.Path) -> str:
     return digest.hexdigest()
 
 
+def lifecycle_helper():
+    """Load the repository's established private-descendant boundary."""
+
+    directory = str(LIFECYCLE_DIRECTORY)
+    if directory not in sys.path:
+        sys.path.insert(0, directory)
+    try:
+        import run_qualification_manifest as qualification
+    except ImportError as error:
+        raise LoaderSyntheticError("owned loader synthetic requires the qualification descendant boundary") from error
+    helper_path = pathlib.Path(qualification.__file__).resolve()
+    manifest_path = pathlib.Path(qualification.manifest.__file__).resolve()
+    if helper_path != LIFECYCLE_HELPER or manifest_path != LIFECYCLE_MANIFEST_HELPER:
+        raise LoaderSyntheticError("owned loader synthetic imported an unexpected lifecycle helper")
+    return qualification
+
+
 def source_seal() -> dict[str, object]:
-    files = [ROOT / "compat" / "ldso" / "run_x86.py", ROOT / "compat" / "x86_64" / "run_owned_loader_synthetic.sh"]
+    """Seal this runner and the exact imported descendant-boundary helpers."""
+
+    qualification = lifecycle_helper()
+    files = [ROOT / "compat" / "ldso" / "run_x86.py", ROOT / "compat" / "x86_64" / "run_owned_loader_synthetic.sh", pathlib.Path(qualification.__file__).resolve(), pathlib.Path(qualification.manifest.__file__).resolve()]
     files.extend(sorted(FIXTURES.glob("*.c")))
     entries = []
     for path in files:
@@ -159,6 +184,81 @@ def checked_product_directory(path: pathlib.Path) -> pathlib.Path:
     return path
 
 
+def checked_scratch_directory(root: pathlib.Path = ROOT) -> pathlib.Path:
+    """Create the one checkout-local evidence parent after physical checks."""
+
+    if root.is_symlink() or not root.is_dir():
+        raise LoaderSyntheticError(f"checkout root is missing or unsafe: {root}")
+    reject_symlink_components(root, "checkout root")
+    work = root / ".work"
+    if work.is_symlink() or not work.is_dir():
+        raise LoaderSyntheticError(f"checkout .work is missing or unsafe: {work}")
+    reject_symlink_components(work, "checkout .work")
+    scratch = work / "x86_64"
+    reject_symlink_components(scratch, "checkout x86 scratch")
+    scratch.mkdir(mode=0o755, exist_ok=True)
+    if scratch.is_symlink() or not scratch.is_dir():
+        raise LoaderSyntheticError(f"checkout x86 scratch is unsafe: {scratch}")
+    return scratch
+
+
+def checked_selection(requested: Sequence[str] | None) -> tuple[str, ...]:
+    """Accept a finite, unique subset while reserving completion for all 21."""
+
+    selected = CASES if requested is None else tuple(requested)
+    if not selected:
+        raise LoaderSyntheticError("select at least one frozen synthetic-loader workload")
+    if len(selected) != len(set(selected)):
+        raise LoaderSyntheticError("synthetic-loader workload selection contains duplicates")
+    if any(name not in CASES for name in selected):
+        raise LoaderSyntheticError("synthetic-loader workload selection is outside the frozen roster")
+    return selected
+
+
+def checked_timeout(value: float) -> float:
+    if not math.isfinite(value) or value <= 0 or value > MAX_TIMEOUT_SECONDS:
+        raise LoaderSyntheticError(f"timeout must be finite, greater than zero, and at most {MAX_TIMEOUT_SECONDS:g} seconds")
+    return value
+
+
+def selected_passed(cases: dict[str, dict[str, object]]) -> bool:
+    return all(item.get("status") == "pass" for item in cases.values())
+
+
+def exact_component_selection(selected: Sequence[str]) -> bool:
+    return len(selected) == len(CASES) and set(selected) == set(CASES)
+
+
+def oracle_seal() -> dict[str, object]:
+    entries: dict[str, pathlib.Path] = {"compiler": ORACLE_CC, "libc": ORACLE_LIBC}
+    sealed: dict[str, object] = {}
+    for name, path in entries.items():
+        if path.is_symlink() or not path.is_file() or not stat.S_ISREG(path.stat().st_mode):
+            raise LoaderSyntheticError(f"pinned musl {name} is absent or unsafe: {path}")
+        sealed[name] = str(path)
+        sealed[name + "_sha256"] = sha256(path)
+    return sealed
+
+
+def preflight(dynamic_sysroot: pathlib.Path, requested: Sequence[str] | None, timeout: float) -> tuple[pathlib.Path, tuple[str, ...], float, pathlib.Path]:
+    """Reject unsafe inputs before creating any collector directory."""
+
+    product = checked_product_directory(dynamic_sysroot)
+    selected = checked_selection(requested)
+    bounded_timeout = checked_timeout(timeout)
+    return product, selected, bounded_timeout, checked_scratch_directory()
+
+
+def summary_lines(component_complete: bool, evidence: pathlib.Path, receipt: pathlib.Path) -> tuple[str, str, str]:
+    """Keep the catalogue's evidence directory on its own exact log line."""
+
+    return (
+        f"owned synthetic loader: {'PASS' if component_complete else 'FAIL'}",
+        f"owned synthetic loader evidence: {evidence}",
+        f"owned synthetic loader receipt: {receipt}",
+    )
+
+
 def tree_seal(root: pathlib.Path) -> dict[str, object]:
     entries: list[dict[str, object]] = []
     for item in sorted(root.rglob("*"), key=lambda value: value.relative_to(root).as_posix()):
@@ -187,15 +287,37 @@ class Recorder:
         self.index += 1
         rendered = tuple(str(item) for item in argv)
         selected_env = dict(env) if env is not None else {}
+        timeout_seconds = checked_timeout(self.timeout if timeout is None else timeout)
+        qualification = lifecycle_helper()
+        result: ProcessResult | None = None
+        boundary_error: Exception | None = None
         try:
-            completed = subprocess.run(rendered, cwd=cwd, env=selected_env or None, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False, timeout=timeout or self.timeout)
-            result = ProcessResult(rendered, completed.returncode, completed.stdout, completed.stderr, False)
-        except subprocess.TimeoutExpired as error:
-            result = ProcessResult(rendered, -1, error.stdout or b"", error.stderr or b"", True)
+            with qualification.private_admission_subreaper() as descendants:
+                process = subprocess.Popen(rendered, cwd=cwd, env=selected_env or None, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+                descendants.register_private_runner(process)
+                try:
+                    stdout, stderr = process.communicate(timeout=timeout_seconds)
+                    descendants.reject_unexpected_descendants()
+                    result = ProcessResult(rendered, process.returncode, stdout, stderr, False)
+                except subprocess.TimeoutExpired:
+                    descendants.terminate_and_reap(process)
+                    stdout, stderr = process.communicate()
+                    result = ProcessResult(rendered, process.returncode, stdout, stderr, True)
+                except BaseException:
+                    descendants.terminate_and_reap(process)
+                    raise
+        except qualification.QualificationRunError as error:
+            boundary_error = error
+        if result is None:
+            if boundary_error is not None:
+                raise LoaderSyntheticError(f"synthetic-loader descendant boundary failed: {boundary_error}") from boundary_error
+            raise LoaderSyntheticError("synthetic-loader command produced no process observation")
         stem = f"{self.index:04d}-{name}"
         (self.raw / f"{stem}.stdout").write_bytes(result.stdout)
         (self.raw / f"{stem}.stderr").write_bytes(result.stderr)
         (self.raw / f"{stem}.json").write_text(json.dumps({"cwd": str(cwd), "environment": selected_env, **result.json()}, indent=2, sort_keys=True) + "\n")
+        if boundary_error is not None:
+            raise LoaderSyntheticError(f"synthetic-loader descendant boundary failed: {boundary_error}") from boundary_error
         return result
 
     def checked(self, name: str, argv: Sequence[str | pathlib.Path], *, cwd: pathlib.Path, env: dict[str, str] | None = None) -> ProcessResult:
@@ -657,22 +779,25 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     started = time.time()
-    scratch = ROOT / ".work" / "x86_64"
-    scratch.mkdir(parents=True, exist_ok=True)
+    try:
+        product, selected, timeout, scratch = preflight(args.dynamic_sysroot, args.case, args.timeout)
+    except (LoaderSyntheticError, OSError) as error:
+        print(f"owned synthetic loader: FAIL; error: {error}")
+        return 1
     report_root = pathlib.Path(tempfile.mkdtemp(prefix="owned-loader-synthetic.", dir=scratch))
     try:
-        product = checked_product_directory(args.dynamic_sysroot)
-        before_source, before_product = source_seal(), tree_seal(product)
-        cases = {name: run_case(name, product, report_root, args.timeout) for name in (args.case or CASES)}
-        after_source, after_product = source_seal(), tree_seal(product)
-        if before_source != after_source or before_product != after_product:
-            raise LoaderSyntheticError("source or supplied product changed while evidence was collected")
-        report = {"schema": 1, "runner": "compat/ldso/run_x86.py", "architecture": "x86_64", "component_complete": all(item["status"] == "pass" for item in cases.values()), "family_complete": False, "selected": list(args.case or CASES), "source_before": before_source, "source_after": after_source, "product_before": before_product, "product_after": after_product, "oracle": {"compiler": str(ORACLE_CC), "compiler_sha256": sha256(ORACLE_CC), "libc": str(ORACLE_LIBC), "libc_sha256": sha256(ORACLE_LIBC)}, "cases": cases, "elapsed_seconds": time.time() - started}
+        before_source, before_product, before_oracle = source_seal(), tree_seal(product), oracle_seal()
+        cases = {name: run_case(name, product, report_root, timeout) for name in selected}
+        after_source, after_product, after_oracle = source_seal(), tree_seal(product), oracle_seal()
+        if before_source != after_source or before_product != after_product or before_oracle != after_oracle:
+            raise LoaderSyntheticError("source, supplied product, or pinned musl oracle changed while evidence was collected")
+        selected_ok = selected_passed(cases)
+        report = {"schema": 1, "runner": "compat/ldso/run_x86.py", "architecture": "x86_64", "source_mount": str(ROOT), "selected_passed": selected_ok, "component_complete": selected_ok and exact_component_selection(selected), "family_complete": False, "selected": list(selected), "source_before": before_source, "source_after": after_source, "product_before": before_product, "product_after": after_product, "oracle_before": before_oracle, "oracle_after": after_oracle, "cases": cases, "elapsed_seconds": time.time() - started}
     except (LoaderSyntheticError, OSError) as error:
         report = {"schema": 1, "runner": "compat/ldso/run_x86.py", "component_complete": False, "family_complete": False, "error": str(error), "elapsed_seconds": time.time() - started}
     path = report_root / "report.json"
     path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-    print(f"owned synthetic loader: {'PASS' if report.get('component_complete') else 'FAIL'}; evidence: {report_root}; receipt: {path}")
+    print(*summary_lines(bool(report.get("component_complete")), report_root, path), sep="\n")
     return 0 if report.get("component_complete") else 1
 
 

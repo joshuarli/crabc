@@ -4,11 +4,16 @@
 from __future__ import annotations
 
 import importlib.util
+import math
+import os
 import pathlib
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -24,7 +29,55 @@ def runner():
     return module
 
 
+def qualification():
+    directory = str(ROOT / "compat" / "x86_64")
+    if directory not in sys.path:
+        sys.path.insert(0, directory)
+    import owned_dynamic_qualification
+    return owned_dynamic_qualification
+
+
 class OwnedLoaderSyntheticTests(unittest.TestCase):
+    def test_recorder_timeout_reaps_a_session_escaping_descendant(self) -> None:
+        """A timed-out fixture cannot leave a private session alive."""
+        module = runner()
+        scratch = ROOT / ".work"
+        scratch.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            work = pathlib.Path(directory)
+            pid_path = work / "escaped.pid"
+            program = """\
+import os
+import pathlib
+import sys
+import time
+
+child = os.fork()
+if child == 0:
+    os.setsid()
+    pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))
+    while True:
+        time.sleep(1)
+while not pathlib.Path(sys.argv[1]).exists():
+    time.sleep(0.01)
+time.sleep(30)
+"""
+            result = module.Recorder(work, 0.2).run(
+                "session-escape", [sys.executable, "-c", program, pid_path], cwd=work
+            )
+            self.assertTrue(result.timed_out)
+            deadline = time.monotonic() + 2
+            child = int(pid_path.read_text())
+            try:
+                while pathlib.Path(f"/proc/{child}").exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertFalse(pathlib.Path(f"/proc/{child}").exists())
+            finally:
+                try:
+                    os.kill(child, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
     def test_roster_is_the_complete_frozen_loader_set(self) -> None:
         module = runner()
         self.assertEqual(
@@ -37,6 +90,53 @@ class OwnedLoaderSyntheticTests(unittest.TestCase):
                 "dynamic-tls", "relocations", "weak-strong",
             ),
         )
+
+    def test_selection_and_timeout_inputs_are_bounded_before_work_creation(self) -> None:
+        module = runner()
+        self.assertEqual(module.checked_selection(None), module.CASES)
+        subset = module.checked_selection(("auxv",))
+        self.assertEqual(subset, ("auxv",))
+        self.assertTrue(module.selected_passed({"auxv": {"status": "pass"}}))
+        self.assertFalse(module.exact_component_selection(subset))
+        self.assertTrue(module.exact_component_selection(module.CASES))
+        for selection in ((), ("auxv", "auxv"), ("not-a-case",)):
+            with self.subTest(selection=selection), self.assertRaises(module.LoaderSyntheticError):
+                module.checked_selection(selection)
+        for value in (0.0, -1.0, math.inf, -math.inf, math.nan):
+            with self.subTest(timeout=value), self.assertRaises(module.LoaderSyntheticError):
+                module.checked_timeout(value)
+
+    def test_invalid_product_is_rejected_before_checkout_work_is_created(self) -> None:
+        module = runner()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            root = pathlib.Path(directory)
+            missing = root / "missing-product"
+            with mock.patch.object(module, "ROOT", root), self.assertRaises(module.LoaderSyntheticError):
+                module.preflight(missing, None, 20.0)
+            self.assertFalse((root / ".work").exists())
+
+    def test_checkout_scratch_rejects_a_symlink_before_mkdir(self) -> None:
+        module = runner()
+        with tempfile.TemporaryDirectory(dir=ROOT / ".work") as directory:
+            root = pathlib.Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            (root / ".work").symlink_to(outside, target_is_directory=True)
+            with self.assertRaises(module.LoaderSyntheticError):
+                module.checked_scratch_directory(root)
+
+    def test_catalogue_evidence_line_names_only_the_retained_directory(self) -> None:
+        module = runner()
+        catalogue = qualification()
+        scratch = ROOT / ".work" / "test-owned-loader-synthetic-catalogue"
+        scratch.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as directory:
+            leaf = pathlib.Path(directory)
+            receipt = leaf / "report.json"
+            receipt.write_text("{}\n")
+            log = leaf / "runner.log"
+            log.write_text("\n".join(module.summary_lines(False, leaf, receipt)) + "\n")
+            self.assertEqual(catalogue.leaf_evidence_directories(log, str(ROOT)), {leaf})
 
     def test_wrapper_refuses_to_build_without_a_supplied_product(self) -> None:
         scratch = ROOT / ".work"

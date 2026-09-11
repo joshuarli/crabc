@@ -6,6 +6,13 @@ compiles every fixture role once with that product's installed headers, retains
 the object digest, and links the same object into a pinned-musl root and an
 owned-product root.  The roots, links, command streams, process streams,
 source seals, and product seals remain below the emitted evidence directory.
+The runner validates the supplied product and physical checkout `.work` path
+before allocating that directory.  It seals the pinned musl compiler and libc
+before and after execution, and includes the imported
+`run_qualification_manifest.py` descendant-boundary helper and its manifest
+module in each source seal.  Every command runs in its own session through
+that Linux child-subreaper boundary, so a timeout or completed fixture cannot
+leave a forked session escapee outside the retained receipt.
 
 The component executes the 21 frozen `compat/ldso/run.py` workload names.  It
 uses kernel interpreter entry first and records the compatibility-alias direct
@@ -18,6 +25,10 @@ both PIE and DSO bases differ across two starts.
 the candidate.  It does not infer a close-to-destructor or reopen-to-
 constructor ordering from the marker presence.  This component does not claim
 a loader-family qualification.
+
+A selected subset can record `selected_passed`, but it cannot set
+`component_complete`.  Completion requires a successful, duplicate-free
+selection of the exact 21-name frozen roster; `family_complete` remains false.
 
 The installed dynamic driver owns three hash styles through
 `--application-hash-style sysv|gnu|both`; the default remains `sysv`.  It also
