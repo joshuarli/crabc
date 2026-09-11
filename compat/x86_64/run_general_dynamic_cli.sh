@@ -138,3 +138,4 @@ PYTHON
 done
 [ "$case_count" -gt 0 ]
 printf 'direct interpreter: PASS %s cases per arm; evidence: %s\n' "$case_count" "$work"
+bash "$ROOT/compat/x86_64/run_owned_loader_libc_identity.sh" "$installed"

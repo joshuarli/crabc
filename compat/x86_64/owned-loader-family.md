@@ -65,11 +65,11 @@ executing `readelf`; all three must identify the same sealed tool. This lets a
 host replay the receipt without `/opt/musl-1.2.6`, Docker, a candidate run, or
 a host readelf binary.
 
-Collect and replay with the target-local commands that the dispatcher can
-register:
+Collect through the pinned native dispatcher, or replay retained evidence on
+the host:
 
 ```bash
-python3 -B compat/x86_64/owned_loader_family.py collect --work .work/x86_64/loader-family
+./scripts/dev-x86_64.sh owned-loader-family --work .work/x86_64/loader-family
 python3 -B compat/x86_64/owned_loader_family.py validate --receipt .work/x86_64/loader-family/receipt.json
 ```
 
@@ -89,7 +89,4 @@ artifact was replayed. It always retains `family_completion=false`,
 `promotion_ready=false`, and `public_support=false`. It neither changes the
 family's planned status nor supplies a public x86 support claim.
 
-Dispatcher, parity, catalog, and generated-report registration remain the
-integration owner's work. The intended command surface is
-`owned-loader-family --work DIR` and `owned-loader-family validate --receipt
-PATH`.
+The dispatcher also supports `owned-loader-family validate --receipt PATH`.

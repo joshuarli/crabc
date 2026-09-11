@@ -604,6 +604,9 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-package-corpus --dynamic-sysroot DYNAMIC_SYSROOT [OPTIONS]  run the frozen native Alpine workloads with supplied package inputs
   owned-loader-synthetic DYNAMIC_SYSROOT  run all 21 frozen loader workloads through the supplied installed product
   owned-loader-inventory DYNAMIC_SYSROOT OUTPUT_JSON  retain compiler-selected source and native loader ELF inventory
+  owned-loader-libc-identity DYNAMIC_SYSROOT  check copied-interpreter libc identity before startup callbacks
+  owned-loader-family --work DIR  join complete three-product qualification and retained inventories
+  owned-loader-family validate --receipt FILE  replay the retained loader-family component
   owned-passwd [DYNAMIC_SYSROOT]         test installed local passwd parsing, lookup and FILE cursors
   owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
@@ -5995,7 +5998,7 @@ case "$command" in
     owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition) ;;
     owned-io-cancellation) ;;
     owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation) ;;
-    owned-package-corpus|owned-loader-synthetic|owned-loader-inventory) ;;
+    owned-package-corpus|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family) ;;
     owned-dynamic-io-cancellation) ;;
     owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex) ;;
     owned-pthread-lifecycle) ;;
@@ -8138,6 +8141,25 @@ case "$command" in
         ensure_image
         run_in_container python3 -B /workspace/compat/x86_64/owned_loader_inventory.py collect \
             --product "$inventory_product" --output "$inventory_output"
+        ;;
+    owned-loader-libc-identity)
+        [ "$#" -eq 1 ] || fail "owned-loader-libc-identity requires one dynamic sysroot"
+        identity_product="$(translate_owned_posix_product "$1")" || exit 2
+        ensure_image
+        run_in_chroot_cap_container bash /workspace/compat/x86_64/run_owned_loader_libc_identity.sh "$identity_product"
+        ;;
+    owned-loader-family)
+        if [ "$#" -eq 2 ] && [ "$1" = --work ]; then
+            loader_family_work="$(translate_owned_posix_product "$2")" || exit 2
+            loader_family_arguments=(collect --work "$loader_family_work")
+        elif [ "$#" -eq 3 ] && [ "$1" = validate ] && [ "$2" = --receipt ]; then
+            loader_family_receipt="$(translate_owned_posix_product "$3" receipt-file)" || exit 2
+            loader_family_arguments=(validate --receipt "$loader_family_receipt")
+        else
+            fail "owned-loader-family requires --work DIR or validate --receipt FILE"
+        fi
+        ensure_image
+        run_in_container python3 -B /workspace/compat/x86_64/owned_loader_family.py "${loader_family_arguments[@]}"
         ;;
     owned-posix-composition)
         ensure_image

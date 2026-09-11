@@ -94,6 +94,16 @@ COPY-visible data, `dlopen(NULL)`/`dlsym` main scope, argv and preserved
 environment. Main ORIGIN resolves without a proc mount. The aggregate runs
 this matrix against both installed and reproducibly extracted products.
 
+The same catalog case then runs `run_owned_loader_libc_identity.sh` across
+PIE and non-PIE. Three layouts observe successful root-libc selection,
+prefix-libc selection with distinct unloaded root aliases, and hardlinked
+root/prefix aliases. Two reject with exact `libcidentity` diagnostics and no
+constructor or main output: distinct admitted root/prefix libc identities and
+an override copy without a canonical identity. The private startup guard has
+no musl equivalent; the ordinary command matrix retains its musl comparison.
+Run this focused component with
+`./scripts/dev-x86_64.sh owned-loader-libc-identity DYNAMIC_SYSROOT`.
+
 The original ordinary musl invocation passed while the installed candidate
 segfaulted with `AT_BASE=0`, exit 139. The direct-main rollback test then failed
 because only the dependency was released; the fixed owner releases main last.
