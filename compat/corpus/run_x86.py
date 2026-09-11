@@ -564,9 +564,20 @@ def apk_identity() -> dict[str, object]:
 
 
 def oracle_source_identity() -> dict[str, object]:
-    """Bind the pinned musl source declaration used by the oracle-side root."""
+    """Bind both the pinned musl declaration and the actual interpreter bytes."""
+    root = require_physical_directory(ORACLE_ROOT, "pinned musl root")
+    runtime = root / "lib/libc.so"
+    loader = root / "lib/ld-musl-x86_64.so.1"
+    try:
+        if not loader.is_symlink() or loader.resolve(strict=True) != runtime:
+            fail("pinned musl loader does not alias its physical libc")
+        loader_target = os.readlink(loader)
+    except OSError as error:
+        raise CorpusError("pinned musl interpreter alias is unavailable") from error
     return {
-        "root": str(ORACLE_ROOT),
+        "root": str(root),
+        "runtime": {"path": str(runtime), "sha256": sha256_file(runtime, "pinned musl runtime")},
+        "loader": {"path": str(loader), "target": loader_target, "resolved_path": str(runtime)},
         "source_manifest": {
             "path": str(ORACLE_SOURCE_MANIFEST),
             "sha256": sha256_file(ORACLE_SOURCE_MANIFEST, "pinned musl oracle source manifest"),
@@ -1146,7 +1157,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--archive-dir", type=Path, default=DEFAULT_INPUT, help="signed exact APK closure")
     parser.add_argument("--index", type=Path, default=DEFAULT_INDEX, help="signed exact APK index")
     parser.add_argument("--work", type=Path, default=DEFAULT_WORK, help="private per-campaign parent below checkout .work")
-    parser.add_argument("--report", type=Path, help="fresh retained JSON path below checkout .work")
+    parser.add_argument("--report", type=Path, help="additional fresh JSON copy below checkout .work")
     parser.add_argument("--quiet", action="store_true", help="write the retained report without duplicating it to stdout")
     parser.add_argument("--tier", action="append", choices=(*TIERS, "all"), default=None, help="select a frozen tier; omitted selects all")
     parser.add_argument("--case", action="append", default=[], help="select one frozen case within the requested tiers")
@@ -1161,14 +1172,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not isinstance(evidence, str):
             fail("native corpus run did not return its retained evidence directory")
         default_report = report.get("report_path")
-        if explicit_report is None:
-            if not isinstance(default_report, str):
-                fail("native corpus run did not return its retained report path")
-            if Path(default_report) != Path(evidence) / "report.json":
-                fail("native corpus default report is outside its retained evidence directory")
-            destination = write_new_report(Path(default_report), encoded)
-        else:
-            destination = write_new_report(explicit_report, encoded)
+        if not isinstance(default_report, str):
+            fail("native corpus run did not return its retained report path")
+        if Path(default_report) != Path(evidence) / "report.json":
+            fail("native corpus default report is outside its retained evidence directory")
+        destination = write_new_report(Path(default_report), encoded)
+        if explicit_report is not None and explicit_report != destination:
+            write_new_report(explicit_report, encoded)
         if not arguments.quiet:
             sys.stdout.write(encoded)
         print(f"owned package corpus evidence: {evidence}", file=sys.stderr)

@@ -280,6 +280,37 @@ class NativeInvocationBoundaryTests(unittest.TestCase):
                 )
             self.assertEqual(__import__("json").loads(report.read_text(encoding="utf-8")), result)
 
+    def test_explicit_report_keeps_the_canonical_receipt_in_its_evidence_root(self) -> None:
+        with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:
+            run_root = Path(temporary) / "run"
+            run_root.mkdir()
+            primary = run_root / "report.json"
+            exported = Path(temporary) / "explicit.json"
+            result = {"passed": True, "execution_root": str(run_root), "report_path": str(primary)}
+            with mock.patch.object(RUNNER, "run", return_value=result), \
+                 mock.patch.object(sys, "stdout", io.StringIO()), \
+                 mock.patch.object(sys, "stderr", io.StringIO()):
+                self.assertEqual(RUNNER.main([
+                    "--dynamic-sysroot", "product", "--report", str(exported), "--quiet",
+                ]), 0)
+            self.assertEqual(primary.read_bytes(), exported.read_bytes())
+
+    def test_oracle_identity_changes_when_runtime_changes_but_source_marker_does_not(self) -> None:
+        with tempfile.TemporaryDirectory(dir=RUNNER.ROOT / ".work") as temporary:
+            root = Path(temporary)
+            (root / "lib").mkdir()
+            runtime = root / "lib/libc.so"
+            runtime.write_bytes(b"original musl runtime")
+            (root / "lib/ld-musl-x86_64.so.1").symlink_to("libc.so")
+            marker = root / ".crabc-oracle"
+            marker.write_bytes(b"same pinned source marker")
+            with mock.patch.object(RUNNER, "ORACLE_ROOT", root), \
+                 mock.patch.object(RUNNER, "ORACLE_SOURCE_MANIFEST", marker):
+                before = RUNNER.oracle_source_identity()
+                runtime.write_bytes(b"changed runtime")
+                after = RUNNER.oracle_source_identity()
+            self.assertNotEqual(before, after)
+
     def test_source_identity_binds_the_actual_process_lifetime_helpers(self) -> None:
         identity = RUNNER.source_identity(self.manifest)
         self.assertEqual(identity["runner"]["path"], "compat/corpus/run_x86.py")

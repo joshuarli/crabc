@@ -127,9 +127,11 @@ python3 -B compat/corpus/tests/test_runner_x86.py
 `--work` names the physical parent for this campaign's fresh retained run
 directories. It and an explicit `--report` must remain below this checkout's
 `.work` directory, cannot cross a symlink or `..`, and an explicit report must
-not already exist. Without `--report`, the runner creates `report.json` in its
-fresh private run directory and emits that exact path on stderr, including for
-a candidate mismatch. In quiet mode it separately emits the retained evidence
+not already exist. The runner always creates `report.json` in its fresh private
+run directory and emits that exact path on stderr, including for a candidate
+mismatch. `--report` requests an additional identical copy. The oracle seal
+binds both the source marker and the actual libc bytes and interpreter alias.
+In quiet mode it separately emits the retained evidence
 directory, pass/fail status, and report path. The JSON records the absolute
 source mount used for those paths, so a host-side reader can remap the
 container receipt deliberately. Omitting `--tier` selects all frozen tiers; an
