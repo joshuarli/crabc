@@ -145,9 +145,37 @@ also compiles this private module in the real selected x86 owned-runtime graph.
 That gate still runs the selected `owned_wordexp.rs` provider, so its relevant
 result here is compilation only; it is not process-adapter execution evidence.
 
-This is deliberately not a real `/bin/sh`/`owned_spawn` product execution,
-an installed C ABI probe, a selected `wordexp` replacement, or full wordexp
-closure. Before selection, a separately linked private consumer must exercise
-the actual spawn/path/runtime composition and the bounded shell corpus,
-including the retained backtick oracle; the future binding must also compose
-the pathname adapter and selected C ABI ownership rules.
+Run the separate actual-owner fixture through the same dispatcher:
+
+```sh
+./scripts/dev-x86_64.sh wordexp-process-private
+```
+
+`compat/x86_64/run_owned_wordexp_process_private.sh` first builds an ordinary
+sealed owned static sysroot and proves its `libc.a` has no bridge symbol. It
+then builds a separate raw `cargo rustc` archive with only
+`crabc_owned_wordexp_process_private_test` and its explicit `--check-cfg`,
+compiles `owned_wordexp_process_private_probe.c` against the ordinary installed
+headers, and directly links that object with the disposable archive plus the
+ordinary CRT and bounded builtins through the pinned LLD. No installed header,
+normal Cargo feature, or normal-product export names the bridge, and the normal
+archive is never replaced. The retained `.work/x86_64/tmp/owned-wordexp-process-private.*`
+leaf records the private build, consumer, program headers, stdout/stderr,
+marker, leader PID, and hashes.
+
+That C consumer takes the real selected environment snapshot and executes real
+`/bin/sh` processes through `owned_spawn`, the pipe/read loop, and wait/kill
+cleanup. It proves output final-newline trimming, quoted empty output, ignored
+ordinary nonzero command status, current environment updates, local assignment
+prefix visibility without export or parent mutation, export overlays, IFS
+restoration, backtick quoted/unquoted/physical-newline behavior, quiet versus
+shown stderr, exactly-once selected commands, unselected and `WRDE_NOCMD`
+zero-command paths, SIGCHLD autoreap completion, and NUL-output kill/reap of a
+shell leader which ignores SIGPIPE. It also runs an ordinary no-command
+expression in an empty static chroot with no `/bin/sh`, proving only a selected
+command requires the shell.
+
+This is a private actual-process proof, not an installed C ABI probe, selected
+`wordexp` replacement, pathname composition, product qualification, or full
+wordexp closure. A later binding still must compose the pathname adapter and
+selected C ABI ownership rules.

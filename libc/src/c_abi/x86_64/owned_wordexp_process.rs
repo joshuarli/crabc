@@ -45,6 +45,12 @@ use super::owned_wordexp_engine::{
     CommandOutput, CommandStyle, WordexpCommandAdapter, WordexpContext,
     WordexpError, WordexpLocaleMode,
 };
+#[cfg(crabc_owned_wordexp_process_private_test)]
+use super::owned_wordexp_engine::{
+    evaluate_wordexp, ParameterPatternOperator, ParameterPatternOutput,
+    PathnameMatches, PatternInput, TildeOutput, WordexpPathAdapter,
+    WordexpSyntax,
+};
 
 const CLOEXEC: i64 = 0x80000;
 const ECHILD: c_int = 10;
@@ -762,6 +768,211 @@ fn seen_contains(bytes: &CBuffer, names: &CVector<ByteSpan>, name: &[u8]) -> boo
         index += 1;
     }
     false
+}
+
+// The following C entry is compiled only into a disposable native fixture
+// archive. It intentionally has no installed header, selected C ABI provider,
+// or normal-product symbol.
+#[cfg(crabc_owned_wordexp_process_private_test)]
+const PRIVATE_TEST_OK: c_int = 0;
+#[cfg(crabc_owned_wordexp_process_private_test)]
+const PRIVATE_TEST_NO_SPACE: c_int = 1;
+#[cfg(crabc_owned_wordexp_process_private_test)]
+const PRIVATE_TEST_OUTPUT_NUL: c_int = 2;
+#[cfg(crabc_owned_wordexp_process_private_test)]
+const PRIVATE_TEST_COMMAND_FORBIDDEN: c_int = 3;
+#[cfg(crabc_owned_wordexp_process_private_test)]
+const PRIVATE_TEST_BAD_ARGUMENT: c_int = 4;
+#[cfg(crabc_owned_wordexp_process_private_test)]
+const PRIVATE_TEST_OUTPUT_CAPACITY: c_int = 5;
+#[cfg(crabc_owned_wordexp_process_private_test)]
+const PRIVATE_TEST_EVALUATION_FAILURE: c_int = 6;
+
+#[cfg(crabc_owned_wordexp_process_private_test)]
+const PRIVATE_TEST_SHOWERR: c_int = 1;
+#[cfg(crabc_owned_wordexp_process_private_test)]
+const PRIVATE_TEST_NOCMD: c_int = 2;
+
+#[cfg(crabc_owned_wordexp_process_private_test)]
+struct PrivateTestNoPaths;
+
+#[cfg(crabc_owned_wordexp_process_private_test)]
+impl WordexpPathAdapter for PrivateTestNoPaths {
+    fn expand_tilde(
+        &mut self,
+        _user: &[u8],
+        _home: Option<&[u8]>,
+        _output: &mut TildeOutput<'_>,
+    ) -> Result<bool, WordexpError> {
+        Ok(false)
+    }
+
+    fn expand_pattern(
+        &mut self,
+        _pattern: &PatternInput<'_>,
+        _output: &mut PathnameMatches<'_>,
+    ) -> Result<bool, WordexpError> {
+        Ok(false)
+    }
+
+    fn remove_parameter_pattern(
+        &mut self,
+        value: &[u8],
+        _pattern: &PatternInput<'_>,
+        _operator: ParameterPatternOperator,
+        output: &mut ParameterPatternOutput<'_>,
+    ) -> Result<(), WordexpError> {
+        output.append_bytes(value)
+    }
+}
+
+#[cfg(crabc_owned_wordexp_process_private_test)]
+unsafe fn private_test_input<'a>(input: *const c_char) -> Result<&'a [u8], WordexpError> {
+    if input.is_null() { return Err(WordexpError::BadCharacter); }
+    let mut length = 0usize;
+    loop {
+        // Avoid an unrepresentable pointer offset even under a malformed test
+        // caller; a valid C string terminates before this boundary.
+        if length == MAX_C_ALLOCATION { return Err(WordexpError::NoSpace); }
+        // SAFETY: the bridge caller supplies one readable NUL-terminated C
+        // string through its terminating byte.
+        let byte = unsafe { ptr::read(input.add(length).cast::<u8>()) };
+        if byte == 0 { break; }
+        length += 1;
+    }
+    // SAFETY: the caller's valid C-string range remains readable for this
+    // bridge call and contains exactly `length` non-NUL source bytes.
+    Ok(unsafe { slice::from_raw_parts(input.cast::<u8>(), length) })
+}
+
+#[cfg(crabc_owned_wordexp_process_private_test)]
+fn private_test_error(error: WordexpError) -> c_int {
+    match error {
+        WordexpError::NoSpace => PRIVATE_TEST_NO_SPACE,
+        WordexpError::OutputNul => PRIVATE_TEST_OUTPUT_NUL,
+        WordexpError::CommandSubstitution => PRIVATE_TEST_COMMAND_FORBIDDEN,
+        WordexpError::Syntax | WordexpError::BadCharacter |
+        WordexpError::UndefinedVariable | WordexpError::ParameterError |
+        WordexpError::Arithmetic | WordexpError::ArithmeticOverflow => {
+            PRIVATE_TEST_EVALUATION_FAILURE
+        }
+    }
+}
+
+#[cfg(crabc_owned_wordexp_process_private_test)]
+fn private_test_copy_words(
+    words: &super::owned_wordexp_engine::ExpandedWords,
+    output: *mut c_char,
+    output_capacity: usize,
+    output_length: *mut usize,
+    output_words: *mut usize,
+) -> c_int {
+    let mut required = 0usize;
+    let mut index = 0usize;
+    while index < words.len() {
+        let Some(word) = words.result_word(index) else {
+            return PRIVATE_TEST_EVALUATION_FAILURE;
+        };
+        let Some(with_word) = required.checked_add(word.byte_len()) else {
+            return PRIVATE_TEST_NO_SPACE;
+        };
+        let Some(with_terminator) = with_word.checked_add(1) else {
+            return PRIVATE_TEST_NO_SPACE;
+        };
+        required = with_terminator;
+        index += 1;
+    }
+    if required > output_capacity { return PRIVATE_TEST_OUTPUT_CAPACITY; }
+
+    // SAFETY: the bridge caller supplies `output_capacity` writable bytes
+    // beginning at non-null `output`; the checked size above bounds all writes.
+    let output = unsafe { slice::from_raw_parts_mut(output.cast::<u8>(), output_capacity) };
+    let mut offset = 0usize;
+    let mut index = 0usize;
+    while index < words.len() {
+        let Some(word) = words.result_word(index) else {
+            return PRIVATE_TEST_EVALUATION_FAILURE;
+        };
+        let mut byte_index = 0usize;
+        while byte_index < word.byte_len() {
+            let Some(byte) = word.byte_at(byte_index) else {
+                return PRIVATE_TEST_EVALUATION_FAILURE;
+            };
+            output[offset] = byte;
+            offset += 1;
+            byte_index += 1;
+        }
+        output[offset] = 0;
+        offset += 1;
+        index += 1;
+    }
+    // SAFETY: the non-null output records belong to the bridge caller and are
+    // written only after complete result serialization succeeded.
+    unsafe {
+        ptr::write(output_length, offset);
+        ptr::write(output_words, words.len());
+    }
+    PRIVATE_TEST_OK
+}
+
+/// Test-only actual-process bridge for the private wordexp adapter.
+///
+/// This symbol is present only with `crabc_owned_wordexp_process_private_test`.
+/// It snapshots the selected environment, parses and evaluates `input` with a
+/// no-path test adapter, and serializes result words as NUL-separated bytes.
+/// `flags` accepts `1` for `WRDE_SHOWERR` behavior and `2` for the core's
+/// command-substitution rejection. The private integer results are documented
+/// beside the fixture; they are not a public wordexp status mapping.
+///
+/// # Safety
+/// `input` must point to a readable NUL-terminated C string for this call.
+/// `output` must name `output_capacity` writable bytes, and `output_length`
+/// and `output_words` must each name one writable `usize`. The selected
+/// environment and active LC_CTYPE must meet `WordexpEnvironmentSnapshot`'s
+/// ordinary capture stability obligations. Deferred cancellation remains
+/// disabled by the bridge caller for the complete command transaction.
+#[cfg(crabc_owned_wordexp_process_private_test)]
+#[no_mangle]
+pub unsafe extern "C" fn crabc_owned_wordexp_process_private_test(
+    input: *const c_char,
+    flags: c_int,
+    output: *mut c_char,
+    output_capacity: usize,
+    output_length: *mut usize,
+    output_words: *mut usize,
+) -> c_int {
+    if input.is_null() || output.is_null() || output_length.is_null() || output_words.is_null() ||
+        flags & !(PRIVATE_TEST_SHOWERR | PRIVATE_TEST_NOCMD) != 0
+    {
+        return PRIVATE_TEST_BAD_ARGUMENT;
+    }
+    // SAFETY: non-null result pointers are caller-writable by the bridge
+    // contract, and zero initialization makes every error result explicit.
+    unsafe {
+        ptr::write(output_length, 0);
+        ptr::write(output_words, 0);
+    }
+    let source = match unsafe { private_test_input(input) } {
+        Ok(source) => source,
+        Err(error) => return private_test_error(error),
+    };
+    let syntax = match WordexpSyntax::parse(source) {
+        Ok(syntax) => syntax,
+        Err(error) => return private_test_error(error),
+    };
+    let mut context = WordexpContext::new();
+    let snapshot = match unsafe { WordexpEnvironmentSnapshot::capture(&mut context) } {
+        Ok(snapshot) => snapshot,
+        Err(error) => return private_test_error(error),
+    };
+    context.set_no_command_substitution(flags & PRIVATE_TEST_NOCMD != 0);
+    let mut commands = snapshot.process_adapter(flags & PRIVATE_TEST_SHOWERR != 0);
+    let mut paths = PrivateTestNoPaths;
+    let words = match evaluate_wordexp(&syntax, &mut context, &mut commands, &mut paths) {
+        Ok(words) => words,
+        Err(error) => return private_test_error(error),
+    };
+    private_test_copy_words(&words, output, output_capacity, output_length, output_words)
 }
 
 #[cfg(test)]
