@@ -51,6 +51,59 @@ symbol-accounting `link-dead-code` setting cannot alter its timed loops. The
 dependency-free native-facade fixture remains the project’s separate clang/lld,
 `std,panic_abort`, bitcode, and fat-LTO Linux/AArch64 proof.
 
+## Native x86-64 supplied-product adapter
+
+`run_x86_64.py` is the native Linux/x86-64 supplied-product adapter. It keeps
+the historical AArch64 `run.py` lane and its interpreter-patching rule intact.
+The x86 adapter instead accepts an already materialized installed, second, or
+extracted dynamic product through `--dynamic-product`. It compiles each
+unchanged application or DSO source exactly once with that product's installed
+headers and the fixed C11/O3/PIE-or-PIC/anti-builtin policy, then separately
+links those exact objects through the installed `bin/crabc-cc-dynamic` and the
+pinned `/usr/local/bin/crabc-x86_64-musl-gcc` reference compiler. It never
+patches the musl candidate's `PT_INTERP`, bypasses the installed driver, or
+rebuilds a supplied product.
+
+The adapter retains source, header, object, link, product, image-tool, staged
+root, input, command, raw-ELF, raw-trace, `smaps`, and cgroup observations.
+Host-side `check REPORT` replays those identities without requiring a host
+native compiler or musl installation. The five-DSO graph preserves its graph:
+only direct roots reach either executable's `DT_NEEDED`; the installed-driver
+receipt records the complete schema-3 closure and the musl link resolves it
+only through `-Wl,-rpath-link`.
+
+Use the dedicated image tag, which is deliberately separate from the ordinary
+core-evidence image:
+
+```bash
+CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf \
+  ./scripts/dev-x86_64.sh perf-c-test
+```
+
+`perf-c plan`, `perf-c run`, `perf-c collect`, and `perf-c check` are the
+roster, attempt, collector, and retained-evidence surfaces. A normal attempt
+uses 31 fresh paired samples after three warm-ups and a deterministic
+10,000-resample one-sided 95% bootstrap. `--implementation-smoke` is the
+only development route before correctness admission: it fixes the budget to
+one pair and no warm-ups, omits memory diagnostics, and cannot be collected or
+promoted. The current collector remains deliberately unavailable until a
+reader owns the complete x86 correctness-closed predecessor chain (the native
+POSIX aggregate/provider quartet and required final execution receipts). An
+owned-dynamic-qualification receipt may bind the supplied product, but cannot
+substitute for that predecessor.
+
+No x86 release result exists. A future full scorecard still requires every
+workload to meet CPU upper-95% `<= 0.90` across 31 paired fresh processes,
+both live PSS and `memory.peak` `<= 0.90`, and the marked syscall rule of at
+most `2R` candidate calls (or zero when the reference is zero), with no
+unexplained error, retry, or fallback. Three consecutive clean Docker
+invocations must all pass an immutable roster. The inherited 74 rows are not
+the full scorecard: supported clock selections beyond `CLOCK_MONOTONIC`,
+medium live-set/free-refill-reuse/worker-local allocation, loopback and
+hermetic hosts/DNS timing, empty/sub-64/guard-adjacent primitive dispositions,
+and per-workload live-state PSS plateaus remain required, separately named
+work rather than waived rows.
+
 ## What is measured
 
 Every timed sample is a fresh child process. The default matrix retains 31
@@ -188,11 +241,12 @@ isolation, or cross-architecture performance. The resident-memory probe gives
 the process footprint of the selected allocator integration.
 
 Allocator invention remains outside crabc’s scope. The narrowly approved work
-is a provenance-preserving Rust semantic port of fixed mimalloc v3.5.0 for
-Linux/AArch64 little-endian. These musl–crabc rows are not sufficient evidence
-for that port: its candidate must be compared against the exact pinned C
-v3.5.0 implementation with matching configuration, fixture, artifact, host,
-and sample provenance. The separate contract and difference register live in
+is a provenance-preserving Rust semantic port of fixed mimalloc v3.5.0. Native
+x86-64 work is active under that separate contract; the AArch64 port work is
+paused. These musl–crabc rows are not sufficient evidence for either port: its
+candidate must be compared against the exact pinned C v3.5.0 implementation
+with matching configuration, fixture, artifact, host, and sample provenance.
+The separate contract and difference register live in
 [`compat/allocator/README.md`](../allocator/README.md) and
 [`compat/allocator/known-differences.md`](../allocator/known-differences.md).
 Do not alter this fixture, an allocation policy, or a configuration merely to

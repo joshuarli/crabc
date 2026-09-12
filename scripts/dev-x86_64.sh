@@ -194,6 +194,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   routine-c-abi-matrix <family-id>  run checked routine C ABI evidence for one family
   headers-layouts-aggregate  run finite non-promoting header accounting evidence
   image  build the pinned Linux/amd64 core-evidence image
+  perf-c {plan|run|collect|check} ...  native supplied-product C performance adapter; use CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf
+  perf-c-test  run focused native C-performance adapter and supplemental-fixture smoke tests in that image
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
   linux-5-10-uapi  verify the fixed Linux 5.10 x86 exported-UAPI input
   header-abi-reference  verify the pinned x86 SysV LP64/x87 header baseline
@@ -2759,6 +2761,72 @@ except (OSError, RuntimeError, ValueError) as error:
 PY_PRODUCT
 }
 
+# Translate only the native C-performance adapter's explicit `.work` inputs.
+# The runner itself owns semantic argument validation; this boundary prevents a
+# Docker invocation from treating a bare word as a volume or selecting a host
+# path hidden by the configured work bind.  `check` intentionally retains its
+# host path after this validation because replay must not need Docker or native
+# tools.
+prepare_native_c_performance_arguments() {
+    [ "$#" -ge 1 ] || fail "usage: ./scripts/dev-x86_64.sh perf-c {plan|run|collect|check} ..."
+    local mode="$1"
+    shift
+    NATIVE_C_PERFORMANCE_ARGUMENTS=("$mode")
+    case "$mode" in
+        check)
+            [ "$#" -eq 1 ] || fail "usage: ./scripts/dev-x86_64.sh perf-c check REPORT"
+            translate_owned_posix_product "$1" receipt-file >/dev/null || exit 2
+            NATIVE_C_PERFORMANCE_ARGUMENTS+=("$(readlink -f -- "$1")")
+            return
+            ;;
+        plan|run|collect)
+            ;;
+        *) fail "usage: ./scripts/dev-x86_64.sh perf-c {plan|run|collect|check} ..." ;;
+    esac
+
+    local dynamic_seen=0 work_seen=0 value translated
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --dynamic-product)
+                [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "--dynamic-product requires a physical .work product"
+                [ "$dynamic_seen" -eq 0 ] || fail "--dynamic-product may appear once"
+                translated="$(translate_owned_posix_product "$2")" || exit 2
+                NATIVE_C_PERFORMANCE_ARGUMENTS+=("$1" "$translated")
+                dynamic_seen=1
+                shift 2
+                ;;
+            --work-dir)
+                [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "--work-dir requires a fresh .work directory"
+                [ "$work_seen" -eq 0 ] || fail "--work-dir may appear once"
+                translated="$(translate_owned_posix_product "$2" fresh-output)" || exit 2
+                NATIVE_C_PERFORMANCE_ARGUMENTS+=("$1" "$translated")
+                work_seen=1
+                shift 2
+                ;;
+            --same-object-input-proof|--attempt-roster|--dynamic-qualification)
+                [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$1 requires a physical .work regular file"
+                translated="$(translate_owned_posix_product "$2" receipt-file)" || exit 2
+                NATIVE_C_PERFORMANCE_ARGUMENTS+=("$1" "$translated")
+                shift 2
+                ;;
+            --samples|--warmup|--cpu|--timeout|--seed|--label|--workload|--attempt-index)
+                [ "$#" -ge 2 ] && [ -n "$2" ] || fail "$1 requires a value"
+                NATIVE_C_PERFORMANCE_ARGUMENTS+=("$1" "$2")
+                shift 2
+                ;;
+            --skip-syscalls|--implementation-smoke)
+                NATIVE_C_PERFORMANCE_ARGUMENTS+=("$1")
+                shift
+                ;;
+            --musl-root|--musl-cc)
+                fail "$1 is fixed by the native C-performance image"
+                ;;
+            *) fail "unknown native C-performance argument: $1" ;;
+        esac
+    done
+    [ "$dynamic_seen" -eq 1 ] && [ "$work_seen" -eq 1 ] || fail "native C-performance plan/run/collect requires --dynamic-product and --work-dir"
+}
+
 prepare_owned_posix_family_arguments() {
     local static_receipt='' dynamic_receipt='' output=''
     local expected='usage: ./scripts/dev-x86_64.sh owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR'
@@ -3130,6 +3198,51 @@ run_in_dynamic_loader_mount_container() {
         --env GIT_CONFIG_COUNT=1 \
         --env GIT_CONFIG_KEY_0=safe.directory \
         --env GIT_CONFIG_VALUE_0=/workspace \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$TARGET_VOLUME:/workspace/target" \
+        --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$IMAGE" "$@"
+}
+
+# Native C-performance collection needs a private cgroup namespace solely for
+# a diagnostic leaf mounted below its fresh `.work` directory.  It is not a
+# general privileged container: network is absent, no host-root bind is added,
+# and an LSM denial is reported by the runner as unsupported rather than
+# replaced with Docker's parent cgroup.  The non-default image tag is
+# deliberate: performance tooling (including strace) must never rebuild the
+# default evidence image while another qualification batch uses it.
+require_native_c_performance_image() {
+    [ "$IMAGE" = "crabc-core-evidence:x86_64-native-perf" ] || \
+        fail "native C performance requires CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf"
+}
+
+run_in_native_c_performance_container() {
+    prepare_work_dir
+    require_native_c_performance_image
+    local image_id
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve native C-performance image identity"
+    docker run --rm --init \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" \
+        --cgroupns=private \
+        --network none \
+        --cap-add=SYS_CHROOT \
+        --cap-add=SYS_ADMIN \
+        --cap-add=SYS_PTRACE \
+        --security-opt=seccomp=unconfined \
+        --workdir /workspace \
+        --env CARGO_HOME=/workspace/.work/x86_64/cargo \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=1 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --env CRABC_PERF_DOCKER_IMAGE_ID="$image_id" \
+        --env CRABC_PERF_CONTAINER_POLICY=cgroupns=private,network=none,SYS_CHROOT,SYS_ADMIN,SYS_PTRACE,seccomp=unconfined \
         --volume "$ROOT_DIR:/workspace" \
         --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
@@ -5917,6 +6030,13 @@ case "$command" in
         [ "$#" -eq 0 ] || fail "campaign-all takes no arguments"
         python3 "$ROOT_DIR/compat/x86_64/campaign_runner.py" all
         ;;
+    perf-c)
+        # Argument parsing and source-mount translation happen after the
+        # native-host check, alongside the other supplied-product commands.
+        ;;
+    perf-c-test)
+        [ "$#" -eq 0 ] || fail "perf-c-test takes no arguments"
+        ;;
     routine-c-abi-matrix)
         [ "$#" -eq 1 ] || fail "routine-c-abi-matrix requires exactly one family id"
         ensure_image
@@ -6174,6 +6294,10 @@ esac
 require_native_linux_x86_64_host
 
 case "$command" in
+    perf-c)
+        prepare_native_c_performance_arguments "$@"
+        set -- "${NATIVE_C_PERFORMANCE_ARGUMENTS[@]}"
+        ;;
     owned-posix-family)
         prepare_owned_posix_family_arguments "$@"
         set -- "${POSIX_FAMILY_ARGUMENTS[@]}"
@@ -6205,6 +6329,50 @@ case "$command" in
 esac
 
 case "$command" in
+    perf-c)
+        if [ "$1" = check ]; then
+            shift
+            # `check` is a pure retained-evidence replay.  It deliberately
+            # stays outside Docker and asks for no host compiler, musl, or
+            # binutils installation.
+            python3 -B "$ROOT_DIR/compat/perf/run_x86_64.py" check "$@"
+        else
+            require_native_c_performance_image
+            ensure_image
+            run_in_native_c_performance_container python3 -B /workspace/compat/perf/run_x86_64.py "$@"
+        fi
+        ;;
+    perf-c-test)
+        require_native_c_performance_image
+        ensure_image
+        run_in_native_c_performance_container bash -ceu '
+            work="$(mktemp -d /workspace/.work/x86_64/native-c-performance-adapter-test.XXXXXX)"
+            log="$work/command.log"
+            if ! {
+                python3 -B -m unittest \
+                    compat/perf/tests/test_run.py \
+                    compat/perf/tests/test_run_x86_64.py \
+                    compat/perf/tests/test_x86_64_evidence.py \
+                    compat/perf/tests/test_x86_64_profile.py
+                python3 -B compat/perf/tests/run_x86_64_workloads_smoke.py --work "$work/workloads"
+            } >"$log" 2>&1; then
+                # A failure must still leave a reviewable retained log.  This
+                # runs before the command returns under ``set -e``.
+                chmod 0755 "$work"
+                chmod 0644 "$log"
+                printf "native C performance focused log: %s\\n" "$log"
+                cat "$log"
+                exit 1
+            fi
+            # Docker creates this focused retained log under umask 077. Make
+            # only its ordinary parent/log readable before publishing its path;
+            # sealed products and source files are never touched here.
+            chmod 0755 "$work"
+            chmod 0644 "$log"
+            printf "native C performance focused log: %s\\n" "$log"
+            cat "$log"
+        '
+        ;;
     image)
         [ "$#" -eq 0 ] || fail "image takes no arguments"
         build_image

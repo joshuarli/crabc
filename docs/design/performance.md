@@ -3,7 +3,10 @@
 This document records selected, reproducible Linux/AArch64 evidence. It is not
 a universal performance claim for either crabc or musl. Musl 1.2.6 is the C
 runtime oracle; Rustix 1.1.4 is the native-facade comparison input. Glibc is
-not measured or used as a fallback.
+not measured or used as a fallback. Native x86-64 supplied-product performance
+uses the separate adapter documented in
+[`compat/perf/README.md`](../../compat/perf/README.md); it retains this frozen
+AArch64 lane as historical evidence and makes no x86 release claim.
 
 ## Measurement contract
 
@@ -47,12 +50,13 @@ per-workload `<= 0.90x` release requirement or apply to another route.
 ### Fixed allocator-port measurements
 
 Allocator design remains out of scope. The narrow planned exception is a
-provenance-preserving Rust semantic port of pinned mimalloc v3.5.0 for
-Linux/AArch64 little-endian; [`docs/design/allocator.md`](allocator.md) owns
-that boundary. The current production `libmimalloc-sys` 0.1.49 backend bundles
-mimalloc v3.3.2 and remains the runtime default until promotion; it is not the
-exact v3.5.0 oracle. The separately built exact pinned C v3.5.0 archive is the
-mandatory differential and performance baseline for the port.
+provenance-preserving Rust semantic port of pinned mimalloc v3.5.0;
+[`docs/design/allocator.md`](allocator.md) owns that boundary. Native x86-64
+work is active while the Linux/AArch64 port work recorded below is paused. The
+current production `libmimalloc-sys` 0.1.49 backend bundles mimalloc v3.3.2
+and remains the runtime default until promotion; it is not the exact v3.5.0
+oracle. The separately built exact pinned C v3.5.0 archive is the mandatory
+differential and performance baseline for the port.
 
 The ordinary musl–crabc rows continue to measure the runtime as users receive
 it. They do not establish Rust-port parity. A port candidate must instead be

@@ -43,6 +43,7 @@ RUN test "$(uname -m)" = "x86_64" \
         python3 \
         rsync \
         rustup \
+        strace \
         tar \
         xz \
     # Alpine packages the bootstrap binary as rustup-init rather than rustup.
@@ -102,6 +103,22 @@ RUN set -eu \
 
 COPY docker/x86_64-musl-oracle-gcc /usr/local/bin/crabc-x86_64-musl-gcc
 RUN chmod 0755 /usr/local/bin/crabc-x86_64-musl-gcc
+
+# This ordinary image-owned manifest binds the external performance tools and
+# musl loader/libc bytes to the Docker content identity recorded by the
+# dispatcher. The adapter copies and parses it into each attempt before and
+# after construction; host-only replay can then verify the retained oracle
+# bytes without requiring any ambient compiler, binutils, or musl tree.
+RUN set -eu \
+    && mkdir -p /usr/local/share \
+    && { \
+        printf '%s\n' 'format=crabc-x86_64-performance-image-tools/v2'; \
+        for tool in /usr/local/bin/crabc-x86_64-musl-gcc /usr/bin/readelf /usr/bin/strace \
+            /opt/musl-1.2.6/lib/ld-musl-x86_64.so.1 /opt/musl-1.2.6/lib/libc.so; do \
+            printf '%s %s\n' "${tool}" "$(sha256sum "${tool}" | awk '{print $1}')"; \
+        done; \
+    } > /usr/local/share/crabc-x86_64-performance-image-tools.manifest \
+    && chmod 0444 /usr/local/share/crabc-x86_64-performance-image-tools.manifest
 
 # Public libc headers that include Linux UAPI declarations need a declared
 # target input.  Do not borrow Alpine's ambient /usr/include tree: export the
