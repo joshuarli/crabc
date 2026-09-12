@@ -5867,6 +5867,25 @@ class X86ParityLedgerTests(unittest.TestCase):
         headers_layouts = self.family(data, "libc.headers-layouts")
         artifacts = headers_layouts["verified_artifact"]
         assert isinstance(artifacts, list) and len(artifacts) == 17
+        policy = ledger.load_callable_visibility_contract()
+        project_only = {entry.path: entry for entry in policy.project_only_headers}
+        expected_project_only = {
+            "daemon.h",
+            "dn_expand.h",
+            "linux/capability.h",
+            "lrand48.h",
+            "pthread_atfork.h",
+            "stdatomic.h",
+            "strverscmp.h",
+            "sys/module.h",
+        }
+        self.assertEqual(set(project_only), expected_project_only)
+        self.assertEqual(
+            {entry.disposition for entry in project_only.values()},
+            {"retained-reviewed-project-c-abi-extension"},
+        )
+        self.assertTrue(all(entry.removal_requires_abi_decision for entry in project_only.values()))
+        reviewed_disposition = project_only["stdatomic.h"].disposition
         artifact = next(
             entry
             for entry in artifacts
@@ -5905,7 +5924,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "Musl 1.2.6 does not install `<stdatomic.h>`",
             "installed-product companion",
             "four owned dynamic entry modes",
-            "56 `retained-pending-c-abi-policy` rows",
+            f"56 `{reviewed_disposition}` rows",
             "complete C ABI",
             "public x86 support",
         ):
@@ -5962,7 +5981,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "fixed strptime source-and-POSIX contract",
             "twenty candidate and 104 oracle wordexp diagnostics",
             "independently captured native-input seal",
-            "56 retained-pending-c-abi-policy rows",
+            "56 retained-reviewed-project-c-abi-extension rows",
             "Musl or C++ header parity",
         ):
             self.assertIn(phrase, family["native_evidence"][0]["scope"])

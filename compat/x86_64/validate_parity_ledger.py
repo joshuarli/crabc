@@ -423,6 +423,7 @@ EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY = {
     "strverscmp.h",
     "sys/module.h",
 }
+REVIEWED_PROJECT_HEADER_C_ABI_DISPOSITION = "retained-reviewed-project-c-abi-extension"
 EXPECTED_LINUX_5_10_UAPI_ARCHIVE = (
     "https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.tar.xz"
 )
@@ -7323,7 +7324,7 @@ def require_reviewed_project_header_c_abi_extensions_artifact(
     )
     require(
         all(
-            header.disposition == "retained-reviewed-project-c-abi-extension"
+            header.disposition == REVIEWED_PROJECT_HEADER_C_ABI_DISPOSITION
             and header.removal_requires_abi_decision
             for header in headers.values()
         ),
@@ -8113,7 +8114,7 @@ def require_addressable_stdatomic_artifact(family: Mapping[str, Any]) -> None:
         "`-nostdlib -static`",
         "installed-product companion",
         "four owned dynamic entry modes",
-        "56 `retained-pending-c-abi-policy` rows",
+        "56 `retained-reviewed-project-c-abi-extension` rows",
         "Musl 1.2.6 does not install `<stdatomic.h>`",
         "Musl or C++ header parity",
         "complete C ABI",
@@ -8181,10 +8182,27 @@ def require_addressable_stdatomic_artifact(family: Mapping[str, Any]) -> None:
         and "six exact libc.so exports" in installed_scope
         and "four owned dynamic pie/non-pie kernel/direct entries" in installed_scope
         and "raw_passed=false" in installed_scope
-        and "56 retained-pending-c-abi-policy rows" in installed_scope
+        and "56 retained-reviewed-project-c-abi-extension rows" in installed_scope
         and "Musl or C++ header parity" in installed_scope
         and "C++ runtime" in installed_scope,
         "static-c-atomic-addressable installed companion scope is incomplete",
+    )
+    try:
+        policy = load_callable_visibility_contract()
+    except MatrixError as error:
+        raise LedgerError(f"addressable atomic project-header policy is invalid: {error}") from error
+    project_only = {header.path: header for header in policy.project_only_headers}
+    require(
+        set(project_only) == EXPECTED_PUBLIC_HEADER_CANDIDATE_ONLY,
+        "addressable atomic project-header policy roster drifted",
+    )
+    require(
+        all(
+            header.disposition == REVIEWED_PROJECT_HEADER_C_ABI_DISPOSITION
+            and header.removal_requires_abi_decision
+            for header in project_only.values()
+        ),
+        "addressable atomic project-header policy disposition drifted",
     )
     runner_path = ROOT / "compat" / "x86_64" / "run_atomic_addressable_abi.sh"
     require(runner_path.is_file(), "static-c-atomic-addressable runner is missing")
@@ -8278,7 +8296,7 @@ def require_posix_native_profile_companions(family: Mapping[str, Any]) -> None:
         and "candidate passes and fixed musl math defects" in scope
         and "candidate good/musl undefined" in scope
         and "raw_passed=false" in scope
-        and "56 retained-pending-c-abi-policy rows remain pending" in scope
+        and "56 retained-reviewed-project-c-abi-extension rows remain unchanged" in scope
         and "Musl or C++ header parity" in scope
         and "native_aggregate_complete only" in scope,
         "libc.posix-runtime finite profile scope is incomplete",

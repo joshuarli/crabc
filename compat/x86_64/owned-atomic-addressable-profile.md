@@ -25,5 +25,5 @@ This proves the existing `static-c-atomic-addressable` project extension on
 one installed product. It retains the original OS-test candidate `good` and
 musl `undefined` observations as raw differences. It neither claims that musl
 has `<stdatomic.h>` or these exports nor changes the
-`retained-pending-c-abi-policy` disposition, header-family coverage, C11
-closure, or public support.
+`retained-reviewed-project-c-abi-extension` disposition, header-family
+coverage, C11 closure, or public support.
