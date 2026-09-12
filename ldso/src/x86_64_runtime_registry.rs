@@ -281,10 +281,12 @@ impl PreparedInitialRegistry {
     /// Initial publication is still single-threaded and unique. The canonical
     /// graph and RuntimeV1 are already release-published; no fallible work or
     /// application callback may occur between that commit and this handoff.
-    pub(super) unsafe fn publish(mut self) {
+    pub(super) unsafe fn publish(mut self, loader_base: usize) {
         let registry = core::mem::replace(&mut self.registry, RuntimeRegistry::empty());
         unsafe { core::ptr::write(REGISTRY.0.get(), registry); }
         self.nodes.relinquish();
+        unsafe { super::x86_64_debugger::publish_initial(
+            core::ptr::addr_of_mut!((*(*REGISTRY.0.get()).head).link_map).cast(), loader_base); }
     }
 }
 
@@ -761,6 +763,7 @@ unsafe extern "C" fn runtime_open(filename: *const u8, flags: i32, error: *mut i
     let filename = unsafe { core::slice::from_raw_parts(filename, length) };
     let result = {
         let guard = RuntimeGuard::acquire();
+        let _notification = super::x86_64_debugger::AddNotification::begin(&guard);
         unsafe { open_transaction(&guard, filename, flags) }
     };
     match result {

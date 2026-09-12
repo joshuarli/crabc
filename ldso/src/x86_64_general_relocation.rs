@@ -706,6 +706,22 @@ unsafe fn apply_word_relocations(scope: &SymbolScope<'_>, objects: &[Object], ow
 /// table ranges were validated by parsing, destinations remain writable, and
 /// the caller exclusively owns mappings and metadata until this returns.
 pub(super) unsafe fn relocate_initial_graph(graph: &InitialGraphState, objects: &[Object; MAX_OBJECTS]) -> Option<()> {
+    unsafe { relocate_initial_graph_inner(graph, objects, #[cfg(feature = "x86_64-owned-dynamic-runtime")] None) }
+}
+
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+pub(super) unsafe fn relocate_initial_graph_with_debugger(
+    graph: &InitialGraphState, objects: &[Object; MAX_OBJECTS],
+    debugger: &super::x86_64_debugger::PreparedInitialDebugger,
+) -> Option<()> {
+    unsafe { relocate_initial_graph_inner(graph, objects, Some(debugger)) }
+}
+
+unsafe fn relocate_initial_graph_inner(
+    graph: &InitialGraphState, objects: &[Object; MAX_OBJECTS],
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    debugger: Option<&super::x86_64_debugger::PreparedInitialDebugger>,
+) -> Option<()> {
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     {
         unsafe { validate_main_crt_mode(objects) }?;
@@ -715,12 +731,18 @@ pub(super) unsafe fn relocate_initial_graph(graph: &InitialGraphState, objects: 
     let scope = initial_scope.view();
     for owner in 0..scope.indices.len() {
         unsafe { preflight_object(&scope, objects, owner) }?;
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        if let Some(debugger) = debugger {
+            unsafe { preflight_debugger_destinations(&scope, objects, owner, debugger) }?;
+        }
     }
     // Libraries first, main last, matching musl. All copies form the final
     // phase so their source data includes ordinary symbol/relative fixups.
     for owner in (1..scope.indices.len()).chain(core::iter::once(0)) {
         unsafe { apply_word_relocations(&scope, objects, owner) }?;
     }
+    #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+    if let Some(debugger) = debugger { unsafe { debugger.relocate(); } }
     let main = &objects[0];
     for index in 0..main.relasz / ELF64_RELA_SIZE {
         let entry = unsafe { main.rela.add(index * ELF64_RELA_SIZE) };
@@ -730,6 +752,60 @@ pub(super) unsafe fn relocate_initial_graph(graph: &InitialGraphState, objects: 
         for index in 0..usize::try_from(copy.length).ok()? {
             unsafe { *(copy.destination as *mut u8).add(index) = *(copy.source as *const u8).add(index) };
         }
+    }
+    Some(())
+}
+
+/// The canonical libc identity grants this one data publication boundary.
+/// Name presence alone never grants another DSO a loader-state receiver.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+pub(super) unsafe fn debugger_pointer_slot(object: &Object) -> Option<*mut usize> {
+    if object.canonical_libc_identity.is_none() { return None; }
+    let mut result = None;
+    for index in 1..object.symcount {
+        if unsafe { symbol_name(object, index) }? != b"_dl_debug_addr" { continue; }
+        let symbol = unsafe { direct_symbol(object, index) }?;
+        let value = unsafe { read_u64(symbol.add(8)) };
+        let size = unsafe { read_u64(symbol.add(16)) };
+        let section = unsafe { read_u16(symbol.add(6)) };
+        if result.is_some() || unsafe { *symbol.add(4) } != 0x11
+            || unsafe { *symbol.add(5) } != 0 || section == 0 || section >= 0xff00
+            || size != 8 || (!object.versym.is_null()
+                && unsafe { read_u16(object.versym.add(index.checked_mul(2)?)) } > 1)
+        { return None; }
+        // Reuse the relocation writer's range and immutable-table checks.
+        unsafe { write_span(object, value, 8, true, Some(index)) }?;
+        result = Some(runtime_address(object.base, value)? as *mut usize);
+    }
+    result
+}
+
+/// The loader's two initial publication slots must not overlap any admitted
+/// RELA/RELR write. In particular, a crafted COPY cannot overwrite DT_DEBUG.
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
+unsafe fn preflight_debugger_destinations(
+    scope: &SymbolScope<'_>, objects: &[Object], owner: usize,
+    debugger: &super::x86_64_debugger::PreparedInitialDebugger,
+) -> Option<()> {
+    let object = &objects[owner];
+    for (table, bytes) in [(object.rela, object.relasz), (object.jmprel, object.pltrelsz)] {
+        for index in 0..bytes / ELF64_RELA_SIZE {
+            let entry = unsafe { table.add(index * ELF64_RELA_SIZE) };
+            let offset = unsafe { read_u64(entry) };
+            let info = unsafe { read_u64(entry.add(8)) };
+            if info as u32 == R_NONE { continue; }
+            let length = if info as u32 == R_COPY {
+                unsafe { copy_relocation(scope, objects, owner, offset,
+                    (info >> 32) as usize, read_i64(entry.add(16))) }?.length
+            } else { 8 };
+            if debugger.overlaps(runtime_address(object.base, offset)?, length)? { return None; }
+        }
+    }
+    let mut scratch = unsafe { RelocationScratch::new(object) }?;
+    let (_, targets) = unsafe { scratch.slices() };
+    let count = unsafe { preflight_relr_table(object, targets, 0) }?;
+    for &offset in &targets[..count] {
+        if debugger.overlaps(runtime_address(object.base, offset)?, 8)? { return None; }
     }
     Some(())
 }

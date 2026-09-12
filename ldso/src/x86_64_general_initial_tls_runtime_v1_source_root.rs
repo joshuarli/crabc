@@ -1,4 +1,5 @@
 #![no_std]
+#![cfg_attr(feature = "x86_64-owned-dynamic-runtime", feature(linkage))]
 #![cfg_attr(not(test), no_main)]
 #![allow(unexpected_cfgs)]
 

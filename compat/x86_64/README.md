@@ -136,6 +136,11 @@ same-object product matrix, and the invalid-only privilege boundary. It remains
 private component evidence and does not complete kernel administration or a
 runtime family.
 
+[loader-debug-crt-abi.md](loader-debug-crt-abi.md) defines the loader-owned
+debugger rendezvous, shared-libc pointer and hook views, and inert weak libc
+CRT defaults. Its native startup dispositions preserve the frozen AArch64
+record while naming the actual x86 entry, relocation, and TLS owners.
+
 `./scripts/dev-x86_64.sh owned-loader-short-stack` is the focused 100 KiB
 libc-test startup regression for the selected general-initial-TLS loader path.
 Its [component record](owned-loader-short-stack.md) identifies the pinned

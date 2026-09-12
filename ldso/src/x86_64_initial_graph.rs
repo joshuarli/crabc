@@ -91,6 +91,9 @@ mod x86_64_runtime_lock;
 #[path = "x86_64_runtime_registry.rs"]
 mod x86_64_runtime_registry;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+#[path = "x86_64_debugger.rs"]
+mod x86_64_debugger;
+#[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[path = "x86_64_library_search.rs"]
 mod x86_64_library_search;
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]

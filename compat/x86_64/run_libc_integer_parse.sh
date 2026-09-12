@@ -4,8 +4,10 @@
 # The project-header C fixture first executes against pinned musl, then as a
 # true -nostdlib static candidate linked only through the selected archive.
 # It selects exactly strtol/strtoul/strtoll/strtoull/strtoimax/strtoumax plus
-# atoi/atol/atoll. Floating, wide, locale-specific, internal, allocation,
-# stdio, and random conversions remain outside this artifact.
+# atoi/atol/atoll. Musl's six historical `__strto*_internal` spellings are
+# weak, same-address aliases of those selected public entries; they add no
+# parser body. Floating, wide, locale-specific, allocation, stdio, random,
+# and other internal conversions remain outside this artifact.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -91,9 +93,16 @@ for symbol in atoi atol atoll strtol strtoul strtoll strtoull strtoimax strtouma
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
+for alias in __strtol_internal __strtoul_internal __strtoll_internal \
+    __strtoull_internal __strtoimax_internal __strtoumax_internal; do
+    grep -Eq "[[:space:]]W[[:space:]]${alias}$" "$archive_symbols" ||
+        fail "archive does not weakly define ${alias}"
+    if grep -Eq "[[:space:]]T[[:space:]]${alias}$" "$archive_symbols"; then
+        fail "archive uses a ${alias} wrapper instead of musl's weak alias"
+    fi
+done
 for unselected in strtol_l strtoul_l strtoll_l strtoull_l \
-    __strtol_internal __strtoul_internal __strtoll_internal __strtoull_internal \
-    __strtoimax_internal __strtoumax_internal malloc calloc realloc free rand; do
+    malloc calloc realloc free rand; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
     fi

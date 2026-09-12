@@ -572,6 +572,7 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             "scripts/build_x86_64_owned_dynamic_sysroot.py",
         )
         self.assertEqual(owned_dynamic.baseline_features, ("x86-owned-static-runtime",))
+        self.assertEqual(owned_dynamic.abi_only_callables, ("_dl_debug_state",))
         self.assertEqual(owned_dynamic.additive_callables, ())
         self.assertEqual(owned_dynamic.replacement_callables, ())
         resolver = next(item for item in rows if item.identifier == "x86-resolver-runtime")
@@ -737,7 +738,10 @@ class FeatureArchiveRosterTests(unittest.TestCase):
 
         owned_static = rows["x86-owned-static-runtime"]
         self.assertIn(permanent_scan.identifier, owned_static.baseline_features)
-        self.assertEqual(owned_static.abi_only_callables, ("__xmknod", "__xmknodat"))
+        self.assertEqual(
+            owned_static.abi_only_callables,
+            ("__xmknod", "__xmknodat", "_fini", "_init"),
+        )
 
     def test_kernel_admin_abi_only_ownership_is_explicit(self) -> None:
         """Keep non-header kernel administration providers out of the default archive."""
@@ -770,7 +774,10 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(io_permissions.additive_callables, ("ioperm", "iopl"))
         self.assertIn(io_permissions.identifier, owned_static.baseline_features)
         self.assertIn(kernel_admin.identifier, owned_static.baseline_features)
-        self.assertEqual(owned_static.abi_only_callables, ("__xmknod", "__xmknodat"))
+        self.assertEqual(
+            owned_static.abi_only_callables,
+            ("__xmknod", "__xmknodat", "_fini", "_init"),
+        )
 
         inherited = ROSTER.selected_baseline_callables(
             owned_static,
@@ -790,7 +797,107 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             tuple(
                 name
                 for name in static_exports
-                if name in {"__xmknod", "__xmknodat", "arch_prctl"}
+                if name in {"__xmknod", "__xmknodat", "_fini", "_init", "arch_prctl"}
+            ),
+            (),
+        )
+
+    def test_loader_weak_defaults_have_one_callable_route(self) -> None:
+        """Keep loader weak functions planned, ABI-only, and separate from its data object."""
+
+        static_exports = tuple(
+            line
+            for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line and not line.startswith("#")
+        )
+        archives = ROSTER.load_feature_archive_roster()
+        rows = {archive.identifier: archive for archive in archives}
+        owned_static = rows["x86-owned-static-runtime"]
+        owned_dynamic = rows["x86-owned-dynamic-runtime"]
+        callable_names = {"_dl_debug_state", "_fini", "_init"}
+        loader_names = {*callable_names, "_dl_debug_addr"}
+
+        self.assertEqual(owned_static.state, "planned")
+        self.assertIsNone(owned_static.evidence_record)
+        self.assertIsNone(owned_static.dispatch_command)
+        self.assertEqual(
+            owned_static.abi_only_callables,
+            ("__xmknod", "__xmknodat", "_fini", "_init"),
+        )
+        self.assertEqual(owned_dynamic.state, "planned")
+        self.assertIsNone(owned_dynamic.evidence_record)
+        self.assertIsNone(owned_dynamic.dispatch_command)
+        self.assertEqual(owned_dynamic.baseline_features, ("x86-owned-static-runtime",))
+        self.assertEqual(owned_dynamic.abi_only_callables, ("_dl_debug_state",))
+        self.assertEqual(owned_dynamic.additive_callables, ())
+        self.assertEqual(owned_dynamic.replacement_callables, ())
+        self.assertEqual(owned_dynamic.aliases, ())
+        self.assertEqual(
+            tuple(
+                (archive.identifier, name)
+                for archive in archives
+                for name in archive.abi_only_callables
+                if name in callable_names
+            ),
+            (
+                ("x86-owned-static-runtime", "_fini"),
+                ("x86-owned-static-runtime", "_init"),
+                ("x86-owned-dynamic-runtime", "_dl_debug_state"),
+            ),
+        )
+        self.assertEqual(
+            tuple(
+                (archive.identifier, name)
+                for archive in archives
+                for name in (*archive.additive_callables, *archive.replacement_callables)
+                if name in loader_names
+            ),
+            (),
+        )
+        self.assertEqual(
+            tuple(
+                (archive.identifier, name)
+                for archive in archives
+                for name in archive.abi_only_callables
+                if name == "_dl_debug_addr"
+            ),
+            (),
+        )
+
+        inherited = ROSTER.selected_baseline_callables(
+            owned_dynamic,
+            archives,
+            static_exports,
+        )
+        expected_inherited = (
+            "__xmknod",
+            "__xmknodat",
+            "_fini",
+            "_init",
+            "arch_prctl",
+            "ioperm",
+            "iopl",
+        )
+        self.assertEqual(
+            tuple(name for name in expected_inherited if name in inherited),
+            expected_inherited,
+        )
+        self.assertEqual(
+            len(inherited.intersection(expected_inherited)),
+            len(expected_inherited),
+        )
+        self.assertEqual(
+            tuple(name for name in static_exports if name in loader_names),
+            (),
+        )
+        self.assertEqual(
+            tuple(
+                (archive.identifier, alias)
+                for archive in archives
+                for alias in archive.aliases
+                if alias.name in loader_names or alias.target in loader_names
             ),
             (),
         )

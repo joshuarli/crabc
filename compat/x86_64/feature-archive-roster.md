@@ -52,7 +52,10 @@ The canonical ledger assigns each non-header provider to its direct feature:
 abi_only_callables = ["arch_prctl"]
 
 # x86-owned-static-runtime
-abi_only_callables = ["__xmknod", "__xmknodat"]
+abi_only_callables = ["__xmknod", "__xmknodat", "_fini", "_init"]
+
+# x86-owned-dynamic-runtime
+abi_only_callables = ["_dl_debug_state"]
 ```
 
 `x86-owned-static-runtime` selects `x86-kernel-admin` through its Cargo
@@ -61,6 +64,13 @@ in turn inherits `ioperm` and `iopl` from `x86-io-permissions`; their existing
 header-callable owner remains that I/O feature. The named component runners
 prove the exact `GLOBAL` binding. The three ABI-only functions gain no header
 declaration, alias row, or default-static ratchet entry.
+
+The owned-static `_init` and `_fini` defaults and shared-libc `_dl_debug_state`
+view are real `WEAK DEFAULT FUNC` definitions. Their component contract in
+`loader-debug-crt-abi.md` proves inert direct calls, strong CRT overrides and
+the loader's separate notification owner. They are not source aliases. The
+eight-byte `_dl_debug_addr` pointer is an `OBJECT`, outside this callable
+roster; the same component proves its layout and canonical loader ownership.
 
 After a ledger integration, run the roster/ledger reader, regenerate only the
 integration-owned header accounting artifacts when their normal workflow calls

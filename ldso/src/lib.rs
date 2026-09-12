@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![cfg_attr(feature = "x86_64-owned-dynamic-runtime", feature(linkage))]
 #![cfg_attr(
     all(target_os = "linux", target_arch = "aarch64", target_endian = "little"),
     feature(linkage)
