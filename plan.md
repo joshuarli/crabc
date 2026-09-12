@@ -106,6 +106,22 @@ pattern workload then passes on that unchanged installed product in all four
 dynamic modes at `.work/x86_64/pattern-after-wordexp-selection/tmp/owned-pattern.Hx2iVv`.
 Fresh full product qualification remains required.
 
+At `3cc41ae8`, the next full product attempt passes the first 63 installed
+cases, including pattern and wordexp, but independent wordexp replay exposes
+an evidence-retention defect. The outer collector changes the already sealed
+empty temporary directory from `0700` to `0755`. The attempt is stopped and
+has no qualification receipt; its unchanged artifacts remain under
+`.work/x86_64/tmp/materialized-dynamic.YFcEjU/` and the wordexp component under
+`.work/x86_64/tmp/owned-wordexp-products.4m0e8cgn/`.
+The version-5 wordexp receipt finishes retention before validating and
+publishing its report, with exact separate execution and retained modes.
+The isolated regression reproduces the mode change; all 58 wordexp-reader
+and dynamic-collector tests then pass, including receipt idempotence under
+a restrictive umask. Fresh native component replay and full product
+qualification remain required. Reproducible static preparation at this
+earlier revision passes, including host replay, at
+`.work/x86_64/posix-static-products-3cc41ae8/preparation.json`.
+
 `024b1563` corrects demonstrated `fmaf`, `fmal`, `powf`, and `nextafterl`
 defects while preserving the pinned numerical algorithms. The integrated
 `math-scalar-corrections` proof passes 25,632 exact-dyadic cases and accounts

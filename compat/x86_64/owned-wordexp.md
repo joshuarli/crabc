@@ -174,7 +174,7 @@ direct entry, making six product modes when both products are selected.
 After validating the report, the runner prints its retained directory with the
 catalog's `evidence:` marker, followed by the report path on the final line.
 
-The version-4 receipt uses one finite case registry in
+The version-5 receipt uses one finite case registry in
 `compat/x86_64/owned_wordexp_evidence.py`: 25 cases in each product mode,
 including the fresh BADCHAR record and twenty-input upstream-policy selectors.
 That yields 150 cells with both products or 100 with only the supplied
@@ -201,6 +201,17 @@ product's unused compatibility alias of that same name.  The required
 candidate entries; the receipt records this exceptional external alias path
 and rejects every other alias change.  Successful and failed
 runs remain under `.work/x86_64` for replay.
+
+Each cell requires its empty `wordexp-tmp` directory to have mode `0700`
+before, between, and after the oracle and candidate executions. After all
+cells finish, `owned_wordexp_evidence.py::_publish_report` applies the dynamic
+collector's retention policy to the exact component evidence tree before
+validating and publishing the receipt. Replay requires that empty directory
+to have mode `0755`; it never accepts the execution mode as a retained state.
+All presealed regular-file bytes and modes, aliases, and devices must still
+match. The outer collector can therefore repeat retention without changing
+the component's sealed evidence. Version 4 required the execution mode during
+replay and could not survive the outer collector's permission normalization.
 
 Run `python3 -B compat/x86_64/owned_wordexp_evidence.py capture-expected-inputs DYNAMIC_SYSROOT` in the pinned native image, adding `--static-sysroot STATIC_SYSROOT` when both product modes are selected. It retains a separate expected native tool/oracle seal; supplied products are validated but never rebuilt. A host replay must provide that independently captured file:
 `python3 -B compat/x86_64/owned_wordexp_evidence.py validate --report REPORT

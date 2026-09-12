@@ -162,3 +162,8 @@ whole `.work` permission rewrite occurs. `finish` applies the same retention
 policy to its exact completed work tree before validation. Snapshot modes thus
 describe retained evidence; runtime permission semantics come from the executed
 fixture assertions and musl observations, before normalization.
+Leaves with independently sealed permission records must finish this same
+retention step before publishing their reports and validate exact retained
+permissions. The wordexp version-5 receipt does so while preserving its
+separate private-directory assertions during execution; repeating the outer
+retention step leaves its sealed evidence unchanged.

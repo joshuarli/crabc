@@ -8,6 +8,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import unittest
 import unittest.mock
@@ -102,6 +103,42 @@ class OwnedWordexpExecutionRootTests(unittest.TestCase):
             fixture_devices={"null": "dev/null"},
         )
 
+    def test_published_execution_evidence_survives_outer_retention(self) -> None:
+        work = self.root
+        payload = tuple(work.iterdir())
+        self.root = work / "execution"
+        self.root.mkdir()
+        for path in payload:
+            path.rename(self.root / path.name)
+        self.addCleanup(shutil.rmtree, work)
+        temporary = self.root / "wordexp-tmp"
+        temporary.mkdir(mode=0o700)
+        temporary.chmod(0o700)
+        self.module._validate_temporary_fixture(self.root)
+        record = self._record()
+        # The report lives outside the sealed execution roster.
+        report_path = work / "owned-wordexp-products.json"
+        output = io.StringIO()
+
+        def validate(checkout, path, expected):
+            self.module._validate_temporary_fixture(self.root, retained=True)
+            self.assertEqual(self.module.validate_execution_root(self.root, record), record)
+
+        previous_umask = os.umask(0o077)
+        try:
+            with contextlib.redirect_stdout(output), unittest.mock.patch.object(
+                    self.module, "validate_report", side_effect=validate):
+                self.module._publish_report(report_path, {"execution": record}, {})
+        finally:
+            os.umask(previous_umask)
+        # Include the receipt itself in the outer collector's exact tree.
+        log = work / "leaf.log"
+        log.write_text(f"evidence: {work}\n", encoding="utf-8")
+        before = self.module.qualification.artifact_snapshot(log, str(ROOT))
+        self.module.qualification.make_retained_evidence_readable(work)
+        self.assertEqual(self.module.qualification.artifact_snapshot(log, str(ROOT)), before)
+        validate(ROOT, report_path, {})
+
     def test_extra_execution_file_is_rejected(self) -> None:
         record = self._record()
         self._write("unexpected", b"not part of the sealed root", 0o644)
@@ -146,10 +183,16 @@ class OwnedWordexpCommandBindingTests(unittest.TestCase):
         temporary.chmod(0o755)
         with self.assertRaises(module.EvidenceError):
             module._validate_temporary_fixture(root)
+        module._validate_temporary_fixture(root, retained=True)
         temporary.chmod(0o700)
+        with self.assertRaises(module.EvidenceError):
+            module._validate_temporary_fixture(root, retained=True)
         (temporary / "leftover-marker").write_bytes(b"unexpected")
         with self.assertRaises(module.EvidenceError):
             module._validate_temporary_fixture(root)
+        temporary.chmod(0o755)
+        with self.assertRaises(module.EvidenceError):
+            module._validate_temporary_fixture(root, retained=True)
         (temporary / "leftover-marker").unlink()
         temporary.rmdir()
         temporary.symlink_to(root, target_is_directory=True)
@@ -318,8 +361,9 @@ class OwnedWordexpReconstructionTests(unittest.TestCase):
         (self.product / "lib/ld-musl-x86_64.so.1").symlink_to("keep")
         (self.product / "lib/keep-alias").symlink_to("keep")
         shutil.copytree(self.product, self.execution, symlinks=True)
-        (self.execution / "wordexp-tmp").mkdir(mode=0o700)
-        (self.execution / "wordexp-tmp").chmod(0o700)
+        # Reconstruction consumes the retained phase of a completed cell.
+        (self.execution / "wordexp-tmp").mkdir(mode=0o755)
+        (self.execution / "wordexp-tmp").chmod(0o755)
         self._copy(self.work / "candidate", self.execution / "consumer-pie")
         self._copy(self.work / "oracle", self.execution / "oracle")
         # The one allowed external alias replacement is intentionally a regular

@@ -31,7 +31,7 @@ import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as products
 import run_qualification_manifest as native_qualification
 
-SCHEMA = "crabc.x86_64-owned-wordexp-products/v4"
+SCHEMA = "crabc.x86_64-owned-wordexp-products/v5"
 EXPECTED_INPUT_SCHEMA = "crabc.x86_64-owned-wordexp-expected-native-inputs/v1"
 SOURCE_MOUNT = "/workspace"
 TARGET = "x86_64-unknown-linux-musl"
@@ -1019,11 +1019,16 @@ def _assert_case_results(root: Path, case: str, oracle: Mapping[str, Any], candi
         fail(f"{description} comparison policy is unknown")
 
 
-def _validate_temporary_fixture(execution_root: Path) -> None:
-    """Require the private marker directory and complete cleanup after a cell."""
+def _validate_temporary_fixture(execution_root: Path, *, retained: bool = False) -> None:
+    """Require an empty marker directory in its exact execution or retention phase.
+
+    Runtime checks require 0700 before, between, and after both executions.
+    Publication then applies the shared retention policy, so offline readers
+    require 0755. Neither phase accepts the other phase's permissions.
+    """
     temporary = _physical(execution_root / "wordexp-tmp", "wordexp temporary fixture", directory=True)
     try:
-        if stat.S_IMODE(temporary.stat().st_mode) != 0o700 or any(temporary.iterdir()):
+        if stat.S_IMODE(temporary.stat().st_mode) != (0o755 if retained else 0o700) or any(temporary.iterdir()):
             fail("wordexp temporary fixture mode or cleanup differs")
     except OSError as error:
         raise EvidenceError("wordexp temporary fixture is unreadable") from error
@@ -1114,8 +1119,14 @@ def _capture_oracle_inputs(work: Path) -> dict[str, Any]:
 
 
 def _publish_report(report_path: Path, report: dict, expected_native_inputs: dict) -> None:
-    """Publish only a validated report; keep its machine-readable path last."""
+    """Finish retention before validation and publication of the sealed report.
+
+    The outer dynamic collector applies this same policy again. Applying it
+    here makes that operation idempotent; presealed regular-file identities
+    are still checked unchanged, never regenerated after permission changes.
+    """
     _write_json(report_path, report)
+    qualification.make_retained_evidence_readable(report_path.parent)
     validate_report(ROOT, report_path, expected_native_inputs)
     print(f"owned wordexp products: evidence: {report_path.parent}")
     print(report_path)
@@ -1487,7 +1498,7 @@ def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, s
     expected_root = _physical(work / "execution" / label, f"wordexp cell {label} expected execution root", directory=True)
     if execution_root != expected_root:
         fail("wordexp execution root path differs")
-    _validate_temporary_fixture(execution_root)
+    _validate_temporary_fixture(execution_root, retained=True)
     fixture_root, fixture_paths, fixture_devices = fixture
     product_files, product_aliases, fixture_expected, device_expected = _expected_execution_maps(
         dynamic_product, fixture_paths, fixture_devices, shell_case, overrides)
