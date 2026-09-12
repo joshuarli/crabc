@@ -1,0 +1,700 @@
+# Closed native x86-64 supplemental performance workload contract.
+#
+# This profile adds representative normal-runtime rows. It is not a support,
+# threshold, optimization, or release-qualification claim. The adapter owns
+# sample collection and memory observation; this file pins only fixture inputs,
+# outcomes, observation plateaus, and the split-artifact boundary.
+
+legacy_memory_phase_count = 74
+
+[profile]
+schema = "crabc.perf.x86_64-profile/v1"
+target = "x86_64-unknown-linux-musl"
+observer_protocol = "crabc.perf.observer-r-c/v1"
+observer_ready_env = "CRABC_PERF_OBSERVER_READY_FD"
+observer_continue_env = "CRABC_PERF_OBSERVER_CONTINUE_FD"
+observer_ready_fd = 97
+observer_continue_fd = 98
+timed_artifact_unchanged = true
+observer_artifact_separate = true
+observer_artifact_byte_identical = false
+release_qualification = false
+
+# Each sample is one measured client process. Its complete setup and teardown
+# belong to the whole-process result; staged loopback peers are separate test
+# infrastructure and never enter the client timing or cgroup measurement.
+[execution_model]
+measured_client_processes_per_row = 1
+full_client_process_setup_included = true
+staged_peer_endpoints_excluded_from_client_measurement = true
+
+# `operations` names the selected repeated route unit. Setup needed to establish
+# that route is pinned separately in each row's geometry and remains part of
+# the process result.
+[operation_counting]
+operations_field = "selected-repeated-route-units"
+
+[[fixture]]
+binary = "x86_64_clock_allocator_workload"
+source = "compat/perf/x86_64_clock_allocator_workload.c"
+c_standard = "c11"
+compile_defines = ["_GNU_SOURCE"]
+link_flags = ["-pthread"]
+
+[[fixture]]
+binary = "x86_64_network_workload"
+source = "compat/perf/x86_64_network_workload.c"
+c_standard = "c11"
+compile_defines = ["_GNU_SOURCE"]
+link_flags = []
+
+[[fixture]]
+binary = "x86_64_primitive_boundary_workload"
+source = "compat/perf/x86_64_primitive_boundary_workload.c"
+c_standard = "c11"
+compile_defines = ["_GNU_SOURCE"]
+link_flags = []
+
+# Every supplemental invocation is exactly:
+#   BINARY MODE ITERATIONS [fixed arguments declared in argv]
+# The observer descriptor pair is opt-in. When both environment variables are
+# absent, timed execution does not open, write, or read an observer descriptor.
+# When both are present, each must be canonical decimal >= 3; the fixture writes
+# byte R at observer_phase and requires one C before cleanup and "ok\n".
+
+[[supplemental_row]]
+id = "clock_gettime_realtime"
+binary = "x86_64_clock_allocator_workload"
+mode = "clock_gettime"
+iterations = 200000
+argv = ["0"]
+observer_phase = "clock-final-call"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 200000
+result_contract = "each clock_gettime succeeds and produces 0 <= tv_nsec < 1000000000"
+geometry = { clock_id = 0, calls = 200000 }
+
+[[supplemental_row]]
+id = "clock_gettime_process_cpu"
+binary = "x86_64_clock_allocator_workload"
+mode = "clock_gettime"
+iterations = 200000
+argv = ["2"]
+observer_phase = "clock-final-call"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 200000
+result_contract = "each clock_gettime succeeds and produces 0 <= tv_nsec < 1000000000"
+geometry = { clock_id = 2, calls = 200000 }
+
+[[supplemental_row]]
+id = "clock_gettime_thread_cpu"
+binary = "x86_64_clock_allocator_workload"
+mode = "clock_gettime"
+iterations = 200000
+argv = ["3"]
+observer_phase = "clock-final-call"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 200000
+result_contract = "each clock_gettime succeeds and produces 0 <= tv_nsec < 1000000000"
+geometry = { clock_id = 3, calls = 200000 }
+
+[[supplemental_row]]
+id = "clock_gettime_monotonic_raw"
+binary = "x86_64_clock_allocator_workload"
+mode = "clock_gettime"
+iterations = 200000
+argv = ["4"]
+observer_phase = "clock-final-call"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 200000
+result_contract = "each clock_gettime succeeds and produces 0 <= tv_nsec < 1000000000"
+geometry = { clock_id = 4, calls = 200000 }
+
+[[supplemental_row]]
+id = "clock_gettime_realtime_coarse"
+binary = "x86_64_clock_allocator_workload"
+mode = "clock_gettime"
+iterations = 200000
+argv = ["5"]
+observer_phase = "clock-final-call"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 200000
+result_contract = "each clock_gettime succeeds and produces 0 <= tv_nsec < 1000000000"
+geometry = { clock_id = 5, calls = 200000 }
+
+[[supplemental_row]]
+id = "clock_gettime_monotonic_coarse"
+binary = "x86_64_clock_allocator_workload"
+mode = "clock_gettime"
+iterations = 200000
+argv = ["6"]
+observer_phase = "clock-final-call"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 200000
+result_contract = "each clock_gettime succeeds and produces 0 <= tv_nsec < 1000000000"
+geometry = { clock_id = 6, calls = 200000 }
+
+[[supplemental_row]]
+id = "clock_gettime_boottime"
+binary = "x86_64_clock_allocator_workload"
+mode = "clock_gettime"
+iterations = 200000
+argv = ["7"]
+observer_phase = "clock-final-call"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 200000
+result_contract = "each clock_gettime succeeds and produces 0 <= tv_nsec < 1000000000"
+geometry = { clock_id = 7, calls = 200000 }
+
+[[supplemental_row]]
+id = "clock_gettime_realtime_alarm"
+binary = "x86_64_clock_allocator_workload"
+mode = "clock_gettime"
+iterations = 200000
+argv = ["8"]
+observer_phase = "clock-final-call"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 200000
+result_contract = "each clock_gettime succeeds and produces 0 <= tv_nsec < 1000000000"
+geometry = { clock_id = 8, calls = 200000 }
+
+[[supplemental_row]]
+id = "clock_gettime_boottime_alarm"
+binary = "x86_64_clock_allocator_workload"
+mode = "clock_gettime"
+iterations = 200000
+argv = ["9"]
+observer_phase = "clock-final-call"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 200000
+result_contract = "each clock_gettime succeeds and produces 0 <= tv_nsec < 1000000000"
+geometry = { clock_id = 9, calls = 200000 }
+
+[[supplemental_row]]
+id = "clock_gettime_tai"
+binary = "x86_64_clock_allocator_workload"
+mode = "clock_gettime"
+iterations = 200000
+argv = ["11"]
+observer_phase = "clock-final-call"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 200000
+result_contract = "each clock_gettime succeeds and produces 0 <= tv_nsec < 1000000000"
+geometry = { clock_id = 11, calls = 200000 }
+
+[[supplemental_row]]
+id = "allocator_live_4m"
+binary = "x86_64_clock_allocator_workload"
+mode = "live"
+iterations = 8
+argv = ["1024", "4096"]
+observer_phase = "allocator-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 8192
+result_contract = "each epoch allocates, writes, verifies, and frees its full live set"
+geometry = { epochs = 8, allocations_per_epoch = 1024, bytes_per_allocation = 4096, live_bytes = 4194304 }
+
+[[supplemental_row]]
+id = "allocator_live_32m"
+binary = "x86_64_clock_allocator_workload"
+mode = "live"
+iterations = 1
+argv = ["128", "262144"]
+observer_phase = "allocator-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 128
+result_contract = "the epoch allocates, writes, verifies, and frees its full live set"
+geometry = { epochs = 1, allocations_per_epoch = 128, bytes_per_allocation = 262144, live_bytes = 33554432 }
+
+[[supplemental_row]]
+id = "allocator_refill_4m"
+binary = "x86_64_clock_allocator_workload"
+mode = "refill"
+iterations = 16
+argv = ["1024", "4096", "512"]
+observer_phase = "allocator-refill-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 8192
+result_contract = "each round frees and refills only even slots while every odd-slot byte remains unchanged; address reuse is not required"
+geometry = { rounds = 16, slots = 1024, refilled_even_slots = 512, bytes_per_allocation = 4096, odd_slots_preserved = 512, address_reuse_required = false }
+
+[[supplemental_row]]
+id = "allocator_worker_local_64"
+binary = "x86_64_clock_allocator_workload"
+mode = "worker"
+iterations = 16
+argv = ["4", "256", "64"]
+observer_phase = "allocator-workers-complete"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 16384
+result_contract = "each worker owns, writes, verifies, and frees only its own allocations"
+geometry = { workers = 4, epochs_per_worker = 16, lifetimes_per_epoch = 256, bytes_per_allocation = 64, allocation_owner = "worker" }
+
+[[supplemental_row]]
+id = "allocator_worker_local_4k"
+binary = "x86_64_clock_allocator_workload"
+mode = "worker"
+iterations = 16
+argv = ["4", "256", "4096"]
+observer_phase = "allocator-workers-complete"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 16384
+result_contract = "each worker owns, writes, verifies, and frees only its own allocations"
+geometry = { workers = 4, epochs_per_worker = 16, lifetimes_per_epoch = 256, bytes_per_allocation = 4096, allocation_owner = "worker" }
+
+[[supplemental_row]]
+id = "loopback_tcp_ipv4_4k"
+binary = "x86_64_network_workload"
+mode = "loopback_tcp_ipv4"
+iterations = 10000
+argv = ["127.0.0.1", "39041"]
+observer_phase = "network-final-echo-open"
+requires_loopback_peer = true
+requires_hermetic_resolver_files = false
+operations = 10000
+result_contract = "one client connection completes each 4096-byte sequence-checked request/echo pair"
+geometry = { request_echo_pairs = 10000, payload_bytes = 4096, client_sockets = 1, client_connections = 1 }
+
+[[supplemental_row]]
+id = "loopback_tcp_ipv6_4k"
+binary = "x86_64_network_workload"
+mode = "loopback_tcp_ipv6"
+iterations = 10000
+argv = ["::1", "39042"]
+observer_phase = "network-final-echo-open"
+requires_loopback_peer = true
+requires_hermetic_resolver_files = false
+operations = 10000
+result_contract = "one client connection completes each 4096-byte sequence-checked request/echo pair"
+geometry = { request_echo_pairs = 10000, payload_bytes = 4096, client_sockets = 1, client_connections = 1 }
+
+[[supplemental_row]]
+id = "loopback_udp_ipv4_4k"
+binary = "x86_64_network_workload"
+mode = "loopback_udp_ipv4"
+iterations = 10000
+argv = ["127.0.0.1", "39043"]
+observer_phase = "network-final-echo-open"
+requires_loopback_peer = true
+requires_hermetic_resolver_files = false
+operations = 10000
+result_contract = "one connected client datagram socket completes each 4096-byte sequence-checked request/echo pair"
+geometry = { request_echo_pairs = 10000, payload_bytes = 4096, client_sockets = 1, client_connections = 1 }
+
+[[supplemental_row]]
+id = "loopback_udp_ipv6_4k"
+binary = "x86_64_network_workload"
+mode = "loopback_udp_ipv6"
+iterations = 10000
+argv = ["::1", "39044"]
+observer_phase = "network-final-echo-open"
+requires_loopback_peer = true
+requires_hermetic_resolver_files = false
+operations = 10000
+result_contract = "one connected client datagram socket completes each 4096-byte sequence-checked request/echo pair"
+geometry = { request_echo_pairs = 10000, payload_bytes = 4096, client_sockets = 1, client_connections = 1 }
+
+[[supplemental_row]]
+id = "resolver_hosts"
+binary = "x86_64_network_workload"
+mode = "resolver_hosts"
+iterations = 20000
+argv = ["perf-host.example.test", "80", "127.0.0.77", "2001:db8::77"]
+observer_phase = "resolver-final-result-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = true
+operations = 20000
+result_contract = "each AF_UNSPEC getaddrinfo/freeaddrinfo pair returns exactly the configured private IPv4 and IPv6 answers and no DNS query is admitted"
+geometry = { lookup_free_pairs = 20000, address_families = ["AF_INET", "AF_INET6"], numeric_service = 80, dns_queries = 0 }
+
+[[supplemental_row]]
+id = "resolver_dns_dual"
+binary = "x86_64_network_workload"
+mode = "resolver_dns_dual"
+iterations = 1000
+argv = ["batch.example.test.", "80", "198.51.100.48", "2001:db8::48"]
+observer_phase = "resolver-final-result-live"
+requires_loopback_peer = true
+requires_hermetic_resolver_files = true
+operations = 1000
+result_contract = "each AF_UNSPEC getaddrinfo/freeaddrinfo pair returns exactly the staged batch A and AAAA answers"
+geometry = { lookup_free_pairs = 1000, address_families = ["AF_INET", "AF_INET6"], numeric_service = 80, dns_server_protocol = "resolver-network-dns-v1" }
+
+[[supplemental_row]]
+id = "resolver_dns_tcp"
+binary = "x86_64_network_workload"
+mode = "resolver_dns_tcp"
+iterations = 1000
+argv = ["tc.example.test.", "80", "198.51.100.45"]
+observer_phase = "resolver-final-result-live"
+requires_loopback_peer = true
+requires_hermetic_resolver_files = true
+operations = 1000
+result_contract = "each AF_INET getaddrinfo/freeaddrinfo pair returns the staged answer; peer evidence requires UDP truncation followed by TCP"
+geometry = { lookup_free_pairs = 1000, address_families = ["AF_INET"], numeric_service = 80, dns_server_protocol = "resolver-network-dns-v1", required_transports = ["udp-truncated", "tcp-answer"] }
+
+[[supplemental_row]]
+id = "memcpy_empty"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["memcpy", "empty"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "memcpy has valid non-null inputs, zero length, returns destination, and leaves bytes unchanged"
+geometry = { valid_bytes = 0, unaligned_offset = 0 }
+
+[[supplemental_row]]
+id = "memset_empty"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["memset", "empty"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "memset has a valid non-null input, zero length, returns destination, and leaves bytes unchanged"
+geometry = { valid_bytes = 0, unaligned_offset = 0 }
+
+[[supplemental_row]]
+id = "strlen_empty"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["strlen", "empty"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "strlen of an empty NUL-terminated string is zero"
+geometry = { valid_bytes = 0, unaligned_offset = 0 }
+
+[[supplemental_row]]
+id = "memchr_empty"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["memchr", "empty"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "memchr has a valid non-null input and zero length and returns null"
+geometry = { valid_bytes = 0, unaligned_offset = 0 }
+
+[[supplemental_row]]
+id = "strstr_empty"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["strstr", "empty"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "strstr of empty haystack and empty needle returns the haystack"
+geometry = { valid_bytes = 0, unaligned_offset = 0 }
+
+[[supplemental_row]]
+id = "memmem_empty"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["memmem", "empty"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "memmem of zero-length haystack and zero-length needle returns the haystack"
+geometry = { valid_bytes = 0, unaligned_offset = 0 }
+
+[[supplemental_row]]
+id = "memcpy_short31_unaligned"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["memcpy", "short31_unaligned"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "31-byte unaligned memcpy returns destination and preserves the exact source bytes"
+geometry = { valid_bytes = 31, unaligned_offset = 1, tail_needle_bytes = 0 }
+
+[[supplemental_row]]
+id = "memset_short31_unaligned"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["memset", "short31_unaligned"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "31-byte unaligned memset returns destination and changes exactly the selected bytes"
+geometry = { valid_bytes = 31, unaligned_offset = 1, tail_needle_bytes = 0 }
+
+[[supplemental_row]]
+id = "strlen_short31_unaligned"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["strlen", "short31_unaligned"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "31-byte unaligned NUL-terminated string has length 31"
+geometry = { valid_bytes = 31, unaligned_offset = 1, tail_needle_bytes = 0 }
+
+[[supplemental_row]]
+id = "memchr_short31_unaligned"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["memchr", "short31_unaligned"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "31-byte unaligned search finds the target at the final byte"
+geometry = { valid_bytes = 31, unaligned_offset = 1, tail_needle_bytes = 0 }
+
+[[supplemental_row]]
+id = "strstr_short31_unaligned"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["strstr", "short31_unaligned"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "31-byte unaligned string search finds the six-byte needle at the tail"
+geometry = { valid_bytes = 31, unaligned_offset = 1, tail_needle_bytes = 6 }
+
+[[supplemental_row]]
+id = "memmem_short31_unaligned"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 2000000
+argv = ["memmem", "short31_unaligned"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 2000000
+result_contract = "31-byte unaligned range search finds the six-byte needle at the tail"
+geometry = { valid_bytes = 31, unaligned_offset = 1, tail_needle_bytes = 6 }
+
+[[supplemental_row]]
+id = "memcpy_guard63"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 500000
+argv = ["memcpy", "guard63"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 500000
+result_contract = "63-byte copy immediately before protected pages returns destination and matches exactly"
+geometry = { valid_bytes = 63, guard_page = true, guarded_mappings = 2, string_nul_before_guard = false, tail_needle_bytes = 0 }
+
+[[supplemental_row]]
+id = "memset_guard63"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 500000
+argv = ["memset", "guard63"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 500000
+result_contract = "63-byte fill immediately before a protected page returns destination and changes exactly the window"
+geometry = { valid_bytes = 63, guard_page = true, guarded_mappings = 1, string_nul_before_guard = false, tail_needle_bytes = 0 }
+
+[[supplemental_row]]
+id = "strlen_guard63"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 500000
+argv = ["strlen", "guard63"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 500000
+result_contract = "62-byte string plus a NUL in the final valid byte has length 62 without touching the protected page"
+geometry = { valid_bytes = 63, guard_page = true, guarded_mappings = 1, string_nul_before_guard = true, tail_needle_bytes = 0 }
+
+[[supplemental_row]]
+id = "memchr_guard63"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 500000
+argv = ["memchr", "guard63"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 500000
+result_contract = "63-byte guarded range search finds the target at the final valid byte"
+geometry = { valid_bytes = 63, guard_page = true, guarded_mappings = 1, string_nul_before_guard = false, tail_needle_bytes = 0 }
+
+[[supplemental_row]]
+id = "strstr_guard63"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 500000
+argv = ["strstr", "guard63"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 500000
+result_contract = "guard-adjacent 62-byte string finds a six-byte tail needle before its final NUL"
+geometry = { valid_bytes = 63, guard_page = true, guarded_mappings = 1, string_nul_before_guard = true, tail_needle_bytes = 6 }
+
+[[supplemental_row]]
+id = "memmem_guard63"
+binary = "x86_64_primitive_boundary_workload"
+mode = "primitive"
+iterations = 500000
+argv = ["memmem", "guard63"]
+observer_phase = "primitive-guard-window-live"
+requires_loopback_peer = false
+requires_hermetic_resolver_files = false
+operations = 500000
+result_contract = "63-byte guarded range search finds the six-byte tail needle ending at the final valid byte"
+geometry = { valid_bytes = 63, guard_page = true, guarded_mappings = 1, string_nul_before_guard = false, tail_needle_bytes = 6 }
+
+# The resolver rows run only in a root that owns these exact conventional
+# files. The DNS server and all peers live outside the measured client process
+# and client cgroup. The hosts-only row still receives a staged resolver file:
+# peer event evidence rejects any DNS request for its successful hosts lookup.
+[resolver_setup]
+dns_server = "compat/resolver-network/dns_server.py"
+dns_protocol = "resolver-network-dns-v1"
+dns_port = 53
+loopback_nameservers = ["127.0.0.1", "127.0.0.2", "127.0.0.3"]
+resolv_conf = """# crabc native performance resolver fixture
+nameserver 127.0.0.1
+nameserver 127.0.0.2
+nameserver 127.0.0.3
+search search.test
+options ndots:1 timeout:1 attempts:1
+"""
+hosts_conf = """127.0.0.1 localhost
+::1 localhost
+127.0.0.77 perf-host.example.test
+2001:db8::77 perf-host.example.test
+"""
+
+# The adapter emits one observer artifact per timed fixture artifact and keeps
+# its memory samples separate. PSS is the maximum across the listed ordered
+# checkpoints; cgroup memory.peak is read from a fresh client-only leaf after
+# complete process exit. There are deliberately no per-checkpoint ratios or
+# performance thresholds.
+[memory_observation]
+timing_and_memory_artifacts = "separate"
+pss = "maximum-declared-checkpoints"
+cgroup_peak = "fresh-client-leaf-after-exit"
+
+[[legacy_memory_phase]]
+rows = ["startup", "startup_constructor_destructor", "startup_dependency_graph"]
+checkpoint = "before and after original main; dependencies and constructor/main state remain live"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["clock_gettime", "gettimeofday", "getpid"]
+checkpoint = "after final successful selected call with calling frame live"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["open_close"]
+checkpoint = "before final close with the real descriptor open"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["fd_file_4k"]
+checkpoint = "after final verified round trip and before descriptor close"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["stdio_file_4k", "stdio_format_parse"]
+checkpoint = "before final fclose with the real FILE, buffer, and caller frame live"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["pthread_create_join_tls"]
+checkpoint = "final worker callback result is ready while its real exit/TLS/TSD remain held"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["pthread_mutex_uncontended"]
+checkpoint = "counter verified while the initialized mutex remains live before destruction"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["pthread_mutex_cond_ping_pong"]
+checkpoint = "final protected counter is complete while worker exit, mutex, and condition remain live"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["loader_dynamic_tls_growth"]
+checkpoint = "parent after each of eight loads, then worker after all TLS instances are checked before exit and dlclose"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = [
+  "memcpy_16k", "memset_16k", "strlen_16k", "memchr_16k", "strstr_4k", "memmem_4k",
+  "memcpy_64_aligned", "memcpy_64_unaligned", "memcpy_16k_aligned", "memcpy_16k_unaligned",
+  "memcpy_256k_aligned", "memcpy_256k_unaligned", "memset_64_aligned", "memset_64_unaligned",
+  "memset_16k_aligned", "memset_16k_unaligned", "memset_256k_aligned", "memset_256k_unaligned",
+  "strlen_64_aligned", "strlen_64_unaligned", "strlen_16k_aligned", "strlen_16k_unaligned",
+  "strlen_256k_aligned", "strlen_256k_unaligned", "memchr_64_aligned", "memchr_64_unaligned",
+  "memchr_16k_aligned", "memchr_16k_unaligned", "memchr_256k_aligned", "memchr_256k_unaligned",
+  "strstr_64_aligned", "strstr_64_unaligned", "strstr_16k_aligned", "strstr_16k_unaligned",
+  "strstr_256k_aligned", "strstr_256k_unaligned", "memmem_64_aligned", "memmem_64_unaligned",
+  "memmem_16k_aligned", "memmem_16k_unaligned", "memmem_256k_aligned", "memmem_256k_unaligned",
+]
+checkpoint = "loops complete with exactly their original touched static arrays retained"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = [
+  "memcpy_128m_aligned", "memcpy_128m_unaligned", "memset_128m_aligned", "memset_128m_unaligned",
+  "strlen_128m_aligned", "strlen_128m_unaligned", "memchr_128m_aligned", "memchr_128m_unaligned",
+  "strstr_128m_aligned", "strstr_128m_unaligned", "memmem_128m_aligned", "memmem_128m_unaligned",
+]
+checkpoint = "before first munmap with exactly the original touched mappings retained; search rows do not prefault an unused destination"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["allocator_64", "allocator_4k"]
+checkpoint = "after original touch and before final free with exactly one allocation live"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["dlsym_1", "dlsym_128", "dlsym_1024"]
+checkpoint = "final lookup result is checked before dlclose"
+peak_rule = "maximum-declared-checkpoints"
+
+[[legacy_memory_phase]]
+rows = ["dlopen_graph"]
+checkpoint = "result 31 is checked before handle closure"
+peak_rule = "maximum-declared-checkpoints"
