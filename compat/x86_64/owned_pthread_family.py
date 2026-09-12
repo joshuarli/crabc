@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
@@ -167,32 +168,19 @@ def _relative_physical(root: Path, value: object, name: str) -> Path:
     return path
 
 
-def validate_request(root: Path, request: object) -> tuple[Path, dict[str, Any]]:
+def _request_matrix_path(root: Path, request: object) -> Path:
     require(isinstance(request, dict) and set(request) == {"schema", "family_execution"},
             "pthread family request fields differ")
     require(request["schema"] == SCHEMA, "pthread family request schema differs")
     path = _relative_physical(root, request["family_execution"], "family execution")
     require(path.name == "execution.json", "pthread family requires a POSIX execution.json receipt")
+    return path
+
+
+def validate_request(root: Path, request: object) -> tuple[Path, dict[str, Any]]:
+    path = _request_matrix_path(root, request)
     matrix = family.validate_receipt(root, path)
     return path, matrix
-
-
-def matrix_request(root: Path, matrix: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, dict[str, Path]]]:
-    """Recover the sealed POSIX request, including its execution source mount.
-
-    A native run records `/workspace` in its invocation. Host-side replay must
-    retain that mount spelling when it verifies the same invocation instead of
-    rebuilding it from the host checkout path.
-    """
-
-    require(isinstance(matrix, dict) and isinstance(matrix.get("request"), dict)
-            and isinstance(matrix.get("inputs"), dict), "pthread family POSIX matrix inputs differ")
-    identity = _current_identity(root, matrix["request"], "POSIX execution request")
-    request_path = _relative_physical(root, identity["path"], "POSIX execution request")
-    request = family.read(request_path)
-    inputs, products = family.input_products(root, request)
-    require(family.same_json(inputs, matrix["inputs"]), "pthread family POSIX matrix inputs changed")
-    return request, inputs, products
 
 
 def require_complete_cells(required: dict[str, Any], cells: dict[str, Any]) -> None:
@@ -320,6 +308,313 @@ def _source_file_identity(root: Path, path: Path, description: str) -> dict[str,
             and path.is_relative_to(root), f"{description} must be a physical checkout file")
     return {"path": path.relative_to(root).as_posix(), "sha256": family.digest(path),
             "size": path.stat().st_size}
+
+
+@dataclass(frozen=True)
+class _InputTree:
+    """One declared prerequisite evidence root and its phase-start contents."""
+
+    description: str
+    path: Path
+    contents: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _DynamicCaseArtifacts:
+    """The sealed dynamic-case roster and its exact retained artifact roots.
+
+    Dynamic qualification keeps its case receipts below its work directory,
+    but a case's ``artifacts`` map may name an exact retained leaf elsewhere
+    under checkout ``.work``.  The case digest binds that map; retaining the
+    map-derived roots makes those leaves part of the same phase boundary.
+    """
+
+    case_identities: dict[str, str]
+    artifact_roots: tuple[tuple[str, Path], ...]
+
+
+@dataclass(frozen=True)
+class _PrevalidatedPthreadTrees:
+    """The exact input roots captured before the complete matrix validation."""
+
+    matrix_path: Path
+    trees: tuple[_InputTree, ...]
+    dynamic_case_artifacts: _DynamicCaseArtifacts
+    source_identity: dict[str, Any]
+    oracle: dict[str, Any]
+    roster_identity: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class _ValidatedPthreadInputs:
+    """Facts admitted once for one pthread coordinator phase.
+
+    The POSIX matrix owner has already replayed the complete static and dynamic
+    product validations when this context is created.  Pthread mappings use
+    its retained facts directly, while the context retains source/oracle
+    identities and the exact evidence trees needed to reject changes before
+    the phase can emit or accept a receipt.  It is intentionally private and
+    never survives an execute, collect, or standalone-validation phase.
+    """
+
+    matrix_path: Path
+    matrix_identity: dict[str, Any]
+    matrix: dict[str, Any]
+    request_path: Path
+    request_identity: dict[str, Any]
+    request: dict[str, Any]
+    product_inputs: family._ValidatedInputProducts
+    dynamic_qualification: dict[str, Any]
+    dynamic_case_artifacts: _DynamicCaseArtifacts
+    roster_identity: dict[str, Any]
+    trees: tuple[_InputTree, ...]
+    native_execution: bool
+
+    def require_output_disjoint(self, output: Path) -> None:
+        """Keep a coordinator's mutable output out of its input snapshots."""
+
+        output = output.absolute()
+        for tree in self.trees:
+            require(not output.is_relative_to(tree.path),
+                    f"pthread family output overlaps {tree.description}")
+
+    def require_current(self, root: Path) -> None:
+        """Reject any prerequisite mutation reached after phase admission."""
+
+        import owned_dynamic_qualification as dynamic
+
+        require(family.same_json(family.file_identity(root, self.matrix_path), self.matrix_identity),
+                "pthread family POSIX matrix receipt changed")
+        current_request_identity = _current_identity(root, self.matrix["request"], "POSIX execution request")
+        require(family.same_json(current_request_identity, self.request_identity),
+                "pthread family POSIX execution request changed")
+        request = family.read(self.request_path)
+        require(family.same_json(request, self.request), "pthread family POSIX execution request content changed")
+        products = family._validated_input_products(root, request, self.matrix["inputs"])
+        require(family.same_json(products.evidence, self.product_inputs.evidence)
+                and products.products == self.product_inputs.products,
+                "pthread family POSIX product mapping changed")
+        qualification = dynamic.read(products.dynamic_qualification)
+        require(family.same_json(qualification, self.dynamic_qualification),
+                "pthread family dynamic qualification receipt changed")
+        current_case_artifacts = _dynamic_case_artifacts(root, products.dynamic_work, qualification)
+        require(family.same_json(current_case_artifacts.case_identities,
+                                 self.dynamic_case_artifacts.case_identities)
+                and current_case_artifacts.artifact_roots == self.dynamic_case_artifacts.artifact_roots,
+                "pthread family dynamic case artifact roster changed")
+        _require_phase_oracle(products.dynamic_work, products.evidence["oracle"], self.native_execution)
+        require(family.same_json(_source_file_identity(root, ROSTER_PATH, "pthread family roster"),
+                                 self.roster_identity), "pthread family roster changed")
+        for tree in self.trees:
+            require(family.same_json(family.snapshot(tree.path), tree.contents),
+                    f"pthread family {tree.description} changed")
+
+
+def _require_matrix_contract(matrix: object) -> dict[str, Any]:
+    require(isinstance(matrix, dict) and matrix.get("schema") == family.SCHEMA
+            and matrix.get("status") == "workload-matrix-verified"
+            and matrix.get("family") == "libc.posix-runtime",
+            "pthread family requires the POSIX product matrix")
+    require(all(matrix.get(name) is False for name in
+                ("native_aggregate_complete", "family_completion", "public_support")),
+            "pthread family matrix promotion boundary differs")
+    require(isinstance(matrix.get("request"), dict) and isinstance(matrix.get("inputs"), dict),
+            "pthread family POSIX matrix inputs differ")
+    return matrix
+
+
+def _dynamic_case_artifacts(root: Path, dynamic_work: Path,
+                            qualification: object) -> _DynamicCaseArtifacts:
+    """Recover every case-hash-bound retained artifact root without revalidation.
+
+    The complete dynamic owner remains the semantic judge for each case.  This
+    narrow recovery only verifies that the qualification receipt names physical
+    case files with their sealed hashes, then follows their declared artifact
+    roster.  It adds no cache parent such as ``.work/x86_64/tmp``: every
+    snapshot root comes from one sealed case record.
+    """
+
+    require(isinstance(qualification, dict) and isinstance(qualification.get("cases"), dict),
+            "pthread family dynamic qualification case map differs")
+    cases = qualification["cases"]
+    require(all(isinstance(path, str) and isinstance(value, str)
+                for path, value in cases.items()),
+            "pthread family dynamic qualification case identity differs")
+    case_root = family.physical(root, dynamic_work / "qualification-cases")
+    identities: dict[str, str] = {}
+    roots: list[tuple[str, Path]] = []
+    for relative in sorted(cases):
+        expected = cases[relative]
+        require(len(expected) == 64 and all(character in "0123456789abcdef" for character in expected),
+                "pthread family dynamic qualification case hash differs")
+        path = _relative_physical(root, relative, "dynamic qualification case")
+        require(path.is_relative_to(case_root) and path.suffix == ".json",
+                "pthread family dynamic qualification case path differs")
+        actual = family.digest(path)
+        require(actual == expected, "pthread family dynamic qualification case changed")
+        record = family.read(path)
+        artifacts = record.get("artifacts") if isinstance(record, dict) else None
+        require(isinstance(artifacts, dict)
+                and all(isinstance(artifact, str) and isinstance(snapshot, dict)
+                        for artifact, snapshot in artifacts.items()),
+                "pthread family dynamic case artifact roster differs")
+        identities[relative] = actual
+        for artifact in sorted(artifacts):
+            artifact_root = _relative_physical(root, artifact, "dynamic case artifact root")
+            require(artifact_root.is_dir() and not artifact_root.is_symlink(),
+                    "pthread family dynamic case artifact root differs")
+            roots.append((f"dynamic case artifact evidence {relative}: {artifact}", artifact_root))
+    return _DynamicCaseArtifacts(case_identities=identities, artifact_roots=tuple(roots))
+
+
+def _require_phase_oracle(dynamic_work: Path, oracle: object, native_execution: bool) -> None:
+    """Check retained oracle evidence offline; check live tools only for execution."""
+
+    import owned_dynamic_qualification as dynamic
+
+    require(isinstance(oracle, dict), "pthread family oracle evidence differs")
+    if native_execution:
+        dynamic.require_live_oracle(dynamic_work, oracle)
+    else:
+        dynamic.validate_oracle(dynamic_work, oracle)
+
+
+def _input_tree_paths(root: Path, matrix_path: Path, static_preparation: Path,
+                      dynamic_work: Path, dynamic_case_artifacts: _DynamicCaseArtifacts) \
+        -> tuple[tuple[str, Path], ...]:
+    """Name only the declared evidence subtrees the matrix validation reads."""
+
+    candidates = (
+        ("POSIX matrix evidence", matrix_path.parent),
+        ("static preparation evidence", static_preparation.parent),
+        ("dynamic qualification evidence", dynamic_work),
+        *dynamic_case_artifacts.artifact_roots,
+    )
+    result: list[tuple[str, Path]] = []
+    seen: set[Path] = set()
+    for description, path in candidates:
+        path = family.physical(root, path)
+        require(path.is_dir(), f"pthread family {description} must be a directory")
+        if path in seen:
+            continue
+        seen.add(path)
+        result.append((description, path))
+    return tuple(result)
+
+
+def _snapshot_input_trees(root: Path, candidates: tuple[tuple[str, Path], ...]) -> tuple[_InputTree, ...]:
+    return tuple(_InputTree(description=description, path=path, contents=family.snapshot(path))
+                 for description, path in candidates)
+
+
+def _prevalidated_input_trees(root: Path, request: object,
+                              native_execution: bool) -> _PrevalidatedPthreadTrees:
+    """Bind the full POSIX validation to the inputs that existed before it ran.
+
+    These reads establish only physical paths and receipt spellings.  They do
+    not validate producer behavior; ``validate_request`` below remains the one
+    complete matrix validation for the phase.  Capturing this baseline first
+    prevents a replacement after that validator returns from becoming a newly
+    accepted snapshot.
+    """
+
+    import owned_dynamic_qualification as dynamic
+
+    matrix_path = _request_matrix_path(root, request)
+    matrix = family.read(matrix_path)
+    require(isinstance(matrix, dict) and isinstance(matrix.get("request"), dict),
+            "pthread family prevalidation matrix request differs")
+    request_identity = _current_identity(root, matrix["request"], "POSIX execution request")
+    request_path = _relative_physical(root, request_identity["path"], "POSIX execution request")
+    matrix_request = family.read(request_path)
+    paths = family._request_paths(root, matrix_request)
+    qualification = dynamic.read(paths["dynamic_qualification"])
+    dynamic_work = _relative_physical(root, qualification.get("work"), "dynamic qualification work")
+    preparation = dynamic.read(dynamic_work / "qualification-prepare.json")
+    oracle = preparation.get("oracle")
+    require(isinstance(oracle, dict), "pthread family prevalidation oracle differs")
+    case_artifacts = _dynamic_case_artifacts(root, dynamic_work, qualification)
+    baseline = _PrevalidatedPthreadTrees(
+        matrix_path=matrix_path,
+        trees=_snapshot_input_trees(root, _input_tree_paths(
+            root, matrix_path, paths["static_preparation"], dynamic_work, case_artifacts)),
+        dynamic_case_artifacts=case_artifacts,
+        source_identity=family.static_products.source_identity(root), oracle=oracle,
+        roster_identity=_source_file_identity(root, ROSTER_PATH, "pthread family roster"),
+    )
+    _require_phase_oracle(dynamic_work, oracle, native_execution)
+    return baseline
+
+
+def _require_prevalidated_trees_current(root: Path, baseline: _PrevalidatedPthreadTrees,
+                                        matrix_path: Path,
+                                        products: family._ValidatedInputProducts,
+                                        case_artifacts: _DynamicCaseArtifacts,
+                                        native_execution: bool) -> tuple[_InputTree, ...]:
+    """Require the complete validator to have judged the captured input state."""
+
+    expected = _input_tree_paths(root, matrix_path, products.static_preparation, products.dynamic_work,
+                                 case_artifacts)
+    actual = tuple((tree.description, tree.path) for tree in baseline.trees)
+    require(matrix_path == baseline.matrix_path and actual == expected,
+            "pthread family prerequisite roots changed during POSIX validation")
+    require(family.same_json(case_artifacts.case_identities,
+                             baseline.dynamic_case_artifacts.case_identities)
+            and case_artifacts.artifact_roots == baseline.dynamic_case_artifacts.artifact_roots,
+            "pthread family dynamic case artifact roster changed during POSIX validation")
+    require(family.same_json(products.evidence["source"], baseline.source_identity),
+            "pthread family source changed during POSIX validation")
+    require(family.same_json(products.evidence["oracle"], baseline.oracle),
+            "pthread family oracle changed during POSIX validation")
+    _require_phase_oracle(products.dynamic_work, baseline.oracle, native_execution)
+    require(family.same_json(_source_file_identity(root, ROSTER_PATH, "pthread family roster"),
+                             baseline.roster_identity),
+            "pthread family roster changed during POSIX validation")
+    for tree in baseline.trees:
+        require(family.same_json(family.snapshot(tree.path), tree.contents),
+                f"pthread family {tree.description} changed during POSIX validation")
+    return baseline.trees
+
+
+def _validated_phase_inputs(root: Path, request: object,
+                            native_execution: bool = False) -> _ValidatedPthreadInputs:
+    """Admit exactly one fully validated POSIX matrix for one local phase.
+
+    ``validate_request`` is the only complete upstream validation in this
+    function.  The private recovery helper below only binds the sealed current
+    file/product facts that downstream pthread mappings need.  The end check
+    prevents those retained facts from crossing a mutable runtime or receipt
+    reconstruction boundary after they have changed.
+    """
+
+    import owned_dynamic_qualification as dynamic
+
+    baseline = _prevalidated_input_trees(root, request, native_execution)
+    matrix_path, validated_matrix = validate_request(root, request)
+    matrix = _require_matrix_contract(validated_matrix)
+    current_matrix = family.read(matrix_path)
+    require(family.same_json(current_matrix, matrix), "pthread family POSIX matrix receipt changed after validation")
+    matrix = _require_matrix_contract(current_matrix)
+    matrix_identity = family.file_identity(root, matrix_path)
+    request_identity = _current_identity(root, matrix["request"], "POSIX execution request")
+    request_path = _relative_physical(root, request_identity["path"], "POSIX execution request")
+    matrix_request = family.read(request_path)
+    products = family._validated_input_products(root, matrix_request, matrix["inputs"])
+    qualification = dynamic.read(products.dynamic_qualification)
+    require(qualification.get("work") == products.dynamic_work.relative_to(root).as_posix()
+            and isinstance(qualification.get("cases"), dict),
+            "pthread family dynamic qualification input differs")
+    case_artifacts = _dynamic_case_artifacts(root, products.dynamic_work, qualification)
+    return _ValidatedPthreadInputs(
+        matrix_path=matrix_path, matrix_identity=matrix_identity, matrix=matrix,
+        request_path=request_path, request_identity=request_identity, request=matrix_request,
+        product_inputs=products, dynamic_qualification=qualification,
+        dynamic_case_artifacts=case_artifacts,
+        roster_identity=baseline.roster_identity,
+        trees=_require_prevalidated_trees_current(root, baseline, matrix_path, products,
+                                                  case_artifacts, native_execution),
+        native_execution=native_execution,
+    )
 
 
 def _checkout_identity(root: Path, value: object, description: str) -> dict[str, Any]:
@@ -607,12 +902,12 @@ def _composition_report(root: Path, leaf: Path, static_product: Path, dynamic_pr
             "artifact_snapshot_sha256": stable_hash(family.snapshot(leaf))}
 
 
-def composition_cells(root: Path, work: Path, matrix: dict[str, Any],
+def composition_cells(root: Path, work: Path, phase: _ValidatedPthreadInputs,
                       roster_entry: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Read three no-rebuild composition replays and bind their 6+12 cells."""
 
-    request, inputs, products = matrix_request(root, matrix)
-    source_mount = request["source_mount"]
+    source_mount = phase.request["source_mount"]
+    products = phase.product_inputs.products
     reports: dict[str, dict[str, Any]] = {}
     for pair in family.PAIRS:
         step = family.physical(root, work / "runs" / pair)
@@ -621,7 +916,7 @@ def composition_cells(root: Path, work: Path, matrix: dict[str, Any],
         family.check_step(root, step, command, environment, source_mount=source_mount)
         leaf = family.leaf_directory(root, step, source_mount)
         reports[pair] = _composition_report(root, leaf, products[pair]["static"], products[pair]["dynamic"],
-                                             roster_entry, source_mount, inputs["oracle"])
+                                             roster_entry, source_mount, phase.product_inputs.evidence["oracle"])
         require(set((step / "tmp").iterdir()) == {leaf}, "composition step has undeclared scratch")
     require(len({record["workload"]["sha256"] for record in reports.values()}) == 1,
             "composition workload object differs across product pairs")
@@ -634,49 +929,38 @@ def composition_cells(root: Path, work: Path, matrix: dict[str, Any],
     return cells
 
 
-def _dynamic_qualification(root: Path, matrix: dict[str, Any]) -> dict[str, Any]:
-    import owned_dynamic_qualification as dynamic
-    inputs = matrix.get("inputs")
-    require(isinstance(inputs, dict) and isinstance(inputs.get("dynamic_qualification"), dict),
-            "pthread family matrix dynamic qualification input differs")
-    path = _relative_physical(root, inputs["dynamic_qualification"].get("path"), "dynamic qualification receipt")
-    return dynamic.validate_receipt(path)
-
-
 def collect(root: Path, work: Path) -> dict[str, Any]:
     work = family.physical(root, work)
     request = family.read(work / "request.json")
-    matrix_path, matrix = validate_request(root, request)
-    require(matrix.get("schema") == family.SCHEMA and matrix.get("status") == "workload-matrix-verified"
-            and matrix.get("family") == "libc.posix-runtime", "pthread family requires the POSIX product matrix")
-    require(all(matrix.get(name) is False for name in ("native_aggregate_complete", "family_completion", "public_support")),
-            "pthread family matrix promotion boundary differs")
-    matrix_request(root, matrix)
+    phase = _validated_phase_inputs(root, request)
+    phase.require_output_disjoint(work)
+    matrix = phase.matrix
     roster = load_roster()
-    dynamic = _dynamic_qualification(root, matrix)
     coverage: dict[str, Any] = {}
     for required in roster["required"]:
         if required["kind"] == "matrix":
             cells = matrix_cells(matrix, required)
         elif required["kind"] == "dynamic-qualification":
-            cells = dynamic_qualification_cells(root, dynamic, required)
+            cells = dynamic_qualification_cells(root, phase.dynamic_qualification, required)
         else:
-            cells = composition_cells(root, work, matrix, required)
+            cells = composition_cells(root, work, phase, required)
         require_complete_cells(required, cells)
         coverage[required["id"]] = {"capability": required["capability"], "behavior": required["behavior"],
                                       "cells": cells}
     inputs = {
-        "family_execution": family.file_identity(root, matrix_path),
+        "family_execution": phase.matrix_identity,
         "execution_request": matrix["request"],
         "source": matrix["inputs"]["source"],
         "oracle": matrix["inputs"]["oracle"],
         "dynamic_qualification": matrix["inputs"]["dynamic_qualification"],
     }
-    return {
+    record = {
         "schema": SCHEMA, "status": "installed-behavior-component-verified", "family": "libc.pthread-tls",
         "inputs": inputs, "roster": _source_file_identity(root, ROSTER_PATH, "pthread family roster"), "coverage": coverage,
         **NONPROMOTING_FLAGS,
     }
+    phase.require_current(root)
+    return record
 
 
 def _fresh_work(root: Path, value: Path) -> Path:
@@ -694,13 +978,14 @@ def _fresh_work(root: Path, value: Path) -> Path:
 def execute(root: Path, family_execution: Path, output: Path, jobs: int) -> Path:
     receipt = family.physical(root, family_execution)
     request = {"schema": SCHEMA, "family_execution": receipt.relative_to(root).as_posix()}
-    matrix_path, matrix = validate_request(root, request)
+    phase = _validated_phase_inputs(root, request, native_execution=True)
     roster = load_roster()
     composition = next(entry for entry in roster["required"] if entry["kind"] == "composition")
     work = _fresh_work(root, output)
+    phase.require_output_disjoint(work)
     require(type(jobs) is int and 1 <= jobs <= len(family.PAIRS), "pthread family jobs must be in [1, 3]")
-    matrix_request_value, _, products = matrix_request(root, matrix)
-    source_mount = matrix_request_value["source_mount"]
+    products = phase.product_inputs.products
+    source_mount = phase.request["source_mount"]
     work.mkdir(parents=True)
     family.static_products.write_new(work / "request.json", request)
     errors: list[BaseException] = []
@@ -721,6 +1006,7 @@ def execute(root: Path, family_execution: Path, output: Path, jobs: int) -> Path
                 future.result()
             except BaseException as error:
                 errors.append(error)
+    phase.require_current(root)
     if errors:
         raise PthreadFamilyError(f"pthread family composition failed: {errors[0]}")
     record = collect(root, work)

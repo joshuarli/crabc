@@ -11,7 +11,7 @@ or public x86 support.
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 import hashlib
 import json
 import os
@@ -236,9 +236,26 @@ def case_environment(root: Path, step: Path, source_mount: str) -> dict[str, str
             'TMPDIR': mounted(root, step / 'tmp', source_mount)}
 
 
-def input_products(root: Path, request: dict) -> tuple[dict, dict[str, dict[str, Path]]]:
-    import owned_dynamic_qualification as dynamic
-    require(root == dynamic.ROOT, 'product owners must use this coordinator checkout')
+@dataclass(frozen=True)
+class _ValidatedInputProducts:
+    """Current paths recovered from one just-validated POSIX input boundary.
+
+    This is deliberately private to the two family coordinators.  It is not a
+    cheaper public receipt validator: its caller must first obtain a complete
+    ``validate_receipt`` result from the POSIX matrix owner for the current
+    coordinator phase.  The recovery checks the retained receipt identities,
+    source, product manifest anchors, and physical paths without replaying the
+    static and dynamic product owners' complete workload trees.
+    """
+
+    evidence: dict
+    products: dict[str, dict[str, Path]]
+    static_preparation: Path
+    dynamic_qualification: Path
+    dynamic_work: Path
+
+
+def _request_paths(root: Path, request: dict) -> dict[str, Path]:
     require(isinstance(request, dict) and set(request) == {
         'schema', 'source_mount', 'static_preparation', 'dynamic_qualification'}, 'execution request fields differ')
     require(request['schema'] == SCHEMA, 'execution request schema differs')
@@ -250,6 +267,68 @@ def input_products(root: Path, request: dict) -> tuple[dict, dict[str, dict[str,
         value = request[name]
         require(isinstance(value, str) and not Path(value).is_absolute(), 'input receipt path must be checkout-relative')
         paths[name] = physical(root, root / value)
+    return paths
+
+
+def _validated_input_products(root: Path, request: dict, evidence: object) -> _ValidatedInputProducts:
+    """Recover a matrix's current product mapping after its full validation.
+
+    The POSIX matrix receipt keeps enough direct identities to bind the
+    producer facts into a downstream coordinator phase.  Replaying
+    ``input_products`` here would validate the static and dynamic producers a
+    second time, including their complete retained workload trees.  Instead,
+    callers use this only after the matrix owner's full validation and retain
+    a phase-end snapshot of the exact evidence roots they consume.
+    """
+
+    paths = _request_paths(root, request)
+    require(isinstance(evidence, dict) and set(evidence) == {
+        'static_preparation', 'dynamic_qualification', 'source', 'static_products',
+        'dynamic_products', 'dynamic_work', 'oracle'}, 'POSIX matrix input evidence fields differ')
+    for name, path in paths.items():
+        require(same_json(file_identity(root, path), evidence[name]),
+                f'POSIX matrix {name} receipt changed')
+    source = static_products.source_identity(root)
+    require(same_json(source, evidence['source']), 'POSIX matrix product source changed')
+
+    static_paths = static_products.product_paths(paths['static_preparation'].parent)
+    static_records = evidence['static_products']
+    require(isinstance(static_records, dict) and set(static_records) == set(PAIRS),
+            'POSIX matrix static product roster differs')
+    for label, product in static_paths.items():
+        manifest = file_identity(root, product / 'share/crabc/manifest.json')
+        require(same_json(manifest, static_records[label]),
+                f'POSIX matrix static product manifest changed: {label}')
+
+    work_value = evidence['dynamic_work']
+    require(isinstance(work_value, str) and work_value and not Path(work_value).is_absolute()
+            and '..' not in Path(work_value).parts, 'POSIX matrix dynamic work differs')
+    dynamic_work = physical(root, root / work_value)
+    dynamic_records = evidence['dynamic_products']
+    require(isinstance(dynamic_records, dict) and set(dynamic_records) == set(PAIRS),
+            'POSIX matrix dynamic product roster differs')
+    products: dict[str, dict[str, Path]] = {}
+    for label, dynamic_label in PAIRS.items():
+        dynamic_product = physical(root, dynamic_work / dynamic_label)
+        manifest = file_identity(root, dynamic_product / 'share/crabc/manifest.json')
+        record = dynamic_records[label]
+        require(isinstance(record, dict) and set(record) == {'path', 'manifest_sha256'},
+                f'POSIX matrix dynamic product fields differ: {label}')
+        require(record['path'] == dynamic_product.relative_to(root).as_posix()
+                and record['manifest_sha256'] == manifest['sha256'],
+                f'POSIX matrix dynamic product manifest changed: {label}')
+        products[label] = {'static': static_paths[label], 'dynamic': dynamic_product}
+    require(isinstance(evidence['oracle'], dict), 'POSIX matrix oracle evidence differs')
+    return _ValidatedInputProducts(evidence=evidence, products=products,
+                                   static_preparation=paths['static_preparation'],
+                                   dynamic_qualification=paths['dynamic_qualification'],
+                                   dynamic_work=dynamic_work)
+
+
+def input_products(root: Path, request: dict) -> tuple[dict, dict[str, dict[str, Path]]]:
+    import owned_dynamic_qualification as dynamic
+    require(root == dynamic.ROOT, 'product owners must use this coordinator checkout')
+    paths = _request_paths(root, request)
     static = static_products.validate_receipt(root, paths['static_preparation'])
     shared = dynamic.validate_receipt(paths['dynamic_qualification'])
     source = static_products.source_identity(root)

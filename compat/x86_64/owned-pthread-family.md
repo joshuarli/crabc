@@ -67,6 +67,39 @@ pretend that the host has the native container linker. The musl compiler,
 libc runtime, and oracle-pin hashes must match the validated POSIX matrix
 oracle.
 
+Each coordinator phase creates a private `_ValidatedPthreadInputs` context.
+At its boundary, `_validated_phase_inputs` asks the POSIX matrix owner to
+perform one complete validation, then
+`owned_posix_family_execution._validated_input_products` recovers only the
+sealed request, physical product paths, source identity, and product-manifest
+anchors needed by the pthread mappings. It does not make a second public
+producer-validation path. Before the complete matrix validation begins, the
+context snapshots the declared POSIX matrix, static-preparation, and
+dynamic-qualification evidence subtrees. It also follows every hash-sealed
+dynamic case record's `artifacts` map and snapshots each declared artifact
+directory, including an exact retained leaf outside the dynamic work directory.
+It records that case roster and its hashes without adding a broad `.work` cache
+parent.
+The static-preparation collector retains its products, archives, and steps
+under its preparation root; POSIX matrix leaves are constrained below their
+own `runs/*/*/tmp` step roots. Those roots already cover their complete retained
+input closure.
+
+The context records source and roster identities separately from the oracle.
+Offline collection and standalone validation use
+`owned_dynamic_qualification.validate_oracle` to check retained oracle bytes,
+pins, manifests, and specs before admission, after matrix validation, and at
+phase end; they never probe image-only live oracle paths. Only `execute` marks
+its explicit native runtime phase and uses `require_live_oracle` before and
+after its composition subprocesses. The context requires the same roots and
+identities after matrix validation, then checks them again before the phase
+accepts or writes its result. A changed retained artifact, product, source,
+request, or oracle therefore cannot use facts admitted before the change.
+Contexts do not cross phase boundaries: composition execution, its following
+receipt collection, and standalone receipt validation each admit a fresh
+upstream matrix. The mutable pthread output must be disjoint from those input
+evidence roots.
+
 The same host reconstruction compares the whole `dynamic-root` copied product
 to its selected installed product, including every payload file and alias. It
 also requires `consumer-pie` and `consumer-non-pie` to be exact copies of their

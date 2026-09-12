@@ -324,5 +324,72 @@ class FamilyMatrixTests(unittest.TestCase):
         self.assertEqual(set(record['runs']), set(execution.PAIRS))
 
 
+class ValidatedInputProductsTests(unittest.TestCase):
+    """Keep downstream phase recovery separate from producer revalidation."""
+
+    def setUp(self):
+        scratch = ROOT / '.work/x86_64/test-posix-validated-input-products'
+        scratch.mkdir(parents=True, exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        (self.root / '.work').mkdir()
+        self.static_work = self.root / '.work/static'
+        self.dynamic_work = self.root / '.work/dynamic'
+        self.static_work.mkdir()
+        self.dynamic_work.mkdir()
+        self.static_receipt = self.static_work / 'preparation.json'
+        self.dynamic_receipt = self.dynamic_work / 'qualification.json'
+        self.static_receipt.write_text('{}\n')
+        self.dynamic_receipt.write_text('{}\n')
+        static = execution.static_products.product_paths(self.static_work)
+        for label, product in static.items():
+            (product / 'share/crabc').mkdir(parents=True)
+            (product / 'share/crabc/manifest.json').write_text(json.dumps({'static': label}))
+        dynamic = {}
+        for label in ('installed', 'second', 'extracted'):
+            product = self.dynamic_work / label
+            (product / 'share/crabc').mkdir(parents=True)
+            (product / 'share/crabc/manifest.json').write_text(json.dumps({'dynamic': label}))
+            dynamic[label] = product
+        self.request = {
+            'schema': execution.SCHEMA, 'source_mount': '/workspace',
+            'static_preparation': self.static_receipt.relative_to(self.root).as_posix(),
+            'dynamic_qualification': self.dynamic_receipt.relative_to(self.root).as_posix(),
+        }
+        self.source = {'revision': '1' * 40, 'content_sha256': '2' * 64}
+        self.evidence = {
+            'static_preparation': execution.file_identity(self.root, self.static_receipt),
+            'dynamic_qualification': execution.file_identity(self.root, self.dynamic_receipt),
+            'source': self.source,
+            'static_products': {
+                label: execution.file_identity(self.root, product / 'share/crabc/manifest.json')
+                for label, product in static.items()
+            },
+            'dynamic_products': {
+                label: {
+                    'path': dynamic[dynamic_label].relative_to(self.root).as_posix(),
+                    'manifest_sha256': execution.digest(dynamic[dynamic_label] / 'share/crabc/manifest.json'),
+                }
+                for label, dynamic_label in execution.PAIRS.items()
+            },
+            'dynamic_work': self.dynamic_work.relative_to(self.root).as_posix(),
+            'oracle': {'fixture': 'oracle'},
+        }
+        self.dynamic_products = dynamic
+
+    def test_recovery_uses_sealed_identities_without_replaying_product_owners(self):
+        import owned_dynamic_qualification as dynamic
+
+        with patch.object(execution.static_products, 'source_identity', return_value=self.source), \
+                patch.object(execution.static_products, 'validate_receipt',
+                             side_effect=AssertionError('static producer replayed')), \
+                patch.object(dynamic, 'validate_receipt', side_effect=AssertionError('dynamic producer replayed')):
+            recovered = execution._validated_input_products(self.root, self.request, self.evidence)
+        self.assertEqual(recovered.products['primary']['dynamic'], self.dynamic_products['installed'])
+        self.assertEqual(recovered.static_preparation, self.static_receipt)
+        self.assertEqual(recovered.dynamic_work, self.dynamic_work)
+
+
 if __name__ == '__main__':
     unittest.main()

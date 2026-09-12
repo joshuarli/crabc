@@ -83,6 +83,24 @@ source, missing product/workload cells, receipt or fixture mutation and JSON
 scalar-type substitutions. Checkout-relative identities and the retained
 source mount support host validation of container-produced evidence.
 
+The pthread/TLS coordinator may consume a matrix only after this complete
+validation has finished for its own current phase. Its private
+`_validated_input_products` recovery binds the matrix's retained receipt
+identities, physical static/dynamic paths, current source identity, and product
+manifest anchors without replaying this matrix's static and dynamic producer
+validators. The downstream phase separately retains the declared matrix,
+static-preparation, and dynamic-qualification evidence roots before matrix
+validation. For each hash-sealed dynamic case, it also retains the exact
+directories named by that case's `artifacts` map; those leaves may be outside
+the dynamic work root and are not replaced by a snapshot of an unrelated cache
+parent. Static preparation and POSIX matrix retained leaves remain below their
+declared preparation and matrix roots. The downstream phase validates retained
+oracle bytes and pins offline, while only its explicit native `execute` phase
+checks live image tools. It requires the same bound state when matrix validation
+returns and rejects any later change before it accepts a pthread receipt. This
+does not change the `execution.json` schema or relax standalone matrix
+validation.
+
 A complete workload matrix is one input to the native successors of the frozen
 differential, OS-test, signal/process, pthread-stress and libc-test aggregate.
 `native_aggregate_complete`, `family_completion` and `public_support` remain
