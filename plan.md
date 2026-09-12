@@ -51,6 +51,14 @@ syscall and memory comparisons remain non-passing; full performance collection
 still requires the complete correctness predecessor chain and three qualified
 scorecards. See [`compat/perf/README.md`](compat/perf/README.md).
 
+At `1c7977e8`, the native Rust-facade companion passes all 27 focused runner
+and dispatcher tests, a fresh five-row crabc-rs/Rustix smoke, and independent
+host replay. Nine malformed report variants are rejected at the public reader.
+Evidence is under `.work/x86_64/performance-dispatcher-review/`, including
+`facade-smoke-1c7977e8.json` and `parent-proof-1c7977e8.json`. These stock-std
+measurement executables do not qualify the owned runtime or Rust-std consumer;
+full collection still refuses execution before correctness-chain admission.
+
 The full native libc-test measurement at `04c4cbd3` records 427 of 434 units
 passing, one missing-provider link (`functional/random`), and six runtime
 failures: `functional/crypt`, `functional/strptime`, `functional/wordexp`,

@@ -60,7 +60,7 @@ Private native Linux/x86-64 mimalloc evidence commands:
   allocator-aggregate-still-live | allocator-aggregate-same-bin-still-live
   allocator-perf --smoke|--full [options]
   allocator-huge-registry | allocator-huge-reservation
-  allocator-unit | allocator-core-unit
+  allocator-unit [--filter module::tests::exact_test_name] | allocator-core-unit
 
 This launcher rejects emulation and does not provide x86 crabc runtime,
 libc, ldso, crabc-rs, sysroot, generic cargo, or shell commands.
@@ -608,9 +608,18 @@ case "$command" in
         run_in_container python3 compat/allocator/x86_64_huge_registry_evidence.py
         ;;
     allocator-unit)
-        [ "$#" -eq 0 ] || fail "allocator-unit takes no arguments"
+        if [ "$#" -ne 0 ]; then
+            [ "$#" -eq 2 ] && [ "$1" = --filter ] || \
+                fail "allocator-unit accepts only --filter module::tests::exact_test_name"
+            [[ "$2" =~ ^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)+$ ]] || \
+                fail "allocator-unit filter must name one fully qualified Rust test"
+        fi
         ensure_image
-        run_in_container cargo test --locked --target x86_64-unknown-linux-musl -p crabc-mimalloc --lib --no-default-features
+        if [ "$#" -eq 0 ]; then
+            run_in_container cargo test --locked --target x86_64-unknown-linux-musl -p crabc-mimalloc --lib --no-default-features
+        else
+            run_in_container python3 compat/allocator/run_unit_x86_64.py "$2"
+        fi
         ;;
     allocator-core-unit)
         [ "$#" -eq 0 ] || fail "allocator-core-unit takes no arguments"

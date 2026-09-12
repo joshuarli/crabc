@@ -16,6 +16,13 @@ hidden by a Cargo-cache mount. Reviewed source manifests retain their original
 archive-path spelling; execution-path relocation does not change upstream
 identity or archive hash verification.
 
+For one development regression, use
+`./compat/allocator/run-x86_64.sh allocator-unit --filter module::tests::exact_test_name`.
+The filter selects one complete Rust test name with `--exact` and preserves its
+raw output. Zero matching tests, an ignored test, or a failed test returns a
+failure. Omit `--filter` for the full library unit suite. These commands do not
+produce M1/M2 qualification receipts.
+
 This directory owns the reproducible source, inventory, C-oracle, and later
 Rust/C evidence for the fixed mimalloc v3.5.0 semantic port. Native
 Linux/x86-64 little-endian development is active alongside runtime parity;

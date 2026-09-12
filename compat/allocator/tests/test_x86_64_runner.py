@@ -86,6 +86,25 @@ fi
         self.assertIn(f"{work}:/workspace/.work/allocator-x86_64".encode(),
                       self.capture.read_bytes().split(b"\0"))
 
+    def test_allocator_unit_selects_one_exact_test_inside_the_pinned_container(self):
+        name = "os::tests::native_large_page_retry_suppression"
+        result = self.launch("allocator-unit", "--filter", name)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        args = self.capture.read_bytes().split(b"\0")
+        self.assertEqual(args[-4:-1], [
+            b"python3", b"compat/allocator/run_unit_x86_64.py", name.encode(),
+        ])
+        self.assertIn(f"{self.boundary / 'target'}:/workspace/target".encode(), args)
+
+    def test_allocator_unit_rejects_ambiguous_filters_before_docker(self):
+        for arguments in (("--filter",), ("--filter", ""), ("--filter", "os"),
+                          ("--filter", "os::"), ("--filter", "../test"),
+                          ("--filter", "--ignored"), ("--filter", "os::test", "--ignored")):
+            with self.subTest(arguments=arguments):
+                result = self.launch("allocator-unit", *arguments)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(self.capture.with_suffix(".calls").exists())
+
     def test_rejects_external_named_traversal_and_mount_syntax_before_docker(self):
         for work in (str(self.fixture / "outside"), "named-volume", "../outside",
                      str(self.boundary / "../escape"), str(self.boundary) + ":/override"):
