@@ -428,6 +428,12 @@ def parse_invocation(arguments: Sequence[str]) -> Invocation:
             output = Path(arguments[index])
         elif rejects_runtime_flag(argument):
             raise DriverError(f"unowned target-runtime flag is rejected: {argument}")
+        elif argument == "-pthread":
+            # GCC owns the thread-aware translation contract (including
+            # _REENTRANT). Both installed link plans already select the owned
+            # libc containing pthread definitions; no additional library or
+            # search path is necessary, and LLD does not consume this flag.
+            compiler_flags.append(argument)
         elif argument.startswith("-gz"):
             # The pinned Rust-distributed LLD intentionally has no zlib
             # support.  GCC in this image otherwise emits compressed DWARF

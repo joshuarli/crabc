@@ -631,6 +631,28 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                     driver.execute(self.root, arguments)
                 run.assert_not_called()
 
+    def test_pthread_reaches_both_source_translation_commands(self):
+        source = Path(self.temporary.name) / "threaded.c"
+        source.write_text("#ifndef _REENTRANT\n#error pthread compilation missing\n#endif\nint value;\n")
+        output = Path(self.temporary.name) / "threaded.o"
+        arguments = ["-pthread", "-c", str(source), "-o", str(output)]
+        invocation = driver.shared.parse_invocation(arguments)
+        with patch.object(driver.shared, "run_checked") as run:
+            driver.shared.compile_source(
+                self.root, invocation.mode, source, output, invocation.compiler_flags,
+            )
+        self.assertIn("-pthread", run.call_args.args[0])
+        with patch.object(driver, "run", return_value="") as run:
+            driver.execute(self.root, ["--dynamic-pie", *arguments])
+        self.assertIn("-pthread", run.call_args.args[0])
+
+    def test_pthread_does_not_admit_library_or_runtime_flag_injection(self):
+        for flag in ("-lpthread", "-pthread=foreign", "-pthreads", "-Wl,-lpthread"):
+            with self.subTest(flag=flag), patch.object(driver, "run") as run:
+                with self.assertRaises(driver.shared.DriverError):
+                    driver.execute(self.root, ["--dynamic-pie", "-pthread", flag, "input.c"])
+                run.assert_not_called()
+
     def test_debug_translation_forces_uncompressed_dwarf_for_both_driver_layers(self):
         """The pinned LLD cannot consume the image's default compressed DWARF."""
 

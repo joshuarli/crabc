@@ -73,6 +73,13 @@ helper passes `-gz=none` unless that exact option is already present. This
 preserves linkable uncompressed DWARF for the pinned LLD; compressed `-gz`
 forms fail at the driver boundary, while `-g0` remains a no-debug request.
 
+The shared helper accepts the exact `-pthread` option for static and dynamic
+invocations. It forwards it to GCC for source translation, including the
+`_REENTRANT` definition. Both owned link plans already select the libc that
+provides pthread symbols, so an object-only link accepts this option without
+adding a library or changing LLD's runtime inputs. `-lpthread`, target-library
+search paths, and unrecognized variants remain rejected.
+
 The private package helper creates a normalized `tar.xz` only from that
 manifest-bound regular-file payload. It rejects archive/extraction paths through existing
 symlinks, bounds untrusted extraction to 4096 members, 128 MiB per regular

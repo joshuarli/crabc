@@ -212,6 +212,14 @@ debug information linkable without stripping it. Explicit compressed forms
 such as `-gz`, `-gz=zlib`, and `-gz=zstd` fail before translation. `-g0`
 retains GCC's ordinary no-debug behavior and receives no injected flag.
 
+The exact `-pthread` option passes through the shared helper to every C
+translation, preserving GCC's `_REENTRANT` contract. It is also admitted on
+object-only links: the installed libc already owns pthread definitions, so
+the fixed LLD command needs no additional runtime input. This admits neither
+`-lpthread` nor new library search paths. `run_owned_driver_pthread.sh` checks
+the definition and real create/join behavior in all four installed executable
+modes, using the same compiled object for each candidate/musl comparison.
+
 `-rdynamic` may occur once on an executable dynamic link only. The driver
 turns it into the fixed LLD `--export-dynamic` option, which permits a
 `dlopen(0)` consumer to resolve executable definitions. Shared-object and
