@@ -271,8 +271,12 @@ def shared(path):
         if shape(alias) != ('FUNC', 'WEAK', 'DEFAULT'):
             raise SystemExit(f'{path}: {name} is not FUNC WEAK DEFAULT: {alias}')
         if target in hidden:
-            if target_row.symbol_type != 'FUNC' or target_row.visibility != 'HIDDEN':
-                raise SystemExit(f'{path}: {target} is not a hidden FUNC body: {target_row}')
+            # The shared linker localizes musl's hidden source symbol and may
+            # render that local symtab row DEFAULT. The dynsym check above is
+            # the export boundary; this row proves the local implementation
+            # still shares its exact definition with the public weak alias.
+            if target_row.symbol_type != 'FUNC' or target_row.binding != 'LOCAL':
+                raise SystemExit(f'{path}: {target} is not a local FUNC body: {target_row}')
         elif shape(target_row) != ('FUNC', 'GLOBAL', 'DEFAULT'):
             raise SystemExit(f'{path}: {target} is not FUNC GLOBAL DEFAULT: {target_row}')
         require_same_definition(alias, target_row, path)
@@ -309,16 +313,16 @@ def static(path):
 musl_dynamic = dynamic(work / 'musl-dynamic-symbols.txt')
 candidate_dynamic = dynamic(work / 'candidate-dynamic-symbols.txt')
 for name in set(aliases) | protected:
-    if shape(musl_dynamic[name]) != shape(candidate_dynamic[name]):
+    if shape(one(musl_dynamic, name, 'musl dynamic symbols')) != shape(one(candidate_dynamic, name, 'candidate dynamic symbols')):
         raise SystemExit(f'dynamic binding/visibility mismatch for {name}')
 musl_shared = shared(work / 'musl-shared-symbols.txt')
 candidate_shared = shared(work / 'candidate-shared-symbols.txt')
 musl_static = static(work / 'musl-static-symbols.txt')
 candidate_static = static(work / 'candidate-static-symbols.txt')
-for name in set(aliases) | set(aliases.values()) | protected:
-    if shape(musl_shared[name]) != shape(candidate_shared[name]):
+for name in set(aliases) | protected:
+    if shape(one(musl_shared, name, 'musl shared symbols')) != shape(one(candidate_shared, name, 'candidate shared symbols')):
         raise SystemExit(f'shared symbol binding/visibility mismatch for {name}')
-    if shape(musl_static[name]) != shape(candidate_static[name]):
+    if shape(one(musl_static, name, 'musl static symbols')) != shape(one(candidate_static, name, 'candidate static symbols')):
         raise SystemExit(f'static symbol binding/visibility mismatch for {name}')
 
 for path in sorted(work.glob('dynamic-*-override.symbols.txt')):

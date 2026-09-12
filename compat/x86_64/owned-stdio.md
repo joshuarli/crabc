@@ -68,6 +68,12 @@ callbacks synchronously join a `ftrylockfile` contender, proving that
 `fread_unlocked`, `fwrite_unlocked`, `fgetws_unlocked`, and `fputws_unlocked`
 still lock because musl aliases them to locking source bodies.
 
+The shared linkers localize the hidden source bodies in their full symbol
+tables: pinned musl records `LOCAL DEFAULT`, while the owned linker records
+`LOCAL HIDDEN`. Both omit those names from `.dynsym`; the runner treats the
+localization as a toolchain detail and proves the public weak alias shares the
+same defining section and value. The archive contract remains `GLOBAL HIDDEN`.
+
 The readelf comparison is the protected-versus-default regression judge. The
 separate shared runtime workload places strong `__uflow` and `__overflow`
 spellings in the main image, then compares pinned-musl and owned-library
