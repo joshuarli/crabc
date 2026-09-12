@@ -109,6 +109,12 @@ static/dynamic product ABI observations. It routes an input to the still-planned
 `compat.abi-differential` family and does not create a symbol ratchet or a
 compatibility, family, promotion, or public-support result.
 
+[native-abi-ratchet.md](native-abi-ratchet.md) applies the separately reviewed
+native x86 public-dynamic-symbol regression floor to a fresh public inventory.
+It keeps historical missing, unexpected, and metadata differences visible and
+does not turn the floor into ABI compatibility, family completion, promotion,
+or public support.
+
 `./scripts/dev-x86_64.sh owned-loader-short-stack` is the focused 100 KiB
 libc-test startup regression for the selected general-initial-TLS loader path.
 Its [component record](owned-loader-short-stack.md) identifies the pinned

@@ -71,8 +71,9 @@ is under `.work/x86_64/abi-inventory-products-640c0939/` in the integration
 worktree, with the differential receipt at
 `differential-tmp/owned-differential.01oK0U/summary.json` beneath that directory.
 These remain separate component measurements of prepared/materialized,
-unqualified products. The ABI symbol ratchet, family qualification, and
-promotion remain open.
+unqualified products. The reviewed public-dynamic regression floor is now
+defined by [`native-abi-ratchet.md`](compat/x86_64/native-abi-ratchet.md);
+full ABI differential/family qualification and promotion remain open.
 
 The native C performance adapter now stages all 114 rows, launches timed
 clients through an isolated static supervisor, and collects separate memory
