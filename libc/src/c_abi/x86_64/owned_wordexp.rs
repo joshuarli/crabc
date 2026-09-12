@@ -153,6 +153,16 @@ unsafe fn early_no_space(words: *mut Wordexp, flags: c_int) -> c_int {
     WRDE_NOSPACE
 }
 
+/// Publish the required fresh zero count for an unquoted forbidden character.
+/// APPEND retains every field of its prior record, and this error does not
+/// make a fresh vector releasable or read any fresh caller field.
+unsafe fn early_bad_character(words: *mut Wordexp, flags: c_int) -> c_int {
+    if flags & WRDE_APPEND == 0 {
+        unsafe { (*words).word_count = 0; }
+    }
+    WRDE_BADCHAR
+}
+
 unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) -> c_int {
     if input.is_null() || words.is_null() { return WRDE_BADCHAR; }
     let allocator = result_allocator();
@@ -165,6 +175,7 @@ unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) ->
     let syntax = match WordexpSyntax::parse(source) {
         Ok(syntax) => syntax,
         Err(WordexpError::NoSpace) => return unsafe { early_no_space(words, flags) },
+        Err(WordexpError::BadCharacter) => return unsafe { early_bad_character(words, flags) },
         Err(error) => return error_status(error),
     };
     if flags & WRDE_NOCMD != 0 && syntax.has_commands() { return WRDE_CMDSUB; }
@@ -213,6 +224,9 @@ unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) ->
 }
 
 /// Expand shell words with call-local variable, quote, and result ownership.
+/// A fresh `WRDE_BADCHAR` writes `we_wordc = 0` but does not promise a
+/// releasable `we_wordv`; DOOFFS retains its initialized offset, and an
+/// APPEND `WRDE_BADCHAR` retains the valid prior record exactly.
 ///
 /// # Safety
 /// `input` is a readable NUL-terminated C string. `words` is a writable,

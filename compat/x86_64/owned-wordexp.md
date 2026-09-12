@@ -41,7 +41,9 @@ command executes after that failure. Even an empty allocation-failure prefix
 is releasable. `WRDE_REUSE` first releases the prior result. `wordfree`
 releases strings and vector, clears count/vector, retains offsets, and makes
 a repeated release inert. A fresh failure other than `WRDE_NOSPACE` does not
-promise a new releasable result; an append failure retains the previous one.
+promise a new releasable result. A fresh `WRDE_BADCHAR` nevertheless writes
+`we_wordc == 0`; with `WRDE_DOOFFS` it retains the supplied `we_offs`, and an
+`WRDE_BADCHAR` failure with `WRDE_APPEND` retains the previous record exactly.
 The C wrapper disables cancellation until all temporary owners have dropped.
 
 The input, result, environment, locale stability, and prior-record obligations
@@ -95,11 +97,13 @@ AArch64 implementation and its frozen evidence remain unchanged.
 
 The governing expansion clauses are [POSIX.1-2024 wordexp](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/functions/wordexp.html)
 and the [Shell Command Language](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html).
+The quiet-source receipt admits only the finite pinned-musl diagnostic `sh: eval: line 0: syntax error: unterminated quoted string\n`; it rejects any other source diagnostic bytes and requires an empty candidate stream.
 The same installed-header object preserves these specific source observations:
 
 | Observation | Pinned musl | Owned candidate |
 | --- | --- | --- |
 | Unterminated quote without SHOWERR | Syntax diagnostic reaches fd 2 | `WRDE_SYNTAX`, empty fd 2 |
+| Fresh `WRDE_BADCHAR` record under NOCMD with count sentinel 19 | Returns `WRDE_BADCHAR` while retaining the sentinel | Returns `WRDE_BADCHAR` and publishes count zero |
 | Standard nested/positional parameter syntax under NOCMD | Recorded parameter-brace or positional rejection | Valid expansion without a command |
 | Recorded arithmetic-delimiter, continuation and dollar-single marker controls | Creates the prohibited command marker | Rejects before a command starts |
 | Initial `#` plus the recorded paired quotes/newlines | Executes the intervening command | Treats `#` literally and returns the exact quoted data without creating a marker |

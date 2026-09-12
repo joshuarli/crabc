@@ -65,6 +65,90 @@ static int check_initial_error(const char *expression, int flags, int expected)
     return words.we_wordc == 0 && words.we_wordv == NULL;
 }
 
+/* A fresh `WRDE_BADCHAR` must publish a zero word count, even though a
+ * non-NOSPACE failure does not promise that `we_wordv` is releasable.  The
+ * only fresh input field under DOOFFS is `we_offs`, which remains intact. */
+static int check_badchar_fresh(const char *expression, int flags)
+{
+    wordexp_t words = {
+        .we_wordc = 19,
+        .we_wordv = NULL,
+        .we_offs = 3,
+    };
+
+    if (wordexp(expression, &words, flags) != WRDE_BADCHAR)
+        return -1;
+    if ((flags & WRDE_DOOFFS) != 0 && words.we_offs != 3)
+        return -1;
+    if (words.we_wordc == 0)
+        return 0;
+    return words.we_wordc == 19 ? 1 : -1;
+}
+
+/* APPEND retains each visible field of its valid prior record when the new
+ * expression is rejected before an expansion prefix is published. */
+static int check_badchar_append(const char *expression)
+{
+    static const char *const old[] = { "old" };
+    wordexp_t words = { 0 };
+    char **old_wordv;
+    char *old_word;
+    size_t old_wordc;
+    size_t old_offs;
+
+    words.we_offs = 2;
+    if (wordexp("old", &words, WRDE_DOOFFS) != 0)
+        return 0;
+    if (!check_words(&words, 1, old) || words.we_wordv[0] != NULL ||
+        words.we_wordv[1] != NULL) {
+        wordfree(&words);
+        return 0;
+    }
+    old_wordv = words.we_wordv;
+    old_word = words.we_wordv[words.we_offs];
+    old_wordc = words.we_wordc;
+    old_offs = words.we_offs;
+    if (wordexp(expression, &words,
+            WRDE_DOOFFS | WRDE_APPEND | WRDE_NOCMD) != WRDE_BADCHAR ||
+        words.we_wordv != old_wordv || words.we_wordc != old_wordc ||
+        words.we_offs != old_offs || words.we_wordv[0] != NULL ||
+        words.we_wordv[1] != NULL || words.we_wordv[old_offs] != old_word ||
+        !check_words(&words, 1, old)) {
+        wordfree(&words);
+        return 0;
+    }
+    return check_freed(&words);
+}
+
+/* Return zero for the required fresh-count result, one only for the pinned
+ * source's uniform unchanged-sentinel observation, and -1 for every mixed
+ * count, status, offset, or append-record result. */
+static int check_badchar_records(void)
+{
+    static const char *const expressions[] = {
+        "one\ntwo", "one|two", "one&two", "one;two", "one<two",
+        "one>two", "one{two", "one}two", "one(two", "one)two",
+    };
+    size_t index;
+
+    int observed_count = -1;
+
+    for (index = 0; index < sizeof expressions / sizeof expressions[0]; ++index) {
+        int fresh = check_badchar_fresh(expressions[index], WRDE_NOCMD);
+        int offsets = check_badchar_fresh(expressions[index],
+            WRDE_NOCMD | WRDE_DOOFFS);
+
+        if (fresh < 0 || offsets < 0 || fresh != offsets ||
+            !check_badchar_append(expressions[index]))
+            return -1;
+        if (observed_count < 0)
+            observed_count = fresh;
+        else if (observed_count != fresh)
+            return -1;
+    }
+    return observed_count;
+}
+
 static int ordinary_and_nocmd_cases(void)
 {
     static const char *const ordinary[] = { "one", "two" };
@@ -244,6 +328,19 @@ int main(int argc, char *argv[])
 
     if (argc == 2 && strncmp(argv[1], "--engine-", 9) == 0)
         return wordexp_engine_run_selector(argv[1]);
+
+    if (argc == 2 && strcmp(argv[1], "--badchar-record") == 0) {
+        result = check_badchar_records();
+        if (result == 0) {
+            puts("owned-wordexp-badchar-record: PASS");
+            return 0;
+        }
+        if (result == 1) {
+            puts("owned-wordexp-badchar-record: SOURCE-RED fresh-count-unchanged");
+            return 0;
+        }
+        return 254;
+    }
 
     if (argc == 2 && strcmp(argv[1], "--shell-unavailable") == 0) {
         result = unavailable_shell_case();
