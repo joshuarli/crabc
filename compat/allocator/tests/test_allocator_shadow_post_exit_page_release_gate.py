@@ -28,7 +28,7 @@ AUDIT_DIRECT_TARGETS = (
     "native_pointer_first_current_owner_reallocate",
     "native_pointer_first_usable_size",
     "native_owner_exit_collection_race",
-    "native_ordinary_mapped_medium_reclaim",
+    "native_ordinary_mapped_regular_reclaim",
 )
 RETIRED_ROUTE_TARGETS = (
     "native_post_exit_lifecycle",

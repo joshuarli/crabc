@@ -1174,7 +1174,7 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                 None
             }
             MainStaticRuntimeFirstArenaPageAllocatorState::DormantExistingArena {
-                session,
+                mut session,
                 page_map,
                 arena_storage,
             } => {
@@ -1209,6 +1209,10 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
+                if !session.ensure_static_main_mapped_regular_claim_selector(pair) {
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return None;
+                }
                 let page_map_lifecycle = match page_map.begin_page_lifecycle() {
                     Ok(lifecycle) => lifecycle,
                     Err(ProcessPageMapError::LifecycleBusy) => {
@@ -1421,6 +1425,11 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         return None;
                     }
                 };
+                if !session.ensure_static_main_mapped_regular_claim_selector(pair) {
+                    let _ = page_map_lifecycle.finish();
+                    self.state = MainStaticRuntimeFirstArenaPageAllocatorState::Retained;
+                    return None;
+                }
                 let arena = match pair.arena() {
                     Ok(arena) => arena,
                     Err(_) => {
@@ -2158,6 +2167,7 @@ fn first_ordinary_fresh_page_size(config: MemoryConfig, request: usize) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bootstrap::TheapPageSession;
     use crate::config::{
         ARENA_ALIGNMENT, ARENA_MIN_SIZE, VmOption, VmOptionEnvironment, VmOptions,
     };
@@ -2230,6 +2240,152 @@ mod tests {
             )
         }
         .expect("the fixture publishes one canonical policy/PageMap binding")
+    }
+
+    /// Opens the real initial persistent owner through its first ordinary
+    /// allocation, then separates its session from the engine only for the
+    /// narrow source-binding structural regression below. The test retains all
+    /// moved process state because it deliberately exercises terminal/unwind
+    /// paths instead of forging a fresh cleanup route after the source slot is
+    /// no longer eligible for normal page work.
+    fn with_live_initial_selected_source(
+        operation: impl FnOnce(NonNull<MainStaticProcessPageSession>) + Send + 'static,
+    ) {
+        thread::spawn(move || {
+            let config = memory_config();
+            let attachment_storage = MainStaticAttachmentStorage::test_static_owner();
+            let subprocess = MainSubprocess::test_static_owner();
+            let page_map = ProcessPageMapStorage::test_static_owner()
+                .initialize(config, subprocess)
+                .expect("the source session owns one initialized PageMap");
+            let arena_storage = ProcessSharedArenaStorage::test_static_owner();
+            let mut owner = unsafe {
+                MainStaticTheapAttachment::begin_with_test_storage(attachment_storage, subprocess)
+            }
+            .expect("ticket zero attaches before the persistent source session");
+            let session = owner
+                .begin_process_lifetime_page_session()
+                .expect("the empty ticket-zero image becomes a permanent source session");
+            let mut allocator = MainStaticRuntimeFirstArenaPageAllocator::begin_legacy(
+                session,
+                page_map,
+                arena_storage,
+            )
+            .expect("the initial persistent owner opens before its first source page");
+            let _live = allocator
+                .allocate(37, false)
+                .expect("the first ordinary allocation installs the selected source pair");
+
+            let state = core::mem::replace(
+                &mut allocator.state,
+                MainStaticRuntimeFirstArenaPageAllocatorState::Transition,
+            );
+            let MainStaticRuntimeFirstArenaPageAllocatorState::Active(active) = state else {
+                panic!("the initial source pair remains in its active ticket-zero engine");
+            };
+            let MainStaticRuntimeActiveEngine {
+                engine,
+                page_map_lifecycle,
+                page_map: _,
+                arena_storage: _,
+            } = active;
+            let (mut initial_session, engine_state) = engine.suspend_runtime_ticket_zero();
+            let session = NonNull::from(&mut initial_session);
+            operation(session);
+
+            // The test may have latched the source or unwound across the
+            // callback. Retain the exact live page/engine/map facts instead
+            // of manufacturing a cleanup transition after that boundary.
+            core::mem::forget(engine_state);
+            core::mem::forget(page_map_lifecycle);
+            core::mem::forget(initial_session);
+            core::mem::forget(allocator);
+            core::mem::forget(owner);
+        })
+        .join()
+        .expect("the initial selected-source structural regression stays current-thread local");
+    }
+
+    /// The initial selector physically lives in the session stored by the
+    /// generic engine. Its bound hook must move it to a restoration guard
+    /// before callback reborrow, and restore it on both ordinary return and
+    /// unwind. A second successful callback after each nonterminal event is
+    /// the observable proof that no selector or exact source pair was lost.
+    #[test]
+    fn initial_selected_mapped_regular_source_restores_after_return_and_unwind() {
+        with_live_initial_selected_source(|session| {
+            // SAFETY: the helper has suspended the enclosing engine, so this
+            // test holds the only live session pointer and the callback cannot
+            // overlap an ordinary page-engine borrow.
+            let first = unsafe {
+                <MainStaticProcessPageSession as TheapPageSession>::
+                    with_static_main_mapped_regular_claim_source(session, |_source| ())
+            };
+            assert!(matches!(
+                first,
+                crate::single_thread::StaticMainMappedRegularClaimSourceHookOutcome::Completed(())
+            ));
+
+            let unwind = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // SAFETY: as above, the suspended engine leaves this exact
+                // source slot as the only mutable state touched by the hook.
+                unsafe {
+                    <MainStaticProcessPageSession as TheapPageSession>::
+                        with_static_main_mapped_regular_claim_source(session, |_source| {
+                            panic!("focused bound initial source unwind")
+                        })
+                }
+            }));
+            assert!(unwind.is_err(), "the focused bound initial source callback unwinds");
+
+            // SAFETY: the unwind dropped the source and restoration guard;
+            // the same suspended session pointer remains valid and unique.
+            let after_unwind = unsafe {
+                <MainStaticProcessPageSession as TheapPageSession>::
+                    with_static_main_mapped_regular_claim_source(session, |_source| ())
+            };
+            assert!(matches!(
+                after_unwind,
+                crate::single_thread::StaticMainMappedRegularClaimSourceHookOutcome::Completed(())
+            ));
+        });
+    }
+
+    /// `Bound` cannot look like an absent source while the outer source view
+    /// is live. The recursive hook therefore receives `Terminal`, latches the
+    /// permanent initial session, and the outer restoration guard still owns
+    /// and restores its exact selector before the final terminal observation.
+    #[test]
+    fn initial_selected_mapped_regular_source_refuses_recursive_bind() {
+        with_live_initial_selected_source(|session| {
+            // SAFETY: the helper has no live engine borrow. The inner call
+            // touches only the `Bound` sentinel and returns before minting a
+            // second source, so it cannot overlap the outer selector borrow.
+            let outer = unsafe {
+                <MainStaticProcessPageSession as TheapPageSession>::
+                    with_static_main_mapped_regular_claim_source(session, |_source| {
+                        <MainStaticProcessPageSession as TheapPageSession>::
+                            with_static_main_mapped_regular_claim_source(session, |_nested| ())
+                    })
+            };
+            assert!(matches!(
+                outer,
+                crate::single_thread::StaticMainMappedRegularClaimSourceHookOutcome::Completed(
+                    crate::single_thread::StaticMainMappedRegularClaimSourceHookOutcome::Terminal
+                )
+            ));
+
+            // SAFETY: the outer source and restoration guard have returned;
+            // this still-valid suspended session is now terminally latched.
+            let after_reentry = unsafe {
+                <MainStaticProcessPageSession as TheapPageSession>::
+                    with_static_main_mapped_regular_claim_source(session, |_source| ())
+            };
+            assert!(matches!(
+                after_reentry,
+                crate::single_thread::StaticMainMappedRegularClaimSourceHookOutcome::Terminal
+            ));
+        });
     }
 
     #[test]

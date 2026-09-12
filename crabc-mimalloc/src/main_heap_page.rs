@@ -113,7 +113,7 @@ use crate::process_page_map::{
 };
 use crate::single_thread::{
     FreeError, OwnerLocalMainHeapPageAllocator, OwnerLocalMainHeapPageSessionBindError,
-    OwnerLocalMappedAbandonedClaimSelector,
+    StaticMainMappedRegularClaimSelector,
     PageAllocatorEngine, PageAllocatorEngineState, RemoteFreePreparationError, RemoteFreeProducer,
     RemoteFreeProducerPair,
     ThreadExitMappedRegularPostExitAdoptError,
@@ -229,7 +229,7 @@ pub(crate) struct MainHeapThreadOwnerLocalPageEngine<'main> {
     // of this persistent owner, not general `PageAllocatorEngine` state.  A
     // short bound session borrows this value only for the selected
     // mapped-abandoned pre-fresh claim.
-    mapped_abandoned_claim: OwnerLocalMappedAbandonedClaimSelector<'main>,
+    mapped_abandoned_claim: StaticMainMappedRegularClaimSelector<'main>,
     lifecycle: MainHeapThreadOwnerLocalPageEngineLease,
     _not_send_or_sync: PhantomData<*mut ()>,
 }
@@ -2174,7 +2174,7 @@ impl<'main> MainHeapThreadOwnerLocalPageEngine<'main> {
         let lifecycle = MainHeapThreadOwnerLocalPageEngineLease::claim(&session)
             .map_err(MainHeapThreadOwnerLocalPageEngineBeginError::Attachment)?;
         let mapped_abandoned_claim =
-            OwnerLocalMappedAbandonedClaimSelector::new(pair, session.main_heap_lease());
+            StaticMainMappedRegularClaimSelector::new(pair, session.main_heap_lease());
         // SAFETY: the pair and attachment checks above establish one process
         // image, and the initial short session captures the exact owner
         // identity which every later operation revalidates before binding.

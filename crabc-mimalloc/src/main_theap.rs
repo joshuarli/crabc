@@ -55,7 +55,13 @@ use crate::subproc::{
 use crate::lock::{PrivateLock, PrivateLockGuard};
 use crate::os::MemoryConfig;
 use crate::os_page::OsAlignedPageOwner;
+use crate::process_arena::ProcessPageArenaLease;
 use crate::random::TheapRandomImage;
+use crate::single_thread::{
+    StaticMainMappedRegularClaimSelector, StaticMainMappedRegularClaimSource,
+    StaticMainMappedRegularClaimSourceHookOutcome,
+    with_bound_static_main_mapped_regular_claim_source,
+};
 use crate::types::{
     Heap, MemoryId, Page, PageQueue, Theap, TheapMainStaticInitError, TheapOwner,
     TheapDynamicInitError, ThreadLocalData,
@@ -1206,6 +1212,7 @@ impl MainStaticTheapAttachment {
             storage: self.storage,
             subprocess: self.subprocess,
             thread: self.thread,
+            static_main_mapped_regular_claim: StaticMainMappedRegularClaimSlot::Unavailable,
             _not_send_or_sync: PhantomData,
         })
     }
@@ -2641,7 +2648,93 @@ pub(crate) struct MainStaticProcessPageSession {
     storage: &'static MainStaticAttachmentStorage,
     subprocess: &'static MainSubprocess,
     thread: crate::types::LiveThreadId,
+    /// The one process-paired ordinary regular reclaim source. It is absent
+    /// before the first arena exists, then remains with this permanent session
+    /// across an all-free active-to-dormant transition and later reactivation.
+    /// It never selects another arena or scans dynamic Heap ownership.
+    static_main_mapped_regular_claim: StaticMainMappedRegularClaimSlot,
     _not_send_or_sync: PhantomData<*mut ()>,
+}
+
+/// Persistent storage state for the initial owner's selected mapped-regular
+/// source.
+///
+/// `Bound` is deliberately distinct from an uninstalled selector. The
+/// selector moves into [`MainStaticMappedRegularClaimSourceRestore`] before a
+/// generic engine callback reborrows its enclosing `PageAllocatorEngine`.
+/// A recursive allocation therefore observes a closed source rather than
+/// treating the temporarily empty field as permission to fresh-allocate.
+enum StaticMainMappedRegularClaimSlot {
+    /// No first arena has installed the one selected source pair yet.
+    Unavailable,
+    /// The persistent initial owner retains its exact source pair between
+    /// ordinary allocations and dormant reactivation.
+    Ready(StaticMainMappedRegularClaimSelector<'static>),
+    /// A stack-local restoration guard owns the selector while the generic
+    /// engine is reborrowed for one synchronous source claim.
+    Bound,
+}
+
+/// Owns the initial selector outside its enclosing page engine for one source
+/// callback and restores it after the source view and engine reborrow end.
+///
+/// This is intentionally not a general selector handoff: the guard is private
+/// to the sealed session hook, its selector has no public accessor, and its
+/// `Drop` restores the exact selector on both normal return and unwind. The
+/// higher-ranked source callback cannot return a reference to this guard.
+#[must_use = "a bound initial selected source must restore its exact persistent selector"]
+struct MainStaticMappedRegularClaimSourceRestore {
+    session: NonNull<MainStaticProcessPageSession>,
+    selector: Option<StaticMainMappedRegularClaimSelector<'static>>,
+}
+
+impl MainStaticMappedRegularClaimSourceRestore {
+    #[inline]
+    fn selector_mut(&mut self) -> &mut StaticMainMappedRegularClaimSelector<'static> {
+        self.selector
+            .as_mut()
+            .expect("a bound initial selected source retains its selector until restoration")
+    }
+}
+
+impl Drop for MainStaticMappedRegularClaimSourceRestore {
+    fn drop(&mut self) {
+        let selector = self
+            .selector
+            .take()
+            .expect("a bound initial selected source restores exactly once");
+        // SAFETY: this guard is constructed only by the sealed static-session
+        // hook after it replaces the persistent slot with `Bound`. The source
+        // view has dropped before this guard because `with_bound_*` completes
+        // its higher-ranked callback first; the engine reborrow in that
+        // callback has ended as well. The enclosing session cannot move while
+        // the hook is active. A malformed slot is fail-closed below instead
+        // of dropping either selector and losing an exact retained range.
+        let session = unsafe { &mut *self.session.as_ptr() };
+        match core::mem::replace(
+            &mut session.static_main_mapped_regular_claim,
+            StaticMainMappedRegularClaimSlot::Unavailable,
+        ) {
+            StaticMainMappedRegularClaimSlot::Bound => {
+                session.static_main_mapped_regular_claim =
+                    StaticMainMappedRegularClaimSlot::Ready(selector);
+            }
+            StaticMainMappedRegularClaimSlot::Unavailable => {
+                session.latch();
+                // A violated private state invariant must retain, rather
+                // than drop, a source selector that may own an exact claim
+                // range.
+                core::mem::forget(selector);
+            }
+            StaticMainMappedRegularClaimSlot::Ready(existing) => {
+                session.latch();
+                // Preserve both exact source states if an impossible second
+                // writer appeared. The permanent session is now terminal.
+                core::mem::forget(existing);
+                core::mem::forget(selector);
+            }
+        }
+    }
 }
 
 impl MainStaticProcessPageSession {
@@ -2665,6 +2758,38 @@ impl MainStaticProcessPageSession {
             storage: self.storage,
             subprocess: self.subprocess,
             _main_attachment: PhantomData,
+        }
+    }
+
+    /// Installs or revalidates the one static-main mapped-regular selector
+    /// after the initial owner has formed its exact process PageMap/arena
+    /// pair. A dormant reactivation may reuse only this same pair; a mismatch
+    /// is terminal rather than an implicit broad arena search.
+    pub(crate) fn ensure_static_main_mapped_regular_claim_selector(
+        &mut self,
+        pair: ProcessPageArenaLease,
+    ) -> bool {
+        if !self.is_current() {
+            self.latch();
+            return false;
+        }
+        match &self.static_main_mapped_regular_claim {
+            StaticMainMappedRegularClaimSlot::Ready(selector)
+                if selector.matches_pair(pair) && !selector.is_terminal() =>
+            {
+                true
+            }
+            StaticMainMappedRegularClaimSlot::Ready(_) | StaticMainMappedRegularClaimSlot::Bound => {
+                self.latch();
+                false
+            }
+            StaticMainMappedRegularClaimSlot::Unavailable => {
+                let main_heap = self.shared_main_heap_lease();
+                self.static_main_mapped_regular_claim = StaticMainMappedRegularClaimSlot::Ready(
+                    StaticMainMappedRegularClaimSelector::new(pair, main_heap),
+                );
+                true
+            }
         }
     }
 
@@ -2995,6 +3120,15 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
     }
 
     #[inline]
+    fn permits_ordinary_page_operations(&self) -> bool {
+        self.is_current()
+            && !matches!(
+                &self.static_main_mapped_regular_claim,
+                StaticMainMappedRegularClaimSlot::Bound
+            )
+    }
+
+    #[inline]
     fn queue(&self, bin: usize) -> Option<&PageQueue> {
         self.is_current().then(|| self.theap().queue(bin)).flatten()
     }
@@ -3170,6 +3304,73 @@ unsafe impl TheapPageSession for MainStaticProcessPageSession {
 
     #[inline]
     fn latch_unfinished_page_engine(&mut self) { self.latch() }
+
+    #[inline]
+    unsafe fn with_static_main_mapped_regular_claim_source<R>(
+        session: NonNull<Self>,
+        operation: impl for<'source> FnOnce(StaticMainMappedRegularClaimSource<'source>) -> R,
+    ) -> StaticMainMappedRegularClaimSourceHookOutcome<R> {
+        // Move the selector completely out of the session before the callback
+        // can reborrow the enclosing page engine. A pointer to a field inside
+        // that engine would overlap the callback's `&mut PageAllocatorEngine`.
+        // `Bound` remains in the session until the restoration guard drops, so
+        // a recursive route is terminal rather than a false no-source miss.
+        let mut restore = unsafe {
+            let session_ref = &mut *session.as_ptr();
+            if !session_ref.is_current() {
+                session_ref.latch();
+                return StaticMainMappedRegularClaimSourceHookOutcome::Terminal;
+            }
+            match core::mem::replace(
+                &mut session_ref.static_main_mapped_regular_claim,
+                StaticMainMappedRegularClaimSlot::Bound,
+            ) {
+                StaticMainMappedRegularClaimSlot::Unavailable => {
+                    session_ref.static_main_mapped_regular_claim =
+                        StaticMainMappedRegularClaimSlot::Unavailable;
+                    return StaticMainMappedRegularClaimSourceHookOutcome::Unavailable;
+                }
+                StaticMainMappedRegularClaimSlot::Ready(selector) if selector.is_terminal() => {
+                    session_ref.static_main_mapped_regular_claim =
+                        StaticMainMappedRegularClaimSlot::Ready(selector);
+                    return StaticMainMappedRegularClaimSourceHookOutcome::Terminal;
+                }
+                StaticMainMappedRegularClaimSlot::Ready(selector) => {
+                    MainStaticMappedRegularClaimSourceRestore {
+                        session,
+                        selector: Some(selector),
+                    }
+                }
+                StaticMainMappedRegularClaimSlot::Bound => {
+                    session_ref.latch();
+                    return StaticMainMappedRegularClaimSourceHookOutcome::Terminal;
+                }
+            }
+        };
+        let selector = NonNull::from(restore.selector_mut()).cast();
+        // SAFETY: `ensure_static_main_mapped_regular_claim_selector` installed
+        // this selector from the same process pair before engine activation.
+        // It now lives in `restore`, outside the page engine's session field.
+        // The child hook drops its higher-ranked source before this function
+        // drops `restore`, so no selector borrow overlaps restoration.
+        let outcome = unsafe {
+            with_bound_static_main_mapped_regular_claim_source(selector, operation)
+        };
+        drop(restore);
+        outcome
+    }
+
+    #[inline]
+    fn is_static_main_mapped_regular_claim_terminal(&self) -> bool {
+        if !self.is_current() {
+            return true;
+        }
+        match &self.static_main_mapped_regular_claim {
+            StaticMainMappedRegularClaimSlot::Unavailable => false,
+            StaticMainMappedRegularClaimSlot::Ready(selector) => selector.is_terminal(),
+            StaticMainMappedRegularClaimSlot::Bound => true,
+        }
+    }
 }
 
 #[cfg(test)]
