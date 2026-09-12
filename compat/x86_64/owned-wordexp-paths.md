@@ -1,10 +1,11 @@
 # Private x86 wordexp pathname adapter
 
-`libc/src/c_abi/x86_64/owned_wordexp_paths.rs` binds the private expansion
-engine to the owned C pattern and conventional-passwd providers. It is C ABI
-compatibility machinery within the active x86 runtime program. The adapter is
-unselected; its presence does not change the public `wordexp` provider or
-qualify an installed product.
+`libc/src/c_abi/x86_64/owned_wordexp_paths.rs` is the private pathname owner
+selected by the deterministic expansion engine and C binding in
+`owned_wordexp.rs`. It binds the engine to the owned C pattern and
+conventional-passwd providers. It is C ABI compatibility machinery within the
+active x86 runtime program and exports no public C symbol; its private API and
+fixtures do not by themselves qualify an installed product or public support.
 
 ## Quote information and pattern ownership
 
@@ -74,8 +75,8 @@ an undefined-variable or shell-syntax result.
 `compat/x86_64/run_owned_wordexp_paths_private.sh`. It builds a disposable native
 static archive with `crabc_owned_wordexp_paths_private_test` and links
 `owned_wordexp_paths_private_probe.c`. The cfg admits only a private fixture
-bridge; normal runtime artifacts export no probe symbol and still use the
-existing C wordexp provider. The runner retains build output, the consumer
+bridge; normal runtime artifacts export no probe symbol and use the selected
+deterministic wordexp provider. The runner retains build output, the consumer
 status and streams, and the fixture leaf beneath `.work/x86_64`. The private
 archive uses the normal builder's pinned tools and complete producer
 environment, including the contained Cargo cache. A direct link uses that raw
@@ -88,6 +89,7 @@ and empty-word rules, C and C.UTF-8 character boundaries, literal and empty
 HOME, reentrant named/UID tilde lookup, and actual filesystem glob ordering,
 leading-period, escaped-wildcard, and no-match behavior. It uses the real
 selected runtime owners. This private witness does not produce a normal
-sysroot qualification receipt. Production selection additionally needs the
-core, process adapter, C record transaction, and installed/extracted C ABI
-evidence to compose at one revision.
+sysroot qualification receipt or installed ABI/public-promotion result. The
+selected C binding composes this pathname owner with the deterministic core,
+process adapter, and sole result transaction; direct installed/extracted C ABI
+evidence remains the separate product validation boundary.

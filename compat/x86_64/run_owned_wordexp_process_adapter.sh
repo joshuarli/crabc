@@ -18,4 +18,4 @@ TMPDIR="$WORK_DIR" rustc --edition=2021 --test "$SOURCE" -o "$BINARY"
 # The native SIGCHLD disposition control temporarily changes process-global
 # state, so this boundary suite must remain serial.
 "$BINARY" --test-threads=1
-printf 'private x86 wordexp process adapter boundary: PASS (unselected fake boundary)\n'
+printf 'private x86 wordexp process adapter boundary: PASS (deterministic boundary)\n'

@@ -1,9 +1,14 @@
-# Private x86 word-expansion engine candidate
+# Private x86 word-expansion engine
 
-This is a private, unselected replacement candidate for the shell-shaped x86
-`wordexp` adapter in `libc/src/c_abi/x86_64/owned_wordexp.rs`. It is C ABI
-compatibility machinery, not a Rust API, shell implementation, provider
-framework, or x86 qualification claim. The selected adapter remains unchanged.
+`libc/src/c_abi/x86_64/owned_wordexp_engine.rs` is the private deterministic
+core selected by the x86 `wordexp` C binding in
+`libc/src/c_abi/x86_64/owned_wordexp.rs`. It is C ABI compatibility machinery,
+not a Rust API, shell implementation, provider framework, or x86 qualification
+claim. The binding composes it with the selected process and pathname owners
+and the sole `WordexpResultRecord` transaction; those private implementation
+APIs do not by themselves establish installed ABI or public-platform support.
+Ordinary expansion completes in this core without `/bin/sh`; only a selected
+opaque command body reaches the process owner, once.
 
 ## Contract and provenance
 
@@ -25,8 +30,8 @@ rules bound the opaque delimiter scanner. Issue 8 also defines dollar-single-quo
 Musl 1.2.6 release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417`,
 `src/misc/wordexp.c` (MIT; SHA-256
 `018c97c999cb60966a0376b71f2c8c187179ef31cf5ddde47b959e8f440e08f8`) remains
-the compatibility oracle and source provenance for the selected adapter. This
-candidate is a new private design, rather than a source translation. Existing
+the compatibility oracle and source provenance for the selected provider. This
+implementation is a new private design, rather than a source translation. Existing
 source RED observations in [owned-wordexp.md](owned-wordexp.md) remain
 observations, not equality claims.
 
@@ -67,7 +72,7 @@ An unquoted physical backslash-newline is removed only in the parser's local
 lexical views: parameter identifiers and command-scanner keyword, identifier,
 and brace-boundary checks use the joined bytes. Parameter records retain the
 joined identifier bytes for context lookup and assignment. The copied source
-and every opaque command-body span remain byte exact, so the later adapter sees
+and every opaque command-body span remain byte exact, so the selected process adapter sees
 the original continuation. Single-quoted and dollar-single-quoted source is
 not globally rewritten.
 
@@ -85,7 +90,7 @@ referenced C `&&` semantics.
 A `WRDE_NOCMD` evaluation scans the complete parsed graph before any task,
 assignment, or adapter call. It rejects every recognized command node with the
 typed command-substitution error. Otherwise each selected opaque body reaches
-the command adapter exactly once.
+the selected process adapter exactly once.
 
 For a selected unset or null `${parameter:?WORD}`, the engine expands the
 present `WORD` on its existing heap task stack before reporting
@@ -93,8 +98,8 @@ present `WORD` on its existing heap task stack before reporting
 name and a synchronous borrowed message view while that temporary remains
 live. An omitted `WORD` reports `None`; an explicitly present word that
 expands empty reports `Some(empty)`. A nested failure propagates directly, so
-only the innermost selected assertion emits an event. The future C adapter
-chooses a real diagnostic sink only for `WRDE_SHOWERR`; its output behavior
+only the innermost selected assertion emits an event. The C binding chooses a
+real diagnostic sink only for `WRDE_SHOWERR`; its output behavior
 does not affect the typed error or result record.
 
 `ExpandedWord` carries ordered byte atoms. Each atom records split eligibility,
@@ -116,8 +121,8 @@ or copying each match through another private word allocation.
 
 ## Private interfaces
 
-These are `pub(super)` implementation boundaries for a later sibling C ABI
-adapter. They deliberately expose narrow read or write views instead of the
+These are `pub(super)` implementation boundaries for the selected x86 C ABI
+binding. They deliberately expose narrow read or write views instead of the
 engine's C-allocated vectors, syntax nodes, or atom flags.
 
 | Boundary | Input and output contract |
@@ -140,9 +145,9 @@ Nodes point into the call-local copied source. Valid nesting has no fixed
 private depth cap and no parser or evaluator path uses Rust call-stack
 recursion.
 
-The later command adapter will invoke `/bin/sh` through `owned_spawn` exactly
-once, with no preflight or shadow execution. It receives the byte-exact opaque
-body. For a backtick form, it may apply only the normative backslash removal
+The selected process adapter invokes `/bin/sh` through `owned_spawn` exactly
+once for each selected opaque command, with no preflight or shadow execution.
+It receives the byte-exact opaque body. For a backtick form, it may apply only the normative backslash removal
 selected by `CommandStyle::Backtick { double_quoted }` before that one child
 invocation; it must not reinterpret the result as shell source itself. It will
 receive current exported context values as `envp` overlays. Assignment-created
@@ -151,33 +156,53 @@ assignment commands, each followed by a newline before the byte-exact command
 body. They are never silently promoted into `envp`, and child assignments never
 mutate the parent context.
 
-The later pathname adapter uses `owned_pattern` and copies strings before
+The selected pathname adapter uses `owned_pattern` and copies strings before
 `globfree`; named tilde lookup uses `owned_passwd`; environment snapshotting
-uses `environment_runtime`. The candidate does not own process creation,
-cancellation suppression, pipe/wait cleanup, `wordexp_t` append/reuse/NOSPACE
-record allocation or commit policy, or C status mapping. It gives that record
-owner the necessary partial-result boundary: accepted fields remain available
-after a later `NoSpace`, while the C wrapper can discard its staged prefix for
-any other typed failure and preserve a pre-existing `WRDE_APPEND` record.
+uses `environment_runtime`. The core does not own process creation,
+cancellation suppression, pipe/wait cleanup, or C status mapping. The sole
+`WordexpResultRecord` transaction owns `wordexp_t` append/reuse/NOSPACE record
+allocation and commit policy. It gives that record owner the necessary
+partial-result boundary: accepted fields remain available after a later
+`NoSpace`, while the C binding discards its staged prefix for any other typed
+failure and preserves a pre-existing `WRDE_APPEND` record.
 
 ## Deterministic policy choices
 
-| Topic | Candidate policy |
+| Topic | Selected implementation policy |
 | --- | --- |
-| Initial variables | The adapter supplies one call-local snapshot of valid shell identifiers, values, and export attributes. The core never reads ambient `environ`. A selected process adapter must also preserve raw non-identifier `envp` entries outside this identifier map. |
-| Locale mode | `WordexpLocaleMode::C` is the explicit default and also represents POSIX byte-locale behavior. `CUtf8` is a call-local mode, not a read of process-global locale state. A later adapter must snapshot the selected C or C.UTF-8 LC_CTYPE state into this mode. |
-| IFS | Unset means space/tab/newline; set-empty disables splitting; set versus unset shares the ordinary `IFS` variable record so `${IFS:=:}` affects later fields. Only unquoted parameter, command, and arithmetic atoms split. C mode preserves byte delimiters. C.UTF-8 mode scans IFS as UTF-8 character byte sequences and matches a complete sequence only inside one unquoted expansion origin. Direct adjacent expansions cannot synthesize an IFS character. Preserving inner WORD origins through nested `${...:-WORD}` and `${...:+WORD}` is the current narrow candidate interpretation, rather than a specifically adjudicated POSIX/Austin result. Invalid or incomplete UTF-8 in IFS advances as a one-byte delimiter; invalid or incomplete field bytes advance as ordinary one-byte data, so arbitrary input is retained. Only ASCII space, tab, and newline are classified as IFS white space; other Unicode IFS characters are deliberately nonwhite, an implementation-defined choice permitted by POSIX. |
+| Initial variables | The selected process adapter supplies one call-local snapshot of valid shell identifiers, values, and export attributes. The core never reads ambient `environ`; the process owner also preserves raw non-identifier `envp` entries outside this identifier map. |
+| Locale mode | `WordexpLocaleMode::C` is the explicit default and also represents POSIX byte-locale behavior. `CUtf8` is a call-local mode, not a read of process-global locale state. The selected process adapter snapshots the selected C or C.UTF-8 LC_CTYPE state into this mode. |
+| IFS | Unset means space/tab/newline; set-empty disables splitting; set versus unset shares the ordinary `IFS` variable record so `${IFS:=:}` affects later fields. Only unquoted parameter, command, and arithmetic atoms split. C mode preserves byte delimiters. C.UTF-8 mode scans IFS as UTF-8 character byte sequences and matches a complete sequence only inside one unquoted expansion origin. Direct adjacent expansions cannot synthesize an IFS character. Preserving inner WORD origins through nested `${...:-WORD}` and `${...:+WORD}` is the current narrow implementation interpretation, rather than a specifically adjudicated POSIX/Austin result. Invalid or incomplete UTF-8 in IFS advances as a one-byte delimiter; invalid or incomplete field bytes advance as ordinary one-byte data, so arbitrary input is retained. Only ASCII space, tab, and newline are classified as IFS white space; other Unicode IFS characters are deliberately nonwhite, an implementation-defined choice permitted by POSIX. |
 | Empty fields | IFS white-space and nonwhite delimiters follow the section 2.6.5 delimiter rules. A quoted zero-width atom can preserve an otherwise empty field at its original position; an unquoted unset or empty expansion vanishes even with empty IFS. |
 | Tilde | Bare `~` receives the current call-local `HOME`; named lookup is delegated. A set-empty `HOME` replaces bare `~` with one explicit empty field. Resolved home bytes are quote-protected from both field splitting and pathname expansion. |
 | Special parameters | `wordexp()` leaves their result unspecified. The context supplies finite values; tests use no host positional state. |
-| Parameter WORD | The source is parsed once and evaluated only when selected, under distinct parameter-word, assignment-value, or pattern-operand context. Unselected branches have no command, arithmetic, assignment, or diagnostic side effect. Assignment stores the quote-removed operand but emits the assigned result under the enclosing expansion's quote state. A selected `:?` follows parameter-word expansion, then returns its typed error while preserving omitted versus explicit-empty syntax for the diagnostic sink. The four `#`/`##`/`%`/`%%` operands ignore an enclosing double quote for pattern syntax while retaining quotes written inside the braces; this applies in arithmetic source too. A shared parameter-header scan chooses that delimiter rule before the matching `}`, so an ordinary outer-double-quoted operand retains literal single quotes and removes `\}` only where POSIX makes that brace escape special. |
+| Initial `#` | Top-level token-initial `#` is a literal byte, one of the two choices POSIX wordexp permits. Following quotes retain their ordinary meaning. Opaque command bodies still use shell comment grammar. |
+| Parameter WORD | The source is parsed once and evaluated only when selected, under distinct parameter-word, assignment-value, or pattern-operand context. An unquoted leading tilde in a selected word is a tilde-prefix and resolves through the same call-local `HOME` path as a root word; an unselected branch does not perform that lookup. Unselected branches have no command, arithmetic, assignment, or diagnostic side effect. Assignment stores the quote-removed operand but emits the assigned result under the enclosing expansion's quote state. A selected `:?` follows parameter-word expansion, then returns its typed error while preserving omitted versus explicit-empty syntax for the diagnostic sink. The four `#`/`##`/`%`/`%%` operands ignore an enclosing double quote for pattern syntax while retaining quotes written inside the braces; this applies in arithmetic source too. A shared parameter-header scan chooses that delimiter rule before the matching `}`, so an ordinary outer-double-quoted operand retains literal single quotes and removes `\}` only where POSIX makes that brace escape special. |
 | Parameter pattern result | The pathname adapter emits removal bytes through `ParameterPatternOutput`. An empty result disappears when its outer parameter expansion is unquoted and becomes one explicit empty field when that expansion is quoted; nonempty output retains normal outer splitting and quote rules. |
 | Parameter length | `${#name}` counts bytes in C mode. In C.UTF-8 mode it counts valid UTF-8 scalars; every malformed or incomplete leading byte counts as one character so the operation preserves forward progress on arbitrary stored bytes. |
 | Arithmetic | The envelope is recognized before evaluation. Direct parameter, command, and nested arithmetic expansion completes across the full selected envelope before arithmetic parsing; arithmetic AST branches and assignments then short-circuit. An unset bare arithmetic identifier is numeric zero; direct parameter expansion still observes `WRDE_UNDEF`. Octal and hexadecimal literals are accepted. The implementation supports plain and ten compound assignments (`*=`, `/=`, `%=`, `+=`, `-=`, `<<=`, `>>=`, `&=`, `^=`, `|=`). |
-| Arithmetic range | Arithmetic uses checked signed 64-bit values. Overflow and divide/modulo by zero are typed errors. Shift counts must be 0 through 63; left shift is checked signed scaling, allowing `0 << 63` and `-1 << 63` when exactly representable while rejecting lost high bits such as `1 << 63`. This is an explicit finite candidate policy where POSIX does not settle every overflow edge. |
+| Arithmetic range | Arithmetic uses checked signed 64-bit values. Overflow and divide/modulo by zero are typed errors. Shift counts must be 0 through 63; left shift is checked signed scaling, allowing `0 << 63` and `-1 << 63` when exactly representable while rejecting lost high bits such as `1 << 63`. This is an explicit finite implementation policy where POSIX does not settle every overflow edge. |
 | Dollar-single quotes | POSIX.1-2024 Issue 8 dollar-single-quoted literals are parsed and their defined byte escapes decoded. |
 | NUL | The private slice API rejects input NUL. A decoded dollar-single or adapter-output NUL is a typed unrepresentable-output error because C result words cannot carry interior NUL. |
-| Unspecified breadth | Where no candidate rule and evidence exist, preserve the selected musl adapter. There is no ambient-shell fallback and no status-to-`WRDE_UNDEF` heuristic. |
+| Unspecified breadth | Behavior outside this documented expansion profile returns its typed engine error, which the C binding maps to the documented public status. Musl remains a comparison oracle, not a fallback provider. There is no whole-input shell fallback, ambient-shell fallback, or status-to-`WRDE_UNDEF` heuristic. |
+
+For the POSIX `$((` ambiguity, arithmetic has lexical precedence. The scanner
+reclassifies only when an arithmetic frame reaches depth zero and sees a `)`
+that is not the first byte of its required `))` terminator in the joined
+lexical view. Both paired openings and paired closes recognize removable
+backslash-newline sequences at root and nested levels. A matched close
+advances past the actual second parenthesis. The raw command-body cursor
+remains immediately after the first opening parenthesis, including any joins
+before the second. The scanner then restarts
+that exact frame as the existing opaque `$(` command scanner from its original
+command-body start, without expansion or command execution. A nested frame is
+reclassified locally and leaves its enclosing arithmetic frame intact. EOF,
+quotes, nested scanner errors, and allocation failure retain their original
+typed failure. A balanced non-arithmetic spelling such as `$((printf x; :))`
+remains an arithmetic error. This finite lexical determination follows the
+heuristic allowance in [POSIX XRAT C.2.6.3](https://pubs.opengroup.org/onlinepubs/9799919799/xrat/V4_xcu_chap01.html).
+Arithmetic evaluation errors never trigger shell reinterpretation after
+substitutions have executed.
 
 ## Evidence and integration boundary
 
@@ -188,7 +213,7 @@ prefix/export visibility; source scanner progress and line joining; ordered
 empty-quote field splitting; quote and pattern preservation; current-HOME
 tilde handling; opaque-command delimiters; command exactly-once selection; and
 the three-phase arithmetic route, range policy, assignments, and `WRDE_NOCMD`
-precheck. It also proves that a raw backtick body reaches the later adapter with
+precheck. It also proves that a raw backtick body reaches the selected process adapter with
 its outer double-quote context intact, including parameter-word and arithmetic
 source paths. Locale tests cover default C byte behavior, C.UTF-8 parameter
 length, two/three/four-byte IFS delimiters, ASCII/nonwhite delimiter adjacency,
@@ -212,7 +237,7 @@ Result-boundary regressions prove that a sink retaining its first field sees
 that prefix after a later sink, command, or pathname `NoSpace`; a multi-match
 pathname stream retains its accepted prefix; NUL pathname output is rejected
 before a field reaches the sink; and a non-memory typed failure remains
-distinct for the later C record owner to discard. A shared-state command/path
+distinct for the sole C record transaction to discard. A shared-state command/path
 test proves an earlier `p*.txt` root is matched before a later command can
 create `p-new.txt`.
 
@@ -223,16 +248,36 @@ error ownership, and the complete-graph `WRDE_NOCMD` precheck. The diagnostic
 capture is typed and in-process; it neither launches a subprocess nor parses
 stderr or an exit status.
 
+Literal regressions retain repeated unrecognized dollar spellings inside one
+double-quoted word without replaying an earlier literal prefix. They also
+cover a selected `${X-~}` under `WRDE_NOCMD`, where an unset `X` resolves the
+call-local `HOME` and does not need a command adapter.
+
+Arithmetic-ambiguity regressions retain four valid `$(` subshell bodies whose
+source begins `$((`, including a `case` body and a here-document. Under
+`WRDE_NOCMD` each rejects before the command adapter runs; otherwise the
+adapter receives the byte-exact body, including its leading subshell `(`,
+once. They retain a whitespace-separated `$(` plus `(` control, a locally
+reclassified nested child, the XRAT incomplete-EOF counterexample, and the
+balanced arithmetic-error boundary.
+Joined-delimiter cases cover both paired openings and closes, repeated joins,
+quoted arithmetic, nested arithmetic, and a joined opener whose command
+interpretation reaches the adapter once with its original bytes.
+
 A retained independent pinned-shell corpus is useful as a comparison, not a
 selection gate. Its two observed rows that set `V=9` in a skipped `&&` or `||`
 operand are pinned BusyBox behavior that conflicts with the POSIX/C lazy
 expression rule above; the retained oracle bytes remain unmodified and the
-candidate follows the standard. The candidate has not qualified a C ABI
+implementation follows the standard. The retained private unit and adapter
+fixtures are component evidence only; they do not qualify an installed C ABI
 product, selected allocator, shell fixture, sysroot, POSIX family, or public
-x86 support.
+x86 support. Direct C/product validation is the separate current evidence
+boundary.
 
-Before selection, a separate change must bind these interfaces to
-`environment_runtime`, `owned_pattern`, `owned_passwd`, and `owned_spawn`;
-preserve raw `envp` entries, C cancellation, pipe/wait cleanup, and result
-record semantics; bind the selected LC_CTYPE snapshot to the context; and add
-direct C ABI plus musl/POSIX evidence for every claimed behavior.
+The selected binding composes these interfaces with `environment_runtime`,
+`owned_pattern`, `owned_passwd`, and `owned_spawn`; preserves raw `envp` entries,
+C cancellation, pipe/wait cleanup, and result-record semantics; and binds the
+selected LC_CTYPE snapshot to the context. Direct C ABI plus musl/POSIX
+validation remains required for every claimed installed behavior. The historical
+x86 `owned_wordexp_nocmd.rs` whole-input scanner is deleted; the AArch64
+implementation and its frozen evidence remain unchanged.

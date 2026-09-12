@@ -56,7 +56,7 @@ static int posix_quiet_case(void)
     diagnostics[1] = -1;
 
     errno = ERANGE;
-    result = wordexp("(", &words, 0);
+    result = wordexp("'unterminated", &words, 0);
     saved_errno = errno;
 
     if (dup2(saved_stderr, STDERR_FILENO) < 0) {
@@ -187,16 +187,38 @@ static int posix_nocmd_dollar_single_control_case(void)
         "$'a\\'b'; printf marker > /wordexp-nocmd-marker; echo 'x'");
 }
 
-/* A comment starts only at a shell token boundary. Its quote-looking bytes are
- * not shell quotes: the physical newline ends the comment and makes the
- * following line active shell input. A lexical preflight that consumes the
- * quote bytes first can hide this command from WRDE_NOCMD. */
+/* POSIX wordexp permits a token-initial # to remain an ordinary character.
+ * The owned evaluator selects that policy; the two quotes below therefore
+ * protect the intervening newlines and redirection bytes as literal data.
+ * Musl's whole-input shell protocol instead runs the intervening command.
+ * Preserve that exact source RED while proving both the owned literal words
+ * and the rejection of an actually unquoted newline. */
 static int posix_nocmd_comment_control_case(void)
 {
-    return posix_no_marker_badchar_case(
+    static const char *const literal[] = {
+        "#", "\nprintf marker > /wordexp-nocmd-marker\n# "
+    };
+    wordexp_t words = { 0 };
+    int result;
+
+    if (unlink(WORDEXP_NOCMD_MARKER) != 0 && errno != ENOENT)
+        return 1;
+    result = wordexp(
         "# \"\n"
         "printf marker > /wordexp-nocmd-marker\n"
-        "# \"");
+        "# \"", &words, WRDE_NOCMD);
+    if (access(WORDEXP_NOCMD_MARKER, F_OK) == 0) {
+        wordfree(&words);
+        return 4;
+    }
+    if (result != 0 || errno != ENOENT || !check_words(&words, 2, literal)) {
+        wordfree(&words);
+        return 2;
+    }
+    if (!check_freed(&words))
+        return 3;
+    return posix_no_marker_badchar_case(
+        "# \nprintf marker > /wordexp-nocmd-marker");
 }
 
 /* `${10}` and the length forms are valid parameter syntax. Their values depend
@@ -304,19 +326,22 @@ static int posix_nocmd_case(void)
     return 0;
 }
 
-/* This is intentionally a non-qualifying fixed-source observation. POSIX
- * WRDE_UNDEF remains unresolved for this batch; this mode records the fixed
- * musl behavior and is not used as a positive compatibility cell. */
+/* The same C object records musl's fixed WRDE_UNDEF defect and requires a
+ * typed BADVAL from the owned evaluator. The source observation stays
+ * explicit in the receipt; only the candidate BADVAL is a positive cell. */
 static int posix_undef_source_observation(void)
 {
     static const char *const no_words[] = { NULL };
     wordexp_t words = { 0 };
+    int result = wordexp("${WORDEXP_UNDEF_MISSING}", &words, WRDE_UNDEF);
 
-    if (wordexp("${WORDEXP_UNDEF_MISSING}", &words, WRDE_UNDEF) != 0)
+    if (result == WRDE_BADVAL)
+        return words.we_wordc == 0 && words.we_wordv == NULL ? 0 : 4;
+    if (result != 0)
         return 1;
     if (!check_words(&words, 0, no_words)) {
         wordfree(&words);
         return 2;
     }
-    return check_freed(&words) ? 0 : 3;
+    return check_freed(&words) ? 10 : 3;
 }

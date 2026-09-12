@@ -1155,30 +1155,35 @@ mod owned_filesystem_mechanisms;
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_vm_mechanisms.rs"]
 mod owned_vm_mechanisms;
-// Word expansion is a target-local adapter over the selected environment,
-// owned spawn transaction, allocation-backed streams, and C allocator. Keep
+// Word expansion owns parsing/evaluation and uses the selected environment,
+// pathname, spawn, and C result-allocation owners. Keep
 // it inside the aggregate so the frozen default archive remains export-free.
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_wordexp.rs"]
 mod owned_wordexp;
-// This is a private, unselected deterministic syntax/evaluation candidate.
-// The selected owned_wordexp C ABI provider remains above; integration is a
-// separate review after the core and adapters have focused evidence.
+// The C adapter and deterministic core share one result-record owner. The
+// private Rust boundaries are not additional exported C records or APIs.
 #[cfg(feature = "x86-owned-static-runtime")]
-#[allow(dead_code)] // The candidate stays intentionally unselected here.
+#[allow(dead_code)] // Includes deterministic core-test views.
 #[path = "owned_wordexp_engine.rs"]
 mod owned_wordexp_engine;
-// The sibling process/environment adapter is also private and unselected. It
-// is compiled only with the owned runtime so its typed boundary cannot drift
-// from the selected spawn, environment, locale, and allocator owners.
+// Only selected command substitutions reach this process/environment owner.
 #[cfg(feature = "x86-owned-static-runtime")]
 #[allow(dead_code)]
 #[path = "owned_wordexp_process.rs"]
 mod owned_wordexp_process;
 #[cfg(feature = "x86-owned-static-runtime")]
-#[allow(dead_code)] // The pathname adapter remains part of the unselected candidate.
+#[allow(dead_code)]
 #[path = "owned_wordexp_paths.rs"]
 mod owned_wordexp_paths;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[allow(dead_code)] // Includes standalone record-ownership test constructors.
+#[path = "owned_wordexp_results.rs"]
+mod owned_wordexp_results;
+// Allocation budgets exist only in a disposable private witness archive.
+#[cfg(all(feature = "x86-owned-static-runtime", crabc_owned_wordexp_result_private_test))]
+#[path = "owned_wordexp_result_failure.rs"]
+mod owned_wordexp_result_failure;
 // The installed owned-static composition additionally needs Lua's complete
 // binary32/binary64 inverse-trigonometry set. Keep it at this aggregate
 // boundary: the frozen default archive must not acquire any of these entries.

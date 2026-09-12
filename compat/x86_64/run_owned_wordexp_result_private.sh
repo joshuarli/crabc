@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Private native witness for the wordexp pathname adapter.
-# Run inside the pinned Linux/x86-64 image. The cfg-only bridge belongs to a
+# Private native witness for wordexp result-allocation failure boundaries.
+# Run inside the pinned Linux/x86-64 image. The cfg-only allocator selector belongs to a
 # disposable archive linked directly with the owned CRT and builtins. The
-# sealed sysroot remains intact; this is separate from installed C ABI evidence.
+# sealed sysroot remains intact; this witness does not replace installed-product evidence.
 set -euo pipefail
 
 readonly ROOT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -15,16 +15,16 @@ if [ -z "${TMPDIR:-}" ] || [[ "$TMPDIR" != "$ROOT_DIR/.work/x86_64/"* ]]; then
     exit 2
 fi
 
-readonly work="$(mktemp -d "$TMPDIR/owned-wordexp-paths-private.XXXXXX")"
+readonly work="$(mktemp -d "$TMPDIR/owned-wordexp-result-private.XXXXXX")"
 printf 'private evidence: %s\n' "$work"
 
 python3 -B "$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py" \
     --output "$work/static-product" >"$work/static-build.json"
 nm -g --defined-only "$work/static-product/usr/lib/libc.a" \
     >"$work/normal-archive.symbols" 2>"$work/normal-archive.stderr"
-if awk '$NF == "__crabc_test_wordexp_paths" { found = 1 } END { exit(found ? 0 : 1) }' \
+if awk '$NF ~ /^__crabc_test_wordexp_result_(budget|unlimited)$/ { found = 1 } END { exit(found ? 0 : 1) }' \
         "$work/normal-archive.symbols"; then
-    printf 'ERROR: normal runtime archive contains the private pathname bridge\n' >&2
+    printf 'ERROR: normal runtime archive contains a private result-allocation control\n' >&2
     exit 1
 fi
 
@@ -61,31 +61,33 @@ subprocess.run([
     "--target-dir", str(work / "cargo"), "--",
     "--cfg", "crabc_owned_static_sysroot",
     "--cfg", builder.MIMALLOC_LIFECYCLE_RUST_CFG,
-    "--cfg", "crabc_owned_wordexp_paths_private_test",
-    "--check-cfg", "cfg(crabc_owned_wordexp_paths_private_test)",
+    "--cfg", "crabc_owned_wordexp_result_private_test",
+    "--check-cfg", "cfg(crabc_owned_wordexp_result_private_test)",
     "-C", "relocation-model=pic", "-C", "code-model=small", "-C", "panic=abort",
     "-Ztls-model=initial-exec", "--remap-path-prefix", f"{root}=/crabc",
 ], cwd=root, env=environment, stdin=subprocess.DEVNULL, check=True)
 PY
 
 /usr/bin/gcc -nostdinc -isystem "$work/static-product/usr/include" \
-    -ffreestanding -fno-builtin -fno-stack-protector -fno-pie -std=c11 -c \
-    "$ROOT_DIR/compat/x86_64/owned_wordexp_paths_private_probe.c" \
-    -o "$work/owned-wordexp-paths-private.o" \
+    -ffreestanding -fno-builtin -fno-stack-protector -fno-pie -std=c11 \
+    -DCRABC_WORDEXP_ENGINE_PROBE_MAIN -DCRABC_WORDEXP_RESULT_PRIVATE_TEST -c \
+    "$ROOT_DIR/compat/x86_64/owned_wordexp_engine_probe.c" \
+    -o "$work/owned-wordexp-result-private.o" \
     >"$work/consumer-build.stdout" 2>"$work/consumer-build.stderr"
 "$LLD" -static --no-dynamic-linker --no-undefined --gc-sections \
     -z relro -z now -e _start \
     "$work/static-product/usr/lib/crt1.o" \
     "$work/static-product/usr/lib/crti.o" \
-    "$work/owned-wordexp-paths-private.o" \
+    "$work/owned-wordexp-result-private.o" \
     "$work/cargo/$TARGET/release/libc.a" \
     "$work/static-product/usr/lib/libcrabc-builtins.a" \
     "$work/static-product/usr/lib/crtn.o" \
-    -o "$work/owned-wordexp-paths-private" \
+    -o "$work/owned-wordexp-result-private" \
     >"$work/consumer-link.stdout" 2>"$work/consumer-link.stderr"
 
 mkdir "$work/fixture"
-if TMPDIR="$work/fixture" timeout 30 "$work/owned-wordexp-paths-private" \
+chmod 0700 "$work/fixture"
+if TMPDIR="$work/fixture" timeout 30 "$work/owned-wordexp-result-private" --engine-result-failure \
     >"$work/consumer.stdout" 2>"$work/consumer.stderr"; then
     printf '0\n' >"$work/consumer.status"
     cat "$work/consumer.stdout"

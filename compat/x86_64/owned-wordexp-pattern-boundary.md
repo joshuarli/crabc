@@ -1,9 +1,9 @@
 # Private quote-aware wordexp pattern boundary
 
-`libc/src/c_abi/x86_64/owned_pattern.rs` contains a private, unselected
-boundary for the later x86 wordexp pathname and parameter-removal adapter. It
-does not add a C symbol, C flag, header declaration, provider selection, or
-wordexp implementation selection. The installed `fnmatch`, `glob`, and
+`libc/src/c_abi/x86_64/owned_pattern.rs` contains the private quote-aware
+boundary selected by the x86 wordexp pathname adapter for pathname and
+parameter-removal operations. It does not add a C symbol, C flag, header
+declaration, or public provider surface. The installed `fnmatch`, `glob`, and
 `globfree` paths remain the existing C ABI slice described in
 [owned-pattern.md](owned-pattern.md).
 
@@ -28,7 +28,7 @@ freeing interior pointers.
 
 POSIX Issue 8 Shell Command Language sections
 [2.14.1](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html#tag_19_14_01)
-and 2.14.3 order pathname expansion before final quote removal. This candidate
+and 2.14.3 order pathname expansion before final quote removal. This implementation
 normalizes quote syntax early into bytes plus protection metadata, retaining
 the effect that the final shell stage would otherwise apply. Backslash
 serialization cannot preserve that distinction: serializing source
@@ -91,6 +91,7 @@ inspected to prove those symbols are absent.
 Run `compat/x86_64/run_owned_pattern_private.sh` only in the pinned native
 `crabc-core-evidence:x86_64` environment. It retains its disposable evidence
 leaf under `.work/x86_64/` on success and failure. It is a private-owner
-regression, not a wordexp, provider, POSIX-family, or native-x86 qualification.
-Run `./scripts/dev-x86_64.sh owned-pattern` separately for the unchanged public
-C-mode control.
+regression, not installed C ABI/public-promotion, POSIX-family, or native-x86
+qualification. The selected pathname adapter uses this boundary; direct
+C/product validation remains separate. Run `./scripts/dev-x86_64.sh
+owned-pattern` separately for the unchanged public C-mode control.

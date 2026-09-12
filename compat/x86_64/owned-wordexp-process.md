@@ -1,19 +1,19 @@
 # Private x86 wordexp process adapter
 
-`libc/src/c_abi/x86_64/owned_wordexp_process.rs` is a private, unselected
-Linux/x86-64 adapter between the deterministic word-expansion candidate in
-`owned_wordexp_engine.rs` and the already selected environment, locale, spawn,
-raw-syscall, and C-allocation leaves. It is compiled only with
-`x86-owned-static-runtime` through the private module entry in
-`static_c_abi.rs`. It exports no C ABI name, does not select or change
-`owned_wordexp.rs`, and does not establish wordexp product or public-platform
-support.
+`libc/src/c_abi/x86_64/owned_wordexp_process.rs` is the private Linux/x86-64
+process adapter selected by the deterministic word-expansion core and its C
+binding in `owned_wordexp.rs`. It binds the core to the selected environment,
+locale, spawn, raw-syscall, and C-allocation leaves. It is compiled with
+`x86-owned-static-runtime` through the module entry in `static_c_abi.rs` and
+exports no C ABI name. Its private API and fixtures do not establish installed
+wordexp product or public-platform support.
 
 The engine is the owner of outer expansion syntax, typed undefined-variable
 and `WRDE_NOCMD` decisions, IFS field splitting, arithmetic, and the safely
 quoted local-assignment prefix. This adapter owns only a call-local environment
 snapshot and one opaque command body's child transaction. The complementary
-pathname adapter and any selected C ABI binding remain separate work.
+pathname adapter and sole `WordexpResultRecord` transaction are separate private
+owners composed by the selected C binding.
 
 ## Snapshot boundary
 
@@ -63,9 +63,8 @@ safe.
 
 `WordexpProcessAdapter` borrows one immutable snapshot. Its caller must have
 disabled deferred cancellation until the adapter has closed its pipe and
-observed or reaped the child. The selected public `wordexp` wrapper already
-has a whole-call cancellation boundary; a future private binding must retain
-that precondition.
+observed or reaped the child. The selected public `wordexp` wrapper establishes
+that whole-call cancellation boundary and retains this precondition.
 
 For each engine-selected command body the adapter:
 
@@ -77,7 +76,7 @@ For each engine-selected command body the adapter:
    stdout bytes through `CommandOutput`, closes the read end, then reaps the
    child.
 
-`WRDE_SHOWERR` has already been decided by the later C ABI binding. When it is
+`WRDE_SHOWERR` has already been decided by the selected C ABI binding. When it is
 false the script begins `exec 2>/dev/null;`; when true it has no diagnostic
 redirection. A shell starts with its inherited `IFS` reset on this platform's
 POSIX shell contract, so an exported current IFS is restored as a safely
@@ -117,7 +116,7 @@ the caller's errno for that completed-output case. This follows POSIX
 [`wait`](https://pubs.opengroup.org/onlinepubs/9799919799/functions/wait.html)'s
 `ECHILD` rule. Every other partial path closes each owned descriptor once.
 
-## Focused evidence and remaining work
+## Focused evidence boundary
 
 Run the fake selected-leaf boundary suite through the pinned native dispatcher:
 
@@ -141,9 +140,10 @@ stdout EOF followed by `SIGCHLD=SIG_IGN` yields `ECHILD`. Its runner keeps the
 test binary under `.work/x86_64/wordexp-process-adapter/`.
 
 The existing `./scripts/dev-x86_64.sh libc-owned-wordexp` static feature gate
-also compiles this private module in the real selected x86 owned-runtime graph.
-That gate still runs the selected `owned_wordexp.rs` provider, so its relevant
-result here is compilation only; it is not process-adapter execution evidence.
+also composes this selected process module in the real x86 owned-runtime graph.
+Its product-level scope and current direct C validation are reported by
+`owned-wordexp.md`; the focused private fixture below remains process-owner
+evidence and does not promote this private API into an installed/public ABI.
 
 Run the separate actual-owner fixture through the same dispatcher:
 
@@ -175,7 +175,9 @@ shell leader which ignores SIGPIPE. It also runs an ordinary no-command
 expression in an empty static chroot with no `/bin/sh`, proving only a selected
 command requires the shell.
 
-This is a private actual-process proof, not an installed C ABI probe, selected
-`wordexp` replacement, pathname composition, product qualification, or full
-wordexp closure. A later binding still must compose the pathname adapter and
-selected C ABI ownership rules.
+This is a private actual-process proof of the selected process owner, not an
+installed C ABI probe, product qualification, or full wordexp closure. The
+selected binding composes the pathname adapter and sole C result transaction;
+direct C/product validation remains the evidence boundary for installed ABI
+claims. The private fixture's earlier measured results remain provenance for
+these owner invariants and are not installed-product PASS results.

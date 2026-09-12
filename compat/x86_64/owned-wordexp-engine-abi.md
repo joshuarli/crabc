@@ -1,13 +1,12 @@
-# Private x86 wordexp engine C ABI regressions
+# X86 wordexp engine C ABI regressions
 
 `compat/x86_64/owned_wordexp_engine_probe.c` is a direct C-ABI regression
-fixture for the private Linux/x86-64 word-expansion candidate. It does not
-select a provider, add an installed declaration, or qualify x86 support. The
-selected `libc/src/c_abi/x86_64/owned_wordexp.rs` remains the product boundary
-until a parent adapter deliberately binds the engine, process/path adapters,
-and `owned_wordexp_results.rs` transaction owner.
+fixture for the selected Linux/x86-64 word-expansion provider. It adds no
+installed declaration and does not qualify x86 support. The selected
+`libc/src/c_abi/x86_64/owned_wordexp.rs` is the product boundary binding the
+engine, process/path adapters, and `owned_wordexp_results.rs` transaction owner.
 
-The source is either included by a later one-object product probe or built with
+The source is included by the one-object product probe or built with
 `CRABC_WORDEXP_ENGINE_PROBE_MAIN`, which supplies a standalone `main` taking
 one selector. Its helpers all begin with `wordexp_engine_`; its static
 assertions require little-endian Linux/x86-64 LP64 `wordexp_t`.
@@ -29,6 +28,7 @@ control; all other shapes are `FAIL`.
 
 | Selector | Direct C ABI invariant |
 | --- | --- |
+| `--engine-literals` | Unrecognized dollar spellings inside double quotes remain literal exactly once; a selected unquoted parameter default expands a leading tilde through the current HOME; removable line joins between paired opening or closing parentheses retain arithmetic. These cases agree with pinned musl. |
 | `--engine-undef` | Direct unset expansion with `WRDE_UNDEF` returns `WRDE_BADVAL`; set-empty succeeds as one empty word; skipped/default/assignment parameter branches have their typed lazy behavior. |
 | `--engine-append-rollback` | An offset-two append followed by undefined-variable and generic parameter errors retains vector address, count, offsets, leading nulls, sentinel, and original bytes. |
 | `--engine-reuse-offsets` | `WRDE_REUSE | WRDE_DOOFFS` retains three leading offsets through release and replacement. |
@@ -64,7 +64,7 @@ source observations.
 ## Private result allocation control
 
 `libc/src/c_abi/x86_64/owned_wordexp_result_failure.rs` has one private
-interface for a parent wrapper:
+interface for the selected C binding:
 
 ```rust
 pub(super) fn allocator() -> super::owned_wordexp_results::WordexpResultAllocator
@@ -95,7 +95,7 @@ finds a one-word `WRDE_NOSPACE` prefix of `one two $(...)` and requires its
 marker absent; a complete success must create one marker byte. Thus failure
 before the second word prevents later command execution.
 
-The parent-owned `wordexp-result-private` runner proves normal-symbol
+The `wordexp-result-private` runner proves normal-symbol
 absence, then links a separate cfg-only archive with this standalone fixture
 and runs that selector under an absolute mode-0700 `TMPDIR`. It is private
 component evidence, not installed-product qualification.
@@ -110,6 +110,6 @@ restored before return.
 
 Pinned native C compilation of both normal and private selector surfaces writes
 only under `.work/x86_64/`. The ordinary pinned-musl run above is a source
-control. Neither that compile nor this component's hook harness selects or
-executes the candidate; final execution and receipt integration belong to the
-parent binding.
+control. Neither compilation nor this component's isolated hook harness
+establishes candidate execution. The installed-product receipt and private
+allocation runner separately validate their declared runtime boundaries.

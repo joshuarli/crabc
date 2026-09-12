@@ -1,11 +1,10 @@
 //! Private Linux/x86-64 environment and command-process adapter for the
-//! unselected deterministic `wordexp` candidate.
+//! owned deterministic `wordexp` evaluator.
 //!
-//! This binds only the candidate core's narrow `WordexpContext` and
-//! `WordexpCommandAdapter` seams.  It deliberately does not select the C ABI
-//! provider in `owned_wordexp.rs`, create a second process implementation, or
-//! decide the public `wordexp_t` status/ownership contract.  Its durable
-//! boundary and remaining integration work are recorded in
+//! This binds the core's narrow `WordexpContext` and `WordexpCommandAdapter`
+//! seams to existing runtime owners. `owned_wordexp.rs` selects this adapter
+//! and decides the public `wordexp_t` status/ownership contract. Its durable
+//! boundary is recorded in
 //! `compat/x86_64/owned-wordexp-process.md`.
 //!
 //! The environment snapshot is taken under the ordinary C caller obligation
@@ -21,7 +20,7 @@
 //! its caller must have disabled deferred cancellation until the adapter has
 //! closed its output descriptor and reaped or observed its child.  The
 //! selected `wordexp` C ABI wrapper already establishes that complete-call
-//! cancellation boundary; a later candidate binding must retain it.
+//! cancellation boundary.
 
 #[cfg(not(all(
     target_os = "linux",
@@ -96,7 +95,7 @@ fn grown_c_allocation<T>(
 ///
 /// It deliberately has no inline capacity so every retained environment byte
 /// and process-script byte has the same selected C allocation owner as the
-/// core candidate.
+/// expansion core.
 struct CBuffer {
     pointer: *mut u8,
     length: usize,
@@ -317,7 +316,7 @@ impl WordexpEnvironmentSnapshot {
 
     /// Borrow this immutable snapshot for one command-substitution adapter.
     /// `show_errors` is the selected C API's WRDE_SHOWERR decision already
-    /// made by a later binding; this private adapter does not inspect C flags.
+    /// made by the C binding; this private adapter does not inspect C flags.
     pub(super) fn process_adapter(&self, show_errors: bool) -> WordexpProcessAdapter<'_> {
         WordexpProcessAdapter { environment: self, show_errors }
     }

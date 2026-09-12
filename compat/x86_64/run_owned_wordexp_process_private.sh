@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Actual native process proof for the unselected x86 wordexp-process adapter.
+# Actual native process proof for the private x86 wordexp-process adapter.
 #
 # The normal sealed static sysroot remains untouched. This runner builds it as
 # the source of project headers, CRT, and bounded helpers, then builds a

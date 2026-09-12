@@ -10,7 +10,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[3]
 MODULE = ROOT / "libc/src/c_abi/x86_64/owned_wordexp.rs"
 SPAWN = ROOT / "libc/src/c_abi/x86_64/owned_spawn.rs"
-SCANNER = ROOT / "libc/src/c_abi/x86_64/owned_wordexp_nocmd.rs"
+ENGINE = ROOT / "libc/src/c_abi/x86_64/owned_wordexp_engine.rs"
+PROCESS = ROOT / "libc/src/c_abi/x86_64/owned_wordexp_process.rs"
+RESULTS = ROOT / "libc/src/c_abi/x86_64/owned_wordexp_results.rs"
 PROBE = ROOT / "compat/x86_64/owned_wordexp_probe.c"
 POSIX_PROBE = ROOT / "compat/x86_64/owned_wordexp_posix_probe.c"
 RUNNER = ROOT / "compat/x86_64/run_libc_owned_wordexp.sh"
@@ -55,54 +57,37 @@ class OwnedWordexpContracts(unittest.TestCase):
             "posix_nocmd_comment_control_case", "# \\\"\\n",
             "posix_nocmd_positional_case", "${10}", "${#1}", "${#10}",
             "portable wordexp transcript",
-            "posix_undef_source_observation", "non-qualifying fixed-source observation",
+            "posix_undef_source_observation", "WRDE_BADVAL",
         ):
             self.assertIn(boundary, source)
 
-    def test_module_uses_existing_spawn_and_stdio_ownership_seams(self) -> None:
+    def test_selected_adapter_has_one_record_owner_and_explicit_typed_boundaries(self) -> None:
         source = MODULE.read_text(encoding="utf-8")
-        scanner = SCANNER.read_text(encoding="utf-8")
-        self.assertIn("pinned musl 1.2.6", source)
-        self.assertIn("owned_spawn::spawn", source)
-        self.assertIn("stdio_standard::fdopen", source)
-        self.assertIn("stdio_standard::getdelim", source)
-        self.assertIn("stdio_standard::fclose", source)
-        self.assertIn('include!("owned_wordexp_nocmd.rs")', source)
-        self.assertNotIn('include!("../../wordexp_nocmd.rs")', source)
-        self.assertNotIn("sys_fork", source)
-        self.assertNotIn("sys_execve", source)
-        self.assertIn("WORDEXP_QUIET_SCRIPT", source)
-        self.assertIn("exec 2>/dev/null;", source)
-        self.assertIn("show_errors", source)
-        self.assertIn("018c97c999cb60966a0376b71f2c8c187179ef31cf5ddde47b959e8f440e08f8", source)
-        self.assertIn("wordexp_nocmd_check", scanner)
-        self.assertIn("NocmdFrames", scanner)
-        self.assertIn("FRAME_PARAMETER", scanner)
-        self.assertIn("FRAME_ARITHMETIC", scanner)
-        self.assertIn("PARAM_PATTERN", scanner)
-        self.assertIn("QUOTE_DOLLAR_SINGLE", scanner)
-        self.assertIn("shell_word_start", scanner)
-        self.assertIn("comment_has_physical_newline", scanner)
-        self.assertIn("NAME_POSITIONAL", scanner)
-        self.assertIn("positional_parameter", scanner)
-        self.assertIn("logical_next", scanner)
-        self.assertIn("skip_line_continuations", scanner)
-        self.assertIn("byte == b'{' && frame.parameter_phase == PARAM_WORD", scanner)
-        self.assertIn("cabi_realloc", scanner)
-        self.assertIn("WRDE_NOSPACE", scanner)
-        self.assertIn("next == b'{'", scanner)
-        self.assertNotIn("escaped_braces", scanner)
-        self.assertNotIn("parameter_braces", scanner)
-        self.assertNotIn("../../wordexp_nocmd.rs", scanner)
-        self.assertIn("if result == WRDE_NOSPACE", source)
+        engine = ENGINE.read_text(encoding="utf-8")
+        results = RESULTS.read_text(encoding="utf-8")
+        self.assertIn("WordexpResultRecord as Wordexp", source)
+        self.assertNotIn("struct Wordexp {", source)
+        self.assertIn("struct WordexpResultRecord", results)
+        for boundary in ("WordexpSyntax::parse", "syntax.has_commands()", "evaluate_wordexp_into",
+                         "WordexpResultTransaction::begin", "commit_completed", "WordexpError::NoSpace",
+                         "WordexpError::UndefinedVariable => WRDE_BADVAL",
+                         "WordexpEnvironmentSnapshot::capture", "NativeWordexpPaths::new"):
+            self.assertIn(boundary, source)
+        self.assertIn("trait WordexpResultSink", engine)
+        self.assertIn("trait WordexpDiagnosticSink", engine)
+        self.assertNotIn("include!(", source)
+        self.assertNotIn("getdelim", source)
+        self.assertNotIn("WORDEXP_QUIET_SCRIPT", source)
 
-    def test_child_spawn_failure_preserves_the_missing_sentinel_result(self) -> None:
+    def test_only_process_adapter_owns_spawn_and_child_failure_translation(self) -> None:
         module = MODULE.read_text(encoding="utf-8")
+        process = PROCESS.read_text(encoding="utf-8")
         spawn = SPAWN.read_text(encoding="utf-8")
-        self.assertIn("spawn_with_outcome", module)
-        self.assertIn("SpawnOutcome::ChildFailure", module)
-        self.assertIn("return WRDE_SYNTAX", module)
-        self.assertIn("errno_before_spawn", module)
+        self.assertNotIn("owned_spawn", module)
+        self.assertIn("spawn_with_outcome", process)
+        self.assertIn("SpawnOutcome::ChildFailure", process)
+        self.assertIn("errno_before_spawn", process)
+        self.assertIn("WordexpError::Syntax", process)
         self.assertIn("pub(super) enum SpawnOutcome", spawn)
         self.assertIn("ParentFailure", spawn)
         self.assertIn("ChildFailure", spawn)
@@ -120,12 +105,11 @@ class OwnedWordexpContracts(unittest.TestCase):
             "make_private_shell_root", "missing inaccessible invalid",
             "audit_linker_trace", "runtime allowlist or exact application-object receipt drifted",
             "chroot_command", "controlled-shell.sha256", "run_same_object_wordexp_cases",
-            "same-object-wordexp", "workload.sha256", "--nocmd-source", "--posix-quiet",
-            "--posix-nocmd", "--undef-source-observation", "SOURCE-RED",
+            "same-object-wordexp", "workload.sha256", "WORD_EXP_CASES", "_case_spec",
+            "compare_wordexp_streams", "_assert_case_results", "selectors.tsv",
             "POSIX_PROBE", "FOO=field X=left Y=right", ".status",
             "SET=1", "mknod", "character device 1:3 mode 666",
-            "--posix-nocmd-escaped-control", "--posix-nocmd-dollar-single-control",
-            "--posix-nocmd-comment-control", "--posix-nocmd-positional",
+            "TMPDIR=/wordexp-tmp", "source/candidate policies",
             "local audit_root=\"$(dirname \"$candidate\")\"",
         ):
             self.assertIn(boundary, source)
@@ -135,7 +119,7 @@ class OwnedWordexpContracts(unittest.TestCase):
     def test_retained_six_mode_evidence_keeps_source_reds_separate_from_positive_cells(self) -> None:
         source = EVIDENCE.read_text(encoding="utf-8")
         for boundary in (
-            'crabc.x86_64-owned-wordexp-products/v3', "POSIX_PROBE",
+            'crabc.x86_64-owned-wordexp-products/v4', "POSIX_PROBE",
             "WORD_EXP_CASES", "CELL_ENVIRONMENT", "posix-quiet-source-red",
             "posix-nocmd-source-red", "posix-nocmd-arithmetic-source-red",
             "posix-nocmd-continuation-source-red", "posix-nocmd-dollar-single-source-red",
@@ -144,7 +128,7 @@ class OwnedWordexpContracts(unittest.TestCase):
             "_assert_case_results", "required=False", "SOURCE-RED diagnostic-present",
             "SOURCE-RED parameter-brace-rejected", "SOURCE-RED positional-parameter-rejected",
             "MODULE = \"libc/src/c_abi/x86_64/owned_wordexp.rs\"",
-            "NOCMD_SCANNER = \"libc/src/c_abi/x86_64/owned_wordexp_nocmd.rs\"",
+            "ENGINE = \"libc/src/c_abi/x86_64/owned_wordexp_engine.rs\"",
             "installed header trace omitted the POSIX correction cells",
         ):
             self.assertIn(boundary, source)

@@ -1,7 +1,7 @@
 //! Test-only result-allocation failure injection for the private x86 wordexp
 //! result owner.
 //!
-//! This module is compiled only when the eventual C adapter opts into
+//! This module is compiled only when the C adapter opts into
 //! `crabc_owned_wordexp_result_private_test`.  It is deliberately an allocator
 //! *handle* for `owned_wordexp_results`, rather than an interposition of the
 //! libc `malloc`, `realloc`, or `free` symbols.  Rust test machinery, parser

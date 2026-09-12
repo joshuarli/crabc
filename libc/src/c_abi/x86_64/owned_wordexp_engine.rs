@@ -1,8 +1,7 @@
-//! Private deterministic core for a possible x86 wordexp replacement.
+//! Private deterministic core for the owned x86 wordexp C adapter.
 //!
-//! The selected owned_wordexp provider still owns the C ABI and its musl shell
-//! protocol. This module has no exported symbol and is intentionally not
-//! called by that provider. Its contract is in
+//! The selected owned_wordexp provider owns the C status and result-record
+//! transaction. This core has no exported C symbol. Its contract is in
 //! compat/x86_64/owned-wordexp-engine.md.
 //!
 //! The core recognizes shell-word expressions, keeps command substitutions as
@@ -456,6 +455,83 @@ fn skip_lexical_line_continuations(
     index
 }
 
+/// The two opening parentheses in an arithmetic expansion are recognized in
+/// the local shell lexical view. `command_body_start` deliberately remains a
+/// raw source cursor immediately after the first `(`: if this arithmetic
+/// reading later becomes an opaque `$(` command substitution, that adapter
+/// must receive any physical line joins before the second `(` unchanged.
+#[derive(Clone, Copy)]
+struct ArithmeticOpening {
+    arithmetic_body_start: usize,
+    command_body_start: usize,
+}
+
+fn arithmetic_opening(
+    syntax: &WordexpSyntax,
+    first_open: usize,
+    end: usize,
+) -> Option<ArithmeticOpening> {
+    let second_open = skip_lexical_line_continuations(
+        syntax, first_open + 1, end,
+    );
+    if second_open >= end ||
+        // SAFETY: the preceding bound check covers the logical second open.
+        unsafe { syntax.byte(second_open) } != b'('
+    {
+        return None;
+    }
+    Some(ArithmeticOpening {
+        arithmetic_body_start: second_open + 1,
+        command_body_start: first_open + 1,
+    })
+}
+
+#[derive(Clone, Copy)]
+struct DollarScanConstruct {
+    kind: u8,
+    body_start: usize,
+    arithmetic_command_body_start: usize,
+}
+
+/// Recognize the nested `${`, `$(`, or `$((` introducer through the same
+/// local line-join view as the root parser. The returned body cursors remain
+/// raw source positions; only lexical recognition skips the joined bytes.
+fn nested_dollar_construct(
+    syntax: &WordexpSyntax,
+    dollar: usize,
+) -> Option<DollarScanConstruct> {
+    let after_dollar = skip_lexical_line_continuations(
+        syntax, dollar + 1, syntax.source_len(),
+    );
+    if after_dollar >= syntax.source_len() {
+        return None;
+    }
+    // SAFETY: the preceding bound check covers the joined introducer byte.
+    let next = unsafe { syntax.byte(after_dollar) };
+    if next == b'{' {
+        return Some(DollarScanConstruct {
+            kind: SCAN_PARAMETER,
+            body_start: after_dollar + 1,
+            arithmetic_command_body_start: NONE,
+        });
+    }
+    if next != b'(' { return None; }
+    if let Some(opening) = arithmetic_opening(
+        syntax, after_dollar, syntax.source_len(),
+    ) {
+        return Some(DollarScanConstruct {
+            kind: SCAN_ARITHMETIC,
+            body_start: opening.arithmetic_body_start,
+            arithmetic_command_body_start: opening.command_body_start,
+        });
+    }
+    Some(DollarScanConstruct {
+        kind: SCAN_COMMAND,
+        body_start: after_dollar + 1,
+        arithmetic_command_body_start: NONE,
+    })
+}
+
 struct SyntaxParser<'a> {
     syntax: &'a mut WordexpSyntax,
     pending_words: HeapVec<PendingWord>,
@@ -534,6 +610,9 @@ impl SyntaxParser<'_> {
         unsafe { self.syntax.words.replace(word, record); }
     }
 
+    /// POSIX wordexp permits a token-initial `#` to remain an ordinary byte.
+    /// This root grammar selects that policy; only opaque command bodies use
+    /// shell comment recognition. A following quote still quotes normally.
     fn parse_roots(&mut self) -> Result<(), WordexpError> {
         let mut index = 0usize;
         while index < self.syntax.source_len() {
@@ -640,7 +719,12 @@ impl SyntaxParser<'_> {
                 at_start = false;
                 continue;
             }
-            if byte == b'~' && at_start && inherited_flags == 0 {
+            // POSIX subjects a selected parameter operator WORD to tilde
+            // expansion too. Its sole private provenance flag does not quote
+            // the leading tilde; any real quote provenance still does.
+            if byte == b'~' && at_start &&
+                inherited_flags & !NODE_PARAMETER_WORD == 0
+            {
                 let mut end = index + 1;
                 while end < range.end {
                     // SAFETY: range bound guards this read.
@@ -854,6 +938,12 @@ impl SyntaxParser<'_> {
                         literal_start = index;
                         continue;
                     }
+                    // The literal prefix has already been emitted. Keep this
+                    // unrecognized dollar in the next literal run so another
+                    // dollar cannot emit the same source prefix again.
+                    literal_start = index;
+                    index += 1;
+                    continue;
                 } else {
                     let (body, after, contains_command) =
                         scan_construct(self.syntax, SCAN_BACKTICK, index + 1, false)?;
@@ -908,21 +998,50 @@ impl SyntaxParser<'_> {
             return Ok(after);
         }
         if next == b'(' {
-            if after_dollar + 1 < end && unsafe { self.byte(after_dollar + 1) } == b'(' {
-                let (body, after, contains_command) =
-                    scan_construct(self.syntax, SCAN_ARITHMETIC, after_dollar + 2, false)?;
-                if after > end { return Err(WordexpError::Syntax); }
-                self.syntax.contains_command |= contains_command;
+            if let Some(opening) = arithmetic_opening(self.syntax, after_dollar, end) {
+                let scanned = scan_construct_detail(
+                    self.syntax,
+                    SCAN_ARITHMETIC,
+                    opening.arithmetic_body_start,
+                    opening.command_body_start,
+                    false,
+                )?;
+                if scanned.after > end { return Err(WordexpError::Syntax); }
+                self.syntax.contains_command |= scanned.contains_command;
+                if scanned.kind == SCAN_COMMAND {
+                    // A definite outer non-paired arithmetic close chose the
+                    // `$(` interpretation. Its raw span begins immediately
+                    // after the first `(`, retaining any physical line joins
+                    // before the delegated subshell opener.
+                    let command = self.syntax.commands.len();
+                    self.syntax.commands.push(Command {
+                        body: scanned.body,
+                        style: CommandStyle::DollarParen,
+                    })?;
+                    self.append_node(word, SyntaxNode {
+                        kind: NODE_COMMAND,
+                        flags,
+                        span: scanned.body,
+                        payload: command,
+                        next: NONE,
+                    })?;
+                    return Ok(scanned.after);
+                }
+                if scanned.kind != SCAN_ARITHMETIC { return Err(WordexpError::Syntax); }
                 let arithmetic = self.syntax.arithmetic.len();
                 self.syntax.arithmetic.push(Arithmetic { word: NONE })?;
                 self.pending_arithmetic.push(PendingArithmetic {
                     arithmetic,
-                    source: body,
+                    source: scanned.body,
                 })?;
                 self.append_node(word, SyntaxNode {
-                    kind: NODE_ARITHMETIC, flags, span: body, payload: arithmetic, next: NONE,
+                    kind: NODE_ARITHMETIC,
+                    flags,
+                    span: scanned.body,
+                    payload: arithmetic,
+                    next: NONE,
                 })?;
-                return Ok(after);
+                return Ok(scanned.after);
             }
             let (body, after, contains_command) =
                 scan_construct(self.syntax, SCAN_COMMAND, after_dollar + 1, false)?;
@@ -1228,6 +1347,11 @@ struct ScanFrame {
     // operand, but not through a `#`/`%` pattern operand.
     parameter_outer_double: bool,
     arithmetic_depth: usize,
+    // For `$((`, this is the raw source cursor immediately after the first
+    // opening parenthesis. A later definite delimiter can therefore restart
+    // the frame as `$(` without discarding a physical line join before the
+    // second opening parenthesis. Other frame kinds use NONE.
+    arithmetic_command_body_start: usize,
     scope_start: usize,
     token_start: usize,
     word_start: bool,
@@ -1238,6 +1362,7 @@ struct ScanFrame {
 impl ScanFrame {
     const fn new(
         kind: u8,
+        arithmetic_command_body_start: usize,
         heredoc_start: usize,
         scope_start: usize,
         parameter_outer_double: bool,
@@ -1247,6 +1372,7 @@ impl ScanFrame {
             quote: QUOTE_NONE,
             parameter_outer_double,
             arithmetic_depth: 0,
+            arithmetic_command_body_start,
             scope_start,
             token_start: NONE,
             word_start: true,
@@ -2008,6 +2134,7 @@ fn push_scan_frame(
     frames: &mut HeapVec<ScanFrame>,
     scopes: &mut HeapVec<CommandScope>,
     kind: u8,
+    arithmetic_command_body_start: usize,
     heredoc_start: usize,
     parameter_outer_double: bool,
 ) -> Result<(), WordexpError> {
@@ -2019,12 +2146,82 @@ fn push_scan_frame(
         NONE
     };
     if let Err(error) = frames.push(ScanFrame::new(
-        kind, heredoc_start, scope_start, parameter_outer_double,
+        kind,
+        arithmetic_command_body_start,
+        heredoc_start,
+        scope_start,
+        parameter_outer_double,
     )) {
         if kind == SCAN_COMMAND { scopes.truncate(scope_start); }
         return Err(error);
     }
     Ok(())
+}
+
+/// The one lexical fact that conclusively defeats the arithmetic reading of
+/// an ambiguous `$((`: an outer arithmetic close which is not the first byte
+/// of its required logical `))` terminator. Lexical line joins may intervene
+/// between those close bytes. End-of-input and every other scanner failure
+/// remain ordinary Syntax rather than becoming a command fallback.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ArithmeticDelimiter {
+    MatchingClose { after: usize },
+    NotArithmetic,
+}
+
+fn arithmetic_delimiter(
+    syntax: &WordexpSyntax,
+    index: usize,
+) -> ArithmeticDelimiter {
+    let second_close = skip_lexical_line_continuations(
+        syntax, index + 1, syntax.source_len(),
+    );
+    if second_close < syntax.source_len() &&
+        // SAFETY: the preceding bound checks the paired-close lookahead.
+        unsafe { syntax.byte(second_close) } == b')'
+    {
+        ArithmeticDelimiter::MatchingClose { after: second_close + 1 }
+    } else {
+        ArithmeticDelimiter::NotArithmetic
+    }
+}
+
+/// Turn only the current ambiguous arithmetic frame into an opaque command
+/// scanner. The caller has already observed `ArithmeticDelimiter::NotArithmetic`.
+/// A fresh root command scope is nested above any still-live parent scope, so
+/// the re-read preserves delimiter, heredoc, and quote state outside this
+/// exact frame.
+fn reclassify_arithmetic_frame_as_command(
+    frames: &mut HeapVec<ScanFrame>,
+    scopes: &mut HeapVec<CommandScope>,
+    index: usize,
+) -> Result<(), WordexpError> {
+    // SAFETY: the caller selected the live top frame.
+    let arithmetic = unsafe { frames.get(index) };
+    debug_assert_eq!(arithmetic.kind, SCAN_ARITHMETIC);
+    debug_assert_ne!(arithmetic.arithmetic_command_body_start, NONE);
+    let scope_start = scopes.len();
+    scopes.push(CommandScope::root())?;
+    let command = ScanFrame::new(
+        SCAN_COMMAND,
+        NONE,
+        arithmetic.heredoc_start,
+        scope_start,
+        false,
+    );
+    // SAFETY: this frame remains live and now owns the just-added root scope.
+    unsafe { frames.replace(index, command); }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct ScannedConstruct {
+    body: Span,
+    after: usize,
+    contains_command: bool,
+    // This equals the requested initial kind unless that initial arithmetic
+    // frame was conclusively reclassified as a `$(` command substitution.
+    kind: u8,
 }
 
 fn nested_parameter_outer_double(
@@ -2042,19 +2239,27 @@ fn nested_parameter_outer_double(
 /// Find the complete body of a parameter, arithmetic, command, or backquote
 /// construct. Nested constructs use this movable explicit stack rather than
 /// calling this routine recursively.
-fn scan_construct(
+fn scan_construct_detail(
     syntax: &WordexpSyntax,
     initial_kind: u8,
     body_start: usize,
+    initial_arithmetic_command_body_start: usize,
     parameter_outer_double: bool,
-) -> Result<(Span, usize, bool), WordexpError> {
+) -> Result<ScannedConstruct, WordexpError> {
     let mut frames = HeapVec::<ScanFrame>::new();
     let mut here_docs = HeapVec::<HereDoc>::new();
     let mut scopes = HeapVec::<CommandScope>::new();
     let mut contains_command = matches!(initial_kind, SCAN_COMMAND | SCAN_BACKTICK);
     push_scan_frame(
-        &mut frames, &mut scopes, initial_kind, 0, parameter_outer_double,
+        &mut frames,
+        &mut scopes,
+        initial_kind,
+        initial_arithmetic_command_body_start,
+        0,
+        parameter_outer_double,
     )?;
+    let mut root_body = body_start;
+    let mut effective_initial_kind = initial_kind;
     let mut index = body_start;
     loop {
         if index >= syntax.source_len() { return Err(WordexpError::Syntax); }
@@ -2093,38 +2298,28 @@ fn scan_construct(
                 index += 1;
                 continue;
             }
-            if byte == b'$' && index + 1 < syntax.source_len() {
-                // SAFETY: lookahead is below source length.
-                let next = unsafe { syntax.byte(index + 1) };
-                let child = if next == b'{' {
-                    Some((SCAN_PARAMETER, index + 2))
-                } else if next == b'(' {
-                    if index + 2 < syntax.source_len() &&
-                        unsafe { syntax.byte(index + 2) } == b'('
-                    {
-                        Some((SCAN_ARITHMETIC, index + 3))
-                    } else {
-                        Some((SCAN_COMMAND, index + 2))
-                    }
-                } else {
-                    None
-                };
-                if let Some((kind, after_open)) = child {
-                    if matches!(kind, SCAN_COMMAND | SCAN_BACKTICK) {
+            if byte == b'$' {
+                if let Some(child) = nested_dollar_construct(syntax, index) {
+                    if matches!(child.kind, SCAN_COMMAND | SCAN_BACKTICK) {
                         contains_command = true;
                     }
-                    let parameter_outer_double = if kind == SCAN_PARAMETER {
+                    let parameter_outer_double = if child.kind == SCAN_PARAMETER {
                         nested_parameter_outer_double(
-                            syntax, &frame, after_open, true,
+                            syntax, &frame, child.body_start, true,
                         )?
                     } else {
                         false
                     };
                     unsafe { frames.replace(top, frame); }
                     push_scan_frame(
-                        &mut frames, &mut scopes, kind, here_docs.len(), parameter_outer_double,
+                        &mut frames,
+                        &mut scopes,
+                        child.kind,
+                        child.arithmetic_command_body_start,
+                        here_docs.len(),
+                        parameter_outer_double,
                     )?;
-                    index = after_open;
+                    index = child.body_start;
                     continue;
                 }
             }
@@ -2132,7 +2327,12 @@ fn scan_construct(
                 contains_command = true;
                 unsafe { frames.replace(top, frame); }
                 push_scan_frame(
-                    &mut frames, &mut scopes, SCAN_BACKTICK, here_docs.len(), false,
+                    &mut frames,
+                    &mut scopes,
+                    SCAN_BACKTICK,
+                    NONE,
+                    here_docs.len(),
+                    false,
                 )?;
                 index += 1;
                 continue;
@@ -2194,29 +2394,14 @@ fn scan_construct(
                 index += 1;
                 continue;
             }
-            if byte == b'$' && index + 1 < syntax.source_len() {
-                // SAFETY: lookahead is below source length.
-                let next = unsafe { syntax.byte(index + 1) };
-                let child = if next == b'{' {
-                    Some((SCAN_PARAMETER, index + 2))
-                } else if next == b'(' {
-                    if index + 2 < syntax.source_len() &&
-                        unsafe { syntax.byte(index + 2) } == b'('
-                    {
-                        Some((SCAN_ARITHMETIC, index + 3))
-                    } else {
-                        Some((SCAN_COMMAND, index + 2))
-                    }
-                } else {
-                    None
-                };
-                if let Some((kind, after_open)) = child {
-                    if matches!(kind, SCAN_COMMAND | SCAN_BACKTICK) {
+            if byte == b'$' {
+                if let Some(child) = nested_dollar_construct(syntax, index) {
+                    if matches!(child.kind, SCAN_COMMAND | SCAN_BACKTICK) {
                         contains_command = true;
                     }
-                    let parameter_outer_double = if kind == SCAN_PARAMETER {
+                    let parameter_outer_double = if child.kind == SCAN_PARAMETER {
                         nested_parameter_outer_double(
-                            syntax, &frame, after_open, false,
+                            syntax, &frame, child.body_start, false,
                         )?
                     } else {
                         false
@@ -2227,19 +2412,31 @@ fn scan_construct(
                     }
                     unsafe { frames.replace(top, frame); }
                     push_scan_frame(
-                        &mut frames, &mut scopes, kind, here_docs.len(), parameter_outer_double,
+                        &mut frames,
+                        &mut scopes,
+                        child.kind,
+                        child.arithmetic_command_body_start,
+                        here_docs.len(),
+                        parameter_outer_double,
                     )?;
-                    index = after_open;
+                    index = child.body_start;
                     continue;
                 }
-                if next == b'\'' && frame.quote != QUOTE_DOUBLE {
+                let after_dollar = skip_lexical_line_continuations(
+                    syntax, index + 1, syntax.source_len(),
+                );
+                if after_dollar < syntax.source_len() &&
+                    // SAFETY: the preceding bound check covers this quote.
+                    unsafe { syntax.byte(after_dollar) } == b'\'' &&
+                    frame.quote != QUOTE_DOUBLE
+                {
                     frame.quote = QUOTE_DOLLAR_SINGLE;
                     frame.word_start = false;
                     if frame.kind == SCAN_COMMAND && frame.token_start == NONE {
                         frame.token_start = index;
                     }
                     unsafe { frames.replace(top, frame); }
-                    index += 2;
+                    index = after_dollar + 1;
                     continue;
                 }
             }
@@ -2251,7 +2448,12 @@ fn scan_construct(
                 }
                 unsafe { frames.replace(top, frame); }
                 push_scan_frame(
-                    &mut frames, &mut scopes, SCAN_BACKTICK, here_docs.len(), false,
+                    &mut frames,
+                    &mut scopes,
+                    SCAN_BACKTICK,
+                    NONE,
+                    here_docs.len(),
+                    false,
                 )?;
                 index += 1;
                 continue;
@@ -2319,9 +2521,14 @@ fn scan_construct(
         match frame.kind {
             SCAN_PARAMETER if byte == b'}' => {
                 if let Some(done) = close_scan_frame(
-                    &mut frames, &mut here_docs, &mut scopes, index, index + 1, body_start,
+                    &mut frames, &mut here_docs, &mut scopes, index, index + 1, root_body,
                 )? {
-                    return Ok((done.0, done.1, contains_command));
+                    return Ok(ScannedConstruct {
+                        body: done.0,
+                        after: done.1,
+                        contains_command,
+                        kind: effective_initial_kind,
+                    });
                 }
                 index += 1;
             }
@@ -2336,17 +2543,40 @@ fn scan_construct(
                     frame.arithmetic_depth -= 1;
                     unsafe { frames.replace(top, frame); }
                     index += 1;
-                } else if index + 1 < syntax.source_len() &&
-                    unsafe { syntax.byte(index + 1) } == b')'
-                {
-                    if let Some(done) = close_scan_frame(
-                        &mut frames, &mut here_docs, &mut scopes, index, index + 2, body_start,
-                    )? {
-                        return Ok((done.0, done.1, contains_command));
-                    }
-                    index += 2;
                 } else {
-                    return Err(WordexpError::Syntax);
+                    match arithmetic_delimiter(syntax, index) {
+                        ArithmeticDelimiter::MatchingClose { after } => {
+                            if let Some(done) = close_scan_frame(
+                                &mut frames,
+                                &mut here_docs,
+                                &mut scopes,
+                                index,
+                                after,
+                                root_body,
+                            )? {
+                                return Ok(ScannedConstruct {
+                                    body: done.0,
+                                    after: done.1,
+                                    contains_command,
+                                    kind: effective_initial_kind,
+                                });
+                            }
+                            index = after;
+                        }
+                        ArithmeticDelimiter::NotArithmetic => {
+                            let command_start = frame.arithmetic_command_body_start;
+                            let initial = top == 0;
+                            reclassify_arithmetic_frame_as_command(
+                                &mut frames, &mut scopes, top,
+                            )?;
+                            contains_command = true;
+                            if initial {
+                                root_body = command_start;
+                                effective_initial_kind = SCAN_COMMAND;
+                            }
+                            index = command_start;
+                        }
+                    }
                 }
             }
             SCAN_COMMAND if byte == b'(' => {
@@ -2382,18 +2612,28 @@ fn scan_construct(
                     return Err(WordexpError::Syntax);
                 } else {
                     if let Some(done) = close_scan_frame(
-                        &mut frames, &mut here_docs, &mut scopes, index, index + 1, body_start,
+                        &mut frames, &mut here_docs, &mut scopes, index, index + 1, root_body,
                     )? {
-                        return Ok((done.0, done.1, contains_command));
+                        return Ok(ScannedConstruct {
+                            body: done.0,
+                            after: done.1,
+                            contains_command,
+                            kind: effective_initial_kind,
+                        });
                     }
                     index += 1;
                 }
             }
             SCAN_BACKTICK if byte == b'\x60' => {
                 if let Some(done) = close_scan_frame(
-                    &mut frames, &mut here_docs, &mut scopes, index, index + 1, body_start,
+                    &mut frames, &mut here_docs, &mut scopes, index, index + 1, root_body,
                 )? {
-                    return Ok((done.0, done.1, contains_command));
+                    return Ok(ScannedConstruct {
+                        body: done.0,
+                        after: done.1,
+                        contains_command,
+                        kind: effective_initial_kind,
+                    });
                 }
                 index += 1;
             }
@@ -2403,6 +2643,22 @@ fn scan_construct(
             }
         }
     }
+}
+
+/// Fixed-kind scanner entry point for parameters, direct commands, and
+/// backquotes. The ambiguous arithmetic caller uses `scan_construct_detail`
+/// so it can observe an initial-frame command reclassification.
+fn scan_construct(
+    syntax: &WordexpSyntax,
+    initial_kind: u8,
+    body_start: usize,
+    parameter_outer_double: bool,
+) -> Result<(Span, usize, bool), WordexpError> {
+    let scanned = scan_construct_detail(
+        syntax, initial_kind, body_start, NONE, parameter_outer_double,
+    )?;
+    debug_assert_eq!(scanned.kind, initial_kind);
+    Ok((scanned.body, scanned.after, scanned.contains_command))
 }
 
 const VARIABLE_UNSET: u8 = 0;
@@ -5835,6 +6091,198 @@ mod tests {
     }
 
     #[test]
+    fn definite_arithmetic_delimiter_failures_reclassify_as_command_substitutions() {
+        // These begin with the ambiguous `$((` spelling. Each reaches one
+        // unpaired outer arithmetic close before the paired command close,
+        // so the scanner can conclusively choose the `$(` subshell reading
+        // without expanding or executing anything.
+        for (input, body) in [
+            (
+                b"$((case $A in a) echo x ;; *) echo y ;; esac))".as_slice(),
+                b"(case $A in a) echo x ;; *) echo y ;; esac)".as_slice(),
+            ),
+            (
+                b"$((echo + 1 ) )".as_slice(),
+                b"(echo + 1 ) ".as_slice(),
+            ),
+            (
+                b"$((case x in x) echo a;; esac) )".as_slice(),
+                b"(case x in x) echo a;; esac) ".as_slice(),
+            ),
+            (
+                b"$((cat<<x\n)(\nx\n))".as_slice(),
+                b"(cat<<x\n)(\nx\n)".as_slice(),
+            ),
+            // A portable spelling that separates `$(` and the subshell's
+            // `(` remains an ordinary command substitution control.
+            (b"$( (marker) )".as_slice(), b" (marker) ".as_slice()),
+        ] {
+            let syntax = WordexpSyntax::parse(input).unwrap();
+            assert!(syntax.has_commands());
+
+            let mut blocked = WordexpContext::new();
+            blocked.set_no_command_substitution(true);
+            let mut commands = TestCommands::new(b"unexpected\n");
+            commands.expected_body = Some(body);
+            commands.expected_style = Some(CommandStyle::DollarParen);
+            let mut paths = TestPaths::plain();
+            assert!(matches!(
+                evaluate_wordexp(&syntax, &mut blocked, &mut commands, &mut paths),
+                Err(WordexpError::CommandSubstitution),
+            ));
+            assert_eq!(commands.calls, 0);
+
+            let mut allowed = WordexpContext::new();
+            let mut commands = TestCommands::new(b"selected\n");
+            commands.expected_body = Some(body);
+            commands.expected_style = Some(CommandStyle::DollarParen);
+            let words = evaluate_wordexp(&syntax, &mut allowed, &mut commands, &mut paths)
+                .unwrap();
+            assert_words(&words, &[b"selected"]);
+            assert_eq!(commands.calls, 1);
+        }
+
+        // An ambiguous child is reclassified in its own scanner frame; its
+        // parent remains arithmetic and sees only the child command output.
+        let nested = WordexpSyntax::parse(b"$((1 + $((echo + 1 ) ) + 1))").unwrap();
+        let mut blocked = WordexpContext::new();
+        blocked.set_no_command_substitution(true);
+        let mut commands = TestCommands::new(b"unexpected\n");
+        commands.expected_body = Some(b"(echo + 1 ) ");
+        commands.expected_style = Some(CommandStyle::DollarParen);
+        let mut paths = TestPaths::plain();
+        assert!(matches!(
+            evaluate_wordexp(&nested, &mut blocked, &mut commands, &mut paths),
+            Err(WordexpError::CommandSubstitution),
+        ));
+        assert_eq!(commands.calls, 0);
+
+        let mut allowed = WordexpContext::new();
+        let mut commands = TestCommands::new(b"1\n");
+        commands.expected_body = Some(b"(echo + 1 ) ");
+        commands.expected_style = Some(CommandStyle::DollarParen);
+        let words = evaluate_wordexp(&nested, &mut allowed, &mut commands, &mut paths).unwrap();
+        assert_words(&words, &[b"3"]);
+        assert_eq!(commands.calls, 1);
+    }
+
+    #[test]
+    fn arithmetic_ambiguity_keeps_incomplete_and_balanced_forms_as_arithmetic_errors() {
+        // POSIX XRAT C.2.6.3's counterexample reaches EOF without a definite
+        // non-arithmetic delimiter. Its command reading happens to complete,
+        // but the arithmetic reading remains the required Syntax outcome.
+        let incomplete = b"$((cat <<EOF\n+((((\nEOF\n) && (\ncat <<EOF\n+\nEOF\n))";
+        assert!(matches!(WordexpSyntax::parse(incomplete), Err(WordexpError::Syntax)));
+
+        // A nested incomplete ambiguous construct cannot make its enclosing
+        // arithmetic frame fall back as a whole.
+        let nested = b"$((1 + $((echo + 1 ) )";
+        assert!(matches!(WordexpSyntax::parse(nested), Err(WordexpError::Syntax)));
+
+        // The finite delimiter heuristic deliberately does not classify a
+        // balanced but non-arithmetic source as a command substitution.
+        let balanced = WordexpSyntax::parse(b"$((printf x; :))").unwrap();
+        let mut context = WordexpContext::new();
+        context.set_no_command_substitution(true);
+        let mut commands = TestCommands::new(b"unexpected");
+        let mut paths = TestPaths::plain();
+        assert!(matches!(
+            evaluate_wordexp(&balanced, &mut context, &mut commands, &mut paths),
+            Err(WordexpError::Arithmetic),
+        ));
+        assert_eq!(commands.calls, 0);
+    }
+
+    #[test]
+    fn arithmetic_delimiters_join_physical_lines_before_recognition() {
+        // A removable backslash-newline is absent from the lexical view used
+        // to recognize both the second opening parenthesis and the paired
+        // arithmetic close. The source itself remains byte-exact elsewhere.
+        for (input, expected) in [
+            (b"$((1+2)\\\n)".as_slice(), b"3".as_slice()),
+            (b"$(\\\n(1+2))".as_slice(), b"3".as_slice()),
+            (b"$\\\n((1+2))".as_slice(), b"3".as_slice()),
+            (b"$((1+2)\\\n\\\n)".as_slice(), b"3".as_slice()),
+            (b"\"$((1+2)\\\n)\"".as_slice(), b"3".as_slice()),
+            // Both kinds of joined opener also work inside a pending
+            // arithmetic source, rather than only at the root parser.
+            (b"$((1+$\\\n((1+2))))".as_slice(), b"4".as_slice()),
+            (b"$((1+$(\\\n(1+2))))".as_slice(), b"4".as_slice()),
+            (b"$((1+$((1+2)\\\n)))".as_slice(), b"4".as_slice()),
+        ] {
+            let mut context = WordexpContext::new();
+            context.set_no_command_substitution(true);
+            let mut commands = TestCommands::new(b"unexpected");
+            let mut paths = TestPaths::plain();
+            let words = evaluate(input, &mut context, &mut commands, &mut paths).unwrap();
+            assert_eq!(
+                words.result_word(0).unwrap().byte_at(0),
+                Some(expected[0]),
+                "{input:?}",
+            );
+            assert_words(&words, &[expected]);
+            assert_eq!(commands.calls, 0);
+        }
+
+        // The logical `$((` spelling below reaches the same definite
+        // delimiter fallback as the contiguous spelling, but the delegated
+        // raw body begins after the *first* opening parenthesis. It must
+        // retain the physical line join before the subshell opener.
+        let input = b"$(\\\n(echo + 1 ) )";
+        let syntax = WordexpSyntax::parse(input).unwrap();
+        assert!(syntax.has_commands());
+        let expected_body = b"\\\n(echo + 1 ) ";
+
+        let mut blocked = WordexpContext::new();
+        blocked.set_no_command_substitution(true);
+        let mut commands = TestCommands::new(b"unexpected\n");
+        commands.expected_body = Some(expected_body);
+        commands.expected_style = Some(CommandStyle::DollarParen);
+        let mut paths = TestPaths::plain();
+        assert!(matches!(
+            evaluate_wordexp(&syntax, &mut blocked, &mut commands, &mut paths),
+            Err(WordexpError::CommandSubstitution),
+        ));
+        assert_eq!(commands.calls, 0);
+
+        let mut allowed = WordexpContext::new();
+        let mut commands = TestCommands::new(b"selected\n");
+        commands.expected_body = Some(expected_body);
+        commands.expected_style = Some(CommandStyle::DollarParen);
+        let words = evaluate_wordexp(
+            &syntax, &mut allowed, &mut commands, &mut paths,
+        ).unwrap();
+        assert_words(&words, &[b"selected"]);
+        assert_eq!(commands.calls, 1);
+
+        // The same raw span survives a nested scanner frame. Its enclosing
+        // arithmetic expansion sees only the selected command output.
+        let nested = WordexpSyntax::parse(
+            b"$((1+$(\\\n(echo + 1 ) )+1))",
+        ).unwrap();
+        let mut blocked = WordexpContext::new();
+        blocked.set_no_command_substitution(true);
+        let mut commands = TestCommands::new(b"unexpected\n");
+        commands.expected_body = Some(expected_body);
+        commands.expected_style = Some(CommandStyle::DollarParen);
+        assert!(matches!(
+            evaluate_wordexp(&nested, &mut blocked, &mut commands, &mut paths),
+            Err(WordexpError::CommandSubstitution),
+        ));
+        assert_eq!(commands.calls, 0);
+
+        let mut allowed = WordexpContext::new();
+        let mut commands = TestCommands::new(b"1\n");
+        commands.expected_body = Some(expected_body);
+        commands.expected_style = Some(CommandStyle::DollarParen);
+        let words = evaluate_wordexp(
+            &nested, &mut allowed, &mut commands, &mut paths,
+        ).unwrap();
+        assert_words(&words, &[b"3"]);
+        assert_eq!(commands.calls, 1);
+    }
+
+    #[test]
     fn arithmetic_expands_all_selected_envelope_tokens_before_lazy_ast_evaluation() {
         for (input, expected) in [
             (b"$((0 && $(number)))".as_slice(), b"0".as_slice()),
@@ -6417,6 +6865,32 @@ mod tests {
         );
         assert_eq!(paths.pattern_calls, 0);
         assert_eq!(commands.calls, 1);
+    }
+
+    #[test]
+    fn unrecognized_dollars_inside_double_quotes_stay_one_literal_run() {
+        let mut context = WordexpContext::new();
+        context.set_no_command_substitution(true);
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let words = evaluate(
+            b"\"$) $} $\\ $\"",
+            &mut context,
+            &mut commands,
+            &mut paths,
+        ).unwrap();
+        assert_words(&words, &[b"$) $} $\\ $"]);
+    }
+
+    #[test]
+    fn selected_parameter_default_word_expands_a_leading_tilde() {
+        let mut context = WordexpContext::new();
+        context.set_no_command_substitution(true);
+        context.set_initial(b"HOME", Some(b"/home/syd"), false).unwrap();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let words = evaluate(b"${X-~}", &mut context, &mut commands, &mut paths).unwrap();
+        assert_words(&words, &[b"/home/syd"]);
     }
 
     #[test]

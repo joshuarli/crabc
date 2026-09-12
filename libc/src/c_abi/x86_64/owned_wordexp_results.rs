@@ -1,10 +1,8 @@
 //! Private staged `wordexp_t` result-record ownership for Linux/x86-64.
 //!
-//! This module is deliberately unselected. `owned_wordexp.rs` remains the
-//! selected C ABI provider; a later integration must replace its local record
-//! mutation as one coherent change rather than create a second exported C ABI
-//! layout. This owner supplies only the record transaction behind that later
-//! adapter.
+//! `owned_wordexp.rs` aliases this module's sole C record type and supplies
+//! its transaction directly to the evaluator's final-word sink. This module
+//! exports no C entry point; the adapter owns flags and public status mapping.
 //!
 //! POSIX.1-2024 permits `WRDE_NOSPACE` to expose words completed before the
 //! allocation failure, while an `WRDE_APPEND` call that reaches any other
@@ -72,12 +70,10 @@ pub(super) enum WordexpResultMode {
     Append { offsets: WordexpResultOffsets },
 }
 
-/// Private mirror of the x86 LP64 `wordexp_t` record.
+/// The sole x86 LP64 `wordexp_t` record layout used by the C adapter.
 ///
-/// This is `repr(C)` so a later one-owner integration can use the exact C
-/// layout. It is not an additional C ABI declaration: no symbol in this
-/// module is exported, and selection must unify this type with the selected
-/// adapter's record definition.
+/// `owned_wordexp.rs` aliases this `repr(C)` type as `Wordexp`; it has no
+/// duplicate record definition. No symbol in this module is exported.
 #[repr(C)]
 pub(super) struct WordexpResultRecord {
     pub(super) word_count: usize,
@@ -99,7 +95,7 @@ impl WordexpResultRecord {
 
 /// Private failures at the result-record boundary.
 ///
-/// A later C adapter maps `NoSpace` to `WRDE_NOSPACE`. `InteriorNul` maps to
+/// The C adapter maps `NoSpace` to `WRDE_NOSPACE`. `InteriorNul` maps to
 /// the engine's unrepresentable-output error, and every non-`NoSpace` error
 /// leaves a transaction to drop rather than commit.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -157,9 +153,9 @@ impl WordexpResultAllocator {
         unsafe { (self.deallocate)(pointer) }
     }
 
-    /// Return the selected libc allocation domain for eventual production use.
+    /// Return the selected libc production allocation domain.
     #[inline]
-    #[allow(dead_code)] // This private candidate is intentionally unselected.
+    #[allow(dead_code)] // Standalone tests may inject their own allocation handle.
     pub(super) const fn selected() -> Self {
         Self {
             allocate: selected_malloc,
@@ -169,7 +165,7 @@ impl WordexpResultAllocator {
     }
 }
 
-#[allow(dead_code)] // Reached only when the later selected adapter chooses `selected`.
+#[allow(dead_code)] // Standalone tests may inject their own allocation handle.
 unsafe extern "C" {
     #[link_name = "malloc"]
     fn result_malloc(size: usize) -> *mut c_void;
@@ -179,19 +175,19 @@ unsafe extern "C" {
     fn result_free(pointer: *mut c_void);
 }
 
-#[allow(dead_code)] // Reached through the intentionally unselected selector.
+#[allow(dead_code)] // Reached through the production allocation handle.
 unsafe fn selected_malloc(size: usize) -> *mut c_void {
     // SAFETY: this is the selected libc C allocation boundary.
     unsafe { result_malloc(size) }
 }
 
-#[allow(dead_code)] // Reached through the intentionally unselected selector.
+#[allow(dead_code)] // Reached through the production allocation handle.
 unsafe fn selected_realloc(pointer: *mut c_void, size: usize) -> *mut c_void {
     // SAFETY: callers preserve C realloc ownership through the transaction.
     unsafe { result_realloc(pointer, size) }
 }
 
-#[allow(dead_code)] // Reached through the intentionally unselected selector.
+#[allow(dead_code)] // Reached through the production allocation handle.
 unsafe fn selected_free(pointer: *mut c_void) {
     // SAFETY: callers pass selected-domain allocations or null.
     unsafe { result_free(pointer) }
@@ -506,8 +502,8 @@ impl Drop for WordexpResultTransaction {
 /// `record` is null or an exclusively owned record published by this owner,
 /// including a fresh/append `WRDE_NOSPACE` prefix. Its vector and non-null
 /// words use `allocator`'s exact allocation domain and have not been copied,
-/// separately freed, or mutated. A later C ABI adapter may expose this through
-/// `wordfree`; it must not use it to release an in-flight transaction.
+/// separately freed, or mutated. The C ABI adapter exposes this through
+/// `wordfree`; it must not release an in-flight transaction.
 pub(super) unsafe fn release_wordexp_result_record(
     record: *mut WordexpResultRecord,
     allocator: WordexpResultAllocator,

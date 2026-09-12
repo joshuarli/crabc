@@ -1,6 +1,6 @@
 //! Focused native test root for the private x86 `wordexp_t` result transaction.
 //!
-//! This imports only the unselected record owner. Its allocator is injected
+//! This imports only the private record owner. Its allocator is injected
 //! through ordinary Rust function pointers, so the harness never exports or
 //! interposes `malloc`, `realloc`, or `free` used by Rust's standard test
 //! runtime.

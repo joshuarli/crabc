@@ -1,4 +1,4 @@
-//! Direct fake-boundary tests for the private, unselected wordexp process
+//! Direct fake-boundary tests for the private wordexp process
 //! adapter.
 //!
 //! The test root deliberately imports neither `static_c_abi.rs` nor the

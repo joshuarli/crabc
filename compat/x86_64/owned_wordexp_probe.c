@@ -2,9 +2,9 @@
  *
  * This workload is deliberately ordinary C: pinned musl 1.2.6 and both
  * installed crabc static modes compile the same source against the project
- * headers.  It exercises the source's shell protocol, NUL-delimited words,
- * hardened WRDE_NOCMD scanner, offset/append/reuse ownership, syntax and
- * unset-variable results, and allocation cleanup.  It does not treat a
+ * headers. It exercises the owned evaluator's expansion stages, lexical
+ * WRDE_NOCMD check, offset/append/reuse ownership, typed errors, diagnostics,
+ * and allocation cleanup against specific fixed-source observations. It does not treat a
  * static executable as evidence for dlopen or a general shell subsystem.
  */
 
@@ -75,7 +75,7 @@ static int ordinary_and_nocmd_cases(void)
     static const char *const nested[] = { "6" };
     static const char *const nested_brace[] = { "{" };
     static const char *const escaped_nested_brace[] = { "\\{" };
-    static const char *const no_words[] = { NULL };
+    static const char *const defaulted[] = { "default" };
     wordexp_t words = { 0 };
 
     if (wordexp("one two", &words, 0) != 0 ||
@@ -84,7 +84,9 @@ static int ordinary_and_nocmd_cases(void)
     if (!check_freed(&words))
         return 2;
 
-    if (wordexp("$1", &words, 0) != 0 ||
+    /* Special-parameter expansion is unspecified for wordexp. A quoted
+     * spelling is an ordinary literal in both provider implementations. */
+    if (wordexp("'$1'", &words, 0) != 0 ||
         !check_words(&words, 1, positional))
         return 3;
     if (!check_freed(&words))
@@ -101,9 +103,8 @@ static int ordinary_and_nocmd_cases(void)
     if (!check_freed(&words))
         return 8;
 
-    /* Musl's source accepts WRDE_UNDEF but does not enable set -u. */
-    if (wordexp("$CRABC_WORDEXP_MISSING", &words, WRDE_UNDEF) != 0 ||
-        !check_words(&words, 0, no_words))
+    if (wordexp("${CRABC_WORDEXP_MISSING-default}", &words, WRDE_UNDEF) != 0 ||
+        !check_words(&words, 1, defaulted))
         return 9;
     if (!check_freed(&words))
         return 10;
@@ -139,8 +140,9 @@ static int ordinary_and_nocmd_cases(void)
         !check_initial_error("`printf bad`", WRDE_NOCMD, WRDE_CMDSUB) ||
         !check_initial_error("one; two", WRDE_NOCMD, WRDE_BADCHAR))
         return 19;
-    /* A syntax error still creates and tears down the shell stream. */
-    if (!check_initial_error("one )", 0, WRDE_SYNTAX))
+    /* Unclosed quoting is a syntax error for either evaluator. The ordinary
+     * cell also retains the pinned source's unwanted quiet diagnostic. */
+    if (!check_initial_error("'unterminated", 0, WRDE_SYNTAX))
         return 20;
     return 0;
 }
@@ -172,25 +174,31 @@ static int offsets_append_reuse(void)
     return check_freed(&words) ? 0 : 6;
 }
 
-/* Musl's child exits after its private `/bin/sh` exec fails; the parent sees
- * the result pipe close before the NUL sentinel and reports WRDE_SYNTAX.
- * Keep this separate mode so the runner can execute the exact same C source
- * in private roots with absent, non-executable, and invalid shell images. */
+/* A selected command requires a usable shell; ordinary expansion does not.
+ * The reader distinguishes the fixed musl shell dependency from the owned
+ * evaluator's result. All three unavailable-shell fixtures use this object. */
 static int unavailable_shell_case(void)
 {
+    static const char *const literal[] = { "literal" };
     wordexp_t words = { 0 };
+    int literal_status;
 
-    /* The child owns its exec errno. Musl's parent returns the missing-stream
-     * syntax result without publishing that child-only value. */
     errno = ERANGE;
-    if (wordexp("literal", &words, 0) != WRDE_SYNTAX)
-        return 1;
-    if (words.we_wordc != 0 || words.we_wordv != NULL)
+    literal_status = wordexp("literal", &words, 0);
+    if (literal_status == 0) {
+        if (!check_words(&words, 1, literal) || !check_freed(&words))
+            return 1;
+    } else if (literal_status != WRDE_SYNTAX ||
+        words.we_wordc != 0 || words.we_wordv != NULL) {
         return 2;
+    }
     if (errno != ERANGE)
         return 3;
-    wordfree(&words);
-    return 0;
+    if (!check_initial_error("$(printf literal)", 0, WRDE_SYNTAX))
+        return 4;
+    if (errno != ERANGE)
+        return 5;
+    return literal_status == WRDE_SYNTAX ? 10 : 0;
 }
 
 /* This expression never starts a shell: `WRDE_NOCMD` must classify it in the
@@ -200,26 +208,49 @@ static int unavailable_shell_case(void)
  * source-shaped scanner does not accidentally weaken that boundary. */
 static int source_nocmd_case(void)
 {
-    if (!check_initial_error(
-            "$((case $A in a) echo x ;; *) echo y ;; esac))",
-            WRDE_NOCMD, WRDE_BADCHAR))
+    static const char *const subshells[] = {
+        "$((echo + 1 ) )",
+        "$((case x in x) echo a;; esac) )",
+        "$((cat<<x\n)(\nx\n))",
+    };
+    wordexp_t words = { 0 };
+    size_t index;
+    int result = wordexp("$((case $A in a) echo x ;; *) echo y ;; esac))",
+        &words, WRDE_NOCMD);
+
+    if ((result != WRDE_BADCHAR && result != WRDE_CMDSUB) ||
+        words.we_wordc != 0 || words.we_wordv != NULL)
         return 1;
     if (!check_initial_error("$(echo x)", WRDE_NOCMD, WRDE_CMDSUB))
         return 2;
-    return 0;
+    if (result == WRDE_CMDSUB) {
+        for (index = 0; index < sizeof subshells / sizeof subshells[0]; ++index) {
+            if (!check_initial_error(subshells[index], WRDE_NOCMD, WRDE_CMDSUB))
+                return 3;
+        }
+    }
+    return result == WRDE_BADCHAR ? 10 : 0;
 }
 
 /* The separately named POSIX correction cells share this ordinary public C
  * translation unit.  The installed driver therefore seals one object before
  * linking it unchanged to the pinned-musl oracle and every owned product. */
 #include "owned_wordexp_posix_probe.c"
+#include "owned_wordexp_engine_probe.c"
 
 int main(int argc, char *argv[])
 {
     int result;
 
+    if (argc == 2 && strncmp(argv[1], "--engine-", 9) == 0)
+        return wordexp_engine_run_selector(argv[1]);
+
     if (argc == 2 && strcmp(argv[1], "--shell-unavailable") == 0) {
         result = unavailable_shell_case();
+        if (result == 10) {
+            puts("owned-wordexp-shell-unavailable: SOURCE-RED ordinary-requires-shell");
+            return 74;
+        }
         if (result != 0)
             return 64 + result;
         puts("owned-wordexp-shell-unavailable: PASS");
@@ -227,6 +258,10 @@ int main(int argc, char *argv[])
     }
     if (argc == 2 && strcmp(argv[1], "--nocmd-source") == 0) {
         result = source_nocmd_case();
+        if (result == 10) {
+            puts("owned-wordexp-nocmd-source: SOURCE-OBSERVATION subshell-badchar");
+            return 106;
+        }
         if (result != 0)
             return 96 + result;
         puts("owned-wordexp-nocmd-source: PASS");
@@ -336,16 +371,17 @@ int main(int argc, char *argv[])
     }
     if (argc == 2 && strcmp(argv[1], "--undef-source-observation") == 0) {
         result = posix_undef_source_observation();
+        if (result == 10) {
+            puts("owned-wordexp-undef-source-observation: SOURCE-RED");
+            return 154;
+        }
         if (result != 0)
             return 144 + result;
-        puts("owned-wordexp-undef-source-observation: SOURCE-RED");
+        puts("owned-wordexp-undef-source-observation: PASS");
         return 0;
     }
     if (argc != 1)
         return 127;
-    result = source_nocmd_case();
-    if (result != 0)
-        return 96 + result;
     result = ordinary_and_nocmd_cases();
     if (result != 0)
         return result;

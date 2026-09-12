@@ -1,4 +1,4 @@
-//! Private pathname and conventional-passwd adapter for the x86 wordexp candidate.
+//! Private pathname and conventional-passwd adapter for owned x86 wordexp.
 //!
 //! The expansion core owns quote removal and evaluation. This adapter copies
 //! its pattern bytes together with their protection map into `owned_pattern`,

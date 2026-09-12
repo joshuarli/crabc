@@ -31,19 +31,32 @@ import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as products
 import run_qualification_manifest as native_qualification
 
-SCHEMA = "crabc.x86_64-owned-wordexp-products/v3"
+SCHEMA = "crabc.x86_64-owned-wordexp-products/v4"
 EXPECTED_INPUT_SCHEMA = "crabc.x86_64-owned-wordexp-expected-native-inputs/v1"
 SOURCE_MOUNT = "/workspace"
 TARGET = "x86_64-unknown-linux-musl"
 PROBE = "compat/x86_64/owned_wordexp_probe.c"
 POSIX_PROBE = "compat/x86_64/owned_wordexp_posix_probe.c"
+ENGINE_PROBE = "compat/x86_64/owned_wordexp_engine_probe.c"
 MODULE = "libc/src/c_abi/x86_64/owned_wordexp.rs"
-NOCMD_SCANNER = "libc/src/c_abi/x86_64/owned_wordexp_nocmd.rs"
+ENGINE = "libc/src/c_abi/x86_64/owned_wordexp_engine.rs"
+PROCESS = "libc/src/c_abi/x86_64/owned_wordexp_process.rs"
+PATHS = "libc/src/c_abi/x86_64/owned_wordexp_paths.rs"
+RESULTS = "libc/src/c_abi/x86_64/owned_wordexp_results.rs"
 DOC = "compat/x86_64/owned-wordexp.md"
 RUNNER = "compat/x86_64/run_owned_wordexp.sh"
 LEGACY_RUNNER = "compat/x86_64/run_libc_owned_wordexp.sh"
-HEADERS = ("errno.h", "wordexp.h", "stdio.h", "stdlib.h", "string.h", "unistd.h", "features.h", "bits/alltypes.h")
-SOURCES = (PROBE, POSIX_PROBE, MODULE, NOCMD_SCANNER, DOC, RUNNER, LEGACY_RUNNER, "compat/x86_64/owned_wordexp_evidence.py",
+HEADERS = ("errno.h", "wordexp.h", "stdio.h", "stdlib.h", "string.h", "unistd.h", "features.h",
+           "bits/alltypes.h", "fcntl.h", "signal.h", "stddef.h", "sys/types.h", "sys/wait.h")
+SOURCES = (PROBE, POSIX_PROBE, ENGINE_PROBE, MODULE, ENGINE, PROCESS, PATHS, RESULTS, DOC, RUNNER, LEGACY_RUNNER,
+           "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/build.rs",
+           "libc/src/c_abi/x86_64/owned_pattern.rs", "libc/src/c_abi/x86_64/owned_fnmatch.rs",
+           "libc/src/c_abi/x86_64/owned_glob.rs",
+           "compat/x86_64/owned-wordexp-engine.md", "compat/x86_64/owned-wordexp-process.md",
+           "compat/x86_64/owned-wordexp-paths.md", "compat/x86_64/owned-wordexp-results.md",
+           "compat/x86_64/owned-wordexp-pattern-boundary.md",
+           "compat/x86_64/owned-wordexp-engine-abi.md",
+           "compat/x86_64/owned_wordexp_evidence.py",
            "compat/x86_64/owned_dynamic_receipt.py",
            "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
            "compat/x86_64/owned_dynamic_qualification.py", "compat/x86_64/run_qualification_manifest.py",
@@ -61,10 +74,10 @@ NULL_FIXTURE_MODE = 0o666
 # semantics for the owned product.
 WORD_EXP_CASES = {
     "normal": ("normal", (), b"owned-wordexp: PASS\n", "quiet-source-red"),
-    "missing": ("missing", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "source-match"),
-    "inaccessible": ("inaccessible", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "source-match"),
-    "invalid": ("invalid", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "source-match"),
-    "nocmd-source": ("normal", ("--nocmd-source",), b"owned-wordexp-nocmd-source: PASS\n", "source-match"),
+    "missing": ("missing", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "ordinary-shell-source-red"),
+    "inaccessible": ("inaccessible", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "ordinary-shell-source-red"),
+    "invalid": ("invalid", ("--shell-unavailable",), b"owned-wordexp-shell-unavailable: PASS\n", "ordinary-shell-source-red"),
+    "nocmd-source": ("normal", ("--nocmd-source",), b"owned-wordexp-nocmd-source: PASS\n", "subshell-source-observation"),
     "posix-quiet": ("normal", ("--posix-quiet",), b"owned-wordexp-posix-quiet: PASS\n", "posix-quiet-source-red"),
     "posix-nocmd": ("normal", ("--posix-nocmd",), b"owned-wordexp-posix-nocmd: PASS\n", "posix-nocmd-source-red"),
     "posix-nocmd-escaped-control": ("normal", ("--posix-nocmd-escaped-control",), b"owned-wordexp-posix-nocmd-escaped-control: PASS\n", "source-match"),
@@ -75,9 +88,26 @@ WORD_EXP_CASES = {
     "posix-nocmd-dollar-single-control": ("normal", ("--posix-nocmd-dollar-single-control",), b"owned-wordexp-posix-nocmd-dollar-single-control: PASS\n", "posix-nocmd-dollar-single-source-red"),
     "posix-nocmd-comment-control": ("normal", ("--posix-nocmd-comment-control",), b"owned-wordexp-posix-nocmd-comment-control: PASS\n", "posix-nocmd-comment-source-red"),
     "posix-nocmd-positional": ("normal", ("--posix-nocmd-positional",), b"owned-wordexp-posix-nocmd-positional: PASS\n", "posix-nocmd-positional-source-red"),
-    "undef-source-observation": ("normal", ("--undef-source-observation",), b"owned-wordexp-undef-source-observation: SOURCE-RED\n", "undef-source-observation"),
+    "undef-source-observation": ("normal", ("--undef-source-observation",), b"owned-wordexp-undef-source-observation: PASS\n", "undef-source-red"),
+    "engine-undef": ("normal", ("--engine-undef",), b"owned-wordexp-engine-undef: PASS\n", "engine-source-red"),
+    "engine-literals": ("normal", ("--engine-literals",), b"owned-wordexp-engine-literals: PASS\n", "source-match"),
+    "engine-append-rollback": ("normal", ("--engine-append-rollback",), b"owned-wordexp-engine-append-rollback: PASS\n", "engine-source-red"),
+    "engine-reuse-offsets": ("normal", ("--engine-reuse-offsets",), b"owned-wordexp-engine-reuse-offsets: PASS\n", "source-match"),
+    "engine-parameter-word": ("normal", ("--engine-parameter-word",), b"owned-wordexp-engine-parameter-word: PASS\n", "engine-source-red"),
+    "engine-diagnostics": ("normal", ("--engine-diagnostics",), b"owned-wordexp-engine-diagnostics: PASS\n", "engine-source-red"),
+    "engine-sigpipe": ("normal", ("--engine-sigpipe",), b"owned-wordexp-engine-sigpipe: PASS\n", "engine-source-red"),
 }
-CELL_ENVIRONMENT = {"CRABC_WORDEXP": "bar baz", "FOO": "field", "X": "left", "Y": "right", "SET": "1"}
+# Exact source transcripts for the new direct C boundary cases. A source RED
+# never permits the selected candidate to fail, even with the same transcript.
+ENGINE_SOURCE_OBSERVATIONS = {
+    "engine-undef": b"owned-wordexp-engine-undef: SOURCE-RED wrde-undef-untyped\n",
+    "engine-append-rollback": b"owned-wordexp-engine-append-rollback: SOURCE-RED wrde-undef-untyped\n",
+    "engine-parameter-word": b"owned-wordexp-engine-parameter-word: SOURCE-RED nocmd-parameter-word-badchar\n",
+    "engine-diagnostics": b"owned-wordexp-engine-diagnostics: SOURCE-RED quiet-shell-diagnostic\n",
+    "engine-sigpipe": b"owned-wordexp-engine-sigpipe: SOURCE-RED shell-child-no-raw-sigpipe\n",
+}
+CELL_ENVIRONMENT = {"CRABC_WORDEXP": "bar baz", "FOO": "field", "X": "left", "Y": "right", "SET": "1",
+                    "TMPDIR": "/wordexp-tmp"}
 MODE_SPECS = {
     "static-et-exec": ("static", "static", "consumer-static-et-exec"),
     "static-pie": ("static-pie", "static", "consumer-static-pie"),
@@ -841,11 +871,16 @@ def _assert_case_results(root: Path, case: str, oracle: Mapping[str, Any], candi
     if comparison == "source-match":
         if (oracle_status != b"0\n" or candidate_status != b"0\n" or
                 oracle_stdout != expected_candidate_stdout or candidate_stdout != expected_candidate_stdout or
-                oracle_stderr != candidate_stderr):
+                oracle_stderr or candidate_stderr):
             fail(f"{description} source-control result differs")
+    elif comparison == "engine-source-red":
+        if (case not in ENGINE_SOURCE_OBSERVATIONS or oracle_status != b"0\n" or
+                oracle_stdout != ENGINE_SOURCE_OBSERVATIONS[case] or oracle_stderr or
+                candidate_status != b"0\n" or candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} engine source observation or positive candidate result differs")
     elif comparison == "quiet-source-red":
-        # The ordinary source workload deliberately carries `one )` through a
-        # no-SHOWERR call. Its pinned-musl stderr is source-control evidence;
+        # The ordinary source workload carries an unterminated quote through
+        # a no-SHOWERR call. Its pinned-musl stderr is source-control evidence;
         # POSIX requires the candidate's stream to be empty.
         if (oracle_status != b"0\n" or candidate_status != b"0\n" or
                 oracle_stdout != expected_candidate_stdout or candidate_stdout != expected_candidate_stdout or
@@ -899,13 +934,34 @@ def _assert_case_results(root: Path, case: str, oracle: Mapping[str, Any], candi
                 oracle_stderr or candidate_status != b"0\n" or
                 candidate_stdout != expected_candidate_stdout or candidate_stderr):
             fail(f"{description} positional source RED or candidate result differs")
-    elif comparison == "undef-source-observation":
-        if (oracle_status != b"0\n" or candidate_status != b"0\n" or
-                oracle_stdout != expected_candidate_stdout or candidate_stdout != expected_candidate_stdout or
+    elif comparison == "ordinary-shell-source-red":
+        if (oracle_status != b"74\n" or candidate_status != b"0\n" or
+                oracle_stdout != b"owned-wordexp-shell-unavailable: SOURCE-RED ordinary-requires-shell\n" or
+                candidate_stdout != expected_candidate_stdout or oracle_stderr or candidate_stderr):
+            fail(f"{description} ordinary expansion shell dependency differs")
+    elif comparison == "subshell-source-observation":
+        if (oracle_status != b"106\n" or candidate_status != b"0\n" or
+                oracle_stdout != b"owned-wordexp-nocmd-source: SOURCE-OBSERVATION subshell-badchar\n" or
+                candidate_stdout != expected_candidate_stdout or oracle_stderr or candidate_stderr):
+            fail(f"{description} ambiguous subshell classification differs")
+    elif comparison == "undef-source-red":
+        if (oracle_status != b"154\n" or candidate_status != b"0\n" or
+                oracle_stdout != b"owned-wordexp-undef-source-observation: SOURCE-RED\n" or
+                candidate_stdout != expected_candidate_stdout or
                 oracle_stderr or candidate_stderr):
-            fail(f"{description} non-qualifying WRDE_UNDEF source observation differs")
+            fail(f"{description} WRDE_UNDEF source RED or candidate BADVAL differs")
     else:
         fail(f"{description} comparison policy is unknown")
+
+
+def _validate_temporary_fixture(execution_root: Path) -> None:
+    """Require the private marker directory and complete cleanup after a cell."""
+    temporary = _physical(execution_root / "wordexp-tmp", "wordexp temporary fixture", directory=True)
+    try:
+        if stat.S_IMODE(temporary.stat().st_mode) != 0o700 or any(temporary.iterdir()):
+            fail("wordexp temporary fixture mode or cleanup differs")
+    except OSError as error:
+        raise EvidenceError("wordexp temporary fixture is unreadable") from error
 
 
 def _run_wordexp_case(work: Path, root: Path, *, label: str, mode: str, case: str, candidate: Path, oracle: Path,
@@ -918,6 +974,11 @@ def _run_wordexp_case(work: Path, root: Path, *, label: str, mode: str, case: st
     else:
         execution.mkdir(parents=True)
         product_files, product_aliases = {}, {}
+    # Marker fixtures create and remove their private temporary directory
+    # inside this chroot. Its host location remains under checkout .work.
+    (execution / "wordexp-tmp").mkdir(mode=0o700)
+    # Clear inherited directory bits as well as observing the requested mode.
+    (execution / "wordexp-tmp").chmod(0o700)
     consumer_name = MODE_SPECS[mode][2]
     _copy_regular(candidate, execution / consumer_name, "execution candidate")
     _copy_regular(oracle, execution / "oracle", "execution pinned-musl oracle")
@@ -941,8 +1002,11 @@ def _run_wordexp_case(work: Path, root: Path, *, label: str, mode: str, case: st
             prefix += [f"/{program}"]
         return prefix + list(arguments)
     direct = mode.endswith("-direct")
+    _validate_temporary_fixture(execution)
     oracle_result = _run(work, f"{label}-oracle", invocation("oracle", False), environment=CELL_ENVIRONMENT, required=False)
+    _validate_temporary_fixture(execution)
     candidate_result = _run(work, f"{label}-candidate", invocation(consumer_name, direct), environment=CELL_ENVIRONMENT, required=False)
+    _validate_temporary_fixture(execution)
     _assert_case_results(root, case, oracle_result, candidate_result, label)
     execution_record["root"] = _mounted(root, execution)
     return {"mode": mode, "case": case, "shell_case": shell_case, "comparison": comparison, "execution": execution_record,
@@ -960,6 +1024,8 @@ def _validate_header_trace(root: Path, trace: Path, dynamic: Path) -> dict[str, 
             fail(f"installed header trace omitted {header}")
     if _mounted(root, root / POSIX_PROBE) not in text:
         fail("installed header trace omitted the POSIX correction cells")
+    if _mounted(root, root / ENGINE_PROBE) not in text:
+        fail("installed header trace omitted the engine C ABI cells")
     return _checkout_identity(root, trace, "installed wordexp header trace")
 
 
@@ -1354,6 +1420,7 @@ def _validate_execution_binding(root: Path, work: Path, label: str, mode: str, s
     expected_root = _physical(work / "execution" / label, f"wordexp cell {label} expected execution root", directory=True)
     if execution_root != expected_root:
         fail("wordexp execution root path differs")
+    _validate_temporary_fixture(execution_root)
     fixture_root, fixture_paths, fixture_devices = fixture
     product_files, product_aliases, fixture_expected, device_expected = _expected_execution_maps(
         dynamic_product, fixture_paths, fixture_devices, shell_case, overrides)

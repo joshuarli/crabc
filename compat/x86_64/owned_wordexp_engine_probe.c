@@ -1,15 +1,13 @@
 /*
- * Direct C-ABI regressions for the private owned x86 wordexp-engine candidate.
+ * Direct C-ABI regressions for the selected owned x86 wordexp provider.
  *
- * This source intentionally has no installed-product role until its parent
- * adapter selects the engine. It is separately includable after the ordinary
+ * This source is included after the ordinary
  * owned_wordexp_probe.c helpers, and its standalone main exists only when
  * CRABC_WORDEXP_ENGINE_PROBE_MAIN is defined. Every helper name stays in the
- * wordexp_engine_ namespace so the eventual one-object probe can include this
- * file without changing its existing source-control cases.
+ * wordexp_engine_ namespace to keep its C-boundary cases findable together.
  *
  * The normal selectors are public-header C calls and can record fixed musl
- * source RED observations before selection. The result-allocation selector is
+ * source RED observations separately from required candidate passes. The result-allocation selector is
  * a different disposable build: it exists only when
  * CRABC_WORDEXP_RESULT_PRIVATE_TEST declares the two fixture-only Rust test
  * controls. No normal product declares, links, or exports those controls.
@@ -404,6 +402,48 @@ static int wordexp_engine_captured_wordexp(
         diagnostics_capacity, diagnostics_length, stream_error_unchanged);
 }
 
+/* Retain the two output regressions found by the unchanged upstream unit:
+ * unrecognized dollar spellings remain literal once, and a selected unquoted
+ * parameter default performs tilde expansion using the current HOME. The
+ * delimiter controls retain arithmetic across removable line joins. */
+static int wordexp_engine_literals_case(void)
+{
+    static const char *const sources[] = {
+        "\"$) $} $\\ $\"", "${" WORDEXP_ENGINE_UNSET "-~}",
+        "$((1+2)\\\n)", "$(\\\n(1+2))"
+    };
+    static const char *const expected[] = { "$) $} $\\ $", "/wordexp-home", "3", "3" };
+    struct wordexp_engine_environment_slot variable = { 0 };
+    struct wordexp_engine_environment_slot home = { 0 };
+    wordexp_t words = { 0 };
+    size_t index;
+    int result = 1;
+
+    if (wordexp_engine_save_environment(&variable, WORDEXP_ENGINE_UNSET) != 0 ||
+        wordexp_engine_save_environment(&home, "HOME") != 0)
+        goto cleanup;
+    if (unsetenv(WORDEXP_ENGINE_UNSET) != 0 || setenv("HOME", "/wordexp-home", 1) != 0) {
+        result = 2;
+        goto cleanup;
+    }
+    for (index = 0; index < sizeof sources / sizeof sources[0]; ++index) {
+        errno = E2BIG;
+        if (wordexp(sources[index], &words, 0) != 0 || errno != E2BIG ||
+            !wordexp_engine_check_complete(&words, 0, &expected[index], 1) ||
+            !wordexp_engine_release(&words, 0)) {
+            result = 3 + (int)index;
+            goto cleanup;
+        }
+    }
+    result = WORDEXP_ENGINE_PASS;
+cleanup:
+    wordexp_engine_discard(&words);
+    if (wordexp_engine_restore_environment(&home) != 0 ||
+        wordexp_engine_restore_environment(&variable) != 0)
+        return 7;
+    return result;
+}
+
 static int wordexp_engine_undef_case(void)
 {
     static const char *const empty[] = { "" };
@@ -523,7 +563,7 @@ static int wordexp_engine_append_rollback_case(void)
         /* This exact three-word record is the current source's omitted
          * WRDE_UNDEF classification, not a fallback label for any success. */
         result = WORDEXP_ENGINE_SOURCE_RED_UNDEF;
-        goto cleanup_words;
+        goto cleanup;
     }
     if (status != WRDE_BADVAL || saved_errno != E2BIG ||
         !wordexp_engine_snapshot_is_unchanged(&words, &snapshot))
@@ -1263,10 +1303,12 @@ static int wordexp_engine_emit_result(const char *name, int result)
     return 1;
 }
 
-/* The eventual one-object receipt can call this directly after including the
+/* The one-object receipt calls this directly after including the
  * file. The standalone main below has exactly the same selector surface. */
 static int wordexp_engine_run_selector(const char *selector)
 {
+    if (strcmp(selector, "--engine-literals") == 0)
+        return wordexp_engine_emit_result("literals", wordexp_engine_literals_case());
     if (strcmp(selector, "--engine-undef") == 0)
         return wordexp_engine_emit_result("undef", wordexp_engine_undef_case());
     if (strcmp(selector, "--engine-append-rollback") == 0)

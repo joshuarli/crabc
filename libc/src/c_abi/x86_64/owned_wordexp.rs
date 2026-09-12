@@ -1,49 +1,30 @@
-//! Owned-static Linux/x86-64 `wordexp` / `wordfree`.
+//! Owned Linux/x86-64 shell-word expansion and C result ownership.
 //!
-//! This is the target-local process/stdio adapter for pinned musl 1.2.6
-//! release commit `9fa28ece75d8a2191de7c5bb53bed224c5947417` (MIT),
-//! `src/misc/wordexp.c::{do_wordexp,wordexp,wordfree}` (source SHA-256
-//! `018c97c999cb60966a0376b71f2c8c187179ef31cf5ddde47b959e8f440e08f8`).
-//! The shell argument protocol, NUL-delimited sentinel/word stream,
-//! `WRDE_DOOFFS`, append/reuse, error returns, and word-vector ownership
-//! follow that source directly. Two narrow POSIX corrections are intentional:
-//! a no-`WRDE_SHOWERR` child begins `exec 2>/dev/null;` before the otherwise
-//! unchanged source `eval` script, and `owned_wordexp_nocmd.rs` uses scoped
-//! parameter, pattern, arithmetic, and quote frames so a nested lexical
-//! delimiter cannot contaminate its caller. Pinned musl remains fixed
-//! source-control data for those known-defect cells.
-//! The established hardened scanner in `../../wordexp_nocmd.rs` remains owned
-//! by the AArch64 implementation; it is not imported as an x86 source oracle.
+//! The private engine performs the POSIX expansion stages with explicit quote
+//! and variable state. Pathname matching and tilde lookup use the existing
+//! pattern and passwd owners. Only a selected command substitution delegates
+//! its opaque body to `/bin/sh`, once, through the owned spawn transaction.
+//! No child exit status or diagnostic text determines `WRDE_BADVAL`.
 //!
-//! Musl's raw `pipe2`/signal-mask/`fork`/`execl` child sequence maps here to
-//! the existing `owned_spawn` transaction: a stack-local musl-shaped `dup2`
-//! record sends standard output to one CLOEXEC pipe end, while the shared
-//! owner supplies signal masking, cancellation state, child-stack isolation,
-//! close-on-exec error reporting, and reaping on failed exec. The parent uses
-//! the existing owned `fdopen`/`getdelim`/`fclose` lifecycle to consume the
-//! source's NUL-delimited stream, and the selected C allocator for words and
-//! vectors. This neither creates a second process implementation nor revives
-//! the legacy raw AArch64 fork/pipe path. Its private completion stage also
-//! distinguishes parent setup from a child that closed the stream before the
-//! sentinel, without treating an errno value as a failure classification.
-//!
-//! `wordexp` deliberately invokes `/bin/sh`, exactly as musl does. The
-//! `WRDE_NOCMD` scanner rejects command substitutions before a child starts;
-//! ordinary expansion remains a C compatibility facility rather than a
-//! sandbox, shell replacement, dynamic-linking claim, or public x86 support.
+//! Musl 1.2.6 remains the fixed compatibility oracle. This implementation is
+//! an owned POSIX evaluator, not a translation of musl's whole-input shell
+//! protocol; its precise source differences belong in the wordexp evidence.
 
-#[cfg(not(all(
-    target_os = "linux",
-    target_arch = "x86_64",
-    target_endian = "little"
-)))]
-compile_error!("owned wordexp requires little-endian Linux/x86-64");
+use core::{ffi::{c_char, c_int}, ptr};
 
-use core::{ffi::{c_char, c_int, c_void}, mem::size_of, ptr};
+use super::owned_wordexp_engine::{
+    evaluate_wordexp_into, ExpandedResultWord, WordexpContext, WordexpDiagnosticSink,
+    WordexpError, WordexpResultSink, WordexpSyntax,
+};
+use super::raw_syscall;
+use super::owned_wordexp_paths::NativeWordexpPaths;
+use super::owned_wordexp_process::WordexpEnvironmentSnapshot;
+use super::owned_wordexp_results::{
+    release_wordexp_result_record, WordexpResultAllocator, WordexpResultError,
+    WordexpResultMode, WordexpResultOffsets, WordexpResultTransaction,
+};
 
-use super::{environment, errno, owned_spawn,
-    posix_spawn_file_actions::{FdOp, PosixSpawnFileActions}, raw_syscall,
-    stdio_standard};
+pub(super) use super::owned_wordexp_results::WordexpResultRecord as Wordexp;
 
 const WRDE_DOOFFS: c_int = 1;
 const WRDE_APPEND: c_int = 2;
@@ -54,327 +35,193 @@ const WRDE_UNDEF: c_int = 32;
 
 const WRDE_NOSPACE: c_int = 1;
 const WRDE_BADCHAR: c_int = 2;
+const WRDE_BADVAL: c_int = 3;
 const WRDE_CMDSUB: c_int = 4;
 const WRDE_SYNTAX: c_int = 5;
-
-const EINTR: i64 = 4;
-const SIGKILL: i64 = 9;
-const CLOEXEC: i64 = 0x80000;
-const FDOP_DUP2: c_int = 2;
 const PTHREAD_CANCEL_DISABLE: c_int = 1;
-
-const SH: &[u8] = b"/bin/sh\0";
-const SH_ARG0: &[u8] = b"sh\0";
-const SH_C: &[u8] = b"-c\0";
-const WORDEXP_SCRIPT: &[u8] = b"eval \"printf %s\\\\\\\\0 x $1 $2\"\0";
-// Keep the musl `eval` spelling and `$1`/`$2` argv protocol byte-for-byte
-// after this leading shell redirection. The source's `$2` redirection occurs
-// inside eval too late to silence an eval parse error such as `(`.
-const WORDEXP_QUIET_SCRIPT: &[u8] = b"exec 2>/dev/null; eval \"printf %s\\\\\\\\0 x $1 $2\"\0";
-const WORDEXP_DEV_NULL: &[u8] = b"2>/dev/null\0";
-const EMPTY: &[u8] = b"\0";
-const READ_MODE: &[u8] = b"r\0";
-
-#[repr(C)]
-pub(super) struct Wordexp {
-    word_count: usize,
-    words: *mut *mut c_char,
-    offsets: usize,
-}
+const EINTR: i64 = 4;
 
 unsafe extern "C" {
-    #[link_name = "calloc"]
-    fn cabi_calloc(count: usize, size: usize) -> *mut c_void;
-    #[link_name = "realloc"]
-    fn cabi_realloc(pointer: *mut c_void, size: usize) -> *mut c_void;
-    #[link_name = "free"]
-    fn cabi_free(pointer: *mut c_void);
     fn pthread_setcancelstate(state: c_int, old: *mut c_int) -> c_int;
 }
 
-include!("owned_wordexp_nocmd.rs");
-
-#[inline]
-unsafe fn close(descriptor: c_int) {
-    // SAFETY: this private descriptor is exclusively owned by the current
-    // source branch. Raw close must not overwrite a preceding source errno.
-    unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor as i64); }
+/// Private failure injection changes only C result storage. The ordinary
+/// provider always selects its production C allocation domain directly.
+fn result_allocator() -> WordexpResultAllocator {
+    #[cfg(crabc_owned_wordexp_result_private_test)]
+    { super::owned_wordexp_result_failure::allocator() }
+    #[cfg(not(crabc_owned_wordexp_result_private_test))]
+    { WordexpResultAllocator::selected() }
 }
 
-unsafe fn reap(process: c_int) {
-    let mut status = 0;
-    loop {
-        // SAFETY: `status` is a live private output word and this caller owns
-        // the successful `owned_spawn` child until it is reaped.
-        let result = unsafe {
-            raw_syscall::syscall4(raw_syscall::SYS_WAIT4, process as i64,
-                ptr::addr_of_mut!(status) as i64, 0, 0)
+fn error_status(error: WordexpError) -> c_int {
+    match error {
+        WordexpError::NoSpace => WRDE_NOSPACE,
+        WordexpError::BadCharacter => WRDE_BADCHAR,
+        WordexpError::UndefinedVariable => WRDE_BADVAL,
+        WordexpError::CommandSubstitution => WRDE_CMDSUB,
+        // Parameter assertions can also reject a defined but empty value.
+        // Their failure, arithmetic failures, and unrepresentable NUL output
+        // use the explicit generic expansion-error policy, never BADVAL.
+        WordexpError::Syntax | WordexpError::ParameterError |
+        WordexpError::Arithmetic | WordexpError::ArithmeticOverflow |
+        WordexpError::OutputNul => WRDE_SYNTAX,
+    }
+}
+
+fn record_error(error: WordexpResultError) -> WordexpError {
+    match error {
+        WordexpResultError::NoSpace => WordexpError::NoSpace,
+        WordexpResultError::InteriorNul => WordexpError::OutputNul,
+        WordexpResultError::ByteLengthMismatch |
+        WordexpResultError::InvalidAppendRecord => WordexpError::Syntax,
+    }
+}
+
+impl WordexpResultSink for WordexpResultTransaction {
+    fn append_word(&mut self, word: ExpandedResultWord<'_>) -> Result<(), WordexpError> {
+        self.append_word_bytes(word.byte_len(), word.bytes()).map_err(record_error)
+    }
+}
+
+struct WordexpDiagnostics { show_errors: bool }
+
+/// Write diagnostic bytes to the inherited standard-error descriptor. Like
+/// the old child protocol, this never changes the parent's FILE orientation,
+/// buffering, or error indicator. It does not publish raw write failures to
+/// errno; arbitrary signal handlers can independently change errno.
+///
+/// These are ordinary calling-thread writes: a broken pipe follows that
+/// thread's SIGPIPE disposition. No hidden signal-mask policy is introduced.
+fn write_diagnostic_bytes(mut bytes: &[u8]) -> bool {
+    while !bytes.is_empty() {
+        // SAFETY: bytes is a live readable range; descriptor 2 is the standard
+        // error destination. Raw syscall owns result/error translation.
+        let written = unsafe {
+            raw_syscall::syscall3(
+                raw_syscall::SYS_WRITE, 2, bytes.as_ptr() as i64, bytes.len() as i64,
+            )
         };
-        if result != -EINTR { return; }
+        if written == -EINTR { continue; }
+        if written <= 0 || written as usize > bytes.len() { return false; }
+        bytes = &bytes[written as usize..];
     }
+    true
 }
 
-unsafe fn free_words(words: *mut *mut c_char, count: usize, offsets: usize) {
-    if words.is_null() { return; }
-    for index in 0..count {
-        // SAFETY: source-owned vector slots are initialized through `count`.
-        let word = unsafe { ptr::read(words.add(offsets + index)) };
-        if !word.is_null() {
-            // SAFETY: every non-null slot came from the selected C allocator.
-            unsafe { cabi_free(word.cast()); }
+impl WordexpDiagnosticSink for WordexpDiagnostics {
+    fn parameter_error(&mut self, name: &[u8], message: Option<ExpandedResultWord<'_>>) {
+        if !self.show_errors { return; }
+        if !write_diagnostic_bytes(b"wordexp: ") ||
+            !write_diagnostic_bytes(name) || !write_diagnostic_bytes(b": ")
+        {
+            return;
         }
+        match message {
+            None => {
+                if !write_diagnostic_bytes(b"parameter is unset or empty") { return; }
+            }
+            Some(message) => {
+                let mut chunk = [0u8; 256];
+                let mut used = 0;
+                for byte in message.bytes() {
+                    chunk[used] = byte;
+                    used += 1;
+                    if used == chunk.len() {
+                        if !write_diagnostic_bytes(&chunk) { return; }
+                        used = 0;
+                    }
+                }
+                if !write_diagnostic_bytes(&chunk[..used]) { return; }
+            }
+        }
+        let _ = write_diagnostic_bytes(b"\n");
     }
-    // SAFETY: the source owns the complete word vector allocation.
-    unsafe { cabi_free(words.cast()); }
 }
 
-unsafe fn no_space(words: *mut Wordexp, flags: c_int) -> c_int {
+/// Publish a releasable fresh zero prefix when parsing runs out of storage.
+/// Append keeps every original field and allocation. Fresh calls only require
+/// an initialized offset field when DOOFFS is set; no other field is read.
+unsafe fn early_no_space(words: *mut Wordexp, flags: c_int) -> c_int {
     if flags & WRDE_APPEND == 0 {
-        // SAFETY: source semantics reset a fresh caller record on early
-        // pipe/spawn/FILE setup failure; append preserves prior ownership.
         unsafe {
             (*words).word_count = 0;
             (*words).words = ptr::null_mut();
+            if flags & WRDE_DOOFFS == 0 { (*words).offsets = 0; }
         }
     }
     WRDE_NOSPACE
 }
 
-unsafe fn get_word(stream: *mut stdio_standard::StandardStream) -> *mut c_char {
-    let mut word = ptr::null_mut();
-    let mut capacity = 0usize;
-    // SAFETY: the owned stream is live and the two private result words are
-    // valid getdelim outputs. The delimiter is the source's NUL byte.
-    if unsafe { stdio_standard::getdelim(&mut word, &mut capacity, 0, stream) } < 0 {
-        // getdelim may have obtained private storage before a later read or
-        // growth failure. The source's helper loses that temporary pointer;
-        // retire it here before reporting the same null/error result so an
-        // unpublishable word cannot escape the owned allocation lifecycle.
-        if !word.is_null() { unsafe { cabi_free(word.cast()); } }
-        ptr::null_mut()
-    } else {
-        word
-    }
-}
-
 unsafe fn do_wordexp(input: *const c_char, words: *mut Wordexp, flags: c_int) -> c_int {
     if input.is_null() || words.is_null() { return WRDE_BADCHAR; }
-
+    let allocator = result_allocator();
     if flags & WRDE_REUSE != 0 {
-        // SAFETY: REUSE requires one prior wordexp record just as musl does.
-        unsafe { wordfree(words.cast()); }
+        // SAFETY: REUSE transfers the prior result's ownership to wordfree.
+        unsafe { release_wordexp_result_record(words, allocator); }
     }
-    if flags & WRDE_NOCMD != 0 {
-        // SAFETY: the C API supplies a readable NUL-terminated input string.
-        let result = unsafe { wordexp_nocmd_check(input) };
-        // The scanner may spill its lexical frame stack through the selected
-        // C allocator. Preserve musl's public `WRDE_NOSPACE` record boundary:
-        // fresh/REUSE calls reset the record, while APPEND retains its prior
-        // vector. Parser classifications still leave the record untouched.
-        if result == WRDE_NOSPACE { return unsafe { no_space(words, flags) }; }
-        if result != 0 { return result; }
-    }
-    // Pinned musl's wordexp source accepts this standardized flag but does
-    // not enable `set -u`; retaining the read documents that exact behavior.
-    let _ = flags & WRDE_UNDEF;
+    // SAFETY: the C caller retains a readable terminated input for this call.
+    let source = unsafe { core::ffi::CStr::from_ptr(input).to_bytes() };
+    let syntax = match WordexpSyntax::parse(source) {
+        Ok(syntax) => syntax,
+        Err(WordexpError::NoSpace) => return unsafe { early_no_space(words, flags) },
+        Err(error) => return error_status(error),
+    };
+    if flags & WRDE_NOCMD != 0 && syntax.has_commands() { return WRDE_CMDSUB; }
 
-    let mut count = 0usize;
-    let mut vector: *mut *mut c_char = ptr::null_mut();
-    if flags & WRDE_APPEND != 0 {
-        // SAFETY: APPEND retains the source's valid prior caller record.
-        unsafe {
-            count = (*words).word_count;
-            vector = (*words).words;
-        }
-    }
-
-    let mut index = count;
-    let offsets;
-    if flags & WRDE_DOOFFS != 0 {
-        // This is musl's `SIZE_MAX/sizeof(void *)/4` guard before adding the
-        // offset. It leaves room for the source's later vector growth.
-        offsets = unsafe { (*words).offsets };
-        if offsets > usize::MAX / size_of::<*mut c_char>() / 4 {
-            return unsafe { no_space(words, flags) };
-        }
-        let Some(with_offsets) = index.checked_add(offsets) else {
-            return unsafe { no_space(words, flags) };
-        };
-        index = with_offsets;
+    let offsets = if flags & WRDE_DOOFFS != 0 {
+        // SAFETY: DOOFFS requires this field to be initialized by the caller.
+        WordexpResultOffsets::Leading(unsafe { (*words).offsets })
     } else {
-        // SAFETY: source clears only the public offset field for this mode.
-        unsafe { (*words).offsets = 0; }
-        offsets = 0;
-    }
-
-    // Pinned musl's child-only exec/dup branch cannot write the parent's
-    // errno. Save it before the private pipe/spawn transaction so that its
-    // missing-sentinel WRDE_SYNTAX result retains that observable boundary.
-    let errno_before_spawn = unsafe { errno::get_errno() };
-    let mut pipes = [-1_i32; 2];
-    // SAFETY: `pipes` is writable private two-int storage.
-    let pipe_result = unsafe {
-        raw_syscall::syscall2(raw_syscall::SYS_PIPE2, pipes.as_mut_ptr() as i64, CLOEXEC)
+        WordexpResultOffsets::None
     };
-    if pipe_result < 0 {
-        // Unlike musl's C pipe2 wrapper, this raw boundary must publish errno.
-        unsafe { errno::set_errno((-pipe_result) as c_int); }
-        return unsafe { no_space(words, flags) };
-    }
-
-    let mut action = FdOp {
-        next: ptr::null_mut(), prev: ptr::null_mut(), cmd: FDOP_DUP2, fd: 1,
-        srcfd: pipes[1], oflag: 0, mode: 0,
+    let mode = if flags & WRDE_APPEND != 0 {
+        WordexpResultMode::Append { offsets }
+    } else {
+        WordexpResultMode::Fresh { offsets }
     };
-    let actions = PosixSpawnFileActions {
-        _pad0: [0; 2], actions: ptr::addr_of_mut!(action).cast(), _pad: [0; 16],
+    let mut transaction = match unsafe { WordexpResultTransaction::begin(words, mode, allocator) } {
+        Ok(transaction) => transaction,
+        Err(error) => return error_status(record_error(error)),
     };
-    let show_errors = flags & WRDE_SHOWERR != 0;
-    let redirect = if show_errors { EMPTY } else { WORDEXP_DEV_NULL };
-    let script = if show_errors { WORDEXP_SCRIPT } else { WORDEXP_QUIET_SCRIPT };
-    let arguments = [
-        SH_ARG0.as_ptr().cast::<c_char>(), SH_C.as_ptr().cast::<c_char>(),
-        script.as_ptr().cast::<c_char>(), SH_ARG0.as_ptr().cast::<c_char>(),
-        input, redirect.as_ptr().cast::<c_char>(), ptr::null(),
-    ];
-    // Take musl's one machine-word environment snapshot without creating a
-    // shared reference to the mutable public object.
-    let environment = unsafe { ptr::read(ptr::addr_of!(environment::__environ)) };
-    let mut process = 0;
-    // SAFETY: the action/argv/environment storage remains live until spawn
-    // returns; `owned_spawn` transfers only a successful child PID to us.
-    let spawned = unsafe {
-        owned_spawn::spawn_with_outcome(&mut process, SH.as_ptr().cast(), &actions,
-            ptr::null(), arguments.as_ptr(), environment.cast_const().cast(), false)
-    };
-    match spawned {
-        owned_spawn::SpawnOutcome::Success => {}
-        owned_spawn::SpawnOutcome::ParentFailure(spawn_error) => {
-            unsafe {
-                close(pipes[0]);
-                close(pipes[1]);
-                errno::set_errno(spawn_error);
-            }
-            return unsafe { no_space(words, flags) };
-        }
-        owned_spawn::SpawnOutcome::ChildFailure(_) => {
-            // Musl's raw child exits after an exec/dup2-side failure. The
-            // parent then observes its otherwise valid result pipe without a
-            // NUL sentinel and returns WRDE_SYNTAX. `owned_spawn` has already
-            // reaped this child-reporting branch; retire only our two pipe
-            // ends and preserve the source-visible missing-sentinel result.
-            unsafe {
-                close(pipes[0]);
-                close(pipes[1]);
-                errno::set_errno(errno_before_spawn);
-            }
-            return WRDE_SYNTAX;
-        }
-    }
-    // `owned_spawn` has executed /bin/sh. Its original CLOEXEC write end will
-    // close at exec; the parent retains only the read end through fdopen.
-    unsafe { close(pipes[1]); }
+    let mut context = WordexpContext::new();
+    context.set_undefined_is_error(flags & WRDE_UNDEF != 0);
+    context.set_no_command_substitution(flags & WRDE_NOCMD != 0);
 
-    let stream = unsafe { stdio_standard::fdopen(pipes[0], READ_MODE.as_ptr().cast()) };
-    if stream.is_null() {
-        unsafe {
-            close(pipes[0]);
-            raw_syscall::syscall2(raw_syscall::SYS_KILL, process as i64, SIGKILL);
-            reap(process);
-        }
-        return unsafe { no_space(words, flags) };
+    // Retire process and pathname owners before publishing the result. The
+    // call-local context also drops before the wrapper restores cancellation.
+    let outcome = (|| {
+        // SAFETY: the C environment and selected CTYPE remain stable under
+        // this call's documented process-state contract.
+        let environment = unsafe { WordexpEnvironmentSnapshot::capture(&mut context) }?;
+        let mut commands = environment.process_adapter(flags & WRDE_SHOWERR != 0);
+        let mut diagnostics = WordexpDiagnostics { show_errors: flags & WRDE_SHOWERR != 0 };
+        evaluate_wordexp_into(
+            &syntax, &mut context, &mut commands, &mut NativeWordexpPaths::new(),
+            &mut transaction, &mut diagnostics,
+        )
+    })();
+    let status = match outcome { Ok(()) => 0, Err(error) => error_status(error) };
+    if matches!(outcome, Ok(()) | Err(WordexpError::NoSpace)) {
+        // SAFETY: only success and the precise resource error publish a
+        // prefix. This consumes staging without another allocation or failure.
+        unsafe { transaction.commit_completed(); }
     }
-
-    let mut capacity = if vector.is_null() { 0 } else { index.saturating_add(1) };
-    // The source frees its sentinel and diagnoses EOF before it as syntax.
-    unsafe { cabi_free(get_word(stream).cast()); }
-    if unsafe { stdio_standard::feof(stream) } != 0 {
-        unsafe {
-            stdio_standard::fclose(stream);
-            reap(process);
-        }
-        return WRDE_SYNTAX;
-    }
-
-    let mut error = 0;
-    loop {
-        let word = unsafe { get_word(stream) };
-        if word.is_null() { break; }
-        if index.checked_add(1).is_none() {
-            // Keep ownership in the local source vector so the returned
-            // result remains releasable by wordfree, as in musl's error path.
-            unsafe { cabi_free(word.cast()); }
-            error = WRDE_NOSPACE;
-            break;
-        }
-        if index + 1 >= capacity {
-            let Some(growth) = capacity.checked_add(capacity / 2 + 10) else {
-                unsafe { cabi_free(word.cast()); }
-                error = WRDE_NOSPACE;
-                break;
-            };
-            let Some(bytes) = growth.checked_mul(size_of::<*mut c_char>()) else {
-                unsafe { cabi_free(word.cast()); }
-                error = WRDE_NOSPACE;
-                break;
-            };
-            let grown = unsafe { cabi_realloc(vector.cast(), bytes).cast::<*mut c_char>() };
-            if grown.is_null() {
-                unsafe { cabi_free(word.cast()); }
-                error = WRDE_NOSPACE;
-                break;
-            }
-            vector = grown;
-            capacity = growth;
-        }
-        // SAFETY: capacity reserves `index` and its following terminator.
-        unsafe {
-            ptr::write(vector.add(index), word);
-            index += 1;
-            ptr::write(vector.add(index), ptr::null_mut());
-        }
-    }
-    if unsafe { stdio_standard::feof(stream) } == 0 { error = WRDE_NOSPACE; }
-    unsafe {
-        stdio_standard::fclose(stream);
-        reap(process);
-    }
-
-    if vector.is_null() {
-        let Some(words_count) = index.checked_add(1) else {
-            return unsafe { no_space(words, flags) };
-        };
-        // SAFETY: source uses a zeroed null terminator vector for zero words.
-        vector = unsafe { cabi_calloc(words_count, size_of::<*mut c_char>()).cast() };
-    }
-    // SAFETY: complete source result ownership transfers only here, after the
-    // child and FILE have been retired. A null allocation remains musl's
-    // observable `we_wordv == NULL` result on this late allocation path.
-    unsafe {
-        (*words).words = vector;
-        (*words).word_count = index;
-        if flags & WRDE_DOOFFS != 0 {
-            if !vector.is_null() {
-                for offset in (1..=offsets).rev() {
-                    ptr::write(vector.add(offset - 1), ptr::null_mut());
-                }
-            }
-            (*words).word_count -= offsets;
-        }
-    }
-    error
+    // Every other outcome drops staging and preserves an APPEND record
+    // exactly, including its original vector address and original strings.
+    status
 }
 
-/// Expand shell-style words through pinned musl's `/bin/sh` protocol.
+/// Expand shell words with call-local variable, quote, and result ownership.
 ///
 /// # Safety
-/// `input` is a readable NUL-terminated C string. `words` is a writable
-/// `wordexp_t`; APPEND and REUSE additionally require a valid result record
-/// from an earlier successful call, exclusively owned by this caller. The
-/// process environment remains readable and stable until the spawned shell
-/// has executed. As in C and musl, ordinary expansion is not safe for
-/// untrusted shell language; callers needing no command substitutions use
-/// `WRDE_NOCMD` and still retain shell-word grammar obligations.
+/// `input` is a readable NUL-terminated C string. `words` is a writable,
+/// exclusively owned `wordexp_t`, disjoint from the input. DOOFFS requires
+/// initialized `we_offs`; APPEND and REUSE require a valid exclusively owned
+/// previous result from this provider (including a NOSPACE prefix). The
+/// environment vector and its strings remain stable while the call copies
+/// them; the selected CTYPE locale remains stable throughout expansion.
+/// Command substitutions execute shell language unless NOCMD rejects them.
 #[no_mangle]
 pub unsafe extern "C" fn wordexp(
     input: *const c_char,
@@ -382,27 +229,23 @@ pub unsafe extern "C" fn wordexp(
     flags: c_int,
 ) -> c_int {
     let mut old_state = 0;
-    // Musl disables deferred cancellation around the complete protocol so a
-    // caller cannot abandon a live child or half-owned word vector.
+    // Preserve the selected whole-call cancellation envelope. A pending
+    // request cannot abandon a child, glob result, or staged C allocation.
     let changed = unsafe { pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &mut old_state) == 0 };
     let result = unsafe { do_wordexp(input, words, flags) };
-    if changed {
-        unsafe { pthread_setcancelstate(old_state, ptr::null_mut()); }
-    }
+    if changed { unsafe { pthread_setcancelstate(old_state, ptr::null_mut()); } }
     result
 }
 
-/// Release a successful wordexp result, including caller-requested offsets.
+/// Release a successful or NOSPACE partial result, retaining caller offsets.
 ///
 /// # Safety
-/// `words` is null or an exclusively owned result record previously returned
-/// by `wordexp`; it must not have been copied, mutated, or freed separately.
+/// `words` is null or an exclusively owned result returned by this provider
+/// with success or NOSPACE. Its vector and strings have not been separately
+/// freed, copied into another owning record, or mutated. A released record
+/// can be released again; its null vector makes that operation inert.
 #[no_mangle]
 pub unsafe extern "C" fn wordfree(words: *mut Wordexp) {
-    if words.is_null() || unsafe { (*words).words.is_null() } { return; }
-    unsafe {
-        free_words((*words).words, (*words).word_count, (*words).offsets);
-        (*words).words = ptr::null_mut();
-        (*words).word_count = 0;
-    }
+    // SAFETY: this entry supplies the same C allocation domain as wordexp.
+    unsafe { release_wordexp_result_record(words, result_allocator()); }
 }

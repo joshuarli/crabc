@@ -1,10 +1,10 @@
 # Private x86 `wordexp_t` result transaction
 
-`libc/src/c_abi/x86_64/owned_wordexp_results.rs` is an unselected private
-owner for the C result record behind a possible x86 `wordexp` replacement. It
-exports no C symbol and does not change the selected
-`libc/src/c_abi/x86_64/owned_wordexp.rs` provider, installed product, shell
-adapter, capability ledger, or x86 support claim.
+`libc/src/c_abi/x86_64/owned_wordexp_results.rs` is the sole private owner for
+the C result record selected by the x86 `wordexp` binding in
+`libc/src/c_abi/x86_64/owned_wordexp.rs`. It exports no C symbol. Its private
+API and focused fixtures document result invariants but do not by themselves
+establish installed-product or public-platform support.
 
 The result boundary is C ABI compatibility machinery. It owns only C-string
 and vector lifetime after a deterministic engine has produced result bytes;
@@ -16,7 +16,7 @@ flags, suppress cancellation, or select a provider.
 POSIX.1-2024 [`wordexp()`](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/functions/wordexp.html)
 requires an allocation-space failure to leave completed words available to the
 caller, while an `WRDE_APPEND` call that returns a different error retains the
-prior result record. The parent adapter classifies the engine outcome and has
+prior result record. The selected C binding classifies the engine outcome and has
 two explicit choices:
 
 - after success or `WRDE_NOSPACE`, call
@@ -45,10 +45,10 @@ adds checked `isize::MAX` bounds for every vector allocation and pointer
 index.
 
 `WordexpResultMode` and `WordexpResultOffsets` carry fresh/append and offset
-ownership explicitly. The C adapter supplies `Leading(we_offs)` only for
+ownership explicitly. The selected C binding supplies `Leading(we_offs)` only for
 `WRDE_DOOFFS`, and `None` otherwise. Its `WRDE_APPEND` policy must preserve
 that flag form across calls; a record does not retain a separate `DOOFFS` bit
-when the count is zero. `WRDE_REUSE` remains outside this component: the C
+when the count is zero. `WRDE_REUSE` remains a binding decision: the selected C
 adapter releases its old record before beginning a fresh transaction.
 
 Fresh setup failure writes `{ word_count: 0, words: NULL, offsets }`, so its
@@ -64,16 +64,16 @@ record, so a later `WRDE_REUSE | WRDE_DOOFFS` call retains the caller's
 
 ## Linear result input and unsafe boundary
 
-`append_word_bytes(byte_len, bytes)` consumes the future engine's linear
+`append_word_bytes(byte_len, bytes)` consumes the deterministic engine's linear
 `ExpandedResultWord::bytes()` iterator once. It reserves a pointer slot plus
 sentinel, allocates one exact NUL-terminated C string, validates that the
 iterator yields exactly `byte_len` non-NUL bytes, and only then accepts that
 word into the staging vector. Short, long, or NUL-containing streams free the
-candidate string without accepting it. This avoids the former repeated
+new string without accepting it. This avoids the former repeated
 indexed-byte scan that would copy atom-backed words in quadratic time.
 
 `WordexpResultTransaction::begin()` is unsafe because it takes a raw C record.
-For `Fresh`, the adapter must pass the offset value separately; the component
+For `Fresh`, the selected C binding passes the offset value separately; the component
 does not read `we_wordc` or `we_wordv`, which a C caller need not initialize.
 For `Append`, the record, its vector, and all original strings must be live,
 exclusively owned, and allocated by the same `WordexpResultAllocator` domain.
@@ -116,7 +116,11 @@ docker run --rm --init --platform linux/amd64 --workdir /workspace \
 ```
 
 The real invocation binds both `TMPDIR` and the executable output below this
-worktree's `.work/x86_64/` directory. It is focused component evidence only;
-selection still needs the parent C adapter to bind the engine sink, C status
-mapping, REUSE policy, cancellation, process adapters, and installed-product
-POSIX/musl evidence.
+worktree's `.work/x86_64/` directory. It is focused component evidence for the
+sole result transaction. The selected C binding already supplies the engine
+sink, C status mapping, REUSE policy, cancellation envelope, and process/path
+owners; this private check still does not establish installed C ABI/public
+promotion or family/platform completion. Direct C/product POSIX/musl evidence
+remains the separate validation boundary. Earlier focused results are retained
+as provenance for these transaction invariants, not installed-product PASS
+results.

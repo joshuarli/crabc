@@ -135,6 +135,72 @@ class OwnedWordexpExecutionRootTests(unittest.TestCase):
             self.module.validate_execution_root(self.root, record)
 
 class OwnedWordexpCommandBindingTests(unittest.TestCase):
+    def test_temporary_fixture_requires_private_mode_and_complete_cleanup(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        temporary = root / "wordexp-tmp"
+        temporary.mkdir(mode=0o700, parents=True)
+        temporary.chmod(0o700)
+        self.addCleanup(shutil.rmtree, root)
+        module._validate_temporary_fixture(root)
+        temporary.chmod(0o755)
+        with self.assertRaises(module.EvidenceError):
+            module._validate_temporary_fixture(root)
+        temporary.chmod(0o700)
+        (temporary / "leftover-marker").write_bytes(b"unexpected")
+        with self.assertRaises(module.EvidenceError):
+            module._validate_temporary_fixture(root)
+        (temporary / "leftover-marker").unlink()
+        temporary.rmdir()
+        temporary.symlink_to(root, target_is_directory=True)
+        with self.assertRaises(module.EvidenceError):
+            module._validate_temporary_fixture(root)
+
+    def test_owned_evaluator_requires_exact_source_observations_and_candidate_results(self) -> None:
+        module = load_module()
+        root = TMP_ROOT / self.id().replace(".", "-")
+        root.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(shutil.rmtree, root)
+
+        def record(prefix: str, streams: tuple[bytes, bytes, bytes]):
+            result = {}
+            for name, value in zip(("status", "stdout", "stderr"), streams):
+                path = root / f"{prefix}.{name}"
+                path.write_bytes(value)
+                result[name] = module._checkout_identity(ROOT, path, f"{prefix} {name}")
+            return result
+
+        cases = (
+            ("missing", b"74\n", b"owned-wordexp-shell-unavailable: SOURCE-RED ordinary-requires-shell\n",
+             b"owned-wordexp-shell-unavailable: PASS\n"),
+            ("inaccessible", b"74\n", b"owned-wordexp-shell-unavailable: SOURCE-RED ordinary-requires-shell\n",
+             b"owned-wordexp-shell-unavailable: PASS\n"),
+            ("invalid", b"74\n", b"owned-wordexp-shell-unavailable: SOURCE-RED ordinary-requires-shell\n",
+             b"owned-wordexp-shell-unavailable: PASS\n"),
+            ("nocmd-source", b"106\n", b"owned-wordexp-nocmd-source: SOURCE-OBSERVATION subshell-badchar\n",
+             b"owned-wordexp-nocmd-source: PASS\n"),
+            ("undef-source-observation", b"154\n", b"owned-wordexp-undef-source-observation: SOURCE-RED\n",
+             b"owned-wordexp-undef-source-observation: PASS\n"),
+        )
+        for case, status, source_stdout, candidate_stdout in cases:
+            with self.subTest(case=case):
+                source_streams = (status, source_stdout, b"")
+                candidate_streams = (b"0\n", candidate_stdout, b"")
+                oracle = record("oracle", source_streams)
+                candidate = record("candidate", candidate_streams)
+                module._assert_case_results(ROOT, case, oracle, candidate, case)
+                # A valid source observation cannot waive a changed status,
+                # transcript, or diagnostic on either side of the comparison.
+                for side in ("oracle", "candidate"):
+                    for stream in range(3):
+                        changed = list(source_streams if side == "oracle" else candidate_streams)
+                        changed[stream] += b"unexpected\n"
+                        broken = record("broken", tuple(changed))
+                        with self.assertRaises(module.EvidenceError):
+                            module._assert_case_results(ROOT, case,
+                                broken if side == "oracle" else oracle,
+                                broken if side == "candidate" else candidate, case)
+
     def test_substituted_oracle_argv_cannot_satisfy_candidate_binding(self) -> None:
         module = load_module()
         root = TMP_ROOT / self.id().replace(".", "-")
@@ -252,6 +318,8 @@ class OwnedWordexpReconstructionTests(unittest.TestCase):
         (self.product / "lib/ld-musl-x86_64.so.1").symlink_to("keep")
         (self.product / "lib/keep-alias").symlink_to("keep")
         shutil.copytree(self.product, self.execution, symlinks=True)
+        (self.execution / "wordexp-tmp").mkdir(mode=0o700)
+        (self.execution / "wordexp-tmp").chmod(0o700)
         self._copy(self.work / "candidate", self.execution / "consumer-pie")
         self._copy(self.work / "oracle", self.execution / "oracle")
         # The one allowed external alias replacement is intentionally a regular
@@ -387,6 +455,44 @@ class OwnedWordexpEnvironmentTests(unittest.TestCase):
         output = (ROOT / Path(record["stdout"]["path"]).relative_to(module.SOURCE_MOUNT)).read_bytes()
         self.assertEqual(output, b"||\n")
         shutil.rmtree(root, ignore_errors=True)
+
+
+class OwnedWordexpEngineResultTests(unittest.TestCase):
+    def test_matching_unexpected_diagnostics_cannot_pass_a_source_control(self) -> None:
+        module = load_module()
+        case = "engine-literals"
+        result = (b"0\n", b"owned-wordexp-engine-literals: PASS\n", b"unexpected diagnostic\n")
+        with unittest.mock.patch.object(module, "_result_streams", side_effect=[result, result]):
+            with self.assertRaises(module.EvidenceError):
+                module._assert_case_results(ROOT, case, {}, {}, case)
+
+    def test_engine_cells_require_positive_candidate_and_exact_source_observation(self) -> None:
+        module = load_module()
+        observations = {
+            "undef": "wrde-undef-untyped",
+            "append-rollback": "wrde-undef-untyped",
+            "parameter-word": "nocmd-parameter-word-badchar",
+            "diagnostics": "quiet-shell-diagnostic",
+            "sigpipe": "shell-child-no-raw-sigpipe",
+        }
+        for name, reason in observations.items():
+            with self.subTest(name=name):
+                case = "engine-" + name
+                prefix = "owned-wordexp-" + case + ": "
+                oracle = (b"0\n", (prefix + "SOURCE-RED " + reason + "\n").encode(), b"")
+                candidate = (b"0\n", (prefix + "PASS\n").encode(), b"")
+                with unittest.mock.patch.object(module, "_result_streams", side_effect=[oracle, candidate]):
+                    module._assert_case_results(ROOT, case, {}, {}, case)
+                for changed_oracle, changed_candidate in (
+                    (candidate, candidate),
+                    (oracle, oracle),
+                    (oracle, (b"1\n", candidate[1], b"")),
+                    (oracle, (b"0\n", candidate[1], b"unexpected diagnostic\n")),
+                    ((b"0\n", oracle[1] + b"extra\n", b""), candidate),
+                ):
+                    with unittest.mock.patch.object(module, "_result_streams", side_effect=[changed_oracle, changed_candidate]):
+                        with self.assertRaises(module.EvidenceError):
+                            module._assert_case_results(ROOT, case, {}, {}, case)
 
 
 class OwnedWordexpExpectedInputTests(unittest.TestCase):
