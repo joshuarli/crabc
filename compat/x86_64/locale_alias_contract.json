@@ -1,0 +1,71 @@
+{
+  "schema": "crabc.x86_64-locale-alias-contract/v1",
+  "oracle": {
+    "release": "musl-1.2.6",
+    "revision": "9fa28ece75d8a2191de7c5bb53bed224c5947417"
+  },
+  "visible_aliases": {
+    "duplocale": "__duplocale",
+    "newlocale": "__newlocale",
+    "uselocale": "__uselocale",
+    "nl_langinfo": "__nl_langinfo",
+    "nl_langinfo_l": "__nl_langinfo_l",
+    "isalnum_l": "__isalnum_l",
+    "isalpha_l": "__isalpha_l",
+    "isblank_l": "__isblank_l",
+    "iscntrl_l": "__iscntrl_l",
+    "isdigit_l": "__isdigit_l",
+    "isgraph_l": "__isgraph_l",
+    "islower_l": "__islower_l",
+    "isprint_l": "__isprint_l",
+    "ispunct_l": "__ispunct_l",
+    "isspace_l": "__isspace_l",
+    "isupper_l": "__isupper_l",
+    "isxdigit_l": "__isxdigit_l",
+    "tolower_l": "__tolower_l",
+    "toupper_l": "__toupper_l",
+    "iswalnum_l": "__iswalnum_l",
+    "iswalpha_l": "__iswalpha_l",
+    "iswblank_l": "__iswblank_l",
+    "iswcntrl_l": "__iswcntrl_l",
+    "iswdigit_l": "__iswdigit_l",
+    "iswgraph_l": "__iswgraph_l",
+    "iswlower_l": "__iswlower_l",
+    "iswprint_l": "__iswprint_l",
+    "iswpunct_l": "__iswpunct_l",
+    "iswspace_l": "__iswspace_l",
+    "iswupper_l": "__iswupper_l",
+    "iswxdigit_l": "__iswxdigit_l",
+    "iswctype_l": "__iswctype_l",
+    "wctype_l": "__wctype_l",
+    "wctrans_l": "__wctrans_l",
+    "towlower_l": "__towlower_l",
+    "towupper_l": "__towupper_l",
+    "towctrans_l": "__towctrans_l",
+    "strcasecmp_l": "__strcasecmp_l",
+    "strncasecmp_l": "__strncasecmp_l",
+    "strcoll_l": "__strcoll_l",
+    "strxfrm_l": "__strxfrm_l",
+    "wcscoll_l": "__wcscoll_l",
+    "wcsxfrm_l": "__wcsxfrm_l"
+  },
+  "hidden_aliases": {
+    "asctime_r": "__asctime_r",
+    "gmtime_r": "__gmtime_r",
+    "localtime_r": "__localtime_r",
+    "strftime_l": "__strftime_l"
+  },
+  "file_local_aliases": {
+    "tzset": "__tzset"
+  },
+  "reverse_visible_aliases": {
+    "freelocale": "__freelocale"
+  },
+  "non_alias_locale_entries": [
+    "wcscasecmp_l",
+    "wcsncasecmp_l"
+  ],
+  "family_completion": false,
+  "promotion_ready": false,
+  "public_support": false
+}

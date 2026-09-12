@@ -46,6 +46,39 @@ type Wint = u32;
 type Wctype = usize;
 type Wctrans = *const c_int;
 
+// These locale internals remain exported by musl. Their public spellings are
+// weak aliases at the same address, rather than independent Rust wrappers.
+// `freelocale` is the reverse source form: the strong public body also has a
+// weak `__freelocale` spelling at its exact address.
+core::arch::global_asm!(
+    ".weak __freelocale", ".set __freelocale, freelocale",
+    ".weak newlocale", ".set newlocale, __newlocale",
+    ".weak uselocale", ".set uselocale, __uselocale",
+    ".weak duplocale", ".set duplocale, __duplocale",
+    ".weak nl_langinfo_l", ".set nl_langinfo_l, __nl_langinfo_l",
+    ".weak nl_langinfo", ".set nl_langinfo, __nl_langinfo",
+    ".weak iswalnum_l", ".set iswalnum_l, __iswalnum_l",
+    ".weak iswalpha_l", ".set iswalpha_l, __iswalpha_l",
+    ".weak iswblank_l", ".set iswblank_l, __iswblank_l",
+    ".weak iswcntrl_l", ".set iswcntrl_l, __iswcntrl_l",
+    ".weak iswdigit_l", ".set iswdigit_l, __iswdigit_l",
+    ".weak iswgraph_l", ".set iswgraph_l, __iswgraph_l",
+    ".weak iswlower_l", ".set iswlower_l, __iswlower_l",
+    ".weak iswprint_l", ".set iswprint_l, __iswprint_l",
+    ".weak iswpunct_l", ".set iswpunct_l, __iswpunct_l",
+    ".weak iswspace_l", ".set iswspace_l, __iswspace_l",
+    ".weak iswupper_l", ".set iswupper_l, __iswupper_l",
+    ".weak iswxdigit_l", ".set iswxdigit_l, __iswxdigit_l",
+    ".weak iswctype_l", ".set iswctype_l, __iswctype_l",
+    ".weak wctype_l", ".set wctype_l, __wctype_l",
+    ".weak towlower_l", ".set towlower_l, __towlower_l",
+    ".weak towupper_l", ".set towupper_l, __towupper_l",
+    ".weak towctrans_l", ".set towctrans_l, __towctrans_l",
+    ".weak wctrans_l", ".set wctrans_l, __wctrans_l",
+    ".weak wcscoll_l", ".set wcscoll_l, __wcscoll_l",
+    ".weak wcsxfrm_l", ".set wcsxfrm_l, __wcsxfrm_l",
+);
+
 const ENOENT: c_int = 2;
 const LC_CTYPE: c_int = 0;
 const LC_ALL: c_int = 6;
@@ -209,7 +242,7 @@ unsafe fn requested_utf8(name: *const c_char) -> Option<bool> {
 }
 
 /// Create or modify one immutable built-in locale object.
-#[no_mangle]
+#[export_name = "__newlocale"]
 pub unsafe extern "C" fn newlocale(mask: c_int, name: *const c_char, base: Locale) -> Locale {
     let mut utf8 = if base.is_null() {
         false
@@ -233,7 +266,7 @@ pub unsafe extern "C" fn newlocale(mask: c_int, name: *const c_char, base: Local
 pub unsafe extern "C" fn freelocale(_locale: Locale) {}
 
 /// Select or query the calling selected thread's locale object.
-#[no_mangle]
+#[export_name = "__uselocale"]
 pub unsafe extern "C" fn uselocale(locale: Locale) -> Locale {
     let old = unsafe { current_token() };
     if !locale.is_null() {
@@ -251,7 +284,7 @@ pub unsafe extern "C" fn uselocale(locale: Locale) -> Locale {
 }
 
 /// Duplicate the immutable observable state of one built-in locale object.
-#[no_mangle]
+#[export_name = "__duplocale"]
 pub unsafe extern "C" fn duplocale(locale: Locale) -> Locale {
     if locale == global_locale() {
         token_for_utf8(locale_multibyte::global_ctype_is_utf8())
@@ -266,7 +299,7 @@ fn bytes_pointer(bytes: &'static [u8]) -> *mut c_char {
 }
 
 /// Query one fixed C/POSIX locale item through an explicit locale object.
-#[no_mangle]
+#[export_name = "__nl_langinfo_l"]
 pub unsafe extern "C" fn nl_langinfo_l(item: c_int, locale: Locale) -> *mut c_char {
     const CODESET: c_int = 14;
     if item == CODESET {
@@ -297,59 +330,59 @@ pub unsafe extern "C" fn nl_langinfo_l(item: c_int, locale: Locale) -> *mut c_ch
 }
 
 /// Query one fixed locale item through the calling thread's selection.
-#[no_mangle]
+#[export_name = "__nl_langinfo"]
 pub unsafe extern "C" fn nl_langinfo(item: c_int) -> *mut c_char {
     unsafe { nl_langinfo_l(item, current_token()) }
 }
 
 macro_rules! localized_classifier {
-    ($localized:ident, $base:ident) => {
-        #[no_mangle]
+    ($localized:ident, $internal:literal, $base:ident) => {
+        #[export_name = $internal]
         pub extern "C" fn $localized(character: Wint, _locale: Locale) -> c_int {
             wide_character::$base(character)
         }
     };
 }
 
-localized_classifier!(iswalnum_l, iswalnum);
-localized_classifier!(iswalpha_l, iswalpha);
-localized_classifier!(iswblank_l, iswblank);
-localized_classifier!(iswcntrl_l, iswcntrl);
-localized_classifier!(iswdigit_l, iswdigit);
-localized_classifier!(iswgraph_l, iswgraph);
-localized_classifier!(iswlower_l, iswlower);
-localized_classifier!(iswprint_l, iswprint);
-localized_classifier!(iswpunct_l, iswpunct);
-localized_classifier!(iswspace_l, iswspace);
-localized_classifier!(iswupper_l, iswupper);
-localized_classifier!(iswxdigit_l, iswxdigit);
+localized_classifier!(iswalnum_l, "__iswalnum_l", iswalnum);
+localized_classifier!(iswalpha_l, "__iswalpha_l", iswalpha);
+localized_classifier!(iswblank_l, "__iswblank_l", iswblank);
+localized_classifier!(iswcntrl_l, "__iswcntrl_l", iswcntrl);
+localized_classifier!(iswdigit_l, "__iswdigit_l", iswdigit);
+localized_classifier!(iswgraph_l, "__iswgraph_l", iswgraph);
+localized_classifier!(iswlower_l, "__iswlower_l", iswlower);
+localized_classifier!(iswprint_l, "__iswprint_l", iswprint);
+localized_classifier!(iswpunct_l, "__iswpunct_l", iswpunct);
+localized_classifier!(iswspace_l, "__iswspace_l", iswspace);
+localized_classifier!(iswupper_l, "__iswupper_l", iswupper);
+localized_classifier!(iswxdigit_l, "__iswxdigit_l", iswxdigit);
 
-#[no_mangle]
+#[export_name = "__iswctype_l"]
 pub extern "C" fn iswctype_l(character: Wint, descriptor: Wctype, _locale: Locale) -> c_int {
     wide_character::iswctype(character, descriptor)
 }
 
-#[no_mangle]
+#[export_name = "__wctype_l"]
 pub unsafe extern "C" fn wctype_l(name: *const c_char, _locale: Locale) -> Wctype {
     unsafe { wide_character::wctype(name) }
 }
 
-#[no_mangle]
+#[export_name = "__towlower_l"]
 pub extern "C" fn towlower_l(character: Wint, _locale: Locale) -> Wint {
     wide_character::towlower(character)
 }
 
-#[no_mangle]
+#[export_name = "__towupper_l"]
 pub extern "C" fn towupper_l(character: Wint, _locale: Locale) -> Wint {
     wide_character::towupper(character)
 }
 
-#[no_mangle]
+#[export_name = "__towctrans_l"]
 pub extern "C" fn towctrans_l(character: Wint, descriptor: Wctrans, _locale: Locale) -> Wint {
     wide_character::towctrans(character, descriptor)
 }
 
-#[no_mangle]
+#[export_name = "__wctrans_l"]
 pub unsafe extern "C" fn wctrans_l(name: *const c_char, _locale: Locale) -> Wctrans {
     unsafe { wide_character::wctrans(name) }
 }
@@ -369,12 +402,12 @@ pub unsafe extern "C" fn wcsncasecmp_l(
     unsafe { wide_character::wcsncasecmp(left, right, count) }
 }
 
-#[no_mangle]
+#[export_name = "__wcscoll_l"]
 pub unsafe extern "C" fn wcscoll_l(left: *const Wchar, right: *const Wchar, _locale: Locale) -> c_int {
     unsafe { wide_character::wcscoll(left, right) }
 }
 
-#[no_mangle]
+#[export_name = "__wcsxfrm_l"]
 pub unsafe extern "C" fn wcsxfrm_l(
     destination: *mut Wchar,
     source: *const Wchar,

@@ -32836,7 +32836,6 @@ def require_gmtime_r_utc_artifact(family: Mapping[str, Any]) -> None:
         not (
             exports
             & {
-                "__gmtime_r",
                 "gmtime",
                 "localtime",
                 "localtime_r",
@@ -32859,6 +32858,14 @@ def require_gmtime_r_utc_artifact(family: Mapping[str, Any]) -> None:
     implementation = (
         ROOT / "libc" / "src" / "c_abi" / "x86_64" / "gmtime_r.rs"
     ).read_text(encoding="utf-8")
+    require("__gmtime_r" in exports, "gmtime_r hidden alias provider is missing")
+    for snippet in (
+        '#[export_name = "__gmtime_r"]',
+        '".hidden __gmtime_r"',
+        '".weak gmtime_r"',
+        '".set gmtime_r, __gmtime_r"',
+    ):
+        require(snippet in implementation, f"gmtime_r hidden alias omits {snippet}")
     for snippet in (
         "src/time/gmtime_r.c",
         "src/time/__secs_to_tm.c",

@@ -39,29 +39,52 @@ use super::{byte_strings, ctype, string_copy};
 
 type Locale = *mut c_void;
 
+// Each selected narrow locale entry has a weak public spelling at the exact
+// address of its strong internal body. Rust callers name this item directly.
+core::arch::global_asm!(
+    ".weak isalnum_l", ".set isalnum_l, __isalnum_l",
+    ".weak isalpha_l", ".set isalpha_l, __isalpha_l",
+    ".weak isblank_l", ".set isblank_l, __isblank_l",
+    ".weak iscntrl_l", ".set iscntrl_l, __iscntrl_l",
+    ".weak isdigit_l", ".set isdigit_l, __isdigit_l",
+    ".weak isgraph_l", ".set isgraph_l, __isgraph_l",
+    ".weak islower_l", ".set islower_l, __islower_l",
+    ".weak isprint_l", ".set isprint_l, __isprint_l",
+    ".weak ispunct_l", ".set ispunct_l, __ispunct_l",
+    ".weak isspace_l", ".set isspace_l, __isspace_l",
+    ".weak isupper_l", ".set isupper_l, __isupper_l",
+    ".weak isxdigit_l", ".set isxdigit_l, __isxdigit_l",
+    ".weak tolower_l", ".set tolower_l, __tolower_l",
+    ".weak toupper_l", ".set toupper_l, __toupper_l",
+    ".weak strcasecmp_l", ".set strcasecmp_l, __strcasecmp_l",
+    ".weak strncasecmp_l", ".set strncasecmp_l, __strncasecmp_l",
+    ".weak strcoll_l", ".set strcoll_l, __strcoll_l",
+    ".weak strxfrm_l", ".set strxfrm_l, __strxfrm_l",
+);
+
 macro_rules! localized_classifier {
-    ($localized:ident, $base:ident) => {
-        #[no_mangle]
+    ($localized:ident, $internal:literal, $base:ident) => {
+        #[export_name = $internal]
         pub extern "C" fn $localized(character: c_int, _locale: Locale) -> c_int {
             ctype::$base(character)
         }
     };
 }
 
-localized_classifier!(isalnum_l, isalnum);
-localized_classifier!(isalpha_l, isalpha);
-localized_classifier!(isblank_l, isblank);
-localized_classifier!(iscntrl_l, iscntrl);
-localized_classifier!(isdigit_l, isdigit);
-localized_classifier!(isgraph_l, isgraph);
-localized_classifier!(islower_l, islower);
-localized_classifier!(isprint_l, isprint);
-localized_classifier!(ispunct_l, ispunct);
-localized_classifier!(isspace_l, isspace);
-localized_classifier!(isupper_l, isupper);
-localized_classifier!(isxdigit_l, isxdigit);
-localized_classifier!(tolower_l, tolower);
-localized_classifier!(toupper_l, toupper);
+localized_classifier!(isalnum_l, "__isalnum_l", isalnum);
+localized_classifier!(isalpha_l, "__isalpha_l", isalpha);
+localized_classifier!(isblank_l, "__isblank_l", isblank);
+localized_classifier!(iscntrl_l, "__iscntrl_l", iscntrl);
+localized_classifier!(isdigit_l, "__isdigit_l", isdigit);
+localized_classifier!(isgraph_l, "__isgraph_l", isgraph);
+localized_classifier!(islower_l, "__islower_l", islower);
+localized_classifier!(isprint_l, "__isprint_l", isprint);
+localized_classifier!(ispunct_l, "__ispunct_l", ispunct);
+localized_classifier!(isspace_l, "__isspace_l", isspace);
+localized_classifier!(isupper_l, "__isupper_l", isupper);
+localized_classifier!(isxdigit_l, "__isxdigit_l", isxdigit);
+localized_classifier!(tolower_l, "__tolower_l", tolower);
+localized_classifier!(toupper_l, "__toupper_l", toupper);
 
 /// Compare two C strings after fixed-ASCII case folding.
 ///
@@ -130,7 +153,7 @@ pub unsafe extern "C" fn strncasecmp(
 ///
 /// The string obligations are those of [`strcasecmp`]. `_locale` must be a
 /// live locale token where the C contract requires one.
-#[no_mangle]
+#[export_name = "__strcasecmp_l"]
 pub unsafe extern "C" fn strcasecmp_l(
     left: *const c_char,
     right: *const c_char,
@@ -146,7 +169,7 @@ pub unsafe extern "C" fn strcasecmp_l(
 ///
 /// The range obligations are those of [`strncasecmp`]. `_locale` must be a
 /// live locale token where the C contract requires one.
-#[no_mangle]
+#[export_name = "__strncasecmp_l"]
 pub unsafe extern "C" fn strncasecmp_l(
     left: *const c_char,
     right: *const c_char,
@@ -175,7 +198,7 @@ pub unsafe extern "C" fn strcoll(left: *const c_char, right: *const c_char) -> c
 ///
 /// The string obligations are those of [`strcoll`]. `_locale` must be a live
 /// locale token where the C contract requires one.
-#[no_mangle]
+#[export_name = "__strcoll_l"]
 pub unsafe extern "C" fn strcoll_l(
     left: *const c_char,
     right: *const c_char,
@@ -215,7 +238,7 @@ pub unsafe extern "C" fn strxfrm(
 ///
 /// The source, destination, capacity, and overlap obligations are those of
 /// [`strxfrm`]. `_locale` must be a live locale token where required by C.
-#[no_mangle]
+#[export_name = "__strxfrm_l"]
 pub unsafe extern "C" fn strxfrm_l(
     destination: *mut c_char,
     source: *const c_char,

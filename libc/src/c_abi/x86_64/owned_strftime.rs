@@ -8,13 +8,17 @@
 //! characters. No locale database or independent numeric formatter is added.
 
 use core::{ffi::{c_char, c_int, c_void}, ptr};
-use super::{owned_timezone, timegm::{self, Tm}};
+use super::{locale_objects, owned_timezone, timegm::{self, Tm}};
 unsafe extern "C" {
     fn snprintf(output: *mut c_char, capacity: usize, format: *const c_char, ...) -> c_int;
     fn strtoul(input: *const c_char, end: *mut *mut c_char, base: c_int) -> u64;
-    fn nl_langinfo(item: c_int) -> *mut c_char;
-    fn nl_langinfo_l(item: c_int, locale: *mut c_void) -> *mut c_char;
 }
+
+core::arch::global_asm!(
+    ".hidden __strftime_l",
+    ".weak strftime_l",
+    ".set strftime_l, __strftime_l",
+);
 
 fn leap(mut year: i32) -> bool {
     if year > i32::MAX-1900 { year -= 2000; }
@@ -37,7 +41,12 @@ fn week_number(tm: &Tm) -> i32 {
     value as i32
 }
 unsafe fn language(item: c_int, locale: Option<*mut c_void>) -> *const c_char {
-    unsafe { match locale { Some(locale) => nl_langinfo_l(item, locale), None => nl_langinfo(item) } }
+    unsafe {
+        match locale {
+            Some(locale) => locale_objects::nl_langinfo_l(item, locale),
+            None => locale_objects::nl_langinfo(item),
+        }
+    }
 }
 unsafe fn string(pointer: *const c_char) -> (*const u8, usize) {
     unsafe {
@@ -200,7 +209,7 @@ pub unsafe extern "C" fn strftime(output: *mut c_char, capacity: usize,
 /// # Safety
 /// Pointer/capacity obligations are those of strftime. Locale is a live
 /// C/POSIX/C.UTF-8 locale object returned by this runtime, not LC_GLOBAL_LOCALE.
-#[no_mangle]
+#[export_name = "__strftime_l"]
 pub unsafe extern "C" fn strftime_l(output: *mut c_char, capacity: usize,
     input: *const c_char, value: *const Tm, locale: *mut c_void) -> usize {
     unsafe { format(output.cast(), capacity, input.cast(), &*value, Some(locale)) }

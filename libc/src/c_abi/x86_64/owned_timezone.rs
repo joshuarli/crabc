@@ -422,11 +422,21 @@ pub(super) unsafe fn zone(seconds: i64, local: bool) -> Zone {
     }
 }
 
-/// Refresh process timezone state from caller-coordinated TZ/environment data.
-#[no_mangle]
-pub extern "C" fn tzset() {
+/// Refresh timezone state through musl's file-local time setup body.
+///
+/// Musl's `__tzset` helper is local to its archive member, so no cross-object
+/// internal spelling is required here. Rust callers retain this private direct
+/// body while the weak public `tzset` remains application-replaceable.
+fn refresh_tzset() {
     let _guard = TimezoneGuard::acquire();
     unsafe { configure(); }
+}
+
+/// Refresh process timezone state from caller-coordinated TZ/environment data.
+#[no_mangle]
+#[linkage = "weak"]
+pub extern "C" fn tzset() {
+    refresh_tzset();
 }
 
 pub(super) unsafe fn tm_zone_name(value: &timegm::Tm) -> *const c_char {

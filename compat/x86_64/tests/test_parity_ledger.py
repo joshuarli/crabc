@@ -21583,6 +21583,33 @@ class X86ParityLedgerTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "closed libc-gmtime-r command"):
             ledger.validate_ledger(data)
 
+    def test_gmtime_r_utc_accepts_its_hidden_same_address_alias(self) -> None:
+        family = self.family(self.data(), "libc.posix-runtime")
+        ledger.require_gmtime_r_utc_artifact(family)
+
+    def test_gmtime_r_utc_requires_its_hidden_alias_definition(self) -> None:
+        family = self.family(self.data(), "libc.posix-runtime")
+        source_path = ROOT / "libc/src/c_abi/x86_64/gmtime_r.rs"
+        original_read = Path.read_text
+        source = original_read(source_path, encoding="utf-8")
+        for fragment in (
+            '#[export_name = "__gmtime_r"]',
+            '".hidden __gmtime_r"',
+            '".weak gmtime_r"',
+            '".set gmtime_r, __gmtime_r"',
+        ):
+            self.assertIn(fragment, source)
+            changed = source.replace(fragment, "", 1)
+
+            def read_text(path: Path, *args: object, **kwargs: object) -> str:
+                if path == source_path:
+                    return changed
+                return original_read(path, *args, **kwargs)
+
+            with self.subTest(fragment=fragment), mock.patch.object(Path, "read_text", read_text):
+                with self.assertRaisesRegex(ledger.LedgerError, "gmtime_r hidden alias"):
+                    ledger.require_gmtime_r_utc_artifact(family)
+
     def test_memory_locking_artifact_keeps_its_closed_mapping_contract(self) -> None:
         data = self.data()
         artifacts = self.family(data, "libc.posix-runtime")["verified_artifact"]

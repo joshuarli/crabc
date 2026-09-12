@@ -65,6 +65,11 @@
           },
           {
             "binding": "weak-same-address",
+            "name": "asctime_r",
+            "target": "__asctime_r"
+          },
+          {
+            "binding": "weak-same-address",
             "name": "clearerr_unlocked",
             "target": "clearerr"
           },
@@ -195,6 +200,11 @@
           },
           {
             "binding": "weak-same-address",
+            "name": "localtime_r",
+            "target": "__localtime_r"
+          },
+          {
+            "binding": "weak-same-address",
             "name": "pthread_timedjoin_np",
             "target": "__pthread_timedjoin_np"
           },
@@ -222,6 +232,11 @@
             "binding": "weak-same-address",
             "name": "setutent",
             "target": "setutxent"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "strftime_l",
+            "target": "__strftime_l"
           },
           {
             "binding": "weak-same-address",
@@ -417572,8 +417587,8 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "dd11d03eae8cae25db6e0827ba800a5f935f6822f45385e1e741ceae52fbea36",
-    "static_c_abi_exports_sha256": "6540da7a1ab00e56690b23bab3f316ceba42f5bc3d0228a66ea2bc24a66c350a"
+    "parity_ledger_sha256": "9347738054df728f4f836c34d729ce10bdde4be8878a3ae2877e34df937d01ec",
+    "static_c_abi_exports_sha256": "6391449eb32afe0178f90a08fae92586e9df85fd3866f6048058cd65e4cd3350"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",

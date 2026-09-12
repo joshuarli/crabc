@@ -52,7 +52,7 @@ assert_pure_utc_code() {
 }
 
 require_native_linux_x86_64
-for tool in ar cargo cmp diff env grep nm objdump readelf rustup sort; do require_tool "$tool"; done
+for tool in ar cargo cmp diff env grep nm objdump python3 readelf rustup sort; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_time_header_abi.sh" >/dev/null
@@ -89,6 +89,21 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$work_dir/selected-symbols" "$work_dir/expected-symbols"
+readelf --symbols --wide "$archive" >"$work_dir/gmtime-alias-symbols"
+readelf --symbols --wide /opt/musl-1.2.6/lib/libc.a >"$work_dir/musl-gmtime-alias-symbols"
+python3 -B - "$ROOT_DIR/compat/x86_64" "$work_dir/gmtime-alias-symbols" \
+    "$work_dir/musl-gmtime-alias-symbols" <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1])
+from locale_alias_contract_symbols import parse_symbols, _require_pair
+
+# Section and member identity distinguish a real alias from unrelated
+# relocatable functions that both happen to start at value zero.
+for path in map(Path, sys.argv[2:]):
+    rows = parse_symbols(path, archive=True, table='.symtab')
+    _require_pair(rows, 'gmtime_r', '__gmtime_r', 'HIDDEN', str(path), True)
+PY
 for symbol in __errno_location gmtime_r; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"

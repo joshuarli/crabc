@@ -15,9 +15,9 @@
 //! - `src/time/__secs_to_tm.c` maps to [`secs_to_utc_tm`] in the sibling
 //!   fixed-UTC conversion leaf.
 //!
-//! Musl exposes `gmtime_r` through its private `__gmtime_r` weak alias. This
-//! selected archive exports only the public header spelling; the private alias
-//! remains unowned.
+//! Musl exposes a hidden strong gmtime provider and a weak public alias at
+//! the same address. Rust callers use this item directly while assembler
+//! supplies the application-replaceable public spelling.
 
 use core::ffi::{c_int, c_long};
 
@@ -25,6 +25,12 @@ use super::errno::set_errno;
 use super::timegm::{secs_to_utc_tm, Tm};
 
 const EOVERFLOW: c_int = 75;
+
+core::arch::global_asm!(
+    ".hidden __gmtime_r",
+    ".weak gmtime_r",
+    ".set gmtime_r, __gmtime_r",
+);
 
 /// Convert one Unix second count into caller-owned UTC `struct tm` storage.
 ///
@@ -37,7 +43,7 @@ const EOVERFLOW: c_int = 75;
 /// representability failure leaves its bytes untouched, writes initial-TLS
 /// errno `EOVERFLOW`, and returns null; a successful conversion preserves
 /// errno and returns the original output pointer.
-#[no_mangle]
+#[export_name = "__gmtime_r"]
 pub unsafe extern "C" fn gmtime_r(input: *const c_long, output: *mut Tm) -> *mut Tm {
     // SAFETY: the C caller supplies initialized non-overlapping input storage.
     let seconds = unsafe { input.read() };

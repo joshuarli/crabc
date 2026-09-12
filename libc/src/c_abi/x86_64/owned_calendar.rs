@@ -5,7 +5,7 @@
 //! Separate static result objects preserve source overwrite/lifetime contracts.
 
 use core::{ffi::{c_char, c_int, c_long}, ptr};
-use super::{errno, gmtime_r, owned_timezone, timegm::{self, Tm}};
+use super::{errno, gmtime_r, locale_objects, owned_timezone, timegm::{self, Tm}};
 
 pub(super) const ZERO: Tm = Tm { seconds: 0, minutes: 0, hours: 0, month_day: 0,
     month: 0, year: 0, week_day: 0, year_day: 0, daylight_saving: 0,
@@ -15,15 +15,23 @@ static mut UTC_RESULT: Tm = ZERO;
 static mut ASCII_RESULT: [u8; 26] = [0; 26];
 unsafe extern "C" {
     fn snprintf(output: *mut c_char, size: usize, format: *const c_char, ...) -> c_int;
-    fn nl_langinfo(item: c_int) -> *mut c_char;
 }
+
+core::arch::global_asm!(
+    ".hidden __localtime_r",
+    ".weak localtime_r",
+    ".set localtime_r, __localtime_r",
+    ".hidden __asctime_r",
+    ".weak asctime_r",
+    ".set asctime_r, __asctime_r",
+);
 
 /// Convert an epoch count into local civil fields.
 /// # Safety
 /// Input is readable time_t storage; output is writable struct tm storage,
 /// non-overlapping with input. Returned tm_zone is borrowed until TZ changes;
 /// callers coordinate environment changes and subsequent use of zone strings.
-#[no_mangle]
+#[export_name = "__localtime_r"]
 pub unsafe extern "C" fn localtime_r(input: *const c_long, output: *mut Tm) -> *mut Tm {
     unsafe {
         let seconds = *input;
@@ -99,14 +107,20 @@ pub unsafe extern "C" fn gmtime(input: *const c_long) -> *mut Tm {
 /// writable storage of at least 26 bytes. Fields must fit the mandated C
 /// representation (including its four-digit year); like musl, overlong
 /// representations trap rather than silently overflow caller storage.
-#[no_mangle]
+#[export_name = "__asctime_r"]
 pub unsafe extern "C" fn asctime_r(value: *const Tm, output: *mut c_char) -> *mut c_char {
     unsafe {
         let tm = &*value;
         // LC_TIME is identical for every admitted locale, including C.
         let count = snprintf(output, 26, c"%.3s %.3s%3d %.2d:%.2d:%.2d %d\n".as_ptr(),
-            nl_langinfo(0x20000 + tm.week_day),
-            nl_langinfo(0x2000e + tm.month), tm.month_day,
+            locale_objects::nl_langinfo_l(
+                0x20000 + tm.week_day,
+                locale_objects::fixed_c_locale(),
+            ),
+            locale_objects::nl_langinfo_l(
+                0x2000e + tm.month,
+                locale_objects::fixed_c_locale(),
+            ), tm.month_day,
             tm.hours, tm.minutes, tm.seconds, tm.year.wrapping_add(1900));
         if count >= 26 { core::arch::asm!("ud2", options(noreturn)); }
         output
