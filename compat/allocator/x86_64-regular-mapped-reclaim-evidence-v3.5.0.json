@@ -1,0 +1,144 @@
+{
+  "format": 1,
+  "schema": "crabc-mimalloc-x86_64-regular-mapped-reclaim-evidence",
+  "profile": "linux-x86_64-private-static-main-mapped-regular-reclaim",
+  "target": {
+    "architecture": "x86_64",
+    "endianness": "little",
+    "rust_target": "x86_64-unknown-linux-musl",
+    "system": "linux"
+  },
+  "upstream": {
+    "archive_root": "mimalloc-3.5.0",
+    "revision": "18b08671c9302247bfb682286e6bf3cc1773f801",
+    "version": "3.5.0"
+  },
+  "scope": {
+    "aarch64_status_reused": false,
+    "arena_backed_regular_only": true,
+    "dynamic_all_suitable_arena_scanning_claimed": false,
+    "emulation_accepted": false,
+    "huge_page_success_claimed": false,
+    "metadata_snapshot_or_arena_destruction_claimed": false,
+    "native_linux_x86_64_required": true,
+    "ordinary_small_malloc_16_alignment_claimed": false,
+    "private_engine_evidence_only": true,
+    "public_crabc_support": false,
+    "public_mi_api_claimed": false,
+    "public_x86_libc_or_ldso_support": false,
+    "regular_kinds": [
+      "direct-small",
+      "medium",
+      "large"
+    ],
+    "rust_receivers": [
+      "later-persistent",
+      "initial-persistent"
+    ],
+    "static_main_selected_arena_only": true
+  },
+  "compile_definitions": [
+    "-DMI_SHARED_LIB",
+    "-DMI_SHARED_LIB_EXPORT",
+    "-DMI_LIBC_MUSL=1"
+  ],
+  "release_flags": [
+    "-O3",
+    "-DNDEBUG",
+    "-DMI_BUILD_RELEASE=1",
+    "-DMI_DEBUG=0",
+    "-DMI_STAT=0",
+    "-DMI_SECURE=0",
+    "-DMI_GUARDED=0"
+  ],
+  "release_source_set": [
+    "src/alloc.c",
+    "src/alloc-aligned.c",
+    "src/alloc-posix.c",
+    "src/arena.c",
+    "src/bitmap.c",
+    "src/heap.c",
+    "src/init.c",
+    "src/libc.c",
+    "src/options.c",
+    "src/os.c",
+    "src/page.c",
+    "src/page-map.c",
+    "src/random.c",
+    "src/stats.c",
+    "src/subproc.c",
+    "src/theap.c",
+    "src/threadlocal.c",
+    "src/prim/prim.c",
+    "src/prim/prim-tls.c"
+  ],
+  "source_anchors": [
+    {
+      "member": "src/alloc.c",
+      "start_line": 29,
+      "end_line": 48,
+      "sha256": "604349215a5d7c553dc4756d7c2d3310c58e57417ae3017e36e0c2c40c8b2d2a"
+    },
+    {
+      "member": "src/alloc-aligned.c",
+      "start_line": 18,
+      "end_line": 28,
+      "sha256": "d621621aad93434ebba31509340146099ab7a5040b251f1c40bf6fcb71545b79"
+    },
+    {
+      "member": "src/alloc-aligned.c",
+      "start_line": 160,
+      "end_line": 187,
+      "sha256": "7079fee31229ec56a2fada1b5a7ba252d0870b263c75bf4658a62713e25937e4"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 725,
+      "end_line": 778,
+      "sha256": "cea2c222a6d9754bf442637478f635fea6691cdede21ec003e1e3a59f481550f"
+    },
+    {
+      "member": "src/arena.c",
+      "start_line": 1129,
+      "end_line": 1152,
+      "sha256": "12763921cec4e0a8546a559f5c7e780161593559bdd5755174c855827c00ab63"
+    },
+    {
+      "member": "src/page.c",
+      "start_line": 276,
+      "end_line": 350,
+      "sha256": "5fa49c4f2655f5afe7646ac99acc59f0b094eb2509dca6cc67b4c92cb8c70c3b"
+    },
+    {
+      "member": "src/init.c",
+      "start_line": 448,
+      "end_line": 480,
+      "sha256": "81710fd90ab37ebaf517e33c88e82c8a847eafad277c376eb18c196d9d86838d"
+    }
+  ],
+  "c_probe_sha256": "84ec30e5517a07d34ca8d1100265b2729e1efc6394876c5705003416de98f325",
+  "rust_test": {
+    "path": "crabc-mimalloc/tests/native_ordinary_mapped_regular_reclaim.rs",
+    "target_arch": "x86_64",
+    "target": "native_ordinary_mapped_regular_reclaim",
+    "test_filter": "regular_mapped_reclaim_trace_matches_pinned_c_protocol"
+  },
+  "trace": {
+    "begin": "CRABC_MI_REGULAR_MAPPED_RECLAIM_TRACE_BEGIN",
+    "end": "CRABC_MI_REGULAR_MAPPED_RECLAIM_TRACE_END",
+    "expected_values": {
+      "trace.regular_mapped_reclaim.later.direct_small.same_page": 1,
+      "trace.regular_mapped_reclaim.later.medium.same_page": 1,
+      "trace.regular_mapped_reclaim.later.large.same_page": 1,
+      "trace.regular_mapped_reclaim.initial.direct_small.same_page": 1,
+      "trace.regular_mapped_reclaim.initial.medium.same_page": 1,
+      "trace.regular_mapped_reclaim.initial.large.same_page": 1,
+      "trace.regular_mapped_reclaim.fallback.medium_to_large.fresh": 1,
+      "trace.regular_mapped_reclaim.later.medium.cleanup_release": 1,
+      "trace.regular_mapped_reclaim.initial.natural_alignment.request1.all_live": 1,
+      "trace.regular_mapped_reclaim.initial.natural_alignment.request8.all_live": 1,
+      "trace.regular_mapped_reclaim.later.natural_alignment.request1.all_live": 1,
+      "trace.regular_mapped_reclaim.later.natural_alignment.request8.all_live": 1
+    }
+  }
+}

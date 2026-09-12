@@ -51,7 +51,7 @@ use crate::config::{
     SMALL_PAGE_SIZE, SMALL_SIZE_MAX, VmOptions,
 };
 #[cfg(feature = "native-runtime-test-audit")]
-use crate::config::VmOption;
+use crate::config::{ARENA_SLICE_SIZE, VmOption};
 use crate::main_heap_thread::{
     MainHeapThreadAttachment, MainHeapThreadAttachmentBeginError,
     MainHeapThreadAttachmentError, MainHeapThreadPageSessionError,
@@ -104,6 +104,10 @@ use crate::single_thread::{
     ProcessPostOwnerExitPointerFreeDisposition, ProcessPostOwnerExitPointerFreeRejection,
     RemoteFreeProducer, RemoteFreeProducerPair,
 };
+#[cfg(feature = "native-runtime-test-audit")]
+use crate::arena::ArenaView;
+#[cfg(feature = "native-runtime-test-audit")]
+use crate::single_thread::arena_page_map_size;
 #[cfg(test)]
 use crate::single_thread::{
     ThreadExitMappedRegularPagesPostExitRemoteFreeProducer,
@@ -220,10 +224,15 @@ const NATIVE_POST_EXIT_ROUTE_REGISTRY_MUTATING: u8 = 1;
 #[cfg(test)]
 const NATIVE_POST_EXIT_ROUTE_REGISTRY_RETAINED: u8 = 2;
 
-// Linux/AArch64's public C allocation ABI guarantees 16-byte natural malloc
-// alignment. A request at or below this boundary remains an ordinary native
-// allocation in the private ledger; only a wider request takes the aligned
-// path, whose interior/base geometry cannot safely name a later normal queue.
+// The pinned native x86 v3.5.0 profile defines `MI_MAX_ALIGN_SIZE` as 16 in
+// `include/mimalloc/types.h:35-39`. This is a C-facing required alignment at
+// this private runtime boundary, not a blanket ordinary-allocation shortcut:
+// `src/page-queue.c:24-95` leaves one-word small blocks eight-byte-strided,
+// while `src/alloc-aligned.c:18-28,160-187` explicitly over-allocates when
+// a request cannot use its natural-alignment fast path. Both initial and
+// later persistent owners therefore delegate the selection to their existing
+// source-shaped aligned allocator, which preserves ordinary allocation only
+// when that predicate permits it.
 const NATIVE_C_MALLOC_ALIGNMENT: usize = 16;
 
 // The source full-medium witness uses the established 64 KiB regular-medium
@@ -4228,6 +4237,61 @@ pub struct NativeRuntimeLifecycleAudit {
     pub native_scheduler_transition_count: usize,
 }
 
+/// A non-owning fingerprint of one exact live arena-backed regular client.
+///
+/// This default-off audit exists only for native differential regressions that
+/// must distinguish reuse of a producer's actual PageMap span from a
+/// coincidental process-wide entry count. The caller must retain `client`
+/// live, sample after all participating allocator owners have joined, and
+/// never treat the copied addresses as a Page, arena, allocation, or release
+/// capability. A non-arena or malformed source page returns `None`.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeLiveClientPageAudit {
+    page_address: usize,
+    arena_slice_start: usize,
+    arena_slice_count: usize,
+    registered_slice_count: usize,
+}
+
+#[cfg(feature = "native-runtime-test-audit")]
+impl NativeRuntimeLiveClientPageAudit {
+    /// Returns the source `mi_page_t` identity selected for this live client.
+    #[doc(hidden)]
+    #[inline]
+    pub const fn page_address(self) -> usize { self.page_address }
+
+    /// Returns the arena slice at which the source page's complete claim
+    /// begins. This is an identity observation only.
+    #[doc(hidden)]
+    #[inline]
+    pub const fn arena_slice_start(self) -> usize { self.arena_slice_start }
+
+    /// Returns the complete source arena claim in fixed arena slices.
+    #[doc(hidden)]
+    #[inline]
+    pub const fn arena_slice_count(self) -> usize { self.arena_slice_count }
+
+    /// Returns the source PageMap-covered prefix in fixed arena slices.
+    #[doc(hidden)]
+    #[inline]
+    pub const fn registered_slice_count(self) -> usize { self.registered_slice_count }
+}
+
+/// Quiescent PageMap facts for one prior [`NativeRuntimeLiveClientPageAudit`]
+/// fingerprint.
+///
+/// It reports only counts over the recorded source PageMap range. It never
+/// returns a PageMap entry, Page, mapping, or release capability.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeLiveClientPageMapSpanAudit {
+    pub matching_page_entry_count: usize,
+    pub non_null_entry_count: usize,
+}
+
 /// Read-only scalar accounting for the runtime's fork-admission gate.
 ///
 /// This is deliberately a default-off direct-test hook. It reports only the
@@ -4747,9 +4811,10 @@ struct NativePostExitRouteRegistryNode {
     _backing: MetaAllocation<'static>,
 }
 
-// Metadata's ordinary source allocation is naturally aligned to the native
-// malloc boundary. Keep this node's typed image within that established
-// guarantee before projecting its bytes as a registry entry.
+// Metadata allocation has its own source alignment contract. This typed-image
+// bound is not a claim that every ordinary one-word small allocation is
+// sixteen-byte aligned; keep the node within the C-facing boundary used by
+// the metadata path before projecting its bytes as a registry entry.
 #[cfg(test)]
 const _: [(); 1] = [();
     (core::mem::align_of::<NativePostExitRouteRegistryNode>() <= NATIVE_C_MALLOC_ALIGNMENT)
@@ -5033,6 +5098,111 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
     })
 }
 
+/// Copies the exact regular arena/PageMap identity for one live native client.
+///
+/// The caller must retain `client` live and sample only after every
+/// participating native worker has completed its owner-exit boundary. That
+/// quiescent condition is the same source-plain PageMap condition used by
+/// [`native_runtime_lifecycle_test_audit`]; this audit does not acquire an
+/// owner, claim a bitmap entry, or extend a page lifetime.
+///
+/// # Safety
+///
+/// `client` must name one currently live native allocation for the complete
+/// call. No other thread may mutate this allocation's PageMap entry, page
+/// ordinary fields, arena membership, or owning allocator while the audit
+/// reads them. In particular, participating native workers must already have
+/// reached and completed their owner-exit boundary, and the caller must not
+/// race a free, reassociation, collection, or arena release.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_live_client_page_test_audit(
+    client: core::ptr::NonNull<u8>,
+) -> Option<NativeRuntimeLiveClientPageAudit> {
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    // SAFETY: the caller's exact-live-client and quiescent-owner proofs are
+    // the same narrowed PageMap contract as the normal pointer-first lookup.
+    let page = unsafe { page_map.lookup_page_for_live_client(client) }.ok()??;
+    // SAFETY: the live client keeps the selected page registered and its
+    // arena provenance immutable. The documented quiescent sample condition
+    // excludes a concurrent ordinary-field mutation while this audit copies
+    // fixed source geometry.
+    let page_ref = unsafe { page.as_ref() };
+    let memory = page_ref.memid().arena_memory()?;
+    let slice_index = memory.slice_index as usize;
+    let arena_slice_count = memory.slice_count as usize;
+    if arena_slice_count == 0 {
+        return None;
+    }
+    let arena_span_size = arena_slice_count.checked_mul(ARENA_SLICE_SIZE)?;
+    // SAFETY: the live page's source arena memid remains paired with the
+    // process-static arena reservation for the client lifetime.
+    let arena = unsafe { ArenaView::from_ptr(memory.arena) }?;
+    let arena_slice_start = arena.slice_start(slice_index)?;
+    let registered_size = arena_page_map_size(page, arena_slice_start, arena_span_size)?;
+    if registered_size == 0 || registered_size % ARENA_SLICE_SIZE != 0 {
+        return None;
+    }
+
+    Some(NativeRuntimeLiveClientPageAudit {
+        page_address: page.as_ptr().addr(),
+        arena_slice_start: arena_slice_start.addr(),
+        arena_slice_count,
+        registered_slice_count: registered_size / ARENA_SLICE_SIZE,
+    })
+}
+
+/// Counts the current PageMap entries in one previously captured source span.
+///
+/// The fingerprint can only originate from
+/// [`native_runtime_live_client_page_test_audit`]. The caller must sample at
+/// the same quiescent owner boundary: this probes source-plain PageMap slots
+/// but never dereferences a prior page address, including after its clients
+/// were freed.
+///
+/// # Safety
+///
+/// `source` must be an unmodified fingerprint returned by
+/// [`native_runtime_live_client_page_test_audit`] in this process image. No
+/// thread may mutate or release an allocator PageMap, its associated arena,
+/// or an entry in the recorded slice span while this function reads it. The
+/// copied fingerprint is not a liveness capability, so this remains required
+/// even after the original client has been freed.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub unsafe fn native_runtime_live_client_page_map_span_test_audit(
+    source: NativeRuntimeLiveClientPageAudit,
+) -> Option<NativeRuntimeLiveClientPageMapSpanAudit> {
+    if source.registered_slice_count == 0
+        || source.registered_slice_count > source.arena_slice_count
+    {
+        return None;
+    }
+    let page_map = RUNTIME_PROCESS.page_map_for_live_native_allocation()?;
+    let page_map = page_map.page_map().ok()?;
+    let mut matching_page_entry_count = 0usize;
+    let mut non_null_entry_count = 0usize;
+    for slice in 0..source.registered_slice_count {
+        let offset = slice.checked_mul(ARENA_SLICE_SIZE)?;
+        let address = source.arena_slice_start.checked_add(offset)?;
+        // SAFETY: no worker may own a PageMap mutation at the documented
+        // quiescent boundary. `address` is a copied arena-slice location and
+        // `checked_lookup` uses it only as PageMap index geometry; it never
+        // dereferences this possibly released client-adjacent address.
+        let page = unsafe { page_map.checked_lookup(address as *const u8) };
+        if !page.is_null() {
+            non_null_entry_count = non_null_entry_count.checked_add(1)?;
+            if page.addr() == source.page_address {
+                matching_page_entry_count = matching_page_entry_count.checked_add(1)?;
+            }
+        }
+    }
+    Some(NativeRuntimeLiveClientPageMapSpanAudit {
+        matching_page_entry_count,
+        non_null_entry_count,
+    })
+}
+
 /// Returns scalar-only accounting for the private fork-admission gate.
 ///
 /// This direct-test hook intentionally reads one atomic word and cannot turn
@@ -5301,7 +5471,7 @@ impl NativeInitialPersistentThreadOwner {
 
     /// Reallocates one exact current initial-thread C-ABI client. The lower
     /// engine keeps the ordinary source realloc decision while ensuring any
-    /// replacement observes the public Linux/AArch64 natural alignment.
+    /// replacement observes the fixed native x86 C-facing alignment boundary.
     ///
     /// # Safety
     ///
@@ -6673,8 +6843,10 @@ pub fn prepare_native_later_thread_arena() -> bool {
 /// The initial process thread uses its continuously stored static-source
 /// owner. An attached later pthread uses its own continuously stored
 /// compiler-TLS owner.
-/// Natural C alignment remains an ordinary source allocation; only wider
-/// alignment takes the distinct aligned path. The local allocation is
+/// The native C-facing alignment requirement uses the existing source-shaped
+/// aligned selector. Its own natural fast path retains ordinary allocation
+/// where the pinned predicate permits it; a one-word client requiring
+/// sixteen-byte alignment stays explicitly aligned. The local allocation is
 /// represented solely by source Page used/free state plus the process PageMap;
 /// no client address is copied into the runtime owner.
 #[doc(hidden)]
@@ -9923,9 +10095,7 @@ fn native_later_thread_allocate_aligned(
     zero: bool,
 ) -> NativePageAllocationResult {
     let result = with_current_thread_native_persistent_allocator(true, |allocator| {
-        if alignment <= NATIVE_C_MALLOC_ALIGNMENT {
-            allocator.allocate(request, zero)
-        } else if zero {
+        if zero {
             allocator.allocate_aligned_zeroed(request, alignment)
         } else {
             allocator.allocate_aligned(request, alignment)

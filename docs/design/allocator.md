@@ -2271,18 +2271,25 @@ second live-owner collection, and queue insertion have all succeeded; only
 then can the caller allocate the third block. It does not broaden the handoff
 to general scanning, cross-thread adoption, or a public allocator route. The
 test invokes this dynamic adapter explicitly before its third allocation;
-`PageAllocatorEngine::allocate` has no dynamic-map scan. The separate,
-selected static-main owner-local medium branch is documented by
-`owner-local-selected-static-main-medium-mapped-abandoned-reclaim` and does
-not expose this dynamic capability. The latter preserves the small-page
-partial collector's head, clears the bit/count before live reassociation,
-collects again, and appends the page back to the same Theap queue. Its all-free
-dynamic-arena result retains the distinct queue-detached release capability and
-follows the source order: full PageMap-span unregister, exact heap-local
-ordinary-bit clear, metadata retirement, then arena-slice release. Only after
-all four succeed does it expose the drained engine. An existing abandoned owner
-or a later release failure remains terminal; forgetting or post-claim failure
-also retains the engine rather than exposing normal free/allocation. Full,
+`PageAllocatorEngine::allocate` has no dynamic-map scan. The separate selected
+static-main mapped-regular branch is documented by
+`static-main-selected-mapped-regular-abandoned-reclaim`. It does not expose
+this dynamic capability. The persistent later and reactivated initial owners
+can each inspect and claim only a same-bin direct-small, medium, or ordinary
+large page from their paired static-main arena for one allocation attempt. The
+path preserves the small-page partial
+collector's head, clears the bit/count before live reassociation, collects
+again, and appends the page back to the same Theap queue. An empty direct-small
+cache first enters this generic path; a distinct-bin request leaves the source
+mapped and uses the ordinary fresh fallback. C-facing sixteen-byte requests
+use the existing source aligned selector, because a one-word ordinary block is
+not universally sixteen-byte aligned. Its all-free dynamic-arena result
+retains the distinct queue-detached release capability and follows the source
+order: full PageMap-span unregister, exact heap-local ordinary-bit clear,
+metadata retirement, then arena-slice release. Only after all four succeed does
+it expose the drained engine. An existing abandoned owner or a later release
+failure remains terminal; forgetting or post-claim failure also retains the
+engine rather than exposing normal free/allocation. Full,
 non-singleton huge, non-arena, foreign, and ordinary abandoning-session pages
 remain rejected. The sole singleton exceptions are the post-TLS arena and
 OS-aligned owner-exit handoffs above; neither is normal abandoned routing or a

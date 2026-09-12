@@ -231,6 +231,7 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
             "allocator-cmake-modes",
             "allocator-live-owner-full-medium-remote-release",
             "allocator-mapped-adoption",
+            "allocator-regular-mapped-reclaim",
             "allocator-direct-small-allocation-adoption",
             "allocator-aggregate-same-bin-still-live",
             "allocator-on-demand",
@@ -386,6 +387,25 @@ class X86_64RunnerBoundaryTests(unittest.TestCase):
         result = self.run_launcher("allocator-mapped-adoption", "unexpected")
         self.assertEqual(result.returncode, 2)
         self.assertIn("allocator-mapped-adoption takes no arguments", result.stderr)
+
+    def test_regular_mapped_reclaim_command_binds_the_closed_native_differential(self) -> None:
+        source = RUNNER.read_text(encoding="utf-8")
+        self.assertIn("allocator-regular-mapped-reclaim)", source)
+        self.assertIn(
+            "run_in_container python3 "
+            "compat/allocator/x86_64_regular_mapped_reclaim_evidence.py --offline",
+            source,
+        )
+        self.assertIn(
+            "allocator-regular-mapped-reclaim accepts only --offline",
+            source,
+        )
+        result = self.run_launcher("allocator-regular-mapped-reclaim", "unexpected")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "allocator-regular-mapped-reclaim accepts only --offline",
+            result.stderr,
+        )
 
     def test_direct_small_allocation_adoption_command_is_closed_and_uses_its_private_offline_probe(
         self,
