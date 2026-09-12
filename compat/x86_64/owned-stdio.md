@@ -52,3 +52,45 @@ dynamic product must replay this component in the canonical qualification catalo
 This receipt is evidence for four finite stdio components only. It does not
 close the stdio family, alter a disposition, imply broad locale or wide-format
 coverage, or claim promotion or public x86 support.
+
+## ELF alias and interposition contract
+
+`run_owned_stdio_alias_contract.sh STATIC_SYSROOT DYNAMIC_SYSROOT` is the
+focused companion for musl 1.2.6's stdio linkage shape. It verifies weak,
+same-address public aliases in both archive and shared artifacts; hidden
+internal `__fdopen`, `__fseeko`, and `__ftello` bodies; and protected
+`__uflow`/`__overflow` visibility in both selected PIC artifacts. The pinned
+musl static oracle and both owned native builders compile PIC, so the archive
+and shared output carry that same protected contract. It also links strong
+application public overrides and checks
+that `fopen` and position wrappers retain their internal bodies. Cookie
+callbacks synchronously join a `ftrylockfile` contender, proving that
+`fread_unlocked`, `fwrite_unlocked`, `fgetws_unlocked`, and `fputws_unlocked`
+still lock because musl aliases them to locking source bodies.
+
+The shared linkers localize the hidden source bodies in their full symbol
+tables: pinned musl records `LOCAL DEFAULT`, while the owned linker records
+`LOCAL HIDDEN`. Both omit those names from `.dynsym`; the runner treats the
+localization as a toolchain detail and proves the public weak alias shares the
+same defining section and value. The archive contract remains `GLOBAL HIDDEN`.
+
+The legacy default archive's single pathname-stream slot preserves this same
+`fseeko`/`ftello` boundary. Its existing `libc-stdio-path-stream` runner checks
+the two hidden strong bodies and weak same-definition aliases against pinned
+musl before exercising the slot. `static_c_abi_exports.txt` records those
+hidden static-link names as well as public exports; they add no header API.
+
+The readelf comparison is the protected-versus-default regression judge. The
+separate shared runtime workload places strong `__uflow` and `__overflow`
+spellings in the main image, then compares pinned-musl and owned-library
+handle lookup plus direct library-body calls. It records collision, lookup,
+and callability; it does not claim to traverse a defining-libc internal call.
+
+Run it in the pinned native environment with supplied fresh products:
+
+```sh
+TMPDIR="$PWD/.work/x86_64/tmp" \
+  ./compat/x86_64/run_owned_stdio_alias_contract.sh \
+  .work/x86_64/stdio-alias-contract/static-product \
+  .work/x86_64/stdio-alias-contract/dynamic-product
+```

@@ -79,7 +79,7 @@ pub unsafe extern "C" fn popen(command: *const c_char, mode: *const c_char) -> *
         let mut pipes = [-1i32; 2];
         let result = sys::syscall2(293, pipes.as_mut_ptr() as i64, CLOEXEC);
         if result < 0 { errno::set_errno(-result as c_int); return ptr::null_mut(); }
-        let stream = super::fdopen(pipes[direction], mode);
+        let stream = super::__fdopen(pipes[direction], mode);
         if stream.is_null() { close(pipes[0]); close(pipes[1]); return stream; }
         let mut actions = SpawnFileActions { _pad0: [0; 2], actions: ptr::null_mut(), _pad: [0; 16] };
         let action_pointer = ptr::addr_of_mut!(actions).cast();

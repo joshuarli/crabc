@@ -304,7 +304,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         posix_runtime = next(
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
-        self.assertEqual(posix_runtime["verified_artifact_count"], 171)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 172)
         self.assertEqual(posix_runtime["verified_slice_count"], 7)
         ledger = inventory.load_toml(inventory.X86_LEDGER_PATH)
         selected_slices = self.family(ledger, "libc.posix-runtime")["verified_slice"]
@@ -335,7 +335,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
         )
         self.assertEqual(
             sum(row["verified_artifact_count"] for row in report["families"]),
-            379,
+            380,
         )
         self.assertEqual(
             sum(row["verified_slice_count"] for row in report["families"]),
@@ -463,7 +463,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
-        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1192)
+        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1194)
         self.assertEqual(
             report["x86_boundary"]["selected_static_exports_in_aarch64_dynamic_candidate_set"],
             1165,

@@ -39,6 +39,20 @@
 //! pthread retirement hook below; internal guards never enter that list.
 //! Fork preparation consumes the narrow registry triplet and preserves the
 //! surviving task's lock list. This is not stdio-family completion.
+//!
+//! ## ELF aliases and interposition ownership
+//!
+//! Musl keeps a few public compatibility spellings weak while its implementation
+//! calls a strong internal spelling. This owner keeps that distinction at the
+//! ELF boundary, rather than adding Rust forwarding functions: `fdopen` aliases
+//! hidden `__fdopen`; `fseeko` and `ftello` alias hidden `__fseeko` and
+//! `__ftello`; and `fgetc_unlocked`/`fputc_unlocked` alias the strong
+//! `getc_unlocked`/`putc_unlocked` entry points. `fread_unlocked` and
+//! `fwrite_unlocked` are intentionally aliases of their locking public bodies,
+//! matching musl's source rather than promising lock-free block I/O. Internal
+//! callers use the strong spellings, so an application's strong public
+//! replacement remains a valid archive/dynamic override without redirecting
+//! this stream engine's lifecycle or positioning paths.
 
 use core::{ffi::{c_char, c_int, c_void}, ptr, sync::atomic::{AtomicI32, Ordering}};
 use super::{c_off_status, c_ssize_status, c_status, errno, raw_syscall};
@@ -482,7 +496,7 @@ pub unsafe extern "C" fn tmpfile() -> *mut StandardStream {
             return ptr::null_mut();
         }
 
-        let stream = unsafe { fdopen(descriptor as c_int, c"w+".as_ptr()) };
+        let stream = unsafe { __fdopen(descriptor as c_int, c"w+".as_ptr()) };
         if stream.is_null() { unsafe { raw_syscall::syscall1(raw_syscall::SYS_CLOSE, descriptor); } }
         return stream;
     }
@@ -522,7 +536,7 @@ unsafe fn open_mode(mode: *const c_char) -> Option<(c_int, u32)> {
 /// intentional diagnostic strengthening over musl __fdopen, invalid or
 /// incompatible descriptors are rejected before ownership transfer.
 #[no_mangle]
-pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut StandardStream {
+pub(super) unsafe extern "C" fn __fdopen(fd: c_int, mode: *const c_char) -> *mut StandardStream {
     unsafe {
         let Some((flags, stream_flags)) = open_mode(mode) else {
             errno::set_errno(EINVAL); return ptr::null_mut();
@@ -548,6 +562,16 @@ pub unsafe extern "C" fn fdopen(fd: c_int, mode: *const c_char) -> *mut Standard
     }
 }
 
+// Pinned musl `stdio/__fdopen.c` keeps the implementation hidden and emits
+// `weak_alias(__fdopen, fdopen)`. Keeping the directives beside the strong
+// body preserves one address and lets an application supply `fdopen` without
+// changing `fopen`/`tmpfile` ownership.
+core::arch::global_asm!(
+    ".hidden __fdopen",
+    ".weak fdopen",
+    ".set fdopen, __fdopen",
+);
+
 // The caller exclusively owns initialized, unpublished dynamic storage.
 // No allocator or application callback is entered while holding LIST_LOCK.
 unsafe fn publish_stream(stream: *mut StandardStream) -> *mut StandardStream {
@@ -569,7 +593,7 @@ pub unsafe extern "C" fn fopen(path: *const c_char, mode: *const c_char) -> *mut
         let Some((flags, _)) = open_mode(mode) else { errno::set_errno(EINVAL); return ptr::null_mut(); };
         let fd = c_status(raw_syscall::syscall4(257, -100, path as i64, flags as i64, 0o666));
         if fd < 0 { return ptr::null_mut(); }
-        let stream = fdopen(fd, mode);
+        let stream = __fdopen(fd, mode);
         if stream.is_null() { raw_syscall::syscall1(3, fd as i64); }
         stream
     }
@@ -1474,61 +1498,47 @@ unsafe fn fwrite_held(source: *const c_void, size: usize, count: usize, stream: 
 /// `stream` is live and the caller has exclusive access, either by holding
 /// flockfile or by excluding every concurrent user, including initialization.
 #[no_mangle]
-pub unsafe extern "C" fn fgetc_unlocked(stream: *mut StandardStream) -> c_int {
-    unsafe { initialize_buffer(stream); read_byte_held(stream) }
-}
-
-/// # Safety
-/// The live stream and exclusive-access obligations are those of fgetc_unlocked.
-#[no_mangle]
 pub unsafe extern "C" fn getc_unlocked(stream: *mut StandardStream) -> c_int {
-    unsafe { fgetc_unlocked(stream) }
+    unsafe { initialize_buffer(stream); read_byte_held(stream) }
 }
 
 /// # Safety
 /// stdin is open and the caller exclusively owns its access and initialization.
 #[no_mangle]
 pub unsafe extern "C" fn getchar_unlocked() -> c_int {
-    unsafe { fgetc_unlocked(ptr::addr_of_mut!(STDIN_STREAM)) }
+    unsafe { getc_unlocked(ptr::addr_of_mut!(STDIN_STREAM)) }
 }
 
 /// # Safety
 /// The caller exclusively owns this live stream, including lazy initialization,
 /// until the write completes; holding flockfile satisfies this requirement.
 #[no_mangle]
-pub unsafe extern "C" fn fputc_unlocked(character: c_int, stream: *mut StandardStream) -> c_int {
-    unsafe { initialize_buffer(stream); write_byte_held(stream, character as u8) }
-}
-
-/// # Safety
-/// The live stream and exclusive-access obligations are those of fputc_unlocked.
-#[no_mangle]
 pub unsafe extern "C" fn putc_unlocked(character: c_int, stream: *mut StandardStream) -> c_int {
-    unsafe { fputc_unlocked(character, stream) }
+    unsafe { initialize_buffer(stream); write_byte_held(stream, character as u8) }
 }
 
 /// # Safety
 /// stdout is open and the caller exclusively owns its access and initialization.
 #[no_mangle]
 pub unsafe extern "C" fn putchar_unlocked(character: c_int) -> c_int {
-    unsafe { fputc_unlocked(character, ptr::addr_of_mut!(STDOUT_STREAM)) }
+    unsafe { putc_unlocked(character, ptr::addr_of_mut!(STDOUT_STREAM)) }
 }
 
-/// # Safety
-/// `destination` is writable for size*count bytes, disjoint from FILE storage;
-/// the caller exclusively owns the live stream, including initialization.
-#[no_mangle]
-pub unsafe extern "C" fn fread_unlocked(destination: *mut c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
-    unsafe { initialize_buffer(stream); fread_held(destination, size, count, stream) }
-}
-
-/// # Safety
-/// `source` is readable for size*count bytes; the caller exclusively owns the
-/// live stream, including initialization, until the transfer completes.
-#[no_mangle]
-pub unsafe extern "C" fn fwrite_unlocked(source: *const c_void, size: usize, count: usize, stream: *mut StandardStream) -> usize {
-    unsafe { initialize_buffer(stream); fwrite_held(source, size, count, stream) }
-}
+// The source bodies are the strong `getc_unlocked`/`putc_unlocked` entry
+// points; `fgetc_unlocked` and `fputc_unlocked` are weak aliases. In contrast,
+// musl's fread.c and fwrite.c alias the conventional unlocked spellings to the
+// locking public bodies. One assembler alias per source relationship preserves
+// the address, archive override point, and locking contract simultaneously.
+core::arch::global_asm!(
+    ".weak fgetc_unlocked",
+    ".set fgetc_unlocked, getc_unlocked",
+    ".weak fputc_unlocked",
+    ".set fputc_unlocked, putc_unlocked",
+    ".weak fread_unlocked",
+    ".set fread_unlocked, fread",
+    ".weak fwrite_unlocked",
+    ".set fwrite_unlocked, fwrite",
+);
 
 /// # Safety
 /// Stream arguments must be live FILE pointers; string and byte ranges must
@@ -1660,7 +1670,7 @@ pub unsafe extern "C" fn clearerr(stream: *mut StandardStream) {
 /// Stream arguments must be live FILE pointers; string and byte ranges must
 /// be valid for the size specified by this C operation.
 #[no_mangle]
-pub unsafe extern "C" fn fseeko(
+pub(super) unsafe extern "C" fn __fseeko(
     stream: *mut StandardStream,
     offset: i64,
     whence: c_int,
@@ -1712,7 +1722,7 @@ pub unsafe extern "C" fn fseeko(
 /// Stream arguments must be live FILE pointers; string and byte ranges must
 /// be valid for the size specified by this C operation.
 #[no_mangle]
-pub unsafe extern "C" fn ftello(stream: *mut StandardStream) -> i64 {
+pub(super) unsafe extern "C" fn __ftello(stream: *mut StandardStream) -> i64 {
     let _guard = unsafe { StreamGuard::acquire(stream) };
     if !unsafe { is_selected_stream(stream) } {
         unsafe { reject_stream() };
@@ -1742,12 +1752,25 @@ pub unsafe extern "C" fn ftello(stream: *mut StandardStream) -> i64 {
     logical_position
 }
 
+// Musl fseek.c/ftell.c keep these lock-owning implementations hidden and
+// publish weak fseeko/ftello aliases. Their other public position functions
+// deliberately call the internal symbols so application overrides affect only
+// direct public calls, never this FILE's state transition.
+core::arch::global_asm!(
+    ".hidden __fseeko",
+    ".weak fseeko",
+    ".set fseeko, __fseeko",
+    ".hidden __ftello",
+    ".weak ftello",
+    ".set ftello, __ftello",
+);
+
 /// # Safety
 /// Stream arguments must be live FILE pointers; string and byte ranges must
 /// be valid for the size specified by this C operation.
 #[no_mangle]
 pub unsafe extern "C" fn ftell(stream: *mut StandardStream) -> core::ffi::c_long {
-    unsafe { ftello(stream) as core::ffi::c_long }
+    unsafe { __ftello(stream) as core::ffi::c_long }
 }
 
 /// # Safety
@@ -1759,7 +1782,7 @@ pub unsafe extern "C" fn fseek(
     offset: core::ffi::c_long,
     whence: c_int,
 ) -> c_int {
-    unsafe { fseeko(stream, offset as i64, whence) }
+    unsafe { __fseeko(stream, offset as i64, whence) }
 }
 
 /// # Safety
@@ -1768,7 +1791,7 @@ pub unsafe extern "C" fn fseek(
 #[no_mangle]
 pub unsafe extern "C" fn rewind(stream: *mut StandardStream) {
     let _guard = unsafe { StreamGuard::acquire(stream) };
-    let _ = unsafe { fseeko(stream, 0, SEEK_SET) };
+    let _ = unsafe { __fseeko(stream, 0, SEEK_SET) };
     if unsafe { is_selected_stream(stream) } {
         unsafe { (*stream).flags &= !(F_EOF | F_ERR) };
     }
@@ -1788,7 +1811,7 @@ pub unsafe extern "C" fn fgetpos(
         unsafe { errno::set_errno(EINVAL) };
         return EOF;
     }
-    let offset = unsafe { ftello(stream) };
+    let offset = unsafe { __ftello(stream) };
     if offset < 0 {
         return EOF;
     }
@@ -1811,7 +1834,7 @@ pub unsafe extern "C" fn fsetpos(
         return EOF;
     }
     let offset = unsafe { ptr::read_unaligned(position.cast::<i64>()) };
-    unsafe { fseeko(stream, offset, SEEK_SET) }
+    unsafe { __fseeko(stream, offset, SEEK_SET) }
 }
 
 

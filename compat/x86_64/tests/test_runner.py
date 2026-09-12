@@ -23973,7 +23973,14 @@ esac
             "fsetpos",
         )
         for symbol in symbols:
-            self.assertIn(f'pub unsafe extern "C" fn {symbol}', implementation)
+            if symbol in {"fseeko", "ftello"}:
+                self.assertIn(f'pub(super) unsafe extern "C" fn __{symbol}', implementation)
+                self.assertIn(f'".weak {symbol}"', implementation)
+                self.assertIn(f'".set {symbol}, __{symbol}"', implementation)
+                self.assertIn(f'".hidden __{symbol}"', implementation)
+                self.assertIn(f"__{symbol}", exports)
+            else:
+                self.assertIn(f'pub unsafe extern "C" fn {symbol}', implementation)
             self.assertIn(symbol, exports)
         for required in (
             "static mut PATH_STREAM:",

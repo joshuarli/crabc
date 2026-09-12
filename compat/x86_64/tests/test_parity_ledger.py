@@ -121,7 +121,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(report["capability_count"], 223)
         self.assertEqual(len(report["capability_owners"]), 223)
         self.assertEqual(report["verified_slice_count"], 51)
-        self.assertEqual(report["verified_artifact_count"], 379)
+        self.assertEqual(report["verified_artifact_count"], 380)
         self.assertEqual(
             report["feature_archive_count"],
             report["verified_feature_archive_count"] + report["planned_feature_archive_count"],
@@ -8798,6 +8798,36 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-c-stdio-permanent-fileno-unlocked must use its closed native command",
         ):
             ledger.validate_ledger(changed)
+
+    def test_stdio_path_stream_accepts_hidden_positioning_aliases(self) -> None:
+        family = self.family(self.data(), "libc.text-math-locale-stdio")
+        ledger.require_stdio_path_stream_artifact(family)
+
+    def test_stdio_path_stream_rejects_incomplete_positioning_aliases(self) -> None:
+        family = self.family(self.data(), "libc.text-math-locale-stdio")
+        owner = ROOT / "libc/src/c_abi/x86_64/stdio_standard.rs"
+        source = owner.read_text(encoding="utf-8")
+        original_read = Path.read_text
+        for symbol in ("fseeko", "ftello"):
+            for required in (
+                f'pub(super) unsafe extern "C" fn __{symbol}',
+                f'".hidden __{symbol}"',
+                f'".weak {symbol}"',
+                f'".set {symbol}, __{symbol}"',
+            ):
+                with self.subTest(symbol=symbol, missing=required):
+                    changed = self.replace_required(source, required, "", str(owner))
+
+                    def read_text(path: Path, *args: object, **kwargs: object) -> str:
+                        if path == owner:
+                            return changed
+                        return original_read(path, *args, **kwargs)
+
+                    with mock.patch.object(Path, "read_text", read_text):
+                        with self.assertRaisesRegex(
+                            ledger.LedgerError, f"pathname stream.*{symbol}"
+                        ):
+                            ledger.require_stdio_path_stream_artifact(family)
 
     def test_stdio_path_stream_remains_a_closed_one_slot_artifact(self) -> None:
         data = self.data()

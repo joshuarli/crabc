@@ -52,7 +52,7 @@ assert_fixture_tls_capacity() {
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "requires native x86-64" ;; esac
-for tool in ar awk cargo cmp diff grep mkdir nm objdump readelf rustup sort timeout; do require_tool "$tool"; done
+for tool in ar awk cargo cmp diff grep mkdir nm objdump python3 readelf rustup sort timeout; do require_tool "$tool"; done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
@@ -93,6 +93,41 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
+# The default archive owns the same weak positioning boundary as installed
+# stdio. Retain section identity: distinct relocatable functions can both
+# have value zero, so address equality alone cannot prove a real alias.
+readelf --symbols --wide "$archive" >"$work_dir/positioning-symbols"
+readelf --symbols --wide /opt/musl-1.2.6/lib/libc.a >"$work_dir/musl-positioning-symbols"
+python3 -B - "$ROOT_DIR/compat/x86_64" "$work_dir/positioning-symbols" \
+    "$work_dir/musl-positioning-symbols" <<'PY'
+from collections import defaultdict
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1])
+from owned_stdio_alias_contract_reader import SymbolRow, same_definition
+
+for path in map(Path, sys.argv[2:]):
+    rows = defaultdict(list)
+    member = ''
+    for line in path.read_text(encoding='utf-8').splitlines():
+        if line.startswith('File: '):
+            member = line[6:]
+        fields = line.split()
+        if len(fields) >= 8 and fields[0].endswith(':') and fields[6] != 'UND':
+            rows[fields[7]].append(SymbolRow(
+                member, fields[1], fields[3], fields[4], fields[5], fields[6], fields[7],
+            ))
+    for name in ('fseeko', 'ftello'):
+        if len(rows[name]) != 1 or len(rows['__' + name]) != 1:
+            raise SystemExit(f'{path}: expected unique positioning definitions for {name}')
+        public, internal = rows[name][0], rows['__' + name][0]
+        if (public.symbol_type, public.binding, public.visibility) != ('FUNC', 'WEAK', 'DEFAULT'):
+            raise SystemExit(f'{path}: {name} must be FUNC WEAK DEFAULT')
+        if (internal.symbol_type, internal.binding, internal.visibility) != ('FUNC', 'GLOBAL', 'HIDDEN'):
+            raise SystemExit(f'{path}: __{name} must be FUNC GLOBAL HIDDEN')
+        if not same_definition(public, internal):
+            raise SystemExit(f'{path}: {name} must alias its hidden positioning body')
+PY
 for symbol in __errno_location __crabc_x86_static_tls_bootstrap fclose fopen \
     fgetpos fseek fseeko fsetpos ftell ftello rewind setvbuf; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||

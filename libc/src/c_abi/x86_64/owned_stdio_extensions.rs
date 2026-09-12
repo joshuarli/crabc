@@ -207,6 +207,17 @@ pub unsafe extern "C" fn __overflow(stream: *mut StandardStream, byte: c_int) ->
     unsafe { initialize_buffer(stream); write_byte_held(stream, byte as u8) }
 }
 
+// stdio_impl.h gives these internal buffer-boundary exports protected
+// visibility in PIC builds. Both selected native producers compile PIC: the
+// static archive retains musl's protected definitions and the shared product
+// publishes the same dynamic contract. Libc calls bind to these bodies even
+// when an application exports the same spelling. This differs from hidden
+// alias targets such as __fdopen.
+core::arch::global_asm!(
+    ".protected __uflow",
+    ".protected __overflow"
+);
+
 core::arch::global_asm!(
     ".weak fpurge", ".set fpurge, __fpurge",
     ".weak fflush_unlocked", ".set fflush_unlocked, fflush",

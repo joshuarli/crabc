@@ -1,11 +1,12 @@
+# Closed crate-owned C ABI and private static-link symbols in the selected x86
+# archive.
 #
 # Artifact runners inspect only `c.*.rcgu.o` members, so compiler-builtins
-# Closed crate-owned C ABI and private static-link symbols in the selected x86
-# archive support does not appear here. Keep this ASCII-sorted and update it
-# archive.
-# glue, uninstalled and not a stable public C API.
-# hidden `__crabc_x86_static_tls_bootstrap` name is private fixture/runtime
-# with every deliberate selected boundary; the runners fail on drift. The
+# archive support does not appear here. Keep names ASCII-sorted and update
+# every deliberate selected boundary; the runners fail on drift.
+# Hidden globals are recorded too: `__crabc_x86_static_tls_bootstrap` is private
+# fixture/runtime glue, and `__fseeko`/`__ftello` own the weak positioning aliases.
+# These internal names are uninstalled and are not a stable public C API.
 _Exit
 ___environ
 __aio_atfork
@@ -30,8 +31,10 @@ __fpclassifyf
 __fpclassifyl
 __freadable
 __freading
+__fseeko
 __fseterr
 __fsetlocking
+__ftello
 __funcs_on_exit
 __futimesat
 __fwritable

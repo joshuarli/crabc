@@ -1821,7 +1821,7 @@ pub unsafe extern "C" fn setvbuf(
 /// serialize access. The path slot is intended for the evidenced regular-file
 /// routes; nonseekable descriptors expose their direct Linux error.
 #[no_mangle]
-pub unsafe extern "C" fn fseeko(
+pub(super) unsafe extern "C" fn __fseeko(
     stream: *mut StandardStream,
     offset: i64,
     whence: c_int,
@@ -1882,7 +1882,7 @@ pub unsafe extern "C" fn fseeko(
 /// `stream` must be the active selected pathname stream and callers must
 /// serialize access.
 #[no_mangle]
-pub unsafe extern "C" fn ftello(stream: *mut StandardStream) -> i64 {
+pub(super) unsafe extern "C" fn __ftello(stream: *mut StandardStream) -> i64 {
     // SAFETY: this predicate dereferences only the exact private pathname slot.
     if !unsafe { is_path_stream(stream) } {
         // SAFETY: no caller stream was dereferenced on this closed boundary.
@@ -1919,6 +1919,18 @@ pub unsafe extern "C" fn ftello(stream: *mut StandardStream) -> i64 {
     logical_position
 }
 
+// This feature-selected legacy owner retains musl fseek.c/ftell.c's ELF
+// ownership shape too: hidden internal caller-serialized bodies, weak public
+// aliases, and internal callers that cannot be interposed by an application.
+core::arch::global_asm!(
+    ".hidden __fseeko",
+    ".weak fseeko",
+    ".set fseeko, __fseeko",
+    ".hidden __ftello",
+    ".weak ftello",
+    ".set ftello, __ftello",
+);
+
 /// C `long` position wrapper for the selected pathname stream.
 ///
 /// # Safety
@@ -1928,7 +1940,7 @@ pub unsafe extern "C" fn ftello(stream: *mut StandardStream) -> i64 {
 #[no_mangle]
 pub unsafe extern "C" fn ftell(stream: *mut StandardStream) -> core::ffi::c_long {
     // SAFETY: the x86 LP64 ABI gives c_long the same range as off_t here.
-    unsafe { ftello(stream) as core::ffi::c_long }
+    unsafe { __ftello(stream) as core::ffi::c_long }
 }
 
 /// C `long` seek wrapper for the selected pathname stream.
@@ -1944,7 +1956,7 @@ pub unsafe extern "C" fn fseek(
     whence: c_int,
 ) -> c_int {
     // SAFETY: x86 LP64 passes the selected long offset unchanged as off_t.
-    unsafe { fseeko(stream, offset as i64, whence) }
+    unsafe { __fseeko(stream, offset as i64, whence) }
 }
 
 /// Rewind the selected pathname stream and clear its EOF/error indicators.
@@ -1955,8 +1967,8 @@ pub unsafe extern "C" fn fseek(
 /// serialize access.
 #[no_mangle]
 pub unsafe extern "C" fn rewind(stream: *mut StandardStream) {
-    // SAFETY: fseeko validates the selected stream before touching its state.
-    let _ = unsafe { fseeko(stream, 0, SEEK_SET) };
+    // SAFETY: the hidden fseeko body validates the selected stream before touching its state.
+    let _ = unsafe { __fseeko(stream, 0, SEEK_SET) };
     // SAFETY: this predicate dereferences only the exact private pathname slot.
     if unsafe { is_path_stream(stream) } {
         // SAFETY: rewind owns the selected stream's status transition.
@@ -1981,8 +1993,8 @@ pub unsafe extern "C" fn fgetpos(
         unsafe { errno::set_errno(EINVAL) };
         return EOF;
     }
-    // SAFETY: ftello validates the selected stream and preserves buffer state.
-    let offset = unsafe { ftello(stream) };
+    // SAFETY: the hidden ftello body validates the selected stream and preserves buffer state.
+    let offset = unsafe { __ftello(stream) };
     if offset < 0 {
         return EOF;
     }
@@ -2013,6 +2025,6 @@ pub unsafe extern "C" fn fsetpos(
     // SAFETY: caller supplies an initialized opaque fpos_t object; this
     // selected representation stores its logical byte offset first.
     let offset = unsafe { ptr::read_unaligned(position.cast::<i64>()) };
-    // SAFETY: fseeko validates and performs the selected logical seek route.
-    unsafe { fseeko(stream, offset, SEEK_SET) }
+    // SAFETY: the hidden fseeko body validates and performs the selected logical seek route.
+    unsafe { __fseeko(stream, offset, SEEK_SET) }
 }

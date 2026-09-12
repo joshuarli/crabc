@@ -80,6 +80,11 @@
           },
           {
             "binding": "weak-same-address",
+            "name": "fdopen",
+            "target": "__fdopen"
+          },
+          {
+            "binding": "weak-same-address",
             "name": "feof_unlocked",
             "target": "feof"
           },
@@ -95,8 +100,23 @@
           },
           {
             "binding": "weak-same-address",
+            "name": "fgetc_unlocked",
+            "target": "getc_unlocked"
+          },
+          {
+            "binding": "weak-same-address",
             "name": "fgets_unlocked",
             "target": "fgets"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "fgetwc_unlocked",
+            "target": "__fgetwc_unlocked"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "fgetws_unlocked",
+            "target": "fgetws"
           },
           {
             "binding": "weak-same-address",
@@ -110,8 +130,43 @@
           },
           {
             "binding": "weak-same-address",
+            "name": "fputc_unlocked",
+            "target": "putc_unlocked"
+          },
+          {
+            "binding": "weak-same-address",
             "name": "fputs_unlocked",
             "target": "fputs"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "fputwc_unlocked",
+            "target": "__fputwc_unlocked"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "fputws_unlocked",
+            "target": "fputws"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "fread_unlocked",
+            "target": "fread"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "fseeko",
+            "target": "__fseeko"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "ftello",
+            "target": "__ftello"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "fwrite_unlocked",
+            "target": "fwrite"
           },
           {
             "binding": "weak-same-address",
@@ -130,6 +185,16 @@
           },
           {
             "binding": "weak-same-address",
+            "name": "getwc_unlocked",
+            "target": "__fgetwc_unlocked"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "getwchar_unlocked",
+            "target": "getwchar"
+          },
+          {
+            "binding": "weak-same-address",
             "name": "pthread_timedjoin_np",
             "target": "__pthread_timedjoin_np"
           },
@@ -142,6 +207,16 @@
             "binding": "weak-same-address",
             "name": "pututline",
             "target": "pututxline"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "putwc_unlocked",
+            "target": "__fputwc_unlocked"
+          },
+          {
+            "binding": "weak-same-address",
+            "name": "putwchar_unlocked",
+            "target": "putwchar"
           },
           {
             "binding": "weak-same-address",
@@ -417497,8 +417572,8 @@
     "linux_uapi_version": "5.10",
     "musl_source_sha256": "d585fd3b613c66151fc3249e8ed44f77020cb5e6c1e635a616d3f9f82460512a",
     "musl_version": "1.2.6",
-    "parity_ledger_sha256": "1c2235e6cbd78e4fa0e35d46925a29c87f9e955aebd580714095dacdba7e44af",
-    "static_c_abi_exports_sha256": "fed4dd782501bb18bacf46aa64da5e6e9eb7e9f9b49df8a1f02b27e15ad06c4e"
+    "parity_ledger_sha256": "dd11d03eae8cae25db6e0827ba800a5f935f6822f45385e1e741ceae52fbea36",
+    "static_c_abi_exports_sha256": "6540da7a1ab00e56690b23bab3f316ceba42f5bc3d0228a66ea2bc24a66c350a"
   },
   "oracle": "Pinned musl 1.2.6",
   "platform": "Linux/x86-64 little-endian",

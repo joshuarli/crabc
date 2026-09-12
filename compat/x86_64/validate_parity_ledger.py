@@ -66121,6 +66121,21 @@ def require_stdio_path_stream_artifact(family: Mapping[str, Any]) -> None:
         "fgetpos",
         "fsetpos",
     ):
+        # Positioning exports are weak aliases to hidden bodies, as in the
+        # installed stdio owner. Keep this legacy source guard aligned with
+        # that interface; the native alias runner judges the resulting ELF.
+        if symbol in {"fseeko", "ftello"}:
+            for snippet in (
+                f'#[no_mangle]\npub(super) unsafe extern "C" fn __{symbol}',
+                f'".hidden __{symbol}"',
+                f'".weak {symbol}"',
+                f'".set {symbol}, __{symbol}"',
+            ):
+                require(
+                    snippet in implementation,
+                    f"pathname stream implementation omits selected {symbol} alias contract: {snippet}",
+                )
+            continue
         require(
             f'pub unsafe extern "C" fn {symbol}' in implementation,
             f"pathname stream implementation omits selected {symbol}",
