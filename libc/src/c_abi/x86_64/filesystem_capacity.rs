@@ -13,8 +13,8 @@
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
 //!
-//! - `src/stat/statvfs.c` maps its `__statfs`/`__fstatfs` weak aliases to
-//!   [`statfs`]/[`fstatfs`] over the Linux x86-64 syscall ABI, and its
+//! - `src/stat/statvfs.c` maps local `__statfs`/`__fstatfs` bodies to weak
+//!   public `statfs`/`fstatfs` aliases over the Linux x86-64 syscall ABI, and its
 //!   `statvfs`/`fstatvfs` bodies to [`statvfs`]/[`fstatvfs`] plus
 //!   [`statvfs_from_statfs`].
 
@@ -121,8 +121,9 @@ unsafe fn fstatfs_raw(descriptor: c_int, output: *mut StatFs) -> i64 {
 ///
 /// `path` must point to a readable NUL-terminated pathname and `output` must
 /// point to writable storage for one complete Linux/x86-64 `struct statfs`.
-#[no_mangle]
-pub unsafe extern "C" fn statfs(path: *const c_char, output: *mut StatFs) -> c_int {
+#[linkage = "internal"]
+#[export_name = "__statfs"]
+pub unsafe extern "C" fn statfs_body(path: *const c_char, output: *mut StatFs) -> c_int {
     // SAFETY: musl clears every public byte first; caller owns the full writable
     // output record and raw pathname contract.
     unsafe { core::ptr::write_bytes(output, 0, 1) };
@@ -135,13 +136,25 @@ pub unsafe extern "C" fn statfs(path: *const c_char, output: *mut StatFs) -> c_i
 ///
 /// `descriptor` must remain valid for the call and `output` must point to
 /// writable storage for one complete Linux/x86-64 `struct statfs`.
-#[no_mangle]
-pub unsafe extern "C" fn fstatfs(descriptor: c_int, output: *mut StatFs) -> c_int {
+#[linkage = "internal"]
+#[export_name = "__fstatfs"]
+pub unsafe extern "C" fn fstatfs_body(descriptor: c_int, output: *mut StatFs) -> c_int {
     // SAFETY: musl clears every public byte first; caller owns the full writable
     // output record and raw descriptor contract.
     unsafe { core::ptr::write_bytes(output, 0, 1) };
     c_status(unsafe { fstatfs_raw(descriptor, output) })
 }
+
+// statvfs.c deliberately makes these source bodies local, even in libc.a.
+// `linkage = "internal"` retains that local definition while the assembler
+// emits musl's weak public same-address aliases. Do not replace either with a
+// wrapper: statvfs/fstatvfs below must keep calling the local bodies.
+core::arch::global_asm!(
+    ".weak statfs",
+    ".set statfs, __statfs",
+    ".weak fstatfs",
+    ".set fstatfs, __fstatfs",
+);
 
 /// Reproduce musl's Linux `statfs` to public `statvfs` field conversion.
 ///
@@ -184,8 +197,7 @@ pub unsafe extern "C" fn statvfs(path: *const c_char, output: *mut StatVfs) -> c
     // SAFETY: a zeroed kernel record is a valid output buffer for Linux.
     let mut kernel: StatFs = unsafe { core::mem::zeroed() };
     // SAFETY: the caller owns the pathname contract; `kernel` is writable.
-    let result = unsafe { statfs_raw(path, &mut kernel) };
-    if c_status(result) < 0 {
+    if unsafe { statfs_body(path, &mut kernel) } < 0 {
         return -1;
     }
     // SAFETY: a successful kernel call initialized `kernel`; caller owns output.
@@ -204,8 +216,7 @@ pub unsafe extern "C" fn fstatvfs(descriptor: c_int, output: *mut StatVfs) -> c_
     // SAFETY: a zeroed kernel record is a valid output buffer for Linux.
     let mut kernel: StatFs = unsafe { core::mem::zeroed() };
     // SAFETY: the caller owns the descriptor contract; `kernel` is writable.
-    let result = unsafe { fstatfs_raw(descriptor, &mut kernel) };
-    if c_status(result) < 0 {
+    if unsafe { fstatfs_body(descriptor, &mut kernel) } < 0 {
         return -1;
     }
     // SAFETY: a successful kernel call initialized `kernel`; caller owns output.

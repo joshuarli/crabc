@@ -14,9 +14,9 @@
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
 //!
 //! - `src/misc/uname.c` maps directly to [`uname`].
-//! - `src/linux/sysinfo.c` maps directly to [`sysinfo`]. Musl's private
-//!   `__lsysinfo` weak-alias arrangement is link-composition machinery, not a
-//!   second public entry point for this closed static archive.
+//! - `src/linux/sysinfo.c::__lsysinfo` maps to the strong internal body below;
+//!   `weak_alias(__lsysinfo, sysinfo)` supplies the public C spelling without
+//!   making the implementation preemptible to selected libc clients.
 //!
 //! Linux 5.10 directly supplies both selected calls. `uname` fills its full
 //! 390-byte public record. The kernel `sysinfo` ABI is 112 bytes, so it writes
@@ -139,6 +139,14 @@ pub unsafe extern "C" fn uname(output: *mut UtsName) -> c_int {
     c_status(result)
 }
 
+// Preserve the musl source relationship: __lsysinfo is hidden in libc.a and
+// localized by the shared link; sysinfo is its weak, same-address public alias.
+core::arch::global_asm!(
+    ".hidden __lsysinfo",
+    ".weak sysinfo",
+    ".set sysinfo, __lsysinfo",
+);
+
 /// Fill one public x86 `struct sysinfo` through Linux `sysinfo(2)`.
 ///
 /// Linux writes its exact 112-byte ABI prefix, including four padding bytes
@@ -150,8 +158,9 @@ pub unsafe extern "C" fn uname(output: *mut UtsName) -> c_int {
 /// `output` must designate writable storage for one complete 368-byte public
 /// x86 `struct sysinfo` for the syscall's duration. The caller owns the output
 /// record and any concurrent system-state observation policy.
+
 #[no_mangle]
-pub unsafe extern "C" fn sysinfo(output: *mut SysInfo) -> c_int {
+pub unsafe extern "C" fn __lsysinfo(output: *mut SysInfo) -> c_int {
     // SAFETY: the caller owns the complete writable public record contract;
     // Linux reads only the pointer word in x86 rdi and fills its ABI prefix.
     let result = unsafe { sysinfo_raw(output) };

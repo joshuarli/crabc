@@ -19,6 +19,21 @@ use core::mem::{align_of, offset_of, size_of};
 
 use super::{c_status, raw_syscall};
 
+unsafe extern "C" {
+    // musl's legacy __xstat.c deliberately names the public aliases. Keep
+    // those relocations distinct from private selected consumers such as
+    // fstat_inode, which use __fstat directly below.
+    #[link_name = "fstat"]
+    fn public_fstat(file_descriptor: c_int, buffer: *mut Stat) -> c_int;
+    #[link_name = "fstatat"]
+    fn public_fstatat(
+        directory_fd: c_int,
+        path: *const c_char,
+        buffer: *mut Stat,
+        flags: c_int,
+    ) -> c_int;
+}
+
 const AT_FDCWD: c_int = -100;
 const AT_SYMLINK_NOFOLLOW: c_int = 0x100;
 
@@ -99,7 +114,7 @@ impl PathMetadata {
 #[cfg(feature = "x86-owned-static-runtime")]
 pub(super) unsafe fn fstat_inode(descriptor: c_int) -> Option<u64> {
     let mut metadata: Stat = unsafe { core::mem::zeroed() };
-    if unsafe { fstat(descriptor, &mut metadata) } == 0 { Some(metadata.inode) } else { None }
+    if unsafe { __fstat(descriptor, &mut metadata) } == 0 { Some(metadata.inode) } else { None }
 }
 
 /// Return the two metadata words consumed by musl's `ftok` formula.
@@ -303,7 +318,7 @@ pub unsafe extern "C" fn lstat(path: *const c_char, buffer: *mut Stat) -> c_int 
 /// `buffer` must point to writable storage for one complete x86 `struct stat`
 /// record. `file_descriptor` is passed directly to Linux `fstat(2)`.
 #[no_mangle]
-pub unsafe extern "C" fn fstat(file_descriptor: c_int, buffer: *mut Stat) -> c_int {
+pub unsafe extern "C" fn __fstat(file_descriptor: c_int, buffer: *mut Stat) -> c_int {
     // SAFETY: the C caller owns the descriptor and output-pointer contract.
     let result = unsafe {
         raw_syscall::syscall2(
@@ -357,7 +372,7 @@ pub(super) unsafe fn fstat_mode(file_descriptor: c_int) -> Result<u32, c_int> {
 /// point to writable storage for one complete x86 `struct stat` record.
 /// `directory_fd` and `flags` are direct Linux `newfstatat(2)` arguments.
 #[no_mangle]
-pub unsafe extern "C" fn fstatat(
+pub unsafe extern "C" fn __fstatat(
     directory_fd: c_int,
     path: *const c_char,
     buffer: *mut Stat,
@@ -367,6 +382,19 @@ pub unsafe extern "C" fn fstatat(
     // the raw `newfstatat` pointer obligations.
     unsafe { newfstatat(directory_fd, path, buffer, flags) }
 }
+
+// Pinned musl's fstat.c/fstatat.c keep these bodies hidden and publish weak
+// public aliases at the same address. Private selected consumers can call the
+// hidden bodies, while the legacy __fxstat wrappers below preserve their own
+// source-level public fstat/fstatat relocations.
+core::arch::global_asm!(
+    ".hidden __fstat",
+    ".weak fstat",
+    ".set fstat, __fstat",
+    ".hidden __fstatat",
+    ".weak fstatat",
+    ".set fstatat, __fstatat",
+);
 
 /// Historical `stat` ABI spelling. The version is an ABI selector only; Linux
 /// uses the one current x86 `struct stat` record selected above.
@@ -404,6 +432,10 @@ pub unsafe extern "C" fn __lxstat(
 /// # Safety
 ///
 /// Same as [`fstat`].
+///
+/// Musl `src/stat/__xstat.c` names the public `fstat` spelling here, so a
+/// strong application definition intentionally remains observable through
+/// this legacy compatibility entry.
 #[no_mangle]
 pub unsafe extern "C" fn __fxstat(
     _version: c_int,
@@ -411,7 +443,7 @@ pub unsafe extern "C" fn __fxstat(
     buffer: *mut Stat,
 ) -> c_int {
     // SAFETY: forwarded unchanged to the ordinary C ABI boundary.
-    unsafe { fstat(file_descriptor, buffer) }
+    unsafe { public_fstat(file_descriptor, buffer) }
 }
 
 /// Historical descriptor-relative `stat` ABI spelling.
@@ -419,6 +451,9 @@ pub unsafe extern "C" fn __fxstat(
 /// # Safety
 ///
 /// Same as [`fstatat`].
+///
+/// Musl `src/stat/__xstat.c` likewise keeps this legacy call through public
+/// `fstatat`, rather than its hidden implementation body.
 #[no_mangle]
 pub unsafe extern "C" fn __fxstatat(
     _version: c_int,
@@ -428,5 +463,5 @@ pub unsafe extern "C" fn __fxstatat(
     flags: c_int,
 ) -> c_int {
     // SAFETY: forwarded unchanged to the ordinary C ABI boundary.
-    unsafe { fstatat(directory_fd, path, buffer, flags) }
+    unsafe { public_fstatat(directory_fd, path, buffer, flags) }
 }

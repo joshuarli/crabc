@@ -86,7 +86,7 @@ fn is_application_signal(signal: c_int) -> bool {
     signal > 0 && signal <= APPLICATION_SIGNAL_MAX && !(32..=34).contains(&signal)
 }
 
-/// Install or query one application signal disposition through Linux.
+/// Execute the selected raw signal-action transaction through Linux.
 ///
 /// # Safety
 ///
@@ -95,23 +95,12 @@ fn is_application_signal(signal: c_int) -> bool {
 /// handler must remain valid for asynchronous entry until a later replacement;
 /// this narrow artifact supplies the required x86 restorer but not pthread
 /// signal coordination or a general handler-lifecycle policy.
-unsafe fn sigaction_impl(
+#[no_mangle]
+pub unsafe extern "C" fn __libc_sigaction(
     signal: c_int,
-    action: *const PublicSigAction,
-    old_action: *mut PublicSigAction,
+    action: *const c_void,
+    old_action: *mut c_void,
 ) -> c_int {
-    if !is_application_signal(signal) {
-        return invalid_argument();
-    }
-
-    #[cfg(feature = "x86-owned-static-runtime")]
-    let _abort_transaction = if signal == 6 {
-        match unsafe { super::owned_process_lock::SignalGuard::acquire() } {
-            Ok(guard) => Some(guard),
-            Err(error) => { unsafe { errno::set_errno(error) }; return -1; }
-        }
-    } else { None };
-
     let mut kernel_action = MaybeUninit::<KernelSigAction>::uninit();
     let action_pointer = if action.is_null() {
         core::ptr::null()
@@ -119,12 +108,13 @@ unsafe fn sigaction_impl(
         #[cfg(feature = "x86-owned-static-runtime")]
         // Match musl's predicate and pre-syscall placement, including failed
         // attempts to install a handler for SIGKILL or SIGSTOP.
-        if unsafe { (*action).handler > 1 && (*action).flags & SA_RESTART == 0 } {
+        if unsafe { (*action.cast::<PublicSigAction>()).handler > 1
+            && (*action.cast::<PublicSigAction>()).flags & SA_RESTART == 0 } {
             INTERRUPTING_SIGNAL_HANDLER_INSTALLED.store(true, core::sync::atomic::Ordering::Release);
         }
         // SAFETY: `action` satisfies this C entry point's public-record
         // contract, and `kernel_action` is writable local storage.
-        unsafe { signal_foundation::pack_public_action(action, kernel_action.as_mut_ptr()) };
+        unsafe { signal_foundation::pack_public_action(action.cast(), kernel_action.as_mut_ptr()) };
         kernel_action.as_ptr()
     };
     let mut old_kernel_action = MaybeUninit::<KernelSigAction>::uninit();
@@ -151,7 +141,7 @@ unsafe fn sigaction_impl(
         // SAFETY: Linux reported success after writing the requested compact
         // output record, and the caller supplied a complete public output.
         unsafe {
-            signal_foundation::unpack_kernel_action(old_kernel_action.as_ptr(), old_action)
+            signal_foundation::unpack_kernel_action(old_kernel_action.as_ptr(), old_action.cast())
         };
     }
     0
@@ -162,19 +152,41 @@ unsafe fn sigaction_impl(
 /// # Safety
 ///
 /// `action` and `old_action` are null or valid x86 public `struct sigaction`
-/// records as described by [`sigaction_impl`]. A non-default/non-ignore
-/// handler must remain callable through asynchronous signal delivery until it
-/// is replaced. This artifact does not make that lifetime process-wide or
-/// pthread-safe.
+/// records. A non-default/non-ignore handler must remain callable through
+/// asynchronous signal delivery until replacement; this leaf does not make
+/// that lifetime process-wide or pthread-safe.
 #[no_mangle]
-pub unsafe extern "C" fn sigaction(
+pub unsafe extern "C" fn __sigaction(
     signal: c_int,
     action: *const c_void,
     old_action: *mut c_void,
 ) -> c_int {
+    if !is_application_signal(signal) {
+        return invalid_argument();
+    }
+
+    #[cfg(feature = "x86-owned-static-runtime")]
+    let _abort_transaction = if signal == 6 {
+        match unsafe { super::owned_process_lock::SignalGuard::acquire() } {
+            Ok(guard) => Some(guard),
+            Err(error) => { unsafe { errno::set_errno(error) }; return -1; }
+        }
+    } else { None };
+
     // SAFETY: the C caller owns both public signal-action pointer contracts.
-    unsafe { sigaction_impl(signal, action.cast(), old_action.cast()) }
+    unsafe { __libc_sigaction(signal, action, old_action) }
 }
+
+// sigaction.c has two hidden callable bodies: __sigaction owns validation and
+// SIGABRT serialization, while __libc_sigaction owns action conversion and the
+// raw syscall. Its weak public alias must share __sigaction's address so an
+// application can override sigaction without redirecting either internal path.
+core::arch::global_asm!(
+    ".hidden __libc_sigaction",
+    ".hidden __sigaction",
+    ".weak sigaction",
+    ".set sigaction, __sigaction",
+);
 
 /// Set a simple BSD/musl-restart signal disposition and return the old handler.
 ///
@@ -192,7 +204,7 @@ pub unsafe extern "C" fn signal(signal: c_int, handler: usize) -> usize {
         padding: 0,
         restorer: 0,
     };
-    // `sigaction_impl` intentionally preserves musl's partial old-action
+    // `__libc_sigaction` intentionally preserves musl's partial old-action
     // writes, so seed this local record before reading the returned handler.
     let mut old_action = PublicSigAction {
         handler: 0,
@@ -203,7 +215,8 @@ pub unsafe extern "C" fn signal(signal: c_int, handler: usize) -> usize {
     };
     // SAFETY: both records are complete local storage. The caller owns the
     // handler lifetime.
-    if unsafe { sigaction_impl(signal, &action, &mut old_action) } < 0 {
+    if unsafe { __sigaction(signal, (&action as *const PublicSigAction).cast(),
+        (&mut old_action as *mut PublicSigAction).cast()) } < 0 {
         SIG_ERR
     } else {
         old_action.handler

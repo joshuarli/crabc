@@ -193,7 +193,7 @@ unsafe fn map_semaphore(fd: c_int) -> *mut c_void {
 }
 unsafe fn unmap_semaphore(semaphore: *mut c_void) {
     // Retain musl munmap's shared VM wait through the existing mapping owner.
-    unsafe { memory_mapping::munmap(semaphore, SEM_BYTES); }
+    unsafe { memory_mapping::__munmap(semaphore, SEM_BYTES); }
 }
 
 struct Cancellation(c_int);

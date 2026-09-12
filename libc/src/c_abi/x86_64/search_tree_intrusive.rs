@@ -46,7 +46,7 @@ type WalkAction = unsafe extern "C" fn(*const c_void, c_int, c_int);
 type FreeKey = Option<unsafe extern "C" fn(*mut c_void)>;
 
 unsafe extern "C" {
-    #[link_name = "mmap"]
+    #[link_name = "__mmap"]
     fn selected_mmap(
         address: *mut c_void,
         length: usize,
@@ -56,7 +56,7 @@ unsafe extern "C" {
         offset: i64,
     ) -> *mut c_void;
 
-    #[link_name = "munmap"]
+    #[link_name = "__munmap"]
     fn selected_munmap(address: *mut c_void, length: usize) -> c_int;
 }
 

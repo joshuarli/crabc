@@ -5040,8 +5040,8 @@ unsafe fn join_selected_worker_inner(
         for symbol in (
             'fn stat(',
             'fn lstat(',
-            'fn fstat(',
-            'fn fstatat(',
+            'fn __fstat(',
+            'fn __fstatat(',
             'fn __xstat(',
             'fn __lxstat(',
             'fn __fxstat(',
@@ -5228,7 +5228,7 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('#[path = "signal_pending.rs"]', static_root)
         self.assertIn('#[path = "signal_set_mutation.rs"]', static_root)
         for symbol in (
-            "fn sigaction(",
+            "fn __sigaction(",
             "fn signal(",
             "fn sigemptyset(",
             "fn sigismember(",
@@ -8540,7 +8540,7 @@ unsafe fn join_selected_worker_inner(
             "fn thrd_detach(",
             "fn thrd_sleep(",
             "detach_selected_worker",
-            "super::clock_nanosleep::clock_nanosleep",
+            "super::clock_nanosleep::__clock_nanosleep",
             "super::clock_nanosleep::CLOCK_REALTIME",
             "exit_selected_c11_worker",
             "SelectedWorkerResultKind::C11",
@@ -8736,7 +8736,7 @@ unsafe fn join_selected_worker_inner(
             "const THRD_SLEEP_INTR: c_int = -1;",
             "const THRD_SLEEP_ERROR: c_int = -2;",
             "pub unsafe extern \"C\" fn thrd_sleep(",
-            "super::clock_nanosleep::clock_nanosleep(",
+            "super::clock_nanosleep::__clock_nanosleep(",
             "super::clock_nanosleep::CLOCK_REALTIME",
             "EINTR => THRD_SLEEP_INTR",
             "_ => THRD_SLEEP_ERROR",
@@ -14628,13 +14628,13 @@ unsafe fn join_selected_worker_inner(
             "fn write(",
             "fn pread(",
             "fn pwrite(",
-            "fn lseek(",
+            "fn __lseek(",
             "fn ftruncate(",
             "fn fsync(",
             "fn fdatasync(",
             "fn dup(",
             "fn dup2(",
-            "fn dup3(",
+            "fn __dup3(",
             "fn pipe(",
             "fn pipe2(",
         ):
@@ -14777,12 +14777,12 @@ unsafe fn join_selected_worker_inner(
             '#[path = "descriptor_io.rs"]',
         ):
             self.assertIn(module, static_root)
-        for symbol in ("fn fstat(", "fn fstatat("):
+        for symbol in ("fn __fstat(", "fn __fstatat("):
             self.assertIn(symbol, stat_compat)
         for symbol in ("fn open(", "fn openat(", "fn creat("):
             self.assertIn(symbol, descriptor_entry)
         self.assertIn("fcntl_no_argument", descriptor_control)
-        for symbol in ("fn read(", "fn pread(", "fn dup3("):
+        for symbol in ("fn read(", "fn pread(", "fn __dup3("):
             self.assertIn(symbol, descriptor_io)
         for required in (
             "#include <errno.h>",
@@ -17065,7 +17065,7 @@ unsafe fn join_selected_worker_inner(
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "system_observation.rs"]', static_root)
-        for symbol in ("fn uname(", "fn sysinfo("):
+        for symbol in ("fn uname(", "fn __lsysinfo("):
             self.assertIn(symbol, system_observation)
         for required in (
             "musl 1.2.6 release commit",
@@ -26054,7 +26054,7 @@ esac
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "clock_gettime.rs"]', static_root)
-        self.assertIn("pub unsafe extern \"C\" fn clock_gettime(", clock_gettime)
+        self.assertIn("pub unsafe extern \"C\" fn __clock_gettime(", clock_gettime)
         for required in (
             "musl 1.2.6 release commit",
             "src/time/clock_gettime.c",
@@ -28208,7 +28208,7 @@ esac
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "clock_nanosleep.rs"]', static_root)
-        self.assertIn("fn clock_nanosleep(", clock_nanosleep)
+        self.assertIn("fn __clock_nanosleep(", clock_nanosleep)
         for required in (
             "musl 1.2.6 release commit",
             "src/time/clock_nanosleep.c",
