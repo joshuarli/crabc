@@ -41,7 +41,13 @@ class ArchiveAlias:
 
 @dataclass(frozen=True)
 class FeatureArchive:
-    """One Cargo-selected archive profile and its public callable delta."""
+    """One Cargo-selected archive profile and its callable provider delta.
+
+    ``additive_callables`` and ``replacement_callables`` name installed-header
+    declarations. ``abi_only_callables`` names archive functions which
+    intentionally have no installed declaration and therefore stay out of the
+    header provider partition.
+    """
 
     identifier: str
     state: str
@@ -54,6 +60,7 @@ class FeatureArchive:
     replacement_callables: tuple[str, ...]
     aliases: tuple[ArchiveAlias, ...]
     feature_selection_source: str | None = None
+    abi_only_callables: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -217,6 +224,8 @@ def parse_feature_archive_roster(
         state = raw.get("state")
         require(state in VALID_STATES, f"{location}.state is invalid")
         expected_keys = set(common_keys)
+        if "abi_only_callables" in raw:
+            expected_keys.add("abi_only_callables")
         if state == "verified":
             expected_keys.update({"evidence_record", "dispatch_command"})
         else:
@@ -263,11 +272,24 @@ def parse_feature_archive_roster(
 
         additive_callables = string_list(raw.get("additive_callables"), f"{location}.additive_callables", allow_empty=True)
         replacement_callables = string_list(raw.get("replacement_callables"), f"{location}.replacement_callables", allow_empty=True)
-        for name in (*additive_callables, *replacement_callables):
+        abi_only_callables: tuple[str, ...] = ()
+        if "abi_only_callables" in raw:
+            abi_only_callables = string_list(
+                raw.get("abi_only_callables"), f"{location}.abi_only_callables"
+            )
+        for name in (*additive_callables, *replacement_callables, *abi_only_callables):
             require_symbol(name, f"{location} callable {name}")
         require(
             not set(additive_callables) & set(replacement_callables),
             f"{location} overlaps additive and replacement callables",
+        )
+        require(
+            not set(abi_only_callables) & set(additive_callables),
+            f"{location} overlaps ABI-only and additive callables",
+        )
+        require(
+            not set(abi_only_callables) & set(replacement_callables),
+            f"{location} overlaps ABI-only and replacement callables",
         )
 
         raw_aliases = raw.get("aliases")
@@ -289,6 +311,11 @@ def parse_feature_archive_roster(
             [alias.name for alias in aliases] == sorted(alias.name for alias in aliases),
             f"{location}.aliases must be ASCII sorted by name",
         )
+        for name in abi_only_callables:
+            require(
+                name not in alias_names,
+                f"{location} ABI-only callable {name} is also an alias name",
+            )
 
         rows.append(
             FeatureArchive(
@@ -303,6 +330,7 @@ def parse_feature_archive_roster(
                 replacement_callables=replacement_callables,
                 aliases=tuple(aliases),
                 feature_selection_source=feature_selection_source,
+                abi_only_callables=abi_only_callables,
             )
         )
 
@@ -360,8 +388,73 @@ def selected_baseline_callables(
         visited.add(identifier)
         dependency = by_id[identifier]
         selected.update(dependency.additive_callables)
+        selected.update(dependency.abi_only_callables)
         pending.extend(dependency.baseline_features)
     return selected
+
+
+def validate_abi_only_callable_ownership(
+    rows: Sequence[FeatureArchive],
+    *,
+    static_exports: Iterable[str],
+    candidate_callables: Iterable[str] | None = None,
+) -> None:
+    """Keep non-header function providers out of every header ownership route.
+
+    Alias *names* are weak public identities and cannot also name an ABI-only
+    provider. An alias target remains eligible: it is the provider side of a
+    source-shaped alias group, not an alias identity itself.
+    """
+
+    static_export_set = set(static_exports)
+    candidate_set = None if candidate_callables is None else set(candidate_callables)
+    header_owners: dict[str, set[str]] = {}
+    alias_owners: dict[str, set[str]] = {}
+    for row in rows:
+        for name in (*row.additive_callables, *row.replacement_callables):
+            header_owners.setdefault(name, set()).add(row.identifier)
+        for alias in row.aliases:
+            alias_owners.setdefault(alias.name, set()).add(row.identifier)
+
+    abi_only_owners: dict[str, str] = {}
+    for row in rows:
+        for name in row.abi_only_callables:
+            require_symbol(name, f"feature archive {row.identifier} ABI-only callable {name}")
+            require(
+                name not in static_export_set,
+                f"feature archive {row.identifier} ABI-only callable {name} is already default-static",
+            )
+            require(
+                candidate_set is None or name not in candidate_set,
+                f"feature archive {row.identifier} ABI-only callable {name} is header-declared",
+            )
+            header_owners_for_name = header_owners.get(name, set())
+            require(
+                not header_owners_for_name,
+                f"feature archive {row.identifier} ABI-only callable {name} overlaps header callable ownership in "
+                + ", ".join(sorted(header_owners_for_name)),
+            )
+            alias_owners_for_name = alias_owners.get(name, set())
+            require(
+                not alias_owners_for_name,
+                f"feature archive {row.identifier} ABI-only callable {name} is also an alias name in "
+                + ", ".join(sorted(alias_owners_for_name)),
+            )
+            previous = abi_only_owners.setdefault(name, row.identifier)
+            require(
+                previous == row.identifier,
+                f"ABI-only callable {name} has multiple feature owners",
+            )
+
+    for row in rows:
+        if not row.abi_only_callables:
+            continue
+        baseline = selected_baseline_callables(row, rows, static_export_set)
+        for name in row.abi_only_callables:
+            require(
+                name not in baseline,
+                f"feature archive {row.identifier} ABI-only callable {name} is already selected by its dependency baseline",
+            )
 
 
 def validate_ledger_bindings(
@@ -375,6 +468,7 @@ def validate_ledger_bindings(
 
     static_export_set = set(static_exports)
     require(static_export_set, "static export ratchet is empty")
+    validate_abi_only_callable_ownership(rows, static_exports=static_export_set)
     require(dispatcher_path.is_file() and not dispatcher_path.is_symlink(), "x86 dispatcher is unsafe")
     dispatcher = dispatcher_path.read_text(encoding="utf-8")
     additive_owners: dict[str, str] = {}
@@ -458,6 +552,11 @@ def partition_candidate_callables(
     candidates = set(candidate_callables)
     static_export_set = set(static_exports)
     require(candidates, "candidate callable set is empty")
+    validate_abi_only_callable_ownership(
+        rows,
+        static_exports=static_export_set,
+        candidate_callables=candidates,
+    )
     default_static = tuple(sorted(candidates & static_export_set))
     owned: set[str] = set(default_static)
     verified: list[tuple[FeatureArchive, tuple[str, ...]]] = []

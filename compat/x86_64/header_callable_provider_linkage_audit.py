@@ -14,6 +14,12 @@ the roster's dependency-only baseline in isolated archives.  The one
 baseline pair is intentionally rejected, so its dedicated provider runner
 remains the semantic evidence and this audit verifies only that it has no
 callable delta contract.
+
+The compiler-derived header inventory remains limited to installed-header
+declarations. ``abi_only_callables`` are separately declared archive functions
+with no installed declaration: this audit proves their selected archive binding
+and ordinary extraction, while each named component runner owns their source,
+ABI signature, behavior proof, and expected global-versus-weak binding.
 """
 
 from __future__ import annotations
@@ -35,7 +41,13 @@ MODULE_DIR = Path(__file__).resolve().parent
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 
-from feature_archive_roster import FeatureArchive, load_feature_archive_roster
+from feature_archive_roster import (
+    FeatureArchive,
+    FeatureArchiveRosterError,
+    load_feature_archive_roster,
+    selected_baseline_callables,
+    validate_abi_only_callable_ownership,
+)
 from header_callable_linkage_audit import (
     INVENTORY_PATH,
     INVENTORY_SCHEMA,
@@ -50,7 +62,7 @@ from header_callable_linkage_audit import (
 )
 
 
-SCHEMA = "crabc.x86_64-header-callable-provider-linkage-audit/v1"
+SCHEMA = "crabc.x86_64-header-callable-provider-linkage-audit/v2"
 
 # This profile deliberately names a valid topology that cannot be expressed as
 # a direct baseline Cargo request: static_c_abi.rs rejects x86-crypt together
@@ -106,6 +118,7 @@ def global_symbol_details(path: Path, readelf: str) -> dict[str, list[dict[str, 
             {
                 "binding": binding,
                 "section": section,
+                "type": symbol_type,
                 "value": fields[1],
                 "visibility": visibility,
             }
@@ -186,6 +199,63 @@ def extract_many(
             }
         )
     return records
+
+
+def abi_only_record(
+    archive: Path,
+    symbol: str,
+    linker: str,
+    nm: str,
+    readelf: str,
+    work_dir: Path,
+) -> dict[str, Any]:
+    """Prove a non-header feature callable extracts as a function provider.
+
+    This intentionally checks only the selected archive's ELF provider. The
+    field has no installed declaration, so a component runner rather than a
+    generated header probe owns its function signature, behavior, and required
+    GLOBAL-versus-WEAK binding.
+    """
+
+    extraction, output = extract_symbol(archive, (symbol,), linker, nm, work_dir)
+    if output is None:
+        return {
+            "detail": extraction["detail"],
+            "status": extraction["status"],
+            "symbol": symbol,
+        }
+    definitions = [
+        entry
+        for entry in global_symbol_details(output, readelf).get(symbol, [])
+        if entry["binding"] in {"GLOBAL", "WEAK"}
+    ]
+    if not definitions:
+        return {
+            "detail": "ordinary archive extraction did not retain a global-or-weak function provider",
+            "definitions": definitions,
+            "status": "binding-mismatch",
+            "symbol": symbol,
+        }
+    return {
+        "definitions": definitions,
+        "detail": "ordinary archive extraction defined a global-or-weak function provider",
+        "status": "extracted",
+        "symbol": symbol,
+    }
+
+
+def abi_only_records(
+    archive: Path,
+    symbols: Sequence[str],
+    linker: str,
+    nm: str,
+    readelf: str,
+    work_dir: Path,
+) -> list[dict[str, Any]]:
+    return [
+        abi_only_record(archive, symbol, linker, nm, readelf, work_dir)
+        for symbol in symbols
+    ]
 
 
 def alias_record(
@@ -275,7 +345,10 @@ def profile_report(
     provider_row: Mapping[str, Any],
     replacement_row: Mapping[str, Any] | None,
     archives: Mapping[str, Path],
-    visible_symbols: set[str],
+    archive_visible_symbols: set[str],
+    header_symbols: set[str],
+    abi_only_symbols: set[str],
+    expected_baseline_abi_only: set[str],
     linker: str,
     nm: str,
     readelf: str,
@@ -311,15 +384,21 @@ def profile_report(
             feature.baseline_features == TOPOLOGY_ONLY_BASELINE
             and not feature.additive_callables
             and not feature.replacement_callables
-            and not feature.aliases,
+            and not feature.aliases
+            and not feature.abi_only_callables,
             "the topology-only composition profile drifted from its no-callable contract",
         )
         provider_require(set(archives) == {"enabled"}, "topology-only feature profile must not build its rejected baseline pair")
         return (
             {
                 "aliases": [],
+                "abi_only_callables": [],
+                "abi_only_extraction": [],
+                "archive_callable_delta": [],
+                "baseline_abi_only_callables": [],
                 "candidate_external_delta": [],
                 "detail": "named composition profile has no callable delta; its dedicated provider runner owns the rejected-pair and allocation-provider proof",
+                "enabled_abi_only_callables": [],
                 "id": feature.identifier,
                 "mode": "topology-only-dedicated-evidence",
                 "status": "delegated",
@@ -329,20 +408,56 @@ def profile_report(
 
     provider_require(set(archives) == {"baseline", "enabled"}, f"feature {feature.identifier} needs isolated baseline and enabled archives")
     baseline = safe_archive(archives["baseline"], f"feature {feature.identifier} baseline archive")
-    baseline_surface = profile_surface(baseline, visible_symbols, nm)
-    enabled_surface = profile_surface(enabled, visible_symbols, nm)
+    baseline_surface = profile_surface(baseline, archive_visible_symbols, nm)
+    enabled_surface = profile_surface(enabled, archive_visible_symbols, nm)
     removed = sorted(baseline_surface - enabled_surface)
-    delta = sorted(enabled_surface - baseline_surface)
-    expected_delta = sorted(set(feature.additive_callables) | {alias.name for alias in feature.aliases if alias.name not in baseline_surface})
+    archive_delta = sorted(enabled_surface - baseline_surface)
+    expected_archive_delta = sorted(
+        set(feature.additive_callables)
+        | set(feature.abi_only_callables)
+        | {alias.name for alias in feature.aliases if alias.name not in baseline_surface}
+    )
+    baseline_abi_only = sorted(baseline_surface & abi_only_symbols)
+    enabled_abi_only = sorted(enabled_surface & abi_only_symbols)
+    expected_enabled_abi_only = sorted(
+        expected_baseline_abi_only | set(feature.abi_only_callables)
+    )
+    candidate_external_delta = sorted(
+        (enabled_surface & header_symbols) - (baseline_surface & header_symbols)
+    )
+    expected_candidate_external_delta = sorted(
+        set(expected_archive_delta) & header_symbols
+    )
     failures: list[str] = []
     if removed:
         failures.append("enabled profile removes visible callable(s): " + ", ".join(removed))
-    if delta != expected_delta:
+    if archive_delta != expected_archive_delta:
         failures.append(
-            "enabled profile callable delta is "
-            + ", ".join(delta)
+            "enabled profile archive callable delta is "
+            + ", ".join(archive_delta)
             + "; expected "
-            + ", ".join(expected_delta)
+            + ", ".join(expected_archive_delta)
+        )
+    if candidate_external_delta != expected_candidate_external_delta:
+        failures.append(
+            "enabled profile header callable delta is "
+            + ", ".join(candidate_external_delta)
+            + "; expected "
+            + ", ".join(expected_candidate_external_delta)
+        )
+    if baseline_abi_only != sorted(expected_baseline_abi_only):
+        failures.append(
+            "baseline ABI-only callable surface is "
+            + ", ".join(baseline_abi_only)
+            + "; expected "
+            + ", ".join(sorted(expected_baseline_abi_only))
+        )
+    if enabled_abi_only != expected_enabled_abi_only:
+        failures.append(
+            "enabled ABI-only callable surface is "
+            + ", ".join(enabled_abi_only)
+            + "; expected "
+            + ", ".join(expected_enabled_abi_only)
         )
     additive_extraction = extract_many(enabled, feature.additive_callables, linker, nm, work_dir)
     for entry in additive_extraction:
@@ -357,6 +472,17 @@ def profile_report(
     for entry in [*baseline_replacement_extraction, *replacement_extraction]:
         if entry["status"] != "extracted":
             failures.append(f"replacement {entry['symbol']} did not extract ordinarily")
+    abi_only_extraction = abi_only_records(
+        enabled,
+        feature.abi_only_callables,
+        linker,
+        nm,
+        readelf,
+        work_dir,
+    )
+    for entry in abi_only_extraction:
+        if entry["status"] != "extracted":
+            failures.append(f"ABI-only {entry['symbol']} did not extract ordinarily")
     alias_checks = [
         alias_record(
             enabled,
@@ -377,10 +503,17 @@ def profile_report(
         {
             "additive_extraction": additive_extraction,
             "aliases": alias_checks,
-            "baseline_candidate_external_symbols": sorted(baseline_surface),
+            "abi_only_callables": list(feature.abi_only_callables),
+            "abi_only_extraction": abi_only_extraction,
+            "archive_callable_delta": archive_delta,
+            "baseline_abi_only_callables": baseline_abi_only,
+            "baseline_archive_callable_symbols": sorted(baseline_surface),
+            "baseline_candidate_external_symbols": sorted(baseline_surface & header_symbols),
             "baseline_replacement_extraction": baseline_replacement_extraction,
-            "candidate_external_delta": delta,
-            "enabled_candidate_external_symbols": sorted(enabled_surface),
+            "candidate_external_delta": candidate_external_delta,
+            "enabled_abi_only_callables": enabled_abi_only,
+            "enabled_archive_callable_symbols": sorted(enabled_surface),
+            "enabled_candidate_external_symbols": sorted(enabled_surface & header_symbols),
             "id": feature.identifier,
             "mode": "isolated-baseline-and-enabled-archives",
             "replacement_extraction": replacement_extraction,
@@ -410,6 +543,14 @@ def audit_provider_closure(
     provider_partition, provider_counts = callable_provider_partition(
         inventory, external, static_exports
     )
+    try:
+        validate_abi_only_callable_ownership(
+            roster,
+            static_exports=static_exports,
+            candidate_callables=external,
+        )
+    except FeatureArchiveRosterError as error:
+        raise ProviderLinkageAuditError(str(error)) from error
     verified_rows, replacement_rows = feature_rows(provider_partition, roster)
     verified_roster = tuple(row for row in roster if row.state == "verified")
     provider_require(
@@ -417,11 +558,15 @@ def audit_provider_closure(
         "profile archives must cover every and only verified feature profile",
     )
     default_symbols = set(provider_partition["default_static"]["members"])
-    visible_symbols = set(external)
-    for feature in verified_roster:
-        visible_symbols.update(feature.additive_callables)
-        visible_symbols.update(feature.replacement_callables)
-        visible_symbols.update(alias.name for alias in feature.aliases)
+    header_symbols = set(external)
+    archive_visible_symbols = set(header_symbols)
+    abi_only_symbols: set[str] = set()
+    for feature in roster:
+        archive_visible_symbols.update(feature.additive_callables)
+        archive_visible_symbols.update(feature.replacement_callables)
+        archive_visible_symbols.update(alias.name for alias in feature.aliases)
+        archive_visible_symbols.update(feature.abi_only_callables)
+        abi_only_symbols.update(feature.abi_only_callables)
 
     with tempfile.TemporaryDirectory(prefix="crabc-x86-header-callable-provider-linkage.") as temporary:
         work_dir = Path(temporary)
@@ -435,12 +580,21 @@ def audit_provider_closure(
         ]
         profiles: list[dict[str, Any]] = []
         for feature in verified_roster:
+            expected_baseline_abi_only = set()
+            if feature.identifier != TOPOLOGY_ONLY_PROFILE:
+                expected_baseline_abi_only = (
+                    selected_baseline_callables(feature, roster, static_exports)
+                    & abi_only_symbols
+                )
             row, profile_failures = profile_report(
                 feature,
                 verified_rows[feature.identifier],
                 replacement_rows.get(feature.identifier),
                 profile_archives[feature.identifier],
-                visible_symbols,
+                archive_visible_symbols,
+                header_symbols,
+                abi_only_symbols,
+                expected_baseline_abi_only,
                 linker,
                 nm,
                 readelf,
@@ -449,6 +603,13 @@ def audit_provider_closure(
             profiles.append(row)
             failures.extend(f"{feature.identifier}: {failure}" for failure in profile_failures)
 
+    selected_abi_only_callables = sorted(
+        {
+            name
+            for profile in profiles
+            for name in profile["enabled_abi_only_callables"]
+        }
+    )
     unprovided = provider_partition["unprovided"]["members"]
     declared_unverified = provider_partition["declared_unverified_feature_archives"]
     incomplete_reasons = list(failures)
@@ -472,15 +633,21 @@ def audit_provider_closure(
         "scope": {
             "family_promotion": False,
             "full_callable_closure": False,
+            "header_declarations_proved_for_abi_only_callables": False,
             "public_support": False,
             "selected_feature_profiles_extracted": True,
             "uses_whole_archive": False,
+        },
+        "selected_abi_only_callables": {
+            "kind": "selected-non-header-feature-callables",
+            "members": selected_abi_only_callables,
         },
         "summary": {
             "callable_provider_counts": provider_counts,
             "complete": complete,
             "incomplete_reasons": incomplete_reasons,
             "selected_provider_closure_complete": selected_provider_closure_complete,
+            "selected_abi_only_callable_count": len(selected_abi_only_callables),
             "topology_only_profile_count": sum(
                 row["mode"] == "topology-only-dedicated-evidence" for row in profiles
             ),
