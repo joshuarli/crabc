@@ -147,6 +147,11 @@ impl<T: Copy> HeapVec<T> {
                 self.capacity.checked_mul(2).ok_or(WordexpError::NoSpace)?
             };
             let bytes = capacity.checked_mul(size_of::<T>()).ok_or(WordexpError::NoSpace)?;
+            // `realloc`, pointer arithmetic, and `from_raw_parts` all require
+            // an allocation whose byte extent fits a signed pointer offset.
+            // Keep that invariant at the one generic growth boundary instead
+            // of relying on a later platform allocator failure.
+            if bytes > isize::MAX as usize { return Err(WordexpError::NoSpace); }
             // SAFETY: realloc accepts the allocation owned by this vector, or
             // null for its first allocation.
             let grown = unsafe { wordexp_engine_realloc(self.pointer.cast(), bytes) }.cast::<T>();
@@ -395,8 +400,11 @@ impl WordexpSyntax {
         unsafe { slice::from_raw_parts(self.parameter_names.pointer.add(span.start), span.len()) }
     }
 
+    /// Whether lexical scanning found any contained command substitution. The
+    /// C wrapper uses this preflight fact before it stages a result record for
+    /// `WRDE_NOCMD`; it does not imply command execution or a shell AST.
     #[inline]
-    fn has_commands(&self) -> bool { self.contains_command }
+    pub(super) fn has_commands(&self) -> bool { self.contains_command }
 
     unsafe fn word(&self, index: usize) -> SyntaxWord {
         // SAFETY: caller supplies a syntax-created word id.
@@ -2829,21 +2837,98 @@ impl ExpandedWord {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ExpandedResultStorage<'a> {
+    // A regular finalized field remains scratch-owned until its result sink
+    // has accepted this borrowed atom view.
+    Atoms(&'a [ExpandedAtom]),
+    // A pathname adapter supplies one borrowed match directly to the result
+    // sink. It never needs to allocate a private ExpandedWord just to copy it.
+    Bytes(&'a [u8]),
+}
+
+/// Read-only bytes for one finalized field. Empty quote markers remain private
+/// evaluator metadata and are omitted from this view.
+#[derive(Clone, Copy)]
+pub(super) struct ExpandedResultWord<'a> {
+    storage: ExpandedResultStorage<'a>,
+}
+
+impl<'a> ExpandedResultWord<'a> {
+    fn from_atoms(atoms: &'a [ExpandedAtom]) -> Self {
+        Self { storage: ExpandedResultStorage::Atoms(atoms) }
+    }
+
+    fn from_bytes(bytes: &'a [u8]) -> Self {
+        debug_assert!(!bytes.iter().any(|byte| *byte == 0));
+        Self { storage: ExpandedResultStorage::Bytes(bytes) }
+    }
+
+    pub(super) fn byte_len(&self) -> usize {
+        match self.storage {
+            ExpandedResultStorage::Atoms(atoms) => atoms.iter()
+                .filter(|atom| atom.flags & ATOM_EMPTY == 0)
+                .count(),
+            ExpandedResultStorage::Bytes(bytes) => bytes.len(),
+        }
+    }
+
+    /// Iterate exactly `byte_len()` NUL-free bytes without flattening atom
+    /// storage. The result-record owner copies this view linearly while the
+    /// caller retains the scratch word or adapter path backing it.
+    pub(super) fn bytes(&self) -> ExpandedResultBytes<'a> {
+        ExpandedResultBytes { storage: self.storage, index: 0 }
+    }
+
+    /// Test convenience for small assertions. Result-record construction uses
+    /// `bytes()` so it never rescans a view once per output byte.
+    pub(super) fn byte_at(&self, wanted: usize) -> Option<u8> {
+        self.bytes().nth(wanted)
+    }
+}
+
+/// Linear byte iterator for `ExpandedResultWord`.
+pub(super) struct ExpandedResultBytes<'a> {
+    storage: ExpandedResultStorage<'a>,
+    index: usize,
+}
+
+impl Iterator for ExpandedResultBytes<'_> {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.storage {
+            ExpandedResultStorage::Atoms(atoms) => loop {
+                let atom = *atoms.get(self.index)?;
+                self.index += 1;
+                if atom.flags & ATOM_EMPTY == 0 { return Some(atom.byte); }
+            },
+            ExpandedResultStorage::Bytes(bytes) => {
+                let byte = *bytes.get(self.index)?;
+                self.index += 1;
+                Some(byte)
+            }
+        }
+    }
+}
+
+/// Transactional final-field boundary for the eventual C result-record owner.
+/// A successful call consumes one whole borrowed field; an error leaves every
+/// previously accepted field owned by the sink and leaves the current backing
+/// word with the evaluator for cleanup.
+pub(super) trait WordexpResultSink {
+    fn append_word(&mut self, word: ExpandedResultWord<'_>) -> Result<(), WordexpError>;
+}
+
+/// Collecting convenience sink for deterministic core tests. The selected C
+/// provider instead supplies a record transaction directly to
+/// `evaluate_wordexp_into`.
 pub(super) struct ExpandedWords {
     words: HeapVec<*mut ExpandedWord>,
 }
 
 impl ExpandedWords {
     const fn new() -> Self { Self { words: HeapVec::new() } }
-
-    fn allocate_word(&mut self) -> Result<*mut ExpandedWord, WordexpError> {
-        // SAFETY: selected C malloc allocates one private word record.
-        let word = unsafe { wordexp_engine_malloc(size_of::<ExpandedWord>()) }.cast::<ExpandedWord>();
-        if word.is_null() { return Err(WordexpError::NoSpace); }
-        // SAFETY: word points to enough uninitialized storage for this object.
-        unsafe { ptr::write(word, ExpandedWord::new()); }
-        Ok(word)
-    }
 
     fn push(&mut self, word: *mut ExpandedWord) -> Result<(), WordexpError> {
         self.words.push(word)
@@ -2857,35 +2942,33 @@ impl ExpandedWords {
         let word = unsafe { self.words.get(index) };
         if word.is_null() { return None; }
         // SAFETY: the result list retains this word through the returned view.
-        Some(ExpandedResultWord { word: unsafe { &*word } })
+        Some(ExpandedResultWord::from_atoms(unsafe { (*word).atoms.as_slice() }))
     }
 }
 
-/// Read-only result bytes for later C-record construction. Empty quote
-/// markers remain private evaluator metadata and are omitted here.
-pub(super) struct ExpandedResultWord<'a> {
-    word: &'a ExpandedWord,
-}
-
-impl ExpandedResultWord<'_> {
-    pub(super) fn byte_len(&self) -> usize {
-        let mut length = 0usize;
-        // SAFETY: this view borrows a live result word.
-        for atom in unsafe { self.word.atoms.as_slice() } {
-            if atom.flags & ATOM_EMPTY == 0 { length += 1; }
+impl WordexpResultSink for ExpandedWords {
+    fn append_word(&mut self, input: ExpandedResultWord<'_>) -> Result<(), WordexpError> {
+        let word = allocate_expanded_word()?;
+        let result = (|| {
+            // SAFETY: this allocation remains local until list insertion.
+            let output = unsafe { &mut *word };
+            let origin = output.reserve_origin()?;
+            let mut nonempty = false;
+            for byte in input.bytes() {
+                output.append_in_origin(&[byte], 0, false, origin)?;
+                nonempty = true;
+            }
+            if !nonempty {
+                output.append_in_origin(&[], 0, true, origin)?;
+            }
+            self.push(word)
+        })();
+        if result.is_err() {
+            // SAFETY: insertion failed, so this local allocation did not
+            // transfer to the collecting sink.
+            unsafe { free_expanded_word(word); }
         }
-        length
-    }
-
-    pub(super) fn byte_at(&self, wanted: usize) -> Option<u8> {
-        let mut index = 0usize;
-        // SAFETY: this view borrows a live result word.
-        for atom in unsafe { self.word.atoms.as_slice() } {
-            if atom.flags & ATOM_EMPTY != 0 { continue; }
-            if index == wanted { return Some(atom.byte); }
-            index += 1;
-        }
-        None
+        result
     }
 }
 
@@ -2937,26 +3020,20 @@ impl TildeOutput<'_> {
     }
 }
 
-/// Restricted sink for pathname matches. It transfers a copied byte path only
-/// after every allocation and append step succeeds.
+/// Restricted sink for pathname matches. It validates the C-string boundary,
+/// then gives the final result transaction a borrowed byte view directly.
+/// Therefore a later allocation failure cannot discard a previously accepted
+/// glob prefix or force an O(n²) re-copy through private word storage.
 pub(super) struct PathnameMatches<'a> {
-    output: &'a mut ExpandedWords,
+    sink: &'a mut dyn WordexpResultSink,
+    appended: bool,
 }
 
 impl PathnameMatches<'_> {
     pub(super) fn append_path(&mut self, bytes: &[u8]) -> Result<(), WordexpError> {
-        let word = self.output.allocate_word()?;
-        let appended = unsafe { (*word).append(bytes, 0, bytes.is_empty()) };
-        if let Err(error) = appended {
-            // SAFETY: allocation did not transfer to the result owner.
-            unsafe { free_expanded_word(word); }
-            return Err(error);
-        }
-        if let Err(error) = self.output.push(word) {
-            // SAFETY: push failed before ownership transferred.
-            unsafe { free_expanded_word(word); }
-            return Err(error);
-        }
+        if bytes.iter().any(|byte| *byte == 0) { return Err(WordexpError::OutputNul); }
+        self.sink.append_word(ExpandedResultWord::from_bytes(bytes))?;
+        self.appended = true;
         Ok(())
     }
 }
@@ -2989,6 +3066,9 @@ impl Drop for ExpandedWords {
 }
 
 fn allocate_expanded_word() -> Result<*mut ExpandedWord, WordexpError> {
+    if size_of::<ExpandedWord>() > isize::MAX as usize {
+        return Err(WordexpError::NoSpace);
+    }
     // SAFETY: selected C malloc allocates one private word record.
     let word = unsafe { wordexp_engine_malloc(size_of::<ExpandedWord>()) }.cast::<ExpandedWord>();
     if word.is_null() { return Err(WordexpError::NoSpace); }
@@ -3538,17 +3618,60 @@ fn consume_ifs_delimiter(
     (index, false)
 }
 
+/// Emit one split field while its scratch backing is still live. A pathname
+/// adapter can replace it with several direct result-sink calls; otherwise
+/// the result sink receives its atom view. Either way the scratch allocation
+/// is reclaimed after the current field is accepted or rejected.
+fn emit_final_word(
+    paths: &mut dyn WordexpPathAdapter,
+    sink: &mut dyn WordexpResultSink,
+    scratch: &mut ScratchWords,
+    word: *mut ExpandedWord,
+) -> Result<(), WordexpError> {
+    let result = (|| {
+        // SAFETY: `word` stays scratch-owned and live through this closure.
+        if unsafe { (*word).has_pattern() } {
+            let (matched, appended) = {
+                let pattern = PatternInput {
+                    // SAFETY: the scratch word remains live through the
+                    // adapter call and it exposes only atom eligibility.
+                    atoms: unsafe { (*word).atoms.as_slice() },
+                };
+                let mut matches = PathnameMatches { sink, appended: false };
+                let matched = paths.expand_pattern(&pattern, &mut matches)?;
+                (matched, matches.appended)
+            };
+            if matched {
+                if !appended { return Err(WordexpError::Syntax); }
+                return Ok(());
+            }
+            // The adapter contract permits output only when it reports a
+            // match. Reject a contradictory adapter before emitting a second
+            // copy of the literal source field.
+            if appended { return Err(WordexpError::Syntax); }
+        }
+        sink.append_word(ExpandedResultWord::from_atoms(
+            // SAFETY: this atom view remains live until append_word returns.
+            unsafe { (*word).atoms.as_slice() },
+        ))
+    })();
+    // SAFETY: this helper consumes exactly one scratch-owned final field even
+    // when the path or result sink reports an error.
+    unsafe { scratch.free(word); }
+    result
+}
+
 fn split_root_word(
     scratch: &mut ScratchWords,
     root: *mut ExpandedWord,
     ifs: &[u8],
     locale_mode: WordexpLocaleMode,
-    output: &mut ExpandedWords,
+    paths: &mut dyn WordexpPathAdapter,
+    sink: &mut dyn WordexpResultSink,
 ) -> Result<(), WordexpError> {
     if ifs.is_empty() {
         if word_has_content(unsafe { &*root }) {
-            output.push(root)?;
-            scratch.release(root);
+            return emit_final_word(paths, sink, scratch, root);
         } else {
             // SAFETY: an empty unquoted expansion has no result field.
             unsafe { scratch.free(root); }
@@ -3569,64 +3692,20 @@ fn split_root_word(
         }
         let (after, nonwhite) = consume_ifs_delimiter(atoms, index, ifs, locale_mode);
         if word_has_content(unsafe { &*current }) || nonwhite {
-            output.push(current)?;
-            scratch.release(current);
+            emit_final_word(paths, sink, scratch, current)?;
             current = scratch.allocate()?;
         }
         index = after;
     }
     // SAFETY: root and current are scratch-owned live words.
-    if word_has_content(unsafe { &*current }) {
-        output.push(current)?;
-        scratch.release(current);
+    let result = if word_has_content(unsafe { &*current }) {
+        emit_final_word(paths, sink, scratch, current)
     } else {
         unsafe { scratch.free(current); }
-    }
-    unsafe { scratch.free(root); }
-    Ok(())
-}
-
-fn apply_pathname_expansion(
-    paths: &mut dyn WordexpPathAdapter,
-    output: &mut ExpandedWords,
-) -> Result<(), WordexpError> {
-    // Keep the input owner separate while adapters append replacement words.
-    // Besides making allocation failure reclaim every source word, this
-    // preserves left-to-right word order when a pattern produces many paths.
-    let mut source = ExpandedWords {
-        words: core::mem::replace(&mut output.words, HeapVec::new()),
+        Ok(())
     };
-    let source_count = source.words.len();
-    let mut index = 0usize;
-    while index < source_count {
-        // SAFETY: each index is initialized before this pass starts.
-        let word = unsafe { source.words.get(index) };
-        // SAFETY: each output pointer is owned and live through this pass.
-        if unsafe { (*word).has_pattern() } {
-            let before = output.words.len();
-            // SAFETY: atoms stay live while the adapter observes them.
-            let pattern = PatternInput {
-                // SAFETY: source word remains live through this adapter call.
-                atoms: unsafe { (*word).atoms.as_slice() },
-            };
-            let mut matches = PathnameMatches { output };
-            let matched = paths.expand_pattern(&pattern, &mut matches)?;
-            if matched {
-                if output.words.len() == before { return Err(WordexpError::Syntax); }
-                // SAFETY: this old word has been replaced by adapter output.
-                unsafe { free_expanded_word(word); }
-                unsafe { source.words.replace(index, ptr::null_mut()); }
-            } else {
-                output.push(word)?;
-                unsafe { source.words.replace(index, ptr::null_mut()); }
-            }
-        } else {
-            output.push(word)?;
-            unsafe { source.words.replace(index, ptr::null_mut()); }
-        }
-        index += 1;
-    }
-    Ok(())
+    unsafe { scratch.free(root); }
+    result
 }
 
 /// Evaluate a parsed wordexp expression with private deterministic adapters.
@@ -3637,10 +3716,25 @@ pub(super) fn evaluate_wordexp(
     commands: &mut dyn WordexpCommandAdapter,
     paths: &mut dyn WordexpPathAdapter,
 ) -> Result<ExpandedWords, WordexpError> {
+    let mut results = ExpandedWords::new();
+    evaluate_wordexp_into(syntax, context, commands, paths, &mut results)?;
+    Ok(results)
+}
+
+/// Evaluate directly into a transactional final-field sink. Each root runs
+/// splitting and pathname expansion to completion before the next root starts,
+/// so side effects from a later command cannot change an earlier glob. A
+/// failing sink retains only fields it already accepted.
+pub(super) fn evaluate_wordexp_into(
+    syntax: &WordexpSyntax,
+    context: &mut WordexpContext,
+    commands: &mut dyn WordexpCommandAdapter,
+    paths: &mut dyn WordexpPathAdapter,
+    sink: &mut dyn WordexpResultSink,
+) -> Result<(), WordexpError> {
     if context.no_command_substitution && syntax.has_commands() {
         return Err(WordexpError::CommandSubstitution);
     }
-    let mut results = ExpandedWords::new();
     let mut scratch = ScratchWords::new();
     let mut tasks = HeapVec::<EvaluationTask>::new();
     let mut root_index = 0usize;
@@ -3663,13 +3757,12 @@ pub(super) fn evaluate_wordexp(
             commands,
             paths,
             &mut scratch,
-            &mut results,
+            sink,
             &mut tasks,
         )?;
         root_index += 1;
     }
-    apply_pathname_expansion(paths, &mut results)?;
-    Ok(results)
+    Ok(())
 }
 
 fn run_evaluation_tasks(
@@ -3678,7 +3771,7 @@ fn run_evaluation_tasks(
     commands: &mut dyn WordexpCommandAdapter,
     paths: &mut dyn WordexpPathAdapter,
     scratch: &mut ScratchWords,
-    results: &mut ExpandedWords,
+    sink: &mut dyn WordexpResultSink,
     tasks: &mut HeapVec<EvaluationTask>,
 ) -> Result<(), WordexpError> {
     while let Some(task) = tasks.pop() {
@@ -3790,7 +3883,8 @@ fn run_evaluation_tasks(
                     task.temporary,
                     context.ifs_bytes(),
                     context.locale_mode(),
-                    results,
+                    paths,
+                    sink,
                 )?;
             }
             TASK_FINISH_ARITHMETIC => {
@@ -4879,6 +4973,186 @@ mod tests {
         }
     }
 
+    struct OrderingCommands<'a> {
+        created: &'a core::cell::Cell<bool>,
+        calls: usize,
+    }
+
+    impl WordexpCommandAdapter for OrderingCommands<'_> {
+        fn execute(
+            &mut self,
+            body: &[u8],
+            _style: CommandStyle,
+            _assignment_prefix: &[u8],
+            _exported_entries: &[u8],
+            output: &mut CommandOutput<'_>,
+        ) -> Result<(), WordexpError> {
+            assert_eq!(body, b"create");
+            self.created.set(true);
+            self.calls += 1;
+            output.append(b"tail")
+        }
+    }
+
+    struct OrderingPaths<'a> {
+        created: &'a core::cell::Cell<bool>,
+        calls: usize,
+    }
+
+    impl WordexpPathAdapter for OrderingPaths<'_> {
+        fn expand_tilde(
+            &mut self,
+            _user: &[u8],
+            _home: Option<&[u8]>,
+            _output: &mut TildeOutput<'_>,
+        ) -> Result<bool, WordexpError> {
+            Ok(false)
+        }
+
+        fn expand_pattern(
+            &mut self,
+            _pattern: &PatternInput<'_>,
+            output: &mut PathnameMatches<'_>,
+        ) -> Result<bool, WordexpError> {
+            self.calls += 1;
+            if !self.created.get() { return Ok(false); }
+            output.append_path(b"p-new.txt")?;
+            Ok(true)
+        }
+
+        fn remove_parameter_pattern(
+            &mut self,
+            value: &[u8],
+            _pattern: &PatternInput<'_>,
+            _operator: ParameterPatternOperator,
+            output: &mut ParameterPatternOutput<'_>,
+        ) -> Result<(), WordexpError> {
+            output.append_bytes(value)
+        }
+    }
+
+    struct LimitedResultSink {
+        accepted: ExpandedWords,
+        accept_limit: usize,
+        error: WordexpError,
+        calls: usize,
+    }
+
+    impl LimitedResultSink {
+        fn new(accept_limit: usize, error: WordexpError) -> Self {
+            Self { accepted: ExpandedWords::new(), accept_limit, error, calls: 0 }
+        }
+    }
+
+    impl WordexpResultSink for LimitedResultSink {
+        fn append_word(&mut self, word: ExpandedResultWord<'_>) -> Result<(), WordexpError> {
+            // The later C record transaction gets this same linear interface.
+            // Prove the view length matches its one-pass byte iterator before
+            // the collecting test sink copies it.
+            assert_eq!(word.bytes().count(), word.byte_len());
+            if self.calls == self.accept_limit { return Err(self.error); }
+            self.accepted.append_word(word)?;
+            self.calls += 1;
+            Ok(())
+        }
+    }
+
+    struct FailingCommands {
+        error: WordexpError,
+        calls: usize,
+    }
+
+    impl WordexpCommandAdapter for FailingCommands {
+        fn execute(
+            &mut self,
+            body: &[u8],
+            _style: CommandStyle,
+            _assignment_prefix: &[u8],
+            _exported_entries: &[u8],
+            _output: &mut CommandOutput<'_>,
+        ) -> Result<(), WordexpError> {
+            assert_eq!(body, b"fail");
+            self.calls += 1;
+            Err(self.error)
+        }
+    }
+
+    struct FailingPatternPaths {
+        error: WordexpError,
+        calls: usize,
+    }
+
+    impl WordexpPathAdapter for FailingPatternPaths {
+        fn expand_tilde(
+            &mut self,
+            _user: &[u8],
+            _home: Option<&[u8]>,
+            _output: &mut TildeOutput<'_>,
+        ) -> Result<bool, WordexpError> {
+            Ok(false)
+        }
+
+        fn expand_pattern(
+            &mut self,
+            _pattern: &PatternInput<'_>,
+            _output: &mut PathnameMatches<'_>,
+        ) -> Result<bool, WordexpError> {
+            self.calls += 1;
+            Err(self.error)
+        }
+
+        fn remove_parameter_pattern(
+            &mut self,
+            value: &[u8],
+            _pattern: &PatternInput<'_>,
+            _operator: ParameterPatternOperator,
+            output: &mut ParameterPatternOutput<'_>,
+        ) -> Result<(), WordexpError> {
+            output.append_bytes(value)
+        }
+    }
+
+    struct TwoMatchPaths {
+        calls: usize,
+        nul: bool,
+    }
+
+    impl WordexpPathAdapter for TwoMatchPaths {
+        fn expand_tilde(
+            &mut self,
+            _user: &[u8],
+            _home: Option<&[u8]>,
+            _output: &mut TildeOutput<'_>,
+        ) -> Result<bool, WordexpError> {
+            Ok(false)
+        }
+
+        fn expand_pattern(
+            &mut self,
+            _pattern: &PatternInput<'_>,
+            output: &mut PathnameMatches<'_>,
+        ) -> Result<bool, WordexpError> {
+            self.calls += 1;
+            if self.nul {
+                output.append_path(b"bad\0path")?;
+            } else {
+                output.append_path(b"first.rs")?;
+                output.append_path(b"second.rs")?;
+            }
+            Ok(true)
+        }
+
+        fn remove_parameter_pattern(
+            &mut self,
+            value: &[u8],
+            _pattern: &PatternInput<'_>,
+            _operator: ParameterPatternOperator,
+            output: &mut ParameterPatternOutput<'_>,
+        ) -> Result<(), WordexpError> {
+            output.append_bytes(value)
+        }
+    }
+
     struct TestPaths {
         pattern_calls: usize,
         match_patterns: bool,
@@ -5045,8 +5319,8 @@ mod tests {
     fn evaluate(
         input: &[u8],
         context: &mut WordexpContext,
-        commands: &mut TestCommands,
-        paths: &mut TestPaths,
+        commands: &mut dyn WordexpCommandAdapter,
+        paths: &mut dyn WordexpPathAdapter,
     ) -> Result<ExpandedWords, WordexpError> {
         let syntax = WordexpSyntax::parse(input)?;
         evaluate_wordexp(&syntax, context, commands, paths)
@@ -5528,6 +5802,125 @@ mod tests {
             &[b"aone", b"two", b"xone two", b"", b"first.rs", b"second.rs", b"*.rs"],
         );
         assert_eq!(paths.pattern_calls, 1);
+    }
+
+    #[test]
+    fn pathname_expansion_finishes_each_root_before_later_commands() {
+        let created = core::cell::Cell::new(false);
+        let mut context = WordexpContext::new();
+        let mut commands = OrderingCommands { created: &created, calls: 0 };
+        let mut paths = OrderingPaths { created: &created, calls: 0 };
+        let words = evaluate(
+            b"p*.txt $(create)",
+            &mut context,
+            &mut commands,
+            &mut paths,
+        ).unwrap();
+        // The first root must see the pathname state before the command in
+        // the second root can create a matching file.
+        assert_words(&words, &[b"p*.txt", b"tail"]);
+        assert_eq!(paths.calls, 1);
+        assert_eq!(commands.calls, 1);
+    }
+
+    #[test]
+    fn result_sink_retains_only_accepted_prefixes_on_later_failures() {
+        let syntax = WordexpSyntax::parse(b"first second").unwrap();
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let mut no_space = LimitedResultSink::new(1, WordexpError::NoSpace);
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &syntax, &mut context, &mut commands, &mut paths, &mut no_space,
+            ),
+            Err(WordexpError::NoSpace),
+        ));
+        assert_words(&no_space.accepted, &[b"first"]);
+        assert_eq!(no_space.calls, 1);
+
+        // The core keeps the same accepted-prefix transaction boundary for a
+        // non-memory error. The later C wrapper decides to discard that
+        // prefix for statuses other than WRDE_NOSPACE.
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let mut semantic = LimitedResultSink::new(1, WordexpError::Arithmetic);
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &syntax, &mut context, &mut commands, &mut paths, &mut semantic,
+            ),
+            Err(WordexpError::Arithmetic),
+        ));
+        assert_words(&semantic.accepted, &[b"first"]);
+
+        let command_syntax = WordexpSyntax::parse(b"first $(fail)").unwrap();
+        let mut context = WordexpContext::new();
+        let mut commands = FailingCommands { error: WordexpError::NoSpace, calls: 0 };
+        let mut paths = TestPaths::plain();
+        let mut command_sink = LimitedResultSink::new(usize::MAX, WordexpError::NoSpace);
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &command_syntax,
+                &mut context,
+                &mut commands,
+                &mut paths,
+                &mut command_sink,
+            ),
+            Err(WordexpError::NoSpace),
+        ));
+        assert_words(&command_sink.accepted, &[b"first"]);
+        assert_eq!(commands.calls, 1);
+
+        let pattern_syntax = WordexpSyntax::parse(b"first *.rs").unwrap();
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = FailingPatternPaths { error: WordexpError::NoSpace, calls: 0 };
+        let mut pattern_sink = LimitedResultSink::new(usize::MAX, WordexpError::NoSpace);
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &pattern_syntax,
+                &mut context,
+                &mut commands,
+                &mut paths,
+                &mut pattern_sink,
+            ),
+            Err(WordexpError::NoSpace),
+        ));
+        assert_words(&pattern_sink.accepted, &[b"first"]);
+        assert_eq!(paths.calls, 1);
+    }
+
+    #[test]
+    fn pathname_matches_stream_into_the_result_sink_and_validate_nul() {
+        let syntax = WordexpSyntax::parse(b"*.rs").unwrap();
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TwoMatchPaths { calls: 0, nul: false };
+        let mut sink = LimitedResultSink::new(1, WordexpError::NoSpace);
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &syntax, &mut context, &mut commands, &mut paths, &mut sink,
+            ),
+            Err(WordexpError::NoSpace),
+        ));
+        // The first pathname match was offered as a borrowed byte view and
+        // survives the sink failure while the second was never accepted.
+        assert_words(&sink.accepted, &[b"first.rs"]);
+        assert_eq!(paths.calls, 1);
+
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TwoMatchPaths { calls: 0, nul: true };
+        let mut sink = LimitedResultSink::new(usize::MAX, WordexpError::NoSpace);
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &syntax, &mut context, &mut commands, &mut paths, &mut sink,
+            ),
+            Err(WordexpError::OutputNul),
+        ));
+        assert_words(&sink.accepted, &[]);
+        assert_eq!(paths.calls, 1);
     }
 
     #[test]

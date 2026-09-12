@@ -9,7 +9,8 @@ framework, or x86 qualification claim. The selected adapter remains unchanged.
 
 POSIX.1-2024 [`wordexp()`](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/functions/wordexp.html)
 defines `WRDE_BADVAL` for an undefined shell variable with `WRDE_UNDEF`, and
-`WRDE_CMDSUB` when `WRDE_NOCMD` forbids command substitution. The
+`WRDE_CMDSUB` when `WRDE_NOCMD` forbids command substitution; its return-value
+contract retains successfully expanded fields on `WRDE_NOSPACE`. The
 [Shell Command Language](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html),
 particularly sections 2.2.3, 2.6.1, 2.6.2, 2.6.4, and 2.6.5, defines quoting,
 tilde and arithmetic expansion, parameter substring patterns, and field
@@ -94,6 +95,15 @@ only use consecutive eligible bytes from one origin, so adjacent expansions or
 quoted/literal boundaries cannot synthesize a delimiter. Nested output is
 copied as data and is not reparsed.
 
+Evaluation completes field splitting and pathname expansion for one parsed root
+word before it begins the next root. This preserves POSIX expansion order: a
+later command substitution cannot create a pathname match for an earlier word.
+Each final field then reaches one transactional result sink call. Ordinary
+fields borrow their atom sequence while scratch ownership remains live;
+pathname matches borrow the adapter's byte slice directly after NUL validation.
+The result boundary exposes a linear byte iterator rather than flattening atoms
+or copying each match through another private word allocation.
+
 ## Private interfaces
 
 These are `pub(super)` implementation boundaries for a later sibling C ABI
@@ -103,17 +113,21 @@ engine's C-allocated vectors, syntax nodes, or atom flags.
 | Boundary | Input and output contract |
 | --- | --- |
 | `WordexpSyntax::parse` | Copies a NUL-free source slice and returns parsed node/span ownership. |
+| `WordexpSyntax::has_commands` | Reports lexical containment of command substitutions for the wrapper's `WRDE_NOCMD` preflight; it neither executes nor builds command syntax. |
 | `WordexpContext` | Holds call-local variable state, export attributes, special-parameter values, IFS, flags, and explicit `WordexpLocaleMode`. `set_initial` distinguishes unset from set-empty. |
-| `evaluate_wordexp` | Consumes immutable syntax plus mutable context and deterministic command/path adapters, returning owned result-word views. |
+| `evaluate_wordexp_into` | Consumes immutable syntax plus mutable context and deterministic command/path adapters, finalizing one root at a time into `WordexpResultSink`. Its `WRDE_NOCMD` check occurs before any task, context mutation, or sink call. |
+| `WordexpResultSink::append_word` | Atomically accepts one borrowed `ExpandedResultWord`, or returns a typed error while leaving earlier accepted fields owned by the sink. `ExpandedResultWord::byte_len` plus `bytes()` yield exactly one linear NUL-free byte stream; `byte_at` is test-only convenience. |
+| `evaluate_wordexp` | A collecting convenience wrapper for core tests. It calls `evaluate_wordexp_into` and retains copied final fields only after the underlying sink accepts each whole field. |
 | `WordexpCommandAdapter::execute` | Receives an opaque body, typed `CommandStyle`, a safely quoted local-assignment prefix, current NUL-separated exported entries, and a `CommandOutput` sink. `CommandStyle::Backtick { double_quoted }` retains the outer quote context needed for the POSIX backtick backslash rule; the body bytes themselves stay unchanged. |
 | `WordexpPathAdapter::expand_tilde` | Receives a user spelling, the current call-local `HOME` for bare `~`, and a `TildeOutput` sink. A home replacement is marked quoted, so it cannot split or glob. |
-| `WordexpPathAdapter::expand_pattern` | Receives `PatternInput` atoms with only pattern eligibility and empty-marker information, then emits copied paths through `PathnameMatches`. |
+| `WordexpPathAdapter::expand_pattern` | Receives `PatternInput` atoms with only pattern eligibility and empty-marker information, then offers NUL-free borrowed pathname bytes through `PathnameMatches` directly to the final sink. |
 | `WordexpPathAdapter::remove_parameter_pattern` | Receives an evaluated pattern plus typed `ParameterPatternOperator`, avoiding duplicated private parser tags. |
 
-All growable syntax, parser, evaluator, arithmetic, and output storage crosses
-the selected C `malloc`/`realloc`/`free` boundary. Nodes point into the
-call-local copied source. Valid nesting has no fixed private depth cap and no
-parser or evaluator path uses Rust call-stack recursion.
+All growable core-owned syntax, parser, evaluator, arithmetic, and collecting
+result storage crosses the selected C `malloc`/`realloc`/`free` boundary.
+Nodes point into the call-local copied source. Valid nesting has no fixed
+private depth cap and no parser or evaluator path uses Rust call-stack
+recursion.
 
 The later command adapter will invoke `/bin/sh` through `owned_spawn` exactly
 once, with no preflight or shadow execution. It receives the byte-exact opaque
@@ -130,7 +144,10 @@ The later pathname adapter uses `owned_pattern` and copies strings before
 `globfree`; named tilde lookup uses `owned_passwd`; environment snapshotting
 uses `environment_runtime`. The candidate does not own process creation,
 cancellation suppression, pipe/wait cleanup, `wordexp_t` append/reuse/NOSPACE
-record ownership, or C status mapping.
+record allocation or commit policy, or C status mapping. It gives that record
+owner the necessary partial-result boundary: accepted fields remain available
+after a later `NoSpace`, while the C wrapper can discard its staged prefix for
+any other typed failure and preserve a pre-existing `WRDE_APPEND` record.
 
 ## Deterministic policy choices
 
@@ -179,6 +196,14 @@ case and all four empty parameter-pattern removals have outer-quote regressions.
 A 64 KiB-thread regression expands 4,000 nested parameter words, 4,000 nested
 arithmetic expansions, and 8,000 arithmetic parentheses while verifying that
 parser and evaluator stacks use heap storage.
+
+Result-boundary regressions prove that a sink retaining its first field sees
+that prefix after a later sink, command, or pathname `NoSpace`; a multi-match
+pathname stream retains its accepted prefix; NUL pathname output is rejected
+before a field reaches the sink; and a non-memory typed failure remains
+distinct for the later C record owner to discard. A shared-state command/path
+test proves an earlier `p*.txt` root is matched before a later command can
+create `p-new.txt`.
 
 A retained independent pinned-shell corpus is useful as a comparison, not a
 selection gate. Its two observed rows that set `V=9` in a skipped `&&` or `||`
