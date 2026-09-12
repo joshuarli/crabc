@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "de739cc9317b7b6901e5a96a7ea564499d851ee00d288dd89b9f2fa8ad4c86df"
+M2_X86_64_VM_FRAGMENT_DIGEST = "4d7084dae7efbc702ae06b565faba30b1d0edc930d8baa63039baec5e0b05020"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -1536,13 +1536,14 @@ M1_RAW_PRIMITIVE_ORACLE_SOURCES = tuple(
 )
 
 # The native M2 VM fixture directly includes the pinned source OS, first-arena,
-# process-preloading, and page-extension bodies. Keep the ordinary raw source
-# closure otherwise complete and singular: a separately linked `os.c`,
-# `arena.c`, `init.c`, or `page.c` would let an unrelated translation unit
-# replace the private source route the trace claims to run.
+# process-preloading, page-extension, and Unix-primitive dispatch bodies.
+# Keep the ordinary raw source closure otherwise complete and singular: a
+# separately linked `os.c`, `arena.c`, `init.c`, `page.c`, or `prim/prim.c`
+# would let an unrelated translation unit replace the private source route the
+# trace claims to run.
 M2_X86_64_VM_C_ORACLE_SOURCES = tuple(
     item for item in M1_RAW_PRIMITIVE_ORACLE_SOURCES
-    if item not in {"src/arena.c", "src/init.c", "src/page.c"}
+    if item not in {"src/arena.c", "src/init.c", "src/page.c", "src/prim/prim.c"}
 )
 
 # Both compiler-TLS readers include the pinned `src/threadlocal.c` directly
@@ -12391,8 +12392,9 @@ def _m2_x86_64_vm_c_command_is_bound(
     """Require one direct-source VM C oracle's complete positional command.
 
     The M2 fixture directly includes pinned `src/os.c`, `src/arena.c`,
-    `src/init.c`, and `src/page.c`, so its ordinary source input list must
-    omit all four while retaining the complete raw primitive closure. Every
+    `src/init.c`, `src/page.c`, and `src/prim/prim.c`, so its ordinary source
+    input list must omit all five while retaining the complete raw primitive
+    closure. Every
     position is fixed apart from the resolved
     compiler, the extracted-source root, the checkout fixture root, and the
     runner-owned output root. This rejects injected preprocessor, object,
@@ -12534,8 +12536,8 @@ def _m2_x86_64_vm_check_records(
 ) -> list[dict[str, Any]]:
     """Turn the three real native C/Rust VM boundaries into their receipts.
 
-    The other twenty-five VM receipts are emitted by the aggregate's exact
-    source test batch. This validator binds the lifecycle, source-profile, and
+    The remaining VM receipts are emitted by the aggregate's exact source
+    test batch. This validator binds the lifecycle, source-profile, and
     named aligned-overmap ownership boundary to the immutable fragment, all
     pinned-C branch anchors, and the component's explicit open frontier so a
     trace count alone can never stand in for VM qualification.

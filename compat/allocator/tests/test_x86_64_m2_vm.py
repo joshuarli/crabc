@@ -228,6 +228,45 @@ class NativeVmAssemblyTests(unittest.TestCase):
             with self.subTest(key=key):
                 self.assertIn(key, producer.TRACE_KEYS)
 
+    def test_large_page_retry_matrix_binds_direct_normal_release_receivers(self):
+        """The finite retry state stays bound to the selected C/Rust policy routes."""
+
+        fragment = RUNNER.read_json(RUNNER.M2_X86_64_VM_FRAGMENT)
+        definition = next(
+            definition
+            for definition in fragment["component"]["bounded_source_definitions"]
+            if definition["id"] == "unix-normal-large-page-retry-suppression"
+        )
+        self.assertEqual(
+            definition["source_anchor"],
+            {
+                "member": "src/prim/unix/prim.c",
+                "start_line": 383,
+                "end_line": 486,
+                "sha256": "f78d506081775a4fd6ff7eda4c7c52127061b0040b7eacd7d71151b335fc3a87",
+            },
+        )
+        self.assertEqual(
+            definition["evidence_check_ids"],
+            [
+                "native-vm-fixed-lifecycle-differential",
+                "normal-release-large-page-retry-suppression-and-ordinary-fallback",
+            ],
+        )
+        producer = RUNNER._m2_x86_64_vm_producer()
+        for key in (
+            "m2.vm.large_retry.initial_failed_large_regular_owner",
+            "m2.vm.large_retry.allow_large_false_preserves_counter",
+            "m2.vm.large_retry.ineligible_geometry_preserves_counter",
+            "m2.vm.large_retry.option_disabled_preserves_counter",
+            "m2.vm.large_retry.eight_suppressed_regular_owners",
+            "m2.vm.large_retry.ninth_reopens_large_regular_owner",
+            "m2.vm.large_retry.competing_cas_failure_regular_owner",
+            "m2.vm.large_retry.competing_cas_seven_then_reopens",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(key, producer.TRACE_KEYS)
+
     def test_aligned_hint_matrix_binds_the_direct_source_definition_and_all_relations(self):
         """Keep the finite normal-release cursor contract explicit in the ledger."""
 
@@ -354,8 +393,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm = summary["components"][0]
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
-        self.assertEqual(len(vm["checks"]), 28)
-        self.assertEqual(len(vm["bounded_source_definitions"]), 16)
+        self.assertEqual(len(vm["checks"]), 29)
+        self.assertEqual(len(vm["bounded_source_definitions"]), 17)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
             for definition in vm["bounded_source_definitions"]
@@ -588,6 +627,11 @@ class NativeVmAssemblyTests(unittest.TestCase):
         direct_page_source["c_command"].append("/pinned/src/page.c")
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, direct_page_source)
+
+        direct_primitive_source = self.vm_evidence(summary)
+        direct_primitive_source["c_command"].append("/pinned/src/prim/prim.c")
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, direct_primitive_source)
 
 
 if __name__ == "__main__":

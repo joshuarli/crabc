@@ -2538,6 +2538,22 @@ trace difference. The bounded small-allocation slice has exact logical-trace
 parity; its deliberately absent lifecycle and API regions are incomplete scope
 rather than claimed differences.
 
+### Native M2 normal-release large-page retry suppression
+
+`allocator-m2` also compares a child-isolated direct pinned-C `_mi_prim_alloc`
+record with Rust `Mapping::map_unix_policy`. Both force failed normal
+MAP_HUGETLB attempts, retain each ordinary fallback mapping through its exact
+release, and observe the eight-call suppression lifetime. The C direct child
+starts without a source Theap, so its first attempt is null-hinted and its
+reopened retry is high-hint/null-hint; the Rust direct-policy test supplies its
+own initialized random image and observes the high-hint/null-hint pair. The record proves that `allow_large=false`, ineligible geometry, and
+a disabled `allow_large_os_pages` option do not consume the counter; the ninth
+eligible call retries the failed large route. One controlled real competing
+AcqRel decrement proves the source's ignored strong-CAS failure while the
+ordinary fallback owner remains valid. This is direct VM-policy evidence only:
+it does not qualify successful hardware huge pages, `large_only`/1-GiB modes,
+ambient diagnostics, or an allocator/runtime caller.
+
 ### Native M2 aligned-overmap cleanup boundary
 
 `./compat/allocator/run-x86_64.sh allocator-m2` records one finite native

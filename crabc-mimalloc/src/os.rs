@@ -488,6 +488,12 @@ pub(crate) struct VmPolicy {
     #[cfg(test)]
     aligned_hint_test_phase: AtomicUsize,
     huge_hint_start: AtomicUsize,
+    // This second test-only schedule pauses only the selected source
+    // prim/unix/prim.c:409 suppression CAS after its Acquire load. One helper
+    // performs the exact competing AcqRel CAS before the source operation
+    // continues, proving its ignored failure without a production hook.
+    #[cfg(test)]
+    large_page_retry_test_phase: AtomicUsize,
     large_page_try_ok: AtomicUsize,
     huge_one_gib_unavailable: AtomicBool,
     numa_node_count: AtomicUsize,
@@ -709,6 +715,8 @@ impl VmPolicy {
             #[cfg(test)]
             aligned_hint_test_phase: AtomicUsize::new(0),
             huge_hint_start: AtomicUsize::new(0),
+            #[cfg(test)]
+            large_page_retry_test_phase: AtomicUsize::new(0),
             large_page_try_ok: AtomicUsize::new(0),
             huge_one_gib_unavailable: AtomicBool::new(false),
             numa_node_count: AtomicUsize::new(0),
@@ -773,6 +781,47 @@ impl VmPolicy {
     #[inline]
     fn test_aligned_hint_cursor(&self) -> usize {
         self.aligned_hint_base.load(Ordering::Acquire)
+    }
+
+    /// Arms one test-only competitor for the exact retry-suppression CAS in
+    /// pinned source prim/unix/prim.c:409.
+    ///
+    /// The caller must arrange one helper invocation while the normal policy
+    /// call has observed a nonzero retry count. The source CAS itself still
+    /// executes unchanged and continues to discard its result.
+    #[cfg(test)]
+    fn test_arm_large_page_retry_competitor(&self) {
+        assert_eq!(
+            self.large_page_retry_test_phase.swap(1, Ordering::AcqRel),
+            0,
+            "the large-page retry test schedule is single-use"
+        );
+    }
+
+    /// Performs the one real competing AcqRel decrement between the source
+    /// retry counter load and its strong CAS. It returns whether that exact
+    /// competitor won; the caller separately checks that the source CAS then
+    /// failed and its regular mapping owner remained valid.
+    #[cfg(test)]
+    fn test_complete_large_page_retry_competitor(&self, expected: usize) -> bool {
+        tests::wait_for_large_page_retry_phase(self, 2, "source retry-count load");
+        let swapped = self
+            .large_page_try_ok
+            .compare_exchange(
+                expected,
+                expected - 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            )
+            .is_ok();
+        self.large_page_retry_test_phase.store(3, Ordering::Release);
+        swapped
+    }
+
+    #[cfg(test)]
+    #[inline]
+    fn test_large_page_retry_source_cas_failed(&self) -> bool {
+        self.large_page_retry_test_phase.load(Ordering::Acquire) == 4
     }
 
     #[cfg(test)]
@@ -2023,12 +2072,33 @@ impl Mapping {
                     .large_page_try_ok
                     .store(LARGE_PAGE_FAILED_RETRY_COUNT, Ordering::Release);
             } else {
-                let _ = policy.large_page_try_ok.compare_exchange(
+                #[cfg(test)]
+                if policy.large_page_retry_test_phase.load(Ordering::Acquire) == 1 {
+                    // The source already completed its Acquire load. Pause
+                    // only this test witness until one helper has made the
+                    // competing exact AcqRel decrement, then run the same
+                    // source CAS and continue regardless of its result.
+                    policy.large_page_retry_test_phase.store(2, Ordering::Release);
+                    tests::wait_for_large_page_retry_phase(
+                        policy,
+                        3,
+                        "competing retry-count decrement",
+                    );
+                }
+                let source_cas = policy.large_page_try_ok.compare_exchange(
                     retry_remaining,
                     retry_remaining - 1,
                     Ordering::AcqRel,
                     Ordering::Acquire,
                 );
+                #[cfg(test)]
+                if policy.large_page_retry_test_phase.load(Ordering::Acquire) == 3 {
+                    policy.large_page_retry_test_phase.store(
+                        if source_cas.is_ok() { 5 } else { 4 },
+                        Ordering::Release,
+                    );
+                }
+                let _ = source_cas;
             }
         }
         let address = Self::mmap_with_hint(source_hint(), length, protection, flags)?;
@@ -5156,6 +5226,24 @@ mod tests {
     use super::*;
     use crabc_core::Errno;
 
+    /* This deadline exists only in the native test schedule. The production
+     * source CAS never waits; a missed helper handoff must fail the witness
+     * instead of leaving an exact unit selection running indefinitely. */
+    pub(super) fn wait_for_large_page_retry_phase(
+        policy: &VmPolicy, expected: usize, boundary: &str,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if policy.large_page_retry_test_phase.load(Ordering::Acquire) == expected {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("large-page retry test schedule timed out at {boundary}");
+            }
+            std::thread::yield_now();
+        }
+    }
+
     static VM_POLICY_SOURCE_ENVIRONMENT_TEST_LOCK: std::sync::Mutex<()> =
         std::sync::Mutex::new(());
     static VM_POLICY_SOURCE_ENVIRONMENT: core::sync::atomic::AtomicPtr<*const core::ffi::c_char> =
@@ -6025,6 +6113,314 @@ mod tests {
         mapping
             .unmap_for_process(process, length, false)
             .expect("the regular fallback retains its complete process owner");
+    }
+
+    /// Runs one normal-release `unix_mmap` policy call through the typed
+    /// owner and checks the raw source selection sequence before the owner is
+    /// explicitly released. A selected large-page failure is injected only at
+    /// the raw huge-map import, so the pinned policy still chooses its
+    /// ordinary fallback and no successful hardware huge-page claim is
+    /// represented by this test. The initialized random image is a direct VM
+    /// policy input for this fixture, never a claim about a runtime
+    /// default-Theap caller or attachment owner.
+    #[cfg(not(miri))]
+    fn large_page_retry_regular_owner(
+        fault: &fault::Guard,
+        policy: &VmPolicy,
+        config: MemoryConfig,
+        length: usize,
+        try_alignment: usize,
+        allow_large: bool,
+        random: &mut TheapRandomImage,
+        expected_huge_attempts: usize,
+    ) -> bool {
+        let capture = fault.capture_policy_mmaps();
+        let mut mapping = match Mapping::map_for_allocator_with_policy(
+            policy,
+            config,
+            length,
+            try_alignment,
+            MapAccess::Committed,
+            allow_large,
+            Some(random),
+        ) {
+            Ok(mapping) => mapping,
+            Err(_) => return false,
+        };
+        let Some((attempts, count)) = capture.attempts() else {
+            return false;
+        };
+        let huge_attempts = attempts[..count]
+            .iter()
+            .filter(|attempt| attempt.uses_huge_page_flag())
+            .count();
+        let regular_attempts = count.checked_sub(huge_attempts);
+        let source_huge_then_null = expected_huge_attempts == 0
+            || (count == 3
+                && attempts[0].uses_huge_page_flag()
+                && attempts[0].hint.is_some()
+                && attempts[1].uses_huge_page_flag()
+                && attempts[1].hint.is_none()
+                && !attempts[2].uses_huge_page_flag());
+        let has_regular_owner = mapping.base().is_ok()
+            && mapping.length() == Ok(length)
+            && !mapping.is_large();
+        drop(capture);
+        let released = mapping.unmap().is_ok() && mapping.base().is_err();
+        huge_attempts == expected_huge_attempts
+            && regular_attempts == Some(1)
+            && source_huge_then_null
+            && has_regular_owner
+            && released
+    }
+
+    /// Covers the normal-release retry-suppression lifetime in pinned
+    /// `src/prim/unix/prim.c:401-486`: one failed large attempt stores eight,
+    /// each eligible ordinary call consumes one count while still returning a
+    /// regular owner, and the ninth call retries the large map. The three
+    /// excluded predicates below must not read or decrement that state.
+    #[cfg(not(miri))]
+    fn normal_release_large_page_retry_suppression_matrix() -> [bool; 6] {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4 * 1024).expect("four KiB is one selected Linux page size"),
+            0,
+            true,
+            true,
+        );
+        let large = config.large_page_size();
+        let length = 8 * large;
+        let mut policy = VmPolicy::defaults_for_test();
+        policy.set_option(VmOption::AllowLargeOsPages, 1);
+        policy.set_option(VmOption::AllowThp, 0);
+        let mut random = TheapRandomImage::empty_weak();
+        random.initialize_weak();
+
+        fault.set(fault::Plan::at_pair(
+            fault::Point::LargeMap,
+            1,
+            fault::Point::LargeMap,
+            1,
+            Errno::NOMEM,
+        ));
+        let initial_failure_starts_suppression = large_page_retry_regular_owner(
+            &fault,
+            &policy,
+            config,
+            length,
+            large,
+            true,
+            &mut random,
+            2,
+        ) && fault.observed() == 2
+            && fault.secondary_observed() == 1
+            && policy.large_page_try_ok.load(Ordering::Acquire)
+                == LARGE_PAGE_FAILED_RETRY_COUNT;
+        fault.set(fault::Plan::disabled());
+
+        let caller_disables_large_without_consuming_suppression = large_page_retry_regular_owner(
+            &fault,
+            &policy,
+            config,
+            length,
+            large,
+            false,
+            &mut random,
+            0,
+        ) && policy.large_page_try_ok.load(Ordering::Acquire)
+                == LARGE_PAGE_FAILED_RETRY_COUNT;
+
+        let ineligible_geometry_without_consuming_suppression = large_page_retry_regular_owner(
+            &fault,
+            &policy,
+            config,
+            large,
+            config.page_size().bytes(),
+            true,
+            &mut random,
+            0,
+        ) && policy.large_page_try_ok.load(Ordering::Acquire)
+                == LARGE_PAGE_FAILED_RETRY_COUNT;
+
+        policy.set_option(VmOption::AllowLargeOsPages, 0);
+        let option_disables_large_without_consuming_suppression = large_page_retry_regular_owner(
+            &fault,
+            &policy,
+            config,
+            length,
+            large,
+            true,
+            &mut random,
+            0,
+        ) && policy.large_page_try_ok.load(Ordering::Acquire)
+                == LARGE_PAGE_FAILED_RETRY_COUNT;
+        policy.set_option(VmOption::AllowLargeOsPages, 1);
+
+        let mut eight_suppressed_regular_owners = true;
+        for remaining in (0..LARGE_PAGE_FAILED_RETRY_COUNT).rev() {
+            eight_suppressed_regular_owners &= large_page_retry_regular_owner(
+                &fault,
+                &policy,
+                config,
+                length,
+                large,
+                true,
+                &mut random,
+                0,
+            ) && policy.large_page_try_ok.load(Ordering::Acquire) == remaining;
+        }
+
+        fault.set(fault::Plan::at_pair(
+            fault::Point::LargeMap,
+            1,
+            fault::Point::LargeMap,
+            1,
+            Errno::NOMEM,
+        ));
+        let ninth_reopens_large_and_returns_regular_owner = large_page_retry_regular_owner(
+            &fault,
+            &policy,
+            config,
+            length,
+            large,
+            true,
+            &mut random,
+            2,
+        ) && fault.observed() == 2
+            && fault.secondary_observed() == 1
+            && policy.large_page_try_ok.load(Ordering::Acquire)
+                == LARGE_PAGE_FAILED_RETRY_COUNT;
+
+        [
+            initial_failure_starts_suppression,
+            caller_disables_large_without_consuming_suppression,
+            ineligible_geometry_without_consuming_suppression,
+            option_disables_large_without_consuming_suppression,
+            eight_suppressed_regular_owners,
+            ninth_reopens_large_and_returns_regular_owner,
+        ]
+    }
+
+    /// Repeats the bounded normal sequence with one actual competitor between
+    /// the source retry-count load and its ignored strong CAS. The winning
+    /// competitor leaves seven source decrements before the next large retry;
+    /// every selected mapping remains a regular owner until explicit release.
+    #[cfg(not(miri))]
+    fn normal_release_large_page_retry_competing_cas_matrix() -> [bool; 2] {
+        let fault = fault::install(fault::Plan::disabled());
+        let config = MemoryConfig::from_observations(
+            PageSize::new(4 * 1024).expect("four KiB is one selected Linux page size"),
+            0,
+            true,
+            true,
+        );
+        let large = config.large_page_size();
+        let length = 8 * large;
+        let mut policy = VmPolicy::defaults_for_test();
+        policy.set_option(VmOption::AllowLargeOsPages, 1);
+        policy.set_option(VmOption::AllowThp, 0);
+        let mut random = TheapRandomImage::empty_weak();
+        random.initialize_weak();
+
+        fault.set(fault::Plan::at_pair(
+            fault::Point::LargeMap,
+            1,
+            fault::Point::LargeMap,
+            1,
+            Errno::NOMEM,
+        ));
+        let initial_failure = large_page_retry_regular_owner(
+            &fault,
+            &policy,
+            config,
+            length,
+            large,
+            true,
+            &mut random,
+            2,
+        ) && policy.large_page_try_ok.load(Ordering::Acquire)
+                == LARGE_PAGE_FAILED_RETRY_COUNT;
+        fault.set(fault::Plan::disabled());
+        assert!(
+            initial_failure
+                && policy.large_page_try_ok.load(Ordering::Acquire)
+                    == LARGE_PAGE_FAILED_RETRY_COUNT,
+            "the competing-CAS schedule requires the source failed-large setup"
+        );
+
+        policy.test_arm_large_page_retry_competitor();
+        let (competing_regular_owner, competitor_won) = std::thread::scope(|scope| {
+            let helper = scope.spawn(|| {
+                policy.test_complete_large_page_retry_competitor(
+                    LARGE_PAGE_FAILED_RETRY_COUNT,
+                )
+            });
+            let owner = large_page_retry_regular_owner(
+                &fault,
+                &policy,
+                config,
+                length,
+                large,
+                true,
+                &mut random,
+                0,
+            );
+            (owner, helper.join().expect("the retry competitor completes"))
+        });
+        let source_cas_failure_keeps_regular_owner = initial_failure
+            && competing_regular_owner
+            && competitor_won
+            && policy.test_large_page_retry_source_cas_failed()
+            && policy.large_page_try_ok.load(Ordering::Acquire)
+                == LARGE_PAGE_FAILED_RETRY_COUNT - 1;
+
+        let mut seven_suppressed_regular_owners = true;
+        for remaining in (0..LARGE_PAGE_FAILED_RETRY_COUNT - 1).rev() {
+            seven_suppressed_regular_owners &= large_page_retry_regular_owner(
+                &fault,
+                &policy,
+                config,
+                length,
+                large,
+                true,
+                &mut random,
+                0,
+            ) && policy.large_page_try_ok.load(Ordering::Acquire) == remaining;
+        }
+
+        fault.set(fault::Plan::at_pair(
+            fault::Point::LargeMap,
+            1,
+            fault::Point::LargeMap,
+            1,
+            Errno::NOMEM,
+        ));
+        let retry_reopens_after_competing_decrement = seven_suppressed_regular_owners
+            && large_page_retry_regular_owner(
+                &fault,
+                &policy,
+                config,
+                length,
+                large,
+                true,
+                &mut random,
+                2,
+            ) && fault.observed() == 2
+                && fault.secondary_observed() == 1
+                && policy.large_page_try_ok.load(Ordering::Acquire)
+                    == LARGE_PAGE_FAILED_RETRY_COUNT;
+
+        [
+            source_cas_failure_keeps_regular_owner,
+            retry_reopens_after_competing_decrement,
+        ]
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn normal_release_large_page_retry_suppression_reopens_after_eight_regular_owners() {
+        assert_eq!(normal_release_large_page_retry_suppression_matrix(), [true; 6]);
+        assert_eq!(normal_release_large_page_retry_competing_cas_matrix(), [true; 2]);
     }
 
     #[cfg(not(miri))]
@@ -8894,6 +9290,10 @@ mod tests {
         drop(failed_release_unmap_ranges);
         let external_callback_trace = crate::arena::m2_external_callback_trace(&fault);
         drop(fault);
+        let large_page_retry_trace = normal_release_large_page_retry_suppression_matrix();
+        let large_page_retry_cas_trace = normal_release_large_page_retry_competing_cas_matrix();
+        assert_eq!(large_page_retry_trace, [true; 6]);
+        assert_eq!(large_page_retry_cas_trace, [true; 2]);
         let policy_trace = crate::process_arena::m2_vm_policy_first_arena_trace();
 
         macro_rules! emit {
@@ -9124,6 +9524,38 @@ mod tests {
         emit!(
             "m2.vm.policy.thp_advice_failure_ignored",
             u8::from(policy_trace.thp_advice_failure_ignored)
+        );
+        emit!(
+            "m2.vm.large_retry.initial_failed_large_regular_owner",
+            u8::from(large_page_retry_trace[0])
+        );
+        emit!(
+            "m2.vm.large_retry.allow_large_false_preserves_counter",
+            u8::from(large_page_retry_trace[1])
+        );
+        emit!(
+            "m2.vm.large_retry.ineligible_geometry_preserves_counter",
+            u8::from(large_page_retry_trace[2])
+        );
+        emit!(
+            "m2.vm.large_retry.option_disabled_preserves_counter",
+            u8::from(large_page_retry_trace[3])
+        );
+        emit!(
+            "m2.vm.large_retry.eight_suppressed_regular_owners",
+            u8::from(large_page_retry_trace[4])
+        );
+        emit!(
+            "m2.vm.large_retry.ninth_reopens_large_regular_owner",
+            u8::from(large_page_retry_trace[5])
+        );
+        emit!(
+            "m2.vm.large_retry.competing_cas_failure_regular_owner",
+            u8::from(large_page_retry_cas_trace[0])
+        );
+        emit!(
+            "m2.vm.large_retry.competing_cas_seven_then_reopens",
+            u8::from(large_page_retry_cas_trace[1])
         );
         std::println!("CRABC_MI_M2_VM_TRACE_END");
     }

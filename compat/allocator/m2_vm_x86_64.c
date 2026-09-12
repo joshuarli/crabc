@@ -1,10 +1,11 @@
 /* Native x86-64 M2 VM-primitives oracle.
  *
  * This intentionally includes the fixed v3.5.0 `src/os.c`, `src/arena.c`,
- * `src/init.c`, and `src/page.c` into the probe so their private configuration,
- * OS-allocation, first arena-reserve, preloading-state, and direct
- * page-extension bodies are observed directly. The Python producer omits those
- * four ordinary source objects from the link
+ * `src/init.c`, `src/page.c`, and `src/prim/prim.c` into the probe so their
+ * private configuration, OS-allocation, first arena-reserve, preloading-state,
+ * direct page-extension, and Unix primitive-dispatch bodies are observed
+ * directly. The Python producer omits those five ordinary source objects from
+ * the link
  * list. It records address-free fixed-profile facts for the regular lifecycle
  * and one bounded, child-only source-option/first-arena policy record. It
  * does not qualify ambient retries, huge-page success/placement, diagnostics,
@@ -22,6 +23,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <pthread.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <mimalloc.h>
@@ -37,8 +39,8 @@
 #endif
 
 /* Resolved through `-I <pinned-source>/src`; keep each private source body
- * singular by omitting `src/os.c`, `src/arena.c`, `src/init.c`, and
- * `src/page.c` from the ordinary C source list. */
+ * singular by omitting `src/os.c`, `src/arena.c`, `src/init.c`, `src/page.c`,
+ * and `src/prim/prim.c` from the ordinary C source list. */
 
 /* `src/os.c:141,151-152` contains exactly the two fetch-add and one
  * strong-CAS operations in `_mi_os_get_aligned_hint`. Interpose only those
@@ -93,6 +95,67 @@ static bool m2_aligned_hint_compare_exchange(
 #include "init.c"
 #include "page.c"
 
+/* src/prim/unix/prim.c:401-410 has one selected retry-suppression strong
+ * CAS. Include the ordinary prim.c dispatcher here as well, and omit its
+ * standalone object from this fixture's source list, so this wrapper sees the
+ * literal pinned source operation. It delegates every call to the same C11
+ * AcqRel/Acquire CAS; only the child-selected first operation waits for one
+ * real competing decrement. */
+typedef struct large_page_retry_atomic_record_s {
+  bool active;
+  bool counter_consistent;
+  _Atomic(size_t)* counter;
+  size_t cas_count;
+  size_t cas_expected_before;
+  size_t cas_expected_after;
+  size_t cas_desired;
+  bool cas_succeeded;
+} large_page_retry_atomic_record_t;
+
+static large_page_retry_atomic_record_t large_page_retry_atomic_record = {
+    .counter_consistent = true,
+};
+static pthread_mutex_t large_page_retry_competitor_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t large_page_retry_competitor_ready = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t large_page_retry_competitor_done = PTHREAD_COND_INITIALIZER;
+static bool large_page_retry_competitor_enabled = false;
+static bool large_page_retry_competitor_waiting = false;
+static bool large_page_retry_competitor_finished = false;
+static _Atomic(size_t)* large_page_retry_competitor_counter = NULL;
+static size_t large_page_retry_competitor_expected = 0;
+static size_t large_page_retry_competitor_desired = 0;
+static bool large_page_retry_competitor_succeeded = false;
+
+/* These waits belong only to this forked C witness. A deadline makes a broken
+ * source/CAS schedule fail its child rather than leave the outer evidence
+ * process waiting indefinitely; the child is still reaped by its exact parent.
+ */
+#define LARGE_PAGE_RETRY_WAIT_SECONDS 5
+static bool large_page_retry_wait_for_locked(
+    pthread_cond_t* condition, bool* complete) {
+  struct timespec deadline;
+  if (clock_gettime(CLOCK_REALTIME, &deadline) != 0) return false;
+  deadline.tv_sec += LARGE_PAGE_RETRY_WAIT_SECONDS;
+  while (!*complete) {
+    const int result = pthread_cond_timedwait(
+        condition, &large_page_retry_competitor_lock, &deadline);
+    if (result == EINTR) continue;
+    if (result != 0) return false;
+  }
+  return true;
+}
+
+static bool m2_large_page_retry_compare_exchange(
+    _Atomic(size_t)* counter, size_t* expected, size_t desired);
+
+#undef mi_atomic_cas_strong_acq_rel
+#define mi_atomic_cas_strong_acq_rel(p, expected, desired) \
+  m2_large_page_retry_compare_exchange((p), (expected), (desired))
+#include "prim/prim.c"
+#undef mi_atomic_cas_strong_acq_rel
+#define mi_atomic_cas_strong_acq_rel(p, exp, des) \
+  mi_atomic_cas_strong((p), (exp), (des), mi_memory_order(acq_rel), mi_memory_order(acquire))
+
 static uintptr_t m2_aligned_hint_fetch_add(
     _Atomic(uintptr_t)* cursor, uintptr_t amount) {
   const uintptr_t observed = atomic_fetch_add_explicit(
@@ -140,6 +203,44 @@ static bool m2_aligned_hint_compare_exchange(
   aligned_hint_atomic_record.cas_desired = desired;
   aligned_hint_atomic_record.cas_succeeded = swapped;
   aligned_hint_atomic_record.cas_count++;
+  return swapped;
+}
+
+static bool m2_large_page_retry_compare_exchange(
+    _Atomic(size_t)* counter, size_t* expected, size_t desired) {
+  const size_t expected_before = *expected;
+  if (large_page_retry_atomic_record.active) {
+    if (large_page_retry_atomic_record.counter == NULL) {
+      large_page_retry_atomic_record.counter = counter;
+    } else if (large_page_retry_atomic_record.counter != counter) {
+      large_page_retry_atomic_record.counter_consistent = false;
+    }
+    if (large_page_retry_competitor_enabled
+        && large_page_retry_atomic_record.cas_count == 0) {
+      pthread_mutex_lock(&large_page_retry_competitor_lock);
+      large_page_retry_competitor_counter = counter;
+      large_page_retry_competitor_expected = expected_before;
+      large_page_retry_competitor_desired = desired;
+      large_page_retry_competitor_waiting = true;
+      pthread_cond_signal(&large_page_retry_competitor_ready);
+      if (!large_page_retry_wait_for_locked(
+              &large_page_retry_competitor_done,
+              &large_page_retry_competitor_finished)) {
+        large_page_retry_atomic_record.counter_consistent = false;
+      }
+      pthread_mutex_unlock(&large_page_retry_competitor_lock);
+    }
+  }
+
+  const bool swapped = atomic_compare_exchange_strong_explicit(
+      counter, expected, desired, memory_order_acq_rel, memory_order_acquire);
+  if (large_page_retry_atomic_record.active) {
+    large_page_retry_atomic_record.cas_expected_before = expected_before;
+    large_page_retry_atomic_record.cas_expected_after = *expected;
+    large_page_retry_atomic_record.cas_desired = desired;
+    large_page_retry_atomic_record.cas_succeeded = swapped;
+    large_page_retry_atomic_record.cas_count++;
+  }
   return swapped;
 }
 
@@ -284,6 +385,37 @@ typedef struct policy_child_record_s {
   bool thp_advice_failure_ignored;
 } policy_child_record_t;
 
+/* This is a separate direct source-primitive witness for the normal-release
+ * large-page retry state. The pinned unix_mmap body owns the retry counter and
+ * chooses every raw map; this fixture only forces its MAP_HUGETLB imports to
+ * fail, records the returned regular map, and checks the exact later
+ * _mi_prim_free range. No large-page success is requested or represented. */
+#define LARGE_PAGE_RETRY_SUPPRESSION_COUNT 8
+typedef struct large_page_retry_probe_s {
+  bool active;
+  bool range_consistent;
+  size_t expected_length;
+  size_t huge_calls;
+  size_t regular_calls;
+  size_t call_huge_calls;
+  void* call_huge_hints[2];
+  void* last_regular_address;
+  size_t last_regular_length;
+  void* expected_release_address;
+  size_t expected_release_length;
+  size_t release_calls;
+  void* last_release_address;
+  size_t last_release_length;
+  bool release_exact;
+  int last_release_result;
+} large_page_retry_probe_t;
+
+static large_page_retry_probe_t large_page_retry_probe = {
+    .range_consistent = true,
+    .release_exact = true,
+    .last_release_result = -1,
+};
+
 /* The pinned `mi_os_prim_alloc_aligned` body is included above. This tiny
  * fixture state controls only its imported mmap/munmap results while a COW
  * child executes one selected call. It does not model an allocator function:
@@ -319,6 +451,18 @@ int __real_mprotect(void* address, size_t length, int protection);
 
 int __wrap_munmap(void* address, size_t length) {
   wrapped_munmap_calls++;
+  if (large_page_retry_probe.active
+      && large_page_retry_probe.expected_release_address != NULL) {
+    large_page_retry_probe.release_calls++;
+    large_page_retry_probe.last_release_address = address;
+    large_page_retry_probe.last_release_length = length;
+    if (address != large_page_retry_probe.expected_release_address
+        || length != large_page_retry_probe.expected_release_length) {
+      large_page_retry_probe.release_exact = false;
+    }
+    large_page_retry_probe.last_release_result = __real_munmap(address, length);
+    return large_page_retry_probe.last_release_result;
+  }
   if (aligned_overmap_probe.active) {
     const size_t index = aligned_overmap_probe.cleanup_munmap_calls;
     if (index < sizeof(aligned_overmap_probe.cleanup_addresses)
@@ -377,6 +521,31 @@ void* __wrap_mmap(void* address, size_t length, int protection, int flags,
     }
     errno = EINVAL;
     return MAP_FAILED;
+  }
+  if (large_page_retry_probe.active) {
+    if (length != large_page_retry_probe.expected_length) {
+      large_page_retry_probe.range_consistent = false;
+    }
+    if ((flags & MAP_HUGETLB) != 0) {
+      if (large_page_retry_probe.call_huge_calls
+          < sizeof(large_page_retry_probe.call_huge_hints)
+              / sizeof(large_page_retry_probe.call_huge_hints[0])) {
+        large_page_retry_probe.call_huge_hints[
+            large_page_retry_probe.call_huge_calls] = address;
+      }
+      large_page_retry_probe.call_huge_calls++;
+      large_page_retry_probe.huge_calls++;
+      errno = ENOMEM;
+      return MAP_FAILED;
+    }
+    large_page_retry_probe.regular_calls++;
+    void* const mapped = __real_mmap(
+        address, length, protection, flags, descriptor, offset);
+    if (mapped != MAP_FAILED) {
+      large_page_retry_probe.last_regular_address = mapped;
+      large_page_retry_probe.last_regular_length = length;
+    }
+    return mapped;
   }
   if (capture_aligned_hint_direct_caller) {
     if (captured_aligned_hint_direct_calls < 2) {
@@ -1345,6 +1514,408 @@ static bool capture_policy_child(policy_child_record_t* record) {
   return captured;
 }
 
+/* The direct retry rows stay below the first-arena child in source ownership,
+ * but execute first in `main` as separate COW children. `unix_mmap` owns a
+ * function-static retry counter, so each child starts before any selected
+ * large map and cannot inherit the first-arena fixture's state. The direct
+ * receiver is `_mi_prim_alloc`, not a default-Theap or runtime caller. */
+typedef struct large_page_retry_normal_record_s {
+  bool source_options_applied;
+  bool initial_failed_large_regular_owner;
+  bool caller_disables_large_preserves_counter;
+  bool ineligible_geometry_preserves_counter;
+  bool option_disabled_preserves_counter;
+  bool eight_suppressed_regular_owners;
+  bool ninth_reopens_large_regular_owner;
+} large_page_retry_normal_record_t;
+
+typedef struct large_page_retry_cas_record_s {
+  bool source_options_applied;
+  bool competing_cas_failure_regular_owner;
+  bool competing_cas_seven_then_reopens;
+} large_page_retry_cas_record_t;
+
+static bool large_page_retry_prepare_source(
+    size_t* length, size_t* alignment) {
+  if (length == NULL || alignment == NULL
+      || setenv("mimalloc_allow_large_os_pages", "1", 1) != 0
+      || setenv("mimalloc_allow_thp", "0", 1) != 0) {
+    return false;
+  }
+  /* This direct primitive receiver needs only the source option/configuration
+   * setup. Avoiding `mi_process_init` proves the retry state without creating
+   * an unrelated Theap/arena caller before the selected unix_mmap invocation.
+   */
+  _mi_options_init();
+  _mi_os_init();
+  const size_t page = _mi_os_page_size();
+  const size_t large = _mi_os_large_page_size();
+  if (page == 0 || large < page || large % page != 0
+      || !_mi_os_canuse_large_page(large, large)
+      || !mi_option_is_enabled(mi_option_allow_large_os_pages)
+      || mi_option_is_enabled(mi_option_allow_thp)) {
+    return false;
+  }
+  *length = large;
+  *alignment = large;
+  return true;
+}
+
+static void large_page_retry_probe_begin(size_t length) {
+  large_page_retry_probe = (large_page_retry_probe_t){
+      .active = true,
+      .range_consistent = true,
+      .expected_length = length,
+      .release_exact = true,
+      .last_release_result = -1,
+  };
+}
+
+static void large_page_retry_probe_end(void) {
+  large_page_retry_probe.active = false;
+  large_page_retry_probe.expected_release_address = NULL;
+}
+
+/* Exercise one selected direct source allocation. The regular fallback stays
+ * mapped through the explicit liveness check, then `_mi_prim_free` must pass
+ * its exact returned address and original length to the real munmap import. */
+static bool large_page_retry_regular_owner(
+    size_t length, size_t alignment, bool allow_large,
+    size_t expected_huge_calls) {
+  large_page_retry_probe.call_huge_calls = 0;
+  large_page_retry_probe.call_huge_hints[0] = NULL;
+  large_page_retry_probe.call_huge_hints[1] = NULL;
+  const size_t regular_before = large_page_retry_probe.regular_calls;
+  const size_t release_before = large_page_retry_probe.release_calls;
+  bool is_large = true;
+  bool is_zero = false;
+  void* address = (void*)1;
+  const int error = _mi_prim_alloc(
+      NULL, length, alignment, true, allow_large, &is_large, &is_zero, &address);
+  /* With no initialized source Theap, the first direct source call advances
+   * the aligned cursor then returns a null hint; its failed huge map has one
+   * raw null attempt. Later direct calls use that cursor and expose the usual
+   * high-hint/null fallback pair. */
+  const bool huge_selection_matches = expected_huge_calls == 0
+      || (expected_huge_calls == 1
+          && large_page_retry_probe.call_huge_calls == 1
+          && large_page_retry_probe.call_huge_hints[0] == NULL)
+      || (expected_huge_calls == 2
+          && large_page_retry_probe.call_huge_calls == 2
+          && large_page_retry_probe.call_huge_hints[0] != NULL
+          && large_page_retry_probe.call_huge_hints[1] == NULL);
+  const bool ordinary_owner = error == 0 && address != NULL && !is_large && is_zero
+      && large_page_retry_probe.range_consistent
+      && large_page_retry_probe.call_huge_calls == expected_huge_calls
+      && huge_selection_matches
+      && large_page_retry_probe.regular_calls == regular_before + 1
+      && large_page_retry_probe.last_regular_address == address
+      && large_page_retry_probe.last_regular_length == length;
+  const bool live_before_release = ordinary_owner
+      && mprotect(address, length, PROT_READ | PROT_WRITE) == 0;
+  bool released = false;
+  if (address != NULL) {
+    large_page_retry_probe.expected_release_address = address;
+    large_page_retry_probe.expected_release_length = length;
+    const int release_error = _mi_prim_free(address, length);
+    released = release_error == 0
+        && large_page_retry_probe.release_calls == release_before + 1
+        && large_page_retry_probe.last_release_address == address
+        && large_page_retry_probe.last_release_length == length
+        && large_page_retry_probe.release_exact
+        && large_page_retry_probe.last_release_result == 0;
+    large_page_retry_probe.expected_release_address = NULL;
+  }
+  return ordinary_owner && live_before_release && released;
+}
+
+static bool large_page_retry_without_suppression(
+    size_t length, size_t alignment, bool allow_large) {
+  large_page_retry_atomic_record = (large_page_retry_atomic_record_t){
+      .active = true,
+      .counter_consistent = true,
+  };
+  const bool owner = large_page_retry_regular_owner(
+      length, alignment, allow_large, 0);
+  const large_page_retry_atomic_record_t record = large_page_retry_atomic_record;
+  large_page_retry_atomic_record.active = false;
+  return owner && record.counter_consistent && record.counter == NULL
+      && record.cas_count == 0;
+}
+
+/* An admitted suppression must use exactly one source strong CAS. The wrapper
+ * delegates that CAS unchanged, then only records its expected/desired state;
+ * successful source CAS leaves `expected` unchanged. */
+static bool large_page_retry_suppressed_regular_owner(
+    size_t length, size_t alignment, size_t expected_counter) {
+  large_page_retry_atomic_record = (large_page_retry_atomic_record_t){
+      .active = true,
+      .counter_consistent = true,
+  };
+  const bool owner = large_page_retry_regular_owner(
+      length, alignment, true, 0);
+  const large_page_retry_atomic_record_t record = large_page_retry_atomic_record;
+  large_page_retry_atomic_record.active = false;
+  return owner && record.counter_consistent && record.counter != NULL
+      && record.cas_count == 1 && record.cas_expected_before == expected_counter
+      && record.cas_expected_after == expected_counter
+      && record.cas_desired == expected_counter - 1 && record.cas_succeeded
+      && atomic_load_explicit(record.counter, memory_order_acquire)
+          == expected_counter - 1;
+}
+
+static int run_large_page_retry_normal_child(int record_descriptor) {
+  large_page_retry_normal_record_t record = {0};
+  size_t length = 0;
+  size_t alignment = 0;
+  if (!large_page_retry_prepare_source(&length, &alignment)) return 1;
+  record.source_options_applied = mi_option_is_enabled(
+      mi_option_allow_large_os_pages) && !mi_option_is_enabled(mi_option_allow_thp);
+  large_page_retry_probe_begin(length);
+
+  record.initial_failed_large_regular_owner = large_page_retry_regular_owner(
+      length, alignment, true, 1);
+  record.caller_disables_large_preserves_counter =
+      large_page_retry_without_suppression(length, alignment, false);
+  record.ineligible_geometry_preserves_counter =
+      large_page_retry_without_suppression(length, _mi_os_page_size(), true);
+  mi_option_set(mi_option_allow_large_os_pages, 0);
+  record.option_disabled_preserves_counter =
+      large_page_retry_without_suppression(length, alignment, true);
+  mi_option_set(mi_option_allow_large_os_pages, 1);
+
+  record.eight_suppressed_regular_owners = true;
+  for (size_t counter = LARGE_PAGE_RETRY_SUPPRESSION_COUNT; counter > 0; counter--) {
+    record.eight_suppressed_regular_owners &=
+        large_page_retry_suppressed_regular_owner(length, alignment, counter);
+  }
+  const _Atomic(size_t)* const counter = large_page_retry_atomic_record.counter;
+  record.ninth_reopens_large_regular_owner =
+      record.eight_suppressed_regular_owners
+      && large_page_retry_regular_owner(length, alignment, true, 2)
+      && counter != NULL
+      && atomic_load_explicit(counter, memory_order_acquire)
+          == LARGE_PAGE_RETRY_SUPPRESSION_COUNT;
+  large_page_retry_probe_end();
+
+  const bool complete = record.source_options_applied
+      && record.initial_failed_large_regular_owner
+      && record.caller_disables_large_preserves_counter
+      && record.ineligible_geometry_preserves_counter
+      && record.option_disabled_preserves_counter
+      && record.eight_suppressed_regular_owners
+      && record.ninth_reopens_large_regular_owner;
+  if (!complete) {
+    fprintf(stderr,
+            "large-page retry normal record failed: options=%d initial=%d allow_false=%d "
+            "ineligible=%d option_disabled=%d eight=%d ninth=%d huge=%zu regular=%zu "
+            "release=%zu range=%d exact_release=%d\n",
+            record.source_options_applied,
+            record.initial_failed_large_regular_owner,
+            record.caller_disables_large_preserves_counter,
+            record.ineligible_geometry_preserves_counter,
+            record.option_disabled_preserves_counter,
+            record.eight_suppressed_regular_owners,
+            record.ninth_reopens_large_regular_owner,
+            large_page_retry_probe.huge_calls,
+            large_page_retry_probe.regular_calls,
+            large_page_retry_probe.release_calls,
+            large_page_retry_probe.range_consistent,
+            large_page_retry_probe.release_exact);
+  }
+  if (!write_all(record_descriptor, &record, sizeof(record))) return 2;
+  return complete ? 0 : 3;
+}
+
+static void* run_large_page_retry_competitor(void* unused) {
+  (void)unused;
+  pthread_mutex_lock(&large_page_retry_competitor_lock);
+  if (!large_page_retry_wait_for_locked(
+          &large_page_retry_competitor_ready,
+          &large_page_retry_competitor_waiting)) {
+    large_page_retry_competitor_succeeded = false;
+    large_page_retry_competitor_finished = true;
+    pthread_cond_signal(&large_page_retry_competitor_done);
+    pthread_mutex_unlock(&large_page_retry_competitor_lock);
+    return NULL;
+  }
+  _Atomic(size_t)* const counter = large_page_retry_competitor_counter;
+  size_t expected = large_page_retry_competitor_expected;
+  const size_t desired = large_page_retry_competitor_desired;
+  pthread_mutex_unlock(&large_page_retry_competitor_lock);
+
+  const bool swapped = counter != NULL && atomic_compare_exchange_strong_explicit(
+      counter, &expected, desired, memory_order_acq_rel, memory_order_acquire);
+
+  pthread_mutex_lock(&large_page_retry_competitor_lock);
+  large_page_retry_competitor_succeeded = swapped;
+  large_page_retry_competitor_finished = true;
+  pthread_cond_signal(&large_page_retry_competitor_done);
+  pthread_mutex_unlock(&large_page_retry_competitor_lock);
+  return NULL;
+}
+
+static int run_large_page_retry_cas_child(int record_descriptor) {
+  large_page_retry_cas_record_t record = {0};
+  size_t length = 0;
+  size_t alignment = 0;
+  if (!large_page_retry_prepare_source(&length, &alignment)) return 1;
+  record.source_options_applied = mi_option_is_enabled(
+      mi_option_allow_large_os_pages) && !mi_option_is_enabled(mi_option_allow_thp);
+  large_page_retry_probe_begin(length);
+  const bool initial_failed_large_regular_owner = large_page_retry_regular_owner(
+      length, alignment, true, 1);
+  /* Do not spawn the schedule helper until the selected cold null-hint
+   * failed-large setup has proved its ordinary fallback. */
+  if (!initial_failed_large_regular_owner
+      || large_page_retry_probe.huge_calls != 1
+      || large_page_retry_probe.regular_calls != 1) {
+    large_page_retry_probe_end();
+    return 2;
+  }
+
+  large_page_retry_atomic_record = (large_page_retry_atomic_record_t){
+      .active = true,
+      .counter_consistent = true,
+  };
+  pthread_mutex_lock(&large_page_retry_competitor_lock);
+  large_page_retry_competitor_enabled = true;
+  large_page_retry_competitor_waiting = false;
+  large_page_retry_competitor_finished = false;
+  large_page_retry_competitor_counter = NULL;
+  large_page_retry_competitor_expected = 0;
+  large_page_retry_competitor_desired = 0;
+  large_page_retry_competitor_succeeded = false;
+  pthread_mutex_unlock(&large_page_retry_competitor_lock);
+  pthread_t competitor;
+  if (pthread_create(&competitor, NULL, run_large_page_retry_competitor, NULL) != 0) {
+    large_page_retry_competitor_enabled = false;
+    large_page_retry_atomic_record.active = false;
+    large_page_retry_probe_end();
+    return 3;
+  }
+  const bool competing_regular_owner = large_page_retry_regular_owner(
+      length, alignment, true, 0);
+  const int join_result = pthread_join(competitor, NULL);
+  pthread_mutex_lock(&large_page_retry_competitor_lock);
+  large_page_retry_competitor_enabled = false;
+  const bool competitor_succeeded = large_page_retry_competitor_succeeded;
+  pthread_mutex_unlock(&large_page_retry_competitor_lock);
+  const large_page_retry_atomic_record_t cas_record = large_page_retry_atomic_record;
+  large_page_retry_atomic_record.active = false;
+  const _Atomic(size_t)* const counter = cas_record.counter;
+  record.competing_cas_failure_regular_owner = competing_regular_owner
+      && join_result == 0 && competitor_succeeded
+      && cas_record.counter_consistent && counter != NULL
+      && cas_record.cas_count == 1
+      && cas_record.cas_expected_before == LARGE_PAGE_RETRY_SUPPRESSION_COUNT
+      && cas_record.cas_expected_after == LARGE_PAGE_RETRY_SUPPRESSION_COUNT - 1
+      && cas_record.cas_desired == LARGE_PAGE_RETRY_SUPPRESSION_COUNT - 1
+      && !cas_record.cas_succeeded
+      && atomic_load_explicit(counter, memory_order_acquire)
+          == LARGE_PAGE_RETRY_SUPPRESSION_COUNT - 1;
+
+  bool seven_suppressed_regular_owners = true;
+  for (size_t counter_before = LARGE_PAGE_RETRY_SUPPRESSION_COUNT - 1;
+       counter_before > 0; counter_before--) {
+    seven_suppressed_regular_owners &= large_page_retry_suppressed_regular_owner(
+        length, alignment, counter_before);
+  }
+  record.competing_cas_seven_then_reopens =
+      record.competing_cas_failure_regular_owner
+      && seven_suppressed_regular_owners
+      && large_page_retry_regular_owner(length, alignment, true, 2)
+      && counter != NULL
+      && atomic_load_explicit(counter, memory_order_acquire)
+          == LARGE_PAGE_RETRY_SUPPRESSION_COUNT;
+  large_page_retry_probe_end();
+
+  if (!write_all(record_descriptor, &record, sizeof(record))) return 4;
+  return record.source_options_applied
+      && record.competing_cas_failure_regular_owner
+      && record.competing_cas_seven_then_reopens ? 0 : 5;
+}
+
+typedef int (*large_page_retry_child_body_t)(int record_descriptor);
+
+/* This private test-only PID output lets the empty-record harness prove that
+ * this exact fixture child was reaped. It is not a source VM observation and
+ * never enters the C/Rust trace schema. */
+static bool capture_large_page_retry_child_with_exact_child(
+    const char* label, large_page_retry_child_body_t child_body,
+    void* record, size_t record_size, pid_t* exact_child) {
+  if (exact_child != NULL) *exact_child = -1;
+  int descriptors[2];
+  if (pipe(descriptors) != 0) return false;
+  const pid_t child = fork();
+  if (child < 0) {
+    close(descriptors[0]);
+    close(descriptors[1]);
+    return false;
+  }
+  if (child == 0) {
+    close(descriptors[0]);
+    const int result = child_body(descriptors[1]);
+    close(descriptors[1]);
+    _exit(result);
+  }
+  if (exact_child != NULL) *exact_child = child;
+  close(descriptors[1]);
+  const size_t record_bytes = read_all(descriptors[0], record, record_size);
+  close(descriptors[0]);
+  const bool child_reaped = reap_exact_child(label, child);
+  const bool captured = record_bytes == record_size && child_reaped;
+  if (!captured) {
+    fprintf(stderr, "%s capture failed: bytes=%zu expected=%zu\n",
+            label, record_bytes, record_size);
+  }
+  return captured;
+}
+
+static bool capture_large_page_retry_child(
+    const char* label, large_page_retry_child_body_t child_body,
+    void* record, size_t record_size) {
+  return capture_large_page_retry_child_with_exact_child(
+      label, child_body, record, record_size, NULL);
+}
+
+/* A fixture-ownership regression, deliberately separate from the upstream VM
+ * trace: an empty child record must reject capture and still leave no waitable
+ * exact child. With the old short-circuit this final wait consumes the zombie;
+ * with unconditional reaping it reports ECHILD. */
+static int run_large_page_retry_empty_record_child(int record_descriptor) {
+  (void)record_descriptor;
+  return 0;
+}
+
+static int run_large_page_retry_empty_record_reap_test(void) {
+  uint8_t record = 0;
+  pid_t child = -1;
+  const bool captured = capture_large_page_retry_child_with_exact_child(
+      "large-page retry empty record child",
+      run_large_page_retry_empty_record_child,
+      &record, sizeof(record), &child);
+  if (captured || child <= 0) {
+    fprintf(stderr,
+            "large-page retry empty-record reap: capture_rejected=%d "
+            "exact_child_echild=0\n",
+            !captured);
+    return 1;
+  }
+
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  const bool exact_child_echild = waited == -1 && errno == ECHILD;
+  fprintf(stderr,
+          "large-page retry empty-record reap: capture_rejected=%d "
+          "exact_child_echild=%d\n",
+          !captured, exact_child_echild);
+  return exact_child_echild ? 0 : 2;
+}
+
 /* This is a deliberately finite direct-included C oracle for
  * `src/os.c:344-430`. It uses fixed, non-replacing native mappings solely to
  * select the source branch geometry. Every allocation, partial free, source
@@ -1661,7 +2232,13 @@ static bool capture_aligned_overmap_matrix_child(
   return captured;
 }
 
-#if defined(CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE)
+#if defined(CRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST)
+
+int main(void) {
+  return run_large_page_retry_empty_record_reap_test();
+}
+
+#elif defined(CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE)
 
 #define ALIGNED_HINT_SOURCE_PROFILE_BEGIN \
   "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_BEGIN"
@@ -1832,6 +2409,20 @@ int main(void) {
 
 #else
 int main(void) {
+  /* These two children run before the first-arena option row. Their directly
+   * included `unix_mmap` static retry state therefore begins at zero in each
+   * selected source process; neither record inherits a prior large failure. */
+  large_page_retry_normal_record_t large_page_retry_normal_record = {0};
+  if (!capture_large_page_retry_child(
+          "large-page retry normal child", run_large_page_retry_normal_child,
+          &large_page_retry_normal_record,
+          sizeof(large_page_retry_normal_record))) return 41;
+  large_page_retry_cas_record_t large_page_retry_cas_record = {0};
+  if (!capture_large_page_retry_child(
+          "large-page retry CAS child", run_large_page_retry_cas_child,
+          &large_page_retry_cas_record,
+          sizeof(large_page_retry_cas_record))) return 42;
+
   /* This fork is the literal constructor-suppressed source preimage. The
    * child proves `_mi_os_get_aligned_hint` advances its zero static cursor
    * before refusing to use `_mi_theap_empty`; all mutations are COW, so the
@@ -2397,6 +2988,22 @@ int main(void) {
   U("m2.vm.policy.regular_hinted_map_after_large_fallback",
       policy_record.regular_hinted_map_after_large_fallback);
   U("m2.vm.policy.thp_advice_failure_ignored", policy_record.thp_advice_failure_ignored);
+  U("m2.vm.large_retry.initial_failed_large_regular_owner",
+      large_page_retry_normal_record.initial_failed_large_regular_owner);
+  U("m2.vm.large_retry.allow_large_false_preserves_counter",
+      large_page_retry_normal_record.caller_disables_large_preserves_counter);
+  U("m2.vm.large_retry.ineligible_geometry_preserves_counter",
+      large_page_retry_normal_record.ineligible_geometry_preserves_counter);
+  U("m2.vm.large_retry.option_disabled_preserves_counter",
+      large_page_retry_normal_record.option_disabled_preserves_counter);
+  U("m2.vm.large_retry.eight_suppressed_regular_owners",
+      large_page_retry_normal_record.eight_suppressed_regular_owners);
+  U("m2.vm.large_retry.ninth_reopens_large_regular_owner",
+      large_page_retry_normal_record.ninth_reopens_large_regular_owner);
+  U("m2.vm.large_retry.competing_cas_failure_regular_owner",
+      large_page_retry_cas_record.competing_cas_failure_regular_owner);
+  U("m2.vm.large_retry.competing_cas_seven_then_reopens",
+      large_page_retry_cas_record.competing_cas_seven_then_reopens);
   puts("CRABC_MI_M2_VM_TRACE_END");
   puts("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN");
   U("m2.vm.aligned_overmap.c.normal_direct_aligned_source_owner_and_stats",
@@ -2422,4 +3029,5 @@ int main(void) {
   puts("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END");
   return 0;
 }
-#endif  /* CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE */
+#endif  /* CRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST ||
+             CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE */

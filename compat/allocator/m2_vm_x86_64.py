@@ -35,7 +35,10 @@ ALIGNED_HINT_PROFILE_TRACE_END = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_
 ALIGNED_OVERMAP_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN"
 ALIGNED_OVERMAP_TRACE_END = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END"
 EXPECTED_RUST_TEST_COUNT = 1
-EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
+LARGE_PAGE_RETRY_CAPTURE_REAP_TEST_DEFINE = (
+    "-DCRABC_M2_LARGE_PAGE_RETRY_CAPTURE_REAP_TEST=1"
+)
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-large-page-retry-suppression-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
 
 CHECKS = (
     (
@@ -52,6 +55,11 @@ CHECKS = (
         "normal-release-aligned-hint-cursor-random-and-cas-matrix",
         "rust-unit",
         "os::tests::normal_release_aligned_hint_matrix_preserves_source_cursor_random_and_cas_rules",
+    ),
+    (
+        "normal-release-large-page-retry-suppression-and-ordinary-fallback",
+        "rust-unit",
+        "os::tests::normal_release_large_page_retry_suppression_reopens_after_eight_regular_owners",
     ),
     (
         "aligned-hint-source-profile-and-direct-caller-matrix",
@@ -274,6 +282,14 @@ TRACE_KEYS = (
     "m2.vm.policy.large_null_hint_retry_failed",
     "m2.vm.policy.regular_hinted_map_after_large_fallback",
     "m2.vm.policy.thp_advice_failure_ignored",
+    "m2.vm.large_retry.initial_failed_large_regular_owner",
+    "m2.vm.large_retry.allow_large_false_preserves_counter",
+    "m2.vm.large_retry.ineligible_geometry_preserves_counter",
+    "m2.vm.large_retry.option_disabled_preserves_counter",
+    "m2.vm.large_retry.eight_suppressed_regular_owners",
+    "m2.vm.large_retry.ninth_reopens_large_regular_owner",
+    "m2.vm.large_retry.competing_cas_failure_regular_owner",
+    "m2.vm.large_retry.competing_cas_seven_then_reopens",
 )
 TRACE_TRUE_KEYS = frozenset(TRACE_KEYS).difference(
     {
@@ -961,6 +977,48 @@ def run_evidence(
         c_run = harness.command_record([str(binary)], cwd=source, timeout_seconds=180)
         harness.require_success(c_run, "pinned C native x86 M2 VM oracle")
         c_trace = parse_trace(str(c_run["stdout"]), source="pinned C")
+
+        # This child-reaping regression is intentionally a separate fixture
+        # harness, not another upstream VM trace value. Its empty record must
+        # reject capture while the parent has already consumed that exact child.
+        capture_reap_binary = artifacts / "m2-vm-primitives-large-page-retry-capture-reap"
+        capture_reap_command = [
+            compiler,
+            "-std=c11",
+            "-fPIC",
+            "-ftls-model=initial-exec",
+            "-DMI_SHARED_LIB",
+            "-DMI_SHARED_LIB_EXPORT",
+            "-DMI_LIBC_MUSL=1",
+            "-DMI_PRIM_HAS_PROCESS_ATTACH=1",
+            "-I",
+            str(source / "include"),
+            "-I",
+            str(source / "src"),
+            *harness.CONFIGURATION_PROFILES["release"],
+            LARGE_PAGE_RETRY_CAPTURE_REAP_TEST_DEFINE,
+            str(FIXTURE),
+            *(str(source / item) for item in harness.M2_X86_64_VM_C_ORACLE_SOURCES),
+            "-Wl,--wrap=munmap",
+            "-Wl,--wrap=mmap",
+            "-Wl,--wrap=madvise",
+            "-Wl,--wrap=mprotect",
+            "-pthread",
+            "-o",
+            str(capture_reap_binary),
+        ]
+        capture_reap_build = harness.command_record(
+            capture_reap_command, cwd=source, timeout_seconds=300
+        )
+        harness.require_success(
+            capture_reap_build, "pinned C native x86 M2 large-page retry capture-reap build"
+        )
+        capture_reap_run = harness.command_record(
+            [str(capture_reap_binary)], cwd=source, timeout_seconds=180
+        )
+        harness.require_success(
+            capture_reap_run, "pinned C native x86 M2 large-page retry capture-reap harness"
+        )
         c_aligned_overmap_trace = parse_aligned_overmap_trace(
             str(c_run["stdout"]),
             source="pinned C",

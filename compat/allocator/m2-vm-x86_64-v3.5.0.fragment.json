@@ -118,6 +118,25 @@
         ]
       },
       {
+        "id": "unix-normal-large-page-retry-suppression",
+        "source_anchor": {
+          "member": "src/prim/unix/prim.c",
+          "start_line": 383,
+          "end_line": 486,
+          "sha256": "f78d506081775a4fd6ff7eda4c7c52127061b0040b7eacd7d71151b335fc3a87"
+        },
+        "required_definitions": [
+          "static void* unix_mmap",
+          "static _Atomic(size_t) large_page_try_ok",
+          "mi_atomic_cas_strong_acq_rel(&large_page_try_ok, &try_ok, try_ok - 1)",
+          "mi_atomic_store_release(&large_page_try_ok, (size_t)8)"
+        ],
+        "evidence_check_ids": [
+          "native-vm-fixed-lifecycle-differential",
+          "normal-release-large-page-retry-suppression-and-ordinary-fallback"
+        ]
+      },
+      {
         "id": "os-free-and-full-memory-id-release",
         "source_anchor": {
           "member": "src/os.c",
@@ -578,7 +597,7 @@
       {
         "id": "unix-regular-map-large-page-and-thp-routing",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/prim/unix/prim.c:308-497 direct and hinted mmap, MAP_NORESERVE, large-page retry suppression, MAP_HUGETLB/MAP_HUGE modes, and MADV_HUGEPAGE routing.",
+        "source_scope": "src/prim/unix/prim.c:308-497 direct and hinted mmap, MAP_NORESERVE, normal-release failed-large retry suppression, MAP_HUGETLB/MAP_HUGE modes, and MADV_HUGEPAGE routing.",
         "source_anchors": [
           {
             "member": "src/prim/unix/prim.c",
@@ -589,10 +608,11 @@
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
+          "normal-release-large-page-retry-suppression-and-ordinary-fallback",
           "aligned-hint-source-profile-and-direct-caller-matrix"
         ],
         "missing_conditions": [
-          "The bounded first-arena record compares one source high-hint MAP_HUGETLB failure, null-hint retry, regular hinted fallback, and ignored MADV_HUGEPAGE error. The separate release direct-caller record forces its hinted raw map to fail before the unchanged source null retry for an admitted wrapped request and proves no mapping owner is returned. Large-page success, retry-suppression lifetime, MAP_HUGE_1GB modes, option/error diagnostics, and every other caller remain unqualified."
+          "The bounded first-arena record compares one source high-hint MAP_HUGETLB failure, null-hint retry, regular hinted fallback, and ignored MADV_HUGEPAGE error. Separate child-isolated direct `_mi_prim_alloc` and Rust `Mapping::map_unix_policy` records cover only normal-release failed-large state: the first failed large attempt stores eight, allow_large=false, ineligible geometry, and disabled allow_large_os_pages do not consume it, eight eligible regular fallback mappings are explicitly released, the ninth retries and restores eight, and one real competing decrement makes the ignored source CAS fail. The C direct child has no initialized Theap, so its first selected huge attempt is null-hinted and its reopened retry is high-hint/null-hint; the Rust direct policy supplies its own random image. The release direct-caller record forces its hinted raw map to fail before the unchanged source null retry for an admitted wrapped request and proves no mapping owner is returned. Hardware large-page success, large_only/MAP_HUGE_1GB modes, ambient option/warning/error diagnostics, THP success, and actual allocator/runtime callers beyond the named direct receivers remain unqualified."
         ]
       },
       {
@@ -755,6 +775,12 @@
         "expected_passed_test_count": 1
       },
       {
+        "id": "normal-release-large-page-retry-suppression-and-ordinary-fallback",
+        "kind": "rust-unit",
+        "target": "os::tests::normal_release_large_page_retry_suppression_reopens_after_eight_regular_owners",
+        "expected_passed_test_count": 1
+      },
+      {
         "id": "aligned-hint-source-profile-and-direct-caller-matrix",
         "kind": "c-rust-vm-primitives-source-profile-matrix",
         "target": "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace",
@@ -908,7 +934,7 @@
     "remaining_conditions": [
       "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, and one child-isolated 128-MiB first-arena large-page fallback, including pinned-C failure ownership and retry evidence for every source branch.",
       "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, and one process-bound suffix terminal receiver: every other receiving allocator caller, callback/counter/error/retry path, and native cleanup differential remains required.",
-      "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success and retry-state behavior, and their native differential evidence.",
+      "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
       "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers."
     ]
