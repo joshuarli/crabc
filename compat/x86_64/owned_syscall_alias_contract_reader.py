@@ -11,6 +11,20 @@ from __future__ import annotations
 from typing import NamedTuple
 
 
+# Musl leaves whose source deliberately names one ordinary public alias. The
+# archive preserves an application override at each call; the shared libc link
+# localizes those calls through the checked musl dynamic-list policy.
+PUBLIC_ALIAS_SOURCE_CALLERS = (
+    ("__fxstat", "fstat"),
+    ("__fxstatat", "fstatat"),
+    ("ftime", "clock_gettime"),
+    ("getloadavg", "sysinfo"),
+    ("sigignore", "sigaction"),
+    ("siginterrupt", "sigaction"),
+    ("sigset", "sigaction"),
+)
+
+
 class SymbolRow(NamedTuple):
     member: str
     value: str

@@ -11,7 +11,11 @@ from pathlib import Path
 SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
 
-from owned_syscall_alias_contract_reader import SymbolRow, same_definition
+from owned_syscall_alias_contract_reader import (
+    PUBLIC_ALIAS_SOURCE_CALLERS,
+    SymbolRow,
+    same_definition,
+)
 
 
 class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
@@ -32,6 +36,20 @@ class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
         )
 
         self.assertFalse(same_definition(alias, forwarding_body))
+
+    def test_public_source_caller_roster_includes_both_sigset_branches(self) -> None:
+        self.assertEqual(
+            PUBLIC_ALIAS_SOURCE_CALLERS,
+            (
+                ("__fxstat", "fstat"),
+                ("__fxstatat", "fstatat"),
+                ("ftime", "clock_gettime"),
+                ("getloadavg", "sysinfo"),
+                ("sigignore", "sigaction"),
+                ("siginterrupt", "sigaction"),
+                ("sigset", "sigaction"),
+            ),
+        )
 
 
 if __name__ == "__main__":

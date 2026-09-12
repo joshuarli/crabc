@@ -67,8 +67,8 @@ are not data. The policy does not use `-Bsymbolic` or
 not apply to the loader, application DSOs, or static archives.
 
 That link policy lets the source keep musl's public spellings in
-`__fxstat`, `__fxstatat`, `ftime`, `getloadavg`, `sigignore`, and
-`siginterrupt`. The archive paths remain available to a strong application
+`__fxstat`, `__fxstatat`, `ftime`, `getloadavg`, `sigignore`, `siginterrupt`,
+and `sigset`. The archive paths remain available to a strong application
 override. The shared link binds their ordinary libc calls locally. Selected
 source callers that actually name `__clock_gettime`, `__lseek`, `__munmap`, or
 `__sigaction` remain explicit hidden-body calls; the list never replaces those
@@ -81,13 +81,20 @@ normal probe reaches all fourteen public names. Its strong-override sibling
 defines viable Linux implementations for all fourteen public names, so startup
 and the selected C allocator can safely use an ordinary spelling before
 `main`; counters prove that direct application calls reach those definitions.
+For signal callers, the strong-override workload exercises `sigset` with
+`SIG_HOLD` and with a viable replacement handler, captures and restores the
+prior `SIGUSR1` action and mask, and observes exactly one public `sigaction`
+call per branch in static/static-PIE and none in shared PIE/non-PIE. It also
+requires the two source calls in `siginterrupt` to reach exactly two static
+override calls and no shared override calls.
+
 It distinguishes source and final-link ownership: legacy `__fxstat`,
-`__fxstatat`, `ftime`, `getloadavg`, `sigignore`, and selected `siginterrupt`
-calls name public aliases in source and bind to an application override from
-the archive, while the shared link's direct local resolution reaches the
-defining libc body. Pinned static caller relocations name `fstat`, `fstatat`,
-and `clock_gettime`; pinned shared disassembly directly branches to the local
-same-address bodies. `statvfs` and `fstatvfs` retain their local statfs bodies;
+`__fxstatat`, `ftime`, `getloadavg`, `sigignore`, `siginterrupt`, and both
+`sigset` branches name public aliases in source and bind to an application
+override from the archive, while the shared link's direct local resolution
+reaches the defining libc body. Pinned static caller relocations name `fstat`,
+`fstatat`, and `clock_gettime`; pinned shared disassembly directly branches to
+local same-address bodies. `statvfs` and `fstatvfs` retain their local statfs bodies;
 `sem_timedwait` reaches `__clock_gettime`; `signal` reaches `__sigaction`; and
 selected tree search continues through hidden mapping bodies. The reader
 rejects a forwarding body that merely shares an archive member and zero
@@ -101,7 +108,7 @@ removes that ordinary relocation while retaining `optind` `GLOB_DAT` and
 allocator interposition as ELF linkage only. It also rejects a supplied product
 whose shared provenance does not bind the selected list and final libc link
 command, then rejects a final `libc.so` that still dynamically relocates any
-of the six public-source caller paths.
+of the seven public-source caller paths.
 
 Run it only in the pinned native image with supplied products below the
 checkout's `.work` tree:

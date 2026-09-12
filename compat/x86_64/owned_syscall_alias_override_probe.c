@@ -194,6 +194,19 @@ int sigaction(int signal_number, const struct sigaction *action,
     return result;
 }
 
+/* These handlers are never raised by the probe. They make both sigset
+ * branches install or observe valid application dispositions before the
+ * original action and mask are restored. */
+static void sigset_hold_handler(int signal_number)
+{
+    (void)signal_number;
+}
+
+static void sigset_nonhold_handler(int signal_number)
+{
+    (void)signal_number;
+}
+
 static int compare_keys(const void *left, const void *right)
 {
     const int left_value = *(const int *)left;
@@ -209,6 +222,11 @@ int main(int argc, char **argv)
     struct statfs filesystem;
     struct sysinfo information;
     struct sigaction action;
+    struct sigaction saved_sigset_action;
+    struct sigaction sigset_action;
+    sigset_t saved_sigset_mask;
+    sigset_t observed_sigset_mask;
+    sigset_t sigset_mask;
     struct statvfs view;
     struct timeb legacy;
     double loads[3];
@@ -297,7 +315,40 @@ int main(int argc, char **argv)
         && action.sa_handler == SIG_IGN && sigaction_calls > calls_before);
     calls_before = sigaction_calls;
     CHECK(siginterrupt(SIGUSR1, 1) == 0
-        && (shared_link ? sigaction_calls == calls_before : sigaction_calls > calls_before));
+        && sigaction_calls == calls_before + (shared_link ? 0 : 2));
+
+    /* musl sigset.c has exactly one source-level sigaction call in either
+     * branch. Set known viable actions and mask states, then restore the
+     * probe's prior SIGUSR1 disposition and mask after both observations. */
+    CHECK(sigemptyset(&sigset_mask) == 0);
+    CHECK(sigaddset(&sigset_mask, SIGUSR1) == 0);
+    CHECK(sigaction(SIGUSR1, NULL, &saved_sigset_action) == 0);
+    CHECK(sigprocmask(SIG_SETMASK, NULL, &saved_sigset_mask) == 0);
+
+    sigset_action = (struct sigaction){0};
+    sigset_action.sa_handler = sigset_hold_handler;
+    CHECK(sigemptyset(&sigset_action.sa_mask) == 0);
+    CHECK(sigaction(SIGUSR1, &sigset_action, NULL) == 0);
+    CHECK(sigprocmask(SIG_UNBLOCK, &sigset_mask, NULL) == 0);
+    calls_before = sigaction_calls;
+    CHECK(sigset(SIGUSR1, SIG_HOLD) == sigset_hold_handler
+        && sigaction_calls == calls_before + (shared_link ? 0 : 1));
+    CHECK(sigprocmask(SIG_SETMASK, NULL, &observed_sigset_mask) == 0
+        && sigismember(&observed_sigset_mask, SIGUSR1) == 1);
+
+    sigset_action.sa_handler = sigset_hold_handler;
+    CHECK(sigaction(SIGUSR1, &sigset_action, NULL) == 0);
+    CHECK(sigprocmask(SIG_BLOCK, &sigset_mask, NULL) == 0);
+    calls_before = sigaction_calls;
+    CHECK(sigset(SIGUSR1, sigset_nonhold_handler) == SIG_HOLD
+        && sigaction_calls == calls_before + (shared_link ? 0 : 1));
+    CHECK(sigaction(SIGUSR1, NULL, &action) == 0
+        && action.sa_handler == sigset_nonhold_handler);
+    CHECK(sigprocmask(SIG_SETMASK, NULL, &observed_sigset_mask) == 0
+        && sigismember(&observed_sigset_mask, SIGUSR1) == 0);
+    CHECK(sigaction(SIGUSR1, &saved_sigset_action, NULL) == 0);
+    CHECK(sigprocmask(SIG_SETMASK, &saved_sigset_mask, NULL) == 0);
+
     calls_before = clock_gettime_calls;
     CHECK(ftime(&legacy) == 0);
     CHECK(shared_link ? clock_gettime_calls == calls_before : clock_gettime_calls > calls_before);
