@@ -221,6 +221,9 @@ struct SyntaxNode {
 
 #[derive(Clone, Copy)]
 struct Parameter {
+    // This span indexes `WordexpSyntax::parameter_names`, whose bytes have
+    // already had lexical backslash-newline pairs removed. Raw input spans
+    // remain in `WordexpSyntax::source` for every source-facing boundary.
     name: Span,
     word: usize,
     kind: u8,
@@ -306,6 +309,7 @@ struct PendingArithmetic {
 /// ownership and status mapping remain deliberate.
 pub(super) struct WordexpSyntax {
     source: HeapVec<u8>,
+    parameter_names: HeapVec<u8>,
     words: HeapVec<SyntaxWord>,
     roots: HeapVec<usize>,
     nodes: HeapVec<SyntaxNode>,
@@ -322,6 +326,7 @@ impl WordexpSyntax {
         }
         let mut syntax = Self {
             source: HeapVec::new(),
+            parameter_names: HeapVec::new(),
             words: HeapVec::new(),
             roots: HeapVec::new(),
             nodes: HeapVec::new(),
@@ -381,6 +386,15 @@ impl WordexpSyntax {
         unsafe { slice::from_raw_parts(self.source.pointer.add(span.start), span.len()) }
     }
 
+    unsafe fn parameter_name(&self, parameter: Parameter) -> &[u8] {
+        let span = parameter.name;
+        debug_assert!(span.start <= span.end && span.end <= self.parameter_names.len());
+        if span.len() == 0 { return &[]; }
+        // SAFETY: parameter construction appends this normalized span to the
+        // syntax-owned parameter-name vector before publishing the record.
+        unsafe { slice::from_raw_parts(self.parameter_names.pointer.add(span.start), span.len()) }
+    }
+
     #[inline]
     fn has_commands(&self) -> bool { self.contains_command }
 
@@ -410,6 +424,25 @@ impl WordexpSyntax {
     }
 }
 
+// POSIX line joining removes an unquoted physical backslash-newline before
+// lexical recognition. This cursor helper never changes source ownership: its
+// callers choose a local lexical view, while opaque command bodies and quoted
+// literal nodes retain their original bytes.
+fn skip_lexical_line_continuations(
+    syntax: &WordexpSyntax,
+    mut index: usize,
+    end: usize,
+) -> usize {
+    while index + 1 < end &&
+        // SAFETY: the loop condition bounds both source reads.
+        unsafe { syntax.byte(index) } == b'\\' &&
+        unsafe { syntax.byte(index + 1) } == b'\n'
+    {
+        index += 2;
+    }
+    index
+}
+
 struct SyntaxParser<'a> {
     syntax: &'a mut WordexpSyntax,
     pending_words: HeapVec<PendingWord>,
@@ -422,16 +455,23 @@ impl SyntaxParser<'_> {
         unsafe { self.syntax.byte(index) }
     }
 
-    /// Shell lexical line joining is local to word grammar. Opaque command
-    /// bodies retain their original bytes for the command adapter.
-    fn skip_line_continuations(&self, mut index: usize, end: usize) -> usize {
-        while index + 1 < end &&
-            unsafe { self.byte(index) } == b'\\' &&
-            unsafe { self.byte(index + 1) } == b'\n'
-        {
-            index += 2;
+    /// Shell lexical line joining is local to the parser's current grammar.
+    /// Opaque command bodies retain their original bytes for the adapter.
+    fn skip_line_continuations(&self, index: usize, end: usize) -> usize {
+        skip_lexical_line_continuations(self.syntax, index, end)
+    }
+
+    fn append_parameter_name(&mut self, raw: Span) -> Result<Span, WordexpError> {
+        let start = self.syntax.parameter_names.len();
+        let mut index = raw.start;
+        while index < raw.end {
+            index = skip_lexical_line_continuations(self.syntax, index, raw.end);
+            if index >= raw.end { break; }
+            // SAFETY: the bounded cursor names one raw source byte.
+            self.syntax.parameter_names.push(unsafe { self.byte(index) })?;
+            index += 1;
         }
-        index
+        Ok(Span { start, end: self.syntax.parameter_names.len() })
     }
 
     fn new_word(&mut self) -> Result<usize, WordexpError> {
@@ -893,29 +933,28 @@ impl SyntaxParser<'_> {
             )?;
             return Ok(after);
         }
-        let mut name_end = after_dollar;
+        let name_raw;
+        let name_end;
         let kind;
         if identifier_start(next) {
-            name_end += 1;
-            while name_end < end && identifier_continue(unsafe { self.byte(name_end) }) {
-                name_end += 1;
-            }
+            name_end = joined_identifier_end(self.syntax, after_dollar, end);
+            name_raw = Span { start: after_dollar, end: name_end };
             kind = PARAM_IDENTIFIER;
         } else if next.is_ascii_digit() {
-            name_end += 1;
-            while name_end < end && unsafe { self.byte(name_end) }.is_ascii_digit() {
-                name_end += 1;
-            }
+            name_end = joined_decimal_end(self.syntax, after_dollar, end);
+            name_raw = Span { start: after_dollar, end: name_end };
             kind = PARAM_POSITIONAL;
         } else if special_parameter(next) {
-            name_end += 1;
+            name_end = after_dollar + 1;
+            name_raw = Span { start: after_dollar, end: name_end };
             kind = PARAM_SPECIAL;
         } else {
             return Ok(index);
         }
+        let name = self.append_parameter_name(name_raw)?;
         let parameter = self.syntax.parameters.len();
         self.syntax.parameters.push(Parameter {
-            name: Span { start: after_dollar, end: name_end },
+            name,
             word: NONE,
             kind,
             length: false,
@@ -939,9 +978,10 @@ impl SyntaxParser<'_> {
         mode: SyntaxMode,
     ) -> Result<usize, WordexpError> {
         let header = parse_parameter_header(self.syntax, inside.start, inside.end, true)?;
+        let name = self.append_parameter_name(header.name)?;
         let parameter = self.syntax.parameters.len();
         self.syntax.parameters.push(Parameter {
-            name: header.name,
+            name,
             word: NONE,
             kind: header.kind,
             length: header.length,
@@ -975,17 +1015,10 @@ impl SyntaxParser<'_> {
 
 fn skip_parameter_line_continuations(
     syntax: &WordexpSyntax,
-    mut index: usize,
+    index: usize,
     end: usize,
 ) -> usize {
-    while index + 1 < end &&
-        // SAFETY: the loop condition bounds both source reads.
-        unsafe { syntax.byte(index) } == b'\\' &&
-        unsafe { syntax.byte(index + 1) } == b'\n'
-    {
-        index += 2;
-    }
-    index
+    skip_lexical_line_continuations(syntax, index, end)
 }
 
 /// Parse only the fixed parameter header. The delimiter scanner uses the
@@ -1007,21 +1040,16 @@ fn parse_parameter_header(
     let (name, kind, length);
     if first == b'#' {
         index += 1;
+        index = skip_parameter_line_continuations(syntax, index, end);
         if index < end && identifier_start(unsafe { syntax.byte(index) }) {
             let name_start = index;
-            index += 1;
-            while index < end && identifier_continue(unsafe { syntax.byte(index) }) {
-                index += 1;
-            }
+            index = joined_identifier_end(syntax, index, end);
             name = Span { start: name_start, end: index };
             kind = PARAM_IDENTIFIER;
             length = true;
         } else if index < end && unsafe { syntax.byte(index) }.is_ascii_digit() {
             let name_start = index;
-            index += 1;
-            while index < end && unsafe { syntax.byte(index) }.is_ascii_digit() {
-                index += 1;
-            }
+            index = joined_decimal_end(syntax, index, end);
             name = Span { start: name_start, end: index };
             kind = PARAM_POSITIONAL;
             length = true;
@@ -1038,19 +1066,13 @@ fn parse_parameter_header(
         }
     } else if identifier_start(first) {
         let name_start = index;
-        index += 1;
-        while index < end && identifier_continue(unsafe { syntax.byte(index) }) {
-            index += 1;
-        }
+        index = joined_identifier_end(syntax, index, end);
         name = Span { start: name_start, end: index };
         kind = PARAM_IDENTIFIER;
         length = false;
     } else if first.is_ascii_digit() {
         let name_start = index;
-        index += 1;
-        while index < end && unsafe { syntax.byte(index) }.is_ascii_digit() {
-            index += 1;
-        }
+        index = joined_decimal_end(syntax, index, end);
         name = Span { start: name_start, end: index };
         kind = PARAM_POSITIONAL;
         length = false;
@@ -1131,6 +1153,38 @@ const fn identifier_start(byte: u8) -> bool {
 #[inline]
 const fn identifier_continue(byte: u8) -> bool {
     identifier_start(byte) || byte.is_ascii_digit()
+}
+
+// The returned source cursor remains immediately after the final identifier
+// byte, so a following lexical line join belongs to the header delimiter
+// rather than the identifier span. Joins between identifier bytes remain in
+// the raw span and are removed only when the parameter record is published.
+fn joined_identifier_end(syntax: &WordexpSyntax, start: usize, end: usize) -> usize {
+    let mut index = start + 1;
+    loop {
+        let joined = skip_lexical_line_continuations(syntax, index, end);
+        if joined >= end ||
+            // SAFETY: `joined` is below the passed source bound here.
+            !identifier_continue(unsafe { syntax.byte(joined) })
+        {
+            return index;
+        }
+        index = joined + 1;
+    }
+}
+
+fn joined_decimal_end(syntax: &WordexpSyntax, start: usize, end: usize) -> usize {
+    let mut index = start + 1;
+    loop {
+        let joined = skip_lexical_line_continuations(syntax, index, end);
+        if joined >= end ||
+            // SAFETY: `joined` is below the passed source bound here.
+            !(unsafe { syntax.byte(joined) }.is_ascii_digit())
+        {
+            return index;
+        }
+        index = joined + 1;
+    }
 }
 
 #[inline]
@@ -1290,35 +1344,79 @@ fn brace_control_word(
     index: usize,
 ) -> bool {
     if !frame.word_start { return false; }
-    let after = index + 1;
+    let after = skip_lexical_line_continuations(
+        syntax, index + 1, syntax.source_len(),
+    );
     if after >= syntax.source_len() { return true; }
     // SAFETY: the preceding length check bounds this one-byte lookahead.
     command_boundary(unsafe { syntax.byte(after) })
 }
 
-fn assignment_word(bytes: &[u8]) -> bool {
-    if bytes.is_empty() || !identifier_start(bytes[0]) { return false; }
-    let mut index = 1usize;
-    while index < bytes.len() && identifier_continue(bytes[index]) {
-        index += 1;
+// Iterate a command token through its local lexical line-join view. The
+// source span is never rewritten, which leaves the opaque command body byte
+// exact for the later adapter.
+fn joined_command_token_next(
+    syntax: &WordexpSyntax,
+    token: Span,
+    index: &mut usize,
+) -> Option<u8> {
+    *index = skip_lexical_line_continuations(syntax, *index, token.end);
+    if *index >= token.end { return None; }
+    // SAFETY: the joined cursor remains inside the bounded token span.
+    let byte = unsafe { syntax.byte(*index) };
+    *index += 1;
+    Some(byte)
+}
+
+fn joined_command_token_equals(
+    syntax: &WordexpSyntax,
+    token: Span,
+    expected: &[u8],
+) -> bool {
+    let mut index = token.start;
+    let mut expected_index = 0usize;
+    while let Some(byte) = joined_command_token_next(syntax, token, &mut index) {
+        if expected_index >= expected.len() || byte != expected[expected_index] {
+            return false;
+        }
+        expected_index += 1;
     }
-    index < bytes.len() && bytes[index] == b'='
+    expected_index == expected.len()
 }
 
-fn command_control_word(bytes: &[u8]) -> bool {
-    matches!(
-        bytes,
-        b"if" | b"then" | b"elif" | b"else" | b"fi" | b"while" | b"until" |
-        b"do" | b"done"
-    )
+fn joined_assignment_word(syntax: &WordexpSyntax, token: Span) -> bool {
+    let mut index = token.start;
+    let Some(first) = joined_command_token_next(syntax, token, &mut index) else {
+        return false;
+    };
+    if !identifier_start(first) { return false; }
+    while let Some(byte) = joined_command_token_next(syntax, token, &mut index) {
+        if byte == b'=' { return true; }
+        if !identifier_continue(byte) { return false; }
+    }
+    false
 }
 
-fn identifier_word(bytes: &[u8]) -> bool {
-    if bytes.is_empty() || !identifier_start(bytes[0]) { return false; }
-    let mut index = 1usize;
-    while index < bytes.len() {
-        if !identifier_continue(bytes[index]) { return false; }
-        index += 1;
+fn joined_command_control_word(syntax: &WordexpSyntax, token: Span) -> bool {
+    joined_command_token_equals(syntax, token, b"if") ||
+    joined_command_token_equals(syntax, token, b"then") ||
+    joined_command_token_equals(syntax, token, b"elif") ||
+    joined_command_token_equals(syntax, token, b"else") ||
+    joined_command_token_equals(syntax, token, b"fi") ||
+    joined_command_token_equals(syntax, token, b"while") ||
+    joined_command_token_equals(syntax, token, b"until") ||
+    joined_command_token_equals(syntax, token, b"do") ||
+    joined_command_token_equals(syntax, token, b"done")
+}
+
+fn joined_identifier_word(syntax: &WordexpSyntax, token: Span) -> bool {
+    let mut index = token.start;
+    let Some(first) = joined_command_token_next(syntax, token, &mut index) else {
+        return false;
+    };
+    if !identifier_start(first) { return false; }
+    while let Some(byte) = joined_command_token_next(syntax, token, &mut index) {
+        if !identifier_continue(byte) { return false; }
     }
     true
 }
@@ -1444,8 +1542,6 @@ fn finish_command_token(
     if frame.token_start == NONE { return Ok(()); }
     let token = Span { start: frame.token_start, end };
     frame.token_start = NONE;
-    // SAFETY: token starts and ends at the current bounded command source.
-    let bytes = unsafe { syntax.bytes(token) };
     let (scope_index, mut scope) = current_command_scope(scopes, frame)?;
 
     if scope.kind == COMMAND_SCOPE_CASE {
@@ -1457,7 +1553,9 @@ fn finish_command_token(
                 return Ok(());
             }
             CASE_PHASE_IN => {
-                if bytes != b"in" { return Err(WordexpError::Syntax); }
+                if !joined_command_token_equals(syntax, token, b"in") {
+                    return Err(WordexpError::Syntax);
+                }
                 scope.phase = CASE_PHASE_PATTERN;
                 scope.command_position = true;
                 scope.case_after_delimiter = false;
@@ -1471,7 +1569,7 @@ fn finish_command_token(
                 // ends the case after a final `;;`. Once a pattern has begun,
                 // the same bytes remain pattern data; an optional leading `(`
                 // records that distinction before its token is scanned.
-                if bytes == b"esac" &&
+                if joined_command_token_equals(syntax, token, b"esac") &&
                     (!scope.case_pattern_started || scope.case_after_delimiter)
                 {
                     return complete_command_scope(scopes, frame);
@@ -1483,7 +1581,9 @@ fn finish_command_token(
                 return Ok(());
             }
             CASE_PHASE_BODY => {
-                if scope.command_position && bytes == b"esac" {
+                if scope.command_position &&
+                    joined_command_token_equals(syntax, token, b"esac")
+                {
                     return complete_command_scope(scopes, frame);
                 }
             }
@@ -1500,10 +1600,10 @@ fn finish_command_token(
                 return Ok(());
             }
             FOR_PHASE_AFTER_NAME => {
-                if bytes == b"in" {
+                if joined_command_token_equals(syntax, token, b"in") {
                     scope.phase = FOR_PHASE_WORDS;
                     scope.for_list_boundary = false;
-                } else if bytes == b"do" {
+                } else if joined_command_token_equals(syntax, token, b"do") {
                     scope.phase = FOR_PHASE_BODY;
                     scope.command_position = true;
                 } else {
@@ -1514,7 +1614,9 @@ fn finish_command_token(
                 return Ok(());
             }
             FOR_PHASE_WORDS => {
-                if bytes == b"do" && scope.for_list_boundary {
+                if joined_command_token_equals(syntax, token, b"do") &&
+                    scope.for_list_boundary
+                {
                     scope.phase = FOR_PHASE_BODY;
                     scope.command_position = true;
                     scope.function_name_candidate_end = NONE;
@@ -1524,7 +1626,9 @@ fn finish_command_token(
                 return Ok(());
             }
             FOR_PHASE_BODY => {
-                if scope.command_position && bytes == b"done" {
+                if scope.command_position &&
+                    joined_command_token_equals(syntax, token, b"done")
+                {
                     return complete_command_scope(scopes, frame);
                 }
             }
@@ -1533,56 +1637,62 @@ fn finish_command_token(
     }
 
     if scope.kind == COMMAND_SCOPE_IF && scope.command_position {
-        match bytes {
-            b"then" => {
-                scope.phase = IF_PHASE_BODY;
-                scope.function_name_candidate_end = NONE;
-                // SAFETY: scope_index identifies the current top lexical scope.
-                unsafe { scopes.replace(scope_index, scope); }
-                return Ok(());
-            }
-            b"elif" => {
-                scope.phase = IF_PHASE_CONDITION;
-                scope.function_name_candidate_end = NONE;
-                // SAFETY: scope_index identifies the current top lexical scope.
-                unsafe { scopes.replace(scope_index, scope); }
-                return Ok(());
-            }
-            b"else" => {
-                scope.phase = IF_PHASE_BODY;
-                scope.function_name_candidate_end = NONE;
-                // SAFETY: scope_index identifies the current top lexical scope.
-                unsafe { scopes.replace(scope_index, scope); }
-                return Ok(());
-            }
-            b"fi" => return complete_command_scope(scopes, frame),
-            _ => {}
+        if joined_command_token_equals(syntax, token, b"then") {
+            scope.phase = IF_PHASE_BODY;
+            scope.function_name_candidate_end = NONE;
+            // SAFETY: scope_index identifies the current top lexical scope.
+            unsafe { scopes.replace(scope_index, scope); }
+            return Ok(());
+        }
+        if joined_command_token_equals(syntax, token, b"elif") {
+            scope.phase = IF_PHASE_CONDITION;
+            scope.function_name_candidate_end = NONE;
+            // SAFETY: scope_index identifies the current top lexical scope.
+            unsafe { scopes.replace(scope_index, scope); }
+            return Ok(());
+        }
+        if joined_command_token_equals(syntax, token, b"else") {
+            scope.phase = IF_PHASE_BODY;
+            scope.function_name_candidate_end = NONE;
+            // SAFETY: scope_index identifies the current top lexical scope.
+            unsafe { scopes.replace(scope_index, scope); }
+            return Ok(());
+        }
+        if joined_command_token_equals(syntax, token, b"fi") {
+            return complete_command_scope(scopes, frame);
         }
     }
 
     if matches!(scope.kind, COMMAND_SCOPE_WHILE | COMMAND_SCOPE_UNTIL) &&
         scope.command_position
     {
-        if bytes == b"do" {
+        if joined_command_token_equals(syntax, token, b"do") {
             scope.phase = LOOP_PHASE_BODY;
             scope.function_name_candidate_end = NONE;
             // SAFETY: scope_index identifies the current top lexical scope.
             unsafe { scopes.replace(scope_index, scope); }
             return Ok(());
         }
-        if bytes == b"done" && scope.phase == LOOP_PHASE_BODY {
+        if joined_command_token_equals(syntax, token, b"done") &&
+            scope.phase == LOOP_PHASE_BODY
+        {
             return complete_command_scope(scopes, frame);
         }
     }
 
     if scope.kind == COMMAND_SCOPE_FUNCTION {
-        let body = match bytes {
-            b"case" => CommandScope::case(),
-            b"for" => CommandScope::for_loop(),
-            b"if" => CommandScope::if_command(),
-            b"while" => CommandScope::while_loop(),
-            b"until" => CommandScope::until_loop(),
-            _ => return Err(WordexpError::Syntax),
+        let body = if joined_command_token_equals(syntax, token, b"case") {
+            CommandScope::case()
+        } else if joined_command_token_equals(syntax, token, b"for") {
+            CommandScope::for_loop()
+        } else if joined_command_token_equals(syntax, token, b"if") {
+            CommandScope::if_command()
+        } else if joined_command_token_equals(syntax, token, b"while") {
+            CommandScope::while_loop()
+        } else if joined_command_token_equals(syntax, token, b"until") {
+            CommandScope::until_loop()
+        } else {
+            return Err(WordexpError::Syntax);
         };
         return begin_compound_command(scopes, frame, body);
     }
@@ -1594,24 +1704,31 @@ fn finish_command_token(
         unsafe { scopes.replace(scope_index, scope); }
         return Ok(());
     }
-    if bytes == b"case" {
+    if joined_command_token_equals(syntax, token, b"case") {
         begin_compound_command(scopes, frame, CommandScope::case())?;
-    } else if bytes == b"for" {
+    } else if joined_command_token_equals(syntax, token, b"for") {
         begin_compound_command(scopes, frame, CommandScope::for_loop())?;
-    } else if bytes == b"if" {
+    } else if joined_command_token_equals(syntax, token, b"if") {
         begin_compound_command(scopes, frame, CommandScope::if_command())?;
-    } else if bytes == b"while" {
+    } else if joined_command_token_equals(syntax, token, b"while") {
         begin_compound_command(scopes, frame, CommandScope::while_loop())?;
-    } else if bytes == b"until" {
+    } else if joined_command_token_equals(syntax, token, b"until") {
         begin_compound_command(scopes, frame, CommandScope::until_loop())?;
-    } else if bytes == b"!" || command_control_word(bytes) || assignment_word(bytes) {
+    } else if joined_command_token_equals(syntax, token, b"!") ||
+        joined_command_control_word(syntax, token) ||
+        joined_assignment_word(syntax, token)
+    {
         scope.command_position = true;
         scope.function_name_candidate_end = NONE;
         // SAFETY: scope_index identifies the current top lexical scope.
         unsafe { scopes.replace(scope_index, scope); }
     } else {
         scope.command_position = false;
-        scope.function_name_candidate_end = if identifier_word(bytes) { end } else { NONE };
+        scope.function_name_candidate_end = if joined_identifier_word(syntax, token) {
+            end
+        } else {
+            NONE
+        };
         // SAFETY: scope_index identifies the current top lexical scope.
         unsafe { scopes.replace(scope_index, scope); }
     }
@@ -2010,6 +2127,16 @@ fn scan_construct(
                 frame.token_start = NONE;
                 frame.word_start = true;
                 unsafe { frames.replace(top, frame); }
+                continue;
+            }
+            if frame.kind == SCAN_COMMAND && byte == b'\\' &&
+                index + 1 < syntax.source_len() &&
+                unsafe { syntax.byte(index + 1) } == b'\n'
+            {
+                // This zero-width lexical join stays inside an existing raw
+                // token span but must not create a token or erase a preceding
+                // word boundary. The opaque body itself stays unmodified.
+                index += 2;
                 continue;
             }
             if byte == b'\\' {
@@ -4491,8 +4618,8 @@ fn start_parameter(
 ) -> Result<(), WordexpError> {
     // SAFETY: node payload refers to syntax-owned parameter metadata.
     let parameter = unsafe { syntax.parameter(node.payload) };
-    // SAFETY: parameter name is a syntax-owned byte span.
-    let name = unsafe { syntax.bytes(parameter.name) };
+    // SAFETY: parameter construction owns this normalized identifier slice.
+    let name = unsafe { syntax.parameter_name(parameter) };
     let value = context.lookup(name, parameter.kind);
     let colon = parameter.flags & PARAM_COLON != 0;
     let selected = parameter_condition(value, colon);
@@ -4623,14 +4750,14 @@ fn finish_parameter(
             // SAFETY: parameter name lives in syntax and value is copied before
             // any context growth can move context-owned bytes.
             context.assign_local(
-                unsafe { syntax.bytes(parameter.name) },
+                unsafe { syntax.parameter_name(parameter) },
                 unsafe { value.as_slice() },
             )?;
             // The assignment operand's quotes build the stored value, but
             // they do not quote the result of the outer := expansion. Emit
             // that result from the assigned value under the outer node state.
             let assigned = context.lookup(
-                unsafe { syntax.bytes(parameter.name) },
+                unsafe { syntax.parameter_name(parameter) },
                 parameter.kind,
             );
             append_stored_value(
@@ -4645,7 +4772,7 @@ fn finish_parameter(
             // SAFETY: both source name and context value stay live during this
             // adapter call; the temporary owns its pattern atoms.
             let value = context.lookup(
-                unsafe { syntax.bytes(parameter.name) },
+                unsafe { syntax.parameter_name(parameter) },
                 parameter.kind,
             );
             let bytes = context.value_bytes(value);
@@ -5787,6 +5914,90 @@ mod tests {
             assert_words(&words, &[b"ok"]);
             assert_eq!(commands.calls, 1);
         }
+    }
+
+    #[test]
+    fn opaque_command_scanner_joins_lexical_tokens_without_rewriting_its_body() {
+        // A physical backslash-newline joins shell tokens before reserved-word
+        // recognition, but the future command adapter still receives its raw
+        // opaque bytes exactly as written.
+        for (input, body) in [
+            (
+                b"$(c\\\nase x in x) printf yes;; esac)".as_slice(),
+                b"c\\\nase x in x) printf yes;; esac".as_slice(),
+            ),
+            (
+                b"$(case x i\\\nn x) printf yes;; esac)".as_slice(),
+                b"case x i\\\nn x) printf yes;; esac".as_slice(),
+            ),
+            (
+                b"$(case x in x) printf yes;; es\\\nac)".as_slice(),
+                b"case x in x) printf yes;; es\\\nac".as_slice(),
+            ),
+            (
+                b"$(f\\\noo () { case x in x) printf yes;; esac; }; foo)".as_slice(),
+                b"f\\\noo () { case x in x) printf yes;; esac; }; foo".as_slice(),
+            ),
+            (
+                b"$( {\\\n case x in x) printf yes;; esac; } )".as_slice(),
+                b" {\\\n case x in x) printf yes;; esac; } ".as_slice(),
+            ),
+            (
+                b"$( { case x in x) printf yes;; esac; }\\\n )".as_slice(),
+                b" { case x in x) printf yes;; esac; }\\\n ".as_slice(),
+            ),
+            (
+                b"$(fo\\\nr v in x; d\\\no case x in x) printf yes;; esac; d\\\none)".as_slice(),
+                b"fo\\\nr v in x; d\\\no case x in x) printf yes;; esac; d\\\none".as_slice(),
+            ),
+            (
+                b"$(i\\\nf true; th\\\nen case x in x) printf yes;; esac; f\\\ni)".as_slice(),
+                b"i\\\nf true; th\\\nen case x in x) printf yes;; esac; f\\\ni".as_slice(),
+            ),
+            (b"$(case x in x) printf yes;; esac)".as_slice(), b"case x in x) printf yes;; esac".as_slice()),
+        ] {
+            let syntax = WordexpSyntax::parse(input).unwrap();
+            assert_eq!(syntax.commands.len(), 1);
+            // SAFETY: the single command record belongs to this syntax object.
+            let command = unsafe { syntax.command(0) };
+            // SAFETY: the recorded body span is inside the copied source.
+            assert_eq!(unsafe { syntax.bytes(command.body) }, body);
+
+            let mut context = WordexpContext::new();
+            let mut commands = TestCommands::new(b"ok");
+            commands.expected_body = Some(body);
+            let mut paths = TestPaths::plain();
+            let words = evaluate(input, &mut context, &mut commands, &mut paths).unwrap();
+            assert_words(&words, &[b"ok"]);
+            assert_eq!(commands.calls, 1);
+        }
+    }
+
+    #[test]
+    fn parameter_names_join_unquoted_line_continuations() {
+        let mut context = WordexpContext::new();
+        context.set_initial(b"FOO", Some(b"yes"), false).unwrap();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+
+        let control = evaluate(b"\"${FOO}\"", &mut context, &mut commands, &mut paths).unwrap();
+        assert_words(&control, &[b"yes"]);
+
+        let words = evaluate(
+            b"\"${FO\\\nO}\" \"$FO\\\nO\" \"${#FO\\\nO}\" \"${NEW\\\nVAR:=yes}\" \"$NEWVAR\"",
+            &mut context,
+            &mut commands,
+            &mut paths,
+        ).unwrap();
+        assert_words(&words, &[b"yes", b"yes", b"3", b"yes", b"yes"]);
+
+        let quoted = evaluate(
+            b"'FO\\\nO' $'FO\\\nO'",
+            &mut context,
+            &mut commands,
+            &mut paths,
+        ).unwrap();
+        assert_words(&quoted, &[b"FO\\\nO", b"FO\\\nO"]);
     }
 
     #[test]

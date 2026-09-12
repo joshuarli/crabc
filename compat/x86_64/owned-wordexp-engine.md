@@ -16,6 +16,7 @@ tilde and arithmetic expansion, parameter substring patterns, and field
 splitting. Its [general-concepts expression rule](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap01.html#tag_18_01_02_01)
 imports the relevant ISO C expression semantics, including lazy `&&` and
 `||` operands. Its [reserved-word positions](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html#tag_19_04),
+[line-joining rule](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html#tag_19_02_01),
 [compound-command delimiters](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html#tag_19_09_04),
 and [function definition](https://pubs.opengroup.org/onlinepubs/9799919799.2024edition/utilities/V3_chap02.html#tag_19_09_05)
 rules bound the opaque delimiter scanner. Issue 8 also defines dollar-single-quoted strings.
@@ -60,6 +61,14 @@ can be a function body. A brace group starts only when `{` or `}` is a whole
 lexical token, so `{missing` remains an ordinary command word. Ordinary
 arguments and for-list data with those spellings remain data. It does not build
 a command execution AST.
+
+An unquoted physical backslash-newline is removed only in the parser's local
+lexical views: parameter identifiers and command-scanner keyword, identifier,
+and brace-boundary checks use the joined bytes. Parameter records retain the
+joined identifier bytes for context lookup and assignment. The copied source
+and every opaque command-body span remain byte exact, so the later adapter sees
+the original continuation. Single-quoted and dollar-single-quoted source is
+not globally rewritten.
 
 An arithmetic node retains a separate `ArithmeticSource` word. Its parameter,
 command, quote, and nested arithmetic expansions complete first on the same
@@ -163,7 +172,9 @@ Opaque-command tests retain quoted controls, here-documents, a
 real `case`, ordinary keyword arguments, for-list data, brace groups,
 subshells, all function-body compound forms, empty-case and optional-pattern
 boundaries, whole-token brace recognition, and nested case/control paths
-without changing raw body bytes. A set-empty `HOME` tilde
+without changing raw body bytes; physical continuation joins in command
+keywords, function identifiers, braces, and parameter names retain separate
+raw-body and quoted-source controls. A set-empty `HOME` tilde
 case and all four empty parameter-pattern removals have outer-quote regressions.
 A 64 KiB-thread regression expands 4,000 nested parameter words, 4,000 nested
 arithmetic expansions, and 8,000 arithmetic parentheses while verifying that
