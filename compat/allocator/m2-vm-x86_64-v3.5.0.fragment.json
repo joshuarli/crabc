@@ -103,9 +103,9 @@
         "id": "unix-aligned-hint-direct-caller",
         "source_anchor": {
           "member": "src/prim/unix/prim.c",
-          "start_line": 342,
-          "end_line": 358,
-          "sha256": "bf1982a2c4259cfcf911ccd53d8adb7754155b71147a86f2c51628372d3b32ca"
+          "start_line": 318,
+          "end_line": 365,
+          "sha256": "1970adf392c22c9bef4bdcc0456c265c85a9ac53fab95ec5601cc318628381d7"
         },
         "required_definitions": [
           "static void* unix_mmap_prim_aligned",
@@ -132,7 +132,8 @@
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
-          "normal-os-offset-full-provenance-and-release-retry"
+          "normal-os-offset-full-provenance-and-release-retry",
+          "aligned-overmap-cleanup-c-rust-boundary-matrix"
         ]
       },
       {
@@ -153,7 +154,9 @@
           "aligned-map-direct-cleanup-owner",
           "aligned-map-prefix-cleanup-owner",
           "aligned-map-suffix-cleanup-owner",
-          "aligned-map-complete-trim-sequence"
+          "aligned-map-complete-trim-sequence",
+          "aligned-overmap-cleanup-c-rust-boundary-matrix",
+          "aligned-map-process-os-page-suffix-terminal-owner"
         ]
       },
       {
@@ -175,7 +178,8 @@
           "process-offset-prefix-decommit-advisory-owner",
           "normal-os-good-size-and-base-provenance",
           "normal-os-offset-zero-delegation-and-geometry",
-          "normal-os-aligned-failure-owner"
+          "normal-os-aligned-failure-owner",
+          "aligned-overmap-cleanup-c-rust-boundary-matrix"
         ]
       },
       {
@@ -414,7 +418,7 @@
       {
         "id": "os-free-and-statistics-events",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded C/Rust trace injects one normal-offset _mi_os_free_ex primitive failure and explicit retry, recording the full MemoryId base and size at both Unix free boundaries.",
+        "source_scope": "src/os.c:240-294 regular OS free, full MemoryId base adjustment, huge dispatch, warnings, and unconditional subprocess committed/reserved counter events; the bounded records inject one normal-offset _mi_os_free_ex primitive failure/retry and, separately, release every selected aligned-overmap returned MemoryId after direct/prefix/suffix cleanup outcomes. The pinned C fixture records its actual void-free counter timing even when a physical cleanup range escaped before that returned-MemoryId release.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -425,16 +429,17 @@
         ],
         "evidence_check_ids": [
           "native-vm-fixed-lifecycle-differential",
-          "normal-os-offset-full-provenance-and-release-retry"
+          "normal-os-offset-full-provenance-and-release-retry",
+          "aligned-overmap-cleanup-c-rust-boundary-matrix"
         ],
         "missing_conditions": [
-          "The selected normal-offset _mi_os_free_ex failure/retry compares the full-MemoryId base/size at both Unix free boundaries and counter timing, but allocation transitions, source warning/error reporting, huge MemoryId dispatch, and every other counter/caller route remain unqualified."
+          "The selected normal-offset _mi_os_free_ex failure/retry and finite aligned-overmap source rows compare full-MemoryId base/size and current/total counter timing, but source warning/error reporting, huge MemoryId dispatch, unselected allocation transitions, and every other counter/caller route remain unqualified."
         ]
       },
       {
         "id": "os-primitive-regular-and-aligned-allocation",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:303-430 regular primitive allocation, direct/aligned overmap selection, partial prefix/suffix free, allocation statistics, large-page argument propagation, and cleanup warnings.",
+        "source_scope": "src/os.c:303-430 regular primitive allocation, direct/aligned overmap selection, partial prefix/suffix free, allocation statistics, large-page argument propagation, and cleanup warnings. The finite native C/Rust boundary drives a normal aligned direct map, direct-map failure fallback, normal prefix-zero/suffix-only geometry, a successful direct/prefix/suffix trim sequence, and each direct/prefix/suffix cleanup failure for Reserved and Committed requests. C retains its actual void-cleanup continuation, escaped physical range, and statistics; Rust records its distinct exact retained owner.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -449,18 +454,20 @@
           "aligned-map-prefix-cleanup-owner",
           "aligned-map-suffix-cleanup-owner",
           "aligned-map-complete-trim-sequence",
+          "aligned-overmap-cleanup-c-rust-boundary-matrix",
           "aligned-map-os-page-claim-owner",
+          "aligned-map-process-os-page-suffix-terminal-owner",
           "aligned-map-metadata-owner",
           "aligned-map-process-arena-owner"
         ],
         "missing_conditions": [
-          "The bounded source-option first arena compares one committed 128-MiB large-page-fallback route, but every other source large-page/option path, aligned cleanup failure disposition, and receiving allocator caller remains unqualified."
+          "The finite aligned-overmap boundary covers only its named direct/overmap cleanup paths and one process-bound suffix receiver. Every other receiving allocator caller, callback/counter/error/retry route, source large-page/option path, and runtime policy remains unqualified."
         ]
       },
       {
         "id": "os-normal-aligned-and-offset-allocation",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:438-527 normal, aligned, zero-offset, and interior-offset allocation routes, including source allow_large forwarding and the best-effort prefix decommit.",
+        "source_scope": "src/os.c:438-527 normal, aligned, zero-offset, and interior-offset allocation routes, including source allow_large forwarding and the best-effort prefix decommit. The selected `_mi_os_alloc_aligned` wrapper reaches the separate finite C/Rust aligned-overmap cleanup boundary without claiming source-equivalent failed-cleanup ownership.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -476,7 +483,8 @@
           "normal-os-good-size-and-base-provenance",
           "normal-os-offset-zero-delegation-and-geometry",
           "normal-os-aligned-failure-owner",
-          "normal-os-source-reservation-caller"
+          "normal-os-source-reservation-caller",
+          "aligned-overmap-cleanup-c-rust-boundary-matrix"
         ],
         "missing_conditions": [
           "The selected normal process receiver proves one offset-prefix decommit success and one consumed advisory failure with the full owner retained, but option-driven large-page/hint policy across all regular and arena callers, general offset geometry, and source statistics/error behavior remain unqualified."
@@ -539,7 +547,7 @@
       {
         "id": "aligned-hint-random-state",
         "disposition": "partial-fixed-profile",
-        "source_scope": "src/os.c:110-158 atomic aligned-hint range, virtual-address eligibility, fixed normal-release default-Theap random state, debug-only fixed-base selection, secure request bound/default-Theap random state, strict wrap threshold, unsigned request arithmetic, and ignored strong-CAS result; plus src/prim/unix/prim.c:342-358 direct source hinted-mmap diagnostic/fallback ordering. The bounded direct-C/Rust matrix proves a constructor-suppressed normal-release cold child advances cursor zero then refuses its uninitialized default Theap; an explicitly initialized parent has first fetch zero and randomized 2--6-TiB start; Rust obtains that image from an isolated real MainStaticTheapAttachment while its startup-only borrow remains valid; eligible/ineligible alignment and VA geometry; exact MI_HINT_MAX no-wrap then greater-than wrap with one staged public random draw; and a controlled real AcqRel competing fetch between source fetch and source CAS, followed by the source second fetch without retry. Separate pinned-C source-profile binaries compile the debug-only fixed-base and secure branches; the secure record proves missing default random after the first cursor fetch, pre-atomic >32-GiB rejection, and exact 32-GiB initialized randomization. The release direct-caller record passes the largest page-multiple through `_mi_prim_alloc`, observes the wrapped source request and real pinned hinted-then-null mmap order, and proves failure leaves no address owner.",
+        "source_scope": "src/os.c:110-158 atomic aligned-hint range, virtual-address eligibility, fixed normal-release default-Theap random state, debug-only fixed-base selection, secure request bound/default-Theap random state, strict wrap threshold, unsigned request arithmetic, and ignored strong-CAS result; plus the complete `src/prim/unix/prim.c:318-365` direct source hinted-mmap function and diagnostic/fallback ordering. The bounded direct-C/Rust matrix proves a constructor-suppressed normal-release cold child advances cursor zero then refuses its uninitialized default Theap; an explicitly initialized parent has first fetch zero and randomized 2--6-TiB start; Rust obtains that image from an isolated real MainStaticTheapAttachment while its startup-only borrow remains valid; eligible/ineligible alignment and VA geometry; exact MI_HINT_MAX no-wrap then greater-than wrap with one staged public random draw; and a controlled real AcqRel competing fetch between source fetch and source CAS, followed by the source second fetch without retry. Separate pinned-C source-profile binaries compile the debug-only fixed-base and secure branches; the secure record proves missing default random after the first cursor fetch, pre-atomic >32-GiB rejection, and exact 32-GiB initialized randomization. The release direct-caller record passes the largest page-multiple through `_mi_prim_alloc`, observes the wrapped source request and real pinned hinted-then-null mmap order, and proves failure leaves no address owner.",
         "source_anchors": [
           {
             "member": "src/os.c",
@@ -549,9 +557,9 @@
           },
           {
             "member": "src/prim/unix/prim.c",
-            "start_line": 342,
-            "end_line": 358,
-            "sha256": "bf1982a2c4259cfcf911ccd53d8adb7754155b71147a86f2c51628372d3b32ca"
+            "start_line": 318,
+            "end_line": 365,
+            "sha256": "1970adf392c22c9bef4bdcc0456c265c85a9ac53fab95ec5601cc318628381d7"
           }
         ],
         "evidence_check_ids": [
@@ -715,10 +723,10 @@
       },
       {
         "id": "vm-range-failure-statistics-and-caller-ownership",
-        "source_scope": "src/os.c:240-712 and normal allocator/arena callers: statistics events, custom commit callbacks beyond the selected process-lived external mi_manage_memory owner, aligned-overmap cleanup, commit/decommit/purge/protect/reset/release errors, and every retained Rust owner receiver.",
+        "source_scope": "src/os.c:240-712 and normal allocator/arena callers: statistics events, custom commit callbacks beyond the selected process-lived external mi_manage_memory owner, aligned-overmap cleanup, commit/decommit/purge/protect/reset/release errors, and every retained Rust owner receiver. The selected C/Rust aligned-overmap matrix and one process-bound suffix receiver are evidence only for their named finite cleanup rows.",
         "required_evidence": [
           "typed subprocess statistics-event and callback owners beyond the selected external process-lived lease",
-          "pinned-C native fault differential covering each failure/retry branch and every caller transfer"
+          "pinned-C native fault differential covering every remaining failure/retry branch and every caller transfer"
         ]
       }
     ],
@@ -745,6 +753,12 @@
         "id": "aligned-hint-source-profile-and-direct-caller-matrix",
         "kind": "c-rust-vm-primitives-source-profile-matrix",
         "target": "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "aligned-overmap-cleanup-c-rust-boundary-matrix",
+        "kind": "c-rust-aligned-overmap-cleanup-boundary-matrix",
+        "target": "os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace",
         "expected_passed_test_count": 1
       },
       {
@@ -799,6 +813,12 @@
         "id": "aligned-map-os-page-claim-owner",
         "kind": "rust-unit",
         "target": "os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner",
+        "expected_passed_test_count": 1
+      },
+      {
+        "id": "aligned-map-process-os-page-suffix-terminal-owner",
+        "kind": "rust-unit",
+        "target": "os_page::tests::paired_alignment_suffix_trim_failure_is_terminal_without_double_accounting",
         "expected_passed_test_count": 1
       },
       {
@@ -882,7 +902,7 @@
     ],
     "remaining_conditions": [
       "Complete the remaining Linux/x86-64 reserve, commit, decommit, purge, protect, unmap, reuse callers and policy beyond the selected fixed regular mapping lifecycle, finite normal no-callback purge decision/range matrix, selected ordinary/external direct page-extension receivers, normal-offset prefix-decommit and full-MemoryId release failure/retry, child-isolated THP transactions, and one child-isolated 128-MiB first-arena large-page fallback, including pinned-C failure ownership and retry evidence for every source branch.",
-      "Complete the aligned-overmap substrate beyond the selected direct/prefix/suffix retained-map owners and one first-arena high-hint fallback: every receiving allocator caller, callback/counter/error path, and native cleanup failure/retry differential remains required.",
+      "Complete the aligned-overmap substrate beyond the selected native direct map, direct-map fallback, prefix-zero/suffix-only geometry, direct/prefix/suffix success and Reserved/Committed cleanup-failure matrix, and one process-bound suffix terminal receiver: every other receiving allocator caller, callback/counter/error/retry path, and native cleanup differential remains required.",
       "Complete aligned-hint policy beyond the finite normal-release cursor, virtual-address eligibility, strict threshold, one controlled CAS schedule, and selected pinned-C debug/secure source profiles plus one admitted wrapped direct caller: actual secure/debug runtime configuration, ambient source options/attachments, source warning/error reporting, every caller, and broader contention remain required. Also complete Linux THP failed-prctl/production-caller behavior, MAP_HUGETLB/MADV_HUGEPAGE success and retry-state behavior, and their native differential evidence.",
       "Complete huge-page reservation/free/progress/timeout behavior, high-address hints, mbind and NUMA option/arena-placement policy, plus all associated failure ownership and diagnostics.",
       "Complete the unconditional subprocess statistics-event owner and the full allocator/arena lifecycle and callback routes beyond the selected fixed normal/offset MemoryId owner, normal-offset release counter/failure retry, contained Linux reuse no-op, reset-advice snapshot, one-page protection retry, first-arena adjustment restoration, one process-lived external mi_manage_memory callback owner with bounded commit/purge results, and selected ordinary/external direct page-extension receivers."

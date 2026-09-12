@@ -32,8 +32,10 @@ TRACE_BEGIN = "CRABC_MI_M2_VM_TRACE_BEGIN"
 TRACE_END = "CRABC_MI_M2_VM_TRACE_END"
 ALIGNED_HINT_PROFILE_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_BEGIN"
 ALIGNED_HINT_PROFILE_TRACE_END = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_END"
+ALIGNED_OVERMAP_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN"
+ALIGNED_OVERMAP_TRACE_END = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END"
 EXPECTED_RUST_TEST_COUNT = 1
-EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-external-page-extension-child-policy-and-aligned-hint-source-profile-cursor-cas-fault"
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-external-page-extension-child-policy-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
 
 CHECKS = (
     (
@@ -55,6 +57,11 @@ CHECKS = (
         "aligned-hint-source-profile-and-direct-caller-matrix",
         "c-rust-vm-primitives-source-profile-matrix",
         "os::tests::emit_m2_aligned_hint_source_profile_c_rust_trace",
+    ),
+    (
+        "aligned-overmap-cleanup-c-rust-boundary-matrix",
+        "c-rust-aligned-overmap-cleanup-boundary-matrix",
+        "os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace",
     ),
     (
         "process-policy-first-arena-clean-primary-fallback",
@@ -100,6 +107,11 @@ CHECKS = (
         "aligned-map-os-page-claim-owner",
         "rust-unit",
         "os_page::tests::aligned_map_prefix_cleanup_failure_transfers_the_live_claim_owner",
+    ),
+    (
+        "aligned-map-process-os-page-suffix-terminal-owner",
+        "rust-unit",
+        "os_page::tests::paired_alignment_suffix_trim_failure_is_terminal_without_double_accounting",
     ),
     (
         "aligned-map-metadata-owner",
@@ -323,6 +335,42 @@ ALIGNED_HINT_PROFILE_C_CONFIGS = (
 ALIGNED_HINT_PROFILE_TRACE_KEYS = tuple(
     key for _, _, keys in ALIGNED_HINT_PROFILE_C_CONFIGS for key in keys
 )
+
+# This boundary intentionally has two schemas. The pinned C trace proves the
+# source's physical-map/statistics consequence after a void partial free
+# fails. The Rust trace proves the stronger retained-owner result. They must
+# remain separate so a row that happens to have the same counter delta cannot
+# be mistaken for ownership equality.
+ALIGNED_OVERMAP_C_TRACE_KEYS = (
+    "m2.vm.aligned_overmap.c.normal_direct_aligned_source_owner_and_stats",
+    "m2.vm.aligned_overmap.c.direct_map_failure_fallback_source_owner_and_stats",
+    "m2.vm.aligned_overmap.c.prefix_zero_suffix_only_source_geometry_and_stats",
+    "m2.vm.aligned_overmap.c.complete_direct_prefix_suffix_cleanup_source_owner_and_stats",
+    "m2.vm.aligned_overmap.c.direct_cleanup_failure_reserved_source_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.c.direct_cleanup_failure_committed_source_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.c.prefix_cleanup_failure_reserved_source_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.c.prefix_cleanup_failure_committed_source_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.c.suffix_cleanup_failure_reserved_source_continues_escaped_live_stats",
+    "m2.vm.aligned_overmap.c.suffix_cleanup_failure_committed_source_continues_escaped_live_stats",
+)
+ALIGNED_OVERMAP_RUST_TRACE_KEYS = (
+    "m2.vm.aligned_overmap.rust.normal_direct_aligned_owner_and_stats",
+    "m2.vm.aligned_overmap.rust.direct_map_failure_fallback_prefix_zero_suffix_only",
+    "m2.vm.aligned_overmap.rust.complete_direct_prefix_suffix_cleanup_owner_and_stats",
+    "m2.vm.aligned_overmap.rust.direct_cleanup_failure_reserved_retains_owner_once",
+    "m2.vm.aligned_overmap.rust.direct_cleanup_failure_committed_retains_owner_once",
+    "m2.vm.aligned_overmap.rust.prefix_cleanup_failure_reserved_retains_full_overmap_once",
+    "m2.vm.aligned_overmap.rust.prefix_cleanup_failure_committed_retains_full_overmap_once",
+    "m2.vm.aligned_overmap.rust.suffix_cleanup_failure_reserved_retains_suffix_once",
+    "m2.vm.aligned_overmap.rust.suffix_cleanup_failure_committed_retains_suffix_once",
+)
+ALIGNED_OVERMAP_DIFFERENCE_ID = "CRABC-MI-ALIGNED-OVERMAP-CLEANUP-OWNER"
+ALIGNED_OVERMAP_COMPARISON = {
+    "c_observation_count": len(ALIGNED_OVERMAP_C_TRACE_KEYS),
+    "difference_id": ALIGNED_OVERMAP_DIFFERENCE_ID,
+    "rust_observation_count": len(ALIGNED_OVERMAP_RUST_TRACE_KEYS),
+    "status": "expected-divergence-verified",
+}
 
 BRANCH_IDS = (
     "unix-platform-primitive-dispatch",
@@ -671,6 +719,49 @@ def parse_aligned_hint_profile_trace(
     return values
 
 
+def parse_aligned_overmap_trace(
+    output: str, *, source: str, expected_keys: Sequence[str],
+) -> dict[str, int]:
+    """Parse one side of the finite aligned-overmap cleanup boundary.
+
+    The C and Rust schemas intentionally differ: C records source continuation
+    and leaked physical ranges after a failed best-effort cleanup, while Rust
+    records the exact retained owner. Both are required to be all-true local
+    relations; this parser must not make them look like one equality record.
+    """
+
+    if (
+        output.count(ALIGNED_OVERMAP_TRACE_BEGIN) != 1
+        or output.count(ALIGNED_OVERMAP_TRACE_END) != 1
+    ):
+        raise ValueError(f"{source} aligned-overmap trace did not emit exactly one marker pair")
+    start = output.index(ALIGNED_OVERMAP_TRACE_BEGIN) + len(ALIGNED_OVERMAP_TRACE_BEGIN)
+    end = output.index(ALIGNED_OVERMAP_TRACE_END)
+    if end <= start:
+        raise ValueError(f"{source} aligned-overmap trace markers are reversed")
+    expected = set(expected_keys)
+    values: dict[str, int] = {}
+    for line in output[start:end].strip().splitlines():
+        if line.count("=") != 1:
+            raise ValueError(f"{source} aligned-overmap trace has a malformed observation")
+        key, raw_value = line.split("=", 1)
+        if (
+            key in values
+            or key not in expected
+            or not raw_value.isascii()
+            or not raw_value.isdecimal()
+        ):
+            raise ValueError(f"{source} aligned-overmap trace has an invalid observation: {line}")
+        values[key] = int(raw_value)
+    missing = sorted(expected.difference(values))
+    unexpected = sorted(set(values).difference(expected))
+    if missing or unexpected or any(value != 1 for value in values.values()):
+        raise ValueError(
+            f"{source} aligned-overmap trace changed: missing {missing}; unexpected {unexpected}"
+        )
+    return values
+
+
 def _validate_trace_values(trace: Mapping[str, int], *, source: str) -> None:
     page = trace["m2.vm.config.page_size"]
     large = trace["m2.vm.config.large_page_size"]
@@ -747,6 +838,24 @@ def _aligned_hint_profile_check(
     return check
 
 
+def _aligned_overmap_cleanup_check(
+    fragment: Mapping[str, Any], test_program: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    if not isinstance(test_program, Mapping) or not isinstance(test_program.get("path"), Path):
+        raise _error("aggregate did not supply its prepared native Rust test program")
+    check = next(
+        check
+        for check in fragment["component"]["checks"]
+        if check["id"] == "aligned-overmap-cleanup-c-rust-boundary-matrix"
+    )
+    if (
+        check["target"] != "os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace"
+        or check["expected_passed_test_count"] != EXPECTED_RUST_TEST_COUNT
+    ):
+        raise _error("aligned-overmap cleanup boundary trace check changed")
+    return check
+
+
 def _compare_aligned_hint_profile_trace(
     c_trace: Mapping[str, int], rust_trace: Mapping[str, int], harness: Any
 ) -> dict[str, Any]:
@@ -761,6 +870,29 @@ def _compare_aligned_hint_profile_trace(
             + "; ".join(mismatches)
         )
     return {"compared_value_count": len(ALIGNED_HINT_PROFILE_TRACE_KEYS), "status": "matched"}
+
+
+def _compare_aligned_overmap_cleanup_boundary(
+    c_trace: Mapping[str, int], rust_trace: Mapping[str, int], harness: Any
+) -> dict[str, Any]:
+    """Validate the named C/Rust ownership divergence without flattening it.
+
+    C's `mi_os_prim_free` adjusts counters and continues even when its imported
+    `munmap` fails. Rust must return an `AlignedMappingFailure` that retains
+    the exact live range, so the trace key sets are intentionally disjoint.
+    """
+
+    if set(c_trace) != set(ALIGNED_OVERMAP_C_TRACE_KEYS) or any(
+        value != 1 for value in c_trace.values()
+    ):
+        raise harness.HarnessError("pinned C aligned-overmap cleanup record changed")
+    if set(rust_trace) != set(ALIGNED_OVERMAP_RUST_TRACE_KEYS) or any(
+        value != 1 for value in rust_trace.values()
+    ):
+        raise harness.HarnessError("Rust aligned-overmap retained-owner record changed")
+    if set(c_trace).intersection(rust_trace):
+        raise harness.HarnessError("aligned-overmap C/Rust boundary lost its distinct ownership schemas")
+    return dict(ALIGNED_OVERMAP_COMPARISON)
 
 
 def run_evidence(
@@ -783,6 +915,7 @@ def run_evidence(
     fragment = load_fragment(contract_fragment)
     check = _trace_check(fragment, test_program)
     profile_check = _aligned_hint_profile_check(fragment, test_program)
+    aligned_overmap_check = _aligned_overmap_cleanup_check(fragment, test_program)
     pin = harness.load_pin()
     upstream = fragment["upstream"]
     if upstream["revision"] != pin["revision"] or upstream["archive_sha256"] != pin["sha256"]:
@@ -824,6 +957,11 @@ def run_evidence(
         c_run = harness.command_record([str(binary)], cwd=source, timeout_seconds=180)
         harness.require_success(c_run, "pinned C native x86 M2 VM oracle")
         c_trace = parse_trace(str(c_run["stdout"]), source="pinned C")
+        c_aligned_overmap_trace = parse_aligned_overmap_trace(
+            str(c_run["stdout"]),
+            source="pinned C",
+            expected_keys=ALIGNED_OVERMAP_C_TRACE_KEYS,
+        )
         profile_commands: list[dict[str, Any]] = []
         c_profile_trace: dict[str, int] = {}
         for profile_id, flags, profile_keys in ALIGNED_HINT_PROFILE_C_CONFIGS:
@@ -900,11 +1038,40 @@ def run_evidence(
     profile_comparison = _compare_aligned_hint_profile_trace(
         c_profile_trace, rust_profile_trace, harness
     )
+    aligned_overmap_rust, aligned_overmap_rust_output = harness._x86_64_run_exact_program_check(
+        test_program,
+        aligned_overmap_check,
+        nocapture=True,
+        gate_name="native x86 M2 aligned-overmap cleanup boundary",
+    )
+    aligned_overmap_rust_command = aligned_overmap_rust["command"]
+    aligned_overmap_rust_count = aligned_overmap_rust["passed_test_count"]
+    if aligned_overmap_rust_command[0] != str(rust_binary):
+        raise harness.HarnessError(
+            "native x86 M2 aligned-overmap Rust witness binary changed during execution"
+        )
+    rust_aligned_overmap_trace = parse_aligned_overmap_trace(
+        aligned_overmap_rust_output,
+        source="Rust",
+        expected_keys=ALIGNED_OVERMAP_RUST_TRACE_KEYS,
+    )
+    aligned_overmap_comparison = _compare_aligned_overmap_cleanup_boundary(
+        c_aligned_overmap_trace, rust_aligned_overmap_trace, harness
+    )
     trace_payload = json.dumps(c_trace, separators=(",", ":"), sort_keys=True).encode("utf-8")
     profile_trace_payload = json.dumps(
         c_profile_trace, separators=(",", ":"), sort_keys=True
     ).encode("utf-8")
     report = {
+        "aligned_overmap_c_trace_sha256": hashlib.sha256(
+            json.dumps(c_aligned_overmap_trace, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        ).hexdigest(),
+        "aligned_overmap_comparison": aligned_overmap_comparison,
+        "aligned_overmap_rust_command": aligned_overmap_rust_command,
+        "aligned_overmap_rust_passed_test_count": aligned_overmap_rust_count,
+        "aligned_overmap_rust_trace_sha256": hashlib.sha256(
+            json.dumps(rust_aligned_overmap_trace, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        ).hexdigest(),
         "aligned_hint_profile_c_commands": profile_commands,
         "aligned_hint_profile_comparison": profile_comparison,
         "aligned_hint_profile_rust_command": profile_rust_command,

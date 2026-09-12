@@ -97,6 +97,17 @@ class NativeVmAssemblyTests(unittest.TestCase):
                 }
             )
         return {
+            "aligned_overmap_c_trace_sha256": "f" * 64,
+            "aligned_overmap_comparison": dict(producer.ALIGNED_OVERMAP_COMPARISON),
+            "aligned_overmap_rust_command": [
+                str(rust_binary),
+                "os::tests::emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace",
+                "--exact",
+                "--test-threads=1",
+                "--nocapture",
+            ],
+            "aligned_overmap_rust_passed_test_count": 1,
+            "aligned_overmap_rust_trace_sha256": "a" * 64,
             "aligned_hint_profile_c_commands": profile_c_commands,
             "aligned_hint_profile_comparison": {
                 "compared_value_count": len(producer.ALIGNED_HINT_PROFILE_TRACE_KEYS),
@@ -259,10 +270,19 @@ class NativeVmAssemblyTests(unittest.TestCase):
             direct["source_anchor"],
             {
                 "member": "src/prim/unix/prim.c",
-                "start_line": 342,
-                "end_line": 358,
-                "sha256": "bf1982a2c4259cfcf911ccd53d8adb7754155b71147a86f2c51628372d3b32ca",
+                "start_line": 318,
+                "end_line": 365,
+                "sha256": "1970adf392c22c9bef4bdcc0456c265c85a9ac53fab95ec5601cc318628381d7",
             },
+        )
+        self.assertEqual(
+            direct["required_definitions"],
+            [
+                "static void* unix_mmap_prim_aligned",
+                "_mi_os_get_aligned_hint",
+                "unix_mmap_prim(hint, size, protect_flags, flags, fd)",
+                "unix_mmap_prim(addr, size, protect_flags, flags, fd)",
+            ],
         )
         self.assertEqual(
             producer.ALIGNED_HINT_PROFILE_TRACE_KEYS,
@@ -330,7 +350,7 @@ class NativeVmAssemblyTests(unittest.TestCase):
         vm = summary["components"][0]
         self.assertEqual(vm["id"], "vm-primitives")
         self.assertEqual(vm["native_status"], "partial")
-        self.assertEqual(len(vm["checks"]), 26)
+        self.assertEqual(len(vm["checks"]), 28)
         self.assertEqual(len(vm["bounded_source_definitions"]), 16)
         callback_definitions = {
             definition["id"]: definition["source_anchor"]
@@ -384,6 +404,8 @@ class NativeVmAssemblyTests(unittest.TestCase):
             ("compared_value_count", 34),
             ("source_anchors", []),
             ("nonclaims", []),
+            ("aligned_overmap_comparison", {"status": "matched"}),
+            ("aligned_overmap_c_trace_sha256", "not-a-digest"),
         ):
             with self.subTest(field=field):
                 evidence = self.vm_evidence(summary)
@@ -395,9 +417,81 @@ class NativeVmAssemblyTests(unittest.TestCase):
         records = RUNNER._m2_x86_64_vm_check_records(
             self.summary(), self.vm_evidence(self.summary())
         )
-        self.assertEqual(len(records), 2)
+        self.assertEqual(len(records), 3)
         self.assertEqual(records[0]["id"], "native-vm-fixed-lifecycle-differential")
         self.assertEqual(records[1]["id"], "aligned-hint-source-profile-and-direct-caller-matrix")
+        self.assertEqual(records[2]["id"], "aligned-overmap-cleanup-c-rust-boundary-matrix")
+        self.assertEqual(records[2]["comparison_status"], "expected-divergence-verified")
+
+    def test_m2_runner_excludes_every_custom_vm_receipt_from_focused_batch(self):
+        summary = self.summary()
+        vm_records = RUNNER._m2_x86_64_vm_check_records(
+            summary, self.vm_evidence(summary)
+        )
+        observed = {}
+
+        def focused_checks(_summary, _program, *, already_executed_check_ids, gate_name):
+            observed["ids"] = set(already_executed_check_ids)
+            observed["gate_name"] = gate_name
+            return []
+
+        with (
+            mock.patch.object(RUNNER, "require_native_x86_64"),
+            mock.patch.object(
+                RUNNER,
+                "m2_memory_substrate_source_state",
+                side_effect=[{"state": "before"}, {"state": "after"}],
+            ),
+            mock.patch.object(
+                RUNNER,
+                "validate_x86_64_m2_memory_substrate_contract",
+                return_value=summary,
+            ),
+            mock.patch.object(RUNNER, "run_milestone0", return_value={}),
+            mock.patch.object(
+                RUNNER, "_x86_64_source_contract_evidence", return_value={"status": "passed"}
+            ),
+            mock.patch.object(
+                RUNNER, "_m2_x86_64_bounded_source_evidence", return_value={"status": "passed"}
+            ),
+            mock.patch.object(RUNNER, "_x86_64_unit_test_program", return_value={}),
+            mock.patch.object(RUNNER, "run_m2_page_map_differential", return_value={}),
+            mock.patch.object(
+                RUNNER, "run_m2_page_map_lazy_commit_failure_differential", return_value={}
+            ),
+            mock.patch.object(RUNNER, "run_m2_page_map_cold_init_differential", return_value={}),
+            mock.patch.object(RUNNER, "_run_m2_x86_64_bitmap_evidence", return_value={}),
+            mock.patch.object(RUNNER, "_m2_x86_64_bitmap_check_records", return_value=[]),
+            mock.patch.object(RUNNER, "_run_m2_x86_64_vm_evidence", return_value={}),
+            mock.patch.object(RUNNER, "_m2_x86_64_vm_check_records", return_value=vm_records),
+            mock.patch.object(RUNNER, "_m2_x86_64_differential_check_record", return_value={}),
+            mock.patch.object(
+                RUNNER, "m2_memory_substrate_source_attestation", return_value={"status": "clean"}
+            ),
+            mock.patch.object(
+                RUNNER, "_run_x86_64_focused_source_checks", side_effect=focused_checks
+            ),
+            mock.patch.object(
+                RUNNER, "m2_x86_64_memory_substrate_report", return_value={"status": "captured"}
+            ),
+        ):
+            self.assertEqual(
+                RUNNER.run_x86_64_m2_memory_substrate(offline=True),
+                {"status": "captured"},
+            )
+
+        self.assertEqual(observed["gate_name"], "native x86 M2 focused source evidence")
+        self.assertTrue(
+            {record["id"] for record in vm_records}.issubset(observed["ids"])
+        )
+        self.assertEqual(
+            {
+                "native-vm-fixed-lifecycle-differential",
+                "aligned-hint-source-profile-and-direct-caller-matrix",
+                "aligned-overmap-cleanup-c-rust-boundary-matrix",
+            },
+            {record["id"] for record in vm_records},
+        )
 
     def test_vm_producer_receipt_requires_the_exact_c_and_rust_producers(self):
         summary = self.summary()
@@ -418,6 +512,13 @@ class NativeVmAssemblyTests(unittest.TestCase):
         )
         with self.assertRaises(RUNNER.HarnessError):
             RUNNER._m2_x86_64_vm_check_records(summary, wrong_profile)
+
+        wrong_aligned_overmap_target = self.vm_evidence(summary)
+        wrong_aligned_overmap_target["aligned_overmap_rust_command"][1] = (
+            "os::tests::emit_m2_vm_primitives_c_rust_trace"
+        )
+        with self.assertRaises(RUNNER.HarnessError):
+            RUNNER._m2_x86_64_vm_check_records(summary, wrong_aligned_overmap_target)
 
         for case, extra_arguments in {
             "extra-debug-macro": ["-DMI_DEBUG=1"],

@@ -1279,6 +1279,74 @@ mod tests {
         assert!(claim.mapping.unmap().is_ok());
     }
 
+    #[cfg(not(miri))]
+    #[test]
+    fn paired_alignment_suffix_trim_failure_is_terminal_without_double_accounting() {
+        // The private test geometry makes the three source cleanup edges
+        // deterministic: direct candidate, overmap prefix, then overmap
+        // suffix. This specifically reaches the process-bound suffix edge
+        // which the earlier paired receiver witness did not isolate.
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            3,
+            Errno::NOMEM,
+        ));
+        let process = process(false);
+        let mut memory_config = config(4 * KIB);
+        memory_config.test_force_full_aligned_map_trim();
+        let before = process.subprocess().vm_statistics().snapshot();
+        let failure = OsAlignedPageClaim::allocate_for_process(
+            process,
+            memory_config,
+            4096,
+            1,
+            crate::arena::ArenaId::none(),
+        )
+        .err()
+        .expect("the forced suffix cleanup failure retains the unpublished claim");
+        assert_eq!(failure.error().stage(), OsAlignedPageFailureStage::Map);
+        assert_eq!(failure.error().operation(), Errno::NOMEM);
+        let OsAlignedPageOwner::Claim(claim) = failure
+            .into_owner()
+            .expect("the failed process aligned map transfers its sole claim owner")
+        else {
+            panic!("an unpublished aligned-map failure cannot be a published owner")
+        };
+        assert_eq!(fault.observed(), 3, "the suffix is the third source cleanup edge");
+        let mapping_length = claim.layout().mapping_length();
+        assert_eq!(claim.mapping.base().unwrap().addr() % PAGE_META_ALIGNMENT, 0);
+        assert!(claim.mapping.length().unwrap() > mapping_length);
+        let after_map_failure = process.subprocess().vm_statistics().snapshot();
+        assert_eq!(after_map_failure.mmap_calls - before.mmap_calls, 2);
+        assert_eq!(
+            after_map_failure.reserved_total - before.reserved_total,
+            mapping_length as i64,
+            "source adjustment accounting reaches the aligned middle even while the suffix stays live"
+        );
+        assert_eq!(after_map_failure.reserved_current - before.reserved_current, mapping_length as i64);
+        assert_eq!(after_map_failure.committed_total, before.committed_total);
+        assert_eq!(after_map_failure.committed_current, before.committed_current);
+
+        // `RetainedAlignmentFailure` is terminal: calling the receiver's
+        // release path must return the stored map error before another raw
+        // unmap or another source accounting event. Keep the one-shot plan
+        // active so a hidden retry would change the observed ordinal.
+        let terminal = claim.release().err().expect("the retained trim claim is not a full-release token");
+        assert_eq!(terminal.error().stage(), OsAlignedPageFailureStage::Release);
+        assert_eq!(terminal.error().operation(), Errno::NOMEM);
+        assert_eq!(fault.observed(), 3, "terminal release must not retry the suffix unmap");
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), after_map_failure);
+
+        // Only the isolated test tears down the terminal owner. This raw edge
+        // deliberately does not replay partial-overmap source accounting.
+        fault.set(fault::Plan::disabled());
+        let OsAlignedPageOwner::Claim(mut claim) = terminal.into_owner() else {
+            panic!("the terminal unpublished receiver must retain the same claim")
+        };
+        claim.mapping.unmap().expect("the retained suffix owner can be dismantled once");
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), after_map_failure);
+    }
+
     #[test]
     fn emit_native_fresh_os_page_ownership_trace() {
         use crate::bootstrap::ExclusiveTheapBootstrap;

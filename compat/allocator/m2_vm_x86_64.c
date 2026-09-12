@@ -28,6 +28,14 @@
 #include <mimalloc/internal.h>
 #include <mimalloc/prim.h>
 
+/* Linux 5.10 supplies this exact non-replacing fixed-map flag. The aligned
+ * overmap oracle uses it only to make one otherwise kernel-chosen test
+ * geometry deterministic; do not substitute MAP_FIXED or a portability
+ * fallback for this source-bound native witness. */
+#ifndef MAP_FIXED_NOREPLACE
+#error "native x86 M2 aligned-overmap oracle requires Linux MAP_FIXED_NOREPLACE"
+#endif
+
 /* Resolved through `-I <pinned-source>/src`; keep each private source body
  * singular by omitting `src/os.c`, `src/arena.c`, `src/init.c`, and
  * `src/page.c` from the ordinary C source list. */
@@ -213,6 +221,33 @@ typedef struct policy_child_record_s {
   bool thp_advice_failure_ignored;
 } policy_child_record_t;
 
+/* The pinned `mi_os_prim_alloc_aligned` body is included above. This tiny
+ * fixture state controls only its imported mmap/munmap results while a COW
+ * child executes one selected call. It does not model an allocator function:
+ * the source still decides whether it has a direct candidate, an overmap, and
+ * whether to continue after a void partial free. */
+typedef enum aligned_overmap_phase_e {
+  ALIGNED_OVERMAP_OFF = 0,
+  ALIGNED_OVERMAP_DIRECT,
+  ALIGNED_OVERMAP_OVER,
+} aligned_overmap_phase_t;
+
+typedef struct aligned_overmap_probe_s {
+  bool active;
+  bool fail_direct_map;
+  size_t fail_cleanup_ordinal;
+  aligned_overmap_phase_t phase;
+  void* direct_target;
+  void* over_target;
+  size_t direct_mmap_calls;
+  size_t over_mmap_calls;
+  size_t cleanup_munmap_calls;
+  void* cleanup_addresses[3];
+  size_t cleanup_lengths[3];
+} aligned_overmap_probe_t;
+
+static aligned_overmap_probe_t aligned_overmap_probe = {0};
+
 int __real_munmap(void* address, size_t length);
 void* __real_mmap(void* address, size_t length, int protection, int flags,
                   int descriptor, off_t offset);
@@ -221,6 +256,23 @@ int __real_mprotect(void* address, size_t length, int protection);
 
 int __wrap_munmap(void* address, size_t length) {
   wrapped_munmap_calls++;
+  if (aligned_overmap_probe.active) {
+    const size_t index = aligned_overmap_probe.cleanup_munmap_calls;
+    if (index < sizeof(aligned_overmap_probe.cleanup_addresses)
+                    / sizeof(aligned_overmap_probe.cleanup_addresses[0])) {
+      aligned_overmap_probe.cleanup_addresses[index] = address;
+      aligned_overmap_probe.cleanup_lengths[index] = length;
+    }
+    aligned_overmap_probe.cleanup_munmap_calls++;
+    if (aligned_overmap_probe.fail_cleanup_ordinal != 0
+        && aligned_overmap_probe.cleanup_munmap_calls
+            == aligned_overmap_probe.fail_cleanup_ordinal) {
+      errno = ENOMEM;
+      return -1;
+    }
+    last_real_munmap_result = __real_munmap(address, length);
+    return last_real_munmap_result;
+  }
   if (capture_release_munmap && captured_release_munmap_calls < 2) {
     const size_t index = captured_release_munmap_calls;
     captured_release_munmap_addresses[index] = address;
@@ -238,6 +290,31 @@ int __wrap_munmap(void* address, size_t length) {
 
 void* __wrap_mmap(void* address, size_t length, int protection, int flags,
                   int descriptor, off_t offset) {
+  if (aligned_overmap_probe.active) {
+    if (aligned_overmap_probe.phase == ALIGNED_OVERMAP_DIRECT) {
+      aligned_overmap_probe.direct_mmap_calls++;
+      if (aligned_overmap_probe.fail_direct_map) {
+        /* `unix_mmap_prim_aligned` may try a source high hint and then null.
+         * Fail every direct raw attempt; moving to the overmap phase only
+         * after the null retry prevents an accidental direct fallback map. */
+        if (address == NULL) aligned_overmap_probe.phase = ALIGNED_OVERMAP_OVER;
+        errno = ENOMEM;
+        return MAP_FAILED;
+      }
+      aligned_overmap_probe.phase = ALIGNED_OVERMAP_OVER;
+      return __real_mmap(
+          aligned_overmap_probe.direct_target, length, protection,
+          flags | MAP_FIXED_NOREPLACE, descriptor, offset);
+    }
+    if (aligned_overmap_probe.phase == ALIGNED_OVERMAP_OVER) {
+      aligned_overmap_probe.over_mmap_calls++;
+      return __real_mmap(
+          aligned_overmap_probe.over_target, length, protection,
+          flags | MAP_FIXED_NOREPLACE, descriptor, offset);
+    }
+    errno = EINVAL;
+    return MAP_FAILED;
+  }
   if (capture_aligned_hint_direct_caller) {
     if (captured_aligned_hint_direct_calls < 2) {
       const size_t index = captured_aligned_hint_direct_calls;
@@ -324,6 +401,18 @@ static int64_t current_reserved(const mi_subproc_t* subproc) {
 
 static int64_t current_committed(const mi_subproc_t* subproc) {
   return mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)(&subproc->stats.committed.current));
+}
+
+static int64_t total_reserved(const mi_subproc_t* subproc) {
+  return mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)(&subproc->stats.reserved.total));
+}
+
+static int64_t total_committed(const mi_subproc_t* subproc) {
+  return mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)(&subproc->stats.committed.total));
+}
+
+static int64_t current_mmap_calls(const mi_subproc_t* subproc) {
+  return mi_atomic_loadi64_relaxed((_Atomic(int64_t)*)(&subproc->stats.mmap_calls.total));
 }
 
 static int64_t current_reset(const mi_subproc_t* subproc) {
@@ -1138,6 +1227,322 @@ static bool capture_policy_child(policy_child_record_t* record) {
   return captured;
 }
 
+/* This is a deliberately finite direct-included C oracle for
+ * `src/os.c:344-430`. It uses fixed, non-replacing native mappings solely to
+ * select the source branch geometry. Every allocation, partial free, source
+ * warning disposition, MemoryId, and statistic transition remains in the
+ * pinned C body. In particular, failed cleanup rows prove the source's actual
+ * best-effort behavior before the Rust retained-owner boundary is compared in
+ * a separate trace namespace. */
+typedef enum aligned_overmap_case_e {
+  ALIGNED_OVERMAP_DIRECT_ALIGNED,
+  ALIGNED_OVERMAP_DIRECT_MAP_FAILURE_FALLBACK,
+  ALIGNED_OVERMAP_PREFIX_ZERO_SUFFIX_ONLY,
+  ALIGNED_OVERMAP_COMPLETE_CLEANUP,
+  ALIGNED_OVERMAP_DIRECT_CLEANUP_FAILURE,
+  ALIGNED_OVERMAP_PREFIX_CLEANUP_FAILURE,
+  ALIGNED_OVERMAP_SUFFIX_CLEANUP_FAILURE,
+} aligned_overmap_case_t;
+
+typedef struct aligned_overmap_targets_s {
+  void* direct_aligned;
+  void* direct_unaligned;
+  void* over_aligned;
+  void* over_unaligned;
+} aligned_overmap_targets_t;
+
+typedef struct aligned_overmap_statistics_s {
+  int64_t reserved_total;
+  int64_t reserved_current;
+  int64_t committed_total;
+  int64_t committed_current;
+  int64_t mmap_calls;
+} aligned_overmap_statistics_t;
+
+typedef struct aligned_overmap_matrix_record_s {
+  bool normal_direct_aligned;
+  bool direct_map_failure_fallback;
+  bool prefix_zero_suffix_only;
+  bool complete_direct_prefix_suffix_cleanup;
+  bool direct_cleanup_failure_reserved_source_continues_escaped_live_stats;
+  bool direct_cleanup_failure_committed_source_continues_escaped_live_stats;
+  bool prefix_cleanup_failure_reserved_source_continues_escaped_live_stats;
+  bool prefix_cleanup_failure_committed_source_continues_escaped_live_stats;
+  bool suffix_cleanup_failure_reserved_source_continues_escaped_live_stats;
+  bool suffix_cleanup_failure_committed_source_continues_escaped_live_stats;
+} aligned_overmap_matrix_record_t;
+
+static aligned_overmap_statistics_t aligned_overmap_statistics(
+    const mi_subproc_t* subproc) {
+  return (aligned_overmap_statistics_t){
+      .reserved_total = total_reserved(subproc),
+      .reserved_current = current_reserved(subproc),
+      .committed_total = total_committed(subproc),
+      .committed_current = current_committed(subproc),
+      .mmap_calls = current_mmap_calls(subproc),
+  };
+}
+
+static bool aligned_overmap_allocation_statistics_match(
+    aligned_overmap_statistics_t before, const mi_subproc_t* subproc,
+    size_t length, bool commit, int64_t maps) {
+  const aligned_overmap_statistics_t after = aligned_overmap_statistics(subproc);
+  const int64_t committed = commit ? (int64_t)length : 0;
+  return after.mmap_calls == before.mmap_calls + maps
+      && after.reserved_total == before.reserved_total + (int64_t)length
+      && after.reserved_current == before.reserved_current + (int64_t)length
+      && after.committed_total == before.committed_total + committed
+      && after.committed_current == before.committed_current + committed;
+}
+
+static bool aligned_overmap_release_statistics_match(
+    aligned_overmap_statistics_t before, const mi_subproc_t* subproc,
+    size_t length, bool commit, int64_t maps) {
+  const aligned_overmap_statistics_t after = aligned_overmap_statistics(subproc);
+  const int64_t committed = commit ? (int64_t)length : 0;
+  /* `mi_stat_decrease` restores current bytes but does not decrement total;
+   * a source cleanup failure has already applied each partial adjustment.
+   * This validates the observable source bookkeeping even when one physical
+   * range remains live outside the returned MemoryId. */
+  return after.mmap_calls == before.mmap_calls + maps
+      && after.reserved_total == before.reserved_total + (int64_t)length
+      && after.reserved_current == before.reserved_current
+      && after.committed_total == before.committed_total + committed
+      && after.committed_current == before.committed_current;
+}
+
+static bool aligned_overmap_prepare_targets(
+    size_t page, size_t alignment, size_t over_length,
+    aligned_overmap_targets_t* targets) {
+  if (page == 0 || alignment < page || (alignment & (alignment - 1)) != 0
+      || alignment > SIZE_MAX / 6
+      || over_length > SIZE_MAX - 6 * alignment - page) {
+    return false;
+  }
+  const size_t span = 6 * alignment + page + over_length;
+  void* const reservation = __real_mmap(
+      NULL, span, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (reservation == MAP_FAILED) return false;
+  const uintptr_t start = (uintptr_t)reservation;
+  const uintptr_t end = start + span;
+  const uintptr_t aligned = (start + alignment - 1) & ~(uintptr_t)(alignment - 1);
+  const uintptr_t direct_unaligned = aligned + page;
+  const uintptr_t over_aligned = aligned + 2 * alignment;
+  const uintptr_t over_unaligned = aligned + 4 * alignment + page;
+  const bool fits = aligned >= start && direct_unaligned >= aligned
+      && over_aligned >= direct_unaligned && over_unaligned >= over_aligned
+      && over_unaligned <= end && over_length <= end - over_unaligned;
+  const int release = __real_munmap(reservation, span);
+  if (!fits || release != 0) return false;
+  targets->direct_aligned = (void*)aligned;
+  targets->direct_unaligned = (void*)direct_unaligned;
+  targets->over_aligned = (void*)over_aligned;
+  targets->over_unaligned = (void*)over_unaligned;
+  return true;
+}
+
+static void aligned_overmap_begin(
+    bool fail_direct_map, size_t fail_cleanup_ordinal,
+    void* direct_target, void* over_target) {
+  aligned_overmap_probe = (aligned_overmap_probe_t){
+      .active = true,
+      .fail_direct_map = fail_direct_map,
+      .fail_cleanup_ordinal = fail_cleanup_ordinal,
+      .phase = ALIGNED_OVERMAP_DIRECT,
+      .direct_target = direct_target,
+      .over_target = over_target,
+  };
+}
+
+static bool aligned_overmap_mapping_is_live(void* address, size_t page) {
+  unsigned char residency = 0;
+  return mincore(address, page, &residency) == 0;
+}
+
+static bool aligned_overmap_cleanup_matches(
+    const aligned_overmap_probe_t* probe, size_t expected_count,
+    void* const expected_addresses[3], const size_t expected_lengths[3]) {
+  if (probe->cleanup_munmap_calls != expected_count) return false;
+  for (size_t index = 0; index < expected_count; index++) {
+    if (probe->cleanup_addresses[index] != expected_addresses[index]
+        || probe->cleanup_lengths[index] != expected_lengths[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool run_aligned_overmap_case(
+    mi_subproc_t* subproc, aligned_overmap_case_t selected, bool commit) {
+  const size_t page = _mi_os_page_size();
+  const size_t length = 2 * page;
+  const size_t alignment = 8 * page;
+  const size_t over_length = length + alignment;
+  if (page == 0 || length / 2 != page || alignment / 8 != page) return false;
+
+  aligned_overmap_targets_t targets = {0};
+  if (!aligned_overmap_prepare_targets(page, alignment, over_length, &targets)) return false;
+  const bool direct_failure = selected == ALIGNED_OVERMAP_DIRECT_MAP_FAILURE_FALLBACK
+      || selected == ALIGNED_OVERMAP_PREFIX_ZERO_SUFFIX_ONLY;
+  const bool direct_aligned = selected == ALIGNED_OVERMAP_DIRECT_ALIGNED;
+  const bool prefix_zero = selected == ALIGNED_OVERMAP_PREFIX_ZERO_SUFFIX_ONLY;
+  const size_t cleanup_failure = selected == ALIGNED_OVERMAP_DIRECT_CLEANUP_FAILURE ? 1
+      : selected == ALIGNED_OVERMAP_PREFIX_CLEANUP_FAILURE ? 2
+      : selected == ALIGNED_OVERMAP_SUFFIX_CLEANUP_FAILURE ? 3 : 0;
+  void* const direct_target = direct_aligned ? targets.direct_aligned : targets.direct_unaligned;
+  void* const over_target = prefix_zero ? targets.over_aligned : targets.over_unaligned;
+  const uintptr_t over_base = (uintptr_t)over_target;
+  const uintptr_t aligned_address = (over_base + alignment - 1) & ~(uintptr_t)(alignment - 1);
+  const size_t prefix = (size_t)(aligned_address - over_base);
+  const size_t suffix = over_length - prefix - length;
+  if (prefix >= over_length || suffix >= over_length || prefix + suffix + length != over_length) {
+    return false;
+  }
+
+  void* expected_addresses[3] = {NULL, NULL, NULL};
+  size_t expected_lengths[3] = {0, 0, 0};
+  size_t expected_cleanup_count = 0;
+  if (!direct_failure && !direct_aligned) {
+    expected_addresses[expected_cleanup_count] = direct_target;
+    expected_lengths[expected_cleanup_count++] = length;
+  }
+  if (!direct_aligned && prefix != 0) {
+    expected_addresses[expected_cleanup_count] = over_target;
+    expected_lengths[expected_cleanup_count++] = prefix;
+  }
+  if (!direct_aligned && suffix != 0) {
+    expected_addresses[expected_cleanup_count] = (void*)(aligned_address + length);
+    expected_lengths[expected_cleanup_count++] = suffix;
+  }
+
+  const aligned_overmap_statistics_t before = aligned_overmap_statistics(subproc);
+  mi_memid_t memid = _mi_memid_none();
+  aligned_overmap_begin(direct_failure, cleanup_failure, direct_target, over_target);
+  void* const result = _mi_os_alloc_aligned(
+      subproc, length, alignment, commit, false /* allow_large */, &memid);
+  const aligned_overmap_probe_t probe = aligned_overmap_probe;
+  aligned_overmap_probe.active = false;
+
+  const int64_t expected_maps = direct_aligned ? 1 : 2;
+  const void* const expected_result = direct_aligned ? direct_target : (void*)aligned_address;
+  bool complete = result == expected_result
+      && memid.mem.os.base == expected_result
+      && memid.mem.os.size == length
+      && memid.initially_committed == commit
+      && probe.over_mmap_calls == (direct_aligned ? 0 : 1)
+      && (direct_failure ? probe.direct_mmap_calls >= 1 : probe.direct_mmap_calls == 1)
+      && aligned_overmap_cleanup_matches(
+          &probe, expected_cleanup_count, expected_addresses, expected_lengths)
+      && aligned_overmap_allocation_statistics_match(
+          before, subproc, length, commit, expected_maps);
+  if (result == NULL) return false;
+
+  void* escaped_address = NULL;
+  size_t escaped_length = 0;
+  if (cleanup_failure == 1) {
+    escaped_address = direct_target;
+    escaped_length = length;
+  } else if (cleanup_failure == 2) {
+    escaped_address = over_target;
+    escaped_length = prefix;
+  } else if (cleanup_failure == 3) {
+    escaped_address = (void*)(aligned_address + length);
+    escaped_length = suffix;
+  }
+  if (escaped_address != NULL) {
+    complete = complete && escaped_length != 0
+        && aligned_overmap_mapping_is_live(escaped_address, page);
+  }
+
+  _mi_os_free_ex(subproc, result, length, commit, memid);
+  complete = complete && aligned_overmap_release_statistics_match(
+      before, subproc, length, commit, expected_maps);
+  if (escaped_address != NULL) {
+    /* This is the source-observable mismatch: `memid` frees only the returned
+     * middle while a failed best-effort cleanup range remains mapped. The
+     * raw cleanup below is fixture teardown, not a source retry. */
+    complete = complete && aligned_overmap_mapping_is_live(escaped_address, page)
+        && __real_munmap(escaped_address, escaped_length) == 0;
+  }
+  return complete;
+}
+
+static int run_aligned_overmap_matrix_child(int record_descriptor) {
+  aligned_overmap_matrix_record_t record = {0};
+  _mi_os_init();
+  mi_process_init();
+  mi_subproc_t* const subproc = _mi_subproc_main();
+  if (subproc == NULL) return 1;
+  record.normal_direct_aligned = run_aligned_overmap_case(
+      subproc, ALIGNED_OVERMAP_DIRECT_ALIGNED, false);
+  record.direct_map_failure_fallback = run_aligned_overmap_case(
+      subproc, ALIGNED_OVERMAP_DIRECT_MAP_FAILURE_FALLBACK, false);
+  record.prefix_zero_suffix_only = run_aligned_overmap_case(
+      subproc, ALIGNED_OVERMAP_PREFIX_ZERO_SUFFIX_ONLY, false);
+  record.complete_direct_prefix_suffix_cleanup = run_aligned_overmap_case(
+      subproc, ALIGNED_OVERMAP_COMPLETE_CLEANUP, false);
+  record.direct_cleanup_failure_reserved_source_continues_escaped_live_stats =
+      run_aligned_overmap_case(subproc, ALIGNED_OVERMAP_DIRECT_CLEANUP_FAILURE, false);
+  record.direct_cleanup_failure_committed_source_continues_escaped_live_stats =
+      run_aligned_overmap_case(subproc, ALIGNED_OVERMAP_DIRECT_CLEANUP_FAILURE, true);
+  record.prefix_cleanup_failure_reserved_source_continues_escaped_live_stats =
+      run_aligned_overmap_case(subproc, ALIGNED_OVERMAP_PREFIX_CLEANUP_FAILURE, false);
+  record.prefix_cleanup_failure_committed_source_continues_escaped_live_stats =
+      run_aligned_overmap_case(subproc, ALIGNED_OVERMAP_PREFIX_CLEANUP_FAILURE, true);
+  record.suffix_cleanup_failure_reserved_source_continues_escaped_live_stats =
+      run_aligned_overmap_case(subproc, ALIGNED_OVERMAP_SUFFIX_CLEANUP_FAILURE, false);
+  record.suffix_cleanup_failure_committed_source_continues_escaped_live_stats =
+      run_aligned_overmap_case(subproc, ALIGNED_OVERMAP_SUFFIX_CLEANUP_FAILURE, true);
+  if (!write_all(record_descriptor, &record, sizeof(record))) return 2;
+  return record.normal_direct_aligned
+      && record.direct_map_failure_fallback
+      && record.prefix_zero_suffix_only
+      && record.complete_direct_prefix_suffix_cleanup
+      && record.direct_cleanup_failure_reserved_source_continues_escaped_live_stats
+      && record.direct_cleanup_failure_committed_source_continues_escaped_live_stats
+      && record.prefix_cleanup_failure_reserved_source_continues_escaped_live_stats
+      && record.prefix_cleanup_failure_committed_source_continues_escaped_live_stats
+      && record.suffix_cleanup_failure_reserved_source_continues_escaped_live_stats
+      && record.suffix_cleanup_failure_committed_source_continues_escaped_live_stats ? 0 : 3;
+}
+
+static bool capture_aligned_overmap_matrix_child(
+    aligned_overmap_matrix_record_t* record) {
+  int descriptors[2];
+  if (pipe(descriptors) != 0) return false;
+  const pid_t child = fork();
+  if (child < 0) {
+    close(descriptors[0]);
+    close(descriptors[1]);
+    return false;
+  }
+  if (child == 0) {
+    close(descriptors[0]);
+    const int result = run_aligned_overmap_matrix_child(descriptors[1]);
+    close(descriptors[1]);
+    _exit(result);
+  }
+  close(descriptors[1]);
+  const size_t record_bytes = read_all(descriptors[0], record, sizeof(*record));
+  close(descriptors[0]);
+  int status = 0;
+  pid_t waited;
+  do {
+    waited = waitpid(child, &status, 0);
+  } while (waited < 0 && errno == EINTR);
+  const bool captured = record_bytes == sizeof(*record)
+      && waited == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  if (!captured) {
+    fprintf(stderr,
+            "aligned-overmap child failed: bytes=%zu expected=%zu waited=%ld expected_pid=%ld "
+            "errno=%d exited=%d status=%d\n",
+            record_bytes, sizeof(*record), (long)waited, (long)child,
+            waited < 0 ? errno : 0, waited == child && WIFEXITED(status),
+            waited == child && WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+  }
+  return captured;
+}
+
 #if defined(CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE)
 
 #define ALIGNED_HINT_SOURCE_PROFILE_BEGIN \
@@ -1313,6 +1718,8 @@ int main(void) {
    * child proves `_mi_os_get_aligned_hint` advances its zero static cursor
    * before refusing to use `_mi_theap_empty`; all mutations are COW, so the
    * parent remains cold for the separately selected policy child below. */
+  aligned_overmap_matrix_record_t aligned_overmap_record = {0};
+  if (!capture_aligned_overmap_matrix_child(&aligned_overmap_record)) return 40;
   const bool aligned_hint_cold_missing_default_advances =
       capture_aligned_hint_cold_child();
   if (!aligned_hint_cold_missing_default_advances) return 38;
@@ -1793,6 +2200,28 @@ int main(void) {
       policy_record.regular_hinted_map_after_large_fallback);
   U("m2.vm.policy.thp_advice_failure_ignored", policy_record.thp_advice_failure_ignored);
   puts("CRABC_MI_M2_VM_TRACE_END");
+  puts("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN");
+  U("m2.vm.aligned_overmap.c.normal_direct_aligned_source_owner_and_stats",
+      aligned_overmap_record.normal_direct_aligned);
+  U("m2.vm.aligned_overmap.c.direct_map_failure_fallback_source_owner_and_stats",
+      aligned_overmap_record.direct_map_failure_fallback);
+  U("m2.vm.aligned_overmap.c.prefix_zero_suffix_only_source_geometry_and_stats",
+      aligned_overmap_record.prefix_zero_suffix_only);
+  U("m2.vm.aligned_overmap.c.complete_direct_prefix_suffix_cleanup_source_owner_and_stats",
+      aligned_overmap_record.complete_direct_prefix_suffix_cleanup);
+  U("m2.vm.aligned_overmap.c.direct_cleanup_failure_reserved_source_continues_escaped_live_stats",
+      aligned_overmap_record.direct_cleanup_failure_reserved_source_continues_escaped_live_stats);
+  U("m2.vm.aligned_overmap.c.direct_cleanup_failure_committed_source_continues_escaped_live_stats",
+      aligned_overmap_record.direct_cleanup_failure_committed_source_continues_escaped_live_stats);
+  U("m2.vm.aligned_overmap.c.prefix_cleanup_failure_reserved_source_continues_escaped_live_stats",
+      aligned_overmap_record.prefix_cleanup_failure_reserved_source_continues_escaped_live_stats);
+  U("m2.vm.aligned_overmap.c.prefix_cleanup_failure_committed_source_continues_escaped_live_stats",
+      aligned_overmap_record.prefix_cleanup_failure_committed_source_continues_escaped_live_stats);
+  U("m2.vm.aligned_overmap.c.suffix_cleanup_failure_reserved_source_continues_escaped_live_stats",
+      aligned_overmap_record.suffix_cleanup_failure_reserved_source_continues_escaped_live_stats);
+  U("m2.vm.aligned_overmap.c.suffix_cleanup_failure_committed_source_continues_escaped_live_stats",
+      aligned_overmap_record.suffix_cleanup_failure_committed_source_continues_escaped_live_stats);
+  puts("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END");
   return 0;
 }
 #endif  /* CRABC_M2_ALIGNED_HINT_SOURCE_PROFILE */

@@ -321,7 +321,7 @@ M2_X86_64_VM_FRAGMENT = ALLOCATOR_ROOT / "m2-vm-x86_64-v3.5.0.fragment.json"
 # rows into both the aggregate manifest and Python. Source bytes are verified
 # separately against the upstream archive before any native check executes.
 M2_X86_64_BITMAP_FRAGMENT_DIGEST = "dbb2bc7d34762819f7ed76c3b50fd3d8599d46b0ba7b9f78fcc9310afe536300"
-M2_X86_64_VM_FRAGMENT_DIGEST = "1605a0bf0cc4d3253cf2ecb17c8cbe22938afe042dad71ee90a362eb5da893d4"
+M2_X86_64_VM_FRAGMENT_DIGEST = "fed578b1abfa281b5423daa0f5e19d4a9af0bad262ec075252e3f360d36e2c72"
 M2_X86_64_PAGE_MAP_CHECK_IDS = (
     "successful-page-map-lifecycle",
     "lazy-page-map-commit-failure",
@@ -12044,6 +12044,7 @@ def validate_x86_64_m2_memory_substrate_contract(
                     "c-rust-native-bitmaps",
                     "c-rust-vm-primitives-fixed-lifecycle",
                     "c-rust-vm-primitives-source-profile-matrix",
+                    "c-rust-aligned-overmap-cleanup-boundary-matrix",
                 }
                 or not isinstance(raw_check.get("target"), str)
                 or type(raw_check.get("expected_passed_test_count")) is not int
@@ -12531,12 +12532,13 @@ def _m2_x86_64_vm_aligned_hint_profile_c_commands_are_bound(
 def _m2_x86_64_vm_check_records(
     summary: Mapping[str, Any], evidence: object
 ) -> list[dict[str, Any]]:
-    """Turn the real fixed-profile C/Rust VM differential into its one receipt.
+    """Turn the three real native C/Rust VM boundaries into their receipts.
 
-    The other twenty-four VM receipts are emitted by the aggregate's exact
-    source test batch. This validator binds the differential to the immutable
-    fragment, all pinned-C branch anchors, and the component's explicit open
-    frontier so a trace count alone can never stand in for VM qualification.
+    The other twenty-five VM receipts are emitted by the aggregate's exact
+    source test batch. This validator binds the lifecycle, source-profile, and
+    named aligned-overmap ownership boundary to the immutable fragment, all
+    pinned-C branch anchors, and the component's explicit open frontier so a
+    trace count alone can never stand in for VM qualification.
     """
 
     component = next(item for item in summary["components"] if item["id"] == "vm-primitives")
@@ -12548,6 +12550,10 @@ def _m2_x86_64_vm_check_records(
     profile_check = next(
         check for check in component["checks"]
         if check["id"] == "aligned-hint-source-profile-and-direct-caller-matrix"
+    )
+    aligned_overmap_check = next(
+        check for check in component["checks"]
+        if check["id"] == "aligned-overmap-cleanup-c-rust-boundary-matrix"
     )
     expected_anchor_rows: list[Mapping[str, Any]] = []
     seen_anchors: set[tuple[object, object, object]] = set()
@@ -12581,9 +12587,13 @@ def _m2_x86_64_vm_check_records(
         or evidence.get("compared_value_count") != len(producer.TRACE_KEYS)
         or evidence.get("aligned_hint_profile_comparison")
         != {"compared_value_count": len(producer.ALIGNED_HINT_PROFILE_TRACE_KEYS), "status": "matched"}
+        or evidence.get("aligned_overmap_comparison")
+        != producer.ALIGNED_OVERMAP_COMPARISON
         or evidence.get("rust_passed_test_count") != trace_check["expected_passed_test_count"]
         or evidence.get("aligned_hint_profile_rust_passed_test_count")
         != profile_check["expected_passed_test_count"]
+        or evidence.get("aligned_overmap_rust_passed_test_count")
+        != aligned_overmap_check["expected_passed_test_count"]
         or evidence.get("nonclaims") != component["remaining_conditions"]
         or not isinstance(evidence.get("trace_sha256"), str)
         or re.fullmatch(r"[0-9a-f]{64}", str(evidence.get("trace_sha256"))) is None
@@ -12591,11 +12601,20 @@ def _m2_x86_64_vm_check_records(
         or re.fullmatch(
             r"[0-9a-f]{64}", str(evidence.get("aligned_hint_profile_trace_sha256"))
         ) is None
+        or not isinstance(evidence.get("aligned_overmap_c_trace_sha256"), str)
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(evidence.get("aligned_overmap_c_trace_sha256"))
+        ) is None
+        or not isinstance(evidence.get("aligned_overmap_rust_trace_sha256"), str)
+        or re.fullmatch(
+            r"[0-9a-f]{64}", str(evidence.get("aligned_overmap_rust_trace_sha256"))
+        ) is None
     ):
         raise HarnessError("native x86 M2 VM producer result is missing or invalid")
     command = evidence.get("rust_command")
     c_command = evidence.get("c_command")
     profile_command = evidence.get("aligned_hint_profile_rust_command")
+    aligned_overmap_command = evidence.get("aligned_overmap_rust_command")
     if (
         not _m2_x86_64_vm_rust_receipt_is_bound(
             evidence.get("rust_build_command"),
@@ -12614,6 +12633,13 @@ def _m2_x86_64_vm_check_records(
         )
         or not _m2_x86_64_vm_aligned_hint_profile_c_commands_are_bound(
             evidence.get("aligned_hint_profile_c_commands"), producer
+        )
+        or not _m2_x86_64_vm_rust_receipt_is_bound(
+            evidence.get("rust_build_command"),
+            evidence.get("rust_execution"),
+            aligned_overmap_command,
+            evidence.get("rust_test_binary"),
+            target=aligned_overmap_check["target"],
         )
     ):
         raise HarnessError("native x86 M2 VM producer command provenance is invalid")
@@ -12672,6 +12698,15 @@ def _m2_x86_64_vm_check_records(
             "id": profile_check["id"],
             "passed_test_count": profile_check["expected_passed_test_count"],
             "target": profile_check["target"],
+        },
+        {
+            "comparison_status": "expected-divergence-verified",
+            "component": "vm-primitives",
+            "command": list(aligned_overmap_command),
+            "evidence_scope": "bounded-native-c-rust-aligned-overmap-cleanup-owner-boundary",
+            "id": aligned_overmap_check["id"],
+            "passed_test_count": aligned_overmap_check["expected_passed_test_count"],
+            "target": aligned_overmap_check["target"],
         },
     ]
 
@@ -12776,6 +12811,7 @@ def m2_x86_64_memory_substrate_report(
         if component_id not in checks_by_component:
             raise HarnessError("native x86 M2 focused check has an unknown component")
         checks_by_component[component_id].append(dict(check))
+    expected_vm_check_ids = {check["id"] for check in expected_vm_records}
     components: list[dict[str, Any]] = []
     unmet: list[str] = []
     for component in summary["components"]:
@@ -12820,7 +12856,7 @@ def m2_x86_64_memory_substrate_report(
                 for check, expected in (
                     (check, declared[check["id"]])
                     for check in checks
-                    if check["id"] != expected_vm_records[0]["id"]
+                    if check["id"] not in expected_vm_check_ids
                 )
             ]:
                 raise HarnessError("native x86 M2 VM executed receipt inventory changed")
@@ -12969,8 +13005,13 @@ def run_x86_64_m2_memory_substrate(*, offline: bool) -> dict[str, Any]:
             summary,
             test_program,
             already_executed_check_ids=frozenset(
-                {success_check["id"], lazy_check["id"], cold_check["id"], vm_checks[0]["id"],
-                 *(check["id"] for check in bitmap_checks)}
+                {
+                    success_check["id"],
+                    lazy_check["id"],
+                    cold_check["id"],
+                    *(check["id"] for check in vm_checks),
+                    *(check["id"] for check in bitmap_checks),
+                }
             ),
             gate_name="native x86 M2 focused source evidence",
         ),

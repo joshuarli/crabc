@@ -106,7 +106,10 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
         evidence = self.bitmap_evidence()
         vm_evidence = NativeVmAssemblyTests.vm_evidence(summary)
         checks = RUNNER._m2_x86_64_vm_check_records(summary, vm_evidence)
-        for check in summary['components'][0]['checks'][1:]:
+        custom_vm_check_ids = {check['id'] for check in checks}
+        for check in summary['components'][0]['checks']:
+            if check['id'] in custom_vm_check_ids:
+                continue
             checks.append({'component': 'vm-primitives', 'command': ['/workspace/.work/prepared-test'],
                            'id': check['id'], 'passed_test_count': 1, 'target': check['target'],
                            'evidence_scope': 'focused-source-test-batch'})
@@ -129,6 +132,33 @@ class NativeBitmapAssemblyTests(unittest.TestCase):
             'bounded_source_evidence': {'status': 'passed', 'record_count': len(records), 'records': records},
             'focused_checks': checks, 'bitmap_evidence': evidence, 'vm_evidence': vm_evidence,
         }
+
+    def test_shared_vm_report_keeps_the_complete_custom_receipt_set_out_of_the_focused_batch(self):
+        arguments = self.report_arguments()
+        vm_checks = [
+            check for check in arguments['focused_checks']
+            if check['component'] == 'vm-primitives'
+        ]
+        custom = [
+            check for check in vm_checks
+            if check.get('comparison_status') is not None
+        ]
+        self.assertEqual(
+            [check['id'] for check in custom],
+            [
+                'native-vm-fixed-lifecycle-differential',
+                'aligned-hint-source-profile-and-direct-caller-matrix',
+                'aligned-overmap-cleanup-c-rust-boundary-matrix',
+            ],
+        )
+        self.assertEqual(len({check['id'] for check in vm_checks}), len(vm_checks))
+        self.assertFalse(
+            any(
+                check['id'] == 'aligned-overmap-cleanup-c-rust-boundary-matrix'
+                and check.get('evidence_scope') == 'focused-source-test-batch'
+                for check in vm_checks
+            )
+        )
 
     def test_report_contains_actual_bitmap_checks_without_promoting_partial_components(self):
         report = RUNNER.m2_x86_64_memory_substrate_report(**self.report_arguments())

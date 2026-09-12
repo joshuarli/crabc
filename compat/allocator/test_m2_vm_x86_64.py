@@ -12,11 +12,28 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from m2_vm_x86_64 import TRACE_KEYS, load_fragment, parse_trace
+from m2_vm_x86_64 import (
+    ALIGNED_OVERMAP_C_TRACE_KEYS,
+    ALIGNED_OVERMAP_RUST_TRACE_KEYS,
+    ALIGNED_OVERMAP_TRACE_BEGIN,
+    ALIGNED_OVERMAP_TRACE_END,
+    TRACE_KEYS,
+    load_fragment,
+    parse_aligned_overmap_trace,
+    parse_trace,
+)
 
 
 ROOT = Path(__file__).resolve().parents[2]
 FRAGMENT = ROOT / "compat/allocator/m2-vm-x86_64-v3.5.0.fragment.json"
+
+
+def valid_aligned_overmap_trace(keys: tuple[str, ...]) -> str:
+    return "\n".join(
+        [ALIGNED_OVERMAP_TRACE_BEGIN]
+        + [f"{key}=1" for key in keys]
+        + [ALIGNED_OVERMAP_TRACE_END]
+    )
 
 
 def valid_trace() -> str:
@@ -48,6 +65,41 @@ class NativeM2VmTraceTests(unittest.TestCase):
         trace = parse_trace(valid_trace(), source="test")
         self.assertEqual(tuple(trace), TRACE_KEYS)
 
+    def test_aligned_overmap_sides_remain_separate_and_fail_closed(self) -> None:
+        c_trace = valid_aligned_overmap_trace(ALIGNED_OVERMAP_C_TRACE_KEYS)
+        rust_trace = valid_aligned_overmap_trace(ALIGNED_OVERMAP_RUST_TRACE_KEYS)
+        self.assertEqual(
+            parse_aligned_overmap_trace(
+                c_trace, source="C", expected_keys=ALIGNED_OVERMAP_C_TRACE_KEYS
+            ),
+            {key: 1 for key in ALIGNED_OVERMAP_C_TRACE_KEYS},
+        )
+        self.assertEqual(
+            parse_aligned_overmap_trace(
+                rust_trace, source="Rust", expected_keys=ALIGNED_OVERMAP_RUST_TRACE_KEYS
+            ),
+            {key: 1 for key in ALIGNED_OVERMAP_RUST_TRACE_KEYS},
+        )
+        for malformed in (
+            c_trace.replace(
+                f"{ALIGNED_OVERMAP_C_TRACE_KEYS[0]}=1\n", "", 1
+            ),
+            c_trace.replace(
+                f"{ALIGNED_OVERMAP_C_TRACE_KEYS[0]}=1",
+                f"{ALIGNED_OVERMAP_C_TRACE_KEYS[0]}=0",
+                1,
+            ),
+            c_trace.replace(
+                f"{ALIGNED_OVERMAP_C_TRACE_KEYS[0]}=1",
+                f"{ALIGNED_OVERMAP_RUST_TRACE_KEYS[0]}=1",
+                1,
+            ),
+        ):
+            with self.subTest(malformed=malformed), self.assertRaises(ValueError):
+                parse_aligned_overmap_trace(
+                    malformed, source="C", expected_keys=ALIGNED_OVERMAP_C_TRACE_KEYS
+                )
+
     def test_missing_duplicate_unknown_and_unmet_relations_fail_closed(self) -> None:
         good = valid_trace()
         malformed = (
@@ -67,7 +119,7 @@ class NativeM2VmTraceTests(unittest.TestCase):
 
 class NativeM2VmFragmentTests(unittest.TestCase):
     def setUp(self) -> None:
-        scratch = ROOT / ".work/tmp"
+        scratch = ROOT / ".work/allocator-x86_64/test-m2-vm-host"
         scratch.mkdir(parents=True, exist_ok=True)
         self.temporary = tempfile.TemporaryDirectory(dir=scratch)
         self.addCleanup(self.temporary.cleanup)
@@ -81,7 +133,11 @@ class NativeM2VmFragmentTests(unittest.TestCase):
     def test_checked_fragment_preserves_the_complete_branch_matrix(self) -> None:
         loaded = load_fragment(self.write_fragment(self.fragment))
         self.assertEqual(loaded["component"]["completion_status"], "partial")
-        self.assertEqual(len(loaded["component"]["checks"]), 25)
+        self.assertEqual(len(loaded["component"]["checks"]), 28)
+        self.assertIn(
+            "aligned-overmap-cleanup-c-rust-boundary-matrix",
+            [check["id"] for check in loaded["component"]["checks"]],
+        )
         self.assertEqual(len(loaded["component"]["branch_matrix"]), 14)
 
     def test_deleting_or_reclassifying_a_required_open_branch_fails(self) -> None:

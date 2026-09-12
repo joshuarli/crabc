@@ -7788,6 +7788,268 @@ mod tests {
             .expect("the exact aligned result releases after its three trims");
     }
 
+    /// Returns one isolated paired source process and a deliberately small
+    /// aligned-map geometry.  These witnesses use the existing test-only
+    /// full-trim input solely to make every cleanup edge deterministic; the
+    /// pinned C oracle keeps its literal `size + alignment` geometry.
+    fn m2_aligned_overmap_process_fixture() -> (MemoryConfig, VmProcess<'static>, usize, usize) {
+        let mut config = MemoryConfig::from_observations(
+            PageSize::new(4 * 1024).expect("four KiB is one selected Linux page size"),
+            1024 * 1024,
+            true,
+            false,
+        );
+        config.test_force_full_aligned_map_trim();
+        let page = config.page_size().bytes();
+        let length = page.checked_mul(2).expect("the selected map length fits");
+        let alignment = page.checked_mul(2).expect("the selected alignment fits");
+        let policy = std::boxed::Box::leak(std::boxed::Box::new(VmPolicy::defaults_for_test()));
+        let subprocess = crate::subproc::MainSubprocess::test_static_owner();
+        (config, VmProcess::new(policy, subprocess), length, alignment)
+    }
+
+    fn m2_aligned_overmap_counter_delta_is(
+        before: crate::statistics::VmStatisticsSnapshot,
+        after: crate::statistics::VmStatisticsSnapshot,
+        maps: i64,
+        reserved: i64,
+        committed: i64,
+    ) {
+        assert_eq!(after.mmap_calls - before.mmap_calls, maps);
+        assert_eq!(after.reserved_total - before.reserved_total, reserved);
+        assert_eq!(after.reserved_current - before.reserved_current, reserved);
+        assert_eq!(after.committed_total - before.committed_total, committed);
+        assert_eq!(after.committed_current - before.committed_current, committed);
+    }
+
+    fn m2_aligned_overmap_direct_aligned_process_witness() {
+        let fault = fault::install(fault::Plan::disabled());
+        let (mut config, process, length, _alignment) = m2_aligned_overmap_process_fixture();
+        // A Linux mmap is page aligned, so the source direct candidate is
+        // already aligned at this one-page request alignment. Do not use the
+        // full-trim seam for this normal direct-success row.
+        config.force_full_aligned_map_trim = false;
+        let before = process.subprocess().vm_statistics().snapshot();
+        let mut mapping = Mapping::map_aligned_for_process(
+            process,
+            config,
+            length,
+            config.page_size().bytes(),
+            MapAccess::Reserved,
+            false,
+            None,
+        )
+        .expect("the direct page-aligned process mapping succeeds");
+        let after = process.subprocess().vm_statistics().snapshot();
+        m2_aligned_overmap_counter_delta_is(before, after, 1, length as i64, 0);
+        assert_eq!(mapping.base().unwrap().addr() % config.page_size().bytes(), 0);
+        assert_eq!(mapping.length(), Ok(length));
+        mapping
+            .unmap_for_process(process, 0, false)
+            .expect("the direct process owner releases once");
+        assert_eq!(fault.observed(), 0);
+    }
+
+    fn m2_aligned_overmap_direct_map_failure_prefix_zero_witness() {
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Map,
+            1,
+            Errno::NOMEM,
+        ));
+        let (mut config, process, length, _alignment) = m2_aligned_overmap_process_fixture();
+        // This is the normal source geometry, not the forced three-cleanup
+        // geometry: a one-page alignment makes the successful overmap's
+        // prefix zero and leaves only its suffix to trim.
+        config.force_full_aligned_map_trim = false;
+        let page = config.page_size().bytes();
+        let before = process.subprocess().vm_statistics().snapshot();
+        let mut mapping = Mapping::map_aligned_for_process(
+            process,
+            config,
+            length,
+            page,
+            MapAccess::Reserved,
+            false,
+            None,
+        )
+        .expect("a failed direct primitive falls through to the source overmap");
+        let after = process.subprocess().vm_statistics().snapshot();
+        m2_aligned_overmap_counter_delta_is(before, after, 2, length as i64, 0);
+        assert_eq!(fault.observed(), 2, "one failed and one successful map edge run");
+        assert_eq!(mapping.base().unwrap().addr() % page, 0);
+        assert_eq!(mapping.length(), Ok(length));
+        fault.set(fault::Plan::disabled());
+        mapping
+            .unmap_for_process(process, 0, false)
+            .expect("the suffix-only aligned result retains one exact process owner");
+    }
+
+    fn m2_aligned_overmap_complete_cleanup_process_witness() {
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            99,
+            Errno::NOMEM,
+        ));
+        let (config, process, length, alignment) = m2_aligned_overmap_process_fixture();
+        let before = process.subprocess().vm_statistics().snapshot();
+        let mut mapping = Mapping::map_aligned_for_process(
+            process,
+            config,
+            length,
+            alignment,
+            MapAccess::Reserved,
+            false,
+            None,
+        )
+        .expect("the forced direct, prefix, and suffix cleanup sequence succeeds");
+        let after = process.subprocess().vm_statistics().snapshot();
+        m2_aligned_overmap_counter_delta_is(before, after, 2, length as i64, 0);
+        assert_eq!(fault.observed(), 3, "direct, prefix, and suffix frees all ran");
+        assert_eq!(mapping.base().unwrap().addr() % alignment, 0);
+        assert_eq!(mapping.length(), Ok(length));
+        fault.set(fault::Plan::disabled());
+        mapping
+            .unmap_for_process(process, 0, false)
+            .expect("the fully trimmed process owner releases once");
+    }
+
+    fn m2_aligned_overmap_cleanup_failure_process_witness(
+        access: MapAccess,
+        cleanup_ordinal: usize,
+    ) {
+        let fault = fault::install(fault::Plan::at(
+            fault::Point::Unmap,
+            cleanup_ordinal,
+            Errno::NOMEM,
+        ));
+        let (config, process, length, alignment) = m2_aligned_overmap_process_fixture();
+        let over_length = length
+            .checked_add(alignment.checked_mul(2).expect("the test headroom fits"))
+            .expect("the forced overmap length fits");
+        let before = process.subprocess().vm_statistics().snapshot();
+        let failure = match Mapping::map_aligned_for_process(
+            process,
+            config,
+            length,
+            alignment,
+            access,
+            false,
+            None,
+        ) {
+            Ok(mut mapping) => {
+                let _ = mapping.unmap();
+                panic!("the selected cleanup edge must transfer its live owner")
+            }
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.error(), Errno::NOMEM);
+        assert_eq!(fault.observed(), cleanup_ordinal);
+        let mut retained = failure
+            .into_mapping()
+            .expect("a failed aligned cleanup retains its exact mapping");
+        let after = process.subprocess().vm_statistics().snapshot();
+        let committed_delta = |bytes: usize| {
+            if matches!(access, MapAccess::Committed) {
+                bytes as i64
+            } else {
+                0
+            }
+        };
+
+        match cleanup_ordinal {
+            // Rust stops at the failed direct cleanup and retains that direct
+            // map. Pinned C instead keeps going into an overmap, which is the
+            // deliberate owner-boundary difference recorded by the native
+            // companion trace.
+            1 => {
+                m2_aligned_overmap_counter_delta_is(before, after, 1, 0, committed_delta(0));
+                assert_eq!(retained.length(), Ok(length));
+            }
+            // The failed prefix is still part of source adjustment accounting,
+            // but Rust preserves the complete overmap and does not attempt the
+            // later suffix release after this error.
+            2 => {
+                let base = retained.base().expect("the retained overmap remains live").addr();
+                let aligned = if base % alignment == 0 {
+                    base.checked_add(alignment).expect("the forced aligned boundary fits")
+                } else {
+                    invariants::align_up(base, alignment).expect("the aligned boundary fits")
+                };
+                let prefix = aligned - base;
+                assert!(prefix != 0 && prefix < over_length);
+                m2_aligned_overmap_counter_delta_is(
+                    before,
+                    after,
+                    2,
+                    (over_length - prefix) as i64,
+                    committed_delta(over_length - prefix),
+                );
+                assert_eq!(retained.length(), Ok(over_length));
+            }
+            // The successful prefix changes the Rust owner before the suffix
+            // failure. Its accounting has already reached the aligned middle,
+            // while the returned owner still includes the live suffix.
+            3 => {
+                m2_aligned_overmap_counter_delta_is(
+                    before,
+                    after,
+                    2,
+                    length as i64,
+                    committed_delta(length),
+                );
+                assert_eq!(retained.base().unwrap().addr() % alignment, 0);
+                assert!(retained.length().unwrap() > length);
+            }
+            _ => panic!("the finite aligned-overmap matrix has three cleanup edges"),
+        }
+
+        // The error carries a terminal, already-adjusted owner. A test-only
+        // raw teardown must not replay a full source counter transition; this
+        // confirms the retained mapping can be released without double
+        // accounting while production leaves recovery to its named owner.
+        fault.set(fault::Plan::disabled());
+        retained
+            .unmap()
+            .expect("the retained aligned-map owner releases through one raw edge");
+        assert_eq!(process.subprocess().vm_statistics().snapshot(), after);
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn emit_m2_aligned_overmap_cleanup_c_rust_boundary_trace() {
+        // This finite matrix intentionally does not compare C and Rust values
+        // as equal. `src/os.c:382,418-423` continues after a void cleanup
+        // failure; Rust returns `AlignedMappingFailure` with the exact live
+        // owner. The native producer validates both side-specific traces and
+        // records that accepted safety strengthening explicitly.
+        m2_aligned_overmap_direct_aligned_process_witness();
+        m2_aligned_overmap_direct_map_failure_prefix_zero_witness();
+        m2_aligned_overmap_complete_cleanup_process_witness();
+        for access in [MapAccess::Reserved, MapAccess::Committed] {
+            for cleanup_ordinal in 1..=3 {
+                m2_aligned_overmap_cleanup_failure_process_witness(access, cleanup_ordinal);
+            }
+        }
+
+        macro_rules! emit {
+            ($name:literal) => {
+                std::println!("{}=1", $name);
+            };
+        }
+
+        std::println!("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN");
+        emit!("m2.vm.aligned_overmap.rust.normal_direct_aligned_owner_and_stats");
+        emit!("m2.vm.aligned_overmap.rust.direct_map_failure_fallback_prefix_zero_suffix_only");
+        emit!("m2.vm.aligned_overmap.rust.complete_direct_prefix_suffix_cleanup_owner_and_stats");
+        emit!("m2.vm.aligned_overmap.rust.direct_cleanup_failure_reserved_retains_owner_once");
+        emit!("m2.vm.aligned_overmap.rust.direct_cleanup_failure_committed_retains_owner_once");
+        emit!("m2.vm.aligned_overmap.rust.prefix_cleanup_failure_reserved_retains_full_overmap_once");
+        emit!("m2.vm.aligned_overmap.rust.prefix_cleanup_failure_committed_retains_full_overmap_once");
+        emit!("m2.vm.aligned_overmap.rust.suffix_cleanup_failure_reserved_retains_suffix_once");
+        emit!("m2.vm.aligned_overmap.rust.suffix_cleanup_failure_committed_retains_suffix_once");
+        std::println!("CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END");
+    }
+
     #[test]
     fn purge_failure_does_not_substitute_an_unclaimed_memory_transition() {
         let fault = fault::install(fault::Plan::disabled());
