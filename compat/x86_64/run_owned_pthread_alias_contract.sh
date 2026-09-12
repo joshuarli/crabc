@@ -127,6 +127,22 @@ same_transcript() {
     cmp "$WORK/$expected.status" "$WORK/$actual.status" || fail "$actual status differs from $expected"
 }
 
+assert_elf_type() {
+    local label="$1" binary="$2" expected="$3"
+    readelf --file-header --wide "$binary" >"$WORK/$label.file-header.txt"
+    case "$expected" in
+        exec)
+            grep -Eq 'Type:[[:space:]]+EXEC[[:space:]]+\(Executable file\)' \
+                "$WORK/$label.file-header.txt" || fail "$label is not ET_EXEC"
+            ;;
+        pie)
+            grep -Eq 'Type:[[:space:]]+DYN[[:space:]]+\(Position-Independent Executable file\)' \
+                "$WORK/$label.file-header.txt" || fail "$label is not PIE ET_DYN"
+            ;;
+        *) fail "unknown ELF type expectation $expected for $label" ;;
+    esac
+}
+
 compile_object() {
     run contract-compile "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" --dynamic-pie \
         -std=c11 -fno-builtin -fno-stack-protector -pthread -c "$CONTRACT_SOURCE" \
@@ -141,26 +157,56 @@ run oracle "$WORK/oracle-contract"
 [ "$(cat "$WORK/oracle.stdout")" = 'owned-pthread-alias-contract-ok' ] ||
     fail 'pinned musl alias contract transcript drifted'
 [ ! -s "$WORK/oracle.stderr" ] || fail 'pinned musl alias contract emitted stderr'
+assert_elf_type oracle-contract "$WORK/oracle-contract" exec
 
 for mode in static static-pie; do
     run "$mode-link" "$STATIC_PRODUCT/bin/crabc-cc" "-$mode" -pthread \
         "$WORK/contract.o" -o "$WORK/$mode-contract"
+    case "$mode" in
+        static) assert_elf_type "$mode-contract" "$WORK/$mode-contract" exec ;;
+        static-pie) assert_elf_type "$mode-contract" "$WORK/$mode-contract" pie ;;
+    esac
     run "$mode" "$WORK/$mode-contract"
     same_transcript oracle "$mode"
 done
 
 for mode in pie non-pie; do
+    case "$mode" in
+        pie) oracle_mode=(-pie); oracle_type=pie ;;
+        non-pie) oracle_mode=(-no-pie); oracle_type=exec ;;
+    esac
+    run "musl-dynamic-$mode-link" "$ORACLE_CC" -std=c11 -pthread -rdynamic \
+        "${oracle_mode[@]}" -Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1 \
+        "$WORK/contract.o" -o "$WORK/musl-dynamic-$mode-contract"
+    assert_elf_type "musl-dynamic-$mode-contract" \
+        "$WORK/musl-dynamic-$mode-contract" "$oracle_type"
+
+    musl_root="$WORK/musl-dynamic-$mode-root"
+    mkdir "$musl_root" "$musl_root/lib" "$musl_root/usr" "$musl_root/usr/lib"
+    cp "$MUSL_LIB" "$musl_root/lib/ld-musl-x86_64.so.1"
+    cp "$MUSL_LIB" "$musl_root/usr/lib/libc.so"
+    cp "$WORK/musl-dynamic-$mode-contract" "$musl_root/contract"
+    run "musl-dynamic-$mode-kernel" chroot "$musl_root" /contract
+    run "musl-dynamic-$mode-direct" chroot "$musl_root" /lib/ld-musl-x86_64.so.1 /contract
+    same_transcript "musl-dynamic-$mode-kernel" "musl-dynamic-$mode-direct"
+done
+
+for mode in pie non-pie; do
     run "dynamic-$mode-link" "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" "--dynamic-$mode" \
         -pthread -rdynamic "$WORK/contract.o" -o "$WORK/dynamic-$mode-contract"
+    case "$mode" in
+        pie) assert_elf_type "dynamic-$mode-contract" "$WORK/dynamic-$mode-contract" pie ;;
+        non-pie) assert_elf_type "dynamic-$mode-contract" "$WORK/dynamic-$mode-contract" exec ;;
+    esac
 
     root="$WORK/dynamic-$mode-root"
     mkdir "$root" "$root/scratch"
     cp -a "$DYNAMIC_PRODUCT/." "$root"
     cp "$WORK/dynamic-$mode-contract" "$root/contract"
     run "dynamic-$mode-kernel" chroot "$root" /contract
-    same_transcript oracle "dynamic-$mode-kernel"
+    same_transcript "musl-dynamic-$mode-kernel" "dynamic-$mode-kernel"
     run "dynamic-$mode-direct" chroot "$root" "$INTERPRETER" /contract
-    same_transcript oracle "dynamic-$mode-direct"
+    same_transcript "musl-dynamic-$mode-direct" "dynamic-$mode-direct"
 done
 
 readelf --dyn-syms --wide "$MUSL_LIB" >"$WORK/musl-dynamic-symbols.txt"
@@ -169,12 +215,15 @@ readelf --symbols --wide "$MUSL_LIB" >"$WORK/musl-shared-symbols.txt"
 readelf --symbols --wide "$DYNAMIC_PRODUCT/usr/lib/libc.so" >"$WORK/candidate-shared-symbols.txt"
 readelf --symbols --wide "$MUSL_ARCHIVE" >"$WORK/musl-static-symbols.txt"
 readelf --symbols --wide "$STATIC_PRODUCT/usr/lib/libc.a" >"$WORK/candidate-static-symbols.txt"
+readelf --relocs --wide "$MUSL_ARCHIVE" >"$WORK/musl-static-relocations.txt"
+readelf --relocs --wide "$STATIC_PRODUCT/usr/lib/libc.a" >"$WORK/candidate-static-relocations.txt"
 for binary in "$WORK"/dynamic-*-contract; do
     readelf --dyn-syms --wide "$binary" >"$binary.symbols.txt"
 done
 
 python3 -B - "$WORK" "$(dirname "$READER")" <<'PY'
 from collections import defaultdict
+import re
 from pathlib import Path
 import sys
 
@@ -292,22 +341,100 @@ def static(path):
         require_same_definition(alias, target_row, path)
     return table
 
-def mq_notify_public_detach_relocation(path):
+def mq_notify_member(path):
     table = rows(path, {'.symtab'})
     definitions = [row for row in table if row.name == 'mq_notify' and row.section != 'UND']
     if len(definitions) != 1:
         raise SystemExit(f'{path}: expected one mq_notify archive definition, found {definitions}')
-    member = definitions[0].member
-    references = [row for row in table if row.member == member and row.name == 'pthread_detach' and row.section == 'UND']
-    if len(references) != 1:
-        raise SystemExit(f'{path}: mq_notify must retain one public pthread_detach relocation, found {references}')
-    reference = references[0]
-    if shape(reference) != ('NOTYPE', 'GLOBAL', 'DEFAULT'):
-        raise SystemExit(f'{path}: mq_notify pthread_detach relocation drifted: {reference}')
-    local_references = [row for row in table if row.member == member and row.name == '__pthread_detach' and row.section == 'UND']
+    return table, definitions[0].member
+
+def relocation_blocks(path):
+    blocks = []
+    member = ''
+    section = None
+    contents = []
+    for line in Path(path).read_text(encoding='utf-8').splitlines():
+        if line.startswith('File: '):
+            if section is not None:
+                blocks.append((member, section, contents))
+                section = None
+                contents = []
+            member = line[6:]
+            continue
+        if line.startswith("Relocation section '"):
+            if section is not None:
+                blocks.append((member, section, contents))
+            section = line.split("'", 2)[1]
+            contents = []
+            continue
+        if section is not None:
+            contents.append(line)
+    if section is not None:
+        blocks.append((member, section, contents))
+    return blocks
+
+def symbol_relocations(path, member, name):
+    token = re.compile(rf'(?:^|\s){re.escape(name)}(?:\s|\+|$)')
+    return [
+        (section, line)
+        for block_member, section, contents in relocation_blocks(path)
+        if block_member == member
+        for line in contents
+        if token.search(line)
+    ]
+
+def musl_mq_notify_public_detach_relocation(symbols, relocations):
+    table, member = mq_notify_member(symbols)
+    references = [
+        row for row in table
+        if row.member == member and row.name == 'pthread_detach' and row.section == 'UND'
+    ]
+    if len(references) != 1 or shape(references[0]) != ('NOTYPE', 'GLOBAL', 'DEFAULT'):
+        raise SystemExit(
+            f'{symbols}: mq_notify must retain one public undefined pthread_detach '
+            f'reference, found {references}'
+        )
+    local_references = [
+        row for row in table
+        if row.member == member and row.name == '__pthread_detach' and row.section == 'UND'
+    ]
     if local_references:
-        raise SystemExit(f'{path}: mq_notify must not name source-local __pthread_detach: {local_references}')
-    return reference
+        raise SystemExit(
+            f'{symbols}: mq_notify must not name source-local __pthread_detach: '
+            f'{local_references}'
+        )
+    relocated = symbol_relocations(relocations, member, 'pthread_detach')
+    if len(relocated) != 1:
+        raise SystemExit(
+            f'{relocations}: mq_notify must have one public pthread_detach relocation, '
+            f'found {relocated}'
+        )
+    if symbol_relocations(relocations, member, '__pthread_detach'):
+        raise SystemExit(
+            f'{relocations}: mq_notify must not relocate source-local __pthread_detach'
+        )
+    return relocated[0]
+
+def candidate_mq_notify_public_detach_relocation(symbols, relocations):
+    _, member = mq_notify_member(symbols)
+    relocated = symbol_relocations(relocations, member, 'pthread_detach')
+    if len(relocated) != 1:
+        raise SystemExit(
+            f'{relocations}: candidate mq_notify must have one public pthread_detach '
+            f'relocation, found {relocated}'
+        )
+    section, _ = relocated[0]
+    if 'owned_message_queues12notify_start' not in section:
+        raise SystemExit(
+            f'{relocations}: candidate public pthread_detach relocation must originate '
+            f'from mq notify_start, found {section}'
+        )
+    if symbol_relocations(relocations, member, '__pthread_detach'):
+        raise SystemExit(
+            f'{relocations}: candidate mq_notify must not relocate source-local '
+            '__pthread_detach'
+        )
+    return relocated[0]
 
 musl_dynamic = dynamic(work / 'musl-dynamic-symbols.txt')
 candidate_dynamic = dynamic(work / 'candidate-dynamic-symbols.txt')
@@ -315,13 +442,12 @@ musl_shared = shared(work / 'musl-shared-symbols.txt')
 candidate_shared = shared(work / 'candidate-shared-symbols.txt')
 musl_static = static(work / 'musl-static-symbols.txt')
 candidate_static = static(work / 'candidate-static-symbols.txt')
-musl_mq_detach = mq_notify_public_detach_relocation(work / 'musl-static-symbols.txt')
-candidate_mq_detach = mq_notify_public_detach_relocation(work / 'candidate-static-symbols.txt')
-if (shape(musl_mq_detach), musl_mq_detach.section) != (shape(candidate_mq_detach), candidate_mq_detach.section):
-    raise SystemExit(
-        'mq_notify pthread_detach relocation binding/type/section mismatch: '
-        f'{musl_mq_detach} != {candidate_mq_detach}'
-    )
+musl_mq_detach = musl_mq_notify_public_detach_relocation(
+    work / 'musl-static-symbols.txt', work / 'musl-static-relocations.txt'
+)
+candidate_mq_detach = candidate_mq_notify_public_detach_relocation(
+    work / 'candidate-static-symbols.txt', work / 'candidate-static-relocations.txt'
+)
 for name in aliases:
     for left, right, label in ((musl_dynamic, candidate_dynamic, 'dynamic'),
                                (musl_shared, candidate_shared, 'shared'),
@@ -336,4 +462,4 @@ for path in sorted(work.glob('dynamic-*-contract.symbols.txt')):
         raise SystemExit(f'{path}: application override is not dynamic GLOBAL DEFAULT: {row}')
 PY
 
-printf 'owned pthread alias contract: PASS (pinned musl archive/shared aliases, static/static-PIE and dynamic PIE/non-PIE strong public override, mq_notify public detach relocation, synchronous pthread_join hidden-provider route); evidence: %s\n' "$WORK"
+printf 'owned pthread alias contract: PASS (pinned musl archive/shared aliases and matching static/shared execution matrix, exact executable ELF modes, strong public override, mq_notify public detach relocation, synchronous pthread_join hidden-provider route); evidence: %s\n' "$WORK"

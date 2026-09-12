@@ -33,10 +33,10 @@ const AF_NETLINK: c_int = 16;
 const SOCK_RAW_CLOEXEC: c_int = 3 | 0x80000;
 const MSG_WAITALL_NOSIGNAL: c_int = 0x100 | 0x4000;
 
-// `src/mq/mq_notify.c` calls the public spelling. Its archive object therefore
-// retains an undefined pthread_detach relocation that a static application
-// override may resolve. Do not name the source-local provider from this
-// separate translation unit.
+// `src/mq/mq_notify.c` calls the public spelling. This translation unit must
+// keep that pthread_detach relocation public until the final static link, where
+// an application strong override may resolve it. Do not name the source-local
+// provider from this separate translation unit.
 unsafe extern "C" {
     #[link_name = "pthread_detach"]
     fn source_pthread_detach(thread: *mut c_void) -> c_int;

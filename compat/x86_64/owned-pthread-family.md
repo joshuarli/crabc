@@ -139,16 +139,23 @@ static application strong override may receive that source call. The alias
 work does not change its worker, cancellation, synchronization, or lifetime
 logic.
 
-The runner compiles one C11 application object once, links it with pinned musl,
-owned static `ET_EXEC`, static PIE, and owned shared PIE/non-PIE products, and
-runs each shared image through kernel and direct-loader entry. `readelf` checks
-one definition per public name, `FUNC WEAK DEFAULT` public aliases, exact
-member/value/type/section identity with their provider, archive hidden/global
-or source-local binding, and the shared dynamic export boundary. It also
-compares musl's and the candidate's `mq_notify` archive member: both retain a
-public `pthread_detach` relocation and neither names the source-local provider.
-Its strong application `pthread_setcancelstate` override must handle the application's
-direct call while `pthread_join` keeps its internal
+The runner compiles one C11 application object once. It links that object with
+pinned musl static `ET_EXEC`, pinned musl shared PIE/non-PIE, owned static
+`ET_EXEC`, static PIE, and owned shared PIE/non-PIE products. Static candidates
+compare to static musl; each shared candidate kernel/direct-loader execution
+compares to the matching pinned-musl shared mode. `readelf` retains and checks
+`ET_EXEC` for static/non-PIE and PIE `ET_DYN` for static-PIE/shared-PIE before
+checking one definition per public name, `FUNC WEAK DEFAULT` public aliases,
+exact member/value/type/section identity with their provider, archive
+hidden/global or source-local binding, and the shared dynamic export boundary.
+It also checks musl's `mq_notify` archive member and the candidate's
+`notify_start` relocation section: each names public `pthread_detach` and
+neither names the source-local provider. The candidate product builder may
+merge callers and aliases into one object, so this checks the caller relocation
+rather than an unresolved-symbol-table row.
+
+Its strong application `pthread_setcancelstate` override must handle the
+application's direct call while `pthread_join` keeps its internal
 `__pthread_setcancelstate` route, as `src/thread/pthread_join.c` requires. A
 worker result and `pthread_join` provide the completion edge; each command has
 a finite 45-second cap.
