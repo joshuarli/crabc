@@ -528,5 +528,196 @@ ELF Header:
         )
 
 
+SYMBOL_HEADER = "   Num:    Value          Size Type    Bind   Vis      Ndx Name\n"
+DYNAMIC = "Symbol table '.dynsym' contains 7 entries:\n" + SYMBOL_HEADER + """\
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     1: 0000000000000008     8 OBJECT  GLOBAL HIDDEN     1 hidden
+     2: 0000000000000000     4 TLS     LOCAL  DEFAULT    2 local_tls
+     3: 0000000000000000     0 FUNC    WEAK   DEFAULT  UND imported@V1 (2)
+     4: 0000000000000010     0 IFUNC   GLOBAL PROTECTED 1 dispatch@@V2
+     5: 0000000000000020     1 <OS specific>: 12 GLOBAL DEFAULT ABS odd
+     6: 0000000000000040     4 OBJECT  <processor specific>: 13 INTERNAL COM common
+"""
+HEADER = """\
+ELF Header:
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Type:                              REL (Relocatable file)
+  Machine:                           Advanced Micro Devices X86-64
+"""
+SECTIONS = """\
+There are 5 section headers, starting at offset 0x100:
+
+Section Headers:
+  [Nr] Name              Type            Address          Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            0000000000000000 000000 000000 00      0   0  0
+  [ 1] .data             PROGBITS        0000000000000000 000040 000008 00  WA  0   0 32
+  [ 2] .tdata            PROGBITS        0000000000000000 000048 000004 00 WAT  0   0 16
+  [ 3] .symtab           SYMTAB          0000000000000000 000050 0000a8 18      4   3  8
+  [ 4] .strtab           STRTAB          0000000000000000 0000f8 000008 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), l (large), p (processor specific)
+"""
+STATIC = DYNAMIC.replace("'.dynsym'", "'.symtab'")
+
+
+def archive_blocks(texts: list[str], names: list[str] | None = None) -> str:
+    if names is None:
+        names = ["same.o"] * len(texts)
+    return "".join(f"\nFile: /facts/lib.a({name})\n{text}" for name, text in zip(names, texts))
+
+
+class NativeAbiCompleteSymbolFactsTests(unittest.TestCase):
+    def test_all_rows_keep_local_hidden_undefined_versions_and_unknown_kinds(self) -> None:
+        rows = inventory.parse_dynamic_symbol_rows(DYNAMIC)
+        self.assertEqual([row["row_index"] for row in rows], list(range(7)))
+        self.assertIsNone(rows[0]["name"])
+        self.assertEqual(rows[1]["visibility"], "HIDDEN")
+        self.assertEqual(rows[2]["binding"], "LOCAL")
+        self.assertEqual(rows[3]["section_index"], "UND")
+        self.assertEqual(rows[3]["version_index"], 2)
+        self.assertEqual(rows[3]["raw_name"], "imported@V1")
+        self.assertEqual((rows[3]["version"], rows[3]["version_default"]), ("V1", False))
+        self.assertEqual((rows[4]["version"], rows[4]["version_default"]), ("V2", True))
+        self.assertEqual(rows[5]["type"], "<OS specific>: 12")
+        self.assertEqual(rows[6]["binding"], "<processor specific>: 13")
+        self.assertEqual(rows[6]["common_alignment"], 64)
+        self.assertEqual([row["raw"] for row in rows], DYNAMIC.splitlines()[2:])
+
+    def test_archive_duplicate_member_occurrences_and_section_placement_are_exact(self) -> None:
+        facts = inventory.parse_archive_elf_facts(
+            archive_blocks([HEADER, HEADER]), archive_blocks([SECTIONS, SECTIONS]),
+            archive_blocks([STATIC, STATIC.replace("hidden", "other")]),
+            ["same.o", "same.o"], expected_archive="/facts/lib.a",
+        )
+        self.assertEqual([(f["member_index"], f["member_occurrence"]) for f in facts], [(0, 0), (1, 1)])
+        table = facts[0]["symbol_tables"][0]
+        self.assertEqual(table["section_index"], 3)
+        self.assertEqual(table["rows"][1]["section_index"], "1")
+        self.assertEqual(facts[0]["sections"][1]["alignment"], 32)
+        self.assertEqual(facts[0]["sections"][2]["flags"], "WAT")
+        self.assertEqual(facts[1]["symbol_tables"][0]["rows"][1]["name"], "other")
+        self.assertEqual(facts[0]["sections"][0]["name"], "")
+
+    def test_truncated_reordered_duplicate_and_malformed_rows_fail_closed(self) -> None:
+        for raw in (
+            DYNAMIC.rsplit("\n", 2)[0] + "\n",
+            DYNAMIC.replace("     3:", "     2:"),
+            DYNAMIC.replace("0000000000000008", "bad-value"),
+            DYNAMIC.replace("imported@V1 (2)", "imported@@@V1 (2)"),
+            DYNAMIC.replace("imported@V1 (2)", "imported@V1@@V2 (2)"),
+            DYNAMIC.replace("   Num:", "   Wrong:"),
+        ):
+            with self.subTest(raw=raw), self.assertRaises(inventory.InventoryError):
+                inventory.parse_dynamic_symbol_rows(raw)
+
+    def test_archive_roster_or_section_symbol_mismatch_fails_closed(self) -> None:
+        cases = [
+            (archive_blocks([HEADER]), archive_blocks([SECTIONS]), archive_blocks([STATIC]), ["same.o", "same.o"]),
+            (archive_blocks([HEADER], ["wrong.o"]), archive_blocks([SECTIONS]), archive_blocks([STATIC]), ["same.o"]),
+            (archive_blocks([HEADER]), archive_blocks([SECTIONS.replace("0000a8", "000090")]), archive_blocks([STATIC]), ["same.o"]),
+            (archive_blocks([HEADER]), archive_blocks([SECTIONS]), archive_blocks([STATIC.replace("     1 hidden", "    99 hidden")]), ["same.o"]),
+        ]
+        for args in cases:
+            with self.subTest(args=args), self.assertRaises(inventory.InventoryError):
+                inventory.parse_archive_elf_facts(*args, expected_archive="/facts/lib.a")
+
+    def test_pinned_unknown_type_binding_and_other_bits_remain_distinct_fields(self) -> None:
+        # Exact GNU readelf row shape from the pinned ELF fixture with only its
+        # st_info/st_other bytes changed; no unknown value is mapped to DEFAULT.
+        raw = "Symbol table '.symtab' contains 1 entry:\n" + SYMBOL_HEADER + (
+            "     0: 0000000000000000     4 <processor specific>: 13 "
+            "<OS specific>: 12 HIDDEN  [<other>: 80]     5 local_tls\n"
+        )
+        row = inventory.parse_elf_symbol_tables(raw)[0]["rows"][0]
+        self.assertEqual(row["type"], "<processor specific>: 13")
+        self.assertEqual(row["binding"], "<OS specific>: 12")
+        self.assertEqual(row["visibility"], "HIDDEN")
+        self.assertEqual(row["other"], "[<other>: 80]")
+
+    def test_all_symbol_tables_and_repeated_identities_are_retained_in_order(self) -> None:
+        tables = inventory.parse_elf_symbol_tables(STATIC + STATIC)
+        self.assertEqual([table["table_index"] for table in tables], [0, 1])
+        self.assertEqual(tables[0]["rows"], tables[1]["rows"])
+        with self.assertRaisesRegex(inventory.InventoryError, "exactly one"):
+            inventory.parse_dynamic_symbol_rows(DYNAMIC + DYNAMIC)
+        raw = STATIC.replace("local_tls", "hidden")
+        self.assertEqual([r["name"] for r in inventory.parse_elf_symbol_tables(raw)[0]["rows"]].count("hidden"), 2)
+
+    def test_display_names_with_spaces_and_hex_sizes_are_not_silently_split(self) -> None:
+        raw = STATIC.replace("local_tls", "source file.c (2)").replace("     4 TLS", "   0x4 TLS")
+        row = inventory.parse_elf_symbol_tables(raw)[0]["rows"][2]
+        self.assertEqual(row["name"], "source file.c (2)")
+        self.assertIsNone(row["version_index"])
+        self.assertEqual((row["size"], row["size_bytes"]), ("0x4", 4))
+
+    def test_unknown_section_types_flags_and_duplicate_names_keep_section_indexes(self) -> None:
+        raw = SECTIONS.replace(".tdata", ".data").replace("WAT", "WAx").replace("PROGBITS", "LOOS+0x42", 1)
+        sections = inventory.parse_elf_sections(raw)["sections"]
+        self.assertEqual([r["index"] for r in sections if r["name"] == ".data"], [1, 2])
+        self.assertEqual(sections[1]["type"], "LOOS+0x42")
+        self.assertEqual(sections[2]["flags"], "WAx")
+
+    def test_missing_repeated_reordered_or_appended_section_rows_fail_closed(self) -> None:
+        lines = SECTIONS.splitlines(keepends=True)
+        row_index = next(i for i, line in enumerate(lines) if "[ 2]" in line)
+        for raw in (
+            "".join(lines[:row_index] + lines[row_index + 1:]),
+            SECTIONS.replace("[ 2]", "[ 1]"),
+            "".join(lines[:row_index - 1] + [lines[row_index], lines[row_index - 1]] + lines[row_index + 1:]),
+            SECTIONS + lines[row_index],
+            SECTIONS.replace("32\n", "bad\n"),
+        ):
+            with self.subTest(raw=raw), self.assertRaises(inventory.InventoryError):
+                inventory.parse_elf_sections(raw)
+
+    def test_archive_no_symbol_table_requires_independent_complete_section_facts(self) -> None:
+        sections = SECTIONS.replace("5 section headers", "4 section headers")
+        sections = "\n".join(line for line in sections.splitlines() if ".symtab" not in line)
+        sections = sections.replace("[ 4]", "[ 3]")
+        facts = inventory.parse_archive_elf_facts(
+            archive_blocks([HEADER]), archive_blocks([sections]), archive_blocks([""]),
+            ["same.o"], expected_archive="/facts/lib.a",
+        )
+        self.assertEqual(facts[0]["symbol_tables"], [])
+        with self.assertRaisesRegex(inventory.InventoryError, "counts differ"):
+            inventory.parse_archive_elf_facts(
+                archive_blocks([HEADER]), archive_blocks([SECTIONS]), archive_blocks([""]),
+                ["same.o"], expected_archive="/facts/lib.a",
+            )
+
+    def test_archive_headers_diagnostics_foreign_target_and_reordered_members_fail_closed(self) -> None:
+        for header in (
+            HEADER + "readelf: Error: truncated\n", HEADER.replace("X86-64", "AArch64"),
+            HEADER + "  Class: ELF64\n", HEADER + "  Number of section headers: 9\n",
+        ):
+            with self.subTest(header=header), self.assertRaises(inventory.InventoryError):
+                inventory.parse_archive_elf_facts(
+                    archive_blocks([header]), archive_blocks([SECTIONS]), archive_blocks([STATIC]),
+                    ["same.o"], expected_archive="/facts/lib.a",
+                )
+        with self.assertRaisesRegex(inventory.InventoryError, "order/count"):
+            inventory.parse_archive_elf_facts(
+                archive_blocks([HEADER, HEADER], ["b.o", "a.o"]),
+                archive_blocks([SECTIONS, SECTIONS], ["a.o", "b.o"]),
+                archive_blocks([STATIC, STATIC], ["a.o", "b.o"]),
+                ["a.o", "b.o"], expected_archive="/facts/lib.a",
+            )
+
+    def test_native_header_retains_both_readelf_version_fields_in_order(self) -> None:
+        header = HEADER + "  Version:                           1 (current)\n  Version:                           0x1\n"
+        facts = inventory.parse_archive_elf_facts(
+            archive_blocks([header]), archive_blocks([SECTIONS]), archive_blocks([STATIC]),
+            ["same.o"], expected_archive="/facts/lib.a",
+        )
+        self.assertEqual(
+            [row["value"] for row in facts[0]["header"]["fields"] if row["name"] == "Version"],
+            ["1 (current)", "0x1"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
