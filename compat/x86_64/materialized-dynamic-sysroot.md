@@ -47,15 +47,28 @@ crabc-dynamic-attach.o,libcrabc-builtins.a}`, the canonical
 The driver admits `--dynamic-pie`, `--dynamic-non-pie` and shared-object
 output; the executable modes select their actual owned dynamic entry. The
 non-PIE mode emits ET_EXEC with the same canonical interpreter, initial TLS
-and lifecycle handoff, without a static-TLS bootstrap. Applications name each DSO explicitly; SONAME, transitive NEEDED,
-imports and search ownership are checked before linkage. `/usr/lib` is the
+and lifecycle handoff, without a static-TLS bootstrap. `/usr/lib` is the
 default emitted application RUNPATH; `--application-runpath PATHS` declares and receipts an application
 path without adding ambient link inputs. Nondefault DSO paths require a
 matching output receipt.
 
+`--application-dso PATH` names an executable-direct application DSO. It is an
+actual LLD input and becomes an executable `DT_NEEDED` entry. A direct-only
+invocation retains the established schema-2 receipt and its direct-link
+behavior. `--transitive-application-dso PATH` names a DSO that is reachable
+through a direct DSO's own `DT_NEEDED`, so it is a validation input only: the
+driver reads and hashes it, verifies its SONAME, sidecar and imports, but never
+passes it to LLD or permits it in the LLD trace. At least one direct DSO is
+required when this spelling is used. Together the declarations must name the
+complete graph: every edge is to another declared SONAME or `libc.so`, every
+node is reachable from a direct root, and duplicate, missing or extra nodes
+fail. Reachability intentionally permits DSO cycles. The linked executable's
+ordered `DT_NEEDED` list must be exactly the direct roots followed by `libc.so`;
+the driver does not use `--as-needed` to hide a direct role.
+
 ### Dynamic link receipt versions
 
-The installed driver's current output is schema 2. Every schema-2 receipt has
+The installed driver's direct-only output is schema 2. Every schema-2 receipt has
 an explicit `application_search_kind` of `runpath` or `rpath`, exactly one
 corresponding non-null path (`application_runpath` or `application_rpath`),
 and `application_hash_style` (`sysv`, `gnu`, or `both`). This keeps a
@@ -73,6 +86,37 @@ carry schema-2 fields. Current workload receipts that require the ordinary
 `/usr/lib` SysV RUNPATH enforce that normalized contract for either declared
 schema. Application DSO sidecars admit either declared version only when they
 declare RUNPATH; DSO RPATH remains unsupported.
+
+Using `--transitive-application-dso` selects schema 3 for that one receipt;
+it does not change schema-2 emission or the old field roster. Schema 3 keeps
+`application_dsos` as the complete SONAME-to-hash identity map, adds the exact
+`application_dso_roles` map (`direct` or `transitive`), and adds
+`application_dso_needed`, the ordered `DT_NEEDED` edge list for every closure
+node. Its `input_receipts` are typed: ordinary command inputs use
+`linker-input`, direct DSO inputs use `direct-application-dso`, and validation
+only nodes use `transitive-application-dso`. The direct paths occur exactly
+once in both `link_command` and `link_trace`; transitive paths occur in neither.
+Every closure DSO has its own normal owned shared-output receipt binding its
+physical path, hash, current installed manifest and observed RUNPATH. The
+driver reconstructs the graph from the ELF files and checks these sidecars
+before it writes the schema-3 output receipt.
+
+`libc.so`, `ld-crabc-x86_64.so.1`, and `ld-musl-x86_64.so.1` are reserved
+runtime identities. They cannot be direct or transitive application DSO nodes;
+`libc.so` remains the explicit runtime edge outside the application closure.
+
+Cycles are admitted only within the declared application input closure; the
+reachability proof does not assume a DAG. The shared object currently being
+linked is not one of those input nodes, so an input DSO whose `DT_NEEDED` edge
+points back to that output is rejected before linking. Supporting that
+self-output relation would require a separate output identity contract.
+
+Receipt readers retain schema-1 and schema-2 behavior by default. A consumer
+that has a concrete closure use must explicitly call
+`owned_dynamic_receipt.validate(..., allow_application_dso_closure=True)`;
+that opt-in validates the typed roles, paths, hashes, graph keysets and
+reachability. Existing no-DSO workload readers therefore do not silently
+accept the broader contract.
 
 The final libc link consumes only classified Rust C ABI objects, the byte-
 matched pinned allocator object and owned compiler helpers. Cargo's stock

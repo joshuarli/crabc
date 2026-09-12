@@ -7,6 +7,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -14,6 +15,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[3]
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+sys.path.insert(0, str(ROOT / "compat/x86_64"))
+import owned_dynamic_receipt as receipt_contract
 RUNNERS = {
     "io-cancellation": (
         ROOT / "compat/x86_64/run_owned_dynamic_io_cancellation.sh",
@@ -121,6 +124,51 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
             })
         return record
 
+    def _transitive_receipt(self) -> dict[str, object]:
+        """A schema-3 root/leaf closure with one actual linker DSO input.
+
+        The direct root reaches the leaf through its own DT_NEEDED edge.  The
+        leaf is still a receipt-bound application input, but it must never
+        appear in the executable link command or LLD trace.
+        """
+
+        root = self.work / "libroot.so"
+        leaf = self.work / "libleaf.so"
+        root.write_bytes(b"root DSO bytes\n")
+        leaf.write_bytes(b"leaf DSO bytes\n")
+        base = self._receipt(2)
+        records = [
+            {"role": "linker-input", **entry}
+            for entry in base["input_receipts"]  # type: ignore[index]
+        ]
+        records.extend((
+            {
+                "role": "direct-application-dso", "name": root.name,
+                "path": str(root), "sha256": sha256(root),
+            },
+            {
+                "role": "transitive-application-dso", "name": leaf.name,
+                "path": str(leaf), "sha256": sha256(leaf),
+            },
+        ))
+        return {
+            **base,
+            "schema": 3,
+            "application_dsos": {root.name: sha256(root), leaf.name: sha256(leaf)},
+            "application_dso_roles": {root.name: "direct", leaf.name: "transitive"},
+            "application_dso_needed": {
+                root.name: [leaf.name, "libc.so"],
+                leaf.name: ["libc.so"],
+            },
+            "input_receipts": records,
+            "link_command": ["/owned/ld.lld", "--export-dynamic", str(root)],
+            "link_trace": [str(self.object), str(root)],
+        }
+
+    @staticmethod
+    def _contract_failure(message: str) -> None:
+        raise ValueError(message)
+
     def _run(self, label: str, receipt: dict[str, object]) -> subprocess.CompletedProcess[str]:
         runner, anchor = RUNNERS[label]
         self.receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
@@ -147,6 +195,67 @@ class OwnedDynamicReceiptConsumerTests(unittest.TestCase):
             with self.subTest(label=label):
                 result = self._run(label, self._receipt(1))
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_schema_three_closure_requires_explicit_reader_admission_and_typed_roles(self) -> None:
+        receipt = self._transitive_receipt()
+        with self.assertRaisesRegex(ValueError, "application DSO closure"):
+            receipt_contract.validate(
+                receipt, format=FORMAT, label="transitive receipt", fail=self._contract_failure,
+            )
+        contract = receipt_contract.validate(
+            receipt, format=FORMAT, label="transitive receipt", fail=self._contract_failure,
+            allow_application_dso_closure=True,
+        )
+        self.assertEqual(contract.schema, 3)
+
+        cycle = json.loads(json.dumps(receipt))
+        cycle["application_dso_needed"]["libleaf.so"] = ["libroot.so", "libc.so"]
+        self.assertEqual(
+            receipt_contract.validate(
+                cycle, format=FORMAT, label="cyclic transitive receipt", fail=self._contract_failure,
+                allow_application_dso_closure=True,
+            ).schema,
+            3,
+        )
+
+        for name in ("libc.so", "ld-crabc-x86_64.so.1", "ld-musl-x86_64.so.1"):
+            with self.subTest(reserved_name=name):
+                reserved = json.loads(json.dumps(receipt).replace("libroot.so", name))
+                with self.assertRaisesRegex(ValueError, "reserved"):
+                    receipt_contract.validate(
+                        reserved, format=FORMAT, label="reserved transitive receipt",
+                        fail=self._contract_failure, allow_application_dso_closure=True,
+                    )
+
+        forged = json.loads(json.dumps(receipt))
+        forged["application_dso_roles"]["libleaf.so"] = "direct"
+        with self.assertRaisesRegex(ValueError, "role"):
+            receipt_contract.validate(
+                forged, format=FORMAT, label="forged transitive receipt", fail=self._contract_failure,
+                allow_application_dso_closure=True,
+            )
+
+        missing = json.loads(json.dumps(receipt))
+        missing["application_dso_needed"]["libroot.so"][0] = "libmissing.so"
+        with self.assertRaisesRegex(ValueError, "closure"):
+            receipt_contract.validate(
+                missing, format=FORMAT, label="missing transitive receipt", fail=self._contract_failure,
+                allow_application_dso_closure=True,
+            )
+
+        unexpected = json.loads(json.dumps(receipt))
+        unexpected["application_dsos"]["libextra.so"] = "c" * 64
+        unexpected["application_dso_roles"]["libextra.so"] = "transitive"
+        unexpected["application_dso_needed"]["libextra.so"] = ["libc.so"]
+        unexpected["input_receipts"].append({
+            "role": "transitive-application-dso", "name": "libextra.so",
+            "path": str(self.work / "libextra.so"), "sha256": "c" * 64,
+        })
+        with self.assertRaisesRegex(ValueError, "unreachable"):
+            receipt_contract.validate(
+                unexpected, format=FORMAT, label="unexpected transitive receipt", fail=self._contract_failure,
+                allow_application_dso_closure=True,
+            )
 
     def test_inline_dynamic_audits_reject_unversioned_mixed_and_extra_receipts(self) -> None:
         valid = self._receipt(2)

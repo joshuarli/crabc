@@ -110,6 +110,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
         for relative in (
             "bin/crabc-cc-dynamic",
             "share/crabc/crabc_cc_static.py",
+            "share/crabc/owned_dynamic_receipt.py",
             "share/crabc/dynamic-product-state.json",
             "usr/include/fixture.h",
             "lib/ld-crabc-x86_64.so.1",

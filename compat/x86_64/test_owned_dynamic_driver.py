@@ -3,6 +3,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 import subprocess
 import sys
@@ -30,7 +31,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"owned test payload")
         (self.root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
-        (self.root / "share/crabc").mkdir(parents=True)
+        (self.root / "share/crabc").mkdir(parents=True, exist_ok=True)
         self.manifest = {"schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
                          "files": {relative: hashlib.sha256(b"owned test payload").hexdigest()
                                    for relative in driver.REQUIRED}, "symlinks": driver.ALIASES}
@@ -38,6 +39,202 @@ class InstalledDynamicDriverTests(unittest.TestCase):
 
     def write_manifest(self):
         (self.root / "share/crabc/manifest.json").write_text(json.dumps(self.manifest))
+
+    @staticmethod
+    def _run_native(command: list[str]) -> None:
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        if completed.returncode:
+            raise AssertionError(
+                f"native fixture command failed: {command[0]}\n{completed.stdout}{completed.stderr}"
+            )
+
+    def _installed_native_driver_fixture(self) -> Path:
+        """Materialize the smallest physical installed product for an ELF graph.
+
+        This is deliberately not a mocked driver test. The fixture has a
+        minimal owned-looking CRT/libc payload solely so the copied installed
+        driver can compile and link a leaf, a root, and an executable through
+        its normal fixed commands. The executable is inspected, not run.
+        """
+
+        root = Path(self.temporary.name) / "native-installed"
+        library = root / "usr/lib"
+        library.mkdir(parents=True)
+        (root / "usr/include").mkdir(parents=True)
+        (root / "share/crabc").mkdir(parents=True)
+        (root / "bin").mkdir()
+        (root / "lib").mkdir()
+        for source, relative in (
+            (Path(driver.__file__), "bin/crabc-cc-dynamic"),
+            (Path(driver.shared.__file__), "share/crabc/crabc_cc_static.py"),
+            (Path(driver.receipt_contract.__file__), "share/crabc/owned_dynamic_receipt.py"),
+        ):
+            destination = root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+        (root / "bin/crabc-cc-dynamic").chmod(0o755)
+
+        fixture = root / "fixture.s"
+        fixture.write_text(".text\n.globl _start\n_start:\n  ret\n")
+        empty = root / "empty.s"
+        empty.write_text(".text\n")
+        for source, output in ((fixture, "Scrt1.o"), (fixture, "crt1.o"),
+                               (empty, "crti.o"), (empty, "crtn.o"),
+                               (empty, "crabc-dynamic-attach.o"), (empty, "empty.o")):
+            self._run_native(["/usr/bin/gcc", "-c", "-fPIC", str(source), "-o", str(library / output)])
+        self._run_native([
+            driver.shared.linker(), "-shared", "--hash-style=sysv", "-soname", "libc.so",
+            str(library / "empty.o"), "-o", str(library / "libc.so"),
+        ])
+        self._run_native(["/usr/bin/ar", "rcs", str(library / "libcrabc-builtins.a"), str(library / "empty.o")])
+        (root / "lib/ld-crabc-x86_64.so.1").write_bytes(b"fixture interpreter\n")
+        (root / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+
+        files = {
+            path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in root.rglob("*") if path.is_file() and not path.is_symlink()
+        }
+        (root / "share/crabc/manifest.json").write_text(json.dumps({
+            "schema": 1, "format": driver.FORMAT, "target": driver.shared.TARGET,
+            "files": files, "symlinks": driver.ALIASES,
+        }))
+        return root
+
+    @staticmethod
+    def _receipt_value_failure(message: str) -> None:
+        raise ValueError(message)
+
+    def test_transitive_application_dso_closure_keeps_leaf_out_of_executable_link(self):
+        """Schema 3 proves root -> leaf without flattening the executable link."""
+
+        root = self._installed_native_driver_fixture()
+        command = [sys.executable, str(root / "bin/crabc-cc-dynamic")]
+        work = Path(self.temporary.name) / "native-work"
+        work.mkdir()
+        leaf_source = work / "leaf.c"
+        extra_source = work / "extra.c"
+        root_source = work / "root.c"
+        main_source = work / "main.c"
+        leaf = work / "libleaf.so"
+        extra = work / "libextra.so"
+        root_dso = work / "libroot.so"
+        main_object = work / "main.o"
+        executable = work / "main"
+        leaf_source.write_text("int leaf(void) { return 7; }\n")
+        extra_source.write_text("int extra(void) { return 11; }\n")
+        root_source.write_text("extern int leaf(void); int root(void) { return leaf(); }\n")
+        main_source.write_text("extern int root(void); int main(void) { return root(); }\n")
+
+        for arguments in (
+            ["--dynamic-shared-object", str(leaf_source), "-o", str(leaf)],
+            ["--dynamic-shared-object", str(extra_source), "-o", str(extra)],
+            ["--dynamic-shared-object", "--application-dso", str(leaf), str(root_source), "-o", str(root_dso)],
+            ["--dynamic-pie", "-c", str(main_source), "-o", str(main_object)],
+            ["--dynamic-pie", "--application-dso", str(root_dso),
+             "--transitive-application-dso", str(leaf), str(main_object), "-o", str(executable)],
+        ):
+            completed = subprocess.run([*command, *arguments], capture_output=True, text=True, check=False)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+
+        receipt_path = Path(str(executable) + ".crabc-link.json")
+        receipt = json.loads(receipt_path.read_text())
+        root_receipt = json.loads(Path(str(root_dso) + ".crabc-link.json").read_text())
+        self.assertEqual(root_receipt["schema"], 2)
+        self.assertEqual(set(root_receipt), driver.RECEIPT_V2_FIELDS)
+        self.assertEqual(root_receipt["application_dsos"], {leaf.name: hashlib.sha256(leaf.read_bytes()).hexdigest()})
+        self.assertEqual(root_receipt["link_command"].count(str(leaf)), 1)
+        self.assertEqual(root_receipt["link_trace"].count(str(leaf)), 1)
+        contract = driver.receipt_contract.validate(
+            receipt, format=driver.FORMAT, label="native closure receipt",
+            fail=self._receipt_value_failure, allow_application_dso_closure=True,
+        )
+        self.assertEqual(contract.schema, 3)
+        self.assertEqual(driver.elf_needed(root_dso, work), [leaf.name, "libc.so"])
+        self.assertEqual(driver.elf_needed(executable, work), [root_dso.name, "libc.so"])
+        self.assertEqual(
+            receipt["application_dso_roles"], {root_dso.name: "direct", leaf.name: "transitive"}
+        )
+        self.assertEqual(
+            receipt["application_dso_needed"],
+            {root_dso.name: [leaf.name, "libc.so"], leaf.name: ["libc.so"]},
+        )
+        self.assertEqual(receipt["link_command"].count(str(root_dso)), 1)
+        self.assertEqual(receipt["link_trace"].count(str(root_dso)), 1)
+        self.assertNotIn("--as-needed", receipt["link_command"])
+        self.assertNotIn(str(leaf), receipt["link_command"])
+        self.assertNotIn(str(leaf), receipt["link_trace"])
+
+        missing = subprocess.run(
+            [*command, "--dynamic-pie", "--application-dso", str(root_dso),
+             "--transitive-application-dso", str(extra), str(main_object),
+             "-o", str(work / "missing-closure")],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(missing.returncode, 0)
+        self.assertIn("undeclared transitive dependency", missing.stderr)
+
+        unexpected = subprocess.run(
+            [*command, "--dynamic-pie", "--application-dso", str(root_dso),
+             "--transitive-application-dso", str(leaf),
+             "--transitive-application-dso", str(extra), str(main_object),
+             "-o", str(work / "unexpected-closure")],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(unexpected.returncode, 0)
+        self.assertIn("unreachable", unexpected.stderr)
+
+        duplicate = subprocess.run(
+            [*command, "--dynamic-pie", "--application-dso", str(root_dso),
+             "--transitive-application-dso", str(leaf),
+             "--transitive-application-dso", str(leaf), str(main_object),
+             "-o", str(work / "duplicate-closure")],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(duplicate.returncode, 0)
+        self.assertIn("duplicate application SONAME", duplicate.stderr)
+
+        leaf.write_bytes(leaf.read_bytes() + b"changed after sidecar\n")
+        changed = subprocess.run(
+            [*command, "--dynamic-pie", "--application-dso", str(root_dso),
+             "--transitive-application-dso", str(leaf), str(main_object), "-o", str(work / "changed-closure")],
+            capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(changed.returncode, 0)
+        self.assertIn("closure receipt", changed.stderr)
+
+        forged = json.loads(json.dumps(receipt))
+        forged["application_dso_roles"][leaf.name] = "direct"
+        with self.assertRaisesRegex(ValueError, "role"):
+            driver.receipt_contract.validate(
+                forged, format=driver.FORMAT, label="forged native closure receipt",
+                fail=self._receipt_value_failure, allow_application_dso_closure=True,
+            )
+
+    def test_transitive_closure_preserves_exact_lazy_dso_runtime_import_exceptions(self):
+        """A receipt-declared lazy import is allowed; an accidental one is not."""
+
+        path = Path(self.temporary.name) / "liblate.so"
+        admitted = driver.ApplicationDso(
+            path, path.name, (), "direct", runtime_imports=frozenset({"late_import"})
+        )
+        accidental = driver.ApplicationDso(path, path.name, (), "direct")
+
+        def symbols(candidate, temporary, *, object_symbols=False):
+            if candidate.name == "liblate.so":
+                return set(), {"late_import"}
+            return set(), set()
+
+        with patch.object(driver, "dynamic_symbols", side_effect=symbols):
+            self.assertEqual(
+                driver.validate_closure_runtime_imports(
+                    {path.name: admitted}, Path(self.temporary.name), self.root / "usr/lib"
+                ),
+                set(),
+            )
+            with self.assertRaisesRegex(driver.shared.DriverError, "runtime imports"):
+                driver.validate_closure_runtime_imports(
+                    {path.name: accidental}, Path(self.temporary.name), self.root / "usr/lib"
+                )
 
     def test_exact_payload_accepts_only_canonical_relative_alias(self):
         driver.validate(self.root)
@@ -100,6 +297,7 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         workload, output, receipt_path = self._dynamic_receipt()
         receipt = json.loads(receipt_path.read_text())
         self.assertEqual(receipt["schema"], 2)
+        self.assertEqual(set(receipt), driver.RECEIPT_V2_FIELDS)
         self.assertEqual(
             (receipt["application_search_kind"], receipt["application_runpath"],
              receipt["application_rpath"], receipt["application_hash_style"]),
@@ -223,6 +421,22 @@ class InstalledDynamicDriverTests(unittest.TestCase):
                         ],
                     )
 
+    def test_reserved_runtime_names_cannot_be_application_dso_declarations(self):
+        """Runtime identities cannot become direct or validation-only application nodes."""
+
+        for option in ("--application-dso", "--transitive-application-dso"):
+            for name in ("libc.so", "ld-crabc-x86_64.so.1", "ld-musl-x86_64.so.1"):
+                with self.subTest(option=option, name=name), patch.object(driver, "run") as run:
+                    with self.assertRaisesRegex(driver.shared.DriverError, "reserved application DSO"):
+                        driver.execute(
+                            self.root,
+                            [
+                                "--dynamic-pie", option, str(Path(self.temporary.name) / name),
+                                "--print-link-plan",
+                            ],
+                        )
+                    run.assert_not_called()
+
     def test_application_search_receipt_binds_the_actual_elf_and_runpath(self):
         path = Path(self.temporary.name) / "plugin.so"
         elf = bytearray(64)
@@ -301,7 +515,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
 
     def test_installed_driver_import_does_not_mutate_payload_without_python_environment(self):
         for relative, source in (("bin/crabc-cc-dynamic", Path(driver.__file__)),
-                                 ("share/crabc/crabc_cc_static.py", Path(driver.shared.__file__))):
+                                 ("share/crabc/crabc_cc_static.py", Path(driver.shared.__file__)),
+                                 ("share/crabc/owned_dynamic_receipt.py", Path(driver.receipt_contract.__file__))):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(source.read_bytes())

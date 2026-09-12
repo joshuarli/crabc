@@ -2,8 +2,9 @@
 """Sealed materialized dynamic driver (not campaign completion).
 
 The static driver's input/ELF/tool checks are reused verbatim from the installed
-package. This owner adds only dynamic linkage and explicit application DSOs.
-The interpreter name is canonical; run applications in the installed root.
+package. This owner adds dynamic linkage, executable-direct application DSOs,
+and an explicitly receipt-validated transitive DSO closure. The interpreter
+name is canonical; run applications in the installed root.
 """
 from __future__ import annotations
 
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager, nullcontext
+from dataclasses import dataclass
 
 # Installed tools are immutable payload, including when callers do not set a
 # Python environment policy. Importing the shared checks must not create a
@@ -23,21 +25,18 @@ sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "share/crabc"))
 import crabc_cc_static as shared
+import owned_dynamic_receipt as receipt_contract
 
 FORMAT = "crabc-x86-64-owned-dynamic-sysroot-v1"
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
 ALIASES = {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"}
 REQUIRED = {"usr/lib/libc.so", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/crti.o", "usr/lib/crtn.o",
-            "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1"}
+            "usr/lib/crabc-dynamic-attach.o", "usr/lib/libcrabc-builtins.a", "lib/ld-crabc-x86_64.so.1",
+            "share/crabc/owned_dynamic_receipt.py"}
 APPLICATION_DSO_BASENAME = re.compile(r"[^/\x00]+\.so(?:\.[0-9]+)*\Z")
-RECEIPT_V1_FIELDS = frozenset({
-    "schema", "format", "mode", "binding", "runtime_imports", "application_runpath", "output_path",
-    "output_sha256", "manifest_sha256", "application_dsos", "owned_runtime_inputs", "input_receipts",
-    "resolved_linker", "link_command", "link_trace", "campaign_complete",
-})
-RECEIPT_V2_FIELDS = RECEIPT_V1_FIELDS | {
-    "application_search_kind", "application_rpath", "application_hash_style",
-}
+RECEIPT_V1_FIELDS = receipt_contract.V1_FIELDS
+RECEIPT_V2_FIELDS = receipt_contract.V2_FIELDS
+RECEIPT_V3_FIELDS = receipt_contract.V3_FIELDS
 
 
 def application_dso_basename(path: Path) -> str:
@@ -52,6 +51,8 @@ def application_dso_basename(path: Path) -> str:
     name = path.name
     if APPLICATION_DSO_BASENAME.fullmatch(name) is None:
         raise shared.DriverError("unowned application DSO")
+    if receipt_contract.is_reserved_application_dso_name(name):
+        raise shared.DriverError("reserved application DSO")
     return name
 
 
@@ -137,34 +138,36 @@ def dso_receipt_runpath(record: object, path: Path) -> str:
     """Return an application DSO's RUNPATH from a closed declared receipt.
 
     Schema 1 retains its exact historical fields and an implicit SysV hash
-    style. Schema 2 states search kind and hash style explicitly. Application
-    DSOs admit RUNPATH only, so executable-only RPATH cannot authorize them.
+    style. Schema 2 states search kind and hash style explicitly. Schema 3
+    adds an explicitly typed closure. Application DSOs admit RUNPATH only, so
+    executable-only RPATH cannot authorize them.
     """
 
-    if not isinstance(record, dict) or type(record.get("schema")) is not int:
-        raise shared.DriverError("application DSO receipt has no declared schema")
-    schema = record["schema"]
-    expected = RECEIPT_V1_FIELDS if schema == 1 else RECEIPT_V2_FIELDS if schema == 2 else None
-    if expected is None or set(record) != expected:
-        raise shared.DriverError("application DSO receipt fields do not match its declared schema")
-    if (record["format"] != FORMAT or record["mode"] != "shared" or record["output_sha256"] != shared.sha256_file(path)
+    if not isinstance(record, dict):
+        raise shared.DriverError("application DSO receipt is not an object")
+    def fail(message: str) -> None:
+        raise shared.DriverError(message)
+
+    contract = receipt_contract.validate(
+        record, format=FORMAT, label="application DSO receipt", fail=fail,
+        allow_application_dso_closure=True,
+    )
+    if (record["mode"] != "shared" or record["output_sha256"] != shared.sha256_file(path)
             or record["output_path"] != str(path.resolve())):
         raise shared.DriverError("application DSO receipt does not bind this shared object")
-    if schema == 1:
-        runpath = record["application_runpath"]
-        if not isinstance(runpath, str) or not runpath or "\0" in runpath:
-            raise shared.DriverError("application DSO receipt has an invalid legacy RUNPATH")
-        return runpath
-    if (record["application_search_kind"] != "runpath" or record["application_rpath"] is not None
-            or record["application_hash_style"] not in ("sysv", "gnu", "both")):
+    if contract.kind != "runpath":
         raise shared.DriverError("application DSO receipt does not declare RUNPATH")
-    runpath = record["application_runpath"]
-    if not isinstance(runpath, str) or not runpath or "\0" in runpath:
-        raise shared.DriverError("application DSO receipt has an invalid RUNPATH")
-    return runpath
+    return contract.path
 
 
-def dso_metadata(path: Path, temporary: Path) -> tuple[str, list[str]]:
+def dso_metadata_detail(path: Path, temporary: Path) -> tuple[str, list[str], list[str]]:
+    """Inspect one physical DSO without treating its dependencies as inputs.
+
+    The detail form keeps the observed RUNPATH for schema-3 sidecar proof.
+    ``dso_metadata`` remains the historical two-value helper used by direct
+    declarations and narrow unit tests.
+    """
+
     data = path.read_bytes()
     if len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01" or int.from_bytes(data[16:18], "little") != 3 or int.from_bytes(data[18:20], "little") != 62:
         raise shared.DriverError(f"application DSO is not native ET_DYN: {path}")
@@ -188,7 +191,218 @@ def dso_metadata(path: Path, temporary: Path) -> tuple[str, list[str]]:
             raise shared.DriverError(f"invalid application search path receipt: {error}") from error
         if runpaths != [dso_receipt_runpath(record, path)]:
             raise shared.DriverError("application DSO has an undeclared runtime search path")
-    return path.name, needed
+    return path.name, needed, runpaths
+
+
+def dso_metadata(path: Path, temporary: Path) -> tuple[str, list[str]]:
+    name, needed, _ = dso_metadata_detail(path, temporary)
+    return name, needed
+
+
+@dataclass(frozen=True)
+class ApplicationDso:
+    """One caller-owned closure node admitted by the installed driver."""
+
+    path: Path
+    name: str
+    needed: tuple[str, ...]
+    role: str
+    receipt: dict[str, object] | None = None
+    search: receipt_contract.SearchContract | None = None
+    runtime_imports: frozenset[str] = frozenset()
+
+
+def receipt_failure(message: str) -> None:
+    raise shared.DriverError(message)
+
+
+def application_dso_sidecar(
+    root: Path, path: Path, runpaths: list[str]
+) -> tuple[dict[str, object], receipt_contract.SearchContract, frozenset[str]]:
+    """Load the normal owned receipt which authorizes one closure DSO.
+
+    A schema-3 declaration is an ownership assertion, rather than a route to
+    let LLD discover a file. Every graph node therefore has to bind the
+    current installed manifest, its physical DSO bytes, normal shared-output
+    mode and observed RUNPATH before the closure can be used.
+    """
+
+    sidecar = Path(str(path) + ".crabc-link.json")
+    shared.require_regular(sidecar, "application DSO closure receipt")
+    try:
+        record = json.loads(sidecar.read_text())
+    except (ValueError, OSError) as error:
+        raise shared.DriverError(f"invalid application DSO closure receipt: {error}") from error
+    if not isinstance(record, dict):
+        raise shared.DriverError("application DSO closure receipt is not an object")
+    search = receipt_contract.validate(
+        record, format=FORMAT, label="application DSO closure receipt", fail=receipt_failure,
+        allow_application_dso_closure=True,
+    )
+    if (record["mode"] != "shared" or record["output_path"] != str(path.resolve())
+            or record["output_sha256"] != shared.sha256_file(path)):
+        raise shared.DriverError("application DSO closure receipt does not bind its shared object")
+    if record["manifest_sha256"] != shared.sha256_file(root / "share/crabc/manifest.json"):
+        raise shared.DriverError("application DSO closure receipt binds another installed product")
+    if record["campaign_complete"] is not False or record["binding"] not in ("now", "lazy"):
+        raise shared.DriverError("application DSO closure receipt has an invalid link contract")
+    imports = record["runtime_imports"]
+    if (not isinstance(imports, list) or not all(isinstance(symbol, str)
+            and re.fullmatch(r"[A-Za-z_][A-Za-z_0-9]*", symbol) is not None for symbol in imports)
+            or len(set(imports)) != len(imports)
+            or (imports and record["binding"] != "lazy")):
+        raise shared.DriverError("application DSO closure receipt runtime imports are invalid")
+    if search.kind != "runpath" or runpaths != [search.path]:
+        raise shared.DriverError("application DSO closure receipt runtime search path differs from ELF")
+    library = root / "usr/lib"
+    expected_runtime = sorted(
+        item.relative_to(root).as_posix()
+        for item in (library / "crti.o", library / "libc.so", library / "crtn.o",
+                     library / "libcrabc-builtins.a")
+    )
+    if record["owned_runtime_inputs"] != expected_runtime:
+        raise shared.DriverError("application DSO closure receipt runtime roster differs")
+    return record, search, frozenset(imports)
+
+
+def closure_node(root: Path, path: Path, role: str, temporary: Path) -> ApplicationDso:
+    """Admit one direct or validation-only DSO and require its sidecar."""
+
+    path = shared.require_application_file(root, path, "DSO")
+    name, needed, runpaths = dso_metadata_detail(path, temporary)
+    receipt, search, imports = application_dso_sidecar(root, path, runpaths)
+    return ApplicationDso(path, name, tuple(needed), role, receipt, search, imports)
+
+
+def closure_reachable(
+    roots: list[str], nodes: dict[str, ApplicationDso], *, omit: str | None = None
+) -> set[str]:
+    """Return reachable closure names while allowing cycles and a local omit."""
+
+    reached: set[str] = set()
+    pending = list(roots)
+    while pending:
+        name = pending.pop()
+        if name == omit or name in reached:
+            continue
+        reached.add(name)
+        pending.extend(needed for needed in nodes[name].needed if needed in nodes)
+    return reached
+
+
+def validate_closure_graph(nodes: dict[str, ApplicationDso], direct_names: list[str]) -> None:
+    """Require the declared input graph to be complete, closed and reachable.
+
+    The shared object being linked is deliberately not an input node. An input
+    back-edge to that output therefore needs a separate self-output identity
+    contract and is rejected here before LLD can publish a receipt.
+    """
+
+    names = set(nodes)
+    for node in nodes.values():
+        if len(set(node.needed)) != len(node.needed):
+            raise shared.DriverError(f"application DSO has duplicate DT_NEEDED entries: {node.path}")
+        if not set(node.needed) <= {"libc.so", *names}:
+            raise shared.DriverError(f"undeclared transitive dependency of {node.path}")
+    if closure_reachable(direct_names, nodes) != names:
+        raise shared.DriverError("application DSO closure has an unreachable declared node")
+
+
+def _sidecar_raw_application_inputs(record: dict[str, object]) -> list[dict[str, object]]:
+    """Return schema-1/2 input records after retaining their historical shape."""
+
+    inputs = record["input_receipts"]
+    if not isinstance(inputs, list) or not all(
+        isinstance(item, dict) and set(item) == {"path", "sha256"}
+        and isinstance(item["path"], str) and item["path"] and "\0" not in item["path"]
+        and isinstance(item["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is not None
+        for item in inputs
+    ):
+        raise shared.DriverError("application DSO closure receipt input roster is invalid")
+    return inputs
+
+
+def validate_closure_sidecar(
+    node: ApplicationDso, nodes: dict[str, ApplicationDso]
+) -> None:
+    """Bind a node's normal receipt to the actual graph it was built against.
+
+    Direct-only receipts describe only immediate DSO children because every
+    one was an LLD input at that historical boundary. Schema 3 records the
+    full reachable child closure. This relation is checked without assuming a
+    DAG for cycles within declared input nodes. The shared output itself is
+    absent from that input closure, so a back-edge to it remains rejected at
+    ``validate_closure_graph`` until a separate self-output contract exists.
+    """
+
+    assert node.receipt is not None and node.search is not None
+    children = [name for name in node.needed if name in nodes]
+    expected_immediate = {name: shared.sha256_file(nodes[name].path) for name in children}
+    identities = node.receipt["application_dsos"]
+    command = node.receipt["link_command"]
+    trace = node.receipt["link_trace"]
+    if (not isinstance(command, list) or not isinstance(trace, list)
+            or not all(isinstance(item, str) for item in [*command, *trace])):
+        raise shared.DriverError("application DSO closure receipt link evidence is invalid")
+
+    if node.search.schema in (1, 2):
+        if not isinstance(identities, dict) or identities != expected_immediate:
+            raise shared.DriverError("application DSO closure receipt dependency identities differ")
+        inputs = _sidecar_raw_application_inputs(node.receipt)
+        for child in children:
+            path = str(nodes[child].path)
+            digest = expected_immediate[child]
+            if sum(item["path"] == path and item["sha256"] == digest for item in inputs) != 1:
+                raise shared.DriverError("application DSO closure receipt does not bind its direct dependency")
+            if command.count(path) != 1 or trace.count(path) != 1:
+                raise shared.DriverError("application DSO closure receipt did not link its direct dependency")
+        forbidden = {str(candidate.path) for name, candidate in nodes.items()
+                     if name not in children and name != node.name}
+        if any(item in forbidden for item in [*command, *trace]):
+            raise shared.DriverError("application DSO closure receipt linked an undeclared graph node")
+        return
+
+    recorded = {item.name: item for item in node.search.application_dso_closure}
+    expected_names = closure_reachable(children, nodes, omit=node.name)
+    expected_identities = {
+        name: shared.sha256_file(nodes[name].path) for name in expected_names
+    }
+    if not isinstance(identities, dict) or identities != expected_identities:
+        raise shared.DriverError("application DSO closure receipt dependency identities differ")
+    if set(recorded) != expected_names:
+        raise shared.DriverError("application DSO closure receipt does not close its transitive graph")
+    if {name for name, item in recorded.items() if item.role == "direct"} != set(children):
+        raise shared.DriverError("application DSO closure receipt direct roles differ from DT_NEEDED")
+    for name, item in recorded.items():
+        expected = nodes[name]
+        if (item.path != str(expected.path) or item.sha256 != shared.sha256_file(expected.path)
+                or item.needed != expected.needed):
+            raise shared.DriverError("application DSO closure receipt graph identity differs from ELF")
+
+
+def validate_closure_runtime_imports(nodes: dict[str, ApplicationDso], temporary: Path, library: Path) -> set[str]:
+    """Resolve every DSO import or match it to its own deliberate exception."""
+
+    provided, _ = dynamic_symbols(library / "libc.so", temporary)
+    requirements: dict[str, set[str]] = {}
+    for name, node in nodes.items():
+        definitions, required = dynamic_symbols(node.path, temporary)
+        provided.update(definitions)
+        requirements[name] = required
+    for name, node in nodes.items():
+        unresolved = requirements[name] - provided
+        if unresolved != node.runtime_imports:
+            raise shared.DriverError(
+                f"application DSO runtime imports differ from its declared contract: {name}"
+            )
+    return provided
+
+
+def elf_needed(path: Path, temporary: Path) -> list[str]:
+    """Read ordered DT_NEEDED names from a just-linked executable or DSO."""
+
+    dynamic = run(["/usr/bin/readelf", "-dW", str(path)], temporary)
+    return re.findall(r"\(NEEDED\).*\[([^\]]+)\]", dynamic)
 
 
 def dynamic_symbols(path: Path, temporary: Path, *, object_symbols: bool = False) -> tuple[set[str], set[str]]:
@@ -239,6 +453,7 @@ def execute(root: Path, arguments: list[str]) -> None:
     application_hash_style_explicit = False
     runtime_imports = set()
     dsos = []
+    transitive_dsos = []
     common = []
     quote_include_inputs = []
     rounding_math = False
@@ -286,10 +501,18 @@ def execute(root: Path, arguments: list[str]) -> None:
             index += 1
             if index == len(arguments): raise shared.DriverError("missing application DSO")
             path = Path(arguments[index])
-            if shared.rejects_runtime_object(path) or path.name == "libc.so":
+            if shared.rejects_runtime_object(path):
                 raise shared.DriverError("unowned application DSO")
             application_dso_basename(path)
             dsos.append(path)
+        elif argument == "--transitive-application-dso":
+            index += 1
+            if index == len(arguments): raise shared.DriverError("missing transitive application DSO")
+            path = Path(arguments[index])
+            if shared.rejects_runtime_object(path):
+                raise shared.DriverError("unowned transitive application DSO")
+            application_dso_basename(path)
+            transitive_dsos.append(path)
         elif argument == "--application-quote-include-dir":
             index += 1
             if index == len(arguments) or arguments[index].startswith("-"):
@@ -323,7 +546,10 @@ def execute(root: Path, arguments: list[str]) -> None:
         raise shared.DriverError("compile-only accepts no application hash style")
     if invocation.compile_only and (runtime_imports or binding != "now"):
         raise shared.DriverError("compile-only accepts no binding/import contract")
-    if invocation.compile_only and dsos: raise shared.DriverError("compile-only accepts no DSO")
+    if invocation.compile_only and (dsos or transitive_dsos):
+        raise shared.DriverError("compile-only accepts no DSO")
+    if transitive_dsos and not dsos:
+        raise shared.DriverError("transitive application DSOs require one direct --application-dso")
     if invocation.link_receipt is not None:
         raise shared.DriverError("dynamic link receipt path is derived from -o")
     if export_dynamic and (mode == "shared" or invocation.compile_only):
@@ -349,7 +575,7 @@ def execute(root: Path, arguments: list[str]) -> None:
         link += ["--dynamic-linker", INTERPRETER, str(library / entry_object),
                  str(library / "crabc-dynamic-attach.o")]
     if invocation.print_link_plan:
-        if dsos: raise shared.DriverError("link plan accepts no application inputs")
+        if dsos or transitive_dsos: raise shared.DriverError("link plan accepts no application inputs")
         print(json.dumps({"format": FORMAT, "mode": mode, "binding": binding,
                           "runtime_imports": sorted(runtime_imports), "application_runpath": application_runpath,
                           "application_rpath": application_rpath, "application_search_kind": application_search_kind,
@@ -358,10 +584,15 @@ def execute(root: Path, arguments: list[str]) -> None:
         return
     output = (invocation.output or Path("a.out")).absolute()
     shared.validate_application_output(root, output)
-    shared.validate_application_output_disjoint(output, invocation.sources + invocation.objects + tuple(dsos))
+    shared.validate_application_output_disjoint(
+        output, invocation.sources + invocation.objects + tuple(dsos) + tuple(transitive_dsos)
+    )
     receipt = Path(str(output) + ".crabc-link.json")
     shared.validate_application_output(root, receipt)
-    shared.validate_application_output_disjoint(receipt, invocation.sources + invocation.objects + tuple(dsos) + (output,))
+    shared.validate_application_output_disjoint(
+        receipt, invocation.sources + invocation.objects + tuple(dsos)
+        + tuple(transitive_dsos) + (output,)
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     with (nullcontext(None) if invocation.compile_only else reserve_receipt(receipt)) as receipt_stream, tempfile.TemporaryDirectory(prefix="crabc-dynamic-link.", dir=output.parent) as temporary_name:
         temporary = Path(temporary_name)
@@ -379,23 +610,48 @@ def execute(root: Path, arguments: list[str]) -> None:
             objects.append(obj)
         if invocation.compile_only:
             return
-        declared = {}
-        for path in dsos:
-            path = shared.require_application_file(root, path, "DSO")
-            name, needed = dso_metadata(path, temporary)
-            if name in declared: raise shared.DriverError("duplicate application SONAME")
-            declared[name] = (path, needed)
-        for path, needed in declared.values():
-            if not set(needed) <= {"libc.so", *declared.keys()}:
-                raise shared.DriverError(f"undeclared transitive dependency of {path}")
-        provided, _ = dynamic_symbols(library / "libc.so", temporary)
-        requirements = set()
-        for path, _ in declared.values():
-            definitions, required = dynamic_symbols(path, temporary)
-            provided.update(definitions)
-            requirements.update(required)
-        if requirements - provided:
-            raise shared.DriverError(f"application DSOs have unresolved runtime imports: {sorted(requirements - provided)}")
+        closure_enabled = bool(transitive_dsos)
+        closure_nodes: dict[str, ApplicationDso] = {}
+        direct_dso_paths: list[Path] = []
+        if closure_enabled:
+            direct_names: list[str] = []
+            for role, candidates in (("direct", dsos), ("transitive", transitive_dsos)):
+                for candidate in candidates:
+                    node = closure_node(root, candidate, role, temporary)
+                    if node.name in closure_nodes:
+                        raise shared.DriverError("duplicate application SONAME")
+                    if any(node.path == existing.path for existing in closure_nodes.values()):
+                        raise shared.DriverError("duplicate application DSO path")
+                    closure_nodes[node.name] = node
+                    if role == "direct":
+                        direct_names.append(node.name)
+                        direct_dso_paths.append(node.path)
+            validate_closure_graph(closure_nodes, direct_names)
+            for node in closure_nodes.values():
+                validate_closure_sidecar(node, closure_nodes)
+            provided = validate_closure_runtime_imports(closure_nodes, temporary, library)
+        else:
+            # Keep the long-standing direct-only path and schema-2 output
+            # unchanged. The schema-3 closure contract is selected only by
+            # the new transitive-only declaration spelling.
+            declared = {}
+            for path in dsos:
+                path = shared.require_application_file(root, path, "DSO")
+                name, needed = dso_metadata(path, temporary)
+                if name in declared: raise shared.DriverError("duplicate application SONAME")
+                declared[name] = (path, needed)
+            for path, needed in declared.values():
+                if not set(needed) <= {"libc.so", *declared.keys()}:
+                    raise shared.DriverError(f"undeclared transitive dependency of {path}")
+            provided, _ = dynamic_symbols(library / "libc.so", temporary)
+            requirements = set()
+            for path, _ in declared.values():
+                definitions, required = dynamic_symbols(path, temporary)
+                provided.update(definitions)
+                requirements.update(required)
+            if requirements - provided:
+                raise shared.DriverError(f"application DSOs have unresolved runtime imports: {sorted(requirements - provided)}")
+            direct_dso_paths = [path for path, _ in declared.values()]
         if runtime_imports:
             # Removing --no-undefined is authorized only by an exact symbol
             # contract, checked against all owned objects before linking. No
@@ -411,12 +667,12 @@ def execute(root: Path, arguments: list[str]) -> None:
                 raise shared.DriverError(f"runtime imports differ from exact unresolved object symbols: {sorted(object_required - object_provided)}")
         if mode == "shared": link += ["-soname", output.name]
         link += [str(library / "crti.o"), *(str(path) for path in objects),
-                 *(str(path) for path, _ in declared.values()), str(library / "libc.so"),
+                 *(str(path) for path in direct_dso_paths), str(library / "libc.so"),
                  str(library / "libcrabc-builtins.a"), str(library / "crtn.o"), "-o", str(output)]
         trace = run([*link[:-2], "--trace", *link[-2:]], temporary).splitlines()
         runtime = [library / name for name in ("crti.o", "libc.so", "crtn.o")]
         if mode != "shared": runtime += [library / entry_object, library / "crabc-dynamic-attach.o"]
-        direct = [*runtime, *objects, *(path for path, _ in declared.values())]
+        direct = [*runtime, *objects, *direct_dso_paths]
         archive = library / "libcrabc-builtins.a"
         # LLD may not extract an archive member. Every other input must appear,
         # and no ambient startup, library, script or helper input is permitted.
@@ -434,18 +690,53 @@ def execute(root: Path, arguments: list[str]) -> None:
             _, output_required = dynamic_symbols(output, temporary)
             if output_required - provided != runtime_imports:
                 raise shared.DriverError("linked runtime imports differ from declared contract")
-        record = {"schema": 2, "format": FORMAT, "mode": mode, "binding": binding,
+        if closure_enabled:
+            expected_needed = [
+                node.name for node in closure_nodes.values() if node.role == "direct"
+            ] + ["libc.so"]
+            if elf_needed(output, temporary) != expected_needed:
+                raise shared.DriverError("linked executable DT_NEEDED differs from declared direct DSO roots")
+        record = {"schema": 3 if closure_enabled else 2, "format": FORMAT, "mode": mode, "binding": binding,
                   "runtime_imports": sorted(runtime_imports), "application_runpath": application_runpath,
                   "application_rpath": application_rpath, "application_search_kind": application_search_kind,
                   "application_hash_style": application_hash_style,
                   "output_path": str(output.resolve()),
                   "output_sha256": shared.sha256_file(output),
                   "manifest_sha256": shared.sha256_file(root / "share/crabc/manifest.json"),
-                  "application_dsos": {name: shared.sha256_file(path) for name, (path, _) in declared.items()},
+                  "application_dsos": (
+                      {name: shared.sha256_file(node.path) for name, node in closure_nodes.items()}
+                      if closure_enabled else
+                      {name: shared.sha256_file(path) for name, (path, _) in declared.items()}
+                  ),
                   "owned_runtime_inputs": sorted(path.relative_to(root).as_posix() for path in [*runtime, archive]),
-                  "input_receipts": [{"path": str(path), "sha256": shared.sha256_file(path)} for path in [*direct, archive]],
+                  "input_receipts": (
+                      [
+                          {"role": "linker-input", "path": str(path), "sha256": shared.sha256_file(path)}
+                          for path in [*runtime, *objects]
+                      ]
+                      + [
+                          {"role": "direct-application-dso", "name": node.name,
+                           "path": str(node.path), "sha256": shared.sha256_file(node.path)}
+                          for node in closure_nodes.values() if node.role == "direct"
+                      ]
+                      + [{"role": "linker-input", "path": str(archive), "sha256": shared.sha256_file(archive)}]
+                      + [
+                          {"role": "transitive-application-dso", "name": node.name,
+                           "path": str(node.path), "sha256": shared.sha256_file(node.path)}
+                          for node in closure_nodes.values() if node.role == "transitive"
+                      ]
+                      if closure_enabled else
+                      [{"path": str(path), "sha256": shared.sha256_file(path)} for path in [*direct, archive]]
+                  ),
                   "resolved_linker": {"path": link[0], "sha256": shared.sha256_file(Path(link[0]))},
                   "link_command": link, "link_trace": trace, "campaign_complete": False}
+        if closure_enabled:
+            record["application_dso_roles"] = {
+                name: node.role for name, node in closure_nodes.items()
+            }
+            record["application_dso_needed"] = {
+                name: list(node.needed) for name, node in closure_nodes.items()
+            }
         receipt_stream(json.dumps(record, indent=2, sort_keys=True) + "\n")
 
 
