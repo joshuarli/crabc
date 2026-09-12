@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import stat
 import subprocess
 import unittest
@@ -17,13 +18,34 @@ ARCH_SOURCE = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "arch_prctl.rs"
 IO_SOURCE = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "io_permissions.rs"
 PROBE = ROOT / "compat" / "x86_64" / "libc_kernel_admin_probe.c"
 RUNNER = ROOT / "compat" / "x86_64" / "run_libc_kernel_admin.sh"
+STATIC_PROVIDER_READER = (
+    ROOT / "compat" / "x86_64" / "kernel_admin_static_provider_reader.py"
+)
 DOCUMENT = ROOT / "compat" / "x86_64" / "kernel-admin-abi.md"
 README = ROOT / "compat" / "x86_64" / "README.md"
 
 
+def load_static_provider_reader():
+    spec = importlib.util.spec_from_file_location(
+        "kernel_admin_static_provider_reader", STATIC_PROVIDER_READER
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load static provider reader: {STATIC_PROVIDER_READER}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class KernelAdminAbiTests(unittest.TestCase):
     def test_owned_component_has_a_closed_provider_and_evidence_contract(self) -> None:
-        for path in (ARCH_SOURCE, IO_SOURCE, PROBE, RUNNER, DOCUMENT):
+        for path in (
+            ARCH_SOURCE,
+            IO_SOURCE,
+            PROBE,
+            RUNNER,
+            STATIC_PROVIDER_READER,
+            DOCUMENT,
+        ):
             self.assertTrue(path.is_file(), f"missing kernel-admin input: {path}")
         self.assertEqual(stat.S_IMODE(RUNNER.stat().st_mode), 0o755)
         syntax = subprocess.run(
@@ -99,6 +121,8 @@ class KernelAdminAbiTests(unittest.TestCase):
             "build_x86_64_owned_dynamic_sysroot.py",
             "assert_provider_symbols",
             "assert_provider_instructions",
+            "kernel_admin_static_provider_reader.py",
+            "readelf --wide --symbols \"$inspection_dir\"/* >\"$report\"",
             "static static-pie",
             "for mode in pie non-pie",
             "dynamic-$mode-kernel",
@@ -115,6 +139,7 @@ class KernelAdminAbiTests(unittest.TestCase):
             self.assertIn(marker, runner)
         for forbidden in ("--cap-add", "seccomp=", "--privileged", "inb", "outb"):
             self.assertNotIn(forbidden, runner)
+        self.assertNotIn('"T", "W"', runner)
 
         for marker in (
             "private native Linux/x86-64 foundation evidence",
@@ -127,6 +152,26 @@ class KernelAdminAbiTests(unittest.TestCase):
         ):
             self.assertIn(marker, document)
         self.assertIn("[kernel-admin-abi.md](kernel-admin-abi.md)", readme)
+
+    def test_static_provider_reader_rejects_weak_and_hidden_metadata(self) -> None:
+        reader = load_static_provider_reader()
+
+        valid = "\n".join(
+            f"    1: 0000000000000000    38 FUNC    GLOBAL DEFAULT    1 {provider}"
+            for provider in reader.PROVIDERS
+        )
+        reader.validate_table(valid)
+
+        for provider, binding, visibility in (
+            ("iopl", "WEAK", "DEFAULT"),
+            ("ioperm", "GLOBAL", "HIDDEN"),
+        ):
+            rejected = valid.replace(
+                f"FUNC    GLOBAL DEFAULT    1 {provider}",
+                f"FUNC    {binding:<6} {visibility:<7} 1 {provider}",
+            )
+            with self.assertRaisesRegex(ValueError, rf"{provider}.*FUNC GLOBAL DEFAULT"):
+                reader.validate_table(rejected)
 
 
 if __name__ == "__main__":

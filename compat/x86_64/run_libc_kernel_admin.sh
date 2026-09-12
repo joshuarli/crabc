@@ -15,6 +15,7 @@ readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
 readonly PROBE="$ROOT/compat/x86_64/libc_kernel_admin_probe.c"
 readonly ARCH_SOURCE="$ROOT/libc/src/c_abi/x86_64/arch_prctl.rs"
 readonly IO_SOURCE="$ROOT/libc/src/c_abi/x86_64/io_permissions.rs"
+readonly STATIC_PROVIDER_READER="$ROOT/compat/x86_64/kernel_admin_static_provider_reader.py"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 
 fail() {
@@ -39,24 +40,20 @@ require_checkout_work() {
 }
 
 assert_provider_symbols() {
-    local artifact="$1" selector="$2" report="$3"
+    local artifact="$1" selector="$2" report="$3" inspection_dir
 
     if [ "$selector" = archive ]; then
-        nm -A --defined-only "$artifact" >"$report"
-        python3 -B - "$report" <<'PY'
-from pathlib import Path
-import re
-import sys
-
-expected = {"arch_prctl", "iopl", "ioperm"}
-seen = {name: 0 for name in expected}
-for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
-    fields = line.split()
-    if len(fields) >= 3 and fields[-1] in expected and fields[-2] in {"T", "W"}:
-        seen[fields[-1]] += 1
-if seen != {name: 1 for name in expected}:
-    raise SystemExit(f"archive provider shape mismatch: {seen}")
-PY
+        # `nm` distinguishes only weak/strong binding here; it cannot prove
+        # ELF DEFAULT visibility. Extract the defining archive members and
+        # validate their raw symbol table metadata instead.
+        inspection_dir="$work/static-provider-symbol-objects"
+        mkdir "$inspection_dir"
+        (
+            cd "$inspection_dir"
+            ar x "$artifact"
+        )
+        readelf --wide --symbols "$inspection_dir"/* >"$report"
+        python3 -B "$STATIC_PROVIDER_READER" "$report"
     else
         readelf --dyn-syms --wide "$artifact" >"$report"
         python3 -B - "$report" <<'PY'
@@ -217,11 +214,11 @@ compare_mode() {
 }
 
 require_checkout_work
-for tool in ar cmp gcc grep nm objdump readelf realpath sha256sum timeout; do
+for tool in ar cmp gcc grep nm objdump python3 readelf realpath sha256sum timeout; do
     require_tool "$tool"
 done
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
-for path in "$PROBE" "$ARCH_SOURCE" "$IO_SOURCE"; do
+for path in "$PROBE" "$ARCH_SOURCE" "$IO_SOURCE" "$STATIC_PROVIDER_READER"; do
     [ -f "$path" ] || fail "missing source input: $path"
 done
 

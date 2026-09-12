@@ -33,8 +33,9 @@ the sealed installed dynamic driver. It links that unchanged object with
 pinned musl, owned static ET_EXEC, owned static PIE, owned dynamic PIE, and
 owned dynamic non-PIE products, and compares the same execution fingerprint.
 Dynamic products run through both normal kernel interpreter dispatch and the
-installed interpreter’s direct path. The runner checks archive and
-shared-provider ELF type/binding/visibility, executable ELF shape, retained
+installed interpreter’s direct path. The runner checks the extracted static
+archive member and shared-provider ELF tables for exactly one `FUNC GLOBAL
+DEFAULT` provider per spelling, then checks executable ELF shape, retained
 provider references, and each provider’s raw syscall instruction and number.
 
 The behavior matrix reads `ARCH_GET_FS` and `ARCH_GET_GS` through valid output
