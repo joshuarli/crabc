@@ -39,6 +39,25 @@ contract validation pass; logs are under `.work/x86_64/integration-54bb0eba/`.
 These source changes require fresh product evidence at the next qualification
 checkpoint. They do not transfer the preceding revision's qualification.
 
+At `640c0939`, the selected native allocator producer adds normal large-page
+retry/CAS/fallback ownership. The final selected VM producer matches 98 values
+and 12 focused reader tests pass. Parent review is retained at
+`.work/x86_64/allocator-retry-parent-review/verification-640c0939.json`; the
+original logs and VM evidence remain under
+`.work/worktrees/allocator_large_page_retry/.work/allocator-x86_64/`. Full M2
+remains partial at historical `e13313c2`. The final C reaping fix has separate
+red/green and selected-producer evidence. This is status documentation only;
+it does not qualify full M2 or change any runtime or promotion gate.
+
+The native ABI inventory collector records two byte-identical reports from the
+`640c0939` prepared-unqualified static and
+materialized-unqualified dynamic product pair. Both host replays pass and a
+retained raw-symbol mutation is rejected. The reports remain under the
+component's ignored `.work/x86_64/` evidence root.
+They are source-bound musl/owned ELF, symbol, archive, and header observations
+only: no symbol ratchet, same-object conclusion, compatibility result, family
+completion, promotion, or public-support claim follows.
+
 The native C performance adapter now stages all 114 rows, launches timed
 clients through an isolated static supervisor, and collects separate memory
 observers with ordered live checkpoints and whole-process cgroup peaks.

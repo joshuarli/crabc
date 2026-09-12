@@ -199,6 +199,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   perf-c-memory-smoke <dynamic-product> <work-dir>  run the bounded native observer/cgroup collector smoke; never a scorecard result
   perf-native {--prepare|--mode smoke|--validate-report REPORT} ...  pinned native Rust-facade performance companion
   perf-native-test  run focused native Rust-facade performance runner tests
+  native-abi-inventory {collect|validate-report} ...  collect or replay the native x86 musl/owned ABI measurement inventory
+  native-abi-inventory-test  run focused native ABI-inventory parser, replay, and dispatcher tests
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
   linux-5-10-uapi  verify the fixed Linux 5.10 x86 exported-UAPI input
   header-abi-reference  verify the pinned x86 SysV LP64/x87 header baseline
@@ -2929,6 +2931,131 @@ prepare_native_facade_performance_arguments() {
     fi
 }
 
+native_abi_inventory_input_path() {
+    local name="$1"
+    local argument="$2"
+    local kind="$3"
+    local canonical_root="$ROOT_DIR"
+    local common_directory
+    if [ -f "$ROOT_DIR/.git" ]; then
+        common_directory="$(GIT_OPTIONAL_LOCKS=0 git -C "$ROOT_DIR" rev-parse --path-format=absolute --git-common-dir)" || return 1
+        canonical_root="$(cd -P "$(dirname "$common_directory")" && pwd)" || return 1
+    fi
+    python3 -B - "$canonical_root" "$name" "$argument" "$kind" <<'PY_NATIVE_ABI_INPUT'
+from pathlib import Path
+import os
+import sys
+
+root = Path(sys.argv[1])
+name = sys.argv[2]
+argument = sys.argv[3]
+kind = sys.argv[4]
+try:
+    raw = Path(argument)
+    if ".." in raw.parts or any(character in argument for character in ("\n", "\r", ":")):
+        raise ValueError("path has parent traversal or Docker mount syntax")
+    path = Path(os.path.abspath(raw))
+    if path.resolve(strict=True) != path:
+        raise ValueError("path is not physical")
+    if not path.is_relative_to(root / ".work"):
+        raise ValueError(f"path is outside canonical checkout .work: {root / '.work'}")
+    if kind == "directory":
+        if not path.is_dir():
+            raise ValueError("path is not a directory")
+    elif kind == "file":
+        if not path.is_file():
+            raise ValueError("path is not a regular file")
+    else:
+        raise ValueError("unknown input kind")
+    print(path)
+except (OSError, RuntimeError, ValueError) as error:
+    raise SystemExit(f"ERROR: native ABI inventory {name}: {error}")
+PY_NATIVE_ABI_INPUT
+}
+
+prepare_native_abi_inventory_arguments() {
+    [ "$#" -ge 1 ] || fail "usage: ./scripts/dev-x86_64.sh native-abi-inventory {collect|validate-report} ..."
+    local mode="$1"
+    shift
+    local static_product='' dynamic_product='' static_preparation='' output='' report=''
+    case "$mode" in
+        collect|validate-report) ;;
+        *) fail "usage: ./scripts/dev-x86_64.sh native-abi-inventory {collect|validate-report} ..." ;;
+    esac
+    if [ "$mode" = validate-report ]; then
+        [ "$#" -ge 1 ] && [ -n "$1" ] && [[ "$1" != -* ]] || fail "validate-report requires REPORT"
+        report="$1"
+        shift
+    fi
+    while [ "$#" -gt 0 ]; do
+        [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "native ABI inventory arguments require a value"
+        case "$1" in
+            --static-product)
+                [ -z "$static_product" ] || fail "--static-product may appear once"
+                static_product="$2"
+                ;;
+            --dynamic-product)
+                [ -z "$dynamic_product" ] || fail "--dynamic-product may appear once"
+                dynamic_product="$2"
+                ;;
+            --static-preparation)
+                [ -z "$static_preparation" ] || fail "--static-preparation may appear once"
+                static_preparation="$2"
+                ;;
+            --output)
+                [ "$mode" = collect ] && [ -z "$output" ] || fail "--output is required once for collect only"
+                output="$2"
+                ;;
+            *) fail "unknown native ABI inventory argument: $1" ;;
+        esac
+        shift 2
+    done
+    [ -n "$static_product" ] && [ -n "$dynamic_product" ] && [ -n "$static_preparation" ] || \
+        fail "native ABI inventory requires static/dynamic products and the static preparation receipt"
+    NATIVE_ABI_STATIC_PRODUCT="$(native_abi_inventory_input_path static-product "$static_product" directory)" || exit 2
+    NATIVE_ABI_DYNAMIC_PRODUCT="$(native_abi_inventory_input_path dynamic-product "$dynamic_product" directory)" || exit 2
+    NATIVE_ABI_STATIC_PREPARATION="$(native_abi_inventory_input_path static-preparation "$static_preparation" file)" || exit 2
+    [[ "$NATIVE_ABI_STATIC_PRODUCT" != *:* && "$NATIVE_ABI_DYNAMIC_PRODUCT" != *:* && "$NATIVE_ABI_STATIC_PREPARATION" != *:* ]] || \
+        fail "native ABI inventory Docker input paths must not contain ':'"
+    NATIVE_ABI_INVENTORY_MODE="$mode"
+    if [ "$mode" = collect ]; then
+        output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
+        case "$output" in
+            /workspace/.work/x86_64|/workspace/.work/x86_64/*) ;;
+            *) fail "native ABI inventory output must be below this checkout's .work/x86_64" ;;
+        esac
+        NATIVE_ABI_INVENTORY_ARGUMENTS=(
+            --collect
+            --static-product /inputs/static-product
+            --dynamic-product /inputs/dynamic-product
+            --static-preparation /inputs/static-preparation.json
+            --output "$output"
+            --work-root /workspace/.work/x86_64
+        )
+    else
+        [ -z "$output" ] || fail "validate-report does not take --output"
+        report="$(translate_owned_posix_product "$report" receipt-file)" || exit 2
+        case "$report" in
+            /workspace/.work/x86_64/cargo|/workspace/.work/x86_64/cargo/*)
+                report="$CARGO_VOLUME${report#/workspace/.work/x86_64/cargo}"
+                ;;
+            /workspace/.work/x86_64|/workspace/.work/x86_64/*)
+                report="$WORK_DIR${report#/workspace/.work/x86_64}"
+                ;;
+            /workspace/*)
+                report="$ROOT_DIR/${report#/workspace/}"
+                ;;
+            *) fail "native ABI inventory report is outside the checkout source/work mounts" ;;
+        esac
+        NATIVE_ABI_INVENTORY_ARGUMENTS=(
+            --validate-report "$report"
+            --static-product "$NATIVE_ABI_STATIC_PRODUCT"
+            --dynamic-product "$NATIVE_ABI_DYNAMIC_PRODUCT"
+            --static-preparation "$NATIVE_ABI_STATIC_PREPARATION"
+        )
+    fi
+}
+
 prepare_owned_posix_family_arguments() {
     local static_receipt='' dynamic_receipt='' output=''
     local expected='usage: ./scripts/dev-x86_64.sh owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR'
@@ -3192,6 +3319,29 @@ run_in_native_facade_performance_container() {
         --volume "$NATIVE_FACADE_RUSTYBENCH_SOURCE:/inputs/rustybench:ro" \
         --volume "$NATIVE_FACADE_RUSTIX_SOURCE:/inputs/rustix:ro" \
         "$IMAGE" "$@"
+}
+
+run_in_native_abi_inventory_container() {
+    prepare_work_dir
+    local image_id
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve native ABI inventory image identity"
+    docker run --rm --init \
+        --user "$(id -u):$(id -g)" \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" \
+        --network none \
+        --workdir /workspace \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env CRABC_X86_ABI_IMAGE_ID="crabc-core-evidence@$image_id" \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$NATIVE_ABI_STATIC_PRODUCT:/inputs/static-product:ro" \
+        --volume "$NATIVE_ABI_DYNAMIC_PRODUCT:/inputs/dynamic-product:ro" \
+        --volume "$NATIVE_ABI_STATIC_PREPARATION:/inputs/static-preparation.json:ro" \
+        "$image_id" "$@"
 }
 
 # Interface discovery snapshots only the disposable container's loopback
@@ -6182,6 +6332,12 @@ case "$command" in
     perf-native-test)
         [ "$#" -eq 0 ] || fail "perf-native-test takes no arguments"
         ;;
+    native-abi-inventory)
+        [ "$#" -ge 1 ] || fail "native-abi-inventory requires collect or validate-report"
+        ;;
+    native-abi-inventory-test)
+        [ "$#" -eq 0 ] || fail "native-abi-inventory-test takes no arguments"
+        ;;
     routine-c-abi-matrix)
         [ "$#" -eq 1 ] || fail "routine-c-abi-matrix requires exactly one family id"
         ensure_image
@@ -6443,6 +6599,10 @@ case "$command" in
         prepare_native_facade_performance_arguments "$@"
         set -- "${NATIVE_FACADE_PERFORMANCE_ARGUMENTS[@]}"
         ;;
+    native-abi-inventory)
+        prepare_native_abi_inventory_arguments "$@"
+        set -- "${NATIVE_ABI_INVENTORY_ARGUMENTS[@]}"
+        ;;
     perf-c)
         prepare_native_c_performance_arguments "$@"
         set -- "${NATIVE_C_PERFORMANCE_ARGUMENTS[@]}"
@@ -6494,6 +6654,20 @@ case "$command" in
         run_in_network_none_container python3 -B -m unittest \
             compat/perf/native/tests/test_x86_64_runner.py \
             compat/perf/native/tests/test_x86_64_dispatcher.py
+        ;;
+    native-abi-inventory)
+        if [ "$NATIVE_ABI_INVENTORY_MODE" = validate-report ]; then
+            python3 -B "$ROOT_DIR/compat/x86_64/native_abi_inventory.py" "$@"
+        else
+            ensure_image
+            run_in_native_abi_inventory_container python3 -B /workspace/compat/x86_64/native_abi_inventory.py "$@"
+        fi
+        ;;
+    native-abi-inventory-test)
+        ensure_image
+        run_in_network_none_container python3 -B -m unittest \
+            compat/x86_64/tests/test_native_abi_inventory.py \
+            compat/x86_64/tests/test_native_abi_inventory_dispatcher.py
         ;;
     perf-c)
         if [ "$1" = check ]; then
