@@ -2501,12 +2501,15 @@ impl Mapping {
         };
 
         reset_with_advice(&RESET_ADVICE, |advice| {
-            fault_before(FaultPoint::Purge)?;
             // SAFETY: `range` is a complete-page subrange of this live mapping.
             // The advisory may discard contents but does not yield references
             // or alter this boundary's ownership state.
             #[cfg(test)]
             fault::record_advice_range(range.address, range.length, advice);
+            // Keep this test-only record at the imported-primitive boundary:
+            // a C link wrapper observes an injected failure attempt before
+            // the syscall returns. The production fault seam remains empty.
+            fault_before(FaultPoint::Purge)?;
             unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) }
         })
         .map(|()| true)
@@ -2526,12 +2529,14 @@ impl Mapping {
         };
         process.subprocess.vm_statistics().reset(range.length);
         reset_with_advice(&RESET_ADVICE, |advice| {
-            fault_before(FaultPoint::Purge)?;
             // SAFETY: `range` is a complete-page subrange of this live
             // mapping. The advisory does not create aliases or change the
             // mapping's release owner.
             #[cfg(test)]
             fault::record_advice_range(range.address, range.length, advice);
+            // Keep the test-only observation at the same import boundary as
+            // the C oracle's `madvise` wrapper, including injected errors.
+            fault_before(FaultPoint::Purge)?;
             unsafe { crabc_core::mm::madvise_raw(range.address, range.length, advice) }
         })
         .map(|()| true)
@@ -4555,6 +4560,8 @@ pub(crate) mod fault {
     static THIRD_OBSERVED: AtomicUsize = AtomicUsize::new(0);
     static THIRD_ENABLED: AtomicBool = AtomicBool::new(false);
     static FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
+    static SECOND_FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
+    static THIRD_FAILURE_ERROR: AtomicI32 = AtomicI32::new(Errno::NOMEM.raw());
     // The M2 native release-failure differential captures only the two
     // selected `_mi_os_free_ex` primitive arguments. This is separate from
     // `OBSERVED`: a count alone cannot prove that an interior client pointer
@@ -4571,13 +4578,31 @@ pub(crate) mod fault {
     ];
     // The normal no-callback purge matrix needs the source-normalized raw
     // advisory range, not just its call count. It captures one selected
-    // mapping-owned advice at a time, so an unnormalized whole span cannot
-    // pass by reaching the same Unix primitive once.
+    // mapping-owned advice sequence at a time, so an unnormalized whole span
+    // cannot pass by reaching the same Unix primitive once. Four edges cover
+    // the complete pinned reset state machine: EAGAIN, EINVAL, and one
+    // `MADV_DONTNEED` fallback, with one spare bounded edge for a receiver.
+    const ADVICE_RANGE_CAPTURE_CAPACITY: usize = 4;
     static ADVICE_RANGE_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
     static ADVICE_RANGE_CAPTURE_COUNT: AtomicUsize = AtomicUsize::new(0);
-    static ADVICE_RANGE_CAPTURE_ADDRESS: AtomicUsize = AtomicUsize::new(0);
-    static ADVICE_RANGE_CAPTURE_LENGTH: AtomicUsize = AtomicUsize::new(0);
-    static ADVICE_RANGE_CAPTURE_ADVICE: AtomicUsize = AtomicUsize::new(0);
+    static ADVICE_RANGE_CAPTURE_ADDRESSES: [AtomicUsize; ADVICE_RANGE_CAPTURE_CAPACITY] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
+    static ADVICE_RANGE_CAPTURE_LENGTHS: [AtomicUsize; ADVICE_RANGE_CAPTURE_CAPACITY] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
+    static ADVICE_RANGE_CAPTURE_ADVICES: [AtomicUsize; ADVICE_RANGE_CAPTURE_CAPACITY] = [
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+        AtomicUsize::new(0),
+    ];
     // The option/hint/large/THP policy slice has a small, source-bounded
     // raw mmap sequence: a high aligned hint can fail and retry at null, and
     // a large-page attempt can precede the regular mapping. Keep those raw
@@ -4609,6 +4634,8 @@ pub(crate) mod fault {
         third_point: usize,
         third_ordinal: usize,
         error: Errno,
+        second_error: Errno,
+        third_error: Errno,
     }
 
     impl Plan {
@@ -4621,6 +4648,8 @@ pub(crate) mod fault {
                 third_point: ANY_POINT,
                 third_ordinal: 0,
                 error: Errno::NOMEM,
+                second_error: Errno::NOMEM,
+                third_error: Errno::NOMEM,
             }
         }
 
@@ -4633,6 +4662,8 @@ pub(crate) mod fault {
                 third_point: ANY_POINT,
                 third_ordinal: 0,
                 error,
+                second_error: error,
+                third_error: error,
             }
         }
 
@@ -4645,6 +4676,8 @@ pub(crate) mod fault {
                 third_point: ANY_POINT,
                 third_ordinal: 0,
                 error,
+                second_error: error,
+                third_error: error,
             }
         }
 
@@ -4668,6 +4701,34 @@ pub(crate) mod fault {
                 third_point: ANY_POINT,
                 third_ordinal: 0,
                 error,
+                second_error: error,
+                third_error: error,
+            }
+        }
+
+        /// Fails two ordered edges with their own Linux errors.
+        ///
+        /// This stays test-only. The reset trace needs `EAGAIN` before the
+        /// source's `MADV_FREE`/`EINVAL` state transition, rather than one
+        /// repeated synthetic error standing in for both source edges.
+        pub(crate) const fn at_pair_with_errors(
+            point: Point,
+            ordinal: usize,
+            error: Errno,
+            second_point: Point,
+            second_ordinal: usize,
+            second_error: Errno,
+        ) -> Self {
+            Self {
+                point: point as usize,
+                ordinal,
+                second_point: second_point as usize,
+                second_ordinal,
+                third_point: ANY_POINT,
+                third_ordinal: 0,
+                error,
+                second_error,
+                third_error: second_error,
             }
         }
 
@@ -4693,6 +4754,36 @@ pub(crate) mod fault {
                 third_point: third_point as usize,
                 third_ordinal,
                 error,
+                second_error: error,
+                third_error: error,
+            }
+        }
+
+        /// Fails three ordered edges with their own Linux errors.
+        ///
+        /// The bounded normal-release reset witness uses this for its exact
+        /// `EAGAIN`, `EINVAL`, then fallback-`EAGAIN` sequence.
+        pub(crate) const fn at_triple_with_errors(
+            point: Point,
+            ordinal: usize,
+            error: Errno,
+            second_point: Point,
+            second_ordinal: usize,
+            second_error: Errno,
+            third_point: Point,
+            third_ordinal: usize,
+            third_error: Errno,
+        ) -> Self {
+            Self {
+                point: point as usize,
+                ordinal,
+                second_point: second_point as usize,
+                second_ordinal,
+                third_point: third_point as usize,
+                third_ordinal,
+                error,
+                second_error,
+                third_error,
             }
         }
     }
@@ -4712,8 +4803,8 @@ pub(crate) mod fault {
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
 
-    /// Test-only capture token for one source-normalized `madvise` argument
-    /// tuple from a mapping-owned transition.
+    /// Test-only bounded capture token for source-normalized `madvise`
+    /// arguments from one mapping-owned transition.
     pub(crate) struct AdviceRangeCapture<'guard> {
         _guard: core::marker::PhantomData<&'guard Guard>,
     }
@@ -4787,14 +4878,22 @@ pub(crate) mod fault {
             }
         }
 
-        /// Starts a fresh capture of exactly one subsequent mapping-owned
-        /// advice tuple. More or fewer calls invalidate the witness.
+        /// Starts a fresh bounded capture of subsequent mapping-owned advice
+        /// tuples. Callers that require one tuple retain [`AdviceRangeCapture::range`];
+        /// reset callers use the ordered sequence to preserve retry/fallback
+        /// ownership.
         pub(crate) fn capture_advice_range(&self) -> AdviceRangeCapture<'_> {
             ADVICE_RANGE_CAPTURE_ACTIVE.store(false, Ordering::Release);
             ADVICE_RANGE_CAPTURE_COUNT.store(0, Ordering::Release);
-            ADVICE_RANGE_CAPTURE_ADDRESS.store(0, Ordering::Release);
-            ADVICE_RANGE_CAPTURE_LENGTH.store(0, Ordering::Release);
-            ADVICE_RANGE_CAPTURE_ADVICE.store(0, Ordering::Release);
+            for address in &ADVICE_RANGE_CAPTURE_ADDRESSES {
+                address.store(0, Ordering::Release);
+            }
+            for length in &ADVICE_RANGE_CAPTURE_LENGTHS {
+                length.store(0, Ordering::Release);
+            }
+            for advice in &ADVICE_RANGE_CAPTURE_ADVICES {
+                advice.store(0, Ordering::Release);
+            }
             ADVICE_RANGE_CAPTURE_ACTIVE.store(true, Ordering::Release);
             AdviceRangeCapture {
                 _guard: core::marker::PhantomData,
@@ -4862,9 +4961,30 @@ pub(crate) mod fault {
                 return None;
             }
             Some((
-                ADVICE_RANGE_CAPTURE_ADDRESS.load(Ordering::Acquire),
-                ADVICE_RANGE_CAPTURE_LENGTH.load(Ordering::Acquire),
-                ADVICE_RANGE_CAPTURE_ADVICE.load(Ordering::Acquire) as u32,
+                ADVICE_RANGE_CAPTURE_ADDRESSES[0].load(Ordering::Acquire),
+                ADVICE_RANGE_CAPTURE_LENGTHS[0].load(Ordering::Acquire),
+                ADVICE_RANGE_CAPTURE_ADVICES[0].load(Ordering::Acquire) as u32,
+            ))
+        }
+
+        /// Returns the complete ordered bounded sequence, together with its
+        /// length. More than the fixed capacity invalidates the witness.
+        pub(crate) fn ranges(
+            &self,
+        ) -> Option<([(usize, usize, u32); ADVICE_RANGE_CAPTURE_CAPACITY], usize)> {
+            let count = self.count();
+            if count > ADVICE_RANGE_CAPTURE_CAPACITY {
+                return None;
+            }
+            Some((
+                core::array::from_fn(|index| {
+                    (
+                        ADVICE_RANGE_CAPTURE_ADDRESSES[index].load(Ordering::Acquire),
+                        ADVICE_RANGE_CAPTURE_LENGTHS[index].load(Ordering::Acquire),
+                        ADVICE_RANGE_CAPTURE_ADVICES[index].load(Ordering::Acquire) as u32,
+                    )
+                }),
+                count,
             ))
         }
     }
@@ -4919,6 +5039,8 @@ pub(crate) mod fault {
         THIRD_SELECTED_POINT.store(plan.third_point, Ordering::Relaxed);
         THIRD_FAILURE_ORDINAL.store(plan.third_ordinal, Ordering::Relaxed);
         FAILURE_ERROR.store(plan.error.raw(), Ordering::Relaxed);
+        SECOND_FAILURE_ERROR.store(plan.second_error.raw(), Ordering::Relaxed);
+        THIRD_FAILURE_ERROR.store(plan.third_error.raw(), Ordering::Relaxed);
         OBSERVED.store(0, Ordering::Release);
         SECOND_OBSERVED.store(0, Ordering::Release);
         THIRD_OBSERVED.store(0, Ordering::Release);
@@ -4951,7 +5073,7 @@ pub(crate) mod fault {
                 let second_observed = SECOND_OBSERVED.fetch_add(1, Ordering::AcqRel) + 1;
                 if second_observed == second_ordinal {
                     THIRD_ENABLED.store(true, Ordering::Release);
-                    let error = FAILURE_ERROR.load(Ordering::Acquire);
+                    let error = SECOND_FAILURE_ERROR.load(Ordering::Acquire);
                     // SAFETY: `Plan` obtains `error` from a valid `Errno`, so
                     // the stored integer remains a positive Linux errno.
                     return Err(unsafe { Errno::from_raw(error).unwrap_unchecked() });
@@ -4966,7 +5088,7 @@ pub(crate) mod fault {
             if third_ordinal != 0 {
                 let third_observed = THIRD_OBSERVED.fetch_add(1, Ordering::AcqRel) + 1;
                 if third_observed == third_ordinal {
-                    let error = FAILURE_ERROR.load(Ordering::Acquire);
+                    let error = THIRD_FAILURE_ERROR.load(Ordering::Acquire);
                     // SAFETY: `Plan` obtains `error` from a valid `Errno`, so
                     // the stored integer remains a positive Linux errno.
                     return Err(unsafe { Errno::from_raw(error).unwrap_unchecked() });
@@ -5000,10 +5122,10 @@ pub(crate) mod fault {
             return;
         }
         let index = ADVICE_RANGE_CAPTURE_COUNT.fetch_add(1, Ordering::AcqRel);
-        if index == 0 {
-            ADVICE_RANGE_CAPTURE_ADDRESS.store(address.addr(), Ordering::Release);
-            ADVICE_RANGE_CAPTURE_LENGTH.store(length, Ordering::Release);
-            ADVICE_RANGE_CAPTURE_ADVICE.store(advice as usize, Ordering::Release);
+        if index < ADVICE_RANGE_CAPTURE_CAPACITY {
+            ADVICE_RANGE_CAPTURE_ADDRESSES[index].store(address.addr(), Ordering::Release);
+            ADVICE_RANGE_CAPTURE_LENGTHS[index].store(length, Ordering::Release);
+            ADVICE_RANGE_CAPTURE_ADVICES[index].store(advice as usize, Ordering::Release);
         }
     }
 
@@ -8367,19 +8489,106 @@ mod tests {
             "the default Linux source decommit retry keeps the mapping accessible"
         );
 
+        // The following bounded record is the entire normal-release source
+        // state machine from `src/prim/unix/prim.c:581-593`. It keeps the
+        // direct `_mi_os_reset` receiver distinct from the later no-callback
+        // `_mi_os_purge_ex` receiver, while the test-only import seam records
+        // every attempted advice just as the C link wrapper does.
+        RESET_ADVICE.store(MADV_FREE as usize, Ordering::Release);
+        let before_reset_eagain = transition_subprocess.vm_statistics().snapshot();
+        let reset_eagain_capture = fault.capture_advice_range();
+        fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::AGAIN));
+        let reset_eagain_succeeds =
+            reserved.reset_for_process(transition_process, 0, page) == Ok(true);
+        let after_reset_eagain = transition_subprocess.vm_statistics().snapshot();
+        let reset_eagain_ranges = reset_eagain_capture.ranges();
+        drop(reset_eagain_capture);
+        let reset_eagain_retries_initial_madv_free = reset_eagain_succeeds
+            && fault.observed() == 2
+            && RESET_ADVICE.load(Ordering::Acquire) == MADV_FREE as usize
+            && matches!(
+                reset_eagain_ranges,
+                Some((ranges, 2))
+                    if ranges[0] == (reserved_base.addr(), page, MADV_FREE)
+                        && ranges[1] == (reserved_base.addr(), page, MADV_FREE)
+            )
+            && after_reset_eagain.reset_calls == before_reset_eagain.reset_calls + 1
+            && after_reset_eagain.reset == before_reset_eagain.reset + page as i64
+            && reserved.base() == Ok(reserved_base);
+
+        let before_fallback_eagain = transition_subprocess.vm_statistics().snapshot();
+        let fallback_eagain_capture = fault.capture_advice_range();
+        fault.set(fault::Plan::at_triple_with_errors(
+            fault::Point::Purge,
+            1,
+            Errno::AGAIN,
+            fault::Point::Purge,
+            1,
+            Errno::INVAL,
+            fault::Point::Purge,
+            1,
+            Errno::AGAIN,
+        ));
+        let fallback_eagain_reports_error = matches!(
+            reserved.reset_for_process(transition_process, 0, page),
+            Err(Errno::AGAIN)
+        );
+        let after_fallback_eagain = transition_subprocess.vm_statistics().snapshot();
+        let fallback_eagain_ranges = fallback_eagain_capture.ranges();
+        drop(fallback_eagain_capture);
+        let reset_fallback_eagain_returns_error_after_one_fallback_attempt =
+            fallback_eagain_reports_error
+                && fault.observed() == 3
+                && fault.secondary_observed() == 2
+                && fault.third_observed() == 1
+                && RESET_ADVICE.load(Ordering::Acquire) == MADV_DONTNEED as usize
+                && matches!(
+                    fallback_eagain_ranges,
+                    Some((ranges, 3))
+                        if ranges[0] == (reserved_base.addr(), page, MADV_FREE)
+                            && ranges[1] == (reserved_base.addr(), page, MADV_FREE)
+                            && ranges[2] == (reserved_base.addr(), page, MADV_DONTNEED)
+                )
+                && after_fallback_eagain.reset_calls
+                    == before_fallback_eagain.reset_calls + 1
+                && after_fallback_eagain.reset == before_fallback_eagain.reset + page as i64
+                && reserved.base() == Ok(reserved_base);
+
+        // The prior error has permanently changed this test process's source
+        // cache. Reinitialize only the test static to model the independent
+        // source process that the C fixture forks for the fallback-error row;
+        // the succeeding row below remains the live parent state used by the
+        // later no-callback purge receiver.
         RESET_ADVICE.store(MADV_FREE as usize, Ordering::Release);
         let before_reset_fallback = transition_subprocess.vm_statistics().snapshot();
-        fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::INVAL));
-        assert_eq!(
-            reserved.reset_for_process(transition_process, 0, page),
-            Ok(true),
-            "the source reset retries MADV_DONTNEED after MADV_FREE EINVAL",
-        );
+        let reset_fallback_capture = fault.capture_advice_range();
+        fault.set(fault::Plan::at_pair_with_errors(
+            fault::Point::Purge,
+            1,
+            Errno::AGAIN,
+            fault::Point::Purge,
+            1,
+            Errno::INVAL,
+        ));
+        let reset_fallback_succeeds =
+            reserved.reset_for_process(transition_process, 0, page) == Ok(true);
         let after_reset_fallback = transition_subprocess.vm_statistics().snapshot();
-        let reset_madv_free_einval_falls_back_to_dontneed = fault.observed() == 2
+        let reset_fallback_ranges = reset_fallback_capture.ranges();
+        drop(reset_fallback_capture);
+        let reset_madv_free_einval_falls_back_to_dontneed = reset_fallback_succeeds
+            && fault.observed() == 3
+            && fault.secondary_observed() == 2
             && RESET_ADVICE.load(Ordering::Acquire) == MADV_DONTNEED as usize
+            && matches!(
+                reset_fallback_ranges,
+                Some((ranges, 3))
+                    if ranges[0] == (reserved_base.addr(), page, MADV_FREE)
+                        && ranges[1] == (reserved_base.addr(), page, MADV_FREE)
+                        && ranges[2] == (reserved_base.addr(), page, MADV_DONTNEED)
+            )
             && after_reset_fallback.reset_calls == before_reset_fallback.reset_calls + 1
-            && after_reset_fallback.reset == before_reset_fallback.reset + page as i64;
+            && after_reset_fallback.reset == before_reset_fallback.reset + page as i64
+            && reserved.base() == Ok(reserved_base);
 
         fault.set(fault::Plan::at(fault::Point::Decommit, 1, Errno::NOMEM));
         let purge_decommit_failure_no_recommit =
@@ -8442,12 +8651,44 @@ mod tests {
             None,
         )
         .expect("the reset-purge option arm receives one owned mapping");
-        fault.set(fault::Plan::at(fault::Point::Purge, 1, Errno::NOMEM));
         let reset_mapping_base = reset_mapping.base().expect("the reset-purge owner starts live");
+        let before_purge_reset_failure = reset_subprocess.vm_statistics().snapshot();
+        let purge_reset_capture = fault.capture_advice_range();
+        fault.set(fault::Plan::at_pair_with_errors(
+            fault::Point::Purge,
+            1,
+            Errno::AGAIN,
+            fault::Point::Purge,
+            1,
+            Errno::NOMEM,
+        ));
         let purge_reset_failure_is_consumed = reset_mapping
-            .purge_for_process(reset_process, 0, page, true, page) == Ok(false)
-            && fault.observed() == 1
-            && reset_mapping.base() == Ok(reset_mapping_base);
+            .purge_for_process(reset_process, 0, page, true, page) == Ok(false);
+        let after_purge_reset_failure = reset_subprocess.vm_statistics().snapshot();
+        let purge_reset_ranges = purge_reset_capture.ranges();
+        drop(purge_reset_capture);
+        let reset_dontneed_persists_to_no_callback_purge = matches!(
+            purge_reset_ranges,
+            Some((ranges, 2))
+                if ranges[0] == (reset_mapping_base.addr(), page, MADV_DONTNEED)
+                    && ranges[1] == (reset_mapping_base.addr(), page, MADV_DONTNEED)
+        );
+        let purge_reset_eagain_then_error_is_consumed_and_owner_retained =
+            purge_reset_failure_is_consumed
+                && fault.observed() == 2
+                && fault.secondary_observed() == 1
+                && reset_dontneed_persists_to_no_callback_purge
+                && reset_mapping.base() == Ok(reset_mapping_base)
+                && after_purge_reset_failure.purge_calls
+                    == before_purge_reset_failure.purge_calls + 1
+                && after_purge_reset_failure.purged
+                    == before_purge_reset_failure.purged + page as i64
+                && after_purge_reset_failure.reset_calls
+                    == before_purge_reset_failure.reset_calls + 1
+                && after_purge_reset_failure.reset
+                    == before_purge_reset_failure.reset + page as i64
+                && after_purge_reset_failure.committed_current
+                    == before_purge_reset_failure.committed_current;
         fault.set(fault::Plan::disabled());
         reset_mapping
             .unmap_for_process(reset_process, page, false)
@@ -8708,6 +8949,14 @@ mod tests {
             "m2.vm.reserved.reset.madv_free_einval_falls_back_to_dontneed",
             u8::from(reset_madv_free_einval_falls_back_to_dontneed)
         );
+        emit!(
+            "m2.vm.reserved.reset.eagain_retries_initial_madv_free",
+            u8::from(reset_eagain_retries_initial_madv_free)
+        );
+        emit!(
+            "m2.vm.reserved.reset.fallback_eagain_returns_error_after_one_fallback_attempt",
+            u8::from(reset_fallback_eagain_returns_error_after_one_fallback_attempt)
+        );
         emit!("m2.vm.reserved.reset_success", 1);
         emit!(
             "m2.vm.reserved.purge.decommit_failure_no_recommit",
@@ -8720,6 +8969,14 @@ mod tests {
         emit!(
             "m2.vm.reserved.purge.reset_failure_is_consumed",
             u8::from(purge_reset_failure_is_consumed)
+        );
+        emit!(
+            "m2.vm.reserved.reset.dontneed_persists_to_no_callback_purge",
+            u8::from(reset_dontneed_persists_to_no_callback_purge)
+        );
+        emit!(
+            "m2.vm.reserved.purge.reset_eagain_then_error_is_consumed_and_owner_retained",
+            u8::from(purge_reset_eagain_then_error_is_consumed_and_owner_retained)
         );
         emit!(
             "m2.vm.reserved.purge.normal_no_callback_policy_range_matrix",

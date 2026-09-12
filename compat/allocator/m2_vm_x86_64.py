@@ -35,7 +35,7 @@ ALIGNED_HINT_PROFILE_TRACE_END = "CRABC_MI_M2_ALIGNED_HINT_SOURCE_PROFILE_TRACE_
 ALIGNED_OVERMAP_TRACE_BEGIN = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_BEGIN"
 ALIGNED_OVERMAP_TRACE_END = "CRABC_MI_M2_ALIGNED_OVERMAP_TRACE_END"
 EXPECTED_RUST_TEST_COUNT = 1
-EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-external-page-extension-child-policy-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
+EVIDENCE_PROFILE = "release-no-default-features-process-paired-regular-vm-reset-eagain-fallback-state-external-page-extension-child-policy-aligned-hint-and-aligned-overmap-cleanup-boundary-fault"
 
 CHECKS = (
     (
@@ -203,10 +203,14 @@ TRACE_KEYS = (
     "m2.vm.reserved.decommit.retry.one_additional_source_attempt",
     "m2.vm.reserved.decommit_no_recommit",
     "m2.vm.reserved.reset.madv_free_einval_falls_back_to_dontneed",
+    "m2.vm.reserved.reset.eagain_retries_initial_madv_free",
+    "m2.vm.reserved.reset.fallback_eagain_returns_error_after_one_fallback_attempt",
     "m2.vm.reserved.reset_success",
     "m2.vm.reserved.purge.decommit_failure_no_recommit",
     "m2.vm.reserved.purge.decommit_retry_no_recommit",
     "m2.vm.reserved.purge.reset_failure_is_consumed",
+    "m2.vm.reserved.reset.dontneed_persists_to_no_callback_purge",
+    "m2.vm.reserved.purge.reset_eagain_then_error_is_consumed_and_owner_retained",
     "m2.vm.reserved.purge.normal_no_callback_policy_range_matrix",
     "m2.vm.reserved.reuse_linux_noop",
     "m2.vm.reserved.protect.failure_returns_false_and_one_source_attempt",

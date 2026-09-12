@@ -174,6 +174,69 @@ static size_t captured_transition_madvise_calls = 0;
 static int captured_transition_advices[4];
 static void* captured_transition_madvise_addresses[4];
 static size_t captured_transition_madvise_lengths[4];
+/* The reset oracle needs distinct imported-error edges rather than a generic
+ * one-shot fault: the unchanged source must retry EAGAIN using its snapshot,
+ * switch its global advice only after FREE/EINVAL, and make exactly one
+ * DONTNEED fallback attempt. This script only controls the wrapped import;
+ * `_mi_prim_reset`, `_mi_os_reset`, and `_mi_os_purge` remain pinned bodies. */
+#define RESET_MADVISE_SCRIPT_CAPACITY 3
+typedef struct reset_madvise_step_s {
+  int advice;
+  int error;
+} reset_madvise_step_t;
+
+typedef struct reset_madvise_script_s {
+  bool active;
+  bool valid;
+  size_t count;
+  size_t next;
+  reset_madvise_step_t steps[RESET_MADVISE_SCRIPT_CAPACITY];
+} reset_madvise_script_t;
+
+static reset_madvise_script_t reset_madvise_script = {0};
+
+static bool reset_madvise_script_begin(
+    const reset_madvise_step_t* steps, size_t count) {
+  if (steps == NULL || count == 0 || count > RESET_MADVISE_SCRIPT_CAPACITY) {
+    return false;
+  }
+  reset_madvise_script.active = false;
+  reset_madvise_script.valid = true;
+  reset_madvise_script.count = count;
+  reset_madvise_script.next = 0;
+  for (size_t index = 0; index < count; index++) {
+    reset_madvise_script.steps[index] = steps[index];
+  }
+  reset_madvise_script.active = true;
+  return true;
+}
+
+static bool reset_madvise_script_finish(void) {
+  const bool complete = reset_madvise_script.active
+      && reset_madvise_script.valid
+      && reset_madvise_script.next == reset_madvise_script.count;
+  reset_madvise_script.active = false;
+  return complete;
+}
+
+/* Every scripted reset edge operates on the same source-owned full page.
+ * Check the captured import arguments as one bounded witness so advice-only
+ * assertions cannot accept a wrongly normalized range from the C oracle. */
+static bool captured_transition_madvise_exact_range(
+    void* address, size_t length, size_t count) {
+  if (count > sizeof(captured_transition_madvise_addresses)
+          / sizeof(captured_transition_madvise_addresses[0])
+      || captured_transition_madvise_calls != count) {
+    return false;
+  }
+  for (size_t index = 0; index < count; index++) {
+    if (captured_transition_madvise_addresses[index] != address
+        || captured_transition_madvise_lengths[index] != length) {
+      return false;
+    }
+  }
+  return true;
+}
 /* The ordinary lifecycle above also frees mappings through this wrapper.
  * Capture only the selected failed full-MemoryId release and its retry, so
  * the address-free trace can prove both source calls used the retained base
@@ -379,6 +442,20 @@ int __wrap_madvise(void* address, size_t length, int advice) {
     captured_transition_madvise_addresses[index] = address;
     captured_transition_madvise_lengths[index] = length;
     captured_transition_madvise_calls++;
+  }
+  if (reset_madvise_script.active) {
+    if (reset_madvise_script.next >= reset_madvise_script.count
+        || reset_madvise_script.steps[reset_madvise_script.next].advice != advice) {
+      reset_madvise_script.valid = false;
+      errno = EINVAL;
+      return -1;
+    }
+    const int error = reset_madvise_script.steps[reset_madvise_script.next].error;
+    reset_madvise_script.next++;
+    if (error != 0) {
+      errno = error;
+      return -1;
+    }
   }
   if (advice == MADV_FREE && fail_next_madvise_free_einval) {
     fail_next_madvise_free_einval = false;
@@ -925,6 +1002,47 @@ static bool reap_exact_child(const char* label, pid_t child) {
             waited == child && WIFSIGNALED(status) ? WTERMSIG(status) : 0);
   }
   return complete;
+}
+
+/* `_mi_prim_reset` owns a function-static advice cache. Fork this one
+ * fallback-error row before the parent accepts FREE/EINVAL, so the child
+ * executes the actual pinned static state from FREE while the parent retains
+ * FREE for its independent succeeding fallback row. No allocator function is
+ * simulated: the child only scripts its imported `madvise` results. */
+static bool capture_reset_fallback_eagain_child(
+    mi_subproc_t* subproc, void* reserved, size_t page) {
+  const pid_t child = fork();
+  if (child < 0) {
+    fprintf(stderr, "reset fallback EAGAIN child fork failed: errno=%d\n", errno);
+    return false;
+  }
+  if (child == 0) {
+    const reset_madvise_step_t steps[] = {
+      { MADV_FREE, EAGAIN },
+      { MADV_FREE, EINVAL },
+      { MADV_DONTNEED, EAGAIN },
+    };
+    const int64_t reset_before = current_reset(subproc);
+    const int64_t reset_calls_before = current_reset_calls(subproc);
+    captured_transition_madvise_calls = 0;
+    capture_transition_madvise = true;
+    const bool began = reset_madvise_script_begin(steps, 3);
+    const bool reset = began && _mi_os_reset(subproc, reserved, page);
+    const bool script_complete = reset_madvise_script_finish();
+    capture_transition_madvise = false;
+    const bool expected = !reset
+        && script_complete
+        && captured_transition_madvise_calls == 3
+        && captured_transition_madvise_exact_range(reserved, page, 3)
+        && captured_transition_advices[0] == MADV_FREE
+        && captured_transition_advices[1] == MADV_FREE
+        && captured_transition_advices[2] == MADV_DONTNEED
+        && current_reset_calls(subproc) == reset_calls_before + 1
+        && current_reset(subproc) == reset_before + (int64_t)page
+        && mprotect(reserved, page, PROT_READ | PROT_WRITE) == 0;
+    _exit(expected ? 0 : 1);
+  }
+  return reap_exact_child("reset fallback EAGAIN child", child);
 }
 
 static bool capture_aligned_hint_child(const char* label, int (*child_body)(void)) {
@@ -1807,19 +1925,67 @@ int main(void) {
   if (!decommit_failure_returns_false || !decommit_failure_is_one_source_attempt
       || !decommit_retry_is_one_additional_source_attempt) return 16;
 
-  /* The source reset cache starts at MADV_FREE.  An EINVAL changes its
-   * process-global advice to MADV_DONTNEED and retries that same primitive;
-   * subsequent fixed purge branches therefore observe the changed source
-   * state, never an invented general advice fallback. */
+  /* The source reset cache starts at MADV_FREE. The child owns the isolated
+   * fallback-EAGAIN row, preserving the parent's FREE cache for the two
+   * succeeding rows below. It proves the source does not loop the fallback
+   * `MADV_DONTNEED` call after an EAGAIN. */
+  const bool reset_fallback_eagain_returns_error_after_one_fallback_attempt =
+      capture_reset_fallback_eagain_child(subproc, reserved, page);
+  if (!reset_fallback_eagain_returns_error_after_one_fallback_attempt) return 17;
+
+  /* First, an EAGAIN retries the original snapshot and leaves the global
+   * source advice at FREE. The script's final zero still reaches the actual
+   * Linux madvise import. */
+  const reset_madvise_step_t retry_free_steps[] = {
+    { MADV_FREE, EAGAIN },
+    { MADV_FREE, 0 },
+  };
+  const int64_t reset_retry_before = current_reset(subproc);
+  const int64_t reset_retry_calls_before = current_reset_calls(subproc);
   captured_transition_madvise_calls = 0;
   capture_transition_madvise = true;
-  fail_next_madvise_free_einval = true;
-  const bool reset_free_einval_falls_back_to_dontneed =
-      _mi_os_reset(subproc, reserved, page)
-      && captured_transition_madvise_calls == 2
-      && captured_transition_advices[0] == MADV_FREE
-      && captured_transition_advices[1] == MADV_DONTNEED;
+  const bool reset_retry_began = reset_madvise_script_begin(retry_free_steps, 2);
+  const bool reset_eagain_succeeds =
+      reset_retry_began && _mi_os_reset(subproc, reserved, page);
+  const bool reset_retry_complete = reset_madvise_script_finish();
   capture_transition_madvise = false;
+  const bool reset_eagain_retries_initial_madv_free = reset_eagain_succeeds
+      && reset_retry_complete
+      && captured_transition_madvise_calls == 2
+      && captured_transition_madvise_exact_range(reserved, page, 2)
+      && captured_transition_advices[0] == MADV_FREE
+      && captured_transition_advices[1] == MADV_FREE
+      && current_reset_calls(subproc) == reset_retry_calls_before + 1
+      && current_reset(subproc) == reset_retry_before + (int64_t)page
+      && mprotect(reserved, page, PROT_READ | PROT_WRITE) == 0;
+  if (!reset_eagain_retries_initial_madv_free) return 17;
+
+  /* Then FREE/EINVAL follows one EAGAIN retry, stores the global
+   * MADV_DONTNEED state, and makes exactly one succeeding fallback call. */
+  const reset_madvise_step_t fallback_steps[] = {
+    { MADV_FREE, EAGAIN },
+    { MADV_FREE, EINVAL },
+    { MADV_DONTNEED, 0 },
+  };
+  const int64_t reset_fallback_before = current_reset(subproc);
+  const int64_t reset_fallback_calls_before = current_reset_calls(subproc);
+  captured_transition_madvise_calls = 0;
+  capture_transition_madvise = true;
+  const bool reset_fallback_began = reset_madvise_script_begin(fallback_steps, 3);
+  const bool reset_fallback_succeeds =
+      reset_fallback_began && _mi_os_reset(subproc, reserved, page);
+  const bool reset_fallback_complete = reset_madvise_script_finish();
+  capture_transition_madvise = false;
+  const bool reset_free_einval_falls_back_to_dontneed = reset_fallback_succeeds
+      && reset_fallback_complete
+      && captured_transition_madvise_calls == 3
+      && captured_transition_madvise_exact_range(reserved, page, 3)
+      && captured_transition_advices[0] == MADV_FREE
+      && captured_transition_advices[1] == MADV_FREE
+      && captured_transition_advices[2] == MADV_DONTNEED
+      && current_reset_calls(subproc) == reset_fallback_calls_before + 1
+      && current_reset(subproc) == reset_fallback_before + (int64_t)page
+      && mprotect(reserved, page, PROT_READ | PROT_WRITE) == 0;
   if (!reset_free_einval_falls_back_to_dontneed) return 17;
 
   /* Exercise both no-callback `_mi_os_purge_ex` option arms after the
@@ -1843,26 +2009,50 @@ int main(void) {
       && captured_transition_madvise_calls == 2
       && captured_transition_advices[1] == MADV_DONTNEED;
   mi_option_set(mi_option_purge_decommits, 0);
-  fail_next_madvise_dontneed = true;
+  const reset_madvise_step_t purge_reset_error_steps[] = {
+    { MADV_DONTNEED, EAGAIN },
+    { MADV_DONTNEED, ENOMEM },
+  };
+  const int64_t purge_reset_calls_before = current_purge_calls(subproc);
+  const int64_t purge_reset_bytes_before = current_purged(subproc);
+  const int64_t purge_reset_reset_calls_before = current_reset_calls(subproc);
+  const int64_t purge_reset_reset_before = current_reset(subproc);
+  const int64_t purge_reset_committed_before = current_committed(subproc);
+  captured_transition_madvise_calls = 0;
+  const bool purge_reset_began = reset_madvise_script_begin(purge_reset_error_steps, 2);
   const bool purge_reset_failure_is_consumed =
-      !_mi_os_purge(subproc, reserved, page)
-      && captured_transition_madvise_calls == 3
-      && captured_transition_advices[2] == MADV_DONTNEED
-      && !fail_next_madvise_dontneed;
+      purge_reset_began && !_mi_os_purge(subproc, reserved, page);
+  const bool purge_reset_complete = reset_madvise_script_finish();
+  const bool reset_dontneed_persists_to_no_callback_purge = purge_reset_complete
+      && captured_transition_madvise_calls == 2
+      && captured_transition_madvise_exact_range(reserved, page, 2)
+      && captured_transition_advices[0] == MADV_DONTNEED
+      && captured_transition_advices[1] == MADV_DONTNEED;
+  const bool purge_reset_eagain_then_error_is_consumed_and_owner_retained =
+      purge_reset_failure_is_consumed
+      && reset_dontneed_persists_to_no_callback_purge
+      && current_purge_calls(subproc) == purge_reset_calls_before + 1
+      && current_purged(subproc) == purge_reset_bytes_before + (int64_t)page
+      && current_reset_calls(subproc) == purge_reset_reset_calls_before + 1
+      && current_reset(subproc) == purge_reset_reset_before + (int64_t)page
+      && current_committed(subproc) == purge_reset_committed_before
+      && mprotect(reserved, page, PROT_READ | PROT_WRITE) == 0;
   capture_transition_madvise = false;
   if (!purge_decommit_failure_no_recommit || !purge_decommit_retry_no_recommit
-      || !purge_reset_failure_is_consumed) {
+      || !purge_reset_eagain_then_error_is_consumed_and_owner_retained) {
     fprintf(stderr,
             "purge_decommit_failure_no_recommit=%d "
             "purge_decommit_retry_no_recommit=%d "
-            "purge_reset_failure_is_consumed=%d purge_decommits=%ld "
-            "purge_delay=%ld pending_dontneed_fault=%d\n",
+            "purge_reset_failure_is_consumed=%d persistent_dontneed=%d "
+            "purge_reset_eagain_then_error=%d purge_decommits=%ld "
+            "purge_delay=%ld\n",
             purge_decommit_failure_no_recommit,
             purge_decommit_retry_no_recommit,
             purge_reset_failure_is_consumed,
+            reset_dontneed_persists_to_no_callback_purge,
+            purge_reset_eagain_then_error_is_consumed_and_owner_retained,
             mi_option_get(mi_option_purge_decommits),
-            mi_option_get(mi_option_purge_delay),
-            fail_next_madvise_dontneed);
+            mi_option_get(mi_option_purge_delay));
     return 18;
   }
 
@@ -2099,6 +2289,10 @@ int main(void) {
   U("m2.vm.reserved.decommit_no_recommit", 1);
   U("m2.vm.reserved.reset.madv_free_einval_falls_back_to_dontneed",
       reset_free_einval_falls_back_to_dontneed);
+  U("m2.vm.reserved.reset.eagain_retries_initial_madv_free",
+      reset_eagain_retries_initial_madv_free);
+  U("m2.vm.reserved.reset.fallback_eagain_returns_error_after_one_fallback_attempt",
+      reset_fallback_eagain_returns_error_after_one_fallback_attempt);
   U("m2.vm.reserved.reset_success", 1);
   U("m2.vm.reserved.purge.decommit_failure_no_recommit",
       purge_decommit_failure_no_recommit);
@@ -2106,6 +2300,10 @@ int main(void) {
       purge_decommit_retry_no_recommit);
   U("m2.vm.reserved.purge.reset_failure_is_consumed",
       purge_reset_failure_is_consumed);
+  U("m2.vm.reserved.reset.dontneed_persists_to_no_callback_purge",
+      reset_dontneed_persists_to_no_callback_purge);
+  U("m2.vm.reserved.purge.reset_eagain_then_error_is_consumed_and_owner_retained",
+      purge_reset_eagain_then_error_is_consumed_and_owner_retained);
   U("m2.vm.reserved.purge.normal_no_callback_policy_range_matrix",
       normal_no_callback_purge_matrix);
   U("m2.vm.reserved.reuse_linux_noop", 1);
