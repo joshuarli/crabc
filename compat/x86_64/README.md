@@ -19,6 +19,10 @@ required family must reach foundation-verified in dependency order.
 The generated inventory is orientation only. Export rosters and selected
 artifacts are ratchets or evidence, not completion predicates.
 
+[feature-archive-roster.md](feature-archive-roster.md) defines the explicit
+feature provider rows, including the narrow non-header callable field
+that remains outside compiler-derived header accounting.
+
 For current state and the exact completion contract, use x86-64.md,
 plan.md, COMPATIBILITY-PROFILE.md, and executable contracts. The
 large prior status narrative is preserved in

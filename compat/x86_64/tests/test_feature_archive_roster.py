@@ -32,6 +32,7 @@ def row(
     baseline_features: list[str] | None = None,
     additive_callables: list[str] | None = None,
     replacement_callables: list[str] | None = None,
+    abi_only_callables: list[str] | None = None,
 ) -> dict[str, object]:
     value: dict[str, object] = {
         "id": identifier,
@@ -48,6 +49,8 @@ def row(
         value["dispatch_command"] = identifier
     else:
         value["feature_selection_source"] = f"compat/x86_64/run_{identifier}.sh"
+    if abi_only_callables is not None:
+        value["abi_only_callables"] = abi_only_callables
     return value
 
 
@@ -720,6 +723,213 @@ class FeatureArchiveRosterTests(unittest.TestCase):
             ROSTER.partition_candidate_callables(
                 invalid, candidate_callables={"fmtmsg", "unrelated"}, static_exports=set(),
             )
+
+    def test_abi_only_callables_stay_out_of_header_provider_accounting(self) -> None:
+        """A real non-header function provider cannot alter header counts."""
+
+        cargo_features = {"x86-abi": ()}
+        rows = ROSTER.parse_feature_archive_roster(
+            [
+                row(
+                    "x86-abi",
+                    additive_callables=["header_feature"],
+                    abi_only_callables=["__strong_private", "strong_private"],
+                )
+            ],
+            cargo_features,
+        )
+
+        partition = ROSTER.partition_candidate_callables(
+            rows,
+            candidate_callables={"header_default", "header_feature", "header_unprovided"},
+            static_exports={"header_default"},
+        )
+
+        self.assertEqual(rows[0].abi_only_callables, ("__strong_private", "strong_private"))
+        self.assertEqual(partition.default_static, ("header_default",))
+        self.assertEqual(partition.verified_feature_archives[0][1], ("header_feature",))
+        self.assertEqual(partition.unprovided, ("header_unprovided",))
+        self.assertNotIn("abi_only_callables", partition.as_report())
+        self.assertNotIn(
+            "abi_only_callables",
+            partition.as_report()["verified_feature_archives"][0],
+        )
+        self.assertEqual(
+            partition.counts(),
+            {
+                "default_static": 1,
+                "verified_feature_archives": 1,
+                "declared_unverified_feature_archives": 0,
+                "unprovided": 1,
+            },
+        )
+
+    def test_abi_only_callables_reject_header_default_alias_and_feature_overlaps(self) -> None:
+        """Non-header providers have one owner and no weak alias identity."""
+
+        header_rows = ROSTER.parse_feature_archive_roster(
+            [row("x86-abi", abi_only_callables=["strong_private"])],
+            {"x86-abi": ()},
+        )
+        with self.assertRaisesRegex(
+            ROSTER.FeatureArchiveRosterError,
+            "ABI-only callable strong_private is header-declared",
+        ):
+            ROSTER.partition_candidate_callables(
+                header_rows,
+                candidate_callables={"strong_private"},
+                static_exports=set(),
+            )
+        with self.assertRaisesRegex(
+            ROSTER.FeatureArchiveRosterError,
+            "ABI-only callable strong_private is already default-static",
+        ):
+            ROSTER.partition_candidate_callables(
+                header_rows,
+                candidate_callables={"header_callable"},
+                static_exports={"strong_private"},
+            )
+
+        alias_row = row("x86-abi", abi_only_callables=["strong_private"])
+        alias_row["aliases"] = [
+            {
+                "name": "strong_private",
+                "target": "provider",
+                "binding": "weak-same-address",
+            }
+        ]
+        with self.assertRaisesRegex(
+            ROSTER.FeatureArchiveRosterError,
+            "ABI-only callable strong_private is also an alias name",
+        ):
+            ROSTER.parse_feature_archive_roster([alias_row], {"x86-abi": ()})
+
+        target_row = row("x86-abi", abi_only_callables=["strong_private"])
+        target_row["aliases"] = [
+            {
+                "name": "weak_public",
+                "target": "strong_private",
+                "binding": "weak-same-address",
+            }
+        ]
+        target_rows = ROSTER.parse_feature_archive_roster(
+            [target_row], {"x86-abi": ()}
+        )
+        self.assertEqual(
+            ROSTER.partition_candidate_callables(
+                target_rows,
+                candidate_callables={"header_callable"},
+                static_exports=set(),
+            ).unprovided,
+            ("header_callable",),
+        )
+
+        cross_alias_row = row("x86-alias-owner")
+        cross_alias_row["aliases"] = [
+            {
+                "name": "strong_private",
+                "target": "provider",
+                "binding": "weak-same-address",
+            }
+        ]
+        cross_alias_rows = ROSTER.parse_feature_archive_roster(
+            [
+                row("x86-abi-owner", abi_only_callables=["strong_private"]),
+                cross_alias_row,
+            ],
+            {"x86-abi-owner": (), "x86-alias-owner": ()},
+        )
+        with self.assertRaisesRegex(
+            ROSTER.FeatureArchiveRosterError,
+            "ABI-only callable strong_private is also an alias name",
+        ):
+            ROSTER.partition_candidate_callables(
+                cross_alias_rows,
+                candidate_callables={"header_callable"},
+                static_exports=set(),
+            )
+
+        duplicate_rows = ROSTER.parse_feature_archive_roster(
+            [
+                row("x86-first", abi_only_callables=["strong_private"]),
+                row("x86-second", abi_only_callables=["strong_private"]),
+            ],
+            {"x86-first": (), "x86-second": ()},
+        )
+        with self.assertRaisesRegex(
+            ROSTER.FeatureArchiveRosterError,
+            "ABI-only callable strong_private has multiple feature owners",
+        ):
+            ROSTER.partition_candidate_callables(
+                duplicate_rows,
+                candidate_callables={"header_callable"},
+                static_exports=set(),
+            )
+
+        header_owned_rows = ROSTER.parse_feature_archive_roster(
+            [
+                row("x86-header-owner", additive_callables=["strong_private"]),
+                row("x86-abi-owner", abi_only_callables=["strong_private"]),
+            ],
+            {"x86-header-owner": (), "x86-abi-owner": ()},
+        )
+        with self.assertRaisesRegex(
+            ROSTER.FeatureArchiveRosterError,
+            "ABI-only callable strong_private overlaps header callable ownership",
+        ):
+            ROSTER.partition_candidate_callables(
+                header_owned_rows,
+                candidate_callables={"header_callable"},
+                static_exports=set(),
+            )
+
+    def test_abi_only_callables_are_optional_nonempty_and_transitive(self) -> None:
+        cargo_features = {"x86-leaf": (), "x86-parent": ("x86-leaf",)}
+        rows = ROSTER.parse_feature_archive_roster(
+            [
+                row("x86-leaf", abi_only_callables=["strong_leaf"]),
+                row("x86-parent", baseline_features=["x86-leaf"]),
+            ],
+            cargo_features,
+        )
+        self.assertEqual(rows[1].abi_only_callables, ())
+        self.assertEqual(
+            ROSTER.selected_baseline_callables(rows[1], rows, set()),
+            {"strong_leaf"},
+        )
+
+        duplicate_baseline_rows = ROSTER.parse_feature_archive_roster(
+            [
+                row("x86-leaf", abi_only_callables=["strong_leaf"]),
+                row(
+                    "x86-parent",
+                    baseline_features=["x86-leaf"],
+                    abi_only_callables=["strong_leaf"],
+                ),
+            ],
+            cargo_features,
+        )
+        with self.assertRaisesRegex(
+            ROSTER.FeatureArchiveRosterError,
+            "ABI-only callable strong_leaf has multiple feature owners",
+        ):
+            ROSTER.partition_candidate_callables(
+                duplicate_baseline_rows,
+                candidate_callables={"header_callable"},
+                static_exports=set(),
+            )
+
+        empty = row("x86-abi", abi_only_callables=[])
+        with self.assertRaisesRegex(
+            ROSTER.FeatureArchiveRosterError,
+            "abi_only_callables must not be empty",
+        ):
+            ROSTER.parse_feature_archive_roster([empty], {"x86-abi": ()})
+
+        drifted = row("x86-abi")
+        drifted["unexpected"] = True
+        with self.assertRaisesRegex(ROSTER.FeatureArchiveRosterError, "keys drifted"):
+            ROSTER.parse_feature_archive_roster([drifted], {"x86-abi": ()})
 
     def test_partition_rejects_default_static_additive_ownership(self) -> None:
         cargo_features = {"x86-extra": ()}

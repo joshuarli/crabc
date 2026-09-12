@@ -13,6 +13,11 @@ verified opt-in feature archives, declared-but-unverified feature profiles,
 and truly unprovided declarations. A nonempty default static-export complement
 still makes the inventory explicitly incomplete; feature ownership cannot
 silently promote a header or runtime family.
+
+The feature roster can separately name archive functions with no installed
+declaration. They do not enter this compiler-derived inventory or its provider
+partition; the selected feature-provider reader records their function binding
+without claiming a generated header signature.
 """
 
 from __future__ import annotations

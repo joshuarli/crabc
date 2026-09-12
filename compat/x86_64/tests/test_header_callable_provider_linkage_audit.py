@@ -38,7 +38,7 @@ AUDIT = load_module("header_callable_provider_linkage_audit_test", AUDIT_PATH)
 
 class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
     @unittest.skipUnless(
-        all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm")),
+        all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm", "readelf")),
         "requires native binutils and C compiler",
     )
     def test_selected_feature_provider_extracts_without_closing_unprovided_complement(
@@ -65,6 +65,7 @@ class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
                 "int replacement(void) { return 3; }\n"
                 "int feature_additive(void) { return 4; }\n"
                 "int alias_target(void) { return 5; }\n"
+                "int abi_only_strong(void) { return 6; }\n"
                 "extern __typeof(alias_target) feature_alias "
                 "__attribute__((weak, alias(\"alias_target\")));\n",
             )
@@ -85,6 +86,7 @@ class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
                         binding="weak-same-address",
                     ),
                 ),
+                abi_only_callables=("abi_only_strong",),
             )
             inventory = {
                 "schema": AUDIT.INVENTORY_SCHEMA,
@@ -144,6 +146,16 @@ class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
         )
         self.assertFalse(report["summary"]["complete"])
         self.assertEqual(report["summary"]["unprovided_callable_count"], 1)
+        self.assertEqual(report["external_callable_count"], 4)
+        self.assertFalse(report["scope"]["header_declarations_proved_for_abi_only_callables"])
+        self.assertEqual(
+            report["selected_abi_only_callables"],
+            {
+                "kind": "selected-non-header-feature-callables",
+                "members": ["abi_only_strong"],
+            },
+        )
+        self.assertEqual(report["summary"]["selected_abi_only_callable_count"], 1)
         self.assertEqual(
             [entry["symbol"] for entry in report["default_static"]["extraction"]],
             ["default_owner", "replacement"],
@@ -152,8 +164,22 @@ class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
         self.assertEqual(profile["id"], "x86-demo")
         self.assertEqual(
             profile["candidate_external_delta"],
-            ["feature_additive", "feature_alias"],
+            ["feature_additive"],
         )
+        self.assertEqual(
+            profile["archive_callable_delta"],
+            ["abi_only_strong", "feature_additive", "feature_alias"],
+        )
+        self.assertEqual(profile["abi_only_callables"], ["abi_only_strong"])
+        self.assertEqual(profile["baseline_abi_only_callables"], [])
+        self.assertEqual(profile["enabled_abi_only_callables"], ["abi_only_strong"])
+        self.assertEqual(
+            [entry["symbol"] for entry in profile["abi_only_extraction"]],
+            ["abi_only_strong"],
+        )
+        self.assertEqual(profile["abi_only_extraction"][0]["status"], "extracted")
+        self.assertEqual(profile["abi_only_extraction"][0]["definitions"][0]["binding"], "GLOBAL")
+        self.assertEqual(profile["abi_only_extraction"][0]["definitions"][0]["type"], "FUNC")
         self.assertEqual(
             [entry["symbol"] for entry in profile["additive_extraction"]],
             ["feature_additive"],
@@ -163,6 +189,195 @@ class HeaderCallableProviderLinkageAuditTests(unittest.TestCase):
             ["replacement"],
         )
         self.assertEqual(profile["aliases"][0]["status"], "verified")
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm", "readelf")),
+        "requires native binutils and C compiler",
+    )
+    def test_abi_only_extraction_retains_a_weak_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = self.archive(
+                Path(temporary),
+                "weak-abi-only",
+                "__attribute__((weak)) int abi_only_weak(void) { return 1; }\n",
+            )
+            work_dir = Path(temporary) / "extract"
+            work_dir.mkdir()
+            record = AUDIT.abi_only_record(
+                archive,
+                "abi_only_weak",
+                "ld",
+                "nm",
+                "readelf",
+                work_dir,
+            )
+
+        self.assertEqual(record["status"], "extracted")
+        self.assertIn("global-or-weak function provider", record["detail"])
+        self.assertEqual(record["definitions"][0]["binding"], "WEAK")
+        self.assertEqual(record["definitions"][0]["type"], "FUNC")
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm", "readelf")),
+        "requires native binutils and C compiler",
+    )
+    def test_abi_only_extraction_rejects_an_object_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            archive = self.archive(
+                Path(temporary),
+                "object-abi-only",
+                "int abi_only_object = 1;\n",
+            )
+            work_dir = Path(temporary) / "extract"
+            work_dir.mkdir()
+            record = AUDIT.abi_only_record(
+                archive,
+                "abi_only_object",
+                "ld",
+                "nm",
+                "readelf",
+                work_dir,
+            )
+
+        self.assertEqual(record["status"], "not-extracted")
+        self.assertIn("ordinary archive extraction did not define", record["detail"])
+
+    @unittest.skipUnless(
+        all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm", "readelf")),
+        "requires native binutils and C compiler",
+    )
+    def test_abi_only_baseline_surface_includes_only_selected_ancestors(self) -> None:
+        """A dependent profile inherits an ABI-only provider without owning it."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            default_archive = self.archive(
+                root,
+                "default-abi-only",
+                "int default_owner(void) { return 1; }\n",
+            )
+            kernel_enabled = self.archive(
+                root,
+                "kernel-enabled",
+                "int default_owner(void) { return 1; }\n"
+                "int arch_prctl(void) { return 2; }\n",
+            )
+            owned_baseline = self.archive(
+                root,
+                "owned-baseline",
+                "int default_owner(void) { return 1; }\n"
+                "int arch_prctl(void) { return 2; }\n",
+            )
+            owned_enabled = self.archive(
+                root,
+                "owned-enabled",
+                "int default_owner(void) { return 1; }\n"
+                "int arch_prctl(void) { return 2; }\n"
+                "int __xmknod(void) { return 3; }\n"
+                "int __xmknodat(void) { return 4; }\n",
+            )
+            kernel = ROSTER.FeatureArchive(
+                identifier="x86-kernel-admin",
+                state="verified",
+                evidence_record="kernel-admin",
+                runner="compat/x86_64/run_libc_kernel_admin.sh",
+                dispatch_command="libc-kernel-admin",
+                baseline_features=(),
+                enabled_features=("x86-kernel-admin",),
+                additive_callables=(),
+                replacement_callables=(),
+                aliases=(),
+                abi_only_callables=("arch_prctl",),
+            )
+            owned = ROSTER.FeatureArchive(
+                identifier="x86-owned-static-runtime",
+                state="verified",
+                evidence_record="owned-static-runtime",
+                runner="compat/x86_64/run_owned_static_sysroot.sh",
+                dispatch_command="owned-static-runtime",
+                baseline_features=("x86-kernel-admin",),
+                enabled_features=("x86-owned-static-runtime",),
+                additive_callables=(),
+                replacement_callables=(),
+                aliases=(),
+                abi_only_callables=("__xmknod", "__xmknodat"),
+            )
+            inventory = {
+                "schema": AUDIT.INVENTORY_SCHEMA,
+                "callables": [self.callable("default_owner")],
+                "callable_provider_partition": {
+                    "kind": "candidate-external-callable-feature-archive-provider-partition",
+                    "default_static": {"members": ["default_owner"]},
+                    "verified_feature_archives": [
+                        {
+                            "aliases": [],
+                            "evidence_record": "kernel-admin",
+                            "id": "x86-kernel-admin",
+                            "members": [],
+                            "runner": "compat/x86_64/run_libc_kernel_admin.sh",
+                            "state": "verified",
+                        },
+                        {
+                            "aliases": [],
+                            "evidence_record": "owned-static-runtime",
+                            "id": "x86-owned-static-runtime",
+                            "members": [],
+                            "runner": "compat/x86_64/run_owned_static_sysroot.sh",
+                            "state": "verified",
+                        },
+                    ],
+                    "declared_unverified_feature_archives": [],
+                    "unprovided": {"members": []},
+                    "replacement_variants": [],
+                },
+            }
+
+            report = AUDIT.audit_provider_closure(
+                inventory=inventory,
+                static_exports=("default_owner",),
+                default_archive=default_archive,
+                roster=(kernel, owned),
+                profile_archives={
+                    "x86-kernel-admin": {
+                        "baseline": default_archive,
+                        "enabled": kernel_enabled,
+                    },
+                    "x86-owned-static-runtime": {
+                        "baseline": owned_baseline,
+                        "enabled": owned_enabled,
+                    },
+                },
+            )
+
+        self.assertTrue(report["summary"]["selected_provider_closure_complete"])
+        self.assertTrue(report["summary"]["complete"])
+        profiles = {row["id"]: row for row in report["feature_profiles"]}
+        self.assertEqual(profiles["x86-kernel-admin"]["baseline_abi_only_callables"], [])
+        self.assertEqual(
+            profiles["x86-kernel-admin"]["enabled_abi_only_callables"],
+            ["arch_prctl"],
+        )
+        self.assertEqual(
+            profiles["x86-owned-static-runtime"]["abi_only_callables"],
+            ["__xmknod", "__xmknodat"],
+        )
+        self.assertEqual(
+            profiles["x86-owned-static-runtime"]["baseline_abi_only_callables"],
+            ["arch_prctl"],
+        )
+        self.assertEqual(
+            profiles["x86-owned-static-runtime"]["enabled_abi_only_callables"],
+            ["__xmknod", "__xmknodat", "arch_prctl"],
+        )
+        self.assertEqual(
+            [entry["symbol"] for entry in profiles["x86-owned-static-runtime"]["abi_only_extraction"]],
+            ["__xmknod", "__xmknodat"],
+        )
+        self.assertEqual(
+            report["selected_abi_only_callables"]["members"],
+            ["__xmknod", "__xmknodat", "arch_prctl"],
+        )
+        self.assertEqual(report["summary"]["selected_abi_only_callable_count"], 3)
 
     @unittest.skipUnless(
         all(shutil.which(tool) for tool in ("cc", "ar", "ld", "nm")),
