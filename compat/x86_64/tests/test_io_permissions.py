@@ -48,8 +48,10 @@ class IoPermissionsTests(unittest.TestCase):
         static_exports = STATIC_EXPORTS.read_text(encoding="utf-8").splitlines()
 
         self.assertIn("x86-io-permissions = []", manifest)
+        self.assertIn('x86-kernel-admin = ["x86-io-permissions"]', manifest)
+        self.assertIn('"x86-kernel-admin",', manifest)
         self.assertIn(
-            '#[cfg(feature = "x86-io-permissions")]\n'
+            '#[cfg(any(feature = "x86-io-permissions", feature = "x86-kernel-admin"))]\n'
             '#[path = "io_permissions.rs"]\n'
             "mod io_permissions;",
             static_root,
@@ -93,9 +95,10 @@ class IoPermissionsTests(unittest.TestCase):
             "assert_feature_delta",
             "ioperm\\niopl",
             "run_sys_io_header_abi.sh",
-            "iopl) syscall_immediate",
-            "ioperm) syscall_immediate",
+            "iopl)\n                syscall_immediate",
+            "ioperm)\n                syscall_immediate",
             "does not issue its Linux syscall",
+            "raw $raw_helper_suffix helper",
             "unexpectedly contains a port-I/O instruction",
             "no port-I/O execution",
             "capture_invalid_probe_status",
@@ -103,6 +106,8 @@ class IoPermissionsTests(unittest.TestCase):
             "-nostdlib -static",
             "candidate selects a dynamic runtime",
             "candidate errno does not use direct initial TLS",
+            "TMPDIR must name checkout-local .work scratch",
+            'mktemp -d "$TMPDIR/crabc-x86-64-libc-io-permissions.XXXXXX"',
         ):
             self.assertIn(required, runner)
         self.assertNotIn("--whole-archive", runner)

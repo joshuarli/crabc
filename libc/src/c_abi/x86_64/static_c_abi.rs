@@ -216,9 +216,14 @@ mod credentials;
 mod credential_observation;
 #[path = "personality.rs"]
 mod personality;
-// These direct privileged-I/O permission wrappers remain opt-in. Their
-// negative-path evidence must not widen the frozen default C ABI archive.
-#[cfg(feature = "x86-io-permissions")]
+// The public musl x86 arch_prctl veneer and direct I/O-permission wrappers
+// enter only through the owned kernel-administration component. The retained
+// I/O-only feature keeps its narrower negative-path archive available without
+// widening the frozen default C ABI surface.
+#[cfg(feature = "x86-kernel-admin")]
+#[path = "arch_prctl.rs"]
+mod arch_prctl;
+#[cfg(any(feature = "x86-io-permissions", feature = "x86-kernel-admin"))]
 #[path = "io_permissions.rs"]
 mod io_permissions;
 // The round-robin interval wrapper observes one kernel scheduler record but

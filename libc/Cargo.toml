@@ -38,6 +38,7 @@ x86-allocator-string-duplication = ["x86-allocator-runtime"]
 # remain gated here so default and older private fixture archives keep their
 # exact contracts.
 x86-owned-static-runtime = [
+    "x86-kernel-admin",
     "x86-crypt-allocator-composition",
     "x86-math-long-double-completion",
     "x86-allocator-runtime",
@@ -154,6 +155,11 @@ x86-signal-reporting = []
 # boundary. Keep it opt-in so the default archive does not silently gain I/O
 # privilege mutation entry points before its negative-path evidence closes.
 x86-io-permissions = []
+# The owned kernel-administration component combines musl's public x86
+# arch_prctl veneer with the separately retained iopl/ioperm leaf. It is
+# selected only by the owned products; the focused I/O-only feature remains
+# available so the frozen default archive keeps its exact export surface.
+x86-kernel-admin = ["x86-io-permissions"]
 # Pinned musl's round-robin interval wrapper is a direct scheduler-observation
 # seam. Keep it opt-in until its C ABI/error/TLS differential is selected,
 # leaving the frozen default archive free of scheduler query entry points.

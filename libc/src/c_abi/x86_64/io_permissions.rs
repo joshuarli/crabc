@@ -1,6 +1,6 @@
 //! Bounded Linux/x86-64 iopl/ioperm C ABI boundary.
 //!
-//! This opt-in owner maps pinned musl 1.2.6 release commit
+//! This retained opt-in owner maps pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417` (musl MIT) directly:
 //!
 //! - `src/linux/iopl.c::iopl` is one `syscall(SYS_iopl, level)` request.
@@ -8,7 +8,10 @@
 //!   `syscall(SYS_ioperm, from, count, turn_on)` request.
 //!
 //! It intentionally contributes no policy, validation, port instruction, or
-//! privilege fallback. The bounded native fixture calls only invalid arguments
+//! privilege fallback. `x86-kernel-admin` selects this leaf for owned static
+//! and dynamic products; `x86-io-permissions` remains the narrow standalone
+//! feature so the frozen default archive does not gain either symbol.
+//! The bounded native fixture calls only invalid arguments
 //! that Linux rejects with `EINVAL` or, when its authority check comes first,
 //! `EPERM`; it does not test or authorize successful permission changes or
 //! port I/O.
