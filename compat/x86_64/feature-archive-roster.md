@@ -45,20 +45,22 @@ only the archive provider and selection closure.
 
 ## Current integration assignments
 
-The C compatibility wrappers have one direct owner in the canonical ledger:
+The canonical ledger assigns each non-header provider to its direct feature:
 
 ```toml
+# x86-kernel-admin
+abi_only_callables = ["arch_prctl"]
+
 # x86-owned-static-runtime
 abi_only_callables = ["__xmknod", "__xmknodat"]
 ```
 
-The separately reviewed kernel component adds a real `x86-kernel-admin`
-Cargo feature and selects it from `x86-owned-static-runtime`. When that
-component is integrated, its new roster row directly owns `arch_prctl` and
-the owned-static baseline inherits it. That dependency is not present before
-the kernel integration. The named component runners prove the exact `GLOBAL`
-binding; neither route adds a header declaration, alias row, or default-static
-ratchet entry for these ABI-only functions.
+`x86-owned-static-runtime` selects `x86-kernel-admin` through its Cargo
+dependency graph and inherits `arch_prctl` in its baseline. The kernel feature
+in turn inherits `ioperm` and `iopl` from `x86-io-permissions`; their existing
+header-callable owner remains that I/O feature. The named component runners
+prove the exact `GLOBAL` binding. The three ABI-only functions gain no header
+declaration, alias row, or default-static ratchet entry.
 
 After a ledger integration, run the roster/ledger reader, regenerate only the
 integration-owned header accounting artifacts when their normal workflow calls

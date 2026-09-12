@@ -130,6 +130,12 @@ and special-node entries. Its installed-product proof keeps weak same-address
 and strong-wrapper ELF shapes explicit; it does not widen headers or resolve
 the ABI-differential family.
 
+[kernel-admin-abi.md](kernel-admin-abi.md) records the owned native
+`arch_prctl`/`iopl`/`ioperm` provider component, its pinned-musl source mapping,
+same-object product matrix, and the invalid-only privilege boundary. It remains
+private component evidence and does not complete kernel administration or a
+runtime family.
+
 `./scripts/dev-x86_64.sh owned-loader-short-stack` is the focused 100 KiB
 libc-test startup regression for the selected general-initial-TLS loader path.
 Its [component record](owned-loader-short-stack.md) identifies the pinned

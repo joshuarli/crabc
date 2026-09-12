@@ -75,19 +75,62 @@ assert_fixture_tls_capacity() {
 
 assert_io_permissions_boundary() {
     local binary="$1" disassembly="$2" label="$3" symbol syscall_immediate symbol_disassembly
+    local inspection_dir="" inspected_binary raw_helper_suffix raw_helper_line raw_helper_object raw_helper_symbol raw_helper_disassembly
+
+    # GNU objdump's --disassemble filter does not select a member from a Rust
+    # archive directly. Extract its exact defining member first; final linked
+    # candidates remain ordinary ELF files and need no extraction.
+    inspected_binary="$binary"
+    if ar t "$binary" >/dev/null 2>&1; then
+        inspection_dir="$work_dir/${label//[^A-Za-z0-9]/_}-provider-objects"
+        mkdir "$inspection_dir"
+        (
+            cd "$inspection_dir"
+            ar x "$binary"
+        )
+    fi
 
     : >"$disassembly"
     for symbol in iopl ioperm; do
         case "$symbol" in
-            iopl) syscall_immediate='\$0xac(,|[[:space:]]|$)' ;;
-            ioperm) syscall_immediate='\$0xad(,|[[:space:]]|$)' ;;
+            iopl)
+                syscall_immediate='\$0xac(,|[[:space:]]|$)'
+                raw_helper_suffix=syscall1
+                ;;
+            ioperm)
+                syscall_immediate='\$0xad(,|[[:space:]]|$)'
+                raw_helper_suffix=syscall3
+                ;;
         esac
         symbol_disassembly="${disassembly}.${symbol}"
-        objdump -d --disassemble="$symbol" "$binary" >"$symbol_disassembly"
-        grep -Eq "[[:space:]]syscall([[:space:]]|$)" "$symbol_disassembly" ||
-            fail "$label $symbol lacks a syscall instruction"
+        if [ -n "$inspection_dir" ]; then
+            inspected_binary="$(nm -A --defined-only "$inspection_dir"/* |
+                awk -v name="$symbol" '$NF == name && $(NF - 1) == "T" && !found { sub(/:.*/, "", $1); result = $1; found = 1 } END { print result }')"
+            [ -n "$inspected_binary" ] || fail "$label archive lacks $symbol object"
+        fi
+        objdump -dr --disassemble="$symbol" "$inspected_binary" >"$symbol_disassembly"
         grep -Eq "$syscall_immediate" "$symbol_disassembly" ||
             fail "$label $symbol does not issue its Linux syscall"
+        if ! grep -Eq "[[:space:]]syscall([[:space:]]|$)" "$symbol_disassembly"; then
+            if [ -n "$inspection_dir" ]; then
+                raw_helper_line="$(nm -A --defined-only "$inspection_dir"/* |
+                    awk -v suffix="$raw_helper_suffix" '$NF ~ ("raw_syscall.*" suffix) && !found { path = $1; sub(/:.*/, "", path); print path "\t" $NF; found = 1 } END { }')"
+            else
+                raw_helper_line="$(nm -A --defined-only "$binary" |
+                    awk -v suffix="$raw_helper_suffix" '$NF ~ ("raw_syscall.*" suffix) && !found { path = $1; sub(/:.*/, "", path); print path "\t" $NF; found = 1 } END { }')"
+            fi
+            raw_helper_object="${raw_helper_line%%$'\t'*}"
+            raw_helper_symbol="${raw_helper_line#*$'\t'}"
+            [ -n "$raw_helper_object" ] && [ "$raw_helper_symbol" != "$raw_helper_line" ] ||
+                fail "$label lacks the raw $raw_helper_suffix helper"
+            raw_helper_disassembly="${disassembly}.${symbol}-${raw_helper_suffix}"
+            objdump -d --disassemble="$raw_helper_symbol" "$raw_helper_object" >"$raw_helper_disassembly"
+            grep -Eq "[[:space:]]syscall([[:space:]]|$)" "$raw_helper_disassembly" ||
+                fail "$label $symbol helper lacks a syscall instruction"
+            grep -Fq "$raw_helper_symbol" "$symbol_disassembly" ||
+                fail "$label $symbol does not call its raw $raw_helper_suffix helper"
+            cat "$raw_helper_disassembly" >>"$disassembly"
+        fi
         cat "$symbol_disassembly" >>"$disassembly"
     done
     if grep -Eq '(^|[[:space:]])(in|out)([bwl])?([[:space:]]|$)|(^|[[:space:]])(ins|outs)[bwl]([[:space:]]|$)' "$disassembly"; then
@@ -111,16 +154,23 @@ case "$(uname -m)" in
     x86_64|amd64) ;;
     *) fail "requires native x86-64" ;;
 esac
-for tool in ar awk cargo cat cmp comm diff grep mkdir nm objdump readelf rustup sort timeout; do
+for tool in ar awk cargo cat cmp comm diff grep mkdir nm objdump readelf realpath rustup sort timeout; do
     require_tool "$tool"
 done
+[ -n "${TMPDIR:-}" ] || fail "TMPDIR must name checkout-local .work scratch"
+[ -d "$TMPDIR" ] && [ "$(realpath "$TMPDIR")" = "$TMPDIR" ] ||
+    fail "TMPDIR must be a physical checkout-local .work directory"
+case "$TMPDIR" in
+    "$ROOT_DIR"/.work/*) ;;
+    *) fail "TMPDIR escapes checkout .work: $TMPDIR" ;;
+esac
 [ -x "$ORACLE_CC" ] || fail "missing pinned musl oracle compiler"
 [ -f "$STATIC_C_ABI_EXPORTS" ] || fail "missing static C ABI export contract"
 
 bash "$ROOT_DIR/compat/x86_64/run_musl_oracle.sh" >/dev/null
 bash "$ROOT_DIR/compat/x86_64/run_sys_io_header_abi.sh" >/dev/null
 
-work_dir="$(mktemp -d /tmp/crabc-x86-64-libc-io-permissions.XXXXXX)"
+work_dir="$(mktemp -d "$TMPDIR/crabc-x86-64-libc-io-permissions.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 baseline_target="$work_dir/cargo-baseline"
 featured_target="$work_dir/cargo-featured"

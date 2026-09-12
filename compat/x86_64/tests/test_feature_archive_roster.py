@@ -83,6 +83,8 @@ class FeatureArchiveRosterTests(unittest.TestCase):
                 "x86-filesystem-traversal",
                 "x86-h-errno",
                 "x86-interval-timers",
+                "x86-io-permissions",
+                "x86-kernel-admin",
                 "x86-legacy-des-compat",
                 "x86-legacy-misc",
                 "x86-math-long-double-completion",
@@ -737,12 +739,81 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertIn(permanent_scan.identifier, owned_static.baseline_features)
         self.assertEqual(owned_static.abi_only_callables, ("__xmknod", "__xmknodat"))
 
-    def test_planned_owned_product_runners_route_to_cargo_selection_sources(self) -> None:
-        """Keep planned product evidence distinct from direct feature selection."""
+    def test_kernel_admin_abi_only_ownership_is_explicit(self) -> None:
+        """Keep non-header kernel administration providers out of the default archive."""
+
+        static_exports = tuple(
+            line
+            for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line and not line.startswith("#")
+        )
+        archives = ROSTER.load_feature_archive_roster()
+        rows = {archive.identifier: archive for archive in archives}
+        kernel_admin = rows["x86-kernel-admin"]
+        io_permissions = rows["x86-io-permissions"]
+        owned_static = rows["x86-owned-static-runtime"]
+
+        self.assertEqual(kernel_admin.state, "planned")
+        self.assertIsNone(kernel_admin.evidence_record)
+        self.assertIsNone(kernel_admin.dispatch_command)
+        self.assertEqual(kernel_admin.runner, "compat/x86_64/run_libc_kernel_admin.sh")
+        self.assertEqual(kernel_admin.feature_selection_source, "libc/Cargo.toml")
+        self.assertEqual(kernel_admin.baseline_features, ("x86-io-permissions",))
+        self.assertEqual(kernel_admin.enabled_features, ("x86-kernel-admin",))
+        self.assertEqual(kernel_admin.abi_only_callables, ("arch_prctl",))
+        self.assertEqual(kernel_admin.additive_callables, ())
+        self.assertEqual(kernel_admin.replacement_callables, ())
+        self.assertEqual(kernel_admin.aliases, ())
+
+        self.assertEqual(io_permissions.additive_callables, ("ioperm", "iopl"))
+        self.assertIn(io_permissions.identifier, owned_static.baseline_features)
+        self.assertIn(kernel_admin.identifier, owned_static.baseline_features)
+        self.assertEqual(owned_static.abi_only_callables, ("__xmknod", "__xmknodat"))
+
+        inherited = ROSTER.selected_baseline_callables(
+            owned_static,
+            archives,
+            static_exports,
+        )
+        expected_inherited = ("arch_prctl", "ioperm", "iopl")
+        self.assertEqual(
+            tuple(name for name in expected_inherited if name in inherited),
+            expected_inherited,
+        )
+        self.assertEqual(
+            len(inherited.intersection(expected_inherited)),
+            len(expected_inherited),
+        )
+        self.assertEqual(
+            tuple(
+                name
+                for name in static_exports
+                if name in {"__xmknod", "__xmknodat", "arch_prctl"}
+            ),
+            (),
+        )
+
+    def test_planned_provider_runners_route_to_cargo_selection_sources(self) -> None:
+        """Keep planned provider evidence distinct from direct feature selection."""
         planned_products = tuple(
             item
             for item in ROSTER.load_feature_archive_roster()
-            if item.identifier in {"x86-owned-static-runtime", "x86-owned-dynamic-runtime"}
+            if item.identifier
+            in {
+                "x86-kernel-admin",
+                "x86-owned-static-runtime",
+                "x86-owned-dynamic-runtime",
+            }
+        )
+        self.assertEqual(
+            tuple(item.identifier for item in planned_products),
+            (
+                "x86-owned-static-runtime",
+                "x86-owned-dynamic-runtime",
+                "x86-kernel-admin",
+            ),
         )
         import tomllib
         data = tomllib.loads((ROOT / "compat/x86_64/parity.toml").read_text())
@@ -761,9 +832,9 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(
             report,
             {
-                "feature_archive_count": len(all_rows),
-                "planned_feature_archive_count": len(planned_products),
-                "verified_feature_archive_count": len(all_rows) - len(planned_products),
+                "feature_archive_count": 32,
+                "planned_feature_archive_count": 3,
+                "verified_feature_archive_count": 29,
             },
         )
 
