@@ -196,6 +196,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   image  build the pinned Linux/amd64 core-evidence image
   perf-c {plan|run|collect|check} ...  native supplied-product C performance adapter; use CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf
   perf-c-test  run focused native C-performance adapter and supplemental-fixture smoke tests in that image
+  perf-c-memory-smoke <dynamic-product> <work-dir>  run the bounded native observer/cgroup collector smoke; never a scorecard result
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
   linux-5-10-uapi  verify the fixed Linux 5.10 x86 exported-UAPI input
   header-abi-reference  verify the pinned x86 SysV LP64/x87 header baseline
@@ -6037,6 +6038,9 @@ case "$command" in
     perf-c-test)
         [ "$#" -eq 0 ] || fail "perf-c-test takes no arguments"
         ;;
+    perf-c-memory-smoke)
+        [ "$#" -eq 2 ] || fail "perf-c-memory-smoke requires DYNAMIC_PRODUCT and fresh WORK_DIR"
+        ;;
     routine-c-abi-matrix)
         [ "$#" -eq 1 ] || fail "routine-c-abi-matrix requires exactly one family id"
         ensure_image
@@ -6372,6 +6376,13 @@ case "$command" in
             printf "native C performance focused log: %s\\n" "$log"
             cat "$log"
         '
+        ;;
+    perf-c-memory-smoke)
+        require_native_c_performance_image
+        ensure_image
+        run_in_native_c_performance_container \
+            python3 -B /workspace/compat/perf/tests/run_x86_64_memory_collector_smoke.py \
+            --dynamic-product "$1" --work "$2"
         ;;
     image)
         [ "$#" -eq 0 ] || fail "image takes no arguments"
