@@ -1,10 +1,10 @@
 {
   "contract_schema": "crabc.x86_64-header-callable-disposition/v1",
   "inputs": {
-    "callable_inventory_sha256": "15aab9f01fff6e988424a853ad43ee617b2cb86c532a4c7440ec6e69ba7f44c9",
+    "callable_inventory_sha256": "cddc9288b7e3c2895901cdd9d775e668e7bc72fb5a9783a351078aff39d710d2",
     "candidate_external_callable_sha256": "b5d19a134ba65119f48d357bdedf87c168d54cf6568d35dd8e4c332329d23bca",
-    "parity_ledger_sha256": "bdfacde69fa08e650d12c6664f08e6cefe84bbafbebef27cf6fc396997f6bf14",
-    "static_c_abi_exports_sha256": "88ef9d51eb6abd08d1a14a45c75dedc0412bb6ac9e364faf1e5aee5b59ed32c0"
+    "parity_ledger_sha256": "25bd554aea03afd260e1f912618456fee96599b57932593f5bae5ddec9e27367",
+    "static_c_abi_exports_sha256": "85807c31d39c85338d410b3f61d8d0e91a68561909608c8d3d137855a6951a66"
   },
   "missing_reference_declaration_groups": [],
   "oracle": "Pinned musl 1.2.6",

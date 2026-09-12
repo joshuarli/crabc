@@ -45,22 +45,20 @@ only the archive provider and selection closure.
 
 ## Current integration assignments
 
-Add the following fields to the existing canonical ledger rows when the named
-runtime providers are integrated:
+The C compatibility wrappers have one direct owner in the canonical ledger:
 
 ```toml
-# Existing x86-kernel-admin row
-abi_only_callables = ["arch_prctl"]
-
-# Existing x86-owned-static-runtime row
+# x86-owned-static-runtime
 abi_only_callables = ["__xmknod", "__xmknodat"]
 ```
 
-`x86-owned-static-runtime` inherits `arch_prctl` through its existing
-`x86-kernel-admin` baseline closure. Do not repeat `arch_prctl` in its direct
-field, add a public declaration, add an alias row, or add it to the default
-static-export ratchet. The named kernel-admin and compatibility component
-runners remain responsible for proving these three providers are `GLOBAL`.
+The separately reviewed kernel component adds a real `x86-kernel-admin`
+Cargo feature and selects it from `x86-owned-static-runtime`. When that
+component is integrated, its new roster row directly owns `arch_prctl` and
+the owned-static baseline inherits it. That dependency is not present before
+the kernel integration. The named component runners prove the exact `GLOBAL`
+binding; neither route adds a header declaration, alias row, or default-static
+ratchet entry for these ABI-only functions.
 
 After a ledger integration, run the roster/ledger reader, regenerate only the
 integration-owned header accounting artifacts when their normal workflow calls

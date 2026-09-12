@@ -1,7 +1,7 @@
 //! Installed owned Linux/x86-64 filesystem C mechanisms.
 //!
 //! This feature-gated block owns exactly `fchmodat`, `lchmod`, `fchown`,
-//! `fchownat`, `mknod`, `mknodat`, `renameat`, `symlinkat`, `statx`,
+//! `fchownat`, `mknod`, `mknodat`, `__xmknod`, `__xmknodat`, `renameat`, `symlinkat`, `statx`,
 //! `fallocate`, `lockf`, `preadv2`, and `pwritev2`. It composes the existing
 //! raw Linux register boundary, selected initial-TLS `errno`, private x86
 //! `struct stat` owner, procfd spelling, vector-I/O ABI, and owned-runtime
@@ -16,8 +16,11 @@
 //!   [`lchmod`], including the Linux-5.10 `fchmodat2` `ENOSYS` fallback;
 //! - `src/unistd/fchown.c` and `src/unistd/fchownat.c` map to [`fchown`] and
 //!   [`fchownat`], including the live-`O_PATH` procfd retry;
-//! - `src/stat/mknod.c`, `src/stat/mknodat.c`, `src/unistd/renameat.c`, and
-//!   `src/unistd/symlinkat.c` map to their same-named entries;
+//! - `src/stat/mknod.c`, `src/stat/mknodat.c`, `src/stat/__xstat.c`,
+//!   `src/unistd/renameat.c`, and `src/unistd/symlinkat.c` map to their
+//!   same-named entries; `__xmknod` and `__xmknodat` retain musl's ignored
+//!   version argument and caller-owned `dev_t *` dereference before forwarding
+//!   to the existing special-node entry;
 //! - `src/linux/statx.c` maps to [`statx`] as a direct syscall. Musl's
 //!   old-kernel `ENOSYS` to `fstatat` fallback is intentionally omitted because
 //!   the Linux 5.10 baseline guarantees `statx`;
@@ -450,6 +453,51 @@ pub unsafe extern "C" fn mknodat(
             device as i64,
         )
     })
+}
+
+/// Musl's historical xstat compatibility entry for [`mknod`].
+///
+/// The source ignores `version` and reads `*device` before making the ordinary
+/// special-node call.  It deliberately performs neither version validation nor
+/// a null check: callers must provide a readable `dev_t` pointer, exactly as
+/// `src/stat/__xstat.c` requires.
+///
+/// # Safety
+///
+/// `path` must remain a readable NUL-terminated pathname and `device` must
+/// point to one readable x86 Linux `dev_t`.  The caller owns the namespace,
+/// mode, device interpretation, and all ordinary `mknod` preconditions.
+#[no_mangle]
+pub unsafe extern "C" fn __xmknod(
+    _version: c_int,
+    path: *const c_char,
+    mode: c_uint,
+    device: *mut c_ulong,
+) -> c_int {
+    // SAFETY: musl's source passes the caller-owned dev_t value directly.
+    unsafe { mknod(path, mode, core::ptr::read(device)) }
+}
+
+/// Musl's historical xstat compatibility entry for [`mknodat`].
+///
+/// `version` is source-ignored and `device` is dereferenced before the
+/// existing directory-relative special-node request, preserving the same raw
+/// caller contract as [`__xmknod`].
+///
+/// # Safety
+///
+/// `path` and `device` have the same requirements as [`__xmknod`], and
+/// `directory_descriptor` must be valid for the selected `mknodat` request.
+#[no_mangle]
+pub unsafe extern "C" fn __xmknodat(
+    _version: c_int,
+    directory_descriptor: c_int,
+    path: *const c_char,
+    mode: c_uint,
+    device: *mut c_ulong,
+) -> c_int {
+    // SAFETY: musl's source passes the caller-owned dev_t value directly.
+    unsafe { mknodat(directory_descriptor, path, mode, core::ptr::read(device)) }
 }
 
 /// Rename one entry between caller-selected directory descriptors.

@@ -77,7 +77,7 @@
 //! | `src/stdio/{printf,vprintf,fprintf,vfprintf}.c` | direct/VaList forwarding into the selected formatter and permanent-stream byte sink; stream entries reject floating and all non-permanent FILE pointers |
 //! | `src/errno/__strerror.h`; `src/errno/strerror.c` | selected immutable fixed-C-locale `%m` message lookup, shared directly with the existing `strerror` leaf |
 //! | `src/stdio/sscanf.c`, `vsscanf.c`, `vfscanf.c`; `src/internal/intscan.c` | NUL-terminated byte scanner, assignment/count discipline, prefix admission, selected integer/string conversions, and sealed `vfscanf` format-NUL, raw-literal, `%%`, format-whitespace, assignment-suppressed raw-character, assignment-suppressed token-string, assignment-suppressed scanset, and assignment-suppressed count states: after the string entry boundary establishes input, format-NUL returns the existing assignment count without entering a scanner state or accessing varargs; the raw literal matches one non-`%`, non-whitespace format byte without assignment; `%%` skips C-locale input whitespace before one literal percent; format whitespace coalesces its run while consuming zero or more input-space bytes without assignment; fixed non-wide `%*3c` consumes three raw bytes without a destination, va_list access, or assignment; fixed non-wide `%*3s` skips C-locale input whitespace before consuming its bounded token without a destination, va_list access, terminator, or assignment; fixed literal non-wide `%*3[abc]` consumes at most three raw `a`/`b`/`c` bytes without input-whitespace skipping, a destination, va_list access, a terminator, or an assignment; and literal non-wide `%*n` reads no source byte and performs no va_list access, count store, or assignment |
-//! | `src/stdio/{scanf,vscanf,fscanf,vfscanf}.c`; `src/internal/intscan.c` | one-byte-lookahead permanent-stream scanner with delimiter preservation, EOF/matching-failure distinction, `%n`, and selected integer/byte-string/character assignments |
+//! | `src/stdio/{scanf,vscanf,fscanf,vfscanf}.c`; `src/stdio/{sscanf,vsscanf}.c`; `src/stdio/vfscanf.c`; `src/internal/intscan.c` | one-byte-lookahead permanent-stream scanner with delimiter preservation, EOF/matching-failure distinction, `%n`, and selected integer/byte-string/character assignments; musl `weak_alias` forms make the six `__isoc99_*` spellings weak, same-address aliases of those existing entries |
 //!
 //! The full musl formatter/scanner also owns decimal and long-double
 //! conversion, locale, wide input, scansets outside the sealed literal
@@ -110,6 +110,29 @@ use core::ffi::{
 };
 
 use super::{errno, error_strings};
+
+// musl 1.2.6 defines the ISO-C99 spellings as weak aliases of the ordinary
+// scanning entries.  Keeping these as assembler aliases, instead of Rust
+// forwarding wrappers, preserves the source-required one definition in both
+// the static archive and shared libc.
+core::arch::global_asm!(
+    ".weak __isoc99_sscanf",
+    ".set __isoc99_sscanf, sscanf",
+    ".weak __isoc99_vsscanf",
+    ".set __isoc99_vsscanf, vsscanf",
+);
+
+#[cfg(feature = "x86-stdio-permanent-format-scan")]
+core::arch::global_asm!(
+    ".weak __isoc99_scanf",
+    ".set __isoc99_scanf, scanf",
+    ".weak __isoc99_vscanf",
+    ".set __isoc99_vscanf, vscanf",
+    ".weak __isoc99_fscanf",
+    ".set __isoc99_fscanf, fscanf",
+    ".weak __isoc99_vfscanf",
+    ".set __isoc99_vfscanf, vfscanf",
+);
 #[cfg(feature = "x86-stdio-permanent-format-scan")]
 use super::stdio_standard;
 #[cfg(feature = "x86-stdio-permanent-format-scan")]

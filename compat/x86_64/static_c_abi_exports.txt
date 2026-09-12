@@ -58,6 +58,8 @@ __iscntrl_l
 __isdigit_l
 __isgraph_l
 __islower_l
+__isoc99_sscanf
+__isoc99_vsscanf
 __isprint_l
 __ispunct_l
 __isspace_l
@@ -139,7 +141,13 @@ __strerror_l
 __strncasecmp_l
 __strtod_l
 __strtof_l
+__strtoimax_internal
+__strtol_internal
 __strtold_l
+__strtoll_internal
+__strtoul_internal
+__strtoull_internal
+__strtoumax_internal
 __strxfrm_l
 __tolower_l
 __toupper_l

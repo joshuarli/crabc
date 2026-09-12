@@ -688,6 +688,55 @@ class FeatureArchiveRosterTests(unittest.TestCase):
         self.assertEqual(composition.additive_callables, ())
         self.assertEqual(composition.replacement_callables, ())
 
+    def test_c_compatibility_entry_provider_ownership_is_explicit(self) -> None:
+        """Keep C-compatibility entries in their real default and feature rows."""
+
+        static_exports = tuple(
+            line
+            for line in (ROOT / "compat" / "x86_64" / "static_c_abi_exports.txt")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line and not line.startswith("#")
+        )
+        expected_default_entries = (
+            "__isoc99_sscanf",
+            "__isoc99_vsscanf",
+            "__strtoimax_internal",
+            "__strtol_internal",
+            "__strtoll_internal",
+            "__strtoul_internal",
+            "__strtoull_internal",
+            "__strtoumax_internal",
+        )
+        self.assertEqual(
+            tuple(name for name in static_exports if name in expected_default_entries),
+            expected_default_entries,
+        )
+
+        rows = {row.identifier: row for row in ROSTER.load_feature_archive_roster()}
+        permanent_scan = rows["x86-stdio-permanent-format-scan"]
+        self.assertEqual(permanent_scan.state, "verified")
+        self.assertEqual(permanent_scan.evidence_record, "static-c-stdio-permanent-format-scan")
+        self.assertEqual(permanent_scan.baseline_features, ())
+        self.assertEqual(
+            permanent_scan.additive_callables,
+            ("fprintf", "fscanf", "printf", "scanf", "vfprintf", "vfscanf", "vprintf", "vscanf"),
+        )
+        self.assertEqual(permanent_scan.replacement_callables, ())
+        self.assertEqual(
+            permanent_scan.aliases,
+            (
+                ROSTER.ArchiveAlias("__isoc99_fscanf", "fscanf", "weak-same-address"),
+                ROSTER.ArchiveAlias("__isoc99_scanf", "scanf", "weak-same-address"),
+                ROSTER.ArchiveAlias("__isoc99_vfscanf", "vfscanf", "weak-same-address"),
+                ROSTER.ArchiveAlias("__isoc99_vscanf", "vscanf", "weak-same-address"),
+            ),
+        )
+
+        owned_static = rows["x86-owned-static-runtime"]
+        self.assertIn(permanent_scan.identifier, owned_static.baseline_features)
+        self.assertEqual(owned_static.abi_only_callables, ("__xmknod", "__xmknodat"))
+
     def test_planned_owned_product_runners_route_to_cargo_selection_sources(self) -> None:
         """Keep planned product evidence distinct from direct feature selection."""
         planned_products = tuple(
