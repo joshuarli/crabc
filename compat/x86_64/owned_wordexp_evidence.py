@@ -106,6 +106,10 @@ ENGINE_SOURCE_OBSERVATIONS = {
     "engine-diagnostics": b"owned-wordexp-engine-diagnostics: SOURCE-RED quiet-shell-diagnostic\n",
     "engine-sigpipe": b"owned-wordexp-engine-sigpipe: SOURCE-RED shell-child-no-raw-sigpipe\n",
 }
+# The ordinary unterminated-quote call exposes this exact fixed-shell stderr
+# through musl's whole-input protocol. A different or additional diagnostic
+# is not evidence of the named source defect.
+QUIET_SOURCE_DIAGNOSTIC = b"sh: eval: line 0: syntax error: unterminated quoted string\n"
 CELL_ENVIRONMENT = {"CRABC_WORDEXP": "bar baz", "FOO": "field", "X": "left", "Y": "right", "SET": "1",
                     "TMPDIR": "/wordexp-tmp"}
 MODE_SPECS = {
@@ -884,7 +888,7 @@ def _assert_case_results(root: Path, case: str, oracle: Mapping[str, Any], candi
         # POSIX requires the candidate's stream to be empty.
         if (oracle_status != b"0\n" or candidate_status != b"0\n" or
                 oracle_stdout != expected_candidate_stdout or candidate_stdout != expected_candidate_stdout or
-                not oracle_stderr or candidate_stderr):
+                oracle_stderr != QUIET_SOURCE_DIAGNOSTIC or candidate_stderr):
             fail(f"{description} quiet source RED or candidate suppression differs")
     elif comparison == "posix-quiet-source-red":
         if (oracle_status != b"84\n" or

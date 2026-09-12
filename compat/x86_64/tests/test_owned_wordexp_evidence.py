@@ -458,6 +458,19 @@ class OwnedWordexpEnvironmentTests(unittest.TestCase):
 
 
 class OwnedWordexpEngineResultTests(unittest.TestCase):
+    def test_quiet_source_observation_requires_exact_pinned_diagnostic(self) -> None:
+        module = load_module()
+        candidate = (b"0\n", b"owned-wordexp: PASS\n", b"")
+        diagnostic = b"sh: eval: line 0: syntax error: unterminated quoted string\n"
+        oracle = (b"0\n", b"owned-wordexp: PASS\n", diagnostic)
+        with unittest.mock.patch.object(module, "_result_streams", side_effect=[oracle, candidate]):
+            module._assert_case_results(ROOT, "normal", {}, {}, "normal")
+        for changed in (b"unrelated failure\n", diagnostic + b"extra\n", diagnostic[:-1], b""):
+            with self.subTest(diagnostic=changed), unittest.mock.patch.object(
+                    module, "_result_streams", side_effect=[oracle[:2] + (changed,), candidate]):
+                with self.assertRaises(module.EvidenceError):
+                    module._assert_case_results(ROOT, "normal", {}, {}, "normal")
+
     def test_matching_unexpected_diagnostics_cannot_pass_a_source_control(self) -> None:
         module = load_module()
         case = "engine-literals"
