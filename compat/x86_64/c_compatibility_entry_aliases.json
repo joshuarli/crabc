@@ -1,0 +1,28 @@
+{
+  "schema": "crabc.x86_64-c-compatibility-entry-aliases/v1",
+  "oracle": {
+    "release": "musl-1.2.6",
+    "revision": "9fa28ece75d8a2191de7c5bb53bed224c5947417"
+  },
+  "weak_aliases": {
+    "__isoc99_fscanf": "fscanf",
+    "__isoc99_scanf": "scanf",
+    "__isoc99_sscanf": "sscanf",
+    "__isoc99_vfscanf": "vfscanf",
+    "__isoc99_vscanf": "vscanf",
+    "__isoc99_vsscanf": "vsscanf",
+    "__strtol_internal": "strtol",
+    "__strtoll_internal": "strtoll",
+    "__strtoul_internal": "strtoul",
+    "__strtoull_internal": "strtoull",
+    "__strtoimax_internal": "strtoimax",
+    "__strtoumax_internal": "strtoumax"
+  },
+  "strong_wrappers": [
+    "__xmknod",
+    "__xmknodat"
+  ],
+  "family_completion": false,
+  "promotion_ready": false,
+  "public_support": false
+}

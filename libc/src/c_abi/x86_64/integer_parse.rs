@@ -14,7 +14,8 @@
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
 //!
 //! - `src/stdlib/strtol.c` maps the six public `strto*` entries to one
-//!   limit-parameterized scanner.
+//!   limit-parameterized scanner and declares its six `__strto*_internal`
+//!   names as weak aliases of those same entries.
 //! - `src/internal/intscan.c`, `src/internal/intscan.h`, `src/internal/shgetc.h`,
 //!   and `src/internal/shgetc.c` map to the bounded NUL-terminated byte scan,
 //!   including musl's invalid-base/no-conversion `EINVAL`, partial `0x`
@@ -26,13 +27,35 @@
 //! non-null, a writable `char **` end pointer. The `atoi`/`atol`/`atoll`
 //! overflow domain remains C undefined, as in musl; wrapping operations merely
 //! prevent that undefined C input from acquiring a Rust panic/runtime path.
-//! Floating, wide, locale-specific, internal `__strto*_internal`, allocation,
-//! stdio, random, and general text-runtime behavior remain outside this
-//! artifact.
+//! Floating, wide, locale-specific, allocation, stdio, random, and general
+//! text-runtime behavior remain outside this artifact. Musl does expose six
+//! `__strto*_internal` spellings as weak same-address aliases of this exact
+//! selected public block; those aliases retain the source ABI and do not add
+//! another parsing algorithm.
 
 use core::ffi::{c_char, c_int, c_long, c_longlong, c_ulong, c_ulonglong};
 
 use super::errno;
+
+// `src/stdlib/strtol.c` uses six weak_alias declarations.  These are aliases
+// of the three-argument source entries: callers using the historical glibc
+// four-argument declaration pass an ABI-extra group register, which the musl
+// source target does not receive or inspect.  Assembly aliases preserve the
+// one implementation and exact ELF address rather than adding wrappers.
+core::arch::global_asm!(
+    ".weak __strtol_internal",
+    ".set __strtol_internal, strtol",
+    ".weak __strtoul_internal",
+    ".set __strtoul_internal, strtoul",
+    ".weak __strtoll_internal",
+    ".set __strtoll_internal, strtoll",
+    ".weak __strtoull_internal",
+    ".set __strtoull_internal, strtoull",
+    ".weak __strtoimax_internal",
+    ".set __strtoimax_internal, strtoimax",
+    ".weak __strtoumax_internal",
+    ".set __strtoumax_internal, strtoumax",
+);
 
 const EINVAL: c_int = 22;
 const ERANGE: c_int = 34;

@@ -115,6 +115,12 @@ It keeps historical missing, unexpected, and metadata differences visible and
 does not turn the floor into ABI compatibility, family completion, promotion,
 or public support.
 
+[c-compatibility-entry-aliases.md](c-compatibility-entry-aliases.md) records the
+source-faithful musl compatibility spellings for selected scanf, integer parse,
+and special-node entries. Its installed-product proof keeps weak same-address
+and strong-wrapper ELF shapes explicit; it does not widen headers or resolve
+the ABI-differential family.
+
 `./scripts/dev-x86_64.sh owned-loader-short-stack` is the focused 100 KiB
 libc-test startup regression for the selected general-initial-TLS loader path.
 Its [component record](owned-loader-short-stack.md) identifies the pinned
