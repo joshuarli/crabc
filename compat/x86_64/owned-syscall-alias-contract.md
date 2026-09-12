@@ -50,14 +50,20 @@ The runner first preserves a pinned-musl static and shared reference. It then
 links the same C calls through owned static ET_EXEC/static-PIE and owned shared
 PIE/non-PIE products, using both kernel and direct-interpreter entry. The
 normal probe reaches all fourteen public names. Its strong-override sibling
-defines all fourteen public names and proves those calls reach the application.
-It also distinguishes musl source ownership: legacy `__fxstat` and
-`__fxstatat`, plus `ftime`, intentionally retain public relocations; `statvfs`
-and `fstatvfs` retain their local statfs bodies; `sem_timedwait` reaches
-`__clock_gettime`; `signal` reaches `__sigaction`; and selected tree search
-continues through hidden mapping bodies. The reader rejects a forwarding body
-that merely shares an archive member and zero `st_value` with an alias by also
-requiring the defining section and type.
+defines viable Linux implementations for all fourteen public names, so startup
+and the selected C allocator can safely use an ordinary spelling before
+`main`; counters prove that direct application calls reach those definitions.
+It distinguishes source and final-link ownership: legacy `__fxstat`,
+`__fxstatat`, `ftime`, `getloadavg`, `sigignore`, and selected `siginterrupt`
+calls name public aliases in source and bind to an application override from
+the archive, while the shared link's direct local resolution reaches the
+defining libc body. Pinned static caller relocations name `fstat`, `fstatat`,
+and `clock_gettime`; pinned shared disassembly directly branches to the local
+same-address bodies. `statvfs` and `fstatvfs` retain their local statfs bodies;
+`sem_timedwait` reaches `__clock_gettime`; `signal` reaches `__sigaction`; and
+selected tree search continues through hidden mapping bodies. The reader
+rejects a forwarding body that merely shares an archive member and zero
+`st_value` with an alias by also requiring the defining section and type.
 
 Run it only in the pinned native image with supplied products below the
 checkout's `.work` tree:

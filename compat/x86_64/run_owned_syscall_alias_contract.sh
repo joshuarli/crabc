@@ -144,9 +144,9 @@ for mode in pie non-pie; do
     same_transcript oracle-contract "oracle-dynamic-$mode-contract-kernel"
     run "oracle-dynamic-$mode-contract-direct" chroot "$oracle_root" /lib/ld-musl-x86_64.so.1 /contract /scratch/regular
     same_transcript oracle-contract "oracle-dynamic-$mode-contract-direct"
-    run "oracle-dynamic-$mode-override-kernel" chroot "$oracle_root" /override /scratch/regular
+    run "oracle-dynamic-$mode-override-kernel" chroot "$oracle_root" /override /scratch/regular shared
     same_transcript oracle-override "oracle-dynamic-$mode-override-kernel"
-    run "oracle-dynamic-$mode-override-direct" chroot "$oracle_root" /lib/ld-musl-x86_64.so.1 /override /scratch/regular
+    run "oracle-dynamic-$mode-override-direct" chroot "$oracle_root" /lib/ld-musl-x86_64.so.1 /override /scratch/regular shared
     same_transcript oracle-override "oracle-dynamic-$mode-override-direct"
 done
 
@@ -166,9 +166,9 @@ for mode in pie non-pie; do
     same_transcript oracle-contract "dynamic-$mode-contract-kernel"
     run "dynamic-$mode-contract-direct" chroot "$root" "$INTERPRETER" /contract /scratch/regular
     same_transcript oracle-contract "dynamic-$mode-contract-direct"
-    run "dynamic-$mode-override-kernel" chroot "$root" /override /scratch/regular
+    run "dynamic-$mode-override-kernel" chroot "$root" /override /scratch/regular shared
     same_transcript oracle-override "dynamic-$mode-override-kernel"
-    run "dynamic-$mode-override-direct" chroot "$root" "$INTERPRETER" /override /scratch/regular
+    run "dynamic-$mode-override-direct" chroot "$root" "$INTERPRETER" /override /scratch/regular shared
     same_transcript oracle-override "dynamic-$mode-override-direct"
 done
 

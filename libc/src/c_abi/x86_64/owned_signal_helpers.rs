@@ -1,22 +1,24 @@
 //! Owned System V signal helpers from musl 1.2.6 (MIT), release revision
 //! 9fa28ece75d8a2191de7c5bb53bed224c5947417, src/signal/{sighold,sigignore,
 //! sigrelse,sigset}.c. Unlike the frozen private raw-syscall leaf, these
-//! wrappers retain the source's public signal set/action/mask relocations.
-//! Without an application interposer, `sigaction` resolves to the owned outer
-//! action body and retains reserved-signal validation, sticky EINTR validity,
-//! SIGABRT serialization, errno translation, and the source's two-step
-//! sigset failure behavior.
+//! wrappers retain the source's public signal set/action/mask spellings. The
+//! archive leaves their action calls available to an application interposer;
+//! the shared final link resolves the same calls to the localized outer body.
+//! Without an interposer, that body retains reserved-signal validation, sticky
+//! EINTR validity, SIGABRT serialization, errno translation, and the source's
+//! two-step sigset failure behavior.
 
 use core::ffi::{c_int, c_void};
 use super::{signal_control as control, signal_set_mutation,
     signal_foundation::{PublicSigAction, PUBLIC_SIGSET_WORDS}};
 
 unsafe extern "C" {
-    // These musl source files name public sigaction deliberately. Retain a
-    // public relocation rather than turning their ordinary C composition into
-    // an unrequested hidden __sigaction call.
-    #[link_name = "sigaction"]
-    fn public_sigaction(
+    // These musl source files name public sigaction deliberately. The archive
+    // retains that override point; the shared final link localizes it to
+    // __sigaction, matching the pinned shared artifact.
+    #[cfg_attr(feature = "x86-owned-dynamic-runtime", link_name = "__sigaction")]
+    #[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), link_name = "sigaction")]
+    fn source_sigaction(
         signal: c_int,
         action: *const c_void,
         old_action: *mut c_void,
@@ -61,7 +63,7 @@ pub extern "C" fn sigrelse(signal: c_int) -> c_int {
 #[no_mangle]
 pub extern "C" fn sigignore(signal: c_int) -> c_int {
     let ignored = action(SIG_IGN);
-    unsafe { public_sigaction(signal, core::ptr::addr_of!(ignored).cast(), core::ptr::null_mut()) }
+    unsafe { source_sigaction(signal, core::ptr::addr_of!(ignored).cast(), core::ptr::null_mut()) }
 }
 
 /// Replace a disposition and unblock its signal, or hold without replacing.
@@ -77,7 +79,7 @@ pub unsafe extern "C" fn sigset(signal: c_int, handler: usize) -> usize {
     let new_action = action(handler);
     let requested = if handler == SIG_HOLD { core::ptr::null() }
         else { core::ptr::addr_of!(new_action).cast() };
-    if unsafe { public_sigaction(signal, requested, core::ptr::addr_of_mut!(old_action).cast()) } < 0 {
+    if unsafe { source_sigaction(signal, requested, core::ptr::addr_of_mut!(old_action).cast()) } < 0 {
         return SIG_ERR;
     }
     let mut old_mask = [0u64; PUBLIC_SIGSET_WORDS];
