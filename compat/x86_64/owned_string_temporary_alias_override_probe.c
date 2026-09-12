@@ -29,7 +29,7 @@ char *stpcpy(char *destination, const char *source)
 
 char *stpncpy(char *destination, const char *source, size_t count)
 {
-    char *result = destination;
+    char *terminator;
 
     ++stpncpy_calls;
     while (count != 0 && (*destination = *source) != '\0') {
@@ -37,11 +37,15 @@ char *stpncpy(char *destination, const char *source, size_t count)
         ++source;
         --count;
     }
+    if (count == 0)
+        return destination;
+
+    terminator = destination;
     while (count != 0) {
         *destination++ = '\0';
         --count;
     }
-    return result + (destination - result);
+    return terminator;
 }
 
 char *strchrnul(const char *string, int character)
@@ -95,7 +99,7 @@ int main(int argc, char **argv)
         stpcpy_calls == 1);
     CHECK(strcpy(internal_copied, "inner") == internal_copied &&
         !strcmp(internal_copied, "inner") && stpcpy_calls == 1);
-    CHECK(stpncpy(padded, "pad", 6) == padded + 6 &&
+    CHECK(stpncpy(padded, "pad", 6) == padded + 3 &&
         !memcmp(padded, "pad\0\0\0", 6) && stpncpy_calls == 1);
     CHECK(strncpy(internal_padded, "inner", 7) == internal_padded &&
         !memcmp(internal_padded, "inner\0\0", 7) && stpncpy_calls == 1);

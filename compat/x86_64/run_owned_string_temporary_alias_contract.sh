@@ -9,8 +9,10 @@ ulimit -c 0
 
 readonly ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly ORACLE_CC=/usr/local/bin/crabc-x86_64-musl-gcc
-readonly MUSL_LIB=/opt/musl-1.2.6/lib/libc.so
-readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
+readonly MUSL_ROOT=/opt/musl-1.2.6
+readonly MUSL_LIB="$MUSL_ROOT/lib/libc.so"
+readonly MUSL_ARCHIVE="$MUSL_ROOT/lib/libc.a"
+readonly MUSL_LOADER="$MUSL_ROOT/lib/ld-musl-x86_64.so.1"
 readonly CONTRACT_SOURCE="$ROOT/compat/x86_64/owned_string_temporary_alias_contract_probe.c"
 readonly OVERRIDE_SOURCE="$ROOT/compat/x86_64/owned_string_temporary_alias_override_probe.c"
 readonly READER_DIR="$ROOT/compat/x86_64"
@@ -31,10 +33,11 @@ fail() {
 [ "$#" -eq 0 ] || [ "$#" -eq 2 ] || usage
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
-for tool in chroot cmp git python3 readelf realpath sha256sum timeout; do
+for tool in chroot cmp cp git python3 readelf realpath sha256sum timeout; do
     command -v "$tool" >/dev/null || fail "missing $tool"
 done
-[ -x "$ORACLE_CC" ] && [ -f "$MUSL_LIB" ] && [ -f "$MUSL_ARCHIVE" ] ||
+[ -x "$ORACLE_CC" ] && [ -f "$MUSL_LIB" ] && [ -f "$MUSL_ARCHIVE" ] &&
+    [ -f "$MUSL_LOADER" ] ||
     fail 'missing pinned musl 1.2.6 toolchain or artifacts'
 for source in "$CONTRACT_SOURCE" "$OVERRIDE_SOURCE" \
     "$READER_DIR/owned_stdio_alias_contract_reader.py"; do
@@ -68,6 +71,8 @@ readonly WORK="$(mktemp -d "$TMPDIR/owned-string-temporary-alias-contract.XXXXXX
 chmod a+rx "$WORK"
 trap 'chmod -R a+rX "$WORK"' EXIT
 printf 'owned string/temporary alias contract evidence: %s\n' "$WORK"
+git rev-parse HEAD >"$WORK/harness.commit"
+git status --porcelain=v1 >"$WORK/harness.status"
 
 run() {
     local stem="$1"
@@ -108,14 +113,75 @@ supplied = sys.argv[5] == '1'
 if not product.is_relative_to(work if not supplied else root / '.work'):
     boundary = 'checkout .work' if supplied else 'this retained disposable evidence product'
     raise SystemExit(f'{kind} product must remain below {boundary}')
-paths = {
-    'static': ('bin/crabc-cc', 'usr/lib/libc.a'),
-    'dynamic': ('bin/crabc-cc-dynamic', 'usr/lib/libc.so'),
-}[kind]
-for relative in paths:
-    path = product / relative
-    if not path.is_file() or path.is_symlink():
-        raise SystemExit(f'{kind} product lacks physical {relative}')
+sys.path.insert(0, str(root / 'compat/x86_64'))
+from owned_posix_product_evidence import (
+    ProductEvidenceError,
+    _validate_dynamic_product,
+    _validate_static_product,
+)
+
+try:
+    if kind == 'static':
+        _validate_static_product(product)
+    elif kind == 'dynamic':
+        _validate_dynamic_product(product)
+    else:
+        raise SystemExit(f'unknown product kind: {kind}')
+except ProductEvidenceError as error:
+    raise SystemExit(f'{kind} product does not satisfy the sealed owned-product contract: {error}') from error
+PY
+}
+
+record_product_provenance() {
+    local supplied="$1"
+    python3 -B - "$WORK" "$STATIC_PRODUCT" "$DYNAMIC_PRODUCT" "$supplied" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+work = Path(sys.argv[1]).resolve(strict=True)
+static = Path(sys.argv[2]).resolve(strict=True)
+dynamic = Path(sys.argv[3]).resolve(strict=True)
+supplied = sys.argv[4] == '1'
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+record = {
+    'dynamic_product': {'path': str(dynamic), 'sha256': digest(dynamic / 'usr/lib/libc.so')},
+    'static_product': {'path': str(static), 'sha256': digest(static / 'usr/lib/libc.a')},
+}
+if not supplied:
+    record['runtime_build'] = {
+        'commit': (work / 'harness.commit').read_text(encoding='utf-8').strip(),
+        'harness_status_sha256': digest(work / 'harness.status'),
+        'origin': 'fresh-current-checkout',
+    }
+else:
+    evidence = static.parent
+    source = evidence / 'source.commit'
+    status = evidence / 'source.status'
+    products = evidence / 'products.sha256'
+    if dynamic.parent == evidence and source.is_file() and status.is_file() and products.is_file():
+        commit = source.read_text(encoding='utf-8').strip()
+        receipt_hashes = set(re.findall(r'^[0-9a-f]{64}', products.read_text(encoding='utf-8'), re.MULTILINE))
+        if re.fullmatch(r'[0-9a-f]{40}', commit) and {
+                record['static_product']['sha256'], record['dynamic_product']['sha256'],
+        } <= receipt_hashes:
+            record['runtime_build'] = {
+                'commit': commit,
+                'evidence': str(evidence),
+                'source_status_sha256': digest(status),
+                'origin': 'supplied-retained-product',
+            }
+    if 'runtime_build' not in record:
+        record['runtime_build'] = {'origin': 'supplied-product-without-build-receipt'}
+
+(work / 'runtime-product-provenance.json').write_text(
+    json.dumps(record, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8'
+)
 PY
 }
 
@@ -134,12 +200,11 @@ readonly STATIC_PRODUCT DYNAMIC_PRODUCT
 validate_product "$STATIC_PRODUCT" static "$PRODUCTS_SUPPLIED"
 validate_product "$DYNAMIC_PRODUCT" dynamic "$PRODUCTS_SUPPLIED"
 
-git rev-parse HEAD >"$WORK/source.commit"
-git status --porcelain=v1 >"$WORK/source.status"
 sha256sum "$CONTRACT_SOURCE" "$OVERRIDE_SOURCE" \
-    "$READER_DIR/owned_stdio_alias_contract_reader.py" >"$WORK/harness.sha256"
+    "$READER_DIR/owned_stdio_alias_contract_reader.py" "$0" >"$WORK/harness.sha256"
 sha256sum "$STATIC_PRODUCT/usr/lib/libc.a" "$DYNAMIC_PRODUCT/usr/lib/libc.so" \
     >"$WORK/products.sha256"
+record_product_provenance "$PRODUCTS_SUPPLIED"
 
 compile_object() {
     local stem="$1" source="$2"
@@ -173,6 +238,32 @@ for mode in static static-pie; do
 done
 
 for mode in pie non-pie; do
+    case "$mode" in
+        pie) musl_mode=(-pie) ;;
+        non-pie) musl_mode=(-no-pie) ;;
+    esac
+    for kind in contract override; do
+        run "musl-shared-$mode-$kind-link" "$ORACLE_CC" -std=c11 "${musl_mode[@]}" \
+            -rdynamic "$WORK/$kind.o" -o "$WORK/musl-shared-$mode-$kind"
+    done
+    root="$WORK/musl-shared-$mode-root"
+    mkdir "$root" "$root/opt" "$root/opt/musl-1.2.6" "$root/scratch" \
+        "$root/scratch/contract" "$root/scratch/contract-direct" \
+        "$root/scratch/override" "$root/scratch/override-direct"
+    cp -a "$MUSL_ROOT/." "$root/opt/musl-1.2.6"
+    cp "$WORK/musl-shared-$mode-contract" "$root/contract"
+    cp "$WORK/musl-shared-$mode-override" "$root/override"
+    for kind in contract override; do
+        run "musl-shared-$mode-$kind-kernel" chroot "$root" "/$kind" \
+            "/scratch/$kind"
+        same_transcript "oracle-$kind" "musl-shared-$mode-$kind-kernel"
+        run "musl-shared-$mode-$kind-direct" chroot "$root" "$MUSL_LOADER" \
+            "/$kind" "/scratch/$kind-direct"
+        same_transcript "oracle-$kind" "musl-shared-$mode-$kind-direct"
+    done
+done
+
+for mode in pie non-pie; do
     for kind in contract override; do
         run "dynamic-$mode-$kind-link" "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" \
             "--dynamic-$mode" -rdynamic "$WORK/$kind.o" -o "$WORK/dynamic-$mode-$kind"
@@ -185,13 +276,33 @@ for mode in pie non-pie; do
     cp "$WORK/dynamic-$mode-contract" "$root/contract"
     cp "$WORK/dynamic-$mode-override" "$root/override"
     run "dynamic-$mode-contract-kernel" chroot "$root" /contract /scratch/contract
-    same_transcript oracle-contract "dynamic-$mode-contract-kernel"
+    same_transcript "musl-shared-$mode-contract-kernel" "dynamic-$mode-contract-kernel"
     run "dynamic-$mode-contract-direct" chroot "$root" "$INTERPRETER" /contract /scratch/contract-direct
-    same_transcript oracle-contract "dynamic-$mode-contract-direct"
+    same_transcript "musl-shared-$mode-contract-direct" "dynamic-$mode-contract-direct"
     run "dynamic-$mode-override-kernel" chroot "$root" /override /scratch/override
-    same_transcript oracle-override "dynamic-$mode-override-kernel"
+    same_transcript "musl-shared-$mode-override-kernel" "dynamic-$mode-override-kernel"
     run "dynamic-$mode-override-direct" chroot "$root" "$INTERPRETER" /override /scratch/override-direct
-    same_transcript oracle-override "dynamic-$mode-override-direct"
+    same_transcript "musl-shared-$mode-override-direct" "dynamic-$mode-override-direct"
+done
+
+assert_elf_type() {
+    local stem="$1" expected="$2"
+    run "$stem-elf-header" readelf --file-header --wide "$WORK/$stem"
+    grep -Eq "^[[:space:]]*Type:[[:space:]]*$expected([[:space:]]|\\()" \
+        "$WORK/$stem-elf-header.stdout" ||
+        fail "$stem is not the expected ELF $expected product"
+}
+
+for kind in contract override; do
+    assert_elf_type "oracle-$kind" EXEC
+    assert_elf_type "static-$kind" EXEC
+    assert_elf_type "static-pie-$kind" DYN
+    for mode in pie non-pie; do
+        expected=EXEC
+        [ "$mode" = pie ] && expected=DYN
+        assert_elf_type "musl-shared-$mode-$kind" "$expected"
+        assert_elf_type "dynamic-$mode-$kind" "$expected"
+    done
 done
 
 readelf --dyn-syms --wide "$MUSL_LIB" >"$WORK/musl-dynamic-symbols.txt"
