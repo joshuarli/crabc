@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #endif
 #include "x86_64_workload_protocol.h"
+#include "fixtures/diagnostic_marker.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -479,6 +480,7 @@ main(int argc, char **argv)
     enum primitive_kind primitive;
     enum primitive_variant variant;
     struct crabc_perf_observer observer;
+    int marker_fd;
     int passed;
 
     if (!crabc_perf_observer_from_environment(&observer))
@@ -488,6 +490,10 @@ main(int argc, char **argv)
         !parse_primitive(argv[3], &primitive) ||
         !parse_variant(argv[4], &variant))
         return 2;
+    marker_fd = diagnostic_marker_fd();
+    if (marker_fd >= 0)
+        write_diagnostic_marker(marker_fd, DIAGNOSTIC_MARKER_BEGIN,
+            sizeof(DIAGNOSTIC_MARKER_BEGIN) - 1);
     switch (variant) {
     case VARIANT_EMPTY:
         passed = run_empty(iterations, primitive, &observer);
@@ -503,6 +509,9 @@ main(int argc, char **argv)
     }
     if (!passed)
         return 1;
+    if (marker_fd >= 0)
+        write_diagnostic_marker(marker_fd, DIAGNOSTIC_MARKER_END,
+            sizeof(DIAGNOSTIC_MARKER_END) - 1);
     puts("ok");
     return 0;
 }

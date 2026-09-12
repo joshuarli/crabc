@@ -233,6 +233,14 @@ markers, including exact calls/errors per completed operation. Marker writes
 are excluded from the whole-process totals. The protocol is absent from timed
 children and the diagnostic remains explicitly marked `timing: false`.
 
+The supplemental `x86_64_clock_allocator_workload`,
+`x86_64_network_workload`, and `x86_64_primitive_boundary_workload` artifacts
+admit their common arguments and optional observer environment before `BEGIN`.
+They emit it before mode dispatch or route setup, then emit `END` only after a
+successful route has completed its source-owned cleanup and before its real
+`puts("ok")`. Their ordinary artifact remains the diagnostic artifact; the
+marker descriptor is absent from timed children.
+
 ## Boundaries and interpretation
 
 This measures the project’s current C dynamic runtime against the pinned musl

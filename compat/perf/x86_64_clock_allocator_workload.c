@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #endif
 #include "x86_64_workload_protocol.h"
+#include "fixtures/diagnostic_marker.h"
 
 #include <pthread.h>
 #include <stdio.h>
@@ -290,12 +291,17 @@ main(int argc, char **argv)
     const char *mode;
     unsigned long iterations;
     struct crabc_perf_observer observer;
+    int marker_fd;
     int passed = 0;
 
     if (!crabc_perf_observer_from_environment(&observer))
         return 2;
     if (argc < 3 || !crabc_perf_parse_positive(argv[2], &iterations))
         return 2;
+    marker_fd = diagnostic_marker_fd();
+    if (marker_fd >= 0)
+        write_diagnostic_marker(marker_fd, DIAGNOSTIC_MARKER_BEGIN,
+            sizeof(DIAGNOSTIC_MARKER_BEGIN) - 1);
     mode = argv[1];
     if (strcmp(mode, "clock_gettime") == 0) {
         unsigned long clock_id;
@@ -338,6 +344,9 @@ main(int argc, char **argv)
     }
     if (!passed)
         return 1;
+    if (marker_fd >= 0)
+        write_diagnostic_marker(marker_fd, DIAGNOSTIC_MARKER_END,
+            sizeof(DIAGNOSTIC_MARKER_END) - 1);
     puts("ok");
     return 0;
 }
