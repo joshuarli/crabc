@@ -1370,20 +1370,51 @@ def status_record(status: int, timed_out: bool) -> dict[str, Any]:
     return aarch64_contract.status_record(status, timed_out)
 
 
-def close_inherited_descriptors(keep: set[int]) -> None:
-    """Close every nonstandard inherited descriptor with fixed child setup."""
+# Linux introduced close_range(2) in 5.9, so the project's 5.10 baseline has
+# it.  The timed and diagnostic children retain only a small fixed FD set; a
+# syscall interval on either side of those descriptors closes everything else
+# without charging an RLIMIT-sized Python close loop to the child.  This is
+# native x86-64 only, hence the explicit syscall number rather than an
+# incomplete portability wrapper.
+SYS_CLOSE_RANGE_X86_64 = 436
+CLOSE_RANGE_LAST = (1 << 32) - 1
 
-    maximum = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
-    if maximum == resource.RLIM_INFINITY:
-        maximum = 1 << 20
-    maximum = min(int(maximum), 1 << 20)
+
+def _kernel_close_range(first: int, last: int) -> None:
+    """Close one inclusive descriptor interval with Linux ``close_range``."""
+
+    require(0 <= first <= last <= CLOSE_RANGE_LAST, "close_range descriptor interval is invalid")
+    result = _libc.syscall(
+        ctypes.c_long(SYS_CLOSE_RANGE_X86_64),
+        ctypes.c_ulong(first),
+        ctypes.c_ulong(last),
+        ctypes.c_ulong(0),
+    )
+    if result == -1:
+        code = ctypes.get_errno()
+        if code == errno.ENOSYS:
+            raise AdapterError("Linux 5.10 close_range syscall is unavailable")
+        raise OSError(code, f"close_range({first}, {last}, 0) failed")
+
+
+def close_inherited_descriptors(keep: set[int]) -> None:
+    """Close every nonstandard inherited descriptor with fixed child setup.
+
+    Keep descriptors divide the unsigned 32-bit kernel range into a handful
+    of disjoint intervals.  There is deliberately no per-number fallback:
+    the required native kernel provides ``close_range`` and an unavailable
+    syscall makes the attempted child fail with its real error.
+    """
+
+    require(all(type(descriptor) is int and 0 <= descriptor <= CLOSE_RANGE_LAST for descriptor in keep),
+            "inherited descriptor roster is invalid")
     start = 3
     for descriptor in sorted(value for value in keep if value >= 3):
         if start < descriptor:
-            os.closerange(start, descriptor)
+            _kernel_close_range(start, descriptor - 1)
         start = descriptor + 1
-    if start < maximum:
-        os.closerange(start, maximum)
+    if start <= CLOSE_RANGE_LAST:
+        _kernel_close_range(start, CLOSE_RANGE_LAST)
 
 
 def child_exec(root: Path, binary: str, arguments: Sequence[str], environment: Mapping[str, str], stdout_path: Path, stderr_path: Path, *, ready_write: int | None = None, continue_read: int | None = None, marker_fd: int | None = None) -> None:
@@ -1502,6 +1533,7 @@ class PtraceSyscallInfo(ctypes.Structure):
 
 _libc = ctypes.CDLL(None, use_errno=True)
 _libc.ptrace.restype = ctypes.c_long
+_libc.syscall.restype = ctypes.c_long
 
 
 def ptrace(request: int, pid: int, address: int = 0, data: Any = 0) -> int:

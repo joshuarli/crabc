@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import errno
 import os
 import signal
 import stat
@@ -72,6 +73,52 @@ class TraceeWaitTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1.0)
         with self.assertRaises(ChildProcessError):
             os.waitpid(pid, os.WNOHANG)
+
+
+class DescriptorClosureTests(unittest.TestCase):
+    def test_descriptor_closure_uses_fixed_kernel_ranges(self) -> None:
+        """Child setup cannot turn a high RLIMIT into one close per number."""
+
+        calls: list[tuple[int, int]] = []
+        with patch.object(runner, "_kernel_close_range", side_effect=lambda first, last: calls.append((first, last))), \
+             patch.object(runner.resource, "getrlimit", side_effect=AssertionError("RLIMIT sweep is forbidden")), \
+             patch.object(runner.os, "closerange", side_effect=AssertionError("per-descriptor close is forbidden")):
+            runner.close_inherited_descriptors({0, 1, 2, 97, 98})
+
+        self.assertEqual(calls, [(3, 96), (99, runner.CLOSE_RANGE_LAST)])
+
+    def test_kernel_ranges_close_a_high_inherited_descriptor(self) -> None:
+        """The fixed-range path closes real inherited descriptors in a child."""
+
+        read_fd, write_fd = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.close(read_fd)
+                source = os.open("/dev/null", os.O_RDONLY)
+                try:
+                    inherited = os.dup2(source, 131_072)
+                finally:
+                    if source != 131_072:
+                        os.close(source)
+                runner.close_inherited_descriptors({0, 1, 2, write_fd})
+                try:
+                    os.fstat(inherited)
+                except OSError as error:
+                    outcome = b"closed" if error.errno == errno.EBADF else b"wrong-error"
+                else:
+                    outcome = b"still-open"
+                os.write(write_fd, outcome)
+            finally:
+                os._exit(0)
+        os.close(write_fd)
+        try:
+            self.assertEqual(os.read(read_fd, 32), b"closed")
+            waited, status = os.waitpid(pid, 0)
+            self.assertEqual(waited, pid)
+            self.assertTrue(os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0)
+        finally:
+            os.close(read_fd)
 
 
 class RetentionTests(unittest.TestCase):
