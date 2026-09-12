@@ -68,18 +68,24 @@ COMPLETE_CORRECTNESS_OWNER = (
 
 IDENTITY_FIELDS = frozenset({"path", "sha256", "mode", "bytes"})
 
-# These are intentionally scorecard obligations, rather than rows quietly
-# omitted from the old 74-workload matrix.  The adapter must keep release false
-# until separate owners provide them.
-ABSENT_SCORECARD_OBLIGATIONS = {
-    "clock-selections-beyond-monotonic": "no supported timing rows for the remaining clock selections",
-    "allocator-medium-live-set": "no medium live-set allocation row",
-    "allocator-free-refill-reuse": "no free/refill/reuse allocation row",
-    "allocator-worker-local": "no worker-local allocation row",
-    "loopback-network-timing": "no loopback timing row",
-    "hermetic-hosts-dns-timing": "no hermetic hosts/DNS timing row",
-    "primitive-empty-sub64-guard-adjacent": "no disposition matrix for empty, sub-64-byte, and guard-adjacent primitives",
-    "per-workload-live-pss-plateaus": "the retained 74 workloads have no per-workload live-state PSS plateaus",
+# The 40-row supplemental profile and the 74-row observer map now provide the
+# formerly absent workload definitions.  They do not make a release result:
+# full collection remains fail-closed until the real correctness predecessor
+# exists, and bounded smokes retain construction facts rather than scorecard
+# verdicts.  Keep these current blockers separately named in every future
+# collector report instead of continuing to describe implemented rows as
+# absent.
+RELEASE_QUALIFICATION_REASON = "full native x86 performance qualification remains unavailable"
+RELEASE_BLOCKERS = {
+    "correctness-closed-predecessor-chain": (
+        "no reader validates the native POSIX aggregate/provider quartet and required final execution receipts"
+    ),
+    "three-consecutive-full-scorecards": (
+        "no clean three-attempt 114-row 31-pair/three-warmup scorecard has been collected"
+    ),
+    "unresolved-performance-verdicts": (
+        "bounded construction and collector smokes are nonqualifying; unresolved whole-process syscall failures and release thresholds remain"
+    ),
 }
 
 # Full qualification builds this finite output set once per provider.  The
@@ -2452,13 +2458,13 @@ def validate_collector_report(checkout: Path, report_path: Path, expected_worklo
 
     report = load_json(report_path, "native performance collector report")
     expected = {
-        "schema", "kind", "status", "source_mount", "collector", "attempts", "release", "absent_scorecard_obligations",
+        "schema", "kind", "status", "source_mount", "collector", "attempts", "release", "release_blockers",
     }
     require(set(report) == expected, "collector report fields drifted")
     require(report["schema"] == SCHEMA and report["kind"] == KIND, "collector report identity differs")
     require(report["source_mount"] == SOURCE_MOUNT, "collector source mount differs")
     require(report["status"] == "complete-evidence", "collector did not retain complete evidence")
-    require(report["absent_scorecard_obligations"] == ABSENT_SCORECARD_OBLIGATIONS, "collector scorecard obligations drifted")
+    require(report["release_blockers"] == RELEASE_BLOCKERS, "collector release blockers drifted")
     collector = report["collector"]
     require(isinstance(collector, dict) and set(collector) == {
         "attempt_roster", "dynamic_product_qualification", "correctness_admission", "attempt_count",
@@ -2569,7 +2575,7 @@ def validate_collector_report(checkout: Path, report_path: Path, expected_worklo
     require(len(image_ids) == 1, "collector attempts used different Docker images")
     release = report["release"]
     require(isinstance(release, dict) and set(release) == {"qualified", "reason"}, "collector release fields differ")
-    require(release == {"qualified": False, "reason": "named scorecard obligations remain absent"}, "collector must retain the unresolved release boundary")
+    require(release == {"qualified": False, "reason": RELEASE_QUALIFICATION_REASON}, "collector must retain the unresolved release boundary")
     raise EvidenceError(
         "collector cannot qualify while the complete correctness-closed predecessor reader is unavailable"
     )

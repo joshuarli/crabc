@@ -3341,7 +3341,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         "build": {},
         "execution": {},
         "measurement": {},
-        "release": {"qualified": False, "reason": "named scorecard obligations remain absent"},
+        "release": {"qualified": False, "reason": evidence.RELEASE_QUALIFICATION_REASON},
     }
     try:
         resolve_run_budget(args)

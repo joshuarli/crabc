@@ -92,18 +92,38 @@ POSIX aggregate/provider quartet and required final execution receipts). An
 owned-dynamic-qualification receipt may bind the supplied product, but cannot
 substitute for that predecessor.
 
-No x86 release result exists. A future full scorecard still requires every
-workload to meet CPU upper-95% `<= 0.90` across 31 paired fresh processes,
-both live PSS and `memory.peak` `<= 0.90`, and both the marked-route and
-whole-process syscall totals to be at most `2R` candidate calls (or zero when
-the reference is zero), with no unexplained error, retry, fallback, or
+The native profile now defines the full 114-row implementation roster: the
+unchanged 74 rows plus supported clock selections, 4-MiB/32-MiB live sets,
+free/refill/reuse, worker-local allocation, TCP/UDP loopback, hermetic
+hosts/DNS, and empty/sub-64/guard primitive dispositions. Every row also has
+a separately linked memory observer with its fixed main-state and plateau R/C
+checkpoints. Those definitions and observer artifacts close the old missing-row
+list; they are not a full performance result.
+
+No x86 release result exists. The release blockers are the missing
+correctness-closed predecessor reader, no clean three-attempt 114-row full
+scorecard, and unresolved performance verdicts. The bounded startup/graph
+construction smokes currently retain whole-process syscall-gate failures; they
+are evidence to preserve, not exemptions. A future full scorecard still
+requires every workload to meet CPU upper-95% `<= 0.90` across 31 paired fresh
+processes, both live PSS and `memory.peak` `<= 0.90`, and both the marked-route
+and whole-process syscall totals to be at most `2R` candidate calls (or zero
+when the reference is zero), with no unexplained error, retry, fallback, or
 unclassified per-syscall difference. Three consecutive clean Docker
-invocations must all pass an immutable roster. The inherited 74 rows are not
-the full scorecard: supported clock selections beyond `CLOCK_MONOTONIC`,
-medium live-set/free-refill-reuse/worker-local allocation, loopback and
-hermetic hosts/DNS timing, empty/sub-64/guard-adjacent primitive dispositions,
-and per-workload live-state PSS plateaus remain required, separately named
-work rather than waived rows.
+invocations must all pass an immutable roster.
+
+`perf-c-memory-smoke` is a separate bounded native collector test. It uses a
+fresh supplied product/work directory, seven selected rows across all six
+observer artifacts, private cgroup-v2 leaves, pre-`execve` ptrace migration,
+raw proc snapshots, and ordered R/C checkpoints. It is implementation-only
+and never produces a scorecard or promotion claim:
+
+```bash
+CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf \
+  ./scripts/dev-x86_64.sh perf-c-memory-smoke \
+  /workspace/.work/x86_64/<dynamic-product> \
+  /workspace/.work/x86_64/<fresh-memory-smoke-work>
+```
 
 ## What is measured
 
@@ -129,8 +149,8 @@ The workloads deliberately cover distinct cost domains:
 | Syscall path | `clock_gettime`, `gettimeofday`, `getpid`, `open_close`; `fd_file_4k` validates `O_CLOEXEC`, `F_GETFD`, `fstat`, `pwrite`, `pread`, and `close` against one staged 4-KiB file; `stdio_file_4k` reads that file, seeks, and validates `fgetc`/`ungetc`; `stdio_format_parse` recreates a lane-private formatted record, flushes and rewinds it, scans integer/string fields, and proves the unread tail remains ordered |
 | Threads/TLS | `pthread_create_join_tls` repeatedly creates and joins one worker; static TLS must start from its initializer in the worker, remain independent in the parent, and agree with a worker-local pthread key; `loader_dynamic_tls_growth` starts a worker before loading eight TLS DSOs, then proves every per-thread image and `dlclose` lifecycle; `pthread_mutex_uncontended` proves a normal-mutex protected counter across 2,000,000 successful lock/unlock pairs; `pthread_mutex_cond_ping_pong` alternates one parent and one worker through a mutex/condition turn protocol |
 | C hot primitives | Legacy 16-KiB/4-KiB rows plus explicit 64-byte, 16-KiB, 256-KiB, and 128-MiB aligned/unaligned rows for `memcpy`, `memset`, `strlen`, `memchr`, `strstr`, and `memmem` |
-| Allocator integration | 64-byte and 4-KiB allocate/touch/free loops |
-| Process memory | Barrier RSS/PSS snapshot, grouped `smaps` attribution, and fresh cgroup-v2 `memory.peak` while 32 MiB is concurrently live |
+| Allocator integration | Legacy 64-byte and 4-KiB allocate/touch/free loops plus separate 4-MiB and 32-MiB live sets, even-slot free/refill/preservation, and worker-local 64-byte/4-KiB ownership rows; `operations` records the actual repeated allocation count where it differs from outer epochs |
+| Process memory | Every one of the 114 rows has a separate observer envelope with main-state/declared-plateau PSS and raw `smaps` attribution; fresh private cgroup-v2 `memory.peak` records the complete observer process, including the 32-MiB live plateau |
 
 `dlopen_graph` stages a generated five-DSO fan-out: the root depends on two
 middle DSOs, each middle DSO depends on one leaf, and the root export must

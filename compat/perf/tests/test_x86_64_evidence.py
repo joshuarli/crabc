@@ -652,8 +652,8 @@ class CollectorCompositionTests(unittest.TestCase):
                 "schema": evidence.SCHEMA, "kind": evidence.KIND, "status": "complete-evidence",
                 "source_mount": evidence.SOURCE_MOUNT, "collector": collector,
                 "attempts": [{"index": index, "report": identity(path)} for index, path in enumerate(attempt_paths, start=1)],
-                "release": {"qualified": False, "reason": "named scorecard obligations remain absent"},
-                "absent_scorecard_obligations": evidence.ABSENT_SCORECARD_OBLIGATIONS,
+                "release": {"qualified": False, "reason": evidence.RELEASE_QUALIFICATION_REASON},
+                "release_blockers": evidence.RELEASE_BLOCKERS,
             }
             report_path = directory / "collector.json"
             report_path.write_text(json.dumps(report), encoding="utf-8")
