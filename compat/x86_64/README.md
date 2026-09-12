@@ -115,6 +115,11 @@ It keeps historical missing, unexpected, and metadata differences visible and
 does not turn the floor into ABI compatibility, family completion, promotion,
 or public support.
 
+[locale-alias-contract.md](locale-alias-contract.md) records the pinned-musl
+weak public/strong internal locale and time alias mechanism, including the
+installed-product interposition proof. It remains a private component result
+and does not complete locale, ABI, qualification, promotion, or public support.
+
 `./scripts/dev-x86_64.sh owned-loader-short-stack` is the focused 100 KiB
 libc-test startup regression for the selected general-initial-TLS loader path.
 Its [component record](owned-loader-short-stack.md) identifies the pinned
