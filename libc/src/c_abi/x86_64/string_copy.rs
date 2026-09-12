@@ -11,11 +11,10 @@
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
 //!
-//! - `src/string/stpcpy.c` maps to `stpcpy` and the private copy-to-NUL helper
-//!   below. Musl names that helper `__stpcpy` and weak-aliases it publicly;
-//!   this closed archive keeps `__stpcpy` private and unexported.
-//! - `src/string/stpncpy.c` maps to `stpncpy` and the private padded-copy
-//!   helper below. Its musl `__stpncpy` helper is likewise not exported here.
+//! - `src/string/stpcpy.c` maps to the `__stpcpy` provider emitted by Rust's
+//!   `stpcpy` item and its weak public `stpcpy` alias.
+//! - `src/string/stpncpy.c` maps to the `__stpncpy` provider emitted by Rust's
+//!   `stpncpy` item and its weak public `stpncpy` alias.
 //! - `src/string/strcpy.c`, `src/string/strncpy.c`, `src/string/strcat.c`,
 //!   `src/string/strncat.c`, `src/string/strlcpy.c`, and
 //!   `src/string/strlcat.c` map respectively to the named public entries.
@@ -217,7 +216,7 @@ unsafe fn copy_with_limit(
 /// `source` must designate a readable NUL-terminated C string, `destination`
 /// must be writable through that terminator, and the two ranges must not
 /// overlap. Neither pointer may be null.
-#[no_mangle]
+#[export_name = "__stpcpy"]
 pub unsafe extern "C" fn stpcpy(
     destination: *mut c_char,
     source: *const c_char,
@@ -228,6 +227,16 @@ pub unsafe extern "C" fn stpcpy(
         .cast::<c_char>()
 }
 
+// Musl's `weak_alias(__stpcpy, stpcpy)` makes the public spelling replaceable
+// while `strcpy` and related source-local users bind the hidden provider.
+// A Rust forwarding wrapper would give the aliases different addresses and
+// would accidentally make the provider preemptible in shared products.
+core::arch::global_asm!(
+    ".hidden __stpcpy",
+    ".weak stpcpy",
+    ".set stpcpy, __stpcpy",
+);
+
 /// Copy at most `count` bytes and return the copied terminator or end pointer.
 ///
 /// # Safety
@@ -236,7 +245,7 @@ pub unsafe extern "C" fn stpcpy(
 /// nonzero, `source` must designate readable bytes through either its first
 /// NUL or `count` bytes. The two ranges must not overlap; both pointers may be
 /// null only when `count` is zero.
-#[no_mangle]
+#[export_name = "__stpncpy"]
 pub unsafe extern "C" fn stpncpy(
     destination: *mut c_char,
     source: *const c_char,
@@ -247,6 +256,14 @@ pub unsafe extern "C" fn stpncpy(
     unsafe { copy_n_padded(destination.cast::<u8>(), source.cast::<u8>(), count) }
         .cast::<c_char>()
 }
+
+// This is the corresponding pinned-musl `weak_alias(__stpncpy, stpncpy)`
+// relationship. The public spelling remains a same-definition weak symbol.
+core::arch::global_asm!(
+    ".hidden __stpncpy",
+    ".weak stpncpy",
+    ".set stpncpy, __stpncpy",
+);
 
 /// Copy one complete C string and return its destination start pointer.
 ///
@@ -260,8 +277,10 @@ pub unsafe extern "C" fn strcpy(
     destination: *mut c_char,
     source: *const c_char,
 ) -> *mut c_char {
-    // SAFETY: this has exactly the internal C-string-copy contract.
-    unsafe { copy_c_string(destination.cast::<u8>(), source.cast::<u8>()) };
+    // SAFETY: this has exactly the strong provider's C-string-copy contract.
+    // Calling the Rust item binds the hidden `__stpcpy` body, never the
+    // application's replaceable weak `stpcpy` spelling.
+    unsafe { stpcpy(destination, source) };
     destination
 }
 
@@ -279,8 +298,9 @@ pub unsafe extern "C" fn strncpy(
     source: *const c_char,
     count: usize,
 ) -> *mut c_char {
-    // SAFETY: this has exactly the internal bounded padded-copy contract.
-    unsafe { copy_n_padded(destination.cast::<u8>(), source.cast::<u8>(), count) };
+    // SAFETY: this has exactly the strong provider's bounded padded-copy
+    // contract and stays independent of a public `stpncpy` replacement.
+    unsafe { stpncpy(destination, source, count) };
     destination
 }
 

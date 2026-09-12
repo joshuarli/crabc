@@ -12,9 +12,8 @@
 //!
 //! - `src/string/memchr.c` maps to `memchr` and its private bounded
 //!   first-byte helper below.
-//! - `src/string/memrchr.c` maps to `memrchr` and its private reverse-search
-//!   helper below. Musl exposes that implementation as `__memrchr` and then
-//!   weak-aliases it to `memrchr`; this closed archive exports only the latter.
+//! - `src/string/memrchr.c` maps to the `__memrchr` provider emitted by Rust's
+//!   `memrchr` item and its weak public `memrchr` alias.
 //! - `src/string/memmem.c` maps to `memmem`, its short 2/3/4-byte rolling
 //!   searches, and its two-way critical-factorization route below.
 //!
@@ -130,7 +129,7 @@ pub unsafe extern "C" fn memchr(
 ///
 /// If `count` is nonzero, `memory` must designate at least `count` readable
 /// bytes for this call. A null pointer is permitted only when `count` is zero.
-#[no_mangle]
+#[export_name = "__memrchr"]
 pub unsafe extern "C" fn memrchr(
     memory: *const c_void,
     character: c_int,
@@ -145,6 +144,15 @@ pub unsafe extern "C" fn memrchr(
         .cast_mut()
         .cast()
 }
+
+// Preserve musl `weak_alias(__memrchr, memrchr)` as a same-address alias. The
+// provider stays hidden, so sibling source-local calls do not cross a public
+// interposition boundary in the shared product.
+core::arch::global_asm!(
+    ".hidden __memrchr",
+    ".weak memrchr",
+    ".set memrchr, __memrchr",
+);
 
 /// Search an exact range for musl's 2/3/4-byte rolling window.
 ///

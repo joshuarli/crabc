@@ -2,7 +2,10 @@
 //!
 //! Pinned musl 1.2.6 (`9fa28ece75d8a2191de7c5bb53bed224c5947417`, MIT):
 //! `src/temp/{mkostemps,mkostemp,mkstemps,mkstemp,mkdtemp}.c` map to the
-//! corresponding entries here. `create` retains their six-X validation,
+//! corresponding entries here. The Rust `mkostemps` item emits musl's hidden
+//! `__mkostemps` provider with a weak public `mkostemps` same-address alias;
+//! its three file-wrapper siblings call that provider directly. `create`
+//! retains their six-X validation,
 //! 100-collision retry, exclusive creation, and failed-template restoration.
 //! File creation uses the existing `descriptor_entry::open` owner; directory
 //! creation uses Linux mkdir. Neither returns an unreserved candidate name.
@@ -65,10 +68,18 @@ unsafe fn create(template: *mut c_char, suffix_length: c_int, object: Object) ->
 /// `template` must be writable NUL-terminated storage, exclusively borrowed
 /// for the call. Its six `X` bytes preceding `suffix_length` are replaced on
 /// success; the caller must close the returned descriptor and remove the file.
-#[no_mangle]
+#[export_name = "__mkostemps"]
 pub unsafe extern "C" fn mkostemps(template: *mut c_char, suffix_length: c_int, flags: c_int) -> c_int {
     unsafe { create(template, suffix_length, Object::File(flags)) }
 }
+
+// Musl's `weak_alias(__mkostemps, mkostemps)` leaves public replacement valid
+// while `mkostemp`, `mkstemps`, and `mkstemp` retain their source-local helper.
+core::arch::global_asm!(
+    ".hidden __mkostemps",
+    ".weak mkostemps",
+    ".set mkostemps, __mkostemps",
+);
 
 /// Create an exclusive file from a template ending in six `X` bytes.
 ///
@@ -77,7 +88,7 @@ pub unsafe extern "C" fn mkostemps(template: *mut c_char, suffix_length: c_int, 
 /// for this call. The caller owns the returned descriptor and created pathname.
 #[no_mangle]
 pub unsafe extern "C" fn mkostemp(template: *mut c_char, flags: c_int) -> c_int {
-    unsafe { create(template, 0, Object::File(flags)) }
+    unsafe { mkostemps(template, 0, flags) }
 }
 
 /// Create an exclusive read/write file with a preserved trailing suffix.
@@ -87,7 +98,7 @@ pub unsafe extern "C" fn mkostemp(template: *mut c_char, flags: c_int) -> c_int 
 /// for this call. The caller owns the returned descriptor and created pathname.
 #[no_mangle]
 pub unsafe extern "C" fn mkstemps(template: *mut c_char, suffix_length: c_int) -> c_int {
-    unsafe { create(template, suffix_length, Object::File(0)) }
+    unsafe { mkostemps(template, suffix_length, 0) }
 }
 
 /// Create an exclusive mode-0600 file from a six-X template.
@@ -97,7 +108,7 @@ pub unsafe extern "C" fn mkstemps(template: *mut c_char, suffix_length: c_int) -
 /// for this call. The caller owns the returned descriptor and created pathname.
 #[no_mangle]
 pub unsafe extern "C" fn mkstemp(template: *mut c_char) -> c_int {
-    unsafe { create(template, 0, Object::File(0)) }
+    unsafe { mkostemps(template, 0, 0) }
 }
 
 /// Create an exclusive mode-0700 directory from a six-X template.

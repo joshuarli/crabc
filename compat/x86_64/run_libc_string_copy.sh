@@ -100,14 +100,15 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in stpcpy stpncpy strcpy strncpy strcat strncat strlcpy strlcat; do
+for symbol in __stpcpy __stpncpy stpcpy stpncpy strcpy strncpy strcat strncat strlcpy strlcat; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-# Shared bootstrap memory/string-search, independent memccpy/mempcpy, and
-# fixed-locale collation roots are deliberate exports. Their materialization
-# does not establish this copy artifact's contract.
-for unselected in __stpcpy __stpncpy strdup \
+# Musl's hidden `__stpcpy`/`__stpncpy` providers and their public weak aliases
+# are this copy artifact's exact same-definition contract. Shared bootstrap
+# memory/string-search, independent memccpy/mempcpy, and fixed-locale
+# collation roots are deliberate sibling exports.
+for unselected in strdup \
     strndup malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -127,7 +128,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in stpcpy stpncpy strcpy strncpy strcat strncat strlcpy strlcat; do
+for symbol in __stpcpy __stpncpy stpcpy stpncpy strcpy strncpy strcat strncat strlcpy strlcat; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
@@ -145,7 +146,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
     "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate retains a dynamic TLS model"
 fi
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|__stpcpy|__stpncpy' \
+if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate selects an unowned or hidden runtime symbol"
 fi
