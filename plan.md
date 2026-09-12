@@ -41,7 +41,8 @@ checkpoint. They do not transfer the preceding revision's qualification.
 
 At `640c0939`, the selected native allocator producer adds normal large-page
 retry/CAS/fallback ownership. The final selected VM producer matches 98 values
-and 12 focused reader tests pass. Parent review is retained at
+and 12 focused reader tests pass. The following allocator paths are relative
+to the main checkout. Parent review is retained at
 `.work/x86_64/allocator-retry-parent-review/verification-640c0939.json`; the
 original logs and VM evidence remain under
 `.work/worktrees/allocator_large_page_retry/.work/allocator-x86_64/`. Full M2
@@ -49,14 +50,29 @@ remains partial at historical `e13313c2`. The final C reaping fix has separate
 red/green and selected-producer evidence. This is status documentation only;
 it does not qualify full M2 or change any runtime or promotion gate.
 
-The native ABI inventory collector records two byte-identical reports from the
-`640c0939` prepared-unqualified static and
-materialized-unqualified dynamic product pair. Both host replays pass and a
-retained raw-symbol mutation is rejected. The reports remain under the
-component's ignored `.work/x86_64/` evidence root.
-They are source-bound musl/owned ELF, symbol, archive, and header observations
-only: no symbol ratchet, same-object conclusion, compatibility result, family
-completion, promotion, or public-support claim follows.
+At `4b1e6536`, the native ABI inventory collector passes all 25 focused tests,
+produces two byte-identical reports from the `640c0939` product pair, and passes
+both host replays. Parent replay rejects nine malformed reports, including
+header deletion, changed product/source bindings, and truncated dynamic tags.
+The reports are under
+`.work/worktrees/native_abi_inventory/.work/x86_64/native-abi-inventory-4b1e6536/`;
+parent proof is at that worktree's
+`.work/x86_64/parent-input-review/verification-4b1e6536.json`.
+These paths are relative to the main checkout. Preserve the clean collector
+worktree for exact-revision replay. The subsequent generated header-accounting
+refresh binds the added ledger route without changing declarations or providers.
+See [`native-abi-inventory.md`](compat/x86_64/native-abi-inventory.md).
+
+The same `640c0939` pair passes reproducible static preparation and dynamic
+materialization validation. All five frozen differential workloads pass in
+30 candidate cells, with one unchanged object per source shared by musl and
+every candidate link; read-only summary reconstruction also passes. Evidence
+is under `.work/x86_64/abi-inventory-products-640c0939/` in the integration
+worktree, with the differential receipt at
+`differential-tmp/owned-differential.01oK0U/summary.json` beneath that directory.
+These remain separate component measurements of prepared/materialized,
+unqualified products. The ABI symbol ratchet, family qualification, and
+promotion remain open.
 
 The native C performance adapter now stages all 114 rows, launches timed
 clients through an isolated static supervisor, and collects separate memory
