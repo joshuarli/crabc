@@ -1,0 +1,128 @@
+schema = "crabc.perf.native-x86-rust-facade-profile/v1"
+
+[execution]
+architecture = "x86_64"
+os = "linux"
+target = "x86_64-unknown-linux-musl"
+image = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+stock_std = "image-owned stock x86_64-unknown-linux-musl std measurement infrastructure"
+
+[normal]
+invocations_per_backend = 5
+sample_count = 100
+sample_size = 1000
+
+[smoke]
+invocations_per_backend = 1
+sample_count = 2
+sample_size = 3
+
+[admission]
+full_correctness_predecessor = "unavailable"
+reason = "the fixed complete correctness predecessor reader is not implemented or wired"
+
+[fixture]
+frozen_source = "compat/perf/native/src/main.rs"
+frozen_source_sha256 = "75dcb476e4108c3eafd7634e68405eb68614d24b6453ef0976f5ee7e884b977f"
+legacy_manifest = "compat/perf/native/Cargo.toml"
+legacy_manifest_sha256 = "f3dd9870af9e63e7779e60339c14a702b26976cc7059082a3eebf654cd96c947"
+supplement = "compat/perf/native/x86_64_fixture.rs"
+supplement_sha256 = "9f86753af61eeb931de32f9a339ff6f6dbf485394e0e1466ff570d4a2457e600"
+manifest_template = "compat/perf/native/x86_64_manifest.toml"
+manifest_template_sha256 = "3d9f4d7e23ada724f6c76296ceb22e4d2736ccf1fec4c2a46ce97d123f1b45b9"
+lock_template = "compat/perf/native/x86_64_Cargo.lock"
+lock_template_sha256 = "63652897b36d1f399b745823e7a92612b957a8fe850ba7dfa9799ba16aed019b"
+cargo_config = ".cargo/config.toml"
+cargo_config_sha256 = "169fc613f083a1866a64c4381a17b392e202e5aa77ede11ea21b4c740971bf94"
+
+[inputs.rustybench]
+canonical_repository = "https://github.com/laputa-systems/rustybench"
+cargo_repository = "https://github.com/joshuarli/rustybench"
+revision = "de81e89e2eb2c05b820144412d82a260e7d28cdb"
+subject = "Add resource and syscall benchmark diagnostics"
+version = "0.1.0"
+tree_paths_sha256 = "d7f43d76a6df6237a9bc3c34379c1a9374776d503e6fdfaca00f68e3ca2ec379"
+tree_entries_sha256 = "f514c4fb4679ea84ba1f0cd38a79c850eec669cee5aa95b13e72cde398fd4c59"
+cargo_toml_sha256 = "32cdf522d29a13921912ed6faac69cd18282731d74bab072fd1fcc48ffe5fd08"
+cargo_lock_sha256 = "81aec1149c303b950352921a0b7282d92744e9d28e5a8902db70ad72cf1aead4"
+resolution_sha256 = "61b4055a6d98e0542e3daf878e0225915a6584b705c57d8540663f0b3a15708e"
+
+[inputs.rustix]
+repository = "https://github.com/bytecodealliance/rustix"
+version = "1.1.4"
+revision = "cf67411d572468d5fc39e8ac8b4e649ae3e5e9ec"
+tree_paths_sha256 = "02e56f781155a9232d5683e0a6b4dd724fe3347c2ce682e5f0023a2f6c0ea486"
+tree_entries_sha256 = "bf0c7b8d6cb2ac811e86906edab2f413b0d546ede8fe26ac690a306283cc8aa3"
+cargo_toml_sha256 = "67431c95b50640b666781d6a80778c8e5472b3b61d0baa3868091a4f924343c6"
+
+[dependency_policy]
+rustybench_default_features = []
+forbidden_active_packages = ["quanta"]
+active_crabc = [
+  "bitflags@2.13.2",
+  "crabc-core@0.3.0",
+  "crabc-perf-native-x86@0.0.0",
+  "crabc-rs@0.3.0",
+  "itoa@1.0.18",
+  "lexopt@0.3.2",
+  "mini-internal@0.1.46",
+  "miniserde@0.1.46",
+  "proc-macro2@1.0.107",
+  "quote@1.0.47",
+  "regex-lite@0.1.9",
+  "rustybench@0.1.0",
+  "rustybench-macros@0.1.0",
+  "syn@3.0.5",
+  "unicode-ident@1.0.24",
+  "zmij@1.0.23",
+]
+active_rustix = [
+  "bitflags@2.13.2",
+  "crabc-perf-native-x86@0.0.0",
+  "errno@0.3.14",
+  "itoa@1.0.18",
+  "lexopt@0.3.2",
+  "libc@0.2.189",
+  "linux-raw-sys@0.12.1",
+  "mini-internal@0.1.46",
+  "miniserde@0.1.46",
+  "proc-macro2@1.0.107",
+  "quote@1.0.47",
+  "regex-lite@0.1.9",
+  "rustix@1.1.4",
+  "rustybench@0.1.0",
+  "rustybench-macros@0.1.0",
+  "syn@3.0.5",
+  "unicode-ident@1.0.24",
+  "zmij@1.0.23",
+]
+
+[[rows]]
+id = "caller_buffer_readlinkat_raw"
+benchmark = "native_x86::caller_buffer"
+source = "supplement"
+operation = "readlinkat_raw private fixed symlink into a caller-owned MaybeUninit buffer"
+
+[[rows]]
+id = "absent_open_error"
+benchmark = "native_x86::missing_error"
+source = "supplement"
+operation = "open private proven-absent path and require ENOENT"
+
+[[rows]]
+id = "clock_gettime_monotonic"
+benchmark = "native_x86::frozen::clock_gettime"
+source = "frozen"
+operation = "existing frozen CLOCK_MONOTONIC route"
+
+[[rows]]
+id = "getpid"
+benchmark = "native_x86::frozen::getpid"
+source = "frozen"
+operation = "existing frozen getpid route"
+
+[[rows]]
+id = "open_close_dev_null"
+benchmark = "native_x86::frozen::open_close"
+source = "frozen"
+operation = "existing frozen /dev/null open/close route"

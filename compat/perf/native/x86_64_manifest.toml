@@ -1,0 +1,33 @@
+[package]
+name = "crabc-perf-native-x86"
+version = "0.0.0"
+edition = "2024"
+publish = false
+autobins = false
+
+# This rendered workspace is measurement infrastructure.  It consumes the
+# frozen facade source and pinned comparison sources but is not a production
+# dependency of crabc, crabc-rs, Rustix, or Rustybench.
+[workspace]
+
+[features]
+default = ["crabc"]
+crabc = ["dep:crabc-rs"]
+rustix = ["dep:rustix"]
+
+[dependencies]
+rustybench = { path = "@RUSTYBENCH_SOURCE@", default-features = false }
+crabc-rs = { path = "@CRABC_RS_SOURCE@", default-features = false, optional = true }
+rustix = { path = "@RUSTIX_SOURCE@", default-features = false, features = ["std", "fs", "process", "time"], optional = true }
+
+[[bench]]
+name = "native_x86"
+path = "@FIXTURE_SOURCE@"
+harness = false
+
+# Both direct-facade backends share the only admitted benchmark profile.
+[profile.bench]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
