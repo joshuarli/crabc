@@ -15,6 +15,20 @@ The source mapping is fixed to musl 1.2.6 release commit
 | `src/stdlib/strtol.c` | `libc/src/c_abi/x86_64/integer_parse.rs` | Each `__strto*_internal` spelling is a weak, same-address alias of its existing strong `strto*` entry. |
 | `src/stat/__xstat.c` | `libc/src/c_abi/x86_64/owned_filesystem_mechanisms.rs` | `__xmknod` and `__xmknodat` are strong wrappers: they ignore `ver`, read the caller `dev_t *`, then call the selected `mknod` or `mknodat` entry. |
 
+`__xmknod` and `__xmknodat` retain that ordinary compatibility behavior: they
+ignore `ver`, read the caller `dev_t *` before delegation, and leave the
+selected `mknod`/`mknodat` path to supply its normal result and `errno`.
+They remain strong `GLOBAL` function definitions in the installed static and
+shared artifacts. This does not make the normal direct call an application
+interposition guarantee. The installed static archive is intentionally a
+one-CGU product; [owned-error-reporting.md](owned-error-reporting.md) records
+the existing rule that it retains strong providers without claiming arbitrary
+application definitions replace internal strong-provider references. Pinned
+musl's separate `__xstat.lo` public-call relocation remains source-oracle
+observation. An application-supplied strong `mknod` or `mknodat` is outside
+this component's static contract, and this clarification does not alter the
+separate shared-libc dynamic-list policy.
+
 The aliases use `.weak` plus `.set`; a Rust forwarding wrapper would make a
 second definition and break the source-required ELF address relation. The
 historical `__strto*_internal` declarations used by external callers commonly
