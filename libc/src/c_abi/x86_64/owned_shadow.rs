@@ -369,7 +369,7 @@ pub unsafe extern "C" fn getspnam_r(
                 }
             };
             stream = if regular {
-                stdio::fdopen(descriptor, READ_BINARY_MODE.as_ptr().cast())
+                stdio::__fdopen(descriptor, READ_BINARY_MODE.as_ptr().cast())
             } else {
                 ptr::null_mut()
             };

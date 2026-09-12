@@ -95,7 +95,7 @@ pub(super) unsafe fn put_held(character: c_int, stream: *mut StandardStream) -> 
 #[no_mangle]
 pub unsafe extern "C" fn fgetwc(stream: *mut StandardStream) -> u32 {
     let _guard = unsafe { StreamGuard::acquire(stream) };
-    unsafe { get_held(stream) }
+    unsafe { __fgetwc_unlocked(stream) }
 }
 /// # Safety
 /// Same live, readable FILE contract as fgetwc.
@@ -107,22 +107,11 @@ pub unsafe extern "C" fn getwc(stream: *mut StandardStream) -> u32 { unsafe { fg
 pub unsafe extern "C" fn getwchar() -> u32 { unsafe { fgetwc(stdin) } }
 /// # Safety
 /// FILE is live and the caller holds its lock or otherwise excludes all access.
+/// Musl makes the public unlocked entries weak aliases of this strong body.
 #[no_mangle]
-pub unsafe extern "C" fn fgetwc_unlocked(stream: *mut StandardStream) -> u32 {
+pub unsafe extern "C" fn __fgetwc_unlocked(stream: *mut StandardStream) -> u32 {
     unsafe { initialize_buffer(stream); get_held(stream) }
 }
-/// # Safety
-/// Same exclusive live FILE contract as fgetwc_unlocked.
-#[no_mangle]
-pub unsafe extern "C" fn __fgetwc_unlocked(stream: *mut StandardStream) -> u32 { unsafe { fgetwc_unlocked(stream) } }
-/// # Safety
-/// Same exclusive live FILE contract as fgetwc_unlocked.
-#[no_mangle]
-pub unsafe extern "C" fn getwc_unlocked(stream: *mut StandardStream) -> u32 { unsafe { fgetwc_unlocked(stream) } }
-/// # Safety
-/// The caller exclusively owns live stdin for this operation.
-#[no_mangle]
-pub unsafe extern "C" fn getwchar_unlocked() -> u32 { unsafe { fgetwc_unlocked(stdin) } }
 
 /// Write one wide character through the captured conversion locale.
 /// # Safety
@@ -130,7 +119,7 @@ pub unsafe extern "C" fn getwchar_unlocked() -> u32 { unsafe { fgetwc_unlocked(s
 #[no_mangle]
 pub unsafe extern "C" fn fputwc(character: c_int, stream: *mut StandardStream) -> u32 {
     let _guard = unsafe { StreamGuard::acquire(stream) };
-    unsafe { put_held(character, stream) }
+    unsafe { __fputwc_unlocked(character, stream) }
 }
 /// # Safety
 /// Same live writable FILE contract as fputwc.
@@ -142,22 +131,11 @@ pub unsafe extern "C" fn putwc(character: c_int, stream: *mut StandardStream) ->
 pub unsafe extern "C" fn putwchar(character: c_int) -> u32 { unsafe { fputwc(character, stdout) } }
 /// # Safety
 /// FILE is live and the caller holds its lock or otherwise excludes all access.
+/// Musl makes the public unlocked entries weak aliases of this strong body.
 #[no_mangle]
-pub unsafe extern "C" fn fputwc_unlocked(character: c_int, stream: *mut StandardStream) -> u32 {
+pub unsafe extern "C" fn __fputwc_unlocked(character: c_int, stream: *mut StandardStream) -> u32 {
     unsafe { initialize_buffer(stream); put_held(character, stream) }
 }
-/// # Safety
-/// Same exclusive live FILE contract as fputwc_unlocked.
-#[no_mangle]
-pub unsafe extern "C" fn __fputwc_unlocked(character: c_int, stream: *mut StandardStream) -> u32 { unsafe { fputwc_unlocked(character, stream) } }
-/// # Safety
-/// Same exclusive live FILE contract as fputwc_unlocked.
-#[no_mangle]
-pub unsafe extern "C" fn putwc_unlocked(character: c_int, stream: *mut StandardStream) -> u32 { unsafe { fputwc_unlocked(character, stream) } }
-/// # Safety
-/// The caller exclusively owns live stdout for this operation.
-#[no_mangle]
-pub unsafe extern "C" fn putwchar_unlocked(character: c_int) -> u32 { unsafe { fputwc_unlocked(character, stdout) } }
 
 /// Push a character's complete encoded byte sequence back onto a wide stream.
 /// # Safety
@@ -203,13 +181,6 @@ pub unsafe extern "C" fn fgetws(destination: *mut c_int, count: c_int, stream: *
         if out == destination || (*stream).flags & F_ERR != 0 { ptr::null_mut() } else { destination }
     }
 }
-/// # Safety
-/// Same storage and live FILE obligations as fgetws; musl's alias still locks.
-#[no_mangle]
-pub unsafe extern "C" fn fgetws_unlocked(destination: *mut c_int, count: c_int, stream: *mut StandardStream) -> *mut c_int {
-    unsafe { fgetws(destination, count, stream) }
-}
-
 /// Write a NUL-terminated wide string using source-sized byte chunks.
 /// # Safety
 /// Source remains readable through its terminator and disjoint from the live
@@ -240,9 +211,18 @@ pub unsafe extern "C" fn fputws(mut source: *const c_int, stream: *mut StandardS
         }
     }
 }
-/// # Safety
-/// Same source/live FILE obligations as fputws; musl's alias still locks.
-#[no_mangle]
-pub unsafe extern "C" fn fputws_unlocked(source: *const c_int, stream: *mut StandardStream) -> c_int {
-    unsafe { fputws(source, stream) }
-}
+// Keep these as assembler aliases rather than forwarding wrappers. In musl,
+// fgetws_unlocked/fputws_unlocked and getwchar_unlocked/putwchar_unlocked
+// remain lock-owning because their strong targets are fgetws/fputws and
+// getwchar/putwchar. The other public wide entries share the true unlocked
+// internal bodies. Exact address identity is part of the ELF contract.
+core::arch::global_asm!(
+    ".weak fgetwc_unlocked", ".set fgetwc_unlocked, __fgetwc_unlocked",
+    ".weak getwc_unlocked", ".set getwc_unlocked, __fgetwc_unlocked",
+    ".weak getwchar_unlocked", ".set getwchar_unlocked, getwchar",
+    ".weak fputwc_unlocked", ".set fputwc_unlocked, __fputwc_unlocked",
+    ".weak putwc_unlocked", ".set putwc_unlocked, __fputwc_unlocked",
+    ".weak putwchar_unlocked", ".set putwchar_unlocked, putwchar",
+    ".weak fgetws_unlocked", ".set fgetws_unlocked, fgetws",
+    ".weak fputws_unlocked", ".set fputws_unlocked, fputws"
+);
