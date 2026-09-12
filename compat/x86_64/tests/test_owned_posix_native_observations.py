@@ -14,6 +14,7 @@ ROOT = HERE.parents[1]
 sys.path.insert(0, str(HERE))
 import owned_posix_native_observations as native
 import owned_math_oracle_defects as math_oracle_defects
+import owned_wordexp_upstream_policy as wordexp_policy
 import owned_differential_evidence as differential
 import owned_signal_process_evidence as signals
 import owned_pthread_stress_source as profile
@@ -825,10 +826,10 @@ class NativeObservationsTests(unittest.TestCase):
         if profile:
             source_names[source_names.index('functional/case_065')] = 'functional/crypt'
             source_names[source_names.index('functional/case_064')] = 'functional/strptime'
+            source_names[source_names.index('functional/case_063')] = 'functional/wordexp'
         if math_defects:
             for number, name in enumerate(('fmaf', 'fmal', 'powf', 'nextafterl')):
                 source_names[source_names.index(f'math/case_{number:03d}')] = 'math/' + name
-            source_names[source_names.index('functional/case_063')] = 'functional/wordexp'
         for name in source_names:
             self.put(stage / 'src' / (name + '.c'), ('/* ' + name + ' */\n').encode())
         if profile:
@@ -1044,6 +1045,12 @@ class NativeObservationsTests(unittest.TestCase):
                             path = self.leaf / 'execution' / name / (side + '.stdout')
                             self.put(path, output)
                             record.update(exit_status=1, stdout=self.binding(path))
+                        if profile and name == 'functional/wordexp':
+                            output = (b'fixture wordexp candidate raw failure\n' if side == 'candidate'
+                                      else b'fixture wordexp pinned-musl raw failure\n')
+                            path = self.leaf / 'execution' / name / (side + '.stdout')
+                            self.put(path, output)
+                            record.update(exit_status=1, stdout=self.binding(path))
                         if math_defects and name in math_oracle_defects.ORACLE_DEFECTS and side == 'oracle':
                             output = math_oracle_defects.expected_oracle_stdout(name, self.recorded(prepared))
                             path = self.leaf / 'execution' / name / (side + '.stdout')
@@ -1098,12 +1105,20 @@ class NativeObservationsTests(unittest.TestCase):
                 unit['runtime']['oracle']['status'] = 'failed'
                 unit['runtime']['candidate']['status'] = 'failed'
                 unit['runtime']['comparison'] = {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
+            if profile and name == 'functional/wordexp':
+                unit['status'] = 'runtime-failed'
+                unit['runtime']['oracle']['status'] = 'failed'
+                unit['runtime']['candidate']['status'] = 'failed'
+                unit['runtime']['comparison'] = {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
             if math_defects and name in math_oracle_defects.ORACLE_DEFECTS:
                 unit['status'] = 'runtime-failed'
                 unit['runtime']['oracle']['status'] = 'failed'
                 unit['runtime']['comparison'] = {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
                 report.update(status='incomplete', counts={'passed': 429, 'runtime-failed': 5})
             report['units'].append(unit)
+        runtime_failed = sum(unit['status'] == 'runtime-failed' for unit in report['units'])
+        if runtime_failed:
+            report.update(status='incomplete', counts={'passed': 434 - runtime_failed, 'runtime-failed': runtime_failed})
         self.put(self.leaf / 'libc-test.json', report)
         return report
 
@@ -1116,7 +1131,58 @@ class NativeObservationsTests(unittest.TestCase):
                 'crypt': {'vectors': dispositions.crypt_vectors(self.root),
                     'receipt': {'path': '.work/crypt/crypt-profile.json', 'sha256': 'c'*64}},
                 'atomic': {'receipt': {'path': '.work/atomic/atomic-addressable-profile.json', 'sha256': 'd'*64},
+                    'selected_dynamic_entries': {mode: {} for mode in MODES}},
+                'wordexp': {'receipt': {'path': '.work/wordexp/owned-wordexp-products.json', 'sha256': 'e'*64},
+                    'expected_native_inputs': {'path': '.work/wordexp-inputs/expected-native-inputs.json', 'sha256': 'f'*64},
+                    'product': {'path': '.work/product'},
+                    'source_policy_probe': {'path': 'compat/x86_64/owned_wordexp_source_policy_probe.c', 'sha256': 'a'*64},
+                    'diagnostic_reference': {'path': 'compat/x86_64/owned_wordexp_upstream_policy_diagnostics.json', 'sha256': 'b'*64},
                     'selected_dynamic_entries': {mode: {} for mode in MODES}}}
+
+    def profile_input_paths(self):
+        return {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
+                'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json',
+                'wordexp_profile': '.work/wordexp/owned-wordexp-products.json',
+                'wordexp_expected_native_inputs': '.work/wordexp-inputs/expected-native-inputs.json'}
+
+    def fixture_wordexp_disposition(self, reader, source, **arguments):
+        """Routing seam only; test_owned_wordexp_upstream_policy owns raw qualification."""
+        self.assertEqual(source.name, 'wordexp.c')
+        self.assertEqual([arguments['candidate_status'], arguments['oracle_status']], [1, 1])
+        self.assertEqual(arguments['candidate_stderr'], b'')
+        self.assertEqual(arguments['oracle_stderr'], b'')
+        self.assertEqual(arguments['candidate_stdout'], b'fixture wordexp candidate raw failure\n')
+        self.assertEqual(arguments['oracle_stdout'], b'fixture wordexp pinned-musl raw failure\n')
+        self.assertIn('receipt', arguments['companion'])
+        return {'unit': 'functional/wordexp', 'status': 'posix-policy-qualified', 'raw_passed': False}
+
+    def test_profile_prerequisites_require_wordexp_report_and_independent_expected_input(self):
+        import owned_atomic_addressable_profile as atomic
+        import owned_crypt_profile as crypt
+        import owned_posix_family_execution as family
+        import owned_posix_native_dispositions as dispositions
+        import owned_wordexp_upstream_policy as wordexp_policy
+        paths = self.profile_input_paths()
+        for value in paths.values():
+            self.put(self.root / value, {'fixture': value})
+        companion = {'product': {'path': '.work/product'}, 'source_policy_probe': {'path': 'probe'},
+                     'diagnostic_reference': {'path': 'reference'},
+                     'selected_dynamic_entries': {mode: {} for mode in MODES}}
+        with patch.object(family, 'validate_receipt', return_value={'fixture': 'complete family matrix'}), \
+             patch.object(dispositions, 'credentials_companion', return_value={'fixture': 'credentials'}), \
+             patch.object(crypt, 'validate_receipt', return_value={'vectors': [], 'vector_observations': {}}), \
+             patch.object(atomic, 'validate_receipt', return_value={'entries': {}}), \
+             patch.object(wordexp_policy, 'validate_companion', return_value=companion) as validate_wordexp:
+            observed = native._load_profile_companions(self.root, self.product, paths)
+        validate_wordexp.assert_called_once_with(self.root, self.root / paths['wordexp_profile'],
+                                                 self.root / paths['wordexp_expected_native_inputs'], self.product)
+        self.assertEqual(observed['wordexp']['product'], companion['product'])
+        self.assertEqual(observed['wordexp']['receipt']['path'], paths['wordexp_profile'])
+        self.assertEqual(observed['wordexp']['expected_native_inputs']['path'],
+                         paths['wordexp_expected_native_inputs'])
+        paths.pop('wordexp_expected_native_inputs')
+        with self.assertRaises(native.NativeObservationError):
+            native._load_profile_companions(self.root, self.product, paths)
 
     def fixture_math_oracle_defects(self):
         expected_hashes = {name: {key: hashlib.sha256(value).hexdigest() for key, value in {
@@ -1131,8 +1197,7 @@ class NativeObservationsTests(unittest.TestCase):
     def test_native_os_profile_preserves_exact_ten_raw_failures(self):
         report = self.os_test_fixture(profile=True)
         proof = self.profile_companions()
-        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
-                  'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
+        inputs = self.profile_input_paths()
         with self.assertRaises(native.NativeObservationError): self.collect('os-test')
         with patch.object(native, '_load_profile_companions', return_value=proof):
             result = native.collect('os-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
@@ -1152,25 +1217,27 @@ class NativeObservationsTests(unittest.TestCase):
     def test_native_libc_profile_preserves_crypt_strptime_and_math_oracle_defect_units(self):
         report = self.libc_test_fixture(profile=True, math_defects=True)
         proof = self.profile_companions()
-        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
-                  'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
+        inputs = self.profile_input_paths()
         with self.assertRaises(native.NativeObservationError): self.collect('libc-test')
         with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', self.fixture_math_oracle_defects()), \
-             patch.object(native, '_load_profile_companions', return_value=proof):
+             patch.object(native, '_load_profile_companions', return_value=proof), \
+             patch.object(wordexp_policy, 'upstream_disposition', side_effect=self.fixture_wordexp_disposition):
             result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                     root=self.root, profile_inputs=inputs)
-            self.assertEqual(report['counts'], {'passed': 429, 'runtime-failed': 5})
+            self.assertEqual(report['counts'], {'passed': 428, 'runtime-failed': 6})
             self.assertEqual(len(result['observations']), 434)
             self.assertEqual(result['qualification']['status'], 'profile-qualified')
-            self.assertEqual(len(result['qualification']['dispositions']), 5)
+            self.assertEqual(len(result['qualification']['dispositions']), 6)
             self.assertEqual(len(result['qualification']['dispositions'][0]['differences']), 28)
             self.assertEqual(result['qualification']['dispositions'][1]['unit'], 'functional/strptime')
-            self.assertEqual([entry['unit'] for entry in result['qualification']['dispositions'][2:]],
+            self.assertEqual(result['qualification']['dispositions'][2]['unit'], 'functional/wordexp')
+            self.assertEqual(result['qualification']['dispositions'][2]['status'], 'posix-policy-qualified')
+            self.assertEqual([entry['unit'] for entry in result['qualification']['dispositions'][3:]],
                              ['math/fmaf', 'math/fmal', 'math/powf'])
             self.assertTrue(all(entry['status'] == 'candidate-passed-oracle-defect'
-                                for entry in result['qualification']['dispositions'][2:]))
+                                for entry in result['qualification']['dispositions'][3:]))
             count_changed = json.loads(json.dumps(report))
-            count_changed['counts']['runtime-failed'] = 4
+            count_changed['counts']['runtime-failed'] = 5
             self.put(self.leaf / 'libc-test.json', count_changed)
             with self.assertRaises(native.NativeObservationError):
                 native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
@@ -1185,10 +1252,10 @@ class NativeObservationsTests(unittest.TestCase):
     def test_native_libc_observer_keeps_corrected_math_as_candidate_passed_oracle_defects(self):
         report = self.libc_test_fixture(profile=True, math_defects=True)
         proof = self.profile_companions()
-        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
-                  'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
+        inputs = self.profile_input_paths()
         with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', self.fixture_math_oracle_defects()):
-            with patch.object(native, '_load_profile_companions', return_value=proof):
+            with patch.object(native, '_load_profile_companions', return_value=proof), \
+                 patch.object(wordexp_policy, 'upstream_disposition', side_effect=self.fixture_wordexp_disposition):
                 result = native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                         root=self.root, profile_inputs=inputs)
         defects = [entry for entry in result['qualification']['dispositions'] if entry['unit'].startswith('math/')]
@@ -1201,17 +1268,17 @@ class NativeObservationsTests(unittest.TestCase):
             self.assertEqual((self.leaf / 'execution' / name / 'oracle.stdout').read_bytes(),
                              math_oracle_defects.expected_oracle_stdout(name, self.recorded(self.leaf / 'source-prepared')))
             self.assertEqual((self.leaf / 'execution' / name / 'oracle.stderr').read_bytes(), b'')
-        self.assertEqual(report['counts'], {'passed': 429, 'runtime-failed': 5})
+        self.assertEqual(report['counts'], {'passed': 428, 'runtime-failed': 6})
 
     def test_native_libc_math_oracle_defect_rejects_changed_stream_source_and_unlisted_failures(self):
         report = self.libc_test_fixture(profile=True, math_defects=True)
         proof = self.profile_companions()
-        inputs = {'family_execution': '.work/family/execution.json', 'crypt_profile': '.work/crypt/crypt-profile.json',
-                  'atomic_addressable_profile': '.work/atomic/atomic-addressable-profile.json'}
+        inputs = self.profile_input_paths()
         fixture_defects = self.fixture_math_oracle_defects()
         def collect():
             with patch.object(math_oracle_defects, 'ORACLE_DEFECTS', fixture_defects):
-                with patch.object(native, '_load_profile_companions', return_value=proof):
+                with patch.object(native, '_load_profile_companions', return_value=proof), \
+                     patch.object(wordexp_policy, 'upstream_disposition', side_effect=self.fixture_wordexp_disposition):
                     return native.collect('libc-test', self.leaf, source_mount=self.mount, dynamic_product=self.product,
                                           root=self.root, profile_inputs=inputs)
         original_report = (self.leaf / 'libc-test.json').read_bytes()
@@ -1264,7 +1331,7 @@ class NativeObservationsTests(unittest.TestCase):
             collect()
         proof_source.write_bytes(proof_before)
 
-        for name in ('math/nextafterl', 'functional/wordexp'):
+        for name in ('math/nextafterl', 'functional/case_000'):
             with self.subTest(unit=name):
                 output = self.leaf / 'execution' / name / 'oracle.stdout'
                 output_before = output.read_bytes()
@@ -1280,7 +1347,7 @@ class NativeObservationsTests(unittest.TestCase):
                 self.put(status_path, unit['runtime']['oracle']['record'])
                 unit['runtime']['oracle']['status_record'] = self.binding(status_path)
                 changed['status'] = 'incomplete'
-                changed['counts'] = {'passed': 428, 'runtime-failed': 6}
+                changed['counts'] = {'passed': 427, 'runtime-failed': 7}
                 self.put(self.leaf / 'libc-test.json', changed)
                 with self.assertRaises(native.NativeObservationError, msg='unlisted runtime failure cannot gain a math disposition'):
                     collect()

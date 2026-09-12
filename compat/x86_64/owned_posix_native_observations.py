@@ -234,7 +234,9 @@ def _load_profile_companions(root, product, inputs):
     import owned_crypt_profile as crypt
     import owned_atomic_addressable_profile as atomic
     import owned_posix_native_dispositions as dispositions
-    keys(inputs, ('family_execution', 'crypt_profile', 'atomic_addressable_profile'),
+    import owned_wordexp_upstream_policy as wordexp_policy
+    keys(inputs, ('family_execution', 'crypt_profile', 'atomic_addressable_profile', 'wordexp_profile',
+                  'wordexp_expected_native_inputs'),
          'native profile prerequisite paths')
     paths = {}
     for key, value in inputs.items():
@@ -244,10 +246,15 @@ def _load_profile_companions(root, product, inputs):
     credential = dispositions.credentials_companion(root, matrix, family.file_identity(root, paths['family_execution']), product)
     crypt_record = crypt.validate_receipt(root, paths['crypt_profile'], product=product)
     atomic_record = atomic.validate_receipt(root, paths['atomic_addressable_profile'], product=product)
+    wordexp_record = wordexp_policy.validate_companion(root, paths['wordexp_profile'],
+                                                        paths['wordexp_expected_native_inputs'], product)
     return {'credentials': credential, 'crypt': {'receipt': family.file_identity(root, paths['crypt_profile']),
             'vectors': crypt_record['vectors'], 'observations': crypt_record['vector_observations']},
             'atomic': {'receipt': family.file_identity(root, paths['atomic_addressable_profile']),
-                       'selected_dynamic_entries': atomic_record['entries']}}
+                       'selected_dynamic_entries': atomic_record['entries']},
+            'wordexp': {'receipt': family.file_identity(root, paths['wordexp_profile']),
+                        'expected_native_inputs': family.file_identity(root, paths['wordexp_expected_native_inputs']),
+                        **wordexp_record}}
 
 
 def collect(component, leaf_root, *, source_mount, dynamic_product, root=ROOT, profile_inputs=None):
@@ -882,6 +889,7 @@ def _libc_test(reader):
     # execution/ELF validators remain its responsibility; no compiler is loaded.
     import owned_libc_test as contract
     import owned_math_oracle_defects as math_oracle
+    import owned_wordexp_upstream_policy as wordexp_policy
     leaf = reader.leaf
     report = read_json(leaf / 'libc-test.json')
     profiled = reader.profile_companions is not None
@@ -948,8 +956,9 @@ def _libc_test(reader):
         name, kind = definition['id'], definition['kind']
         crypt_profile = profiled and name == 'functional/crypt'
         strptime_profile = profiled and name == 'functional/strptime'
+        wordexp_profile = profiled and name == 'functional/wordexp'
         math_oracle_defect = profiled and name in math_oracle.ORACLE_DEFECTS
-        profiled_runtime = crypt_profile or strptime_profile or math_oracle_defect
+        profiled_runtime = crypt_profile or strptime_profile or wordexp_profile or math_oracle_defect
         same([unit['id'], unit['kind'], unit['suite'], unit['status']],
              [name, kind, definition['suite'], 'runtime-failed' if profiled_runtime else 'passed'], 'libc-test unit role and status')
         source, obj = leaf / 'source-prepared' / definition['source'], object_paths[name]
@@ -998,12 +1007,12 @@ def _libc_test(reader):
         runtime = unit['runtime']
         same(runtime['comparison'], {'status': 'blocked', 'reason': 'candidate runtime did not pass this prepared root'}
              if crypt_profile else {'status': 'blocked', 'reason': 'pinned-musl runtime did not pass this prepared root'}
-             if strptime_profile or math_oracle_defect else {'status': 'passed', 'detail': 'passed'},
+             if strptime_profile or wordexp_profile or math_oracle_defect else {'status': 'passed', 'detail': 'passed'},
              'libc-test runtime comparison')
         results, raw = {}, {}
         for side in ('oracle', 'candidate'):
             run = runtime[side]
-            failed = (side == 'candidate' and (crypt_profile or strptime_profile)) or (
+            failed = wordexp_profile or (side == 'candidate' and (crypt_profile or strptime_profile)) or (
                 side == 'oracle' and (strptime_profile or math_oracle_defect))
             same([run['status'], run['root_reclaimed']], ['failed' if failed else 'passed', True],
                  'libc-test private-root raw result')
@@ -1047,6 +1056,14 @@ def _libc_test(reader):
             dispositions.append(profile_contract.strptime_disposition(reader, source,
                 candidate_status=runtime['candidate']['record']['exit_status'], candidate_stdout=raw['candidate'][0], candidate_stderr=raw['candidate'][1],
                 oracle_status=runtime['oracle']['record']['exit_status'], oracle_stdout=raw['oracle'][0], oracle_stderr=raw['oracle'][1]))
+        elif wordexp_profile:
+            import owned_posix_native_dispositions as profile_contract
+            disposition = wordexp_policy.upstream_disposition(reader, source,
+                candidate_status=runtime['candidate']['record']['exit_status'], candidate_stdout=raw['candidate'][0], candidate_stderr=raw['candidate'][1],
+                oracle_status=runtime['oracle']['record']['exit_status'], oracle_stdout=raw['oracle'][0], oracle_stderr=raw['oracle'][1],
+                companion=reader.profile_companions['wordexp'])
+            disposition['profiles'] = profile_contract.profile_sources(reader.root)
+            dispositions.append(disposition)
         elif math_oracle_defect:
             dispositions.append(math_oracle.oracle_defect_disposition(reader, source, unit=name,
                 candidate_status=runtime['candidate']['record']['exit_status'], candidate_stdout=raw['candidate'][0], candidate_stderr=raw['candidate'][1],
@@ -1054,7 +1071,7 @@ def _libc_test(reader):
         else:
             require(raw['oracle'] == raw['candidate'], 'libc-test raw runtime streams differ: ' + name)
         observations[name] = {'kind': kind, **results}
-    expected_dispositions = ['functional/crypt', 'functional/strptime', *math_oracle.ORACLE_DEFECTS]
+    expected_dispositions = ['functional/crypt', 'functional/strptime', 'functional/wordexp', *math_oracle.ORACLE_DEFECTS]
     require(not profiled or [entry['unit'] for entry in dispositions] == expected_dispositions,
             'libc-test fixed profile and math oracle-defect dispositions are missing')
     return reader.finish('libc-test', 'libc-test.json', observations, objects,

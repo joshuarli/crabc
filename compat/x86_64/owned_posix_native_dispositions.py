@@ -21,6 +21,8 @@ STRPTIME_REFERENCE_SHA256 = 'af24cbeb224b18937c7396ce38710df72f7e35ba896dc5603de
 DYNAMIC_MODES = ('pie-kernel', 'pie-direct', 'non-pie-kernel', 'non-pie-direct')
 PROFILE_SOURCES = ('COMPATIBILITY-PROFILE.md', 'compat/crabc-rs/crypt-profile.md',
     'compat/x86_64/owned-posix-native-dispositions.md', 'compat/x86_64/owned_posix_native_dispositions.py',
+    'compat/x86_64/owned_wordexp_upstream_policy.py',
+    'compat/x86_64/owned_wordexp_upstream_policy_diagnostics.json',
     'compat/x86_64/atomic_addressable_abi_probe.c', 'compat/x86_64/atomic_addressable_abi_probe.cpp',
     'compat/x86_64/atomic_addressable_abi_dynamic_main.c', 'compat/x86_64/run_atomic_addressable_abi.sh',
     'compat/x86_64/run_owned_atomic_addressable_profile.sh',

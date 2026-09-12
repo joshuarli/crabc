@@ -25,9 +25,10 @@ import owned_crypt_profile as crypt
 import owned_atomic_addressable_profile as atomic
 import owned_math_oracle_defects as math_oracle
 import owned_posix_native_dispositions as dispositions
+import owned_wordexp_upstream_policy as wordexp_policy
 
 ROOT = Path(__file__).resolve().parents[2]
-SCHEMA = 'crabc.x86_64-owned-posix-native-execution/v1'
+SCHEMA = 'crabc.x86_64-owned-posix-native-execution/v2'
 IO_SOURCE = 'compat/x86_64/owned_io_cancellation_probe.c'
 
 
@@ -62,7 +63,7 @@ COMPONENTS = (
     Component('libc-test', 'compat/x86_64/run_owned_libc_test.sh',
         ('compat/x86_64/owned_libc_test.py',), (), '', 'owned-libc-test.'),
 )
-SHARED_SOURCES = (*crypt.SOURCES, *atomic.SOURCES,
+SHARED_SOURCES = (*crypt.SOURCES, *atomic.SOURCES, *wordexp_policy.wordexp.SOURCES, *wordexp_policy.SOURCES,
     'compat/x86_64/owned_math_oracle_defects.py', *math_oracle.PROOF_SOURCES,
     'compat/x86_64/owned_posix_native_dispositions.py',
     'compat/x86_64/owned-posix-native-dispositions.md',
@@ -178,7 +179,7 @@ def io_replacement(root, matrix):
 
 def input_matrix(root, request):
     require(isinstance(request, dict) and set(request) == {'schema', 'source_mount', 'family_execution', 'crypt_profile',
-            'atomic_addressable_profile'}
+            'atomic_addressable_profile', 'wordexp_profile', 'wordexp_expected_native_inputs'}
             and request['schema'] == SCHEMA, 'native execution request fields differ')
     mount = request['source_mount']
     require(isinstance(mount, str) and Path(mount).is_absolute() and '..' not in Path(mount).parts
@@ -211,12 +212,26 @@ def input_matrix(root, request):
             'atomic input must be checkout-relative')
     atomic_path = family.physical(root, root / atomic_value)
     atomic_record = atomic.validate_receipt(root, atomic_path, product=product)
+    wordexp_value = request['wordexp_profile']
+    require(isinstance(wordexp_value, str) and not Path(wordexp_value).is_absolute(),
+            'wordexp profile input must be checkout-relative')
+    wordexp_path = family.physical(root, root / wordexp_value)
+    wordexp_expected_value = request['wordexp_expected_native_inputs']
+    require(isinstance(wordexp_expected_value, str) and not Path(wordexp_expected_value).is_absolute(),
+            'wordexp expected native input must be checkout-relative')
+    wordexp_expected_path = family.physical(root, root / wordexp_expected_value)
+    wordexp_record = wordexp_policy.validate_companion(root, wordexp_path, wordexp_expected_path, product)
     credentials = dispositions.credentials_companion(root, matrix, family.file_identity(root, path), product)
     inputs = {'crypt_profile': family.file_identity(root, crypt_path),
               'crypt_tree': tree_binding(root, crypt_path.parent),
               'atomic_addressable_profile': family.file_identity(root, atomic_path),
               'atomic_addressable_tree': tree_binding(root, atomic_path.parent),
-              'profile_companions': {'credentials': credentials, 'crypt': crypt_record, 'atomic': atomic_record},
+              'wordexp_profile': family.file_identity(root, wordexp_path),
+              'wordexp_profile_tree': tree_binding(root, wordexp_path.parent),
+              'wordexp_expected_native_inputs': family.file_identity(root, wordexp_expected_path),
+              'wordexp_expected_native_inputs_tree': tree_binding(root, wordexp_expected_path.parent),
+              'profile_companions': {'credentials': credentials, 'crypt': crypt_record, 'atomic': atomic_record,
+                                     'wordexp': wordexp_record},
               'family_execution': family.file_identity(root, path), 'source': source,
               'source_files': source_files(root), 'product': product_binding(root, product),
               'matrix_inputs': matrix['inputs'], 'io_cancellation_replacement': io_replacement(root, matrix)}
@@ -271,7 +286,8 @@ def collect_component(root, work, index, component, inputs, product, source_moun
     try:
         observed = native.collect(component.id, leaf, source_mount=source_mount, dynamic_product=product, root=root,
             profile_inputs={key: inputs[key]['path'] for key in
-                            ('family_execution', 'crypt_profile', 'atomic_addressable_profile')})
+                            ('family_execution', 'crypt_profile', 'atomic_addressable_profile', 'wordexp_profile',
+                             'wordexp_expected_native_inputs')})
     except native.NativeObservationError as error:
         raise family.ExecutionError(str(error)) from error
     require(observed['component'] == component.id and observed['product']['path'] == product.relative_to(root).as_posix()
@@ -307,6 +323,14 @@ def guard(root, inputs, product):
                       inputs['atomic_addressable_profile']) and
             same_json(tree_binding(root, (root / inputs['atomic_addressable_profile']['path']).parent),
                       inputs['atomic_addressable_tree']), 'atomic addressable input changed during native execution')
+    require(same_json(family.file_identity(root, root / inputs['wordexp_profile']['path']), inputs['wordexp_profile']) and
+            same_json(tree_binding(root, (root / inputs['wordexp_profile']['path']).parent),
+                      inputs['wordexp_profile_tree']), 'wordexp profile input changed during native execution')
+    require(same_json(family.file_identity(root, root / inputs['wordexp_expected_native_inputs']['path']),
+                      inputs['wordexp_expected_native_inputs']) and
+            same_json(tree_binding(root, (root / inputs['wordexp_expected_native_inputs']['path']).parent),
+                      inputs['wordexp_expected_native_inputs_tree']),
+            'wordexp expected native input changed during native execution')
 
 
 def collect(root, work):
@@ -340,20 +364,25 @@ def collect(root, work):
             'native_aggregate_complete': True, 'campaign_complete': False, 'family_completion': False, 'public_support': False}
 
 
-def execute(root, work, matrixpath, cryptpath, atomicpath):
+def execute(root, work, matrixpath, cryptpath, atomicpath, wordexppath, wordexp_expected_path):
     root = root.resolve(strict=True)
     work = family.physical(root, root / work)
     matrixpath = family.physical(root, root / matrixpath)
     cryptpath = family.physical(root, root / cryptpath)
     atomicpath = family.physical(root, root / atomicpath)
+    wordexppath = family.physical(root, root / wordexppath)
+    wordexp_expected_path = family.physical(root, root / wordexp_expected_path)
     require(not work.exists(), 'native execution requires fresh output')
     request = {'schema': SCHEMA, 'source_mount': str(root),
                'family_execution': family.physical(root, matrixpath).relative_to(root).as_posix(),
                'crypt_profile': family.physical(root, cryptpath).relative_to(root).as_posix(),
-               'atomic_addressable_profile': family.physical(root, atomicpath).relative_to(root).as_posix()}
+               'atomic_addressable_profile': family.physical(root, atomicpath).relative_to(root).as_posix(),
+               'wordexp_profile': family.physical(root, wordexppath).relative_to(root).as_posix(),
+               'wordexp_expected_native_inputs': family.physical(root, wordexp_expected_path).relative_to(root).as_posix()}
     inputs, product = input_matrix(root, request)
     matrix_inputs = inputs['matrix_inputs']
     input_roots = [family.physical(root, cryptpath).parent, family.physical(root, atomicpath).parent,
+                   family.physical(root, wordexppath).parent, family.physical(root, wordexp_expected_path).parent,
                    matrixpath.parent, root / matrix_inputs['dynamic_work']]
     input_roots.extend((root / matrix_inputs[name]['path']).parent
                        for name in ('static_preparation', 'dynamic_qualification'))
@@ -438,13 +467,16 @@ def main():
     run.add_argument('--family-execution', type=Path, required=True)
     run.add_argument('--crypt-profile', type=Path, required=True)
     run.add_argument('--atomic-addressable-profile', type=Path, required=True)
+    run.add_argument('--wordexp-profile', type=Path, required=True)
+    run.add_argument('--wordexp-expected-native-inputs', type=Path, required=True)
     check = sub.add_parser('validate')
     check.add_argument('receipt', type=Path)
     args = parser.parse_args()
     try:
         if args.action == 'run':
             print(execute(ROOT, args.output, args.family_execution, args.crypt_profile,
-                          args.atomic_addressable_profile))
+                          args.atomic_addressable_profile, args.wordexp_profile,
+                          args.wordexp_expected_native_inputs))
         else:
             validate_receipt(ROOT, args.receipt)
             print('native POSIX aggregate receipt: PASS')

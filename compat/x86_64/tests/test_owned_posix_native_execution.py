@@ -4,6 +4,8 @@ The family matrix and native C collectors have independent product/source
 tests. These fixtures replace those two judges, retaining physical products,
 all three I/O replays, and five real subprocesses so ordering, failure state,
 input identity, and immutable evidence remain observable coordinator behavior.
+The wordexp full-receipt validator is an explicit external judge seam here;
+these tests cover coordinator wiring, never a real wordexp qualification.
 """
 import base64
 import hashlib
@@ -45,6 +47,10 @@ class NativeExecutionTests(unittest.TestCase):
         self.crypt_path = self.put(self.root / '.work/crypt/crypt-profile.json', {'fixture': 'external crypt judge'})
         self.atomic_path = self.put(self.root / '.work/atomic/atomic-addressable-profile.json',
                                     {'fixture': 'external atomic judge'})
+        self.wordexp_path = self.put(self.root / '.work/wordexp/owned-wordexp-products.json',
+                                     {'fixture': 'external wordexp full receipt judge'})
+        self.wordexp_expected_path = self.put(self.root / '.work/wordexp-inputs/expected-native-inputs.json',
+                                              {'fixture': 'independently captured wordexp expected inputs'})
         self.products = {}
         for label in ('installed', 'second', 'extracted'):
             product = self.root / '.work/dynamic' / label
@@ -108,6 +114,7 @@ class NativeExecutionTests(unittest.TestCase):
         self.patch(execution.crypt, 'validate_receipt', side_effect=lambda *args, **kwargs: {'vectors': [], 'vector_observations': {}})
         self.patch(execution.atomic, 'validate_receipt', side_effect=lambda *args, **kwargs: {'entries': {}})
         self.patch(execution.dispositions, 'credentials_companion', return_value={'fixture': 'external credentials judge'})
+        self.patch(execution.wordexp_policy, 'validate_companion', side_effect=self.wordexp_companion)
         self.profile_components = set()
         self.native_judge = self.patch(native, 'collect', side_effect=self.native_result)
 
@@ -144,7 +151,9 @@ class NativeExecutionTests(unittest.TestCase):
         self.assertEqual(root, self.root)
         self.assertEqual(profile_inputs, {'family_execution': self.relative(self.matrix_path),
             'crypt_profile': self.relative(self.crypt_path),
-            'atomic_addressable_profile': self.relative(self.atomic_path)})
+            'atomic_addressable_profile': self.relative(self.atomic_path),
+            'wordexp_profile': self.relative(self.wordexp_path),
+            'wordexp_expected_native_inputs': self.relative(self.wordexp_expected_path)})
         if (leaf / 'raw.status').read_bytes() != b'0\n' or (leaf / 'raw.stdout').read_bytes() != (component + ' observed\n').encode():
             raise native.NativeObservationError('synthetic component raw observation failed')
         def identity(path):
@@ -167,8 +176,18 @@ class NativeExecutionTests(unittest.TestCase):
                 replacement_io_cancellation_receipt=None, native_aggregate_complete=False)
         return result
 
+    def wordexp_companion(self, root, report, expected, product):
+        self.assertEqual((root, report, expected, product),
+                         (self.root, self.wordexp_path, self.wordexp_expected_path, self.product))
+        return {'product': {'path': self.relative(product), 'manifest': {'fixture': 'selected product'}},
+                'source_policy_probe': {'path': 'compat/x86_64/owned_wordexp_source_policy_probe.c', 'sha256': 'a' * 64},
+                'diagnostic_reference': {'path': 'compat/x86_64/owned_wordexp_upstream_policy_diagnostics.json',
+                                         'sha256': 'b' * 64},
+                'selected_dynamic_entries': {mode: {} for mode in native.MODES}}
+
     def execute(self):
-        return execution.execute(self.root, self.work, self.matrix_path, self.crypt_path, self.atomic_path)
+        return execution.execute(self.root, self.work, self.matrix_path, self.crypt_path, self.atomic_path,
+                                 self.wordexp_path, self.wordexp_expected_path)
 
     def leaf(self, component):
         item = next(item for item in execution.COMPONENTS if item.id == component)
@@ -206,6 +225,18 @@ class NativeExecutionTests(unittest.TestCase):
             self.execute()
         self.assertFalse(self.work.exists())
 
+    def test_missing_wordexp_prerequisite_prevents_execution(self):
+        self.wordexp_path.unlink()
+        with self.assertRaises((RuntimeError, OSError)):
+            self.execute()
+        self.assertFalse(self.work.exists())
+
+    def test_missing_wordexp_expected_input_prevents_execution(self):
+        self.wordexp_expected_path.unlink()
+        with self.assertRaises((RuntimeError, OSError)):
+            self.execute()
+        self.assertFalse(self.work.exists())
+
     def test_crypt_artifact_mutation_stops_sequence(self):
         self.put(self.crypt_path.parent / 'raw.stdout', b'physical companion')
         self.append_runner('os-test', 'printf changed > "$root/.work/crypt/raw.stdout"\n')
@@ -217,6 +248,20 @@ class NativeExecutionTests(unittest.TestCase):
         self.put(self.atomic_path.parent / 'raw.stdout', b'physical companion')
         self.append_runner('os-test', 'printf changed > "$root/.work/atomic/raw.stdout"\n')
         with self.assertRaisesRegex(RuntimeError, 'atomic addressable input changed'):
+            self.execute()
+        self.assertFalse((self.work / 'runs/signal-process').exists())
+
+    def test_wordexp_report_artifact_mutation_stops_sequence(self):
+        self.put(self.wordexp_path.parent / 'retained.raw', b'physical companion')
+        self.append_runner('os-test', 'printf changed > "$root/.work/wordexp/retained.raw"\n')
+        with self.assertRaisesRegex(RuntimeError, 'wordexp profile input changed'):
+            self.execute()
+        self.assertFalse((self.work / 'runs/signal-process').exists())
+
+    def test_wordexp_expected_input_mutation_stops_sequence(self):
+        self.put(self.wordexp_expected_path.parent / 'retained.raw', b'physical companion')
+        self.append_runner('os-test', 'printf changed > "$root/.work/wordexp-inputs/retained.raw"\n')
+        with self.assertRaisesRegex(RuntimeError, 'wordexp expected native input changed'):
             self.execute()
         self.assertFalse((self.work / 'runs/signal-process').exists())
 
@@ -373,9 +418,11 @@ class NativeExecutionTests(unittest.TestCase):
 
     def test_fresh_output_cannot_overlap_an_input_or_be_reused(self):
         with self.assertRaisesRegex(RuntimeError, 'overlap|input|product'):
-            execution.execute(self.root, self.product / 'aggregate', self.matrix_path, self.crypt_path, self.atomic_path)
+            execution.execute(self.root, self.product / 'aggregate', self.matrix_path, self.crypt_path, self.atomic_path,
+                              self.wordexp_path, self.wordexp_expected_path)
         with self.assertRaisesRegex(RuntimeError, 'overlap|input|matrix'):
-            execution.execute(self.root, self.matrix_path.parent / 'aggregate', self.matrix_path, self.crypt_path, self.atomic_path)
+            execution.execute(self.root, self.matrix_path.parent / 'aggregate', self.matrix_path, self.crypt_path, self.atomic_path,
+                              self.wordexp_path, self.wordexp_expected_path)
         self.execute()
         with self.assertRaisesRegex(RuntimeError, 'fresh'):
             self.execute()
@@ -384,7 +431,8 @@ class NativeExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'overlap'):
             execution.execute(self.root, self.matrix_path.parent / 'aggregate',
                               Path(self.relative(self.matrix_path)), Path(self.relative(self.crypt_path)),
-                              Path(self.relative(self.atomic_path)))
+                              Path(self.relative(self.atomic_path)), Path(self.relative(self.wordexp_path)),
+                              Path(self.relative(self.wordexp_expected_path)))
         self.assertFalse((self.matrix_path.parent / 'aggregate').exists())
 
     def test_predecessor_binding_rejects_reordered_successful_steps(self):

@@ -1,11 +1,29 @@
 # Native POSIX aggregate execution
 
 `owned_posix_native_execution.py` consumes a fully validated three-product POSIX
-family `execution.json` plus installed-product `crypt-profile.json` and
-`atomic-addressable-profile.json` receipts, selects their shared installed dynamic product, and executes
-five fresh component commands in fixed order: differential, os-test,
-signal-process, pthread-stress, and libc-test. It neither builds products nor
-substitutes the static workload matrix for these native runs.
+family `execution.json`, installed-product `crypt-profile.json` and
+`atomic-addressable-profile.json` receipts, a complete wordexp product report,
+and a separately captured wordexp expected-native-inputs file. It selects their
+shared installed dynamic product and executes five fresh component commands in
+fixed order: differential, os-test, signal-process, pthread-stress, and
+libc-test. It neither builds products nor substitutes the static workload
+matrix for these native runs.
+
+The v2 `native-execution.json` request has exactly five prerequisite fields besides
+its schema and source mount: `family_execution`, `crypt_profile`,
+`atomic_addressable_profile`, `wordexp_profile`, and
+`wordexp_expected_native_inputs`. All must be physical checkout-relative files;
+the coordinator rejects a missing, extra, or renamed request field before it
+creates output.
+
+The wordexp report is replayed through the full
+`owned_wordexp_evidence.validate_report` contract using the supplied expected
+inputs, rather than a report-derived expectation. The coordinator binds both
+files and their parent trees before and after execution. The replay must bind
+the selected dynamic product and its manifest, and it must retain all four
+dynamic `source-policy` cells. The finite native accounting of the original
+raw `functional/wordexp` failure is described in
+[`owned-posix-native-dispositions.md`](owned-posix-native-dispositions.md).
 
 The pthread stress command uses `native-v1`, ten iterations and a ten-second
 case timeout. Its delegated `READ_FILE` and `ASYNC_LOOP` observations are bound
@@ -36,6 +54,8 @@ starts the pinned native container with private mount authority and no network:
   --family-execution .work/x86_64/posix-matrix/execution.json \
   --crypt-profile .work/x86_64/crypt/crypt-profile.json \
   --atomic-addressable-profile .work/x86_64/atomic/atomic-addressable-profile.json \
+  --wordexp-profile .work/x86_64/wordexp/owned-wordexp-products.json \
+  --wordexp-expected-native-inputs .work/x86_64/wordexp-inputs/expected-native-inputs.json \
   --output .work/x86_64/posix-native
 ```
 
@@ -51,6 +71,8 @@ python3 -B compat/x86_64/owned_posix_native_execution.py run \
   --family-execution .work/x86_64/posix-matrix/execution.json \
   --crypt-profile .work/x86_64/crypt/crypt-profile.json \
   --atomic-addressable-profile .work/x86_64/atomic/atomic-addressable-profile.json \
+  --wordexp-profile .work/x86_64/wordexp/owned-wordexp-products.json \
+  --wordexp-expected-native-inputs .work/x86_64/wordexp-inputs/expected-native-inputs.json \
   --output .work/x86_64/posix-native
 python3 -B compat/x86_64/owned_posix_native_execution.py validate \
   .work/x86_64/posix-native/native-execution.json
@@ -61,9 +83,12 @@ A validated `native-execution.json` sets only `native_aggregate_complete`.
 The focused coordinator regressions use explicit prerequisite/native judge
 seams and five actual subprocesses; they do not claim real runtime qualification.
 
-The finite credential-alias, address-taken atomic, and crypt differences retain
-upstream reports, counts and raw exit 1. Only the strict native profile collector
-may qualify these three finite source boundaries; all other outcomes still require raw success. See
+The finite credential-alias, address-taken atomic, crypt, strptime, and wordexp
+differences retain upstream reports, counts and raw failures. The separately
+bounded corrected-math entries retain their candidate-pass/pinned-musl-oracle-
+defect accounting. Only the strict native collector may admit those named
+records; all other outcomes still require raw success. See
 [`owned-posix-native-dispositions.md`](owned-posix-native-dispositions.md) for
-the exact source roster and mandatory same-product companions. The crypt
-receipt and every retained companion artifact are rehashed between steps.
+the exact source roster and mandatory same-product companions. The crypt,
+atomic, wordexp report, expected-input seal, and every retained companion
+artifact are rehashed between steps.

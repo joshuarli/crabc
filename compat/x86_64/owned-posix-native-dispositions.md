@@ -8,7 +8,7 @@ A qualified profile difference is never an upstream pass or an excluded unit.
 `owned_posix_native_observations.py` still validates every source, object,
 link, execution root, raw outcome and oracle observation.
 
-Only these four source boundaries may have a profile disposition:
+Only these five source boundaries may have a profile disposition:
 
 * OS-test `basic/unistd/{seteuid,setegid,setreuid,setregid}.out`: pinned musl
   reports `exit: 0`; the candidate reports the exact alias and `ENOTSUP`.
@@ -61,7 +61,38 @@ Only these four source boundaries may have a profile disposition:
   unchanged and requires four digits after a `%z` sign. The ordinary source
   cases remain checked by the untouched unit and installed numeric/calendar
   component; this disposition establishes no general locale, time, or glibc
-  extension closure. It admits no `wordexp`, `random`, or other failure.
+  extension closure. It admits no other unit or failure.
+* libc-test `functional/wordexp`: both the selected candidate and pinned musl
+  retain raw exit status 1, empty process stderr, and their complete original
+  source-prefixed diagnostic streams. The checked
+  `owned_wordexp_upstream_policy_diagnostics.json` reference fixes the
+  untouched `functional/wordexp.c` SHA-256
+  `e3e310de1a73bc30273ac5f4711492817a2f26a5750795c9a3f0be42645871c9`,
+  all 20 candidate and all 104 musl diagnostics, their order, and the terminal
+  `FAIL /functional/wordexp [status 1]` marker. `owned_wordexp_upstream_policy.py`
+  rejects any changed source, status, stderr, missing, extra, altered, or
+  reordered diagnostic.
+
+  The nested disposition is `posix-policy-qualified` and still records
+  `raw_passed: false`; the enclosing libc-test result is only
+  `profile-qualified`. It is never a candidate pass or a pinned-musl oracle
+  defect. Its public-C companion is described in
+  [`owned-wordexp-upstream-policy.md`](owned-wordexp-upstream-policy.md): all
+  four dynamic entry modes must retain the exact twenty candidate observations
+  and the separately pinned musl observations, including every status, word
+  byte, captured diagnostic, command-effect, and `env=0` field.
+
+  Qualification requires both the complete same-product wordexp report and a
+  separately captured expected-native-inputs file. The native reader gives the
+  latter to the full `owned_wordexp_evidence.validate_report` reconstruction;
+  it never derives the expected input from the report being checked. That
+  reconstruction binds the current installed-product source/object/header/link
+  closure. The accounting reader then requires that report's dynamic root and
+  manifest to name this aggregate's installed product and requires all four
+  `source-policy` cells. A partial companion, another product, a changed
+  expected-input seal, or a successful marker without those raw observations
+  fails closed. This boundary does not qualify `functional/random` or any
+  unlisted libc-test failure.
 
 The bounded adapter parses decimal rounds and normalizes values below 1000 to
 1000 before validating RustCrypto parameters. It rejects excessive or
@@ -101,13 +132,15 @@ oracle defect, never a candidate limitation or a raw musl pass. A candidate
 failure, an oracle pass, matched raw failure, changed/missing/extra diagnostic,
 source or header drift, timeout, failed link/root, or any unlisted unit fails
 closed. `math/nextafterl` remains an ordinary raw pass; this finite set admits
-neither it nor `wordexp` or `random`.
+neither it nor `random` or another unlisted unit.
 
 The native coordinator requires the complete family `execution.json`,
-`--crypt-profile RECEIPT`, and `--atomic-addressable-profile RECEIPT` before
-creating output. Both installed-product companions consume the identical
-product. Their raw source, product and receipt identities join the before/after
-input seals.
+`--crypt-profile RECEIPT`, `--atomic-addressable-profile RECEIPT`,
+`--wordexp-profile RECEIPT`, and
+`--wordexp-expected-native-inputs EXPECTED` before creating output. All three
+installed-product companions consume the identical product. Their raw source,
+product, report/expected-input trees, and receipt identities join the
+before/after input seals.
 
 The state transition is explicit:
 
