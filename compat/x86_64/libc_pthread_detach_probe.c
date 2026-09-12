@@ -9,7 +9,9 @@
  * lifecycle ownership; comparable routes never reuse an opaque handle after
  * terminal join or detached completion. Candidate-only error-path diagnostics
  * make their one intentionally documented pre-completion handle query while
- * the detached worker remains held live.
+ * the detached worker remains held live. Musl's thrd_detach is a weak alias
+ * of pthread_detach, so those unadmitted-handle diagnostics retain its raw
+ * pthread EINVAL result rather than applying a C11 wrapper translation.
  *
  * The candidate additionally selects prompt state-only detach followed by
  * lazy reaping at a later selected lifecycle entry, after the kernel has
@@ -192,7 +194,7 @@ static int run_thrd_double_detach_round(void)
         return 47;
     if (thrd_detach(thread) != thrd_success)
         return 48;
-    if (thrd_detach(thread) != thrd_error)
+    if (thrd_detach(thread) != EINVAL)
         return 49;
     if (errno != parent_errno_sentinel)
         return 50;
@@ -239,7 +241,7 @@ static int run_candidate_self_detach_completion_round(void)
 static int run_candidate_null_detach_rejection_round(void)
 {
     errno = parent_errno_sentinel;
-    if (pthread_detach(0) != EINVAL || thrd_detach(0) != thrd_error ||
+    if (pthread_detach(0) != EINVAL || thrd_detach(0) != EINVAL ||
         errno != parent_errno_sentinel)
         return 80;
     return 0;

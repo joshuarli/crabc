@@ -3,7 +3,7 @@
 //! Pinned musl 1.2.6 release commit
 //! 9fa28ece75d8a2191de7c5bb53bed224c5947417, MIT (`COPYRIGHT`):
 //! src/mq/mq_open.c, mq_close.c, mq_unlink.c, mq_getattr.c, mq_send.c,
-//! mq_receive.c, mq_timedsend.c, mq_timedreceive.c, and mq_notify.c map to
+//! mq_receive.c, mq_timedsend.c, mq_timedreceive.c, and src/mq/mq_notify.c map to
 //! the corresponding entries below. The existing mq_setattr leaf retains
 //! its shared record/syscall boundary. Linux/x86-64 has one native 64-bit
 //! time ABI, so the source's 32-bit/time64 compatibility branch is absent.
@@ -32,6 +32,15 @@ const SIGEV_THREAD: c_int = 2;
 const AF_NETLINK: c_int = 16;
 const SOCK_RAW_CLOEXEC: c_int = 3 | 0x80000;
 const MSG_WAITALL_NOSIGNAL: c_int = 0x100 | 0x4000;
+
+// `src/mq/mq_notify.c` calls the public spelling. This translation unit must
+// keep that pthread_detach relocation public until the final static link, where
+// an application strong override may resolve it. Do not name the source-local
+// provider from this separate translation unit.
+unsafe extern "C" {
+    #[link_name = "pthread_detach"]
+    fn source_pthread_detach(thread: *mut c_void) -> c_int;
+}
 
 /// Musl strips exactly one optional leading slash, then delegates namespace
 /// validation and error precedence to the Linux mq syscall.
@@ -198,7 +207,10 @@ unsafe extern "C" fn notify_start(argument: *mut c_void) -> *mut c_void {
         posix_semaphore::sem_post(ptr::addr_of_mut!((*args).semaphore).cast());
     }
     if error != 0 { return ptr::null_mut(); }
-    unsafe { pthread_create_join::pthread_detach(pthread_identity::current_thread_pointer().cast()); }
+    // Retain the source public relocation rather than calling the source-local
+    // provider through a Rust item. Static musl links permit an application
+    // strong pthread_detach definition to receive this mq worker call.
+    unsafe { source_pthread_detach(pthread_identity::current_thread_pointer().cast()); }
     let mut cookie = [0_u8; 32];
     let length = unsafe { socket_transport::recv(socket, cookie.as_mut_ptr().cast(), cookie.len(), MSG_WAITALL_NOSIGNAL) };
     super::descriptor_io::close(socket);

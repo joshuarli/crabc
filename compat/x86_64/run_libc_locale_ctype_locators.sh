@@ -89,8 +89,9 @@ for symbol in "${SELECTED_SYMBOLS[@]}"; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define $symbol"
 done
-for unselected in __newlocale __freelocale __duplocale __uselocale \
-    __nl_langinfo __nl_langinfo_l strfmon strfmon_l malloc calloc \
+# Locale object and langinfo aliases belong to the selected shared archive;
+# this leaf's exclusions concern only the still-unselected siblings below.
+for unselected in strfmon strfmon_l malloc calloc \
     realloc free; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected $unselected"

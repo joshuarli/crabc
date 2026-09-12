@@ -99,13 +99,14 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in memchr memrchr memmem; do
+for symbol in memchr __memrchr memrchr memmem; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
-# The shared archive deliberately exports the bulk-memory and separately
-# evidenced C-string-copy symbols; they are therefore not exclusions here.
-for unselected in __memrchr __memchr malloc \
+# Musl's hidden `__memrchr` provider and public weak `memrchr` alias are this
+# memory-search artifact's same-definition pair. The shared archive also
+# exports bulk-memory and separately evidenced C-string-copy siblings.
+for unselected in __memchr malloc \
     free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -114,10 +115,13 @@ done
 # Fixed-locale collation/transformation is independently evidenced and is not
 # selected by this memory-search fixture.
 
+# Rust codegen units can package unrelated errno/TLS functions alongside the
+# selected memory helpers. Constrain this no-CRT image to reachable fixture
+# functions; the final no-TLS and unresolved-symbol checks still apply.
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_MEMORY_SEARCH_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie \
     -ffreestanding -fno-builtin -fno-stack-protector -Wl,-e,_start \
-    -Wl,--no-undefined compat/x86_64/libc_memory_search_probe.c \
+    -Wl,--no-undefined -Wl,--gc-sections compat/x86_64/libc_memory_search_probe.c \
     compat/x86_64/libc_memory_search_start.S "$archive" -o "$candidate"
 
 readelf --symbols --wide "$candidate" >"$candidate_symbols"
@@ -125,7 +129,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in memchr memrchr memmem; do
+for symbol in memchr __memrchr memrchr memmem; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
@@ -143,7 +147,7 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|DTPOFF(32|64)?|__tls_get_a
     "$candidate_relocations" "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate retains a dynamic TLS model"
 fi
-if grep -Eq 'crabc_core|mimalloc|sha_crypt|__memrchr' \
+if grep -Eq 'crabc_core|mimalloc|sha_crypt' \
     "$candidate_symbols" "$candidate_disassembly"; then
     fail "candidate selects an unowned or hidden runtime symbol"
 fi

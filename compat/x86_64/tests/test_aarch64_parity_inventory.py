@@ -463,7 +463,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             {row["contract_state"] for row in report["capabilities"]},
             {"implemented-foundation", "selected-private", "missing"},
         )
-        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1239)
+        self.assertEqual(report["x86_boundary"]["selected_static_export_count"], 1254)
         self.assertEqual(
             report["x86_boundary"]["selected_static_exports_in_aarch64_dynamic_candidate_set"],
             1209,
@@ -482,7 +482,7 @@ class AArch64ParityInventoryTests(unittest.TestCase):
             row for row in report["families"] if row["id"] == "libc.posix-runtime"
         )
         self.assertEqual(posix_runtime["contract_state"], "selected-private")
-        self.assertEqual(posix_runtime["verified_artifact_count"], 171)
+        self.assertEqual(posix_runtime["verified_artifact_count"], 172)
         self.assertIn(
             {"family": "libc.posix-runtime", "id": "static-c-sleep"},
             report["selected_private_artifacts"],

@@ -219,7 +219,9 @@ if grep -Eqi 'arch_prctl|mov[[:space:]]+%rsi,[[:space:]]*%fs:0' \
     compat/x86_64/libc_pthread_c11_tsd_start.S; then
     fail "fixture start must not install a private FS base"
 fi
-objdump -d --disassemble=pthread_key_create "$candidate" >"$key_create_disassembly"
+# Inspect the hidden strong provider behind the weak public alias: objdump
+# selects that provider's label for their shared definition.
+objdump -d --disassemble=__pthread_key_create "$candidate" >"$key_create_disassembly"
 grep -Eq 'lock[[:space:]]+cmpxchg' "$key_create_disassembly" ||
     fail "pthread_key_create lacks its private atomic key-table lock"
 

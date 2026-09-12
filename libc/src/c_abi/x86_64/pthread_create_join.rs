@@ -100,6 +100,28 @@ use super::{
     static_tls,
 };
 
+// Pinned musl 1.2.6 spells these source bodies `__pthread_*` and publishes
+// weak public aliases with `weak_alias`.  The static source body for detach is
+// local, while create/exit/join are hidden globals.  Keep the Rust item names
+// useful to direct internal callers, but give their ELF definitions musl's
+// provider spellings so a public application override cannot preempt an
+// internal lifecycle call.
+core::arch::global_asm!(
+    ".hidden __pthread_create",
+    ".weak pthread_create",
+    ".set pthread_create, __pthread_create",
+    ".hidden __pthread_exit",
+    ".weak pthread_exit",
+    ".set pthread_exit, __pthread_exit",
+    ".weak pthread_detach",
+    ".set pthread_detach, __pthread_detach",
+    ".weak thrd_detach",
+    ".set thrd_detach, __pthread_detach",
+    ".hidden __pthread_join",
+    ".weak pthread_join",
+    ".set pthread_join, __pthread_join",
+);
+
 const EAGAIN: c_int = 11;
 const EINTR: c_int = 4;
 const EINVAL: c_int = 22;
@@ -1988,7 +2010,7 @@ unsafe extern "C" fn worker_entry(opaque: *mut c_void) -> c_int {
 /// callback argument lifetime. A callback must return normally or call the
 /// selected-worker pthread_exit path; other thread-exit behavior remains
 /// outside this bounded lifecycle.
-#[no_mangle]
+#[export_name = "__pthread_create"]
 pub unsafe extern "C" fn pthread_create(
     thread: *mut *mut c_void,
     attributes: *const c_void,
@@ -2430,7 +2452,7 @@ pub(super) unsafe fn exit_selected_c11_worker(result: c_int) -> ! {
 ///
 /// The selected callback must not use any object after this call. Its result
 /// must remain valid until its joining caller consumes it.
-#[no_mangle]
+#[export_name = "__pthread_exit"]
 #[inline(never)]
 pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
     // SAFETY: this exported pthread boundary retains the selected worker-only
@@ -2811,12 +2833,21 @@ pub(super) unsafe fn detach_selected_worker(thread: *mut c_void) -> c_int {
 ///
 /// `thread` must be one selected opaque thread handle. After a successful
 /// return it is no longer valid for an admitted join operation.
-#[no_mangle]
+#[export_name = "__pthread_detach"]
+#[linkage = "internal"]
+#[inline(never)]
 pub unsafe extern "C" fn pthread_detach(thread: *mut c_void) -> c_int {
     // SAFETY: this C boundary preserves the selected opaque-handle ownership
     // contract documented above.
     unsafe { detach_selected_worker(thread) }
 }
+
+// LLVM does not discover a `global_asm!` `.set` reference when it decides
+// whether an internal provider is dead. Retain one local typed reference until
+// the linker sees the public weak alias in the same function section.
+#[used]
+#[linkage = "internal"]
+static KEEP_PTHREAD_DETACH: unsafe extern "C" fn(*mut c_void) -> c_int = pthread_detach;
 
 /// Join one normal-returning or selected-explicit-exit worker from [`pthread_create`].
 ///
@@ -2830,7 +2861,7 @@ pub unsafe extern "C" fn pthread_detach(thread: *mut c_void) -> c_int {
 /// The opaque handle and optional result storage must meet those lifetime and
 /// alignment requirements. The caller must not concurrently join the same
 /// handle; such broader pthread behavior is deliberately outside this slice.
-#[no_mangle]
+#[export_name = "__pthread_join"]
 pub unsafe extern "C" fn pthread_join(thread: *mut c_void, result: *mut *mut c_void) -> c_int {
     let worker_result = match unsafe { join_selected_worker(thread) } {
         Ok(worker_result) if worker_result.kind == SelectedWorkerResultKind::Pthread => {

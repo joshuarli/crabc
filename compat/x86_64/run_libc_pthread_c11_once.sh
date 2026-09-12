@@ -57,24 +57,53 @@ assert_selected_c_abi_surface() {
     fi
 }
 
+assert_private_once_raw_syscall_edge() {
+    local role="$1"
+    local arity="$2"
+    local disassembly="$3"
+    local trampoline
+    local trampoline_disassembly
+
+    # The generic raw wrappers may remain separate leaves. Follow only a
+    # direct provider edge, rather than matching an unrelated syscall in the
+    # closed candidate; an inlined wrapper is also valid only if the provider
+    # itself retains the instruction.
+    trampoline="$(sed -nE 's/.*call[[:space:]]+[[:xdigit:]]+[[:space:]]+<([^>]*11raw_syscall8syscall'"$arity"'[^>]*)>.*/\1/p' "$disassembly" | sort -u)"
+    if [ -z "$trampoline" ]; then
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+            fail "pthread_once ${role} has neither an inline syscall nor a direct private syscall${arity} target"
+        return
+    fi
+    [ "$(printf '%s\n' "$trampoline" | sed -n '$=')" = 1 ] ||
+        fail "pthread_once ${role} has more than one private syscall${arity} target"
+    trampoline_disassembly="$work_dir/pthread-once-${role}-syscall${arity}-trampoline"
+    objdump -d --disassemble="$trampoline" "$candidate" >"$trampoline_disassembly"
+    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$trampoline_disassembly" ||
+        fail "pthread_once ${role} private syscall${arity} target lacks its raw x86 syscall"
+}
+
 assert_private_once_futex_path() {
     local disassembly="$work_dir/pthread-once-disassembly"
 
-    objdump -d --disassemble=pthread_once "$candidate" >"$disassembly"
+    # The weak public alias and hidden strong provider share one definition;
+    # objdump selects the provider's label for that address. The provider sets
+    # normal SysV arguments for raw_syscall::{syscall4,syscall3}; their shared
+    # leaves move them into Linux syscall registers before executing syscall.
+    objdump -d --disassemble=__pthread_once "$candidate" >"$disassembly"
     grep -Eq 'lock[[:space:]]+cmpxchg' "$disassembly" ||
         fail "pthread_once lacks its x86 atomic compare-exchange"
     grep -Eq 'xchg[[:space:]].*\(%r' "$disassembly" ||
         fail "pthread_once lacks its atomic exchange release"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "pthread_once lacks a raw x86 futex syscall"
-    grep -Eq '\$0xca,%eax|\$0xca,%rax|\$0x00000000000000ca,%rax' \
-        "$disassembly" || fail "pthread_once lacks futex syscall number 202"
-    grep -Eq '\$0x80,%esi|\$0x80,%rsi' "$disassembly" ||
+    grep -Eq '\$0xca,%(edi|rdi|eax|rax)' "$disassembly" ||
+        fail "pthread_once lacks futex syscall number 202"
+    grep -Eq '\$0x80,%(edx|rdx|esi|rsi)' "$disassembly" ||
         fail "pthread_once lacks FUTEX_WAIT_PRIVATE"
-    grep -Eq '\$0x81,%esi|\$0x81,%rsi' "$disassembly" ||
+    grep -Eq '\$0x81,%(edx|rdx|esi|rsi)' "$disassembly" ||
         fail "pthread_once lacks FUTEX_WAKE_PRIVATE"
-    grep -Eq '\$0x7fffffff,%edx|\$0x7fffffff,%rdx' "$disassembly" ||
+    grep -Eq '\$0x7fffffff,%(ecx|rcx|edx|rdx)' "$disassembly" ||
         fail "pthread_once does not normalize wake-all to INT_MAX"
+    assert_private_once_raw_syscall_edge wait 4 "$disassembly"
+    assert_private_once_raw_syscall_edge wake 3 "$disassembly"
     if grep -Eq '%fs:' "$disassembly"; then
         fail "pthread_once must not mutate errno TLS"
     fi

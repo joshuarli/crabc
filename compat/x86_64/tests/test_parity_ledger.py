@@ -17497,7 +17497,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         detach_abi = " ".join(detach["x86_abi_prerequisites"])
         for phrase in (
             "pthread_detach.c",
-            "thrd_detach.c",
+            "weak_alias(__pthread_detach, thrd_detach)",
             "Joinable",
             "DetachedReclaiming",
             "registry lock",
@@ -18725,6 +18725,45 @@ class X86ParityLedgerTests(unittest.TestCase):
             "static-c-pthread-cancel-deferred must use the closed libc-pthread-cancel-deferred command",
         ):
             ledger.validate_ledger(changed)
+
+    def test_pthread_artifacts_accept_hidden_alias_providers(self) -> None:
+        family = self.family(self.data(), "libc.pthread-tls")
+        for validate in (
+            ledger.require_static_pthread_c11_once_artifact,
+            ledger.require_static_pthread_c11_tsd_artifact,
+            ledger.require_static_pthread_cancel_deferred_artifact,
+        ):
+            with self.subTest(validator=validate.__name__):
+                validate(family)
+
+    def test_pthread_artifacts_require_hidden_alias_definitions(self) -> None:
+        family = self.family(self.data(), "libc.pthread-tls")
+        original_read = Path.read_text
+        for module, name, validate in (
+            ("pthread_once.rs", "pthread_once", ledger.require_static_pthread_c11_once_artifact),
+            ("pthread_tsd.rs", "pthread_key_create", ledger.require_static_pthread_c11_tsd_artifact),
+            ("pthread_tsd.rs", "pthread_key_delete", ledger.require_static_pthread_c11_tsd_artifact),
+            ("pthread_create_join.rs", "pthread_exit", ledger.require_static_pthread_cancel_deferred_artifact),
+        ):
+            source_path = ROOT / "libc/src/c_abi/x86_64" / module
+            source = original_read(source_path, encoding="utf-8")
+            for fragment in (
+                f'#[export_name = "__{name}"]',
+                f'".hidden __{name}"',
+                f'".weak {name}"',
+                f'".set {name}, __{name}"',
+            ):
+                self.assertIn(fragment, source)
+                changed = source.replace(fragment, "", 1)
+
+                def read_text(path: Path, *args: object, **kwargs: object) -> str:
+                    if path == source_path:
+                        return changed
+                    return original_read(path, *args, **kwargs)
+
+                with self.subTest(name=name, fragment=fragment), mock.patch.object(Path, "read_text", read_text):
+                    with self.assertRaisesRegex(ledger.LedgerError, "pthread hidden alias"):
+                        validate(family)
 
     def test_pthread_spin_destroy_artifact_stays_private_and_non_promoting(
         self,

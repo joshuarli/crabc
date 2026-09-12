@@ -137,6 +137,12 @@ dynamic allocation-boundary check for caller-owned `asprintf` bytes, passwd
 temporary `getline` cleanup, and AIO list-state ownership. Its [component record](owned-c-allocation-interposition.md)
 keeps those executable allocator edges distinct from the FILE-lifetime receipt.
 
+[owned-string-temporary-alias-contract.md](owned-string-temporary-alias-contract.md)
+records the standalone native proof for the five selected musl weak aliases:
+`stpcpy`, `stpncpy`, `strchrnul`, `memrchr`, and `mkostemps`. It is run directly
+inside the dispatcher-owned pinned native container and deliberately has no
+separate dispatcher command.
+
 ## Boundary and caveats
 
 The campaign covers Linux 5.10-or-newer, native x86-64 little-endian execution,

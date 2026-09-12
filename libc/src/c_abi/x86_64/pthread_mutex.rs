@@ -77,6 +77,28 @@ use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
 use super::{atomic, pthread_create_join, pthread_identity, pthread_vmlock, raw_syscall, static_tls};
 
+// Pinned musl exposes these public entry points as weak aliases of hidden
+// `__pthread_mutex_*` bodies. Retaining that source linkage makes internal
+// Rust calls nonpreemptible without changing the mutex state machine.
+core::arch::global_asm!(
+    ".hidden __pthread_mutex_trylock",
+    ".weak pthread_mutex_trylock",
+    ".set pthread_mutex_trylock, __pthread_mutex_trylock",
+    ".hidden __pthread_mutex_lock",
+    ".weak pthread_mutex_lock",
+    ".set pthread_mutex_lock, __pthread_mutex_lock",
+    ".hidden __pthread_mutex_unlock",
+    ".weak pthread_mutex_unlock",
+    ".set pthread_mutex_unlock, __pthread_mutex_unlock",
+);
+
+#[cfg(feature = "x86-owned-static-runtime")]
+core::arch::global_asm!(
+    ".hidden __pthread_mutex_timedlock",
+    ".weak pthread_mutex_timedlock",
+    ".set pthread_mutex_timedlock, __pthread_mutex_timedlock",
+);
+
 const EPERM: c_int = 1;
 #[cfg(feature = "x86-owned-static-runtime")]
 const EAGAIN: c_int = 11;
@@ -2099,7 +2121,7 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut c_void) -> c_int {
 ///
 /// `mutex` must designate a live, aligned selected mutex. Its complete
 /// lifetime and protected-data synchronization remain with the C caller.
-#[no_mangle]
+#[export_name = "__pthread_mutex_trylock"]
 pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut c_void) -> c_int {
     let mutex = mutex.cast::<PublicPthreadMutex>();
     if unsafe { is_selected_normal_mutex(mutex) } {
@@ -2130,7 +2152,7 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut c_void) -> c_int {
 /// `mutex` must designate a live, aligned selected mutex. The caller owns the
 /// object lifetime, protected-data discipline, and all signal/cancellation
 /// policy; this direct static leaf is not a cancellation point.
-#[no_mangle]
+#[export_name = "__pthread_mutex_lock"]
 pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut c_void) -> c_int {
     let mutex = mutex.cast::<PublicPthreadMutex>();
     // SAFETY: the caller supplies a complete mutex whose type word is stable.
@@ -2162,7 +2184,7 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut c_void) -> c_int {
 /// `mutex` must designate a live, aligned selected mutex held according to
 /// the caller's normal-mutex discipline. Unlocking a normal mutex from the
 /// wrong thread is outside POSIX and this selected contract.
-#[no_mangle]
+#[export_name = "__pthread_mutex_unlock"]
 pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut c_void) -> c_int {
     let mutex = mutex.cast::<PublicPthreadMutex>();
     // SAFETY: the caller supplies a complete mutex whose type word is stable.
@@ -2198,7 +2220,7 @@ pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut c_void) -> c_int {
 /// `absolute_timeout` must name a readable native x86 `struct timespec` for
 /// the operation. Its representation and lifetime remain C caller duties.
 #[cfg(feature = "x86-owned-static-runtime")]
-#[no_mangle]
+#[export_name = "__pthread_mutex_timedlock"]
 pub unsafe extern "C" fn pthread_mutex_timedlock(
     mutex: *mut c_void,
     absolute_timeout: *const c_void,

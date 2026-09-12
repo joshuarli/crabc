@@ -109,18 +109,18 @@ nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
 
-for symbol in index rindex strchr strchrnul strcmp strverscmp strcspn strlen strncmp \
+for symbol in __strchrnul __memrchr index rindex strchr strchrnul strcmp strverscmp strcspn strlen strncmp \
     strnlen strpbrk strrchr strspn strstr; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
 done
 # Closed-surface hygiene: these neighboring families must not be pulled into
 # this artifact merely because the byte-string fixture links the selected set.
-# The bulk-memory, memory-search, separately evidenced C-string-copy, and
-# fixed-locale collation roots are deliberate exports of the shared x86
-# archive. Their materialization does not establish this byte-string
-# artifact's contract.
-for unselected in __memrchr __strchrnul strdup \
+# `__strchrnul` and its public weak alias are this byte-string artifact's
+# contract; `__memrchr` is the sibling memory-search provider selected by
+# `strrchr`'s source-local call. The bulk-memory, separately evidenced
+# C-string-copy, and fixed-locale collation roots are deliberate siblings.
+for unselected in strdup \
     strndup malloc free calloc realloc; do
     if grep -Eq "[[:space:]][TW][[:space:]]${unselected}$" "$archive_symbols"; then
         fail "archive accidentally exports unselected ${unselected}"
@@ -142,7 +142,9 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in index rindex strchr strchrnul strcmp strverscmp strcspn strlen strncmp \
+# The sibling __memrchr provider may be inlined into strrchr. Its archive
+# definition is checked above; this executable need not retain an unused body.
+for symbol in __strchrnul index rindex strchr strchrnul strcmp strverscmp strcspn strlen strncmp \
     strnlen strpbrk strrchr strspn strstr; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"

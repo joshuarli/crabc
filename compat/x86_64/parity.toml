@@ -9463,13 +9463,14 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_artifact]]
 id = "static-c-byte-strings"
-description = "Private native x86 selected-static-archive byte-string block. One dependency-free `crabc-libc` archive resolves exactly `index`/`rindex`, `strchr`/`strchrnul`, `strcmp`, GNU `strverscmp`, `strcspn`, `strlen`, `strncmp`, `strnlen`, `strpbrk`, `strrchr`, `strspn`, and `strstr` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's public `index` and `rindex` forwarding wrappers map to `strchr` and `strrchr`, while private `__strchrnul`/`__memrchr` helpers remain internal and unexported; GNU `strverscmp` retains musl's scalar digit/leading-zero comparison state machine, and the selected implementation retains scalar fallback behavior as an intentional mapping boundary. This artifact is deliberately narrower than general string, locale, allocation, or stateful C text support; it does not select libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86 support."
+description = "Private native x86 selected-static-archive byte-string block. One dependency-free `crabc-libc` archive resolves exactly `index`/`rindex`, `strchr`/`strchrnul`, `strcmp`, GNU `strverscmp`, `strcspn`, `strlen`, `strncmp`, `strnlen`, `strpbrk`, `strrchr`, `strspn`, and `strstr` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's public `index` and `rindex` forwarding wrappers map to `strchr` and `strrchr`, while private `__strchrnul`/`__memrchr` helpers are hidden strong archive providers for weak public aliases; GNU `strverscmp` retains musl's scalar digit/leading-zero comparison state machine, and the selected implementation retains scalar fallback behavior as an intentional mapping boundary. This artifact is deliberately narrower than general string, locale, allocation, or stateful C text support; it does not select libc.so, CRT, dynamic TLS, loader, sysroot, allocator, or public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
   "libc/src/lib.rs",
   "libc/src/c_abi/x86_64/static_c_abi.rs",
   "libc/src/c_abi/x86_64/byte_strings.rs",
+  "libc/src/c_abi/x86_64/memory_search.rs",
   "include/string.h",
   "include/strverscmp.h",
   "include/strings.h",
@@ -9486,7 +9487,7 @@ source_owners = [
 ]
 x86_abi_prerequisites = [
   "The selected public byte-string ABI uses const char pointers, LP64 size_t lengths, and C pointer-return/signature conventions for the named search, comparison, span, and length functions, including GNU `strverscmp`'s signed int comparison result",
-  "Pinned musl 1.2.6 `src/string/index.c` and `src/string/rindex.c` are public forwarding wrappers to the selected strchr and strrchr implementations; its `src/string/strverscmp.c` defines the selected GNU scalar digit/leading-zero comparison state machine, while private `__strchrnul` and `__memrchr` helpers remain internal mapping details, not additional exports",
+  "Pinned musl 1.2.6 `src/string/index.c` and `src/string/rindex.c` are public forwarding wrappers to the selected strchr and strrchr implementations; its `src/string/strverscmp.c` defines the selected GNU scalar digit/leading-zero comparison state machine, while private `__strchrnul` and `__memrchr` helpers are hidden strong archive providers; strchr and strrchr retain those implementations when the public weak aliases are replaced",
   "GNU-gated `strverscmp` and `strchrnul` have no declaration under strict POSIX selectors; the selected scalar implementations retain byte-at-a-time fallback behavior where no vector or architecture-specific kernel is admitted",
 ]
 x86_header_prerequisites = ["The candidate preprocesses project string.h and strings.h with the named declarations, GNU-gated `strverscmp`/`strchrnul`, and feature-selected index/rindex aliases; the separate C/C++ header gate compares these declarations with pinned musl and does not select a general installed-header or C text ABI claim."]
@@ -9778,7 +9779,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_artifact]]
 id = "static-c-memory-search"
-description = "Private native x86 selected-static-archive memory-search block. One dependency-free `crabc-libc` archive resolves exactly `memchr`, GNU `memrchr`, and POSIX/GNU `memmem` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's private `__memrchr` helper remains an internal mapping detail and is not exported; the selected implementation is stateless, allocation-free, and direct. This artifact deliberately excludes general string, locale, allocation, errno/TLS, dynamic-runtime, and public x86 support."
+description = "Private native x86 selected-static-archive memory-search block. One dependency-free `crabc-libc` archive resolves exactly `memchr`, GNU `memrchr`, and POSIX/GNU `memmem` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's private `__memrchr` helper is the hidden strong archive provider of the weak public `memrchr` alias; the selected implementation is stateless, allocation-free, and direct. This artifact deliberately excludes general string, locale, allocation, errno/TLS, dynamic-runtime, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
@@ -9808,7 +9809,7 @@ oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ec
 
 [[family.verified_artifact]]
 id = "static-c-string-copy"
-description = "Private native x86 selected-static-archive C-string-copy block. One dependency-free `crabc-libc` archive resolves exactly `stpcpy`, `stpncpy`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strlcpy`, and `strlcat` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's private `__stpcpy`/`__stpncpy` helpers remain internal and unexported; the selected scalar fallback is stateless and allocation-free. This artifact excludes bounded byte transfer, duplication/allocation, token state, locale, errno/TLS, dynamic runtime, and public x86 support."
+description = "Private native x86 selected-static-archive C-string-copy block. One dependency-free `crabc-libc` archive resolves exactly `stpcpy`, `stpncpy`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strlcpy`, and `strlcat` into a freestanding C fixture after an equivalent pinned-musl execution. Musl's private `__stpcpy`/`__stpncpy` helpers are hidden strong archive providers for weak public aliases; the selected scalar fallback is stateless and allocation-free. This artifact excludes bounded byte transfer, duplication/allocation, token state, locale, errno/TLS, dynamic runtime, and public x86 support."
 source_owners = [
   "compat/upstreams.toml",
   "libc/Cargo.toml",
@@ -9829,7 +9830,7 @@ source_owners = [
 ]
 x86_abi_prerequisites = [
   "The selected C copy/concatenation ABI uses mutable/const char pointers, LP64 size_t lengths, pointer-return conventions for stpcpy/stpncpy and the standard copies/concatenations, and size_t return conventions for strlcpy/strlcat",
-  "Pinned musl 1.2.6 src/string/stpcpy.c and src/string/stpncpy.c expose private __stpcpy/__stpncpy helpers then public weak aliases; the selected archive retains only public stpcpy/stpncpy, while strcpy/strncpy preserve their helper-forwarding relationships",
+  "Pinned musl 1.2.6 src/string/stpcpy.c and src/string/stpncpy.c expose private __stpcpy/__stpncpy helpers then public weak aliases; the selected archive retains the hidden strong providers and public weak same-address aliases, while strcpy/strncpy call the providers directly",
   "strcpy/strncpy/strcat/strncat are unconditional; stpcpy/stpncpy are POSIX/XOPEN/GNU/BSD-gated; and strlcpy/strlcat are GNU/BSD-gated. Source and destination overlap is outside the selected copy contract; the direct scalar leaf has no errno, TLS, syscall, allocator, or mutable global state",
 ]
 x86_header_prerequisites = ["The candidate preprocesses project string.h with unconditional strcpy/strncpy/strcat/strncat, POSIX/XOPEN/GNU/BSD-gated stpcpy/stpncpy, and GNU/BSD-gated strlcpy/strlcat declarations. The same direct gate retains exact GNU C strdupa syntax: a caller-provided `alloca.h` permits its C caller-frame expansion, while source-faithful C++ keeps the macro visible in compiler-native mode but rejects the raw void-pointer expansion. It is header-only and selects neither a strdupa symbol nor allocator/runtime/archive linkage; the separate C/C++ gate compares these feature selections with pinned musl and does not select a general installed-header or C text ABI claim."]
@@ -11491,16 +11492,16 @@ source_owners = [
   "scripts/check_structure.py",
 ]
 x86_abi_prerequisites = [
-  "Pinned musl 1.2.6 src/thread/pthread_detach.c and src/thread/thrd_detach.c map a successful detach to the pthread/C11 success vocabulary. The comparable fixture uses only ordinary external selected workers; it deliberately does not treat repeated/racing detach or any post-detach handle use as portable musl behavior.",
+  "Pinned musl 1.2.6 src/thread/pthread_detach.c defines the source-local __pthread_detach body with weak_alias(__pthread_detach, thrd_detach) and the corresponding pthread_detach alias. Both share successful detach and the raw pthread error result; there is no independent C11 error-translation wrapper. The comparable fixture uses only ordinary external selected workers; it deliberately does not treat repeated/racing detach or any post-detach handle use as portable musl behavior.",
   "The selected x86 control record keeps an atomic `Joinable`, `JoinClaimed`, `Detached`, or `DetachedReclaiming` lifecycle state. Lookup, one-winner Joinable transition, and withdrawal happen under the fixed private TP registry lock, so join versus detach and detach versus detach cannot retain a raw control pointer while a later reaper unmaps it.",
   "Linux 5.10 clone=56 installs the fresh Static Initial TLS v1 Variant-II `%fs:0` TP with CLONE_SETTLS and arranges CLONE_CHILD_CLEARTID. `pthread_detach` and `thrd_detach` are state-only: they issue no futex wait, mapping release, or syscall. A later selected create/join boundary observes child_tid==0 after CLONE_CHILD_CLEARTID, claims detached reaping, withdraws the registry entry, and then may release the TLS image and control/stack mapping; join retains futex=202 and reclamation uses munmap=11.",
-  "System V AMD64 passes pthread_t/thrd_t as opaque pointer values. The C11 wrapper maps the shared success/error status without converting a callback or result representation; no detached callback result is decoded or handed to a joiner.",
+  "System V AMD64 passes pthread_t/thrd_t as opaque pointer values. The C11 alias shares the raw pthread success/error status without converting a callback or result representation; no detached callback result is decoded or handed to a joiner.",
 ]
 x86_header_prerequisites = [
   "The fixture preprocesses project errno.h, pthread.h, threads.h, bits/alltypes.h, and features.h. The separate 28-context C/C++ pthread/C11 header matrix checks pthread_detach/thrd_detach signatures and unmangled C linkage alongside the existing selected lifecycle declarations; it is not a broad header or pthread/C11 implementation claim.",
 ]
 native_evidence = [{ state = "verified", command = "./scripts/dev-x86_64.sh libc-pthread-detach", scope = "Pinned-musl project-header C reference plus a true dependency-free x86 crabc-libc archive and `-nostdlib -static` candidate. The comparable reference and candidate routes detach held external pthread/C11 workers before and after the fixture's callback-completion signal on normal or selected pthread_exit/thrd_exit routes, preserving each parent errno; they deliberately do not prove a detach call after kernel exit. Candidate-only routes prove selected self-detach completion, null-handle status mapping, double-detach and join-vs-detach/detach-vs-detach one-winner ownership outcomes, an explicitly nonportable held-worker join-after-detach diagnostic, and 64-slot reuse only through a later pthread_create after CLONE_CHILD_CLEARTID. Archive/final-ELF checks require exact selected exports, hidden clone=56, direct initial TLS, no interpreter/DT_NEEDED/unresolved symbol or dynamic TLS resolver/allocator/ambient runtime, and both source/disassembly ratchets that detach remains a no-syscall state transition while clear-child-tid gated reaping occurs only at later selected create/join boundaries. It does not establish general pthread/C11 behavior, detached-at-create attributes, portable post-detach handle operations, general detached-thread reclamation, dynamic/loader TLS, CRT, sysroot, or public x86 support." }]
-oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and ordinary pthread_detach/thrd_detach C/POSIX behavior oracle for src/thread/pthread_detach.c and src/thread/thrd_detach.c; candidate-only ownership diagnostics remain explicitly outside that comparison." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clone=56, CLONE_SETTLS, CLONE_CHILD_CLEARTID, futex=202, mmap=9, munmap=11, and SYS_exit=60 lifetime ordering for the selected worker mappings." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 opaque pthread_t/thrd_t pointer ABI and Variant-II `%fs:0` initial-exec TLS contract for the selected worker image." }]
+oracle = [{ kind = "c-posix", source = "Pinned musl 1.2.6 release commit 9fa28ece75d8a2191de7c5bb53bed224c5947417", role = "Musl MIT source mapping and ordinary pthread_detach/thrd_detach C/POSIX behavior oracle for src/thread/pthread_detach.c and its weak_alias(__pthread_detach, thrd_detach); candidate-only ownership diagnostics remain explicitly outside that comparison." }, { kind = "kernel-abi", source = "Linux 5.10 x86-64 ABI", role = "clone=56, CLONE_SETTLS, CLONE_CHILD_CLEARTID, futex=202, mmap=9, munmap=11, and SYS_exit=60 lifetime ordering for the selected worker mappings." }, { kind = "elf-abi", source = "System V AMD64 psABI", role = "LP64 opaque pthread_t/thrd_t pointer ABI and Variant-II `%fs:0` initial-exec TLS contract for the selected worker image." }]
 
 [[family.verified_artifact]]
 id = "static-c-thrd-sleep"
@@ -20424,6 +20425,9 @@ aliases = [
   { name = "getwc_unlocked", target = "__fgetwc_unlocked", binding = "weak-same-address" },
   { name = "getwchar_unlocked", target = "getwchar", binding = "weak-same-address" },
   { name = "localtime_r", target = "__localtime_r", binding = "weak-same-address" },
+  { name = "mkostemps", target = "__mkostemps", binding = "weak-same-address" },
+  { name = "pthread_cond_timedwait", target = "__pthread_cond_timedwait", binding = "weak-same-address" },
+  { name = "pthread_mutex_timedlock", target = "__pthread_mutex_timedlock", binding = "weak-same-address" },
   { name = "pthread_timedjoin_np", target = "__pthread_timedjoin_np", binding = "weak-same-address" },
   { name = "pthread_tryjoin_np", target = "__pthread_tryjoin_np", binding = "weak-same-address" },
   { name = "pututline", target = "pututxline", binding = "weak-same-address" },

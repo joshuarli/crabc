@@ -1717,7 +1717,7 @@ unsafe fn join_selected_worker_inner(
         for required in (
             "static_c_abi_exports.txt", "-nostdlib -static", "--no-undefined",
             "reference-fingerprint", "candidate-fingerprint",
-            "[[:space:]]TLS[[:space:]]", "__newlocale", "strxfrm",
+            "[[:space:]]TLS[[:space:]]", "strfmon", "strxfrm",
         ):
             self.assertIn(required, artifact_runner)
         self.assertIn('id = "static-c-locale-ctype-locators"', parity)
@@ -1938,306 +1938,266 @@ unsafe fn join_selected_worker_inner(
         self.assertIn("    libc-math-x87-extended)", source)
         self.assertIn("    libc-math-special)", source)
         self.assertIn("    libc-fdim) ;;", source)
-        preflight = source.split('case "$command" in\n', 1)[1].split(
-            '\nesac\n\nrequire_native_linux_x86_64_host\n\ncase "$command" in\n', 1
-        )[0]
+        # Helpers contain their own indented command cases. The dispatcher
+        # owns three top-level cases: admission, argument preparation, and
+        # execution; audit those boundaries independently.
+        command_cases = re.findall(
+            r'^case "\$command" in\n(.*?)^esac$', source, re.MULTILINE | re.DOTALL
+        )
+        self.assertEqual(len(command_cases), 3)
+        preflight = command_cases[0]
         actual_groups = tuple(
             line.strip()[:-4]
             for line in preflight.splitlines()
             if line.strip().endswith(") ;;")
         )
+        # This records the documented no-argument admission surface directly.
+        # Keep it independent of the dispatcher parser so additions need an
+        # explicit roster review rather than being accepted by construction.
         expected_groups = (
-            "getloadavg-header-abi",
-            "libc-getloadavg",
-            "sleep-header-abi",
-            "libc-sleep",
-            "mq-setattr-header-abi|libc-mq-setattr",
-            "timerfd-header-abi|signalfd-header-abi",
-            "signal-legacy-aliases-header-abi|libc-signal-legacy-aliases|signal-sysv-helpers-header-abi|libc-signal-sysv-helpers",
-            "psignal-header-abi|libc-psignal|libc-process-signal",
-            "h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime",
-            "legacy-misc-header-abi|libc-legacy-misc",
-            "ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-interval-timers|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions",
-            "libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min",
-            "sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi",
-            "sched-cpu-set-source-form",
-            "ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp",
-            "temporary-names-header-abi|libc-temporary-names",
-            "file-handles-header-abi|libc-file-handles",
-            "posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions|process-exec-header-abi|libc-process-exec",
-            "readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync",
-            "tee-header-abi|splice-header-abi",
-            "sync-file-range-header-abi|copy-file-range-header-abi",
-            "stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi|stdio-fixed-format-whitespace-scan-header-abi|stdio-fixed-literal-scan-header-abi|stdio-fixed-empty-format-scan-header-abi|stdio-fixed-suppressed-character-scan-header-abi|stdio-fixed-suppressed-string-scan-header-abi|stdio-fixed-suppressed-scanset-scan-header-abi|stdio-fixed-suppressed-count-scan-header-abi",
-            "math-complex-complete-header-abi|libc-math-complex-complete",
-            "stdio-permanent-byte-io-header-abi",
-            "stdio-permanent-status-header-abi",
-            "stdio-permanent-freading-stdin-header-abi",
-            "stdio-permanent-fsetlocking-stdin-header-abi",
-            "stdio-permanent-fseterr-stdin-header-abi",
-            "stdio-permanent-freadable-stdin-header-abi",
-            "stdio-permanent-fwritable-stderr-header-abi",
-            "stdio-permanent-fbufsize-stderr-header-abi",
-            "stdio-permanent-flbf-stderr-header-abi",
-            "stdio-permanent-fileno-header-abi",
-            "stdio-permanent-fileno-unlocked-header-abi",
-            "stdio-permanent-feof-unlocked-header-abi",
-            "stdio-permanent-ferror-unlocked-header-abi",
-            "clock-adjtime-header-abi",
-            "clock-settime-header-abi",
-            "timer-getoverrun-header-abi",
-            "timer-delete-header-abi",
-            "timer-gettime-header-abi",
-            "timer-settime-header-abi",
-            "fopen64-header-abi",
-            "pthread-spin-destroy-header-abi|pthread-spin-operations-header-abi",
-            "pthread-header-source-form",
-            "sys-io-header-abi",
-            "tcp-header-abi",
-            "stddef-header-abi",
-            "atomic-addressable-abi",
-            "image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-general-initial-graph|ldso-general-initial-target-root|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail|pthread-spin-init-header-abi",
-            "math-elementary-long-double-header-abi|libc-math-elementary-long-double",
-            "ldso-fixed-graph-dlfcn",
-            "ldso-public-dlfcn|ldso-dladdr-symbol-bounds",
-            "ldso-bounded-dlopen",
-            "math-special-header-abi|libc-math-special",
-            "math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow",
-            "inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi|service-lifecycle-header-abi",
-            "libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser",
-            "ldso-target-root",
-            "libc-fenv-rounding",
-            "libc-math-minmax",
-            "libc-math-bit-sign",
-            "libc-math-trunc",
-            "libc-math-fmod",
-            "libc-math-cbrt",
-            "libc-math-ceil",
-            "libc-math-floor",
-            "libc-math-round",
-            "libc-math-log2",
-            "libc-fdim",
-            "machine-context-header-abi",
-            "memory-sync-header-abi",
-            "memory-locking-header-abi",
-            "memfd-create-header-abi",
-            "vector-io-header-abi",
-            "libc-crt1-static-tls",
-            "owned-static-sysroot",
-            "owned-loader-short-stack|owned-dynamic-sysroot",
-            "crt-object-bundle",
-            "crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto",
-            "linux-5-10-uapi",
-            "candidate-header-closure",
-            "headers-layouts-aggregate",
-            "installed-header-tree-closure",
-            "selected-header-install-projection",
-            "header-callable-visibility-matrix",
-            "header-callable-disposition",
-            "project-header-extension-policy",
-            "header-abi-matrix",
-            "header-record-layout-matrix",
-            "header-declaration-macro-visibility-matrix",
-            "header-callable-linkage-audit",
-            "header-callable-provider-linkage-audit",
-            "uapi-wrapper-matrix",
-            "epoll-header-abi",
-            "event-descriptors-header-abi",
-            "fanotify-header-abi",
-            "dirent-header-abi",
-            "ftw-header-abi",
-            "stat-ftw-header-source-form",
-            "param-header-source-form",
-            "pathname-lifecycle-header-abi",
-            "timeval-transitive-header-abi",
-            "sys-time-direct-header-abi",
-            "access-header-abi",
-            "xattr-header-abi",
-            "madvise-reference",
-            "basename-header-abi|siginterrupt-header-abi|mlockall-header-abi|munlockall-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-basename|libc-siginterrupt|libc-mlockall|libc-munlockall|libc-ftime|libc-clock-getcpuclockid",
-            "umask-header-abi|intrusive-queue-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf",
-            "ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi|uchar-stateful-header-abi",
-            "integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|crypt-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|wait-extensions-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi",
-            "posix-exit-header-abi|posix-spawnattr-init-header-abi|posix-spawnattr-getpgroup-header-abi|posix-spawnattr-signal-fields-header-abi|posix-spawnattr-getschedparam-header-abi|posix-spawnattr-getschedpolicy-header-abi",
-            "ffs-header-abi",
-            "memory-special-header-abi",
-            "memccpy-header-abi",
-            "aio-error-header-abi",
-            "byte-strings-header-abi",
-            "memory-search-header-abi",
-            "memccpy-header-abi",
-            "mempcpy-header-abi",
-            "strsep-header-abi",
-            "strtok-header-abi|stateful-byte-strings-header-abi",
-            "string-copy-header-abi",
-            "error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi",
-            "string-duplication-header-abi",
-            "random-entropy-header-abi",
-            "sysv-semaphore-header-abi|posix-semaphore-header-abi",
-            "sysv-message-shared-memory-header-abi",
-            "libc-event-descriptors",
-            "libc-extended-attributes",
-            "libc-pathname-lifecycle",
-            "libc-directory-streams",
-            "libc-filesystem-traversal",
-            "libc-filesystem-directory",
-            "libc-filesystem-extensions",
-            "libc-lchmod-unsupported",
-            "libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-format-scan|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition",
-            "libc-pthread-identity",
-            "libc-pthread-affinity",
-            "libc-pthread-cpuclock",
-            "libc-pthread-name",
-            "libc-pthread-attributes|libc-pthread-attr-lifecycle|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init|libc-pthread-spin-operations",
-            "libc-pthread-spin-destroy",
-            "libc-pthread-detach",
-            "libc-thrd-yield",
-            "libc-memory-sync",
-            "libc-memory-locking",
-            "libc-memfd-create",
-            "libc-legacy-memory",
-            "libc-memory-special",
-            "libc-memccpy",
-            "libc-mempcpy",
-            "libc-strsep",
-            "libc-strtok|libc-stateful-byte-strings",
-            "libc-allocator-runtime",
-            "libc-allocator-basic-runtime-v1",
-            "libc-allocator-string-duplication",
-            "libc-scandir",
-            "libc-allocator-observability",
-            "libc-alloca",
-            "libc-static-c-abi-differential",
-            "libc-static-c-abi-same-object-differential|qualification-posix-abi-admission",
-            "libc-interface-discovery",
-            "libc-posix-exit|libc-posix-spawnattr-init|libc-posix-spawnattr-getpgroup|libc-posix-spawnattr-signal-fields|libc-posix-spawnattr-getschedparam|libc-posix-spawnattr-getschedpolicy",
-            "libc-clock-adjtime",
-            "libc-clock-settime",
-            "libc-timer-getoverrun",
-            "libc-timer-delete",
-            "libc-timer-gettime",
-            "libc-timer-settime",
-            "libc-tee|libc-splice",
-            "libc-sync-file-range|libc-copy-file-range",
-            "libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-crypt-allocator-composition|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-service-lifecycle|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-uchar-stateful|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network",
-            "libc-vector-io|libc-uio-cxx-linkage",
-            "libc-sysv-semaphore|libc-posix-semaphore",
-            "libc-sysv-message-shared-memory",
-            "libc-math-exp",
-            "libc-math-cos",
-            "libc-math-cosh",
-            "libc-math-asinh",
-            "libc-math-exp10f",
-            "libc-math-sinh",
-            "libc-pthread-condattr-pshared",
-            "libc-pthread-attr-lifecycle",
-            "libc-pthread-condattr-clock",
-            "libc-pthread-mutexattr-protocol-query",
-            "libc-pthread-mutexattr-pshared-query",
-            "libc-pthread-mutexattr-robust-query",
-            "libc-pthread-mutexattr-type-query",
-            "libc-pthread-mutexattr-type-setter",
-            "libc-pthread-mutex-prioceiling-query",
-            "libc-pthread-getconcurrency",
-            "libc-pthread-setconcurrency",
-            "libc-rand-r|libc-lrand48",
-            "feature-profile-control-plane-header-abi",
-            "terminal-streams-header-topology",
-            "link-header-source-form",
-            "reboot-header-source-form",
-            "stdio-header-source-form",
-            "math-tgmath-source-form",
-            "mman-mcl-onfault-header-source-form",
-            "mount-header-source-form",
-            "klog-header-source-form",
-            "cachectl-header-source-form",
-            "syslog-header-abi",
-            "sysmacros-header-source-form",
-            "ioctl-header-source-form",
-            "fcntl-event-header-topology",
-        )
-        expected_groups = tuple(
-            group.replace(
-                "libc-math-x87-extended|libc-memory",
-                "libc-math-x87-extended|libc-math-long-double-completion|"
-                "libc-math-elementary-fenv-sensitive|libc-memory",
-            ).replace(
-                "ldso-general-initial-target-root|ldso-initial-tls",
-                "ldso-general-initial-target-root|ldso-general-initial-tls|"
-                "ldso-general-initial-tls-target-root|ldso-initial-tls",
-            )
-            for group in expected_groups
-        )
-        bounded_dlopen_index = expected_groups.index("ldso-bounded-dlopen") + 1
-        expected_groups = (
-            expected_groups[:bounded_dlopen_index]
-            + (
-                "loader-libc-tls-runtime-v1",
-                "loader-libc-tls-runtime-v1-registry",
-                "loader-libc-general-tls-runtime-v1",
-                "loader-libc-general-tls-runtime-v1-target-root",
-                "dynamic-main-thread-runtime-v1",
-                "dynamic-main-thread-runtime-v1-target-root",
-            )
-            + expected_groups[bounded_dlopen_index:]
-        )
-        lchmod_index = expected_groups.index("libc-lchmod-unsupported") + 1
-        expected_groups = (
-            expected_groups[:lchmod_index]
-            + ("libc-fopen64-alias",)
-            + expected_groups[lchmod_index:]
-        )
-        dynamic_main_index = (
-            expected_groups.index("dynamic-main-thread-runtime-v1-target-root") + 1
-        )
-        expected_groups = (
-            expected_groups[:dynamic_main_index]
-            + ("general-dynamic-lifecycle", "general-relocations")
-            + expected_groups[dynamic_main_index:]
-        )
-        fenv_rounding_index = expected_groups.index("libc-fenv-rounding") + 1
-        expected_groups = (
-            expected_groups[:fenv_rounding_index]
-            + ("libc-owned-scalar-math", "libc-owned-binary80-math")
-            + expected_groups[fenv_rounding_index:]
-        )
-        static_sysroot_index = expected_groups.index("owned-static-sysroot")
-        expected_groups = (
-            expected_groups[:static_sysroot_index]
-            + (
-                "owned-crypt-runtime",
-                "owned-system-cancellation",
-                "owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-process-trio|owned-process-control|"
-                "owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition",
-                "owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern",
-                "owned-pthread-spin",
-                "owned-syslog",
-                "owned-error-reporting",
-                "owned-io-cancellation",
-                "owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation",
-                "owned-dynamic-io-cancellation",
-                "owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex",
-                "owned-pthread-lifecycle",
-                "qualification-manifest",
-            )
-            + expected_groups[static_sysroot_index:]
-        )
-        static_sysroot_index = expected_groups.index("owned-static-sysroot") + 1
-        expected_groups = (
-            expected_groups[:static_sysroot_index]
-            + ("lua-static-source-build", "lua-dynamic-source-build", "libc-owned-wordexp")
-            + expected_groups[static_sysroot_index:]
-        )
-        dynamic_sysroot_index = expected_groups.index("owned-loader-short-stack|owned-dynamic-sysroot") + 1
-        expected_groups = (
-            expected_groups[:dynamic_sysroot_index]
-            + ("owned-dynamic-pthread-exit", "owned-dynamic-fork", "materialized-dynamic-sysroot")
-            + expected_groups[dynamic_sysroot_index:]
-        )
-        expected_groups = tuple(
-            "owned-static-sysroot|owned-posix-static-products|owned-posix-family"
-            if group == "owned-static-sysroot" else group
-            for group in expected_groups
+            'perf-native',
+            'getloadavg-header-abi',
+            'libc-getloadavg',
+            'sleep-header-abi',
+            'libc-sleep',
+            'mq-setattr-header-abi|libc-mq-setattr',
+            'timerfd-header-abi|signalfd-header-abi',
+            'signal-legacy-aliases-header-abi|libc-signal-legacy-aliases|signal-sysv-helpers-header-abi|libc-signal-sysv-helpers',
+            'psignal-header-abi|libc-psignal|libc-process-signal',
+            'h-errno-header-abi|libc-h-errno|resolver-runtime-header-abi|libc-resolver-runtime',
+            'legacy-misc-header-abi|libc-legacy-des-compat|libc-legacy-misc',
+            'ualarm-header-abi|usleep-header-abi|libc-timerfd|libc-signalfd|libc-sigpause|libc-sigisemptyset|libc-sigandset-sigorset|libc-sigpending|libc-sigrtmax|libc-sigrtmin|libc-sched-getscheduler|libc-sched-rr-interval|libc-alarm|libc-ualarm|libc-interval-timers|libc-usleep|libc-sigaddset-sigdelset-sigfillset|libc-sched-getparam|libc-sched-setparam|libc-sched-setscheduler|libc-sched-getaffinity|libc-sched-setaffinity|libc-setfsuid|libc-setfsgid|libc-personality|libc-io-permissions',
+            'libc-sched-cpucount|libc-sched-getcpu|libc-sched-priority-bounds|libc-sched-yield|libc-sched-get-priority-max|libc-sched-get-priority-min',
+            'sched-cpucount-header-abi|sched-cpu-macros-header-abi|sched-getscheduler-header-abi|sched-rr-interval-header-abi|sched-priority-bounds-header-abi|sched-get-priority-max-header-abi|sched-get-priority-min-header-abi|sched-getparam-header-abi|sched-setparam-header-abi|sched-setscheduler-header-abi|sched-getaffinity-header-abi|sched-setaffinity-header-abi|setfsuid-header-abi|setfsgid-header-abi|personality-header-abi',
+            'sched-cpu-set-source-form',
+            'ctermid-header-abi|grantpt-header-abi|unlockpt-header-abi|gethostid-header-abi|issetugid-header-abi|endhostent-header-abi|protocol-database-header-abi|ether-line-header-abi|ether-header-abi|res-init-header-abi|posix-spawnattr-destroy-header-abi|posix-spawnattr-getflags-header-abi|posix-spawnattr-setpgroup-header-abi|posix-spawnattr-setschedparam-header-abi|posix-spawnattr-setschedpolicy-header-abi|posix-spawn-file-actions-init-header-abi|getpagesize-header-abi|gettid-header-abi|posix-close-header-abi|isatty-header-abi|ttyname-r-header-abi|tcgetpgrp-header-abi|tcsetpgrp-header-abi|getpass-header-abi|fchdir-header-abi|ulimit-header-abi|libc-ctermid|libc-grantpt|libc-unlockpt|libc-gethostid|libc-issetugid|libc-endhostent|libc-sethostent|libc-protocol-database|libc-ether-line|libc-ether|libc-res-init|libc-posix-spawnattr-destroy|libc-posix-spawnattr-getflags|libc-posix-spawnattr-setpgroup|libc-posix-spawnattr-setschedparam|libc-posix-spawnattr-setschedpolicy|libc-posix-spawn-file-actions-init|libc-getpagesize|libc-gettid|libc-posix-close|libc-isatty|libc-ttyname-r|libc-tcgetpgrp|libc-tcsetpgrp|libc-getpass|libc-fchdir|libc-ulimit|mkfifo-header-abi|mkdirat-header-abi|mkfifoat-header-abi|libc-mkfifo|libc-mkdirat|libc-mkfifoat|mktemp-header-abi|libc-mktemp',
+            'temporary-names-header-abi|libc-temporary-names',
+            'file-handles-header-abi|libc-file-handles',
+            'posix-spawn-file-actions-header-abi|libc-posix-spawn-file-actions|process-exec-header-abi|libc-process-exec',
+            'readlinkat-header-abi|libc-readlinkat|linkat-header-abi|libc-linkat|renameat2-header-abi|libc-renameat2|lchown-header-abi|libc-lchown|hasmntopt-header-abi|libc-hasmntopt|unlinkat-header-abi|libc-unlinkat|chown-header-abi|libc-chown|sync-header-abi|libc-sync',
+            'tee-header-abi|splice-header-abi',
+            'sync-file-range-header-abi|copy-file-range-header-abi',
+            'stdio-permanent-line-io-header-abi|stdio-octal-hex-scan-header-abi|stdio-fixed-percent-scan-header-abi|stdio-fixed-format-whitespace-scan-header-abi|stdio-fixed-literal-scan-header-abi|stdio-fixed-empty-format-scan-header-abi|stdio-fixed-suppressed-character-scan-header-abi|stdio-fixed-suppressed-string-scan-header-abi|stdio-fixed-suppressed-scanset-scan-header-abi|stdio-fixed-suppressed-count-scan-header-abi',
+            'math-complex-complete-header-abi|libc-math-complex-complete',
+            'stdio-permanent-byte-io-header-abi',
+            'stdio-permanent-status-header-abi',
+            'stdio-permanent-freading-stdin-header-abi',
+            'stdio-permanent-fsetlocking-stdin-header-abi',
+            'stdio-permanent-fseterr-stdin-header-abi',
+            'stdio-permanent-freadable-stdin-header-abi',
+            'stdio-permanent-fwritable-stderr-header-abi',
+            'stdio-permanent-fbufsize-stderr-header-abi',
+            'stdio-permanent-flbf-stderr-header-abi',
+            'stdio-permanent-fileno-header-abi',
+            'stdio-permanent-fileno-unlocked-header-abi',
+            'stdio-permanent-feof-unlocked-header-abi',
+            'stdio-permanent-ferror-unlocked-header-abi',
+            'clock-adjtime-header-abi',
+            'clock-settime-header-abi',
+            'timer-getoverrun-header-abi',
+            'timer-delete-header-abi',
+            'timer-gettime-header-abi',
+            'timer-settime-header-abi',
+            'fopen64-header-abi',
+            'pthread-spin-destroy-header-abi|pthread-spin-operations-header-abi',
+            'pthread-header-source-form',
+            'sys-io-header-abi',
+            'tcp-header-abi',
+            'stddef-header-abi',
+            'atomic-addressable-abi',
+            'project-header-extension-policy',
+            'image|musl-oracle|header-abi-reference|public-header-surface|header-abi-project|math-complex-header-abi|sys-reg-header-abi|types-header-abi|stat-header-abi|utime-header-abi|pthread-c11-header-abi|pthread-cancellation-header-abi|stdlib-header-abi|stdio-standard-header-abi|time-header-abi|poll-header-abi|select-header-abi|fcntl-header-abi|descriptor-advice-header-abi|filesystem-capacity-header-abi|flock-header-abi|sendfile-header-abi|ioctl-header-abi|unistd-header-abi|system-header-abi|syscall-header-abi|signal-header-abi|termios-header-abi|mman-header-abi|resource-header-abi|socket-header-abi|socket-messages-header-abi|random-entropy-header-abi|mm-abi-reference|mapping-reference|memory-vm-reference|pty-basic-reference|terminal-reference|mlock-reference|msync-reference|mincore-reference|fs-advice-reference|memfd-reference|ftruncate-reference|statfs-reference|timestamp-reference|path-lifecycle-reference|namespace-reference|path-core-reference|xattr-reference|directory-reference|temporary-object-reference|statx-reference|cwd-canonicalize-reference|root-change-reference|mount-reference|thread-kill-reference|ipc-reference|shm-reference|inotify-reference|socket-transport-reference|interface-device-reference|resolver-transport-reference|resolver-facade-reference|netdb-reference|users-databases-reference|posix-fallocate-reference|fallocate-reference|file-position-reference|sync-reference|syncfs-reference|sync-file-range-reference|rand-reference|time-abi-reference|time-observation-reference|calendar-time-reference|advanced-time-reference|relative-sleep-reference|clock-nanosleep-reference|getitimer-reference|setitimer-reference|timerfd-reference|pselect-reference|poll-reference|ppoll-reference|epoll-reference|process-identity-reference|child-ownership-reference|getgroups-reference|process-session-reference|pidfd-open-reference|fcntl-getlk-reference|fcntl-status-reference|flock-reference|sendfile-reference|copy-file-range-reference|scheduler-priority-bounds-reference|rr-interval-reference|sched-affinity-reference|sched-affinity-set-reference|priority-reference|setpriority-reference|rlimit-reference|rlimit-targeted-reference|setrlimit-reference|umask-reference|rusage-reference|times-reference|fstat-reference|statat-reference|getcwd-reference|readlinkat-reference|access-reference|system-reference|thread-reference|thread-credentials-reference|fs-credentials-reference|core|facade|facade-record-owning|libc-syscall|libc-errno-tls|libc-stat-compat|libc-credentials|libc-bootstrap-primitives|libc-signal-control|libc-signal-execution|libc-static-tls-v1|libc-crt-static-tls|libc-pthread-create-join-tls|libc-c11-lifecycle|libc-c11-plain-sync|libc-pthread-c11-once|libc-pthread-c11-tsd|libc-pthread-tls-aggregate|libc-pthread-cancel-deferred|libc-pthread-atfork|libc-thrd-sleep|libc-pthread-mutex-normal|libc-pthread-rwlock|libc-pthread-cond-private|libc-termios-control|libc-process-context|libc-environment|libc-descriptor-io|libc-descriptor-lifecycle|libc-timestamp-updates|libc-process-resources|libc-socket-transport|libc-socket-messages|libc-thread-pointer|libc-foundation|libc-fenv|libc-math-complex|libc-elementary-sqrt-fenv|libc-math-x87-extended|libc-math-long-double-completion|libc-math-elementary-fenv-sensitive|libc-memory|libc-setjmp|libc-atomic|libc-clone-raw|libc-signal-altstack|libc-signal-foundation|ldso-relocation|ldso-image|ldso-initial-graph|ldso-general-initial-graph|ldso-general-initial-target-root|ldso-general-initial-tls|ldso-general-initial-tls-target-root|ldso-initial-tls|ldso-initial-exec-tls|ldso-owned-crt-handoff|ldso-fixed-graph-introspection|ldso-dynamic-admission|libc-stack-chk-fail|pthread-spin-init-header-abi',
+            'math-elementary-long-double-header-abi|libc-math-elementary-long-double',
+            'ldso-fixed-graph-dlfcn',
+            'ldso-public-dlfcn|ldso-dladdr-symbol-bounds',
+            'ldso-bounded-dlopen',
+            'loader-libc-tls-runtime-v1',
+            'loader-libc-tls-runtime-v1-registry',
+            'loader-libc-general-tls-runtime-v1',
+            'loader-libc-general-tls-runtime-v1-target-root',
+            'dynamic-main-thread-runtime-v1',
+            'dynamic-main-thread-runtime-v1-target-root',
+            'general-dynamic-lifecycle',
+            'general-relocations',
+            'math-special-header-abi|libc-math-special',
+            'math-exp2-header-abi|math-expm1-header-abi|math-log10-header-abi|libc-math-exp2|libc-math-expm1|libc-math-log10|math-exp10-header-abi|math-log-header-abi|math-sin-header-abi|math-tan-header-abi|math-tanh-header-abi|math-atanh-header-abi|math-acosh-header-abi|math-sincos-header-abi|math-pow-header-abi|libc-math-exp10|libc-math-log|libc-math-sin|libc-math-tan|libc-math-tanh|libc-math-atanh|libc-math-acosh|libc-math-sincos|libc-math-pow',
+            'inet-address-header-abi|nameser-header-abi|quota-header-abi|endservent-header-abi|service-lifecycle-header-abi',
+            'libc-network-byte-order|libc-dn-skipname|libc-dn-expand|libc-ns-flagdata|libc-ns-get16|libc-ns-get32|libc-ns-put16|libc-ns-put32|libc-ns-skiprr|libc-nameser-wire-aggregate|libc-nameser-message-parser',
+            'ldso-target-root',
+            'libc-fenv-rounding',
+            'math-scalar-corrections',
+            'libc-owned-scalar-math',
+            'libc-owned-binary80-math',
+            'libc-math-minmax',
+            'libc-math-bit-sign',
+            'libc-math-trunc',
+            'libc-math-fmod',
+            'libc-math-cbrt',
+            'libc-math-ceil',
+            'libc-math-floor',
+            'libc-math-round',
+            'libc-math-log2',
+            'libc-fdim',
+            'machine-context-header-abi',
+            'memory-sync-header-abi',
+            'memory-locking-header-abi',
+            'memfd-create-header-abi',
+            'vector-io-header-abi',
+            'libc-crt1-static-tls',
+            'owned-crypt-runtime|owned-atomic-addressable-profile',
+            'owned-system-cancellation',
+            'owned-rand',
+            'owned-pthread-signal|owned-dynamic-spawn|owned-atfork-registry|owned-fmtmsg|owned-utmpx|owned-process-trio|owned-underscore-fork|owned-aio|owned-process-control|owned-signal-helpers|owned-posix-signals|owned-pty|owned-passwd|owned-account-files|owned-locale|owned-wordexp|owned-stdio|owned-numeric-calendar|owned-posix-filesystem|owned-nftw-relative-base|owned-unix-mechanisms|owned-posix-composition',
+            'owned-assert|owned-legacy-time|owned-environment-lifecycle|owned-linux-control|owned-kernel-residual|owned-quick-exit|owned-filesystem-mechanisms|owned-credentials-profile|owned-vm-mechanisms|owned-group|owned-pattern|owned-wcsftime|owned-regex|owned-strfmon',
+            'owned-pthread-spin',
+            'owned-syslog',
+            'owned-error-reporting|owned-stdio-allocator-interposition|owned-mimalloc-startup-errno|owned-signal-handler-fork|owned-c-allocation-interposition',
+            'owned-io-cancellation',
+            'owned-resolver-network|owned-classic-netdb|owned-resolver-cancellation',
+            'owned-package-corpus|owned-loader-synthetic|owned-loader-inventory|owned-loader-libc-identity|owned-loader-family',
+            'owned-dynamic-io-cancellation',
+            'owned-posix-timers|owned-pthread-scheduling|owned-pthread-cpuclock|owned-message-queues|owned-named-ipc|owned-fcntl|owned-pthread-getattr|owned-pthread-join-cancel|owned-pthread-cond-cancel|owned-pthread-cond-timed|owned-pthread-mutex',
+            'owned-pthread-lifecycle',
+            'qualification-manifest',
+            'owned-static-sysroot|owned-posix-static-products|owned-posix-family|owned-posix-native|owned-pthread-family|owned-pthread-family-composition',
+            'lua-static-source-build',
+            'lua-dynamic-source-build',
+            'libc-owned-wordexp',
+            'owned-loader-short-stack|owned-dynamic-sysroot',
+            'owned-dynamic-pthread-exit',
+            'owned-dynamic-fork',
+            'materialized-dynamic-sysroot',
+            'crt-object-bundle',
+            'crt-dynamic-startup|crt-dynamic-link-contract|consumer-static-pie-lto|consumer-native-facade-lto',
+            'linux-5-10-uapi',
+            'candidate-header-closure',
+            'headers-layouts-aggregate',
+            'installed-header-tree-closure',
+            'selected-header-install-projection',
+            'header-callable-visibility-matrix',
+            'header-callable-disposition',
+            'header-abi-matrix',
+            'header-record-layout-matrix',
+            'header-declaration-macro-visibility-matrix',
+            'header-callable-linkage-audit',
+            'header-callable-provider-linkage-audit',
+            'uapi-wrapper-matrix',
+            'epoll-header-abi',
+            'event-descriptors-header-abi',
+            'fanotify-header-abi',
+            'dirent-header-abi',
+            'ftw-header-abi',
+            'stat-ftw-header-source-form',
+            'param-header-source-form',
+            'pathname-lifecycle-header-abi',
+            'timeval-transitive-header-abi',
+            'sys-time-direct-header-abi',
+            'access-header-abi',
+            'xattr-header-abi',
+            'madvise-reference',
+            'basename-header-abi|siginterrupt-header-abi|mlockall-header-abi|munlockall-header-abi|ftime-header-abi|clock-getcpuclockid-header-abi|libc-basename|libc-siginterrupt|libc-mlockall|libc-munlockall|libc-ftime|libc-clock-getcpuclockid',
+            'umask-header-abi|intrusive-queue-header-abi|getdtablesize-header-abi|membarrier-header-abi|syncfs-header-abi|confstr-header-abi|fpathconf-header-abi|pathconf-header-abi|sysconf-header-abi|libc-umask|libc-intrusive-queue|libc-getdtablesize|libc-membarrier|libc-syncfs|libc-confstr|libc-fpathconf|libc-pathconf|libc-sysconf',
+            'ctype-header-abi|locale-profile-header-abi|locale-multibyte-header-abi|iconv-header-abi|wide-character-header-abi|wcswcs-header-abi|locale-object-wide-header-abi|locale-narrow-header-abi|c32rtomb-header-abi|uchar-stateful-header-abi',
+            'integer-arithmetic-header-abi|integer-parse-header-abi|float-parse-header-abi|crypt-header-abi|getsubopt-header-abi|l64a-header-abi|intmax-arithmetic-header-abi|credential-observation-header-abi|login-name-header-abi|child-reaping-header-abi|wait-extensions-header-abi|immediate-termination-header-abi|sched-getcpu-header-abi|sched-yield-header-abi|bsearch-header-abi|linear-search-header-abi|intrusive-queue-header-abi|qsort-header-abi|callback-algorithms-header-abi',
+            'posix-exit-header-abi|posix-spawnattr-init-header-abi|posix-spawnattr-getpgroup-header-abi|posix-spawnattr-signal-fields-header-abi|posix-spawnattr-getschedparam-header-abi|posix-spawnattr-getschedpolicy-header-abi',
+            'ffs-header-abi',
+            'memory-special-header-abi',
+            'memccpy-header-abi',
+            'aio-error-header-abi',
+            'byte-strings-header-abi',
+            'memory-search-header-abi',
+            'memccpy-header-abi',
+            'mempcpy-header-abi',
+            'strsep-header-abi',
+            'strtok-header-abi|stateful-byte-strings-header-abi',
+            'string-copy-header-abi',
+            'error-strings-header-abi|strsignal-header-abi|gettext-catalog-header-abi',
+            'string-duplication-header-abi',
+            'random-entropy-header-abi',
+            'sysv-semaphore-header-abi|posix-semaphore-header-abi',
+            'sysv-message-shared-memory-header-abi',
+            'libc-event-descriptors',
+            'libc-extended-attributes',
+            'libc-pathname-lifecycle',
+            'libc-directory-streams',
+            'libc-filesystem-traversal',
+            'libc-filesystem-directory',
+            'libc-filesystem-extensions',
+            'libc-lchmod-unsupported',
+            'libc-fopen64-alias',
+            'libc-stdio-standard|libc-stdio-format-scan|libc-stdio-integer-scan|libc-stdio-octal-hex-scan|libc-stdio-fixed-percent-scan|libc-stdio-fixed-format-whitespace-scan|libc-stdio-fixed-literal-scan|libc-stdio-fixed-empty-format-scan|libc-stdio-fixed-suppressed-character-scan|libc-stdio-fixed-suppressed-string-scan|libc-stdio-fixed-suppressed-scanset-scan|libc-stdio-fixed-suppressed-count-scan|libc-stdio-float-hex-output|libc-stdio-errno-output|libc-stdio-permanent-format-scan|libc-stdio-permanent-line-io|libc-stdio-permanent-byte-io|libc-stdio-permanent-status|libc-stdio-permanent-freading-stdin|libc-stdio-permanent-fsetlocking-stdin|libc-stdio-permanent-fseterr-stdin|libc-stdio-permanent-freadable-stdin|libc-stdio-permanent-fwritable-stderr|libc-stdio-permanent-fbufsize-stderr|libc-stdio-permanent-flbf-stderr|libc-stdio-permanent-fileno|libc-stdio-permanent-fileno-unlocked|libc-stdio-permanent-feof-unlocked|libc-stdio-permanent-ferror-unlocked|libc-stdio-path-stream|libc-stdio-tmpfile|libc-text-math-locale-stdio-composition',
+            'libc-pthread-identity',
+            'libc-pthread-affinity',
+            'libc-pthread-cpuclock',
+            'libc-pthread-name',
+            'libc-pthread-attributes|libc-pthread-attr-lifecycle|libc-pthread-barrierattr-pshared|libc-pthread-barrier|libc-pthread-spin-init|libc-pthread-spin-operations',
+            'libc-pthread-spin-destroy',
+            'libc-pthread-detach',
+            'libc-thrd-yield',
+            'libc-memory-sync',
+            'libc-memory-locking',
+            'libc-memfd-create',
+            'libc-legacy-memory',
+            'libc-memory-special',
+            'libc-memccpy',
+            'libc-mempcpy',
+            'libc-strsep',
+            'libc-strtok|libc-stateful-byte-strings',
+            'libc-allocator-runtime',
+            'libc-allocator-basic-runtime-v1',
+            'libc-allocator-string-duplication',
+            'libc-scandir',
+            'libc-allocator-observability',
+            'libc-alloca',
+            'libc-static-c-abi-differential',
+            'libc-static-c-abi-same-object-differential|qualification-posix-abi-admission',
+            'libc-interface-discovery',
+            'libc-posix-exit|libc-posix-spawnattr-init|libc-posix-spawnattr-getpgroup|libc-posix-spawnattr-signal-fields|libc-posix-spawnattr-getschedparam|libc-posix-spawnattr-getschedpolicy',
+            'libc-clock-adjtime',
+            'libc-clock-settime',
+            'libc-timer-getoverrun',
+            'libc-timer-delete',
+            'libc-timer-gettime',
+            'libc-timer-settime',
+            'libc-tee|libc-splice',
+            'libc-sync-file-range|libc-copy-file-range',
+            'libc-readiness-waits|libc-system-observation|libc-system-information|libc-fcntl-record-locks|libc-flock|libc-sendfile|libc-posix-fallocate|libc-descriptor-advice|libc-filesystem-capacity|libc-uts-identity|libc-ctype|libc-locale-profile|libc-locale-multibyte|libc-locale-wide-iconv|libc-wide-character|libc-wcswcs|libc-locale-object-wide|libc-locale-narrow|libc-locale-ctype-locators|libc-locale-error-strings|libc-regex|owned-regex-compiler|owned-regex-execution|libc-integer-arithmetic|libc-integer-parse|libc-float-parse|libc-getsubopt|libc-crypt|libc-crypt-allocator-composition|libc-l64a|libc-a64l|libc-intmax-arithmetic|libc-credential-observation|libc-secure-environment|libc-login-name|libc-child-reaping|libc-wait-extensions|libc-immediate-termination|libc-bsearch|libc-linear-search|libc-intrusive-queue|libc-qsort|libc-callback-algorithms|libc-search-tree-intrusive|libc-search-hash-table|libc-gettext-catalog|libc-access|libc-clock-gettime|libc-time-observation|libc-difftime|libc-timegm|libc-gmtime-r|libc-system-configuration|libc-mapping-core|libc-header-layouts-baseline|libc-nanosleep|libc-clock-nanosleep|libc-descriptor-entry|libc-fcntl-status-control|libc-ioctl|libc-ffs|libc-byte-strings|libc-in6addr-any|libc-in6addr-loopback|libc-process-globals-getopt|libc-auxv-observation|libc-inet-address|libc-inet-ntoa|libc-inet-classful|libc-hstrerror|libc-endservent|libc-service-lifecycle|libc-numeric-netdb|libc-random-entropy|libc-memory-search|libc-string-copy|libc-error-strings|libc-strsignal|libc-descriptor-pipeline|libc-c32rtomb|libc-uchar-stateful|libc-memccpy|libc-aio-error|libc-inet-netof|libc-inet-network',
+            'libc-vector-io|libc-uio-cxx-linkage',
+            'libc-sysv-semaphore|libc-posix-semaphore',
+            'libc-sysv-message-shared-memory',
+            'libc-math-exp',
+            'libc-math-cos',
+            'libc-math-cosh',
+            'libc-math-asinh',
+            'libc-math-exp10f',
+            'libc-math-sinh',
+            'libc-pthread-condattr-pshared',
+            'libc-pthread-attr-lifecycle',
+            'libc-pthread-condattr-clock',
+            'libc-pthread-mutexattr-protocol-query',
+            'libc-pthread-mutexattr-pshared-query',
+            'libc-pthread-mutexattr-robust-query',
+            'libc-pthread-mutexattr-type-query',
+            'libc-pthread-mutexattr-type-setter',
+            'libc-pthread-mutex-prioceiling-query',
+            'libc-pthread-getconcurrency',
+            'libc-pthread-setconcurrency',
+            'libc-rand-r|libc-lrand48',
+            'feature-profile-control-plane-header-abi',
+            'terminal-streams-header-topology',
+            'link-header-source-form',
+            'reboot-header-source-form',
+            'stdio-header-source-form',
+            'math-tgmath-source-form',
+            'mman-mcl-onfault-header-source-form',
+            'mount-header-source-form',
+            'klog-header-source-form',
+            'cachectl-header-source-form',
+            'syslog-header-abi',
+            'sysmacros-header-source-form',
+            'ioctl-header-source-form',
+            'fcntl-event-header-topology',
+            'wordexp-process-adapter|wordexp-process-private|wordexp-paths-private|wordexp-result-private',
         )
         self.assertEqual(actual_groups, expected_groups)
 
@@ -2246,9 +2206,7 @@ unsafe fn join_selected_worker_inner(
             for group in expected_groups
             for command in group.split("|")
         }
-        handlers = source.split(
-            'require_native_linux_x86_64_host\n\ncase "$command" in\n', 1
-        )[1]
+        handlers = command_cases[2]
         handler_groups = re.findall(
             r"^    ([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)$", handlers, re.MULTILINE
         )
@@ -2257,7 +2215,23 @@ unsafe fn join_selected_worker_inner(
             for group in handler_groups
             for command in group.split("|")
         }
-        self.assertSetEqual(handled_commands, expected_commands)
+        # These commands validate or normalize their own arguments in the
+        # first case before they enter the execution case. They are intentionally
+        # outside the no-argument admission groups above, but execution coverage
+        # remains exact.
+        execution_only_commands = {
+            "native-abi-inventory",
+            "native-abi-inventory-test",
+            "native-abi-ratchet",
+            "native-abi-ratchet-test",
+            "perf-c",
+            "perf-c-memory-smoke",
+            "perf-c-test",
+            "perf-native-test",
+        }
+        self.assertSetEqual(
+            handled_commands, expected_commands | execution_only_commands
+        )
         self.assertIn("libc-stat-compat", source)
         self.assertIn("libc-credentials", source)
         self.assertIn("libc-bootstrap-primitives", source)
@@ -8529,7 +8503,8 @@ unsafe fn join_selected_worker_inner(
             "src/thread/pthread_create.c::start_c11",
             "src/thread/thrd_join.c",
             "src/thread/thrd_exit.c",
-            "src/thread/thrd_detach.c",
+            "src/thread/pthread_detach.c::__pthread_detach",
+            "weak_alias(__pthread_detach,thrd_detach)",
             "src/thread/thrd_sleep.c",
             "C11StartRoutine",
             "SelectedWorkerStart::C11",
@@ -8537,9 +8512,7 @@ unsafe fn join_selected_worker_inner(
             "fn thrd_create(",
             "fn thrd_join(",
             "fn thrd_exit(",
-            "fn thrd_detach(",
             "fn thrd_sleep(",
-            "detach_selected_worker",
             "super::clock_nanosleep::clock_nanosleep",
             "super::clock_nanosleep::CLOCK_REALTIME",
             "exit_selected_c11_worker",
@@ -10633,13 +10606,24 @@ unsafe fn join_selected_worker_inner(
         for name in (
             "pthread_mutexattr_setprotocol",
             "pthread_mutex_setprioceiling",
-            "pthread_mutex_timedlock",
         ):
             self.assertIn(
                 '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\n'
                 f'pub unsafe extern "C" fn {name}',
                 pthread_mutex,
             )
+        self.assertIn(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[export_name = "__pthread_mutex_timedlock"]\n'
+            'pub unsafe extern "C" fn pthread_mutex_timedlock',
+            pthread_mutex,
+        )
+        for required in (
+            '".hidden __pthread_mutex_timedlock"',
+            '".weak pthread_mutex_timedlock"',
+            '".set pthread_mutex_timedlock, __pthread_mutex_timedlock"',
+        ):
+            self.assertIn(required, pthread_mutex)
         for forbidden in (
             "pub unsafe extern \"C\" fn pthread_cond_",
             "pub unsafe extern \"C\" fn pthread_rwlock_",
@@ -11802,10 +11786,17 @@ unsafe fn join_selected_worker_inner(
                 "pthread_setspecific",
                 "tss_create",
                 "tss_delete",
-                "tss_get",
                 "tss_set",
             },
         )
+        for required in (
+            '".weak pthread_getspecific"',
+            '".set pthread_getspecific, __pthread_getspecific"',
+            '".weak tss_get"',
+            '".set tss_get, __pthread_getspecific"',
+            '#[linkage = "internal"]',
+        ):
+            self.assertIn(required, tsd)
         for forbidden in (
             'pub unsafe extern "C" fn pthread_cancel',
             'pub unsafe extern "C" fn pthread_exit',
@@ -11853,7 +11844,6 @@ unsafe fn join_selected_worker_inner(
         for wrapper_name, pthread_entry in (
             ("tss_create", "pthread_key_create(key, destructor)"),
             ("tss_delete", "pthread_key_delete(key)"),
-            ("tss_get", "pthread_getspecific(key)"),
             ("tss_set", "pthread_setspecific(key, value)"),
         ):
             wrapper = tsd.split(
@@ -12009,6 +11999,9 @@ unsafe fn join_selected_worker_inner(
         c11_lifecycle = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c11_thread_lifecycle.rs"
         ).read_text(encoding="utf-8")
+        owned_message_queues = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "owned_message_queues.rs"
+        ).read_text(encoding="utf-8")
         probe = (
             ROOT / "compat" / "x86_64" / "libc_pthread_detach_probe.c"
         ).read_text(encoding="utf-8")
@@ -12079,13 +12072,22 @@ unsafe fn join_selected_worker_inner(
         ):
             self.assertLess(detached_claim.index(earlier), detached_claim.index(later))
 
-        self.assertIn("src/thread/thrd_detach.c", c11_lifecycle)
-        c11_detach = c11_lifecycle.split("pub unsafe extern \"C\" fn thrd_detach", 1)[1].split(
-            "/// End the current selected C11 worker", 1
-        )[0]
-        self.assertIn("detach_selected_worker", c11_detach)
-        self.assertIn("THRD_SUCCESS", c11_detach)
-        self.assertIn("THRD_ERROR", c11_detach)
+        self.assertIn("src/thread/pthread_detach.c::__pthread_detach", c11_lifecycle)
+        self.assertIn("weak_alias(__pthread_detach,thrd_detach)", c11_lifecycle)
+        for required in (
+            '".weak pthread_detach"',
+            '".set pthread_detach, __pthread_detach"',
+            '".weak thrd_detach"',
+            '".set thrd_detach, __pthread_detach"',
+            '#[linkage = "internal"]',
+        ):
+            self.assertIn(required, pthread_create_join)
+        self.assertIn("src/mq/mq_notify.c", owned_message_queues)
+        self.assertIn('#[link_name = "pthread_detach"]', owned_message_queues)
+        self.assertIn("source_pthread_detach(", owned_message_queues)
+        self.assertNotIn(
+            "pthread_create_join::detach_selected_worker", owned_message_queues
+        )
 
         for required in (
             "run_pthread_round",
@@ -33093,7 +33095,8 @@ esac
             'x86-legacy-misc = ["x86-legacy-des-compat"]', manifest
         )
         self.assertIn(
-            '#[cfg(feature = "x86-legacy-misc")]\n#[path = "legacy_misc.rs"]\nmod legacy_misc;',
+            '#[cfg(all(feature = "x86-legacy-misc", not(feature = "x86-owned-static-runtime")))]\n'
+            '#[path = "legacy_misc.rs"]\nmod legacy_misc;',
             static_root,
         )
         self.assertIn(
@@ -33102,7 +33105,7 @@ esac
             static_root,
         )
         for required in (
-            "src/legacy/fmtmsg.c::fmtmsg",
+            "src/misc/fmtmsg.c::fmtmsg",
             "MSGVERB",
             "MM_PRINT",
             "MM_CONSOLE",
@@ -33149,7 +33152,7 @@ esac
             "run_libc_system_information.sh",
             "run_libc_issetugid.sh",
             "unfeatured selected-static C ABI export surface drifted",
-            "opt-in legacy.misc changed more than its exact public closure",
+            "composite legacy.misc changed more than fmtmsg beyond narrow inert-DES",
             "inert DES compatibility functions select a local cipher",
             "candidate selects a dynamic runtime",
             "candidate retains a dynamic TLS model",

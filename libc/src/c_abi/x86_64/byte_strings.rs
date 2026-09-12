@@ -21,10 +21,11 @@
 //!   `src/string/strverscmp.c` map respectively to the named public C entries
 //!   below. The selected `dirent` `versionsort` callback reuses the latter
 //!   rather than carrying a second comparison state machine.
-//! - Musl's hidden `__strchrnul` and `__memrchr`, and the `memchr` calls from
-//!   `strnlen` and `strstr`, map to private helpers in this leaf. The complete
-//!   musl library weak-aliases some of those helpers to wider public symbols;
-//!   this deliberately closed archive does not export those neighboring APIs.
+//! - Musl's hidden `__strchrnul` maps to the public weak alias/provider pair
+//!   below. `strrchr` calls the sibling `memory_search::__memrchr` provider,
+//!   while the `memchr` calls from `strnlen` and `strstr` map to private helpers
+//!   in this leaf. Those source-local calls do not widen a neighboring public
+//!   API beyond its separately selected alias contract.
 //!
 //! The two intentional source-level differences preserve the same observable
 //! C contracts at this boundary. First, `strlen` and `strchrnul` select their
@@ -40,6 +41,8 @@ use core::{
     ffi::{c_char, c_int},
     ptr::{null, null_mut},
 };
+
+use super::memory_search;
 
 /// Locate `target` or the first NUL in one caller-owned C string.
 ///
@@ -116,30 +119,6 @@ unsafe fn find_byte_in_range(cursor: *const u8, target: u8, count: usize) -> Opt
         offset += 1;
     }
     None
-}
-
-/// Private `__memrchr`-shaped reverse search over an exact readable range.
-///
-/// # Safety
-///
-/// When `count` is nonzero, `cursor` must designate at least `count` readable
-/// bytes. A null cursor is valid only with a zero count.
-#[inline]
-unsafe fn find_last_byte_in_range(
-    cursor: *const u8,
-    target: u8,
-    mut count: usize,
-) -> *const u8 {
-    while count != 0 {
-        count -= 1;
-        // SAFETY: the decremented count remains one valid byte index.
-        let candidate = unsafe { cursor.add(count) };
-        // SAFETY: `candidate` lies inside the exact caller-owned range.
-        if unsafe { candidate.read() } == target {
-            return candidate;
-        }
-    }
-    null()
 }
 
 #[inline]
@@ -316,13 +295,22 @@ pub unsafe extern "C" fn strncmp(
 ///
 /// `string` must designate a readable NUL-terminated byte sequence. A null
 /// pointer is never valid.
-#[no_mangle]
+#[export_name = "__strchrnul"]
 pub unsafe extern "C" fn strchrnul(string: *const c_char, character: c_int) -> *mut c_char {
     // SAFETY: the caller supplies the complete C-string input contract.
     unsafe { strchrnul_bytes(string.cast::<u8>(), character as u8) }
         .cast_mut()
         .cast::<c_char>()
 }
+
+// Musl's public `strchrnul` is a weak alias of the hidden `__strchrnul`
+// provider. Keep it as one ELF definition so application interposition applies
+// only to direct public calls, while source-local users select the provider.
+core::arch::global_asm!(
+    ".hidden __strchrnul",
+    ".weak strchrnul",
+    ".set strchrnul, __strchrnul",
+);
 
 /// Locate the first occurrence of `character` in one C string.
 ///
@@ -333,9 +321,14 @@ pub unsafe extern "C" fn strchrnul(string: *const c_char, character: c_int) -> *
 #[no_mangle]
 pub unsafe extern "C" fn strchr(string: *const c_char, character: c_int) -> *mut c_char {
     // SAFETY: the caller supplies the complete C-string input contract.
-    unsafe { find_byte_in_c_string(string.cast::<u8>(), character as u8) }
-        .cast_mut()
-        .cast::<c_char>()
+    let found = unsafe { strchrnul(string, character) };
+    // SAFETY: the strong provider returns an in-string matching byte or its
+    // readable terminator.
+    if unsafe { found.cast::<u8>().read() } == character as u8 {
+        found
+    } else {
+        null_mut()
+    }
 }
 
 /// Locate the final occurrence of `character` in one C string.
@@ -350,9 +343,9 @@ pub unsafe extern "C" fn strrchr(string: *const c_char, character: c_int) -> *mu
     // the private inclusive reverse-search range.
     let length = unsafe { strlen(string) };
     // SAFETY: the range is the string's bytes plus its readable terminator.
-    unsafe { find_last_byte_in_range(string.cast::<u8>(), character as u8, length + 1) }
-        .cast_mut()
-        .cast::<c_char>()
+    // The sibling item's Rust call selects musl's hidden `__memrchr` provider,
+    // preserving the source-local operation when public `memrchr` is replaced.
+    unsafe { memory_search::memrchr(string.cast(), character, length + 1) }.cast()
 }
 
 /// BSD-compatible forwarding alias for [`strchr`].

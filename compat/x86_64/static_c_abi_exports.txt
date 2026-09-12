@@ -79,6 +79,7 @@ __libc_start_main
 __lxstat
 __membarrier_init
 __memcpy_fwd
+__memrchr
 __newlocale
 __nl_langinfo
 __nl_langinfo_l
@@ -87,6 +88,15 @@ __optreset
 __posix_getopt
 __progname
 __progname_full
+__pthread_create
+__pthread_exit
+__pthread_join
+__pthread_key_create
+__pthread_key_delete
+__pthread_mutex_lock
+__pthread_mutex_trylock
+__pthread_mutex_unlock
+__pthread_once
 __pthread_rwlock_rdlock
 __pthread_rwlock_timedrdlock
 __pthread_rwlock_timedwrlock
@@ -94,6 +104,8 @@ __pthread_rwlock_tryrdlock
 __pthread_rwlock_trywrlock
 __pthread_rwlock_unlock
 __pthread_rwlock_wrlock
+__pthread_setcancelstate
+__pthread_testcancel
 __qsort_r
 __sched_cpucount
 __setjmp
@@ -105,7 +117,10 @@ __sigsetjmp
 __stack_chk_fail
 __stack_chk_fail_local
 __stdio_exit
+__stpcpy
+__stpncpy
 __strcasecmp_l
+__strchrnul
 __strcoll_l
 __strerror_l
 __strncasecmp_l

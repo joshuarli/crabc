@@ -17254,7 +17254,7 @@ def require_static_pthread_c11_detach_artifact(family: Mapping[str, Any]) -> Non
     prerequisite_text = " ".join(prerequisites)
     for phrase in (
         "src/thread/pthread_detach.c",
-        "src/thread/thrd_detach.c",
+        "weak_alias(__pthread_detach, thrd_detach)",
         "Joinable",
         "DetachedReclaiming",
         "registry lock",
@@ -18450,6 +18450,35 @@ def require_static_c11_plain_sync_artifact(family: Mapping[str, Any]) -> None:
     )
 
 
+def require_pthread_hidden_aliases(
+    static_exports: set[str], module: str, names: tuple[str, ...]
+) -> None:
+    """Account for archive providers behind the selected weak pthread aliases.
+
+    These strong hidden definitions implement the public entry itself; they
+    do not select an additional pthread operation or a dynamic public export.
+    """
+    implementation = (
+        ROOT / "libc" / "src" / "c_abi" / "x86_64" / module
+    ).read_text(encoding="utf-8")
+    for name in names:
+        provider = f"__{name}"
+        require(
+            provider in static_exports,
+            f"pthread hidden alias provider is missing: {provider}",
+        )
+        for fragment in (
+            f'#[export_name = "{provider}"]',
+            f'".hidden {provider}"',
+            f'".weak {name}"',
+            f'".set {name}, {provider}"',
+        ):
+            require(
+                fragment in implementation,
+                f"pthread hidden alias omits {fragment}",
+            )
+
+
 def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
     """Ratchet one normal-return pthread/C11 once artifact without promotion.
 
@@ -18764,7 +18793,10 @@ def require_static_pthread_c11_once_artifact(family: Mapping[str, Any]) -> None:
         selected_once_exports <= static_exports,
         "static-c-pthread-c11-once must expose pthread_once and call_once",
     )
-    for unselected in ("__pthread_once", "__pthread_once_full"):
+    require_pthread_hidden_aliases(
+        static_exports, "pthread_once.rs", ("pthread_once",)
+    )
+    for unselected in ("__pthread_once_full",):
         require(
             unselected not in static_exports,
             f"static-c-pthread-c11-once must not expose private {unselected}",
@@ -19136,11 +19168,10 @@ def require_static_pthread_c11_tsd_artifact(family: Mapping[str, Any]) -> None:
         selected_tsd_exports <= static_exports,
         "static-c-pthread-c11-tsd must expose its eight selected TSD symbols",
     )
-    for unselected in (
-        "__pthread_key_create",
-        "__pthread_key_delete",
-        "__pthread_tsd_run_dtors",
-    ):
+    require_pthread_hidden_aliases(
+        static_exports, "pthread_tsd.rs", ("pthread_key_create", "pthread_key_delete")
+    )
+    for unselected in ("__pthread_tsd_run_dtors",):
         require(
             unselected not in static_exports,
             f"static-c-pthread-c11-tsd must not expose private {unselected}",
@@ -19442,7 +19473,10 @@ def require_static_pthread_cancel_deferred_artifact(
         selected_exports <= static_exports,
         "static-c-pthread-cancel-deferred must expose its selected cancellation surface",
     )
-    for unselected in ("__testcancel", "__cancel", "__pthread_exit"):
+    require_pthread_hidden_aliases(
+        static_exports, "pthread_create_join.rs", ("pthread_exit",)
+    )
+    for unselected in ("__testcancel", "__cancel"):
         require(
             unselected not in static_exports,
             f"static-c-pthread-cancel-deferred must not expose private {unselected}",
@@ -73658,7 +73692,7 @@ def require_locale_ctype_locator_artifact(family: Mapping[str, Any]) -> None:
         "reference-fingerprint",
         "candidate-fingerprint",
         "[[:space:]]TLS[[:space:]]",
-        "__newlocale",
+        "strfmon",
     ):
         require(
             snippet in runner,
