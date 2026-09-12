@@ -235,6 +235,10 @@ struct Parameter {
     length: bool,
     operator: u8,
     flags: u8,
+    // `${name:?}` has no diagnostic WORD, whereas `${name:?""}` has an
+    // explicitly present WORD whose expansion is empty. This source fact
+    // survives evaluation so the diagnostic boundary can preserve it.
+    word_present: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -285,6 +289,7 @@ struct ParameterHeader {
     operator: u8,
     flags: u8,
     word_start: usize,
+    word_present: bool,
 }
 
 impl ParameterHeader {
@@ -968,6 +973,7 @@ impl SyntaxParser<'_> {
             length: false,
             operator: PARAM_NONE,
             flags: 0,
+            word_present: false,
         })?;
         self.append_node(word, SyntaxNode {
             kind: NODE_PARAMETER,
@@ -995,6 +1001,7 @@ impl SyntaxParser<'_> {
             length: header.length,
             operator: header.operator,
             flags: header.flags,
+            word_present: header.word_present,
         })?;
         if header.operator != PARAM_NONE {
             // The outer parameter node keeps `inherited_flags` for result
@@ -1140,7 +1147,15 @@ fn parse_parameter_header(
         return Err(WordexpError::Syntax);
     }
     let word_start = skip_parameter_line_continuations(syntax, index, end);
-    Ok(ParameterHeader { name, kind, length, operator, flags, word_start })
+    Ok(ParameterHeader {
+        name,
+        kind,
+        length,
+        operator,
+        flags,
+        word_start,
+        word_present: word_start < end,
+    })
 }
 
 fn parameter_scan_outer_double(
@@ -2913,11 +2928,30 @@ impl Iterator for ExpandedResultBytes<'_> {
 }
 
 /// Transactional final-field boundary for the eventual C result-record owner.
-/// A successful call consumes one whole borrowed field; an error leaves every
-/// previously accepted field owned by the sink and leaves the current backing
-/// word with the evaluator for cleanup.
+/// A successful call consumes one whole borrowed field. An error must accept
+/// none of the current field, leaves every previously accepted field owned by
+/// the sink, and leaves the current backing word with the evaluator for
+/// cleanup.
 pub(super) trait WordexpResultSink {
     fn append_word(&mut self, word: ExpandedResultWord<'_>) -> Result<(), WordexpError>;
+}
+
+/// Synchronous runtime-diagnostic boundary for a selected `${parameter:?WORD}`
+/// assertion. It receives a borrowed, already-expanded message while the
+/// scratch backing remains live. Diagnostics cannot fail or become result
+/// records, so an output write cannot alter the `ParameterError` outcome.
+pub(super) trait WordexpDiagnosticSink {
+    fn parameter_error(&mut self, name: &[u8], message: Option<ExpandedResultWord<'_>>) -> ();
+}
+
+struct SilentWordexpDiagnostics;
+
+impl WordexpDiagnosticSink for SilentWordexpDiagnostics {
+    fn parameter_error(
+        &mut self,
+        _name: &[u8],
+        _message: Option<ExpandedResultWord<'_>>,
+    ) -> () {}
 }
 
 /// Collecting convenience sink for deterministic core tests. The selected C
@@ -3213,6 +3247,7 @@ const TASK_WORD: u8 = 1;
 const TASK_FINISH_PARAMETER: u8 = 2;
 const TASK_FINISH_ROOT: u8 = 3;
 const TASK_FINISH_ARITHMETIC: u8 = 4;
+const TASK_FINISH_PARAMETER_ERROR: u8 = 5;
 
 #[derive(Clone, Copy)]
 struct EvaluationTask {
@@ -3257,6 +3292,19 @@ impl EvaluationTask {
             kind: TASK_FINISH_ROOT, word: NONE, node: NONE,
             target: ptr::null_mut(), parameter: NONE, temporary,
             node_flags: 0, context: EvaluationContext::ParameterWord,
+        }
+    }
+
+    const fn finish_parameter_error(parameter: usize, temporary: *mut ExpandedWord) -> Self {
+        Self {
+            kind: TASK_FINISH_PARAMETER_ERROR,
+            word: NONE,
+            node: NONE,
+            target: ptr::null_mut(),
+            parameter,
+            temporary,
+            node_flags: 0,
+            context: EvaluationContext::ParameterWord,
         }
     }
 
@@ -3717,7 +3765,10 @@ pub(super) fn evaluate_wordexp(
     paths: &mut dyn WordexpPathAdapter,
 ) -> Result<ExpandedWords, WordexpError> {
     let mut results = ExpandedWords::new();
-    evaluate_wordexp_into(syntax, context, commands, paths, &mut results)?;
+    let mut diagnostics = SilentWordexpDiagnostics;
+    evaluate_wordexp_into(
+        syntax, context, commands, paths, &mut results, &mut diagnostics,
+    )?;
     Ok(results)
 }
 
@@ -3731,6 +3782,7 @@ pub(super) fn evaluate_wordexp_into(
     commands: &mut dyn WordexpCommandAdapter,
     paths: &mut dyn WordexpPathAdapter,
     sink: &mut dyn WordexpResultSink,
+    diagnostics: &mut dyn WordexpDiagnosticSink,
 ) -> Result<(), WordexpError> {
     if context.no_command_substitution && syntax.has_commands() {
         return Err(WordexpError::CommandSubstitution);
@@ -3758,6 +3810,7 @@ pub(super) fn evaluate_wordexp_into(
             paths,
             &mut scratch,
             sink,
+            diagnostics,
             &mut tasks,
         )?;
         root_index += 1;
@@ -3772,6 +3825,7 @@ fn run_evaluation_tasks(
     paths: &mut dyn WordexpPathAdapter,
     scratch: &mut ScratchWords,
     sink: &mut dyn WordexpResultSink,
+    diagnostics: &mut dyn WordexpDiagnosticSink,
     tasks: &mut HeapVec<EvaluationTask>,
 ) -> Result<(), WordexpError> {
     while let Some(task) = tasks.pop() {
@@ -3791,7 +3845,7 @@ fn run_evaluation_tasks(
                     }
                     NODE_PARAMETER => {
                         start_parameter(
-                            syntax, context, paths, scratch, tasks, task,
+                            syntax, context, paths, diagnostics, scratch, tasks, task,
                             node, node.next,
                         )?;
                     }
@@ -3876,6 +3930,9 @@ fn run_evaluation_tasks(
             }
             TASK_FINISH_PARAMETER => {
                 finish_parameter(syntax, context, paths, scratch, task)?;
+            }
+            TASK_FINISH_PARAMETER_ERROR => {
+                finish_parameter_error(syntax, diagnostics, scratch, task)?;
             }
             TASK_FINISH_ROOT => {
                 split_root_word(
@@ -4704,6 +4761,7 @@ fn start_parameter(
     syntax: &WordexpSyntax,
     context: &mut WordexpContext,
     paths: &mut dyn WordexpPathAdapter,
+    diagnostics: &mut dyn WordexpDiagnosticSink,
     scratch: &mut ScratchWords,
     tasks: &mut HeapVec<EvaluationTask>,
     task: EvaluationTask,
@@ -4774,7 +4832,14 @@ fn start_parameter(
             append_stored_value(context, value, output_flags, unsafe { &mut *task.target })?;
             tasks.push(EvaluationTask::word(task.word, next, task.target, task.context))?;
         }
-        PARAM_ERROR if !selected => return Err(WordexpError::ParameterError),
+        PARAM_ERROR if !selected => {
+            if parameter.word_present {
+                push_parameter_error_word(syntax, scratch, tasks, node.payload)?;
+            } else {
+                diagnostics.parameter_error(name, None);
+                return Err(WordexpError::ParameterError);
+            }
+        }
         PARAM_ERROR => {
             append_stored_value(context, value, output_flags, unsafe { &mut *task.target })?;
             tasks.push(EvaluationTask::word(task.word, next, task.target, task.context))?;
@@ -4826,6 +4891,60 @@ fn push_parameter_word(
     let child = unsafe { syntax.word(parameter_record.word) };
     tasks.push(EvaluationTask::word(parameter_record.word, child.first, temporary, context))?;
     Ok(())
+}
+
+/// Schedule a selected `${parameter:?WORD}` without a parent continuation:
+/// after WORD expansion the task reports one borrowed diagnostic and returns
+/// `ParameterError`, so later outer-word nodes never run.
+fn push_parameter_error_word(
+    syntax: &WordexpSyntax,
+    scratch: &mut ScratchWords,
+    tasks: &mut HeapVec<EvaluationTask>,
+    parameter: usize,
+) -> Result<(), WordexpError> {
+    // SAFETY: parameter comes from one syntax node payload.
+    let parameter_record = unsafe { syntax.parameter(parameter) };
+    if !parameter_record.word_present || parameter_record.word == NONE {
+        return Err(WordexpError::Syntax);
+    }
+    let temporary = scratch.allocate()?;
+    tasks.push(EvaluationTask::finish_parameter_error(parameter, temporary))?;
+    // SAFETY: a present parameter WORD was parsed into this syntax object.
+    let child = unsafe { syntax.word(parameter_record.word) };
+    tasks.push(EvaluationTask::word(
+        parameter_record.word,
+        child.first,
+        temporary,
+        EvaluationContext::ParameterWord,
+    ))?;
+    Ok(())
+}
+
+/// Report one fully expanded parameter-error WORD while its scratch backing is
+/// live. Nested WORD failures return before this task runs, so they retain
+/// their own typed error and never produce a spurious outer diagnostic.
+fn finish_parameter_error(
+    syntax: &WordexpSyntax,
+    diagnostics: &mut dyn WordexpDiagnosticSink,
+    scratch: &mut ScratchWords,
+    task: EvaluationTask,
+) -> Result<(), WordexpError> {
+    // SAFETY: this task was built from one syntax parameter and one
+    // scratch-owned parameter-WORD temporary.
+    let parameter = unsafe { syntax.parameter(task.parameter) };
+    let message = if parameter.word_present {
+        Some(ExpandedResultWord::from_atoms(
+            // SAFETY: the temporary stays scratch-owned through the callback.
+            unsafe { (*task.temporary).atoms.as_slice() },
+        ))
+    } else {
+        None
+    };
+    diagnostics.parameter_error(unsafe { syntax.parameter_name(parameter) }, message);
+    // SAFETY: a synchronous unit-returning diagnostic cannot retain this
+    // scratch word, so completion immediately reclaims it before reporting.
+    unsafe { scratch.free(task.temporary); }
+    Err(WordexpError::ParameterError)
 }
 
 fn finish_parameter(
@@ -5054,6 +5173,60 @@ mod tests {
             self.accepted.append_word(word)?;
             self.calls += 1;
             Ok(())
+        }
+    }
+
+    struct TestDiagnostics {
+        events: usize,
+        name: [u8; 32],
+        name_len: usize,
+        message_present: bool,
+        message: [u8; 128],
+        message_len: usize,
+    }
+
+    impl TestDiagnostics {
+        const fn new() -> Self {
+            Self {
+                events: 0,
+                name: [0; 32],
+                name_len: 0,
+                message_present: false,
+                message: [0; 128],
+                message_len: 0,
+            }
+        }
+
+        fn assert_event(&self, name: &[u8], message: Option<&[u8]>) {
+            assert_eq!(self.events, 1);
+            assert_eq!(&self.name[..self.name_len], name);
+            assert_eq!(self.message_present, message.is_some());
+            if let Some(message) = message {
+                assert_eq!(&self.message[..self.message_len], message);
+            }
+        }
+    }
+
+    impl WordexpDiagnosticSink for TestDiagnostics {
+        fn parameter_error(
+            &mut self,
+            name: &[u8],
+            message: Option<ExpandedResultWord<'_>>,
+        ) -> () {
+            assert!(name.len() <= self.name.len());
+            self.name[..name.len()].copy_from_slice(name);
+            self.name_len = name.len();
+            self.message_present = message.is_some();
+            self.message_len = 0;
+            if let Some(message) = message {
+                assert_eq!(message.bytes().count(), message.byte_len());
+                for byte in message.bytes() {
+                    assert!(self.message_len < self.message.len());
+                    self.message[self.message_len] = byte;
+                    self.message_len += 1;
+                }
+            }
+            self.events += 1;
         }
     }
 
@@ -5324,6 +5497,17 @@ mod tests {
     ) -> Result<ExpandedWords, WordexpError> {
         let syntax = WordexpSyntax::parse(input)?;
         evaluate_wordexp(&syntax, context, commands, paths)
+    }
+
+    fn evaluate_into_silent(
+        syntax: &WordexpSyntax,
+        context: &mut WordexpContext,
+        commands: &mut dyn WordexpCommandAdapter,
+        paths: &mut dyn WordexpPathAdapter,
+        sink: &mut dyn WordexpResultSink,
+    ) -> Result<(), WordexpError> {
+        let mut diagnostics = SilentWordexpDiagnostics;
+        evaluate_wordexp_into(syntax, context, commands, paths, sink, &mut diagnostics)
     }
 
     #[test]
@@ -5831,13 +6015,34 @@ mod tests {
         let mut paths = TestPaths::plain();
         let mut no_space = LimitedResultSink::new(1, WordexpError::NoSpace);
         assert!(matches!(
-            evaluate_wordexp_into(
+            evaluate_into_silent(
                 &syntax, &mut context, &mut commands, &mut paths, &mut no_space,
             ),
             Err(WordexpError::NoSpace),
         ));
         assert_words(&no_space.accepted, &[b"first"]);
         assert_eq!(no_space.calls, 1);
+
+        // A rejected second field stops root traversal before a later command
+        // can run. This makes the accepted prefix a real transaction boundary
+        // rather than merely a post-evaluation collector artifact.
+        let blocked_syntax = WordexpSyntax::parse(b"first second $(must-not-run)").unwrap();
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"unexpected");
+        let mut paths = TestPaths::plain();
+        let mut blocked = LimitedResultSink::new(1, WordexpError::NoSpace);
+        assert!(matches!(
+            evaluate_into_silent(
+                &blocked_syntax,
+                &mut context,
+                &mut commands,
+                &mut paths,
+                &mut blocked,
+            ),
+            Err(WordexpError::NoSpace),
+        ));
+        assert_words(&blocked.accepted, &[b"first"]);
+        assert_eq!(commands.calls, 0);
 
         // The core keeps the same accepted-prefix transaction boundary for a
         // non-memory error. The later C wrapper decides to discard that
@@ -5847,7 +6052,7 @@ mod tests {
         let mut paths = TestPaths::plain();
         let mut semantic = LimitedResultSink::new(1, WordexpError::Arithmetic);
         assert!(matches!(
-            evaluate_wordexp_into(
+            evaluate_into_silent(
                 &syntax, &mut context, &mut commands, &mut paths, &mut semantic,
             ),
             Err(WordexpError::Arithmetic),
@@ -5860,7 +6065,7 @@ mod tests {
         let mut paths = TestPaths::plain();
         let mut command_sink = LimitedResultSink::new(usize::MAX, WordexpError::NoSpace);
         assert!(matches!(
-            evaluate_wordexp_into(
+            evaluate_into_silent(
                 &command_syntax,
                 &mut context,
                 &mut commands,
@@ -5878,7 +6083,7 @@ mod tests {
         let mut paths = FailingPatternPaths { error: WordexpError::NoSpace, calls: 0 };
         let mut pattern_sink = LimitedResultSink::new(usize::MAX, WordexpError::NoSpace);
         assert!(matches!(
-            evaluate_wordexp_into(
+            evaluate_into_silent(
                 &pattern_syntax,
                 &mut context,
                 &mut commands,
@@ -5899,7 +6104,7 @@ mod tests {
         let mut paths = TwoMatchPaths { calls: 0, nul: false };
         let mut sink = LimitedResultSink::new(1, WordexpError::NoSpace);
         assert!(matches!(
-            evaluate_wordexp_into(
+            evaluate_into_silent(
                 &syntax, &mut context, &mut commands, &mut paths, &mut sink,
             ),
             Err(WordexpError::NoSpace),
@@ -5914,13 +6119,185 @@ mod tests {
         let mut paths = TwoMatchPaths { calls: 0, nul: true };
         let mut sink = LimitedResultSink::new(usize::MAX, WordexpError::NoSpace);
         assert!(matches!(
-            evaluate_wordexp_into(
+            evaluate_into_silent(
                 &syntax, &mut context, &mut commands, &mut paths, &mut sink,
             ),
             Err(WordexpError::OutputNul),
         ));
         assert_words(&sink.accepted, &[]);
         assert_eq!(paths.calls, 1);
+    }
+
+    #[test]
+    fn parameter_error_expands_selected_word_and_reports_one_typed_diagnostic() {
+        let omitted = WordexpSyntax::parse(b"${U:?}").unwrap();
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let mut results = ExpandedWords::new();
+        let mut diagnostics = TestDiagnostics::new();
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &omitted,
+                &mut context,
+                &mut commands,
+                &mut paths,
+                &mut results,
+                &mut diagnostics,
+            ),
+            Err(WordexpError::ParameterError),
+        ));
+        diagnostics.assert_event(b"U", None);
+        assert_words(&results, &[]);
+
+        // A physical line join after the operator is still an omitted WORD.
+        let joined_omitted = WordexpSyntax::parse(b"${U:?\\\n}").unwrap();
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let mut results = ExpandedWords::new();
+        let mut diagnostics = TestDiagnostics::new();
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &joined_omitted,
+                &mut context,
+                &mut commands,
+                &mut paths,
+                &mut results,
+                &mut diagnostics,
+            ),
+            Err(WordexpError::ParameterError),
+        ));
+        diagnostics.assert_event(b"U", None);
+
+        // Quoting makes an explicitly present WORD even though its resulting
+        // byte view is empty.
+        let empty = WordexpSyntax::parse(b"${U:?\"\"}").unwrap();
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let mut results = ExpandedWords::new();
+        let mut diagnostics = TestDiagnostics::new();
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &empty,
+                &mut context,
+                &mut commands,
+                &mut paths,
+                &mut results,
+                &mut diagnostics,
+            ),
+            Err(WordexpError::ParameterError),
+        ));
+        diagnostics.assert_event(b"U", Some(b""));
+
+        let command = WordexpSyntax::parse(b"${U:?$(selected)}").unwrap();
+        for value in [None, Some(b"".as_slice())] {
+            let mut context = WordexpContext::new();
+            if let Some(value) = value {
+                context.set_initial(b"U", Some(value), false).unwrap();
+            }
+            let mut commands = TestCommands::new(b"message\n");
+            commands.expected_body = Some(b"selected");
+            let mut paths = TestPaths::plain();
+            let mut results = ExpandedWords::new();
+            let mut diagnostics = TestDiagnostics::new();
+            assert!(matches!(
+                evaluate_wordexp_into(
+                    &command,
+                    &mut context,
+                    &mut commands,
+                    &mut paths,
+                    &mut results,
+                    &mut diagnostics,
+                ),
+                Err(WordexpError::ParameterError),
+            ));
+            diagnostics.assert_event(b"U", Some(b"message"));
+            assert_eq!(commands.calls, 1);
+            assert_words(&results, &[]);
+        }
+
+        let assignment = WordexpSyntax::parse(b"${U:?${V:=yes}}").unwrap();
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let mut results = ExpandedWords::new();
+        let mut diagnostics = TestDiagnostics::new();
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &assignment,
+                &mut context,
+                &mut commands,
+                &mut paths,
+                &mut results,
+                &mut diagnostics,
+            ),
+            Err(WordexpError::ParameterError),
+        ));
+        diagnostics.assert_event(b"U", Some(b"yes"));
+        assert_eq!(context.value_bytes(context.lookup_identifier(b"V")), b"yes");
+
+        let set = WordexpSyntax::parse(b"${U:?$(must-not-run)}").unwrap();
+        let mut context = WordexpContext::new();
+        context.set_initial(b"U", Some(b"ready"), false).unwrap();
+        let mut commands = TestCommands::new(b"unexpected");
+        let mut paths = TestPaths::plain();
+        let mut results = ExpandedWords::new();
+        let mut diagnostics = TestDiagnostics::new();
+        evaluate_wordexp_into(
+            &set,
+            &mut context,
+            &mut commands,
+            &mut paths,
+            &mut results,
+            &mut diagnostics,
+        ).unwrap();
+        assert_words(&results, &[b"ready"]);
+        assert_eq!(commands.calls, 0);
+        assert_eq!(diagnostics.events, 0);
+
+        // A failure within the selected diagnostic WORD owns the event. The
+        // outer `U` assertion never reaches its completion task.
+        let nested = WordexpSyntax::parse(b"${U:?${V:?inner}}").unwrap();
+        let mut context = WordexpContext::new();
+        let mut commands = TestCommands::new(b"");
+        let mut paths = TestPaths::plain();
+        let mut results = ExpandedWords::new();
+        let mut diagnostics = TestDiagnostics::new();
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &nested,
+                &mut context,
+                &mut commands,
+                &mut paths,
+                &mut results,
+                &mut diagnostics,
+            ),
+            Err(WordexpError::ParameterError),
+        ));
+        diagnostics.assert_event(b"V", Some(b"inner"));
+
+        let blocked = WordexpSyntax::parse(b"${U:?$(blocked)}").unwrap();
+        let mut context = WordexpContext::new();
+        context.set_no_command_substitution(true);
+        let mut commands = TestCommands::new(b"unexpected");
+        let mut paths = TestPaths::plain();
+        let mut results = ExpandedWords::new();
+        let mut diagnostics = TestDiagnostics::new();
+        assert!(matches!(
+            evaluate_wordexp_into(
+                &blocked,
+                &mut context,
+                &mut commands,
+                &mut paths,
+                &mut results,
+                &mut diagnostics,
+            ),
+            Err(WordexpError::CommandSubstitution),
+        ));
+        assert_eq!(commands.calls, 0);
+        assert_eq!(diagnostics.events, 0);
     }
 
     #[test]

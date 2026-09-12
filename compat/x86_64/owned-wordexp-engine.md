@@ -87,6 +87,16 @@ assignment, or adapter call. It rejects every recognized command node with the
 typed command-substitution error. Otherwise each selected opaque body reaches
 the command adapter exactly once.
 
+For a selected unset or null `${parameter:?WORD}`, the engine expands the
+present `WORD` on its existing heap task stack before reporting
+`ParameterError`. `WordexpDiagnosticSink` receives the normalized parameter
+name and a synchronous borrowed message view while that temporary remains
+live. An omitted `WORD` reports `None`; an explicitly present word that
+expands empty reports `Some(empty)`. A nested failure propagates directly, so
+only the innermost selected assertion emits an event. The future C adapter
+chooses a real diagnostic sink only for `WRDE_SHOWERR`; its output behavior
+does not affect the typed error or result record.
+
 `ExpandedWord` carries ordered byte atoms. Each atom records split eligibility,
 pathname-pattern eligibility, quote or escape protection, a zero-width explicit
 empty marker, and an expansion origin. Ordered empty markers preserve the
@@ -115,8 +125,9 @@ engine's C-allocated vectors, syntax nodes, or atom flags.
 | `WordexpSyntax::parse` | Copies a NUL-free source slice and returns parsed node/span ownership. |
 | `WordexpSyntax::has_commands` | Reports lexical containment of command substitutions for the wrapper's `WRDE_NOCMD` preflight; it neither executes nor builds command syntax. |
 | `WordexpContext` | Holds call-local variable state, export attributes, special-parameter values, IFS, flags, and explicit `WordexpLocaleMode`. `set_initial` distinguishes unset from set-empty. |
-| `evaluate_wordexp_into` | Consumes immutable syntax plus mutable context and deterministic command/path adapters, finalizing one root at a time into `WordexpResultSink`. Its `WRDE_NOCMD` check occurs before any task, context mutation, or sink call. |
-| `WordexpResultSink::append_word` | Atomically accepts one borrowed `ExpandedResultWord`, or returns a typed error while leaving earlier accepted fields owned by the sink. `ExpandedResultWord::byte_len` plus `bytes()` yield exactly one linear NUL-free byte stream; `byte_at` is test-only convenience. |
+| `evaluate_wordexp_into` | Consumes immutable syntax plus mutable context and deterministic command/path adapters, finalizing one root at a time into `WordexpResultSink`, followed by a synchronous `WordexpDiagnosticSink`. Its `WRDE_NOCMD` check occurs before any task, context mutation, sink call, or diagnostic. |
+| `WordexpResultSink::append_word` | Atomically accepts one borrowed `ExpandedResultWord`, or returns a typed error after accepting none of the current field while leaving earlier accepted fields owned by the sink. `ExpandedResultWord::byte_len` plus `bytes()` yield exactly one linear NUL-free byte stream; `byte_at` is test-only convenience. |
+| `WordexpDiagnosticSink::parameter_error` | Receives one selected `${parameter:?WORD}` name and an optional borrowed expanded message synchronously, returns unit, and cannot turn diagnostic output into `NoSpace` or a result-record mutation. |
 | `evaluate_wordexp` | A collecting convenience wrapper for core tests. It calls `evaluate_wordexp_into` and retains copied final fields only after the underlying sink accepts each whole field. |
 | `WordexpCommandAdapter::execute` | Receives an opaque body, typed `CommandStyle`, a safely quoted local-assignment prefix, current NUL-separated exported entries, and a `CommandOutput` sink. `CommandStyle::Backtick { double_quoted }` retains the outer quote context needed for the POSIX backtick backslash rule; the body bytes themselves stay unchanged. |
 | `WordexpPathAdapter::expand_tilde` | Receives a user spelling, the current call-local `HOME` for bare `~`, and a `TildeOutput` sink. A home replacement is marked quoted, so it cannot split or glob. |
@@ -159,7 +170,7 @@ any other typed failure and preserve a pre-existing `WRDE_APPEND` record.
 | Empty fields | IFS white-space and nonwhite delimiters follow the section 2.6.5 delimiter rules. A quoted zero-width atom can preserve an otherwise empty field at its original position; an unquoted unset or empty expansion vanishes even with empty IFS. |
 | Tilde | Bare `~` receives the current call-local `HOME`; named lookup is delegated. A set-empty `HOME` replaces bare `~` with one explicit empty field. Resolved home bytes are quote-protected from both field splitting and pathname expansion. |
 | Special parameters | `wordexp()` leaves their result unspecified. The context supplies finite values; tests use no host positional state. |
-| Parameter WORD | The source is parsed once and evaluated only when selected, under distinct parameter-word, assignment-value, or pattern-operand context. Unselected branches have no command, arithmetic, or assignment side effect. Assignment stores the quote-removed operand but emits the assigned result under the enclosing expansion's quote state. The four `#`/`##`/`%`/`%%` operands ignore an enclosing double quote for pattern syntax while retaining quotes written inside the braces; this applies in arithmetic source too. A shared parameter-header scan chooses that delimiter rule before the matching `}`, so an ordinary outer-double-quoted operand retains literal single quotes and removes `\}` only where POSIX makes that brace escape special. |
+| Parameter WORD | The source is parsed once and evaluated only when selected, under distinct parameter-word, assignment-value, or pattern-operand context. Unselected branches have no command, arithmetic, assignment, or diagnostic side effect. Assignment stores the quote-removed operand but emits the assigned result under the enclosing expansion's quote state. A selected `:?` follows parameter-word expansion, then returns its typed error while preserving omitted versus explicit-empty syntax for the diagnostic sink. The four `#`/`##`/`%`/`%%` operands ignore an enclosing double quote for pattern syntax while retaining quotes written inside the braces; this applies in arithmetic source too. A shared parameter-header scan chooses that delimiter rule before the matching `}`, so an ordinary outer-double-quoted operand retains literal single quotes and removes `\}` only where POSIX makes that brace escape special. |
 | Parameter pattern result | The pathname adapter emits removal bytes through `ParameterPatternOutput`. An empty result disappears when its outer parameter expansion is unquoted and becomes one explicit empty field when that expansion is quoted; nonempty output retains normal outer splitting and quote rules. |
 | Parameter length | `${#name}` counts bytes in C mode. In C.UTF-8 mode it counts valid UTF-8 scalars; every malformed or incomplete leading byte counts as one character so the operation preserves forward progress on arbitrary stored bytes. |
 | Arithmetic | The envelope is recognized before evaluation. Direct parameter, command, and nested arithmetic expansion completes across the full selected envelope before arithmetic parsing; arithmetic AST branches and assignments then short-circuit. An unset bare arithmetic identifier is numeric zero; direct parameter expansion still observes `WRDE_UNDEF`. Octal and hexadecimal literals are accepted. The implementation supports plain and ten compound assignments (`*=`, `/=`, `%=`, `+=`, `-=`, `<<=`, `>>=`, `&=`, `^=`, `|=`). |
@@ -204,6 +215,13 @@ before a field reaches the sink; and a non-memory typed failure remains
 distinct for the later C record owner to discard. A shared-state command/path
 test proves an earlier `p*.txt` root is matched before a later command can
 create `p-new.txt`.
+
+Parameter-error regressions retain omitted versus explicit-empty message
+presence, physical continuation joining, unset and null command-message
+execution, assignment-message mutation, selected no-event behavior, nested
+error ownership, and the complete-graph `WRDE_NOCMD` precheck. The diagnostic
+capture is typed and in-process; it neither launches a subprocess nor parses
+stderr or an exit status.
 
 A retained independent pinned-shell corpus is useful as a comparison, not a
 selection gate. Its two observed rows that set `V=9` in a skipped `&&` or `||`
