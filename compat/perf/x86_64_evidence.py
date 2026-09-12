@@ -566,16 +566,24 @@ def verify_inventory(root: Path, expected: object, label: str) -> None:
     require(inventory_tree(root) == expected, f"{label} inventory changed")
 
 
-def replay_observed_mappings(raw: str, root: Path) -> list[str]:
+def replay_observed_mappings(raw: str, recorded_root: str) -> list[str]:
     """Rebuild sealed-root file mappings from one retained ``/proc/PID/maps``.
 
     The runner may ignore anonymous kernel mappings, but an absolute file
     mapping must belong to the exact staged chroot tree.  Retaining only a
     hand-written list would let a later ambient loader fallback disappear from
     host replay, so the list is always recomputed from the raw observation.
+
+    ``/proc/PID/maps`` is emitted inside the native container and therefore
+    names the fixed ``/workspace`` mount.  Validate that recorded namespace
+    first.  Host replay translates its resulting paths only afterwards; using
+    the host checkout prefix here would incorrectly reject every legitimate
+    retained map from the container.
     """
 
-    prefix = str(root.resolve(strict=True))
+    require(isinstance(recorded_root, str), "recorded mapping root is not text")
+    relative = _relative_to_mount(recorded_root, SOURCE_MOUNT)
+    prefix = str(Path(SOURCE_MOUNT) / relative)
     paths: list[str] = []
     for line in raw.splitlines():
         fields = line.split(maxsplit=5)
@@ -587,6 +595,23 @@ def replay_observed_mappings(raw: str, root: Path) -> list[str]:
         paths.append(path)
     require(paths, "runtime mapping observation contains no sealed files")
     return sorted(set(paths))
+
+
+def _verify_replayed_mapping_paths(
+    checkout: Path,
+    paths: Sequence[str],
+    root: Path,
+    label: str,
+) -> None:
+    """Translate recorded map paths and prove they remain below the host root."""
+
+    physical_root = root.resolve(strict=True)
+    for path in paths:
+        translated = translate_source_path(checkout, SOURCE_MOUNT, path)
+        try:
+            translated.resolve(strict=True).relative_to(physical_root)
+        except ValueError as error:
+            raise EvidenceError(f"{label}: translated runtime mapping escaped sealed root: {path}") from error
 
 
 def parse_dynamic_section(raw: str) -> dict[str, Any]:
@@ -864,6 +889,24 @@ def replay_successful_execve(raw: str, binary: str, arguments: Sequence[str]) ->
 
     argv = ", ".join(json.dumps(value) for value in [binary, *arguments])
     pattern = re.compile(rf'^{_trace_prefix()}execve\("{re.escape(binary)}",\s*\[{re.escape(argv)}\],\s*.*\)\s+=\s+0$')
+    matches = [index for index, line in enumerate(raw.splitlines()) if pattern.match(line)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def replay_successful_preexec_chroot(raw: str, root: str) -> int | None:
+    """Locate the one successful diagnostic-child chroot into its lane root.
+
+    The trace begins before Python performs descriptor setup and ``chroot``.
+    The later ``/app/bin/...`` execve is identical across providers, so its
+    argv alone cannot prove which staged runtime root the diagnostic child
+    entered.  Bind the successful pre-exec ``chroot`` to the sealed lane root
+    before using its syscall counts for either provider.
+    """
+
+    require(isinstance(root, str) and root.startswith(SOURCE_MOUNT + "/"),
+            "trace chroot root is not a source-mounted staged lane")
+    quoted = json.dumps(root)
+    pattern = re.compile(rf'^{_trace_prefix()}chroot\({re.escape(quoted)}\)\s+=\s+0$')
     matches = [index for index, line in enumerate(raw.splitlines()) if pattern.match(line)]
     return matches[0] if len(matches) == 1 else None
 
@@ -1423,23 +1466,47 @@ def _verify_timing_launcher_sample(
     root_record: str,
     invocation: Mapping[str, Any],
     label: str,
+    invocation_directory: Path,
+    seen_artifacts: set[str],
 ) -> None:
-    """Bind a timed sample's derived metrics to one static launcher result."""
+    """Bind a timed sample's derived metrics to one fresh launcher result.
+
+    The static launcher's JSON has no sample-index field.  Its result and
+    client/supervisor streams therefore have to occupy the exact fresh output
+    directory selected by the recorded warmup/sample plan, and no such raw
+    artifact may be referenced by another client invocation.
+    """
 
     expected = {"command", "status", "stdout", "stderr", "result"}
     require(isinstance(launcher, dict) and set(launcher) == expected,
             f"{label}: timing launcher fields differ")
+    require(invocation_directory.is_dir() and not invocation_directory.is_symlink(),
+            f"{label}: timing launcher invocation directory is absent")
+
+    def bind_artifact(record: object, expected_name: str, artifact_label: str) -> Path:
+        require(isinstance(record, dict), f"{label}: {artifact_label} identity is absent")
+        expected_path = _recorded_path(checkout, SOURCE_MOUNT, str(invocation_directory / expected_name))
+        require(record.get("path") == expected_path,
+                f"{label}: {artifact_label} path is not its canonical invocation output")
+        path = retained_file_identity(checkout, SOURCE_MOUNT, record, f"{label}: {artifact_label}")
+        recorded = str(record["path"])
+        require(recorded not in seen_artifacts,
+                f"{label}: timing launcher {artifact_label} was reused across client invocations")
+        seen_artifacts.add(recorded)
+        return path
+
     result_record = launcher["result"]
-    require(isinstance(result_record, dict), f"{label}: timing launcher result is absent")
-    result_path = retained_file_identity(checkout, SOURCE_MOUNT, result_record, f"{label}: timing launcher result")
+    result_path = bind_artifact(result_record, "timing-launcher-result.json", "result")
+    bind_artifact(sample["stdout"], "stdout", "client stdout")
+    bind_artifact(sample["stderr"], "stderr", "client stderr")
+    supervisor_stdout = bind_artifact(launcher["stdout"], "timing-launcher.stdout", "supervisor stdout")
+    supervisor_stderr = bind_artifact(launcher["stderr"], "timing-launcher.stderr", "supervisor stderr")
     raw_result = validate_timing_launcher_result(load_json(result_path, f"{label}: timing launcher result"))
     require(launcher["status"] == {"kind": "exit", "code": 0}
             and sample["elapsed_wall_ns"] == raw_result["elapsed_wall_ns"]
             and sample["resources"] == raw_result["resources"]
             and sample["status"] == timing_launcher_status(raw_result),
             f"{label}: sample metrics do not derive from timing launcher")
-    supervisor_stdout = retained_file_identity(checkout, SOURCE_MOUNT, launcher["stdout"], f"{label}: timing launcher stdout")
-    supervisor_stderr = retained_file_identity(checkout, SOURCE_MOUNT, launcher["stderr"], f"{label}: timing launcher stderr")
     require(not supervisor_stdout.read_bytes() and not supervisor_stderr.read_bytes(),
             f"{label}: timing launcher emitted unexpected output")
     command = launcher["command"]
@@ -1471,6 +1538,8 @@ def _verify_completed_sample(
     row: performance_profile.PerformanceRow | None = None,
     host: Mapping[str, Any] | None = None,
     seen_peers: set[str] | None = None,
+    invocation_directory: Path | None = None,
+    seen_launcher_artifacts: set[str] | None = None,
 ) -> Mapping[str, Any]:
     expected = {
         "elapsed_wall_ns", "status", "resources", "stdout", "stderr", "stdout_matches",
@@ -1501,15 +1570,19 @@ def _verify_completed_sample(
             f"{label}: output hash differs")
     if full:
         require(root_record is not None and invocation is not None and row is not None and host is not None
-                and seen_peers is not None,
+                and seen_peers is not None and invocation_directory is not None
+                and seen_launcher_artifacts is not None,
                 f"{label}: full sample replay context is absent")
+        require(stdout.parent == invocation_directory and stderr.parent == invocation_directory,
+                f"{label}: client outputs are not in their canonical invocation directory")
         _verify_timing_launcher_sample(
             checkout, sample, sample["launcher"], launcher_output=launcher_output,
             root_record=root_record, invocation=invocation, label=label,
+            invocation_directory=invocation_directory, seen_artifacts=seen_launcher_artifacts,
         )
         _verify_peer_context(
             checkout, sample["peer"], row=row, root_record=root_record, host=host,
-            invocation_directory=stdout.parent, label=label, seen_records=seen_peers,
+            invocation_directory=invocation_directory, label=label, seen_records=seen_peers,
         )
     return sample
 
@@ -1568,6 +1641,9 @@ def _verify_diagnostic(
     if full:
         require(root_record is not None and host is not None and seen_peers is not None,
                 f"{label}: full diagnostic replay context is absent")
+        chroot = replay_successful_preexec_chroot(raw, root_record)
+        require(chroot is not None and chroot < whole["boundary_trace_line"] - 1,
+                f"{label}: diagnostic chroot does not bind the selected lane root")
         _verify_peer_context(
             checkout, diagnostic["peer"], row=row, root_record=root_record, host=host,
             invocation_directory=stdout.parent, label=label, seen_records=seen_peers,
@@ -1760,10 +1836,8 @@ def _verify_observer_mapping(
     require(isinstance(mappings, dict) and set(mappings) == {"raw", "paths"}
             and isinstance(mappings["paths"], list), f"{label}: mapping observation differs")
     raw = retained_file_identity(checkout, SOURCE_MOUNT, mappings["raw"], f"{label}: maps raw")
-    rebuilt = [
-        _recorded_path(checkout, SOURCE_MOUNT, path)
-        for path in replay_observed_mappings(raw.read_text(encoding="utf-8", errors="replace"), root)
-    ]
+    rebuilt = replay_observed_mappings(raw.read_text(encoding="utf-8", errors="replace"), root_record)
+    _verify_replayed_mapping_paths(checkout, rebuilt, root, label)
     require(mappings["paths"] == rebuilt
             and all(isinstance(path, str) and path.startswith(root_record + "/") for path in mappings["paths"]),
             f"{label}: mapping observation escapes its sealed root")
@@ -2016,6 +2090,7 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
             )
             launcher_output = timing_launcher["output"]
         seen_peers: set[str] = set()
+        seen_launcher_artifacts: set[str] = set()
         workloads = measurement.get("workloads")
         require(isinstance(workloads, dict) and set(workloads) == set(selected), "workload metrics roster differs")
         contract = _performance_contract(str(checkout.resolve(strict=True)))
@@ -2042,6 +2117,13 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
                 root_record = execution_roots[lane]
                 root_text = root_record.get("root") if isinstance(root_record, dict) else None
                 require(isinstance(root_text, str), f"{name}/{lane}: sealed execution root differs")
+                attempt_root: Path | None = None
+                if full:
+                    physical_root = translate_source_path(checkout, SOURCE_MOUNT, root_text)
+                    require(physical_root.name == lane and physical_root.parent.name == "roots"
+                            and physical_root.parent.parent.name == "execution",
+                            f"{name}/{lane}: staged root cannot bind canonical invocation outputs")
+                    attempt_root = physical_root.parent.parent.parent
                 expected_lane = {
                     "status", "iterations_per_process", "operations_per_process",
                     "warmup_processes", "warmups", "sample_count", "samples", "summary", "syscalls",
@@ -2060,6 +2142,11 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
                         index_field="warmup_index", index=warmup_index, execution_order=None,
                         launcher_output=launcher_output, root_record=root_text, invocation=invocation,
                         row=rows_by_name[name] if full else None, host=host, seen_peers=seen_peers if full else None,
+                        invocation_directory=(
+                            attempt_root / "raw" / "execution" / f"warmup-{lane}-{name}-{warmup_index}"
+                            if attempt_root is not None else None
+                        ),
+                        seen_launcher_artifacts=seen_launcher_artifacts if full else None,
                     )
                 samples = lane_item["samples"]
                 require(isinstance(samples, list) and len(samples) == FULL_SAMPLE_COUNT, f"{name}/{lane}: sample roster differs")
@@ -2069,6 +2156,11 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
                         index=sample_index, execution_order=plan_order[(lane, sample_index)],
                         launcher_output=launcher_output, root_record=root_text, invocation=invocation,
                         row=rows_by_name[name] if full else None, host=host, seen_peers=seen_peers if full else None,
+                        invocation_directory=(
+                            attempt_root / "raw" / "execution" / f"sample-{lane}-{name}-{sample_index}"
+                            if attempt_root is not None else None
+                        ),
+                        seen_launcher_artifacts=seen_launcher_artifacts if full else None,
                     )
                 require(lane_item["summary"] == contract.summarize_samples(samples), f"{name}/{lane}: summary differs")
                 _verify_diagnostic(
@@ -3031,10 +3123,10 @@ def _verify_attempt_execution(checkout: Path, attempt: Mapping[str, Any], index:
         require(isinstance(mappings["paths"], list), f"attempt {index} {lane} mapping paths are absent")
         for mapped in mappings["paths"]:
             require(isinstance(mapped, str) and mapped.startswith(str(Path(root_record["root"]))), f"attempt {index} {lane} observed ambient mapping")
-        rebuilt_mappings = [
-            _recorded_path(checkout, SOURCE_MOUNT, path)
-            for path in replay_observed_mappings(raw_mapping.read_text(encoding="utf-8", errors="replace"), root)
-        ]
+        rebuilt_mappings = replay_observed_mappings(
+            raw_mapping.read_text(encoding="utf-8", errors="replace"), root_record["root"],
+        )
+        _verify_replayed_mapping_paths(checkout, rebuilt_mappings, root, f"attempt {index} {lane}")
         require(mappings["paths"] == rebuilt_mappings,
                 f"attempt {index} {lane} mapping list disagrees with retained proc maps")
     raw = execution["raw"]

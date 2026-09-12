@@ -1763,11 +1763,6 @@ def run_timed(
             process_stdout, process_stderr = kill_timing_supervisor(process, timeout)
         if process.returncode != 0:
             parent_failure = f"timing launcher exited with {process.returncode}"
-            if not parent_timed_out:
-                try:
-                    abort_timing_supervisor_group(process)
-                except AdapterError as cleanup_error:
-                    parent_failure += f"; {cleanup_error}"
         if result_path.exists():
             try:
                 raw_result = evidence.validate_timing_launcher_result(
@@ -1777,6 +1772,16 @@ def run_timed(
                 parent_failure = parent_failure or str(error)
         else:
             parent_failure = parent_failure or "timing launcher produced no result JSON"
+        # A success exit code proves only that the supervisor itself returned;
+        # it does not prove it reaped its direct client.  A missing or invalid
+        # result is therefore an abnormal supervisor outcome too.  Kill the
+        # fresh session before retaining the failed sample, so a malformed
+        # zero-exit supervisor cannot leave an unmeasured client alive.
+        if parent_failure is not None and not parent_timed_out:
+            try:
+                abort_timing_supervisor_group(process)
+            except AdapterError as cleanup_error:
+                parent_failure += f"; {cleanup_error}"
     except (OSError, AdapterError, peers.PeerError, ValueError) as error:
         parent_failure = str(error)
         if process is not None and process.poll() is None:
@@ -1784,7 +1789,7 @@ def run_timed(
                 process_stdout, process_stderr = kill_timing_supervisor(process, timeout)
             except AdapterError as cleanup_error:
                 parent_failure += f"; {cleanup_error}"
-        elif process is not None and process.returncode not in {None, 0}:
+        elif process is not None:
             try:
                 abort_timing_supervisor_group(process)
             except AdapterError as cleanup_error:

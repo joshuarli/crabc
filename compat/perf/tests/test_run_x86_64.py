@@ -131,6 +131,62 @@ class TimingLauncherLifecycleTests(unittest.TestCase):
                 except ProcessLookupError:
                     pass
 
+    def test_zero_exit_without_result_kills_its_surviving_process_group(self) -> None:
+        """A zero-exit supervisor without a result is still an abnormal abort."""
+
+        row = next(item for item in runner.performance_rows(ROOT) if item.name == "memmem_guard63")
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            lane_root = directory / "lane"
+            lane_root.mkdir()
+            child_pid = directory / "surviving-child.pid"
+            supervisor = directory / "zero-exit-no-result.py"
+            supervisor.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, pathlib, time\n"
+                f"marker = pathlib.Path({str(child_pid)!r})\n"
+                "pid = os.fork()\n"
+                "if pid == 0:\n"
+                "    os.close(1)\n"
+                "    os.close(2)\n"
+                "    while True:\n"
+                "        time.sleep(1)\n"
+                "marker.write_text(str(pid), encoding='ascii')\n"
+                "os._exit(0)\n",
+                encoding="utf-8",
+            )
+            supervisor.chmod(0o755)
+            lane = runner.Lane(
+                name="musl", root=lane_root,
+                binaries={row.timed_artifact: "/app/bin/fake"}, dsos={},
+                io_file=directory / "io", span_inputs={},
+                environment={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            )
+            launcher = runner.TimingLauncher(
+                source=supervisor, output=supervisor, command=[], raw={},
+            )
+            result = runner.run_timed(
+                ROOT, lane, row, directory / "attempt", 1.0, launcher,
+                client_cpu=2, peer_cpu=None, allowed_affinity=(2,),
+            )
+            self.assertEqual(result["status"]["kind"], "launcher-failed")
+            self.assertEqual(result["launcher"]["status"], {"kind": "exit", "code": 0})
+            self.assertIn("no result JSON", result["status"]["reason"])
+            deadline = time.monotonic() + 2.0
+            while not child_pid.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(child_pid.exists(), "test supervisor never recorded its child")
+            pid = int(child_pid.read_text(encoding="ascii"))
+            try:
+                while Path(f"/proc/{pid}").exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertFalse(Path(f"/proc/{pid}").exists(), "zero-exit launcher child was not killed")
+            finally:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
 
 class MeasurementCompletenessTests(unittest.TestCase):
     def test_red_syscall_scorecard_is_complete_when_clients_and_raw_diagnostics_exist(self) -> None:

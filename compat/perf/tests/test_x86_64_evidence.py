@@ -188,6 +188,59 @@ class RawTraceReplayTests(unittest.TestCase):
             with self.assertRaisesRegex(evidence.EvidenceError, "marked syscall region"):
                 evidence._verify_diagnostic(ROOT, forged, invocation, "trace")
 
+    def test_raw_trace_rejects_lane_swapped_preexec_chroot(self) -> None:
+        """The selected client trace must enter the matching sealed lane root."""
+
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            begin = "CRABC_PERF_BEGIN"
+            end = "CRABC_PERF_END"
+            musl_root = "/workspace/.work/x86_64/roots/musl"
+            crabc_root = "/workspace/.work/x86_64/roots/crabc"
+            trace = directory / "trace.raw"
+            trace.write_text("\n".join((
+                f'chroot("{crabc_root}") = 0',
+                'execve("/app/bin/workload", ["/app/bin/workload", "mode"], 0x1 /* 5 vars */) = 0',
+                f'write(97, "{begin}", {len(begin)}) = {len(begin)}',
+                'getpid() = 1',
+                f'write(97, "{end}", {len(end)}) = {len(end)}',
+                '',
+            )), encoding="utf-8")
+            stdout = directory / "stdout"; stdout.write_bytes(b"ok\n")
+            stderr = directory / "stderr"; stderr.write_bytes(b"")
+            markers = directory / "markers"; markers.write_bytes(b"")
+            strace_stdout = directory / "strace.stdout"; strace_stdout.write_bytes(b"")
+            strace_stderr = directory / "strace.stderr"; strace_stderr.write_bytes(b"")
+            invocation = {
+                "binary": "/app/bin/workload", "arguments": ["mode"],
+                "fixture_mode": "test", "iterations_per_process": 1,
+            }
+            marked = evidence.replay_marker_region(trace.read_text(), 97, begin, end)
+            whole = evidence.replay_whole_process_after_execve(
+                trace.read_text(), "/app/bin/workload", ["mode"], 97, begin, end,
+            )
+            diagnostic = {
+                "status": "ok", "diagnostic": True, "timing": False,
+                "child": {"kind": "exit", "code": 0}, "resources": resources(1),
+                "trace": identity(trace), "stdout": identity(stdout), "stderr": identity(stderr),
+                "markers": identity(markers), "strace_stdout": identity(strace_stdout), "strace_stderr": identity(strace_stderr),
+                "trace_sha256": hashlib.sha256(trace.read_bytes()).hexdigest(),
+                "whole_process": whole, "marked_region": marked,
+                "workload_execve": {"path": "/app/bin/workload", "argv": ["/app/bin/workload", "mode"]},
+                "successful_workload_execve_trace_lines": [whole["boundary_trace_line"]],
+                "marker_writes_excluded_from_whole_process": True,
+                "peer": None,
+            }
+            rows = evidence.performance_profile.performance_rows(
+                ROOT, evidence._performance_contract(str(ROOT.resolve())).WORKLOADS,
+            )
+            row = next(item for item in rows if item.name == "startup")
+            with self.assertRaisesRegex(evidence.EvidenceError, "chroot"):
+                evidence._verify_diagnostic(
+                    ROOT, diagnostic, invocation, "lane-trace", row=row,
+                    root_record=musl_root, host={}, seen_peers=set(),
+                )
+
 
 class RawMemoryReplayTests(unittest.TestCase):
     def test_raw_smaps_rejects_forged_pss(self) -> None:
@@ -309,6 +362,27 @@ class RawMemoryReplayTests(unittest.TestCase):
         swapped["musl"]["migration"]["probe"] = probes[("crabc", "live")]
         with self.assertRaisesRegex(evidence.EvidenceError, "lane/phase"):
             evidence._verify_probe_assignment(swapped, {}, (), list(probes.values()), mount)
+
+
+class ObservedMappingReplayTests(unittest.TestCase):
+    def test_observer_maps_replay_in_recorded_mount_before_host_translation(self) -> None:
+        """Container `/workspace` maps remain valid when host replay relocates them."""
+
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            root = directory / "execution/roots/musl"
+            mapped = root / "app/bin/observer"
+            mapped.parent.mkdir(parents=True)
+            mapped.write_bytes(b"observer")
+            root_record = evidence._recorded_path(ROOT, evidence.SOURCE_MOUNT, str(root))
+            mapped_record = f"{root_record}/app/bin/observer"
+            raw = directory / "maps.raw"
+            raw.write_text(
+                f"00400000-00401000 r-xp 00000000 00:00 0 {mapped_record}\n",
+                encoding="utf-8",
+            )
+            mappings = {"raw": identity(raw), "paths": [mapped_record]}
+            evidence._verify_observer_mapping(ROOT, mappings, root, root_record, "mapping")
 
 
 class RawElfReplayTests(unittest.TestCase):
@@ -823,6 +897,54 @@ class SamplePlanReplayTests(unittest.TestCase):
                 extra = copy.deepcopy(report)
                 extra["measurement"]["workloads"]["cheap-substitute"] = copy.deepcopy(extra["measurement"]["workloads"][name])
                 self.assertTrue(evidence.validate_measurement_attempt(ROOT, extra, [name], full=False))
+
+
+class TimingLauncherArtifactReplayTests(unittest.TestCase):
+    def test_timing_launcher_raw_artifacts_cannot_be_reused(self) -> None:
+        """One raw launcher result and streams prove only one fresh client."""
+
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            invocation_directory = directory / "raw/execution/sample-musl-startup-0"
+            invocation_directory.mkdir(parents=True)
+            launcher_binary = directory / "launcher"; launcher_binary.write_bytes(b"launcher")
+            stdout = invocation_directory / "stdout"; stdout.write_bytes(b"ok\n")
+            stderr = invocation_directory / "stderr"; stderr.write_bytes(b"")
+            launcher_stdout = invocation_directory / "timing-launcher.stdout"; launcher_stdout.write_bytes(b"")
+            launcher_stderr = invocation_directory / "timing-launcher.stderr"; launcher_stderr.write_bytes(b"")
+            raw_result = invocation_directory / "timing-launcher-result.json"
+            raw_result.write_text(json.dumps({
+                "schema": evidence.TIMING_LAUNCHER_SCHEMA, "child_pid": 77, "wait_status": 0,
+                "timed_out": False, "elapsed_wall_ns": 11, "resources": resources(1),
+            }), encoding="utf-8")
+            root_record = "/workspace/.work/x86_64/staged-root"
+            invocation = {"binary": "/app/bin/workload", "arguments": ["mode"]}
+            sample = {
+                "elapsed_wall_ns": 11, "status": {"kind": "exit", "code": 0}, "resources": resources(1),
+                "stdout": identity(stdout), "stderr": identity(stderr),
+            }
+            launcher = {
+                "command": [
+                    identity(launcher_binary)["path"], root_record, sample["stdout"]["path"],
+                    sample["stderr"]["path"], identity(raw_result)["path"], "1000",
+                    invocation["binary"], *invocation["arguments"],
+                ],
+                "status": {"kind": "exit", "code": 0},
+                "stdout": identity(launcher_stdout), "stderr": identity(launcher_stderr),
+                "result": identity(raw_result),
+            }
+            seen: set[str] = set()
+            evidence._verify_timing_launcher_sample(
+                ROOT, sample, launcher, launcher_output=identity(launcher_binary),
+                root_record=root_record, invocation=invocation, label="first",
+                invocation_directory=invocation_directory, seen_artifacts=seen,
+            )
+            with self.assertRaisesRegex(evidence.EvidenceError, "reused"):
+                evidence._verify_timing_launcher_sample(
+                    ROOT, sample, launcher, launcher_output=identity(launcher_binary),
+                    root_record=root_record, invocation=invocation, label="second",
+                    invocation_directory=invocation_directory, seen_artifacts=seen,
+                )
 
 
 if __name__ == "__main__":
