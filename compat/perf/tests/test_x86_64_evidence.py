@@ -83,6 +83,48 @@ class CanonicalProfileInvocationTests(unittest.TestCase):
 
 
 class RawTraceReplayTests(unittest.TestCase):
+    def test_scorecard_gate_requires_whole_process_and_classifies_every_difference(self) -> None:
+        """A zero marked main cannot conceal startup/loader syscall drift."""
+
+        reference = {
+            "marked_region": {"calls": {}},
+            "whole_process": {"calls": {"openat": {"calls": 10, "errors": 0}}},
+        }
+        candidate = {
+            "marked_region": {"calls": {}},
+            "whole_process": {"calls": {"openat": {"calls": 41, "errors": 0}}},
+        }
+        gate = evidence.scorecard_syscall_gate(reference, candidate, operations=1)
+        self.assertEqual(gate["marked_region"]["status"], "pass")
+        self.assertEqual(gate["whole_process"]["status"], "fail")
+        self.assertEqual(gate["status"], "fail")
+        self.assertEqual(gate["whole_process"]["total_calls"]["release_gate"], "fail")
+        self.assertTrue(any("whole_process: total calls: candidate 41 exceeds 2R=20" == item for item in gate["violations"]))
+
+        # A candidate can remain below 2R and still cannot pass until a
+        # workload-contract owner classifies the nonzero lifecycle difference.
+        candidate["whole_process"]["calls"]["openat"]["calls"] = 11
+        unresolved = evidence.scorecard_syscall_gate(reference, candidate, operations=1)
+        self.assertEqual(unresolved["whole_process"]["status"], "fail")
+        self.assertEqual(unresolved["whole_process"]["total_calls"]["release_gate"], "pass")
+        self.assertTrue(any("unclassified" in item for item in unresolved["violations"]))
+
+        # Per-name redistribution is visible for review but does not replace
+        # the scorecard's total-call 2R rule with a stricter per-name rule.
+        reference["whole_process"]["calls"] = {
+            "openat": {"calls": 8, "errors": 0}, "close": {"calls": 2, "errors": 0},
+        }
+        candidate["whole_process"]["calls"] = {
+            "openat": {"calls": 3, "errors": 0}, "close": {"calls": 17, "errors": 0},
+        }
+        redistributed = evidence.scorecard_syscall_gate(reference, candidate, operations=1)
+        self.assertEqual(redistributed["whole_process"]["total_calls"], {
+            "reference": 10, "candidate": 20, "threshold_numerator": 2,
+            "threshold_denominator": 1, "rule": "at-most-2R", "release_gate": "pass",
+        })
+        self.assertEqual(redistributed["status"], "fail")
+        self.assertTrue(any("unclassified" in item for item in redistributed["violations"]))
+
     def test_whole_process_begins_at_selected_execve_not_python_prelude(self) -> None:
         begin = "CRABC_PERF_BEGIN"
         end = "CRABC_PERF_END"
@@ -258,15 +300,15 @@ class RawMemoryReplayTests(unittest.TestCase):
             }
             for lane in ("musl", "crabc")
         }
-        evidence._verify_probe_assignment(memory, list(probes.values()), mount)
+        evidence._verify_probe_assignment(memory, {}, (), list(probes.values()), mount)
         reused = copy.deepcopy(memory)
         reused["crabc"]["cgroup_memory"]["after_ready_self_test"]["migration"]["probe"] = probes[("crabc", "live")]
         with self.assertRaisesRegex(evidence.EvidenceError, "lane/phase"):
-            evidence._verify_probe_assignment(reused, list(probes.values()), mount)
+            evidence._verify_probe_assignment(reused, {}, (), list(probes.values()), mount)
         swapped = copy.deepcopy(memory)
         swapped["musl"]["migration"]["probe"] = probes[("crabc", "live")]
         with self.assertRaisesRegex(evidence.EvidenceError, "lane/phase"):
-            evidence._verify_probe_assignment(swapped, list(probes.values()), mount)
+            evidence._verify_probe_assignment(swapped, {}, (), list(probes.values()), mount)
 
 
 class RawElfReplayTests(unittest.TestCase):
@@ -415,6 +457,57 @@ class ImageToolManifestTests(unittest.TestCase):
             forged["tools"][evidence.FIXED_STRACE] = "f" * 64
             with self.assertRaisesRegex(evidence.EvidenceError, "manifest record"):
                 evidence._verify_image_tool_manifest(ROOT, forged, index=1, tools=tools)
+
+
+class CpuDiagnosticReplayTests(unittest.TestCase):
+    def test_raw_cpu_model_and_frequency_telemetry_replay_independently(self) -> None:
+        """Frequency drift stays diagnostic, while replay still needs raw bytes."""
+
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            raw = Path(temporary) / "cpuinfo.raw"
+            raw.write_bytes(
+                b"processor\t: 0\n"
+                b"model name\t: Example x86 CPU\n"
+                b"cpu MHz\t\t: 3200.000\n"
+                b"bogomips\t: 6400.00\n"
+            )
+            record = {"raw": identity(raw), **evidence.cpuinfo_diagnostics(raw.read_bytes())}
+            self.assertEqual(
+                evidence._verify_cpuinfo_diagnostic(ROOT, record, "before"),
+                {"model_names": ["Example x86 CPU"], "cpu_mhz": ["3200.000"], "bogomips": ["6400.00"]},
+            )
+            forged = copy.deepcopy(record)
+            forged["cpu_mhz"] = ["800.000"]
+            with self.assertRaisesRegex(evidence.EvidenceError, "differs from raw"):
+                evidence._verify_cpuinfo_diagnostic(ROOT, forged, "before")
+
+    def test_stable_cpu_identity_replays_both_raw_captures(self) -> None:
+        """Volatile frequency drift is allowed; a changed CPU identity is not."""
+
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            before = directory / "cpuinfo.before"
+            after = directory / "cpuinfo.after"
+            before.write_bytes(
+                b"model name\t: Example x86 CPU\n"
+                b"cpu MHz\t\t: 3200.000\n"
+                b"bogomips\t: 6400.00\n"
+            )
+            after.write_bytes(
+                b"model name\t: Example x86 CPU\n"
+                b"cpu MHz\t\t: 800.000\n"
+                b"bogomips\t: 1600.00\n"
+            )
+            diagnostics = {
+                "before": {"raw": identity(before), **evidence.cpuinfo_diagnostics(before.read_bytes())},
+                "after": {"raw": identity(after), **evidence.cpuinfo_diagnostics(after.read_bytes())},
+            }
+            host = {"cpuinfo_sha256": evidence.cpuinfo_identity_sha256(before.read_bytes())}
+            evidence._verify_stable_cpuinfo_identity(ROOT, host, diagnostics, index=1)
+            after.write_bytes(after.read_bytes().replace(b"Example x86 CPU", b"Other x86 CPU"))
+            diagnostics["after"] = {"raw": identity(after), **evidence.cpuinfo_diagnostics(after.read_bytes())}
+            with self.assertRaisesRegex(evidence.EvidenceError, "stable CPU identity"):
+                evidence._verify_stable_cpuinfo_identity(ROOT, host, diagnostics, index=1)
 
 
 class CollectorCompositionTests(unittest.TestCase):
@@ -678,7 +771,8 @@ class SamplePlanReplayTests(unittest.TestCase):
                     "operations_per_process": invocation["operations_per_process"],
                     "warmup_processes": evidence.FULL_WARMUP_COUNT, "warmups": warmups,
                     "sample_count": evidence.FULL_SAMPLE_COUNT, "samples": samples,
-                    "summary": contract.summarize_samples(samples), "syscalls": {"marked_region": {"calls": {}}},
+                    "summary": contract.summarize_samples(samples),
+                    "syscalls": {"marked_region": {"calls": {}}, "whole_process": {"calls": {}}},
                 }
             reference = [200 for _ in range(evidence.FULL_SAMPLE_COUNT)]
             candidate = [180 for _ in range(evidence.FULL_SAMPLE_COUNT)]
@@ -687,8 +781,9 @@ class SamplePlanReplayTests(unittest.TestCase):
                 "status": "ok", "seed": seed,
                 "sample_plan": [{"lane": lane, "sample_index": index} for lane, index in plan],
                 "cpu": {**cpu, "release_gate": "pass" if cpu["one_sided_95_upper"] <= 0.90 else "fail"},
-                "syscall_gate": evidence.syscall_gate(
-                    {"calls": {}}, {"calls": {}},
+                "syscall_gate": evidence.scorecard_syscall_gate(
+                    {"marked_region": {"calls": {}}, "whole_process": {"calls": {}}},
+                    {"marked_region": {"calls": {}}, "whole_process": {"calls": {}}},
                     operations=invocation["operations_per_process"],
                 ),
             }
@@ -703,6 +798,7 @@ class SamplePlanReplayTests(unittest.TestCase):
                         "musl": {"mappings": mapping, "cgroup_memory": {"after_ready_self_test": {}}},
                         "crabc": {"mappings": mapping, "cgroup_memory": {"after_ready_self_test": {}}},
                     },
+                    "memory_observers": {},
                     "workloads": {name: {"invocation": invocation, **lanes, "comparison": comparison}},
                 },
                 "execution": {"roots": {

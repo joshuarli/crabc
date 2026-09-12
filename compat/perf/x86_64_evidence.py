@@ -36,6 +36,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import x86_64_profile as performance_profile
+import x86_64_peers as peers
 
 
 SCHEMA = 1
@@ -53,6 +54,9 @@ FIXED_READELF = "/usr/bin/readelf"
 FIXED_STRACE = "/usr/bin/strace"
 FIXED_MUSL_LOADER = "/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1"
 FIXED_MUSL_LIBC = "/opt/musl-1.2.6/lib/libc.so"
+TIMING_LAUNCHER_SCHEMA = "crabc.perf.x86_64-timing-launcher/v1"
+TIMING_LAUNCHER_SOURCE = "compat/perf/x86_64_timing_launcher.c"
+TIMING_LAUNCHER_FLAGS = ("-static", "-no-pie", "-std=c11", "-O2")
 IMAGE_TOOL_MANIFEST_FORMAT = "crabc-x86_64-performance-image-tools/v2"
 FIXED_COMPILE_FLAGS = ("-std=c11", "-O3", "-fno-builtin")
 APP_RUNPATH = "/app/lib:/usr/lib"
@@ -147,6 +151,7 @@ FULL_OBJECT_NAMES = frozenset({
 })
 FULL_SOURCE_NAMES = frozenset({
     *STATIC_SOURCE_FILES,
+    "peer_helper", "dns_server", "timing_launcher",
     "symbols_1", "symbols_1024",
     *(f"graph:{name}" for name in GRAPH_SOURCES),
     *(f"supplemental:{name}" for name in SUPPLEMENTAL_TIMED_LINK_NAMES),
@@ -155,6 +160,9 @@ FULL_SOURCE_NAMES = frozenset({
 })
 FULL_SOURCE_PATHS = {
     **{name: f"compat/perf/fixtures/{filename}" for name, filename in STATIC_SOURCE_FILES.items()},
+    "peer_helper": "compat/perf/x86_64_peers.py",
+    "dns_server": "compat/resolver-network/dns_server.py",
+    "timing_launcher": TIMING_LAUNCHER_SOURCE,
     **{f"supplemental:{name}": path for name, path in performance_profile.SUPPLEMENTAL_TIMED_SOURCES.items()},
     **{
         f"memory_observer:{artifact}": performance_profile.LEGACY_MEMORY_SOURCES[family]
@@ -222,6 +230,57 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def cpuinfo_diagnostics(raw: bytes) -> dict[str, list[str]]:
+    """Extract readable CPU-model and frequency observations from raw cpuinfo.
+
+    These fields are diagnostics, deliberately separate from the stable CPU
+    identity hash.  Linux may refresh frequency and bogomips values while an
+    attempt is running, so replay proves each derived list against its raw
+    capture but never requires the before and after telemetry to be equal.
+    """
+
+    models: list[str] = []
+    cpu_mhz: list[str] = []
+    bogomips: list[str] = []
+    for raw_line in raw.decode("utf-8", errors="replace").splitlines():
+        key, separator, value = raw_line.partition(":")
+        if not separator:
+            continue
+        normalized_key = key.strip()
+        normalized_value = value.strip()
+        if normalized_key == "model name":
+            models.append(normalized_value)
+        elif normalized_key == "cpu MHz":
+            cpu_mhz.append(normalized_value)
+        elif normalized_key == "bogomips":
+            bogomips.append(normalized_value)
+    return {
+        "model_names": models,
+        "cpu_mhz": cpu_mhz,
+        "bogomips": bogomips,
+    }
+
+
+def cpuinfo_identity_sha256(raw: bytes) -> str:
+    """Hash stable CPU identity fields while retaining live telemetry elsewhere.
+
+    Linux regenerates ``cpu MHz`` and ``bogomips`` while an attempt is in
+    progress.  They remain replayable diagnostics, but cannot make a clean
+    before/after attempt appear to have changed machines.  This helper is
+    shared by the producer and reader so a reported stable identity is always
+    reconstructed from both retained raw captures.
+    """
+
+    volatile = {b"cpu MHz", b"bogomips"}
+    lines: list[bytes] = []
+    for line in raw.splitlines():
+        name, separator, _value = line.partition(b":")
+        if separator and name.strip() in volatile:
+            continue
+        lines.append(line)
+    return hashlib.sha256(b"\n".join(lines) + b"\n").hexdigest()
 
 
 def file_identity(path: Path) -> dict[str, Any]:
@@ -564,6 +623,69 @@ def parse_x86_64_dyn_header(raw: str) -> dict[str, str]:
     return fields
 
 
+def parse_x86_64_static_exec_header(raw: str) -> dict[str, str]:
+    """Extract the fixed static ET_EXEC facts for the timing supervisor."""
+
+    fields: dict[str, str] = {}
+    for name in ("Class", "Data", "Type", "Machine"):
+        match = re.search(rf"^\s*{re.escape(name)}:\s*(.+?)\s*$", raw, re.MULTILINE)
+        require(match is not None, f"static ELF header lacks {name}")
+        fields[name] = match.group(1)
+    require(fields["Class"] == "ELF64" and "little endian" in fields["Data"].lower()
+            and fields["Type"].startswith("EXEC") and fields["Machine"] == "Advanced Micro Devices X86-64",
+            "static ELF header is not x86-64 little-endian ET_EXEC")
+    return fields
+
+
+def physical_x86_64_static_exec_facts(path: Path) -> dict[str, Any]:
+    """Boundedly confirm that the timing supervisor is a static x86 ET_EXEC."""
+
+    require(path.is_file() and not path.is_symlink(), "physical static ELF is not a regular file")
+    try:
+        data = path.read_bytes()
+    except OSError as error:
+        raise EvidenceError(f"cannot read physical static ELF: {path}") from error
+
+    def part(offset: int, size: int, label: str) -> bytes:
+        require(type(offset) is int and type(size) is int and 0 <= offset <= len(data)
+                and 0 <= size <= len(data) - offset,
+                f"physical static ELF {label} escapes output bytes")
+        return data[offset:offset + size]
+
+    def unpack(fmt: str, offset: int, label: str) -> tuple[Any, ...]:
+        return struct.unpack(fmt, part(offset, struct.calcsize(fmt), label))
+
+    require(part(0, 7, "identity") == b"\x7fELF\x02\x01\x01",
+            "physical static ELF is not ELF64 little-endian")
+    header = unpack("<HHIQQQIHHHHHH", 16, "header")
+    kind, machine, version, _entry, program_offset, _section_offset, _flags, header_size, program_size, program_count, _section_size, _section_count, _section_names = header
+    require(kind == 2 and machine == 62 and version == 1 and header_size == 64
+            and program_size == 56 and 0 < program_count < 65536,
+            "physical static ELF header is not x86-64 ET_EXEC")
+    require(program_offset <= len(data) and program_count <= (len(data) - program_offset) // program_size,
+            "physical static ELF program-header table escapes output bytes")
+    interpreters: list[str] = []
+    dynamic_segments = 0
+    for index in range(program_count):
+        program_type, _flags, offset, _virtual, _physical, file_size, _memory_size, _align = unpack(
+            "<IIQQQQQQ", program_offset + index * program_size, "program header",
+        )
+        part(offset, file_size, "program segment")
+        if program_type == 3:
+            value = part(offset, file_size, "interpreter")
+            require(value.endswith(b"\0") and value.count(b"\0") == 1,
+                    "physical static ELF interpreter is malformed")
+            try:
+                interpreters.append(value[:-1].decode("ascii", errors="strict"))
+            except UnicodeDecodeError as error:
+                raise EvidenceError("physical static ELF interpreter is not ASCII") from error
+        elif program_type == 2:
+            dynamic_segments += 1
+    require(not interpreters and dynamic_segments == 0,
+            "timing supervisor is not a static ELF without PT_INTERP/PT_DYNAMIC")
+    return {"interpreters": interpreters, "dynamic_segments": dynamic_segments}
+
+
 def physical_x86_64_dynamic_facts(path: Path) -> dict[str, Any]:
     """Read the selected ELF's loader facts directly from bounded bytes.
 
@@ -822,18 +944,43 @@ def canonical_workload_invocations(checkout: Path) -> dict[str, dict[str, Any]]:
     return result
 
 
+def canonical_memory_observer_invocations(checkout: Path) -> dict[str, dict[str, Any]]:
+    """Return the separate non-timed observer envelope for every row."""
+
+    timed = canonical_workload_invocations(checkout)
+    contract = _performance_contract(str(checkout.resolve(strict=True)))
+    try:
+        rows = performance_profile.performance_rows(checkout, contract.WORKLOADS)
+    except performance_profile.ProfileError as error:
+        raise EvidenceError(str(error)) from error
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        invocation = timed[row.name]
+        result[row.name] = {
+            "timed_binary": invocation["binary"],
+            "arguments": invocation["arguments"],
+            "memory_artifact": row.memory_artifact,
+            "observer_binary": f"/app/bin/{row.memory_artifact}",
+            "phases": list(row.memory_phases),
+            "protocol": performance_profile.OBSERVER_PROTOCOL,
+        }
+    return result
+
+
 def syscall_gate(
     reference: Mapping[str, Any],
     candidate: Mapping[str, Any],
     *,
     operations: int | None = None,
+    require_difference_classification: bool = False,
 ) -> dict[str, Any]:
-    """Apply the retained per-syscall 2R/reference-zero diagnostic rule.
+    """Judge exact total calls while retaining per-syscall diagnostics.
 
-    The normalizer uses exact numerator/denominator records instead of rounded
-    floats.  Some supplemental allocation routes take one argv iteration to
-    mean thousands of allocation operations, so their explicit profile count
-    is the denominator for the marked-region diagnostic.
+    The 2R/reference-zero release rule applies to the summed calls in the
+    selected scope.  Per-syscall records remain necessary to expose errors and
+    unexplained redistribution, but they are not a hidden stricter 2R gate.
+    When supplied, the operation denominator is an exact marked-region
+    diagnostic, not a replacement for the total-call comparison.
     """
 
     reference_calls = reference.get("calls")
@@ -842,6 +989,7 @@ def syscall_gate(
     require(operations is None or type(operations) is int and operations > 0,
             "completed operation count is invalid")
     violations: list[str] = []
+    differences: dict[str, dict[str, dict[str, int]]] = {}
     names = sorted(set(reference_calls) | set(candidate_calls))
     normalized_reference: dict[str, dict[str, int]] = {}
     normalized_candidate: dict[str, dict[str, int]] = {}
@@ -862,14 +1010,45 @@ def syscall_gate(
                 "calls_numerator": cand["calls"], "errors_numerator": cand["errors"],
                 "operations_denominator": operations,
             }
-        if ref["calls"] == 0:
-            if cand["calls"] != 0:
-                violations.append(f"{name}: reference-zero but candidate made {cand['calls']} calls")
-        elif cand["calls"] > 2 * ref["calls"]:
-            violations.append(f"{name}: candidate {cand['calls']} exceeds 2R={2 * ref['calls']}")
+        if ref["calls"] != cand["calls"] or ref["errors"] != cand["errors"]:
+            differences[name] = {
+                "reference": {"calls": ref["calls"], "errors": ref["errors"]},
+                "candidate": {"calls": cand["calls"], "errors": cand["errors"]},
+            }
         if cand["errors"] != ref["errors"]:
             violations.append(f"{name}: candidate/reference errors differ ({cand['errors']}/{ref['errors']})")
-    result: dict[str, Any] = {"status": "pass" if not violations else "fail", "violations": violations}
+        if require_difference_classification and name in differences:
+            violations.append(f"{name}: nonzero candidate/reference difference is unclassified")
+    reference_total = sum(entry["calls"] for entry in reference_calls.values())
+    candidate_total = sum(entry["calls"] for entry in candidate_calls.values())
+    if reference_total == 0:
+        total_gate = {
+            "reference": 0,
+            "candidate": candidate_total,
+            "threshold_numerator": 2,
+            "threshold_denominator": 1,
+            "rule": "reference-zero",
+            "release_gate": "pass" if candidate_total == 0 else "fail",
+        }
+        if candidate_total != 0:
+            violations.append(f"total calls: reference-zero but candidate made {candidate_total} calls")
+    else:
+        total_gate = {
+            "reference": reference_total,
+            "candidate": candidate_total,
+            "threshold_numerator": 2,
+            "threshold_denominator": 1,
+            "rule": "at-most-2R",
+            "release_gate": "pass" if candidate_total <= 2 * reference_total else "fail",
+        }
+        if candidate_total > 2 * reference_total:
+            violations.append(f"total calls: candidate {candidate_total} exceeds 2R={2 * reference_total}")
+    result: dict[str, Any] = {
+        "status": "pass" if not violations else "fail",
+        "violations": violations,
+        "differences": differences,
+        "total_calls": total_gate,
+    }
     if operations is not None:
         result.update({
             "operations_per_process": operations,
@@ -877,6 +1056,41 @@ def syscall_gate(
             "candidate_per_operation": normalized_candidate,
         })
     return result
+
+
+def scorecard_syscall_gate(
+    reference_diagnostic: Mapping[str, Any],
+    candidate_diagnostic: Mapping[str, Any],
+    *,
+    operations: int,
+) -> dict[str, Any]:
+    """Judge hot-region and whole-process syscall obligations independently.
+
+    A marker isolates repeated work, but it cannot erase process startup,
+    loader, constructor, destructor, or relocation calls.  No native x86
+    classification owner has been wired yet, so every nonzero difference is
+    retained as an explicit unresolved failure instead of being silently
+    treated as a harmless fixed-cost discrepancy.
+    """
+
+    marked = syscall_gate(
+        reference_diagnostic["marked_region"], candidate_diagnostic["marked_region"],
+        operations=operations, require_difference_classification=True,
+    )
+    whole = syscall_gate(
+        reference_diagnostic["whole_process"], candidate_diagnostic["whole_process"],
+        require_difference_classification=True,
+    )
+    violations = [
+        *(f"marked_region: {message}" for message in marked["violations"]),
+        *(f"whole_process: {message}" for message in whole["violations"]),
+    ]
+    return {
+        "status": "pass" if not violations else "fail",
+        "marked_region": marked,
+        "whole_process": whole,
+        "violations": violations,
+    }
 
 
 def _receipt_contract(checkout: Path) -> Any:
@@ -1108,6 +1322,141 @@ RESOURCE_FIELDS = (
 )
 
 
+def validate_timing_launcher_result(value: object) -> Mapping[str, Any]:
+    """Validate one raw static-supervisor result before deriving a sample."""
+
+    expected = {"schema", "child_pid", "wait_status", "timed_out", "elapsed_wall_ns", "resources"}
+    require(isinstance(value, dict) and set(value) == expected
+            and value["schema"] == TIMING_LAUNCHER_SCHEMA,
+            "timing launcher result fields differ")
+    require(type(value["child_pid"]) is int and value["child_pid"] > 0,
+            "timing launcher child PID differs")
+    require(type(value["wait_status"]) is int and value["wait_status"] >= 0,
+            "timing launcher raw wait status differs")
+    require(isinstance(value["timed_out"], bool)
+            and type(value["elapsed_wall_ns"]) is int and value["elapsed_wall_ns"] >= 0,
+            "timing launcher timeout or wall metric differs")
+    require(os.WIFEXITED(value["wait_status"]) or os.WIFSIGNALED(value["wait_status"]),
+            "timing launcher did not retain a terminal child wait status")
+    resources = value["resources"]
+    require(isinstance(resources, dict) and set(resources) == set(RESOURCE_FIELDS)
+            and all(type(resources[field]) is int and resources[field] >= 0 for field in RESOURCE_FIELDS),
+            "timing launcher resources differ")
+    return value
+
+
+def timing_launcher_status(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Derive the ordinary report status from the retained raw wait status."""
+
+    validate_timing_launcher_result(value)
+    if value["timed_out"]:
+        return {"kind": "timeout"}
+    status = value["wait_status"]
+    if os.WIFEXITED(status):
+        return {"kind": "exit", "code": os.WEXITSTATUS(status)}
+    if os.WIFSIGNALED(status):
+        return {"kind": "signal", "signal": os.WTERMSIG(status)}
+    raise EvidenceError("timing launcher terminal status could not be decoded")
+
+
+def _verify_peer_context(
+    checkout: Path,
+    record: object,
+    *,
+    row: performance_profile.PerformanceRow,
+    root_record: str,
+    host: Mapping[str, Any],
+    invocation_directory: Path,
+    label: str,
+    seen_records: set[str],
+) -> None:
+    """Replay one fresh external peer against its exact client invocation.
+
+    ``x86_64_peers`` proves the peer's private lifecycle.  The collector owns
+    the other half of that boundary: the peer must use the original controller
+    mask, a CPU distinct from the benchmark CPU, the matching staged root, and
+    a record path unique to this sample/trace/observer invocation.
+    """
+
+    needs_peer = row.requires_loopback_peer or row.requires_hermetic_resolver_files
+    if not needs_peer:
+        require(record is None, f"{label}: non-network invocation retained a peer")
+        return
+    require(isinstance(record, dict), f"{label}: private peer evidence is absent")
+    try:
+        peer = peers.validate_context(checkout, record, require_complete=True)
+    except peers.PeerError as error:
+        raise EvidenceError(f"{label}: private peer evidence differs: {error}") from error
+
+    peer_cpu = host.get("peer_cpu")
+    allowed_affinity = host.get("allowed_affinity_before_pin")
+    benchmark_cpu = host.get("benchmark_cpu")
+    require(type(peer_cpu) is int and type(benchmark_cpu) is int
+            and isinstance(allowed_affinity, list) and peer_cpu != benchmark_cpu
+            and peer["affinity"] == {
+                "peer_cpu": peer_cpu,
+                "allowed_affinity": allowed_affinity,
+            }, f"{label}: peer affinity is not bound to the attempt host")
+    expected_root = str(Path(root_record).relative_to(SOURCE_MOUNT))
+    expected_record = invocation_directory / "peer" / "peer-context.json"
+    try:
+        expected_record_text = expected_record.relative_to(checkout).as_posix()
+    except ValueError as error:
+        raise EvidenceError(f"{label}: peer invocation path escapes checkout") from error
+    require(peer["row"]["id"] == row.name and peer["row"]["mode"] == row.fixture_mode
+            and peer["row"]["client_iterations"] == row.iterations
+            and peer["row"]["operations"] == row.operations
+            and peer["client"]["execution_root"] == expected_root
+            and peer["record_file"] == expected_record_text,
+            f"{label}: peer is not bound to its exact row/root/invocation")
+    require(peer["record_file"] not in seen_records,
+            f"{label}: peer context was reused across client invocations")
+    seen_records.add(peer["record_file"])
+
+
+def _verify_timing_launcher_sample(
+    checkout: Path,
+    sample: Mapping[str, Any],
+    launcher: Mapping[str, Any],
+    *,
+    launcher_output: Mapping[str, Any],
+    root_record: str,
+    invocation: Mapping[str, Any],
+    label: str,
+) -> None:
+    """Bind a timed sample's derived metrics to one static launcher result."""
+
+    expected = {"command", "status", "stdout", "stderr", "result"}
+    require(isinstance(launcher, dict) and set(launcher) == expected,
+            f"{label}: timing launcher fields differ")
+    result_record = launcher["result"]
+    require(isinstance(result_record, dict), f"{label}: timing launcher result is absent")
+    result_path = retained_file_identity(checkout, SOURCE_MOUNT, result_record, f"{label}: timing launcher result")
+    raw_result = validate_timing_launcher_result(load_json(result_path, f"{label}: timing launcher result"))
+    require(launcher["status"] == {"kind": "exit", "code": 0}
+            and sample["elapsed_wall_ns"] == raw_result["elapsed_wall_ns"]
+            and sample["resources"] == raw_result["resources"]
+            and sample["status"] == timing_launcher_status(raw_result),
+            f"{label}: sample metrics do not derive from timing launcher")
+    supervisor_stdout = retained_file_identity(checkout, SOURCE_MOUNT, launcher["stdout"], f"{label}: timing launcher stdout")
+    supervisor_stderr = retained_file_identity(checkout, SOURCE_MOUNT, launcher["stderr"], f"{label}: timing launcher stderr")
+    require(not supervisor_stdout.read_bytes() and not supervisor_stderr.read_bytes(),
+            f"{label}: timing launcher emitted unexpected output")
+    command = launcher["command"]
+    require(isinstance(command, list) and len(command) >= 8
+            and command[0] == launcher_output["path"]
+            and command[1] == root_record
+            and command[2] == sample["stdout"]["path"]
+            and command[3] == sample["stderr"]["path"]
+            and command[4] == result_record["path"]
+            and isinstance(command[5], str) and command[5].isdecimal() and int(command[5]) > 0
+            and command[6] == invocation["binary"]
+            and command[7:] == invocation["arguments"],
+            f"{label}: timing launcher command differs")
+    distinct_outputs = {command[2], command[3], command[4], launcher["stdout"]["path"], launcher["stderr"]["path"]}
+    require(len(distinct_outputs) == 5, f"{label}: timing launcher output paths overlap")
+
+
 def _verify_completed_sample(
     checkout: Path,
     sample: object,
@@ -1116,11 +1465,20 @@ def _verify_completed_sample(
     index_field: str,
     index: int,
     execution_order: int | None,
+    launcher_output: Mapping[str, Any] | None = None,
+    root_record: str | None = None,
+    invocation: Mapping[str, Any] | None = None,
+    row: performance_profile.PerformanceRow | None = None,
+    host: Mapping[str, Any] | None = None,
+    seen_peers: set[str] | None = None,
 ) -> Mapping[str, Any]:
     expected = {
         "elapsed_wall_ns", "status", "resources", "stdout", "stderr", "stdout_matches",
         "stderr_bytes", "stdout_sha256", "stderr_sha256", index_field,
     } | ({"execution_order"} if execution_order is not None else set())
+    full = launcher_output is not None
+    if full:
+        expected |= {"launcher", "peer"}
     require(isinstance(sample, dict) and set(sample) == expected, f"{label}: sample fields differ")
     require(sample[index_field] == index, f"{label}: sample index differs")
     if execution_order is not None:
@@ -1141,6 +1499,18 @@ def _verify_completed_sample(
     require(sample["stdout_sha256"] == hashlib.sha256(stdout_bytes).hexdigest()
             and sample["stderr_sha256"] == hashlib.sha256(stderr_bytes).hexdigest(),
             f"{label}: output hash differs")
+    if full:
+        require(root_record is not None and invocation is not None and row is not None and host is not None
+                and seen_peers is not None,
+                f"{label}: full sample replay context is absent")
+        _verify_timing_launcher_sample(
+            checkout, sample, sample["launcher"], launcher_output=launcher_output,
+            root_record=root_record, invocation=invocation, label=label,
+        )
+        _verify_peer_context(
+            checkout, sample["peer"], row=row, root_record=root_record, host=host,
+            invocation_directory=stdout.parent, label=label, seen_records=seen_peers,
+        )
     return sample
 
 
@@ -1149,12 +1519,20 @@ def _verify_diagnostic(
     diagnostic: object,
     invocation: Mapping[str, Any],
     label: str,
+    *,
+    row: performance_profile.PerformanceRow | None = None,
+    root_record: str | None = None,
+    host: Mapping[str, Any] | None = None,
+    seen_peers: set[str] | None = None,
 ) -> Mapping[str, Any]:
     expected = {
         "status", "diagnostic", "timing", "child", "resources", "trace", "stdout", "stderr", "markers",
         "strace_stdout", "strace_stderr", "trace_sha256", "whole_process", "marked_region",
         "workload_execve", "successful_workload_execve_trace_lines", "marker_writes_excluded_from_whole_process",
     }
+    full = row is not None
+    if full:
+        expected.add("peer")
     require(isinstance(diagnostic, dict) and set(diagnostic) == expected, f"{label}: diagnostic fields differ")
     require(diagnostic["status"] == "ok" and diagnostic["diagnostic"] is True and diagnostic["timing"] is False,
             f"{label}: diagnostic status differs")
@@ -1187,6 +1565,13 @@ def _verify_diagnostic(
     require(diagnostic["successful_workload_execve_trace_lines"] == [whole["boundary_trace_line"]]
             and diagnostic["marker_writes_excluded_from_whole_process"] is True,
             f"{label}: workload execve boundary differs")
+    if full:
+        require(root_record is not None and host is not None and seen_peers is not None,
+                f"{label}: full diagnostic replay context is absent")
+        _verify_peer_context(
+            checkout, diagnostic["peer"], row=row, root_record=root_record, host=host,
+            invocation_directory=stdout.parent, label=label, seen_records=seen_peers,
+        )
     return diagnostic
 
 
@@ -1363,15 +1748,207 @@ def _verify_cgroup_lifecycle(checkout: Path, setup: object, cleanup: object) -> 
     retained_file_identity(checkout, SOURCE_MOUNT, cleanup["unmount_stderr"], "private cgroup unmount stderr")
 
 
-def _verify_probe_assignment(memory: Mapping[str, Any], owned_probe_leaves: object, private_mount: object) -> None:
-    """Require four distinct provider/lifecycle probes, not one reused peak."""
+def _verify_observer_mapping(
+    checkout: Path,
+    mappings: object,
+    root: Path,
+    root_record: str,
+    label: str,
+) -> None:
+    """Rebuild one observer checkpoint's sealed-root mapping roster."""
+
+    require(isinstance(mappings, dict) and set(mappings) == {"raw", "paths"}
+            and isinstance(mappings["paths"], list), f"{label}: mapping observation differs")
+    raw = retained_file_identity(checkout, SOURCE_MOUNT, mappings["raw"], f"{label}: maps raw")
+    rebuilt = [
+        _recorded_path(checkout, SOURCE_MOUNT, path)
+        for path in replay_observed_mappings(raw.read_text(encoding="utf-8", errors="replace"), root)
+    ]
+    require(mappings["paths"] == rebuilt
+            and all(isinstance(path, str) and path.startswith(root_record + "/") for path in mappings["paths"]),
+            f"{label}: mapping observation escapes its sealed root")
+
+
+def _verify_observer_checkpoint(
+    checkout: Path,
+    checkpoint: object,
+    *,
+    index: int,
+    phase: str,
+    pid: int,
+    root: Path,
+    root_record: str,
+    label: str,
+) -> None:
+    expected = {"index", "phase", "ready", "continue", "memory", "mappings", "cgroup_memory"}
+    require(isinstance(checkpoint, dict) and set(checkpoint) == expected
+            and checkpoint["index"] == index and checkpoint["phase"] == phase
+            and checkpoint["ready"] == "R" and checkpoint["continue"] == "C",
+            f"{label}: observer checkpoint order differs")
+    _verify_memory_snapshot(checkout, checkpoint["memory"], f"{label}: PSS", expected_pid=pid)
+    _verify_observer_mapping(checkout, checkpoint["mappings"], root, root_record, label)
+    cgroup = checkpoint["cgroup_memory"]
+    require(isinstance(cgroup, dict) and set(cgroup) == {"memory_peak_bytes", "memory_stat", "raw"}
+            and type(cgroup["memory_peak_bytes"]) is int and cgroup["memory_peak_bytes"] >= 0,
+            f"{label}: checkpoint cgroup fields differ")
+    raw = cgroup["raw"]
+    require(isinstance(raw, dict) and set(raw) == {"memory_peak", "memory_stat"},
+            f"{label}: checkpoint cgroup raw fields differ")
+    peak = _read_decimal_raw(
+        retained_file_identity(checkout, SOURCE_MOUNT, raw["memory_peak"], f"{label}: checkpoint memory.peak"),
+        label,
+    )
+    stat_value = _read_memory_stat_raw(
+        retained_file_identity(checkout, SOURCE_MOUNT, raw["memory_stat"], f"{label}: checkpoint memory.stat"),
+        label,
+    )
+    require(cgroup["memory_peak_bytes"] == peak and cgroup["memory_stat"] == stat_value,
+            f"{label}: checkpoint cgroup values disagree with raw bytes")
+
+
+def _memory_metric(reference: int, candidate: int) -> dict[str, Any]:
+    require(type(reference) is int and reference >= 0 and type(candidate) is int and candidate >= 0,
+            "memory comparison value differs")
+    if reference == 0:
+        return {
+            "reference": reference,
+            "candidate": candidate,
+            "threshold_numerator": 9,
+            "threshold_denominator": 10,
+            "release_gate": "reference-zero",
+        }
+    return {
+        "reference": reference,
+        "candidate": candidate,
+        "threshold_numerator": 9,
+        "threshold_denominator": 10,
+        "release_gate": "pass" if candidate * 10 <= reference * 9 else "fail",
+    }
+
+
+def _verify_memory_observer_result(
+    checkout: Path,
+    result: object,
+    *,
+    invocation: Mapping[str, Any],
+    row: performance_profile.PerformanceRow,
+    lane: str,
+    root: Path,
+    root_record: str,
+    private_mount: str,
+    host: Mapping[str, Any],
+    seen_peers: set[str],
+) -> Mapping[str, Any]:
+    """Replay one non-timed observer process from raw checkpoint evidence."""
+
+    expected = {
+        "status", "protocol", "observer", "migration", "checkpoints", "cgroup_memory", "child", "resources",
+        "stdout", "stderr", "stdout_sha256", "stderr_sha256", "peer",
+    }
+    require(isinstance(result, dict) and set(result) == expected
+            and result["status"] == "ok" and result["protocol"] == performance_profile.OBSERVER_PROTOCOL
+            and result["observer"] == invocation,
+            f"{row.name}/{lane}: memory observer fields differ")
+    migration = result["migration"]
+    expected_probe = f"{private_mount}/probe-{lane}-observer-{row.name}"
+    expected_migration_fields = {"pid", "root", "executable", "expected_executable", "threads", "probe", "event", "syscall"}
+    require(isinstance(migration, dict) and set(migration) == expected_migration_fields
+            and type(migration["pid"]) is int and migration["pid"] > 0
+            and migration["root"] == root_record and migration["probe"] == expected_probe
+            and isinstance(migration["executable"], str) and migration["executable"]
+            and migration["executable"] == migration["expected_executable"]
+            and migration["threads"] == 1 and migration["event"] == "syscall-entry-execve",
+            f"{row.name}/{lane}: observer pre-exec migration differs")
+    require(migration["syscall"] == {
+        "api": "PTRACE_GET_SYSCALL_INFO", "entry": True, "architecture": "x86_64", "number": 59,
+        "path": invocation["observer_binary"],
+        "argv": [invocation["observer_binary"], *invocation["arguments"]],
+    }, f"{row.name}/{lane}: observer pre-exec argv differs")
+    require(result["child"] == {"kind": "exit", "code": 0}, f"{row.name}/{lane}: observer child differs")
+    resources = result["resources"]
+    require(isinstance(resources, dict) and set(resources) == set(RESOURCE_FIELDS)
+            and all(type(resources[field]) is int and resources[field] >= 0 for field in RESOURCE_FIELDS),
+            f"{row.name}/{lane}: observer resources differ")
+    stdout = retained_file_identity(checkout, SOURCE_MOUNT, result["stdout"], f"{row.name}/{lane}: observer stdout")
+    stderr = retained_file_identity(checkout, SOURCE_MOUNT, result["stderr"], f"{row.name}/{lane}: observer stderr")
+    require(stdout.read_bytes() == b"ok\n" and not stderr.read_bytes()
+            and result["stdout_sha256"] == sha256_file(stdout)
+            and result["stderr_sha256"] == sha256_file(stderr),
+            f"{row.name}/{lane}: observer output differs")
+    checkpoints = result["checkpoints"]
+    require(isinstance(checkpoints, list) and len(checkpoints) == len(invocation["phases"]),
+            f"{row.name}/{lane}: observer checkpoint roster differs")
+    for index, (checkpoint, phase) in enumerate(zip(checkpoints, invocation["phases"], strict=True)):
+        _verify_observer_checkpoint(
+            checkout, checkpoint, index=index, phase=phase, pid=migration["pid"], root=root,
+            root_record=root_record, label=f"{row.name}/{lane}/{phase}",
+        )
+    cgroup = result["cgroup_memory"]
+    expected_cgroup = {"status", "memory_peak_after_exit_bytes", "memory_stat_after_exit", "raw", "attribution_limit"}
+    require(isinstance(cgroup, dict) and set(cgroup) == expected_cgroup and cgroup["status"] == "ok"
+            and type(cgroup["memory_peak_after_exit_bytes"]) is int
+            and cgroup["memory_peak_after_exit_bytes"] >= 0 and isinstance(cgroup["memory_stat_after_exit"], dict),
+            f"{row.name}/{lane}: observer post-exit cgroup fields differ")
+    raw = cgroup["raw"]
+    require(isinstance(raw, dict) and set(raw) == {"memory_peak_after_exit", "memory_stat_after_exit"},
+            f"{row.name}/{lane}: observer post-exit raw fields differ")
+    peak = _read_decimal_raw(
+        retained_file_identity(checkout, SOURCE_MOUNT, raw["memory_peak_after_exit"], f"{row.name}/{lane}: observer post-exit peak"),
+        f"{row.name}/{lane}",
+    )
+    stat_value = _read_memory_stat_raw(
+        retained_file_identity(checkout, SOURCE_MOUNT, raw["memory_stat_after_exit"], f"{row.name}/{lane}: observer post-exit stat"),
+        f"{row.name}/{lane}",
+    )
+    require(cgroup["memory_peak_after_exit_bytes"] == peak and cgroup["memory_stat_after_exit"] == stat_value
+            and cgroup["attribution_limit"] == "memory.peak can include warm file-cache charges; it is retained as cgroup high-water and is never reset, subtracted, or read from Docker's parent cgroup",
+            f"{row.name}/{lane}: observer post-exit values disagree with raw bytes")
+    _verify_peer_context(
+        checkout, result["peer"], row=row, root_record=root_record, host=host,
+        invocation_directory=stdout.parent, label=f"{row.name}/{lane}: observer",
+        seen_records=seen_peers,
+    )
+    return result
+
+
+def _verify_memory_observer_comparison(
+    result: object,
+    reference: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    label: str,
+) -> None:
+    require(isinstance(result, dict) and set(result) == {"status", "pss_max_kib", "memory_peak_after_exit_bytes"}
+            and result["status"] == "ok", f"{label}: observer memory comparison differs")
+    reference_pss = max(checkpoint["memory"]["pss_kib"] for checkpoint in reference["checkpoints"])
+    candidate_pss = max(checkpoint["memory"]["pss_kib"] for checkpoint in candidate["checkpoints"])
+    require(result["pss_max_kib"] == _memory_metric(reference_pss, candidate_pss)
+            and result["memory_peak_after_exit_bytes"] == _memory_metric(
+                reference["cgroup_memory"]["memory_peak_after_exit_bytes"],
+                candidate["cgroup_memory"]["memory_peak_after_exit_bytes"],
+            ), f"{label}: observer memory comparison does not derive from raw checkpoints")
+
+
+def _verify_probe_assignment(
+    memory: Mapping[str, Any],
+    observer_memory: Mapping[str, Any],
+    rows: Sequence[performance_profile.PerformanceRow],
+    owned_probe_leaves: object,
+    private_mount: object,
+) -> None:
+    """Require every old and per-row observer leaf exactly once."""
 
     require(isinstance(private_mount, str), "private cgroup mount path differs")
-    expected = {
+    old_expected = {
         f"{private_mount}/probe-{lane}-{phase}"
         for lane in ("musl", "crabc")
         for phase in ("live", "after-ready")
     }
+    observer_expected = {
+        f"{private_mount}/probe-{lane}-observer-{row.name}"
+        for lane in ("musl", "crabc")
+        for row in rows
+    }
+    expected = old_expected | observer_expected
     require(isinstance(owned_probe_leaves, list) and len(owned_probe_leaves) == len(expected)
             and set(owned_probe_leaves) == expected,
             "private cgroup owned-probe roster differs")
@@ -1385,6 +1962,14 @@ def _verify_probe_assignment(memory: Mapping[str, Any], owned_probe_leaves: obje
         require(live["migration"].get("probe") == f"{private_mount}/probe-{lane}-live"
                 and after["migration"].get("probe") == f"{private_mount}/probe-{lane}-after-ready",
                 "memory probe lane/phase assignment differs from the owned lifecycle roster")
+    for row in rows:
+        result = observer_memory.get(row.name)
+        require(isinstance(result, dict), f"{row.name}: observer memory result is absent")
+        for lane in ("musl", "crabc"):
+            lane_result = result.get(lane)
+            require(isinstance(lane_result, dict)
+                    and lane_result.get("migration", {}).get("probe") == f"{private_mount}/probe-{lane}-observer-{row.name}",
+                    f"{row.name}/{lane}: observer probe assignment differs")
 
 
 def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expected_workloads: Sequence[str], *, full: bool) -> list[str]:
@@ -1394,7 +1979,7 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
     try:
         measurement = report.get("measurement")
         expected_measurement = {
-            "selected_workloads", "samples", "warmup", "seed", "cgroup_setup", "cgroup_cleanup", "memory", "workloads",
+            "selected_workloads", "samples", "warmup", "seed", "cgroup_setup", "cgroup_cleanup", "memory", "memory_observers", "workloads",
         }
         require(isinstance(measurement, dict) and set(measurement) == expected_measurement,
                 "measurement fields differ")
@@ -1413,10 +1998,36 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
         execution_roots = report.get("execution", {}).get("roots") if isinstance(report.get("execution"), dict) else None
         require(isinstance(execution_roots, dict) and set(execution_roots) == {"musl", "crabc"},
                 "sealed execution roots are absent for memory ownership")
+        host: Mapping[str, Any] | None = None
+        launcher_output: Mapping[str, Any] | None = None
+        if full:
+            tools = report.get("tools")
+            require(isinstance(tools, dict) and isinstance(tools.get("before"), dict)
+                    and isinstance(tools["before"].get("host"), dict),
+                    "attempt host record is absent for full sample replay")
+            host = tools["before"]["host"]
+            build = report.get("build")
+            harness = build.get("harness") if isinstance(build, dict) else None
+            timing_launcher = harness.get("timing_launcher") if isinstance(harness, dict) else None
+            require(isinstance(timing_launcher, dict) and isinstance(timing_launcher.get("output"), dict),
+                    "timing launcher harness is absent for full sample replay")
+            retained_file_identity(
+                checkout, SOURCE_MOUNT, timing_launcher["output"], "timing launcher output for sample replay",
+            )
+            launcher_output = timing_launcher["output"]
+        seen_peers: set[str] = set()
         workloads = measurement.get("workloads")
         require(isinstance(workloads, dict) and set(workloads) == set(selected), "workload metrics roster differs")
         contract = _performance_contract(str(checkout.resolve(strict=True)))
         canonical = canonical_workload_invocations(checkout)
+        canonical_observers = canonical_memory_observer_invocations(checkout)
+        try:
+            rows_by_name = {
+                row.name: row
+                for row in performance_profile.performance_rows(checkout, contract.WORKLOADS)
+            }
+        except performance_profile.ProfileError as error:
+            raise EvidenceError(str(error)) from error
         for row_index, name in enumerate(selected):
             item = workloads[name]
             require(isinstance(item, dict) and set(item) == {"invocation", "musl", "crabc", "comparison"}, f"{name}: row fields differ")
@@ -1428,6 +2039,9 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
             plan_order = {(lane, sample_index): order for order, (lane, sample_index) in enumerate(plan)}
             for lane in ("musl", "crabc"):
                 lane_item = item[lane]
+                root_record = execution_roots[lane]
+                root_text = root_record.get("root") if isinstance(root_record, dict) else None
+                require(isinstance(root_text, str), f"{name}/{lane}: sealed execution root differs")
                 expected_lane = {
                     "status", "iterations_per_process", "operations_per_process",
                     "warmup_processes", "warmups", "sample_count", "samples", "summary", "syscalls",
@@ -1441,16 +2055,27 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
                 warmups = lane_item["warmups"]
                 require(isinstance(warmups, list) and len(warmups) == FULL_WARMUP_COUNT, f"{name}/{lane}: warmup roster differs")
                 for warmup_index, warmup in enumerate(warmups):
-                    _verify_completed_sample(checkout, warmup, label=f"{name}/{lane}/warmup-{warmup_index}", index_field="warmup_index", index=warmup_index, execution_order=None)
+                    _verify_completed_sample(
+                        checkout, warmup, label=f"{name}/{lane}/warmup-{warmup_index}",
+                        index_field="warmup_index", index=warmup_index, execution_order=None,
+                        launcher_output=launcher_output, root_record=root_text, invocation=invocation,
+                        row=rows_by_name[name] if full else None, host=host, seen_peers=seen_peers if full else None,
+                    )
                 samples = lane_item["samples"]
                 require(isinstance(samples, list) and len(samples) == FULL_SAMPLE_COUNT, f"{name}/{lane}: sample roster differs")
                 for sample_index, sample in enumerate(samples):
                     _verify_completed_sample(
                         checkout, sample, label=f"{name}/{lane}/sample-{sample_index}", index_field="sample_index",
                         index=sample_index, execution_order=plan_order[(lane, sample_index)],
+                        launcher_output=launcher_output, root_record=root_text, invocation=invocation,
+                        row=rows_by_name[name] if full else None, host=host, seen_peers=seen_peers if full else None,
                     )
                 require(lane_item["summary"] == contract.summarize_samples(samples), f"{name}/{lane}: summary differs")
-                _verify_diagnostic(checkout, lane_item["syscalls"], invocation, f"{name}/{lane}")
+                _verify_diagnostic(
+                    checkout, lane_item["syscalls"], invocation, f"{name}/{lane}",
+                    row=rows_by_name[name] if full else None, root_record=root_text,
+                    host=host, seen_peers=seen_peers if full else None,
+                )
             comparison = item["comparison"]
             require(isinstance(comparison, dict) and set(comparison) == {"status", "seed", "sample_plan", "cpu", "syscall_gate"}
                     and comparison["status"] == "ok" and comparison["seed"] == seed and comparison["sample_plan"] == plan_records,
@@ -1460,9 +2085,8 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
             cpu = contract.bootstrap_cpu_ratio(reference_cpu, candidate_cpu, seed=seed, resamples=CPU_RESAMPLES)
             expected_cpu = {**cpu, "release_gate": "pass" if cpu["one_sided_95_upper"] <= 0.90 else "fail"}
             require(comparison["cpu"] == expected_cpu, f"{name}: bootstrap metric differs")
-            expected_gate = syscall_gate(
-                item["musl"]["syscalls"]["marked_region"],
-                item["crabc"]["syscalls"]["marked_region"],
+            expected_gate = scorecard_syscall_gate(
+                item["musl"]["syscalls"], item["crabc"]["syscalls"],
                 operations=invocation["operations_per_process"],
             )
             require(comparison["syscall_gate"] == expected_gate, f"{name}: syscall gate provenance differs")
@@ -1488,10 +2112,36 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
                 checkout, after_ready, f"{lane}: post-ready allocation", live=False,
                 expected_root=root_record["root"], owned_probe_leaves=owned_probe_leaves,
             )
-        _verify_probe_assignment(
-            memory, owned_probe_leaves, measurement["cgroup_setup"]["private_mount_command"][4],
-        )
-    except (EvidenceError, ValueError, KeyError, TypeError, IndexError) as error:
+        observer_memory = measurement.get("memory_observers")
+        if full:
+            require(isinstance(observer_memory, dict) and set(observer_memory) == set(selected),
+                    "per-workload memory observer metrics are absent")
+            private_mount = measurement["cgroup_setup"]["private_mount_command"][4]
+            selected_rows: list[performance_profile.PerformanceRow] = []
+            for name in selected:
+                row = rows_by_name.get(name)
+                invocation = canonical_observers.get(name)
+                item = observer_memory.get(name) if isinstance(observer_memory, dict) else None
+                require(row is not None and invocation is not None and isinstance(item, dict)
+                        and set(item) == {"invocation", "musl", "crabc", "comparison"}
+                        and item["invocation"] == invocation,
+                        f"{name}: observer invocation contract differs")
+                selected_rows.append(row)
+                for lane in ("musl", "crabc"):
+                    root_record = execution_roots[lane]
+                    root_text = root_record.get("root") if isinstance(root_record, dict) else None
+                    require(isinstance(root_text, str), f"{name}/{lane}: observer root is absent")
+                    _verify_memory_observer_result(
+                        checkout, item[lane], invocation=invocation, row=row, lane=lane,
+                        root=translate_source_path(checkout, SOURCE_MOUNT, root_text),
+                        root_record=root_text, private_mount=private_mount,
+                        host=host, seen_peers=seen_peers,
+                    )
+                _verify_memory_observer_comparison(item["comparison"], item["musl"], item["crabc"], name)
+            _verify_probe_assignment(memory, observer_memory, selected_rows, owned_probe_leaves, private_mount)
+        else:
+            require(observer_memory == {}, "partial measurement observer metrics differ")
+    except (EvidenceError, peers.PeerError, ValueError, KeyError, TypeError, IndexError) as error:
         reasons.append(str(error))
     return reasons
 
@@ -1503,9 +2153,48 @@ class CheckedReport:
     blockers: tuple[str, ...]
 
 
+def _verify_cpuinfo_diagnostic(checkout: Path, record: object, label: str) -> dict[str, list[str]]:
+    """Replay one raw CPU model/frequency observation without freezing it."""
+
+    expected = {"raw", "model_names", "cpu_mhz", "bogomips"}
+    require(isinstance(record, dict) and set(record) == expected,
+            f"{label} CPU diagnostic fields differ")
+    raw = retained_file_identity(checkout, SOURCE_MOUNT, record["raw"], f"{label} raw cpuinfo")
+    derived = cpuinfo_diagnostics(raw.read_bytes())
+    require(record["model_names"] == derived["model_names"]
+            and record["cpu_mhz"] == derived["cpu_mhz"]
+            and record["bogomips"] == derived["bogomips"]
+            and derived["model_names"] and all(derived["model_names"]),
+            f"{label} CPU diagnostic differs from raw cpuinfo")
+    return derived
+
+
+def _verify_stable_cpuinfo_identity(
+    checkout: Path,
+    host: Mapping[str, Any],
+    diagnostics: Mapping[str, Any],
+    *,
+    index: int,
+) -> None:
+    """Bind the stable host CPU hash to both retained raw cpuinfo captures."""
+
+    stable_cpu_identity = host.get("cpuinfo_sha256")
+    require(isinstance(stable_cpu_identity, str) and re.fullmatch(r"[0-9a-f]{64}", stable_cpu_identity) is not None,
+            f"attempt {index} CPU identity is absent")
+    before_cpuinfo_raw = retained_file_identity(
+        checkout, SOURCE_MOUNT, diagnostics["before"]["raw"], f"attempt {index} before raw cpuinfo",
+    )
+    after_cpuinfo_raw = retained_file_identity(
+        checkout, SOURCE_MOUNT, diagnostics["after"]["raw"], f"attempt {index} after raw cpuinfo",
+    )
+    require(cpuinfo_identity_sha256(before_cpuinfo_raw.read_bytes()) == stable_cpu_identity
+            and cpuinfo_identity_sha256(after_cpuinfo_raw.read_bytes()) == stable_cpu_identity,
+            f"attempt {index} stable CPU identity differs from retained cpuinfo")
+
+
 def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: Mapping[str, Any], index: int) -> None:
     tools = attempt["tools"]
-    expected = {"before", "after", "compile_policy", "link_policy"}
+    expected = {"before", "after", "host_cpuinfo_diagnostics", "compile_policy", "link_policy"}
     require(isinstance(tools, dict) and set(tools) == expected, f"attempt {index} tool record differs")
     before = tools["before"]
     after = tools["after"]
@@ -1515,6 +2204,13 @@ def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: M
     }
     require(isinstance(before, dict) and isinstance(after, dict) and set(before) == snapshot_fields and after == before,
             f"attempt {index} tool/image identity changed during collection")
+    diagnostics = tools["host_cpuinfo_diagnostics"]
+    require(isinstance(diagnostics, dict) and set(diagnostics) == {"before", "after"},
+            f"attempt {index} CPU diagnostic record differs")
+    before_cpuinfo = _verify_cpuinfo_diagnostic(checkout, diagnostics["before"], f"attempt {index} before")
+    after_cpuinfo = _verify_cpuinfo_diagnostic(checkout, diagnostics["after"], f"attempt {index} after")
+    require(before_cpuinfo["model_names"] == after_cpuinfo["model_names"],
+            f"attempt {index} CPU model changed during collection")
     candidate_driver = retained_file_identity(checkout, SOURCE_MOUNT, before["candidate_driver"], f"attempt {index} candidate driver")
     require(before["candidate_driver"] == product["driver"], f"attempt {index} candidate driver differs from supplied product")
     _valid_external_identity(before["musl_compiler"], f"attempt {index} musl compiler", FIXED_MUSL_COMPILER)
@@ -1538,12 +2234,26 @@ def _verify_attempt_tools(checkout: Path, attempt: Mapping[str, Any], product: M
         "reference": FIXED_MUSL_COMPILER,
     }, f"attempt {index} link policy differs")
     host = before["host"]
-    expected_host = {"system", "machine", "kernel_release", "cpuinfo_sha256", "benchmark_cpu", "affinity", "cache_topology", "governor", "environment", "docker_image_id"}
+    expected_host = {
+        "system", "machine", "kernel_release", "cpuinfo_sha256", "benchmark_cpu",
+        "allowed_affinity_before_pin", "peer_cpu", "affinity", "cache_topology", "governor",
+        "environment", "docker_image_id",
+    }
     require(isinstance(host, dict) and set(host) == expected_host, f"attempt {index} host record differs")
     require(host["system"] == "Linux" and str(host["machine"]).lower() in {"x86_64", "amd64"}, f"attempt {index} host is not native Linux/x86-64")
     require(isinstance(host["kernel_release"], str) and host["kernel_release"], f"attempt {index} kernel identity is absent")
-    require(isinstance(host["cpuinfo_sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", host["cpuinfo_sha256"]) is not None, f"attempt {index} CPU identity is absent")
+    _verify_stable_cpuinfo_identity(checkout, host, diagnostics, index=index)
     require(type(host["benchmark_cpu"]) is int and isinstance(host["affinity"], list) and host["affinity"] == [host["benchmark_cpu"]], f"attempt {index} affinity is not pinned")
+    allowed_affinity = host["allowed_affinity_before_pin"]
+    require(isinstance(allowed_affinity, list) and allowed_affinity
+            and all(type(cpu) is int for cpu in allowed_affinity)
+            and allowed_affinity == sorted(set(allowed_affinity))
+            and host["benchmark_cpu"] in allowed_affinity,
+            f"attempt {index} original controller affinity differs")
+    peer_cpu = host["peer_cpu"]
+    require(peer_cpu is None or (
+        type(peer_cpu) is int and peer_cpu in allowed_affinity and peer_cpu != host["benchmark_cpu"]
+    ), f"attempt {index} peer CPU differs from the original allowed affinity")
     require(isinstance(host["cache_topology"], dict), f"attempt {index} cache topology is absent")
     require(isinstance(host["governor"], dict) and set(host["governor"]) == {"scaling_governor", "scaling_available_governors"}, f"attempt {index} governor availability differs")
     require(isinstance(host["environment"], dict), f"attempt {index} environment record is absent")
@@ -1985,9 +2695,65 @@ def _expected_link_object(name: str) -> str:
     raise EvidenceError(f"unrecognized native performance link object: {name}")
 
 
+def _verify_timing_launcher_harness(
+    checkout: Path,
+    harness: object,
+    source_seal: Mapping[str, Any],
+    *,
+    index: int,
+) -> Mapping[str, Any]:
+    """Replay the static supervisor without treating it as a provider input."""
+
+    require(isinstance(harness, dict) and set(harness) == {"timing_launcher"},
+            f"attempt {index} harness roster differs")
+    launcher = harness["timing_launcher"]
+    expected = {"source", "output", "compile_command", "compile_raw", "readelf"}
+    require(isinstance(launcher, dict) and set(launcher) == expected,
+            f"attempt {index} timing launcher fields differ")
+    source = retained_file_identity(checkout, SOURCE_MOUNT, launcher["source"],
+                                    f"attempt {index} timing launcher source")
+    output = retained_file_identity(checkout, SOURCE_MOUNT, launcher["output"],
+                                    f"attempt {index} timing launcher output")
+    require(launcher["source"] == source_seal["source:timing_launcher"]
+            and launcher["source"]["path"] == f"{SOURCE_MOUNT}/{TIMING_LAUNCHER_SOURCE}",
+            f"attempt {index} timing launcher source differs")
+    command = launcher["compile_command"]
+    require(command == [FIXED_MUSL_COMPILER, *TIMING_LAUNCHER_FLAGS, launcher["source"]["path"], "-o", launcher["output"]["path"]],
+            f"attempt {index} timing launcher compile command differs")
+    raw = launcher["compile_raw"]
+    require(isinstance(raw, dict) and set(raw) == {"stdout", "stderr"},
+            f"attempt {index} timing launcher compile raw differs")
+    retained_file_identity(checkout, SOURCE_MOUNT, raw["stdout"], f"attempt {index} timing launcher compile stdout")
+    retained_file_identity(checkout, SOURCE_MOUNT, raw["stderr"], f"attempt {index} timing launcher compile stderr")
+    readelf = launcher["readelf"]
+    expected_reads = {"header": ["-hW"], "program_headers": ["-lW"]}
+    require(isinstance(readelf, dict) and set(readelf) == set(expected_reads),
+            f"attempt {index} timing launcher readelf roster differs")
+    outputs: dict[str, Path] = {}
+    for name, arguments in expected_reads.items():
+        record = readelf[name]
+        require(isinstance(record, dict) and set(record) == {"command", "status", "output", "stderr"}
+                and record["command"] == [FIXED_READELF, *arguments, launcher["output"]["path"]]
+                and record["status"] == {"kind": "exit", "code": 0},
+                f"attempt {index} timing launcher readelf {name} differs")
+        outputs[name] = retained_file_identity(checkout, SOURCE_MOUNT, record["output"],
+                                                f"attempt {index} timing launcher readelf {name} output")
+        retained_file_identity(checkout, SOURCE_MOUNT, record["stderr"],
+                               f"attempt {index} timing launcher readelf {name} stderr")
+    parse_x86_64_static_exec_header(outputs["header"].read_text(encoding="utf-8", errors="replace"))
+    require(not parse_program_interpreters(outputs["program_headers"].read_text(encoding="utf-8", errors="replace")),
+            f"attempt {index} timing launcher has PT_INTERP")
+    require(physical_x86_64_static_exec_facts(output) == {"interpreters": [], "dynamic_segments": 0},
+            f"attempt {index} timing launcher physical ELF differs")
+    return launcher
+
+
 def _verify_attempt_build(checkout: Path, attempt: Mapping[str, Any], index: int) -> None:
     build = attempt["build"]
-    require(isinstance(build, dict) and set(build) == {"objects", "links", "same_object_input_proof", "same_object_input_proof_file", "companion_same_object_input_proof"}, f"attempt {index} build fields differ")
+    require(isinstance(build, dict) and set(build) == {
+        "objects", "links", "harness", "same_object_input_proof", "same_object_input_proof_file",
+        "companion_same_object_input_proof",
+    }, f"attempt {index} build fields differ")
     objects = build["objects"]
     require(isinstance(objects, dict) and set(objects) == FULL_OBJECT_NAMES,
             f"attempt {index} object roster differs")
@@ -1998,6 +2764,7 @@ def _verify_attempt_build(checkout: Path, attempt: Mapping[str, Any], index: int
             f"attempt {index} tool snapshot is absent")
     driver_path = tools["before"]["candidate_driver"].get("path")
     require(isinstance(driver_path, str), f"attempt {index} candidate driver path is absent")
+    _verify_timing_launcher_harness(checkout, build["harness"], source_seal, index=index)
     object_paths: dict[str, Mapping[str, Any]] = {}
     for name, item in objects.items():
         expected_object = {"source", "object", "mode", "compile_command", "raw"}

@@ -94,9 +94,10 @@ substitute for that predecessor.
 
 No x86 release result exists. A future full scorecard still requires every
 workload to meet CPU upper-95% `<= 0.90` across 31 paired fresh processes,
-both live PSS and `memory.peak` `<= 0.90`, and the marked syscall rule of at
-most `2R` candidate calls (or zero when the reference is zero), with no
-unexplained error, retry, or fallback. Three consecutive clean Docker
+both live PSS and `memory.peak` `<= 0.90`, and both the marked-route and
+whole-process syscall totals to be at most `2R` candidate calls (or zero when
+the reference is zero), with no unexplained error, retry, fallback, or
+unclassified per-syscall difference. Three consecutive clean Docker
 invocations must all pass an immutable roster. The inherited 74 rows are not
 the full scorecard: supported clock selections beyond `CLOCK_MONOTONIC`,
 medium live-set/free-refill-reuse/worker-local allocation, loopback and
@@ -107,11 +108,15 @@ work rather than waived rows.
 ## What is measured
 
 Every timed sample is a fresh child process. The default matrix retains 31
-samples per lane/workload after warm-up. The parent records elapsed wall
-time around that child and uses `wait4(2)` for isolated user/system CPU time,
-peak RSS, page faults, and voluntary/involuntary context switches. Timed
-samples do not run under `strace`, a profiler, or an allocator wrapper. The
-runner pins itself and every child to one allowed Linux CPU, then runs adjacent
+samples per lane/workload after warm-up. A separately sealed static
+`x86_64_timing_launcher` prepares its contained root, file descriptors, and
+working directory before it forks; only the direct client `execve` is measured
+by its raw `wait4(2)` result. The adapter replays that raw result into elapsed
+wall time, user/system CPU time, peak RSS, page faults, and
+voluntary/involuntary context switches. Parent setup cost is neither charged
+to a lane nor estimated and subtracted. Timed samples do not run under
+`strace`, a profiler, or an allocator wrapper. The runner pins itself and
+every child to one allowed Linux CPU, then runs adjacent
 musl/crabc sample pairs in a recorded deterministic order. Each report records
 a 10,000-resample paired bootstrap one-sided 95% upper CPU-ratio bound; its
 CPU gate is not inferred from a rounded median.
@@ -229,9 +234,12 @@ per-syscall calls/errors. Schema 5 gives that diagnostic a descriptor-only
 marker protocol: every C fixture writes `CRABC_PERF_BEGIN` immediately before
 its selected route and `CRABC_PERF_END` immediately after it. The report retains
 both non-marker whole-process totals and the calls strictly between those
-markers, including exact calls/errors per completed operation. Marker writes
-are excluded from the whole-process totals. The protocol is absent from timed
-children and the diagnostic remains explicitly marked `timing: false`.
+markers, including exact calls/errors per completed operation. Each scope
+keeps a summed-total `2R`/reference-zero verdict; per-syscall records are
+diagnostics that must still explain every call or error difference. Marker
+writes are excluded from the whole-process totals. The protocol is absent
+from timed children and the diagnostic remains explicitly marked `timing:
+false`.
 
 The supplemental `x86_64_clock_allocator_workload`,
 `x86_64_network_workload`, and `x86_64_primitive_boundary_workload` artifacts

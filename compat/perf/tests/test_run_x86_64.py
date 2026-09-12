@@ -13,7 +13,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -73,6 +73,89 @@ class TraceeWaitTests(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 1.0)
         with self.assertRaises(ChildProcessError):
             os.waitpid(pid, os.WNOHANG)
+
+
+class TimingLauncherLifecycleTests(unittest.TestCase):
+    def test_abnormal_supervisor_exit_kills_its_surviving_process_group(self) -> None:
+        """A dead launcher leader cannot leave an unmeasured workload alive."""
+
+        row = next(item for item in runner.performance_rows(ROOT) if item.name == "memmem_guard63")
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            lane_root = directory / "lane"
+            lane_root.mkdir()
+            child_pid = directory / "surviving-child.pid"
+            supervisor = directory / "abnormal-supervisor.py"
+            supervisor.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os, pathlib, signal, time\n"
+                f"marker = pathlib.Path({str(child_pid)!r})\n"
+                "pid = os.fork()\n"
+                "if pid == 0:\n"
+                "    os.close(1)\n"
+                "    os.close(2)\n"
+                "    while True:\n"
+                "        time.sleep(1)\n"
+                "marker.write_text(str(pid), encoding='ascii')\n"
+                "os._exit(7)\n",
+                encoding="utf-8",
+            )
+            supervisor.chmod(0o755)
+            lane = runner.Lane(
+                name="musl", root=lane_root,
+                binaries={row.timed_artifact: "/app/bin/fake"}, dsos={},
+                io_file=directory / "io", span_inputs={},
+                environment={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            )
+            launcher = runner.TimingLauncher(
+                source=supervisor, output=supervisor, command=[], raw={},
+            )
+            result = runner.run_timed(
+                ROOT, lane, row, directory / "attempt", 1.0, launcher,
+                client_cpu=2, peer_cpu=None, allowed_affinity=(2,),
+            )
+            self.assertEqual(result["status"]["kind"], "launcher-failed")
+            self.assertEqual(result["launcher"]["status"], {"kind": "exit", "code": 7})
+            deadline = time.monotonic() + 2.0
+            while not child_pid.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(child_pid.exists(), "test supervisor never recorded its child")
+            pid = int(child_pid.read_text(encoding="ascii"))
+            try:
+                while Path(f"/proc/{pid}").exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertFalse(Path(f"/proc/{pid}").exists(), "surviving launcher child was not killed")
+            finally:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+
+class MeasurementCompletenessTests(unittest.TestCase):
+    def test_red_syscall_scorecard_is_complete_when_clients_and_raw_diagnostics_exist(self) -> None:
+        """A replayable red verdict must not be relabelled as missing data."""
+
+        complete_red = {
+            "startup": {
+                "comparison": {
+                    "status": "ok",
+                    "syscall_gate": {"status": "fail", "violations": ["whole_process: excess calls"]},
+                },
+                "musl": {"syscalls": {"status": "ok"}},
+                "crabc": {"syscalls": {"status": "ok"}},
+            },
+        }
+        self.assertTrue(runner.timed_measurements_are_complete(complete_red))
+        incomplete = {
+            **complete_red,
+            "broken": {
+                "comparison": {"status": "ok", "syscall_gate": {"status": "pass"}},
+                "musl": {"syscalls": {"status": "ok"}},
+                "crabc": {"syscalls": {"status": "failed"}},
+            },
+        }
+        self.assertFalse(runner.timed_measurements_are_complete(incomplete))
 
 
 class DescriptorClosureTests(unittest.TestCase):
@@ -192,6 +275,38 @@ class HostIdentityTests(unittest.TestCase):
 
         self.assertEqual(runner.cpuinfo_identity_sha256(before), runner.cpuinfo_identity_sha256(after))
         self.assertNotEqual(runner.cpuinfo_identity_sha256(before), runner.cpuinfo_identity_sha256(different_cpu))
+
+    def test_pin_cpu_retains_the_pre_pin_controller_mask(self) -> None:
+        """Peer selection must not rediscover the post-pin singleton mask."""
+
+        with patch.object(runner.os, "sched_getaffinity", side_effect=({2, 7}, {2})), \
+             patch.object(runner.os, "sched_setaffinity") as set_affinity:
+            cpu, allowed = runner.pin_cpu(None)
+        self.assertEqual((cpu, allowed), (2, (2, 7)))
+        set_affinity.assert_called_once_with(0, {2})
+
+    def test_peer_setup_receives_a_distinct_cpu_from_the_original_mask(self) -> None:
+        """The measured client CPU cannot become the loopback/DNS peer CPU."""
+
+        row = next(item for item in runner.performance_rows(ROOT) if item.name == "loopback_tcp_ipv4_4k")
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            root = Path(temporary)
+            lane = runner.Lane(
+                name="musl", root=root,
+                binaries={row.timed_artifact: "/app/bin/x86_64_network_workload"},
+                dsos={}, io_file=root / "io", span_inputs={}, environment={},
+            )
+            context = Mock()
+            context.argv = tuple(runner.virtual_arguments(row, lane)[2:])
+            with patch.object(runner.peers, "start_context", return_value=context) as started:
+                actual = runner.start_row_peer(
+                    ROOT, lane, row, root / "peer", client_cpu=2, peer_cpu=7,
+                    allowed_affinity=(2, 7), timeout=1.0,
+                )
+        self.assertIs(actual, context)
+        self.assertEqual(started.call_args.kwargs["cpu"], 7)
+        self.assertEqual(started.call_args.kwargs["allowed_affinity"], (2, 7))
+        context.stage_resolver_files.assert_called_once_with()
 
 
 class MuslRuntimeStagingTests(unittest.TestCase):

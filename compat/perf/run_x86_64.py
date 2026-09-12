@@ -43,6 +43,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import run as aarch64_contract
 import x86_64_evidence as evidence
+import x86_64_peers as peers
 import x86_64_profile as performance_profile
 
 
@@ -66,6 +67,9 @@ MARKER_FD = 97
 READY_FD = 97
 CONTINUE_FD = 98
 FIXED_COMPILE_FLAGS = ("-std=c11", "-O3", "-fno-builtin")
+TIMING_LAUNCHER_SCHEMA = evidence.TIMING_LAUNCHER_SCHEMA
+TIMING_LAUNCHER_FLAGS = evidence.TIMING_LAUNCHER_FLAGS
+TIMING_LAUNCHER_SOURCE = evidence.TIMING_LAUNCHER_SOURCE
 FIXED_LINK_FLAGS = ("--hash-style=sysv", "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text")
 GRAPH_NEEDED = {
     "libbench_graph_leaf_left.so": ["libc.so"],
@@ -361,7 +365,15 @@ def capture_image_tool_manifest(root: Path, retained: Path) -> dict[str, Any]:
     }
 
 
-def tool_snapshot(root: Path, product: Path, musl_cc: Path, cpu: int, image_manifest: Path) -> dict[str, Any]:
+def tool_snapshot(
+    root: Path,
+    product: Path,
+    musl_cc: Path,
+    cpu: int,
+    allowed_affinity: Sequence[int],
+    peer_cpu: int | None,
+    image_manifest: Path,
+) -> dict[str, Any]:
     """Seal image-owned tool bytes and their content-addressed manifest."""
 
     musl = external_tool_identity(musl_cc)
@@ -385,7 +397,7 @@ def tool_snapshot(root: Path, product: Path, musl_cc: Path, cpu: int, image_mani
         "musl_loader": musl_loader,
         "musl_libc": musl_libc,
         "image_tool_manifest": manifest,
-        "host": host_snapshot(cpu),
+        "host": host_snapshot(cpu, allowed_affinity, peer_cpu),
     }
 
 
@@ -466,6 +478,24 @@ def readelf_capture(readelf: str, binary: Path, raw_root: Path, label: str, root
     return result
 
 
+def static_readelf_capture(binary: Path, raw_root: Path, label: str, root: Path) -> dict[str, dict[str, Any]]:
+    """Retain the two static-ELF observations used by the timing supervisor."""
+
+    result: dict[str, dict[str, Any]] = {}
+    for name, arguments in {"header": ["-hW"], "program_headers": ["-lW"]}.items():
+        capture = command_capture(
+            [evidence.FIXED_READELF, *arguments, str(binary)], root,
+            raw_root / f"{label}.{name}", f"readelf {label} {name}",
+        )
+        result[name] = {
+            "command": recorded_command(root, capture["command"]),
+            "status": capture["status"],
+            "output": retained_identity(root, capture["stdout"]),
+            "stderr": retained_identity(root, capture["stderr"]),
+        }
+    return result
+
+
 def raw_outputs(record: Mapping[str, Any]) -> dict[str, Any]:
     return {"stdout": record["stdout"], "stderr": record["stderr"]}
 
@@ -484,17 +514,24 @@ def cpuinfo_identity_sha256(raw: bytes) -> str:
     retain vendor, model, family, stepping, flags, topology, and cache identity.
     """
 
-    volatile = {b"cpu MHz", b"bogomips"}
-    lines = []
-    for line in raw.splitlines():
-        name, separator, _value = line.partition(b":")
-        if separator and name.strip() in volatile:
-            continue
-        lines.append(line)
-    return sha256_bytes(b"\n".join(lines) + b"\n")
+    return evidence.cpuinfo_identity_sha256(raw)
 
 
-def host_snapshot(cpu: int) -> dict[str, Any]:
+def capture_cpuinfo_diagnostic(root: Path, retained: Path) -> dict[str, Any]:
+    """Retain raw CPU model/frequency telemetry outside the stable tool seal."""
+
+    source = Path("/proc/cpuinfo")
+    require(source.is_file(), "native performance image lacks readable /proc/cpuinfo")
+    retained.parent.mkdir(parents=True, exist_ok=True)
+    raw = source.read_bytes()
+    retained.write_bytes(raw)
+    return {
+        "raw": retained_identity(root, retained),
+        **evidence.cpuinfo_diagnostics(raw),
+    }
+
+
+def host_snapshot(cpu: int, allowed_affinity: Sequence[int], peer_cpu: int | None) -> dict[str, Any]:
     governors: dict[str, Any] = {}
     for name in ("scaling_governor", "scaling_available_governors"):
         path = Path(f"/sys/devices/system/cpu/cpu{cpu}/cpufreq/{name}")
@@ -511,6 +548,8 @@ def host_snapshot(cpu: int) -> dict[str, Any]:
         "kernel_release": platform.release(),
         "cpuinfo_sha256": cpuinfo_identity_sha256(Path("/proc/cpuinfo").read_bytes()) if Path("/proc/cpuinfo").is_file() else None,
         "benchmark_cpu": cpu,
+        "allowed_affinity_before_pin": list(allowed_affinity),
+        "peer_cpu": peer_cpu,
         "affinity": sorted(os.sched_getaffinity(0)),
         "cache_topology": cache,
         "governor": governors,
@@ -519,19 +558,19 @@ def host_snapshot(cpu: int) -> dict[str, Any]:
     }
 
 
-def pin_cpu(requested: int | None) -> int:
+def pin_cpu(requested: int | None) -> tuple[int, tuple[int, ...]]:
     if not hasattr(os, "sched_getaffinity") or not hasattr(os, "sched_setaffinity"):
         raise AdapterError("Linux CPU affinity APIs are unavailable")
-    allowed = os.sched_getaffinity(0)
+    allowed = tuple(sorted(os.sched_getaffinity(0)))
     require(bool(allowed), "native performance runner has no allowed CPU")
     cpu = min(allowed) if requested is None else requested
     require(cpu in allowed, f"requested CPU {cpu} is outside allowed affinity {sorted(allowed)}")
     os.sched_setaffinity(0, {cpu})
     require(os.sched_getaffinity(0) == {cpu}, f"runner affinity did not remain pinned to CPU {cpu}")
-    return cpu
+    return cpu, allowed
 
 
-def validate_environment(args: argparse.Namespace, root: Path) -> tuple[Path, Path, Path, int]:
+def validate_environment(args: argparse.Namespace, root: Path) -> tuple[Path, Path, Path, int, tuple[int, ...], int | None]:
     require(sys.platform == "linux", f"requires native Linux, got {sys.platform}")
     require(platform.machine().lower() in {"x86_64", "amd64"}, f"requires native x86-64, got {platform.machine()}")
     samples = getattr(args, "samples", 1)
@@ -550,10 +589,11 @@ def validate_environment(args: argparse.Namespace, root: Path) -> tuple[Path, Pa
     require(Path("/usr/bin/readelf").is_file(), "pinned image lacks /usr/bin/readelf")
     require(Path(evidence.FIXED_STRACE).is_file(), "pinned image lacks fixed /usr/bin/strace for the non-timed syscall diagnostic")
     evidence.dynamic_product_identity(root, product)
-    cpu = pin_cpu(args.cpu)
+    cpu, allowed_affinity = pin_cpu(args.cpu)
+    peer_cpu = next((candidate for candidate in allowed_affinity if candidate != cpu), None)
     require(re.fullmatch(r"sha256:[0-9a-f]{64}", os.environ.get("CRABC_PERF_DOCKER_IMAGE_ID", "")) is not None,
             "native performance command must record a content-addressed Docker image ID")
-    return product, musl_root, musl_cc, cpu
+    return product, musl_root, musl_cc, cpu, allowed_affinity, peer_cpu
 
 
 def resolve_run_budget(args: argparse.Namespace) -> None:
@@ -642,6 +682,16 @@ class BuiltProvider:
     validated_closure: tuple[Path, ...] = ()
 
 
+@dataclass(frozen=True)
+class TimingLauncher:
+    """Pinned static timing supervisor, distinct from provider artifacts."""
+
+    source: Path
+    output: Path
+    command: list[str]
+    raw: dict[str, Any]
+
+
 @dataclass
 class BuildState:
     # ``root`` is the immutable checkout/source mount.  Every generated
@@ -662,6 +712,7 @@ class BuildState:
     # later host replay can re-run the narrow graph contract rather than
     # treating a receipt hash as a substitute for graph evidence.
     graph_receipts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    timing_launcher: TimingLauncher | None = None
 
     @property
     def driver(self) -> Path:
@@ -701,6 +752,10 @@ def source_roster(
     legacy_families = {row.source_family for row in rows if row.legacy}
     supplemental_families = {row.source_family for row in rows if not row.legacy}
     sources: dict[str, Path] = {}
+    # This static supervisor is a harness tool, not one of the application
+    # objects or provider inputs.  Its source still belongs in every timed
+    # attempt's seal because it owns the measured-child wait4 boundary.
+    sources["timing_launcher"] = root / TIMING_LAUNCHER_SOURCE
     headers = {
         name: fixtures / name
         for name in evidence.HEADER_FILES
@@ -725,6 +780,13 @@ def source_roster(
         fixture = fixtures_by_binary.get(family)
         require(fixture is not None, f"supplemental fixture source is absent: {family}")
         sources[f"supplemental:{family}"] = root / fixture.source
+    peer_rows = [row for row in rows if row_uses_private_peer(row)]
+    if peer_rows:
+        # These helpers run outside the measured client but define the exact
+        # loopback/DNS inputs that its conventional resolver and sockets see.
+        sources["peer_helper"] = root / "compat/perf/x86_64_peers.py"
+    if any(row.requires_hermetic_resolver_files for row in peer_rows):
+        sources["dns_server"] = root / "compat/resolver-network/dns_server.py"
     if supplemental_families:
         headers["x86_64_workload_protocol.h"] = root / "compat/perf/x86_64_workload_protocol.h"
     if include_memory_observers:
@@ -831,6 +893,42 @@ def compile_required_objects(
             compile_object(state, name, source, shared=False, extra=supplemental_compile_flags(state.root, family))
         elif name.startswith("memory_observer:"):
             compile_object(state, name, source, shared=False)
+
+
+def compile_timing_launcher(state: BuildState, source: Path) -> TimingLauncher:
+    """Build the static supervisor as harness evidence, never a lane input."""
+
+    require(state.timing_launcher is None, "timing launcher was compiled more than once")
+    require(source == state.root / TIMING_LAUNCHER_SOURCE and source.is_file() and not source.is_symlink(),
+            "timing launcher source differs")
+    output = state.work / "build/harness/x86_64_timing_launcher"
+    output.parent.mkdir(parents=True, exist_ok=True)
+    command = [str(state.musl_cc), *TIMING_LAUNCHER_FLAGS, str(source), "-o", str(output)]
+    capture = command_capture(command, state.root, state.raw_root / "timing-launcher-compile", "timing launcher compile")
+    require(output.is_file() and not output.is_symlink() and output.stat().st_mode & 0o111,
+            "pinned compiler did not produce the static timing launcher")
+    static_raw = static_readelf_capture(output, state.raw_root, "timing-launcher", state.root)
+    header = Path(str(static_raw["header"]["output"]["path"]).replace(evidence.SOURCE_MOUNT, str(state.root), 1))
+    programs = Path(str(static_raw["program_headers"]["output"]["path"]).replace(evidence.SOURCE_MOUNT, str(state.root), 1))
+    evidence.parse_x86_64_static_exec_header(header.read_text(encoding="utf-8", errors="replace"))
+    require(not evidence.parse_program_interpreters(programs.read_text(encoding="utf-8", errors="replace")),
+            "static timing launcher unexpectedly has PT_INTERP")
+    require(evidence.physical_x86_64_static_exec_facts(output) == {"interpreters": [], "dynamic_segments": 0},
+            "static timing launcher bytes differ")
+    launcher = TimingLauncher(
+        source=source,
+        output=output,
+        command=recorded_command(state.root, capture["command"]),
+        raw={
+            "compile": {
+                "stdout": retained_identity(state.root, capture["stdout"]),
+                "stderr": retained_identity(state.root, capture["stderr"]),
+            },
+            "readelf": static_raw,
+        },
+    )
+    state.timing_launcher = launcher
+    return launcher
 
 
 def candidate_link(
@@ -1129,9 +1227,20 @@ def build_record(root: Path, state: BuildState) -> dict[str, Any]:
             **({"dynamic_graph": state.graph_receipts[name]} if name in state.graph_receipts else {}),
         }
     inputs = {"io_fixture": sha256_bytes(bytes(range(256)) * 16)}
+    launcher = state.timing_launcher
+    require(launcher is not None, "timing launcher build record is absent")
     return {
         "objects": objects,
         "links": links,
+        "harness": {
+            "timing_launcher": {
+                "source": recorded_identity(root, launcher.source),
+                "output": retained_identity(root, launcher.output),
+                "compile_command": launcher.command,
+                "compile_raw": launcher.raw["compile"],
+                "readelf": launcher.raw["readelf"],
+            },
+        },
         "same_object_input_proof": {
             "objects": {name: item["object"]["sha256"] for name, item in sorted(objects.items())},
             "inputs": inputs,
@@ -1290,6 +1399,75 @@ def virtual_binary(row: performance_profile.PerformanceRow, lane: Lane) -> str:
     return lane.binaries[key]
 
 
+def row_uses_private_peer(row: performance_profile.PerformanceRow) -> bool:
+    """Return whether this exact row needs owned loopback/DNS infrastructure."""
+
+    return row.requires_loopback_peer or row.requires_hermetic_resolver_files
+
+
+def start_row_peer(
+    checkout: Path,
+    lane: Lane,
+    row: performance_profile.PerformanceRow,
+    invocation_work: Path,
+    client_cpu: int,
+    peer_cpu: int | None,
+    allowed_affinity: Sequence[int],
+    timeout: float,
+    *,
+    iterations: int | None = None,
+) -> peers.PeerContext | None:
+    """Start one non-client peer context for a selected network invocation.
+
+    Peer processes stay outside the chroot and its diagnostic cgroup leaf.
+    The returned context is stopped by the caller after the exact client child
+    is reaped; it never launches or measures that client itself.
+    """
+
+    if not row_uses_private_peer(row):
+        return None
+    require(peer_cpu is not None and peer_cpu != client_cpu and peer_cpu in allowed_affinity,
+            f"private peer row lacks a distinct allowed peer CPU: {row.name}")
+    require(not row.legacy and row.fixture_mode is not None,
+            f"private peer row lacks its supplemental fixture contract: {row.name}")
+    arguments = virtual_arguments(row, lane)
+    require(arguments[:2] == [row.fixture_mode, str(row.iterations)],
+            f"private peer invocation prefix differs for {row.name}")
+    context: peers.PeerContext | None = None
+    try:
+        context = peers.start_context(
+            checkout,
+            row_id=row.name,
+            mode=row.fixture_mode,
+            invocation_work=invocation_work,
+            client_root=lane.root,
+            cpu=peer_cpu,
+            allowed_affinity=allowed_affinity,
+            iterations=iterations,
+            timeout_seconds=timeout,
+        )
+        require(list(context.argv) == arguments[2:], f"private peer argv differs for {row.name}")
+        context.stage_resolver_files()
+        return context
+    except (peers.PeerError, AdapterError) as error:
+        if context is not None:
+            context.stop()
+        raise AdapterError(f"private peer setup failed for {row.name}: {error}") from error
+
+
+def stop_row_peer(checkout: Path, context: peers.PeerContext | None) -> tuple[dict[str, Any] | None, str | None]:
+    """Retain one peer result without replacing a primary client failure."""
+
+    if context is None:
+        return None, None
+    record = context.stop()
+    try:
+        peers.validate_context(checkout, record, require_complete=True)
+    except peers.PeerError as error:
+        return record, str(error)
+    return record, None
+
+
 def rusage_record(value: resource.struct_rusage) -> dict[str, int]:
     return aarch64_contract.rusage_record(value)
 
@@ -1417,10 +1595,31 @@ def close_inherited_descriptors(keep: set[int]) -> None:
         _kernel_close_range(start, CLOSE_RANGE_LAST)
 
 
-def child_exec(root: Path, binary: str, arguments: Sequence[str], environment: Mapping[str, str], stdout_path: Path, stderr_path: Path, *, ready_write: int | None = None, continue_read: int | None = None, marker_fd: int | None = None) -> None:
-    """The sole timed child setup: FDs, chroot, cwd, and direct execve."""
+def child_exec(
+    root: Path,
+    binary: str,
+    arguments: Sequence[str],
+    environment: Mapping[str, str],
+    stdout_path: Path,
+    stderr_path: Path,
+    *,
+    ready_write: int | None = None,
+    continue_read: int | None = None,
+    marker_fd: int | None = None,
+) -> None:
+    """The sole diagnostic/observer child setup: FDs, chroot, cwd, execve.
+
+    The timed launcher has a separate supervisor so its measured child needs
+    no Python setup.  This controlled path remains necessary for ptrace and
+    memory diagnostics.  Marker and observer use the same fixed descriptor
+    number 97, therefore one child may carry exactly one protocol.
+    """
 
     try:
+        require((ready_write is None) == (continue_read is None),
+                "memory observer descriptors must be supplied as one pair")
+        require(marker_fd is None or ready_write is None,
+                "diagnostic marker and memory observer cannot share descriptor 97")
         stdin = os.open(root / "dev/null", os.O_RDONLY)
         stdout = os.open(stdout_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         stderr = os.open(stderr_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -1444,7 +1643,10 @@ def child_exec(root: Path, binary: str, arguments: Sequence[str], environment: M
         os.chroot(root)
         os.chdir("/app")
         env = dict(environment)
-        if marker_fd is not None:
+        if ready_write is not None:
+            env[performance_profile.READY_ENV] = str(READY_FD)
+            env[performance_profile.CONTINUE_ENV] = str(CONTINUE_FD)
+        elif marker_fd is not None:
             env[aarch64_contract.DIAGNOSTIC_MARKER_ENV] = str(MARKER_FD)
         os.execve(binary, [binary, *arguments], env)
     except BaseException as error:
@@ -1454,27 +1656,185 @@ def child_exec(root: Path, binary: str, arguments: Sequence[str], environment: M
             os._exit(127)
 
 
-def run_timed(checkout: Path, lane: Lane, row: performance_profile.PerformanceRow, output: Path, timeout: float) -> dict[str, Any]:
+def timeout_milliseconds(timeout: float) -> str:
+    """Encode one positive child deadline for the static supervisor."""
+
+    require(type(timeout) in {int, float} and timeout > 0, "timing timeout differs")
+    milliseconds = int(float(timeout) * 1000.0 + 0.999_999)
+    require(0 < milliseconds <= (1 << 31) - 1, "timing timeout exceeds launcher range")
+    return str(milliseconds)
+
+
+def launcher_process_status(returncode: int | None, parent_timed_out: bool) -> dict[str, Any]:
+    if parent_timed_out:
+        return {"kind": "timeout"}
+    if returncode is None:
+        return {"kind": "not-waited"}
+    if returncode >= 0:
+        return {"kind": "exit", "code": returncode}
+    return {"kind": "signal", "signal": -returncode}
+
+
+def kill_timing_supervisor(process: subprocess.Popen[bytes], timeout: float) -> tuple[bytes, bytes]:
+    """Bounded parent-abort cleanup for one fresh launcher process group."""
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except OSError as error:
+        raise AdapterError(f"could not kill timing-launcher process group: {error}") from error
+    try:
+        return process.communicate(timeout=max(0.25, min(float(timeout), 2.0)))
+    except subprocess.TimeoutExpired as error:
+        raise AdapterError("timing-launcher process group did not exit after SIGKILL") from error
+
+
+def abort_timing_supervisor_group(process: subprocess.Popen[bytes]) -> None:
+    """Kill a fresh launcher session even after its supervisor has exited.
+
+    A malformed or signalled supervisor can leave its direct client alive in
+    the inherited process group.  The parent has already collected the
+    supervisor's status in this path, so it must explicitly kill that owned
+    group before retaining the failed attempt.
+    """
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        # A group with no remaining member is already cleaned up.
+        return
+    except OSError as error:
+        raise AdapterError(f"could not abort timing-launcher process group: {error}") from error
+
+
+def run_timed(
+    checkout: Path,
+    lane: Lane,
+    row: performance_profile.PerformanceRow,
+    output: Path,
+    timeout: float,
+    launcher: TimingLauncher,
+    client_cpu: int,
+    peer_cpu: int | None,
+    allowed_affinity: Sequence[int],
+) -> dict[str, Any]:
+    """Collect a fresh timed client through the static pre-fork supervisor.
+
+    The launcher performs root/FD/cwd setup before its own fork, so the raw
+    wait4 resources in its result describe only the direct workload execve.
+    Python remains responsible for retained raw output, external peers, and
+    aborting the launcher's separate process group on a supervisor failure.
+    """
+
     output.mkdir(parents=True, exist_ok=True)
     stdout = output / "stdout"
     stderr = output / "stderr"
-    started = time.monotonic_ns()
-    pid = os.fork()
-    if pid == 0:
-        child_exec(lane.root, virtual_binary(row, lane), virtual_arguments(row, lane), lane.environment, stdout, stderr)
-    status, usage, timed_out = wait_child(pid, timeout)
+    result_path = output / "timing-launcher-result.json"
+    launcher_stdout = output / "timing-launcher.stdout"
+    launcher_stderr = output / "timing-launcher.stderr"
+    require(all(not path.exists() for path in (stdout, stderr, result_path, launcher_stdout, launcher_stderr)),
+            f"timing sample output already exists for {row.name}/{lane.name}")
+    command = [
+        str(launcher.output.resolve(strict=True)), str(lane.root.resolve(strict=True)),
+        str(stdout.resolve()), str(stderr.resolve()), str(result_path.resolve()),
+        timeout_milliseconds(timeout), virtual_binary(row, lane), *virtual_arguments(row, lane),
+    ]
+    process: subprocess.Popen[bytes] | None = None
+    process_stdout = b""
+    process_stderr = b""
+    parent_timed_out = False
+    parent_failure: str | None = None
+    context: peers.PeerContext | None = None
+    peer_record: dict[str, Any] | None = None
+    raw_result: Mapping[str, Any] | None = None
+    try:
+        context = start_row_peer(
+            checkout, lane, row, output / "peer", client_cpu, peer_cpu, allowed_affinity, timeout,
+        )
+        process = subprocess.Popen(
+            command, cwd=checkout, env=dict(lane.environment), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        try:
+            process_stdout, process_stderr = process.communicate(timeout=float(timeout) + 2.0)
+        except subprocess.TimeoutExpired:
+            parent_timed_out = True
+            process_stdout, process_stderr = kill_timing_supervisor(process, timeout)
+        if process.returncode != 0:
+            parent_failure = f"timing launcher exited with {process.returncode}"
+            if not parent_timed_out:
+                try:
+                    abort_timing_supervisor_group(process)
+                except AdapterError as cleanup_error:
+                    parent_failure += f"; {cleanup_error}"
+        if result_path.exists():
+            try:
+                raw_result = evidence.validate_timing_launcher_result(
+                    evidence.load_json(result_path, f"timing launcher result {row.name}/{lane.name}"),
+                )
+            except evidence.EvidenceError as error:
+                parent_failure = parent_failure or str(error)
+        else:
+            parent_failure = parent_failure or "timing launcher produced no result JSON"
+    except (OSError, AdapterError, peers.PeerError, ValueError) as error:
+        parent_failure = str(error)
+        if process is not None and process.poll() is None:
+            try:
+                process_stdout, process_stderr = kill_timing_supervisor(process, timeout)
+            except AdapterError as cleanup_error:
+                parent_failure += f"; {cleanup_error}"
+        elif process is not None and process.returncode not in {None, 0}:
+            try:
+                abort_timing_supervisor_group(process)
+            except AdapterError as cleanup_error:
+                parent_failure += f"; {cleanup_error}"
+    finally:
+        launcher_stdout.write_bytes(process_stdout)
+        launcher_stderr.write_bytes(process_stderr)
+        if context is not None:
+            try:
+                peer_record, peer_failure = stop_row_peer(checkout, context)
+                parent_failure = parent_failure or peer_failure
+            except (OSError, AdapterError, peers.PeerError) as error:
+                parent_failure = parent_failure or f"timing peer cleanup failed: {error}"
+
     stdout_bytes = stdout.read_bytes() if stdout.exists() else b""
     stderr_bytes = stderr.read_bytes() if stderr.exists() else b""
+    supervisor_status = launcher_process_status(None if process is None else process.returncode, parent_timed_out)
+    launcher_record = {
+        "command": recorded_command(checkout, command),
+        "status": supervisor_status,
+        "stdout": retained_identity(checkout, launcher_stdout),
+        "stderr": retained_identity(checkout, launcher_stderr),
+        "result": retained_identity(checkout, result_path) if result_path.exists() else None,
+    }
+    if raw_result is not None and parent_failure is None and supervisor_status == {"kind": "exit", "code": 0}:
+        return {
+            "elapsed_wall_ns": raw_result["elapsed_wall_ns"],
+            "status": evidence.timing_launcher_status(raw_result),
+            "resources": raw_result["resources"],
+            "stdout": retained_identity(checkout, stdout) if stdout.exists() else None,
+            "stderr": retained_identity(checkout, stderr) if stderr.exists() else None,
+            "stdout_matches": stdout_bytes == EXPECTED_STDOUT,
+            "stderr_bytes": len(stderr_bytes),
+            "stdout_sha256": sha256_bytes(stdout_bytes),
+            "stderr_sha256": sha256_bytes(stderr_bytes),
+            "launcher": launcher_record,
+            "peer": peer_record,
+        }
     return {
-        "elapsed_wall_ns": time.monotonic_ns() - started,
-        "status": status_record(status, timed_out),
-        "resources": rusage_record(usage),
+        "status": {"kind": "launcher-failed", "reason": parent_failure or "launcher did not collect a client"},
+        "elapsed_wall_ns": raw_result["elapsed_wall_ns"] if raw_result is not None else None,
+        "resources": raw_result["resources"] if raw_result is not None else {},
         "stdout": retained_identity(checkout, stdout) if stdout.exists() else None,
         "stderr": retained_identity(checkout, stderr) if stderr.exists() else None,
         "stdout_matches": stdout_bytes == EXPECTED_STDOUT,
         "stderr_bytes": len(stderr_bytes),
         "stdout_sha256": sha256_bytes(stdout_bytes),
         "stderr_sha256": sha256_bytes(stderr_bytes),
+        "launcher": launcher_record,
+        "peer": peer_record,
     }
 
 
@@ -1958,6 +2318,359 @@ def spawn_memory_child(lane: Lane, mode: str, output: Path) -> tuple[int, int, i
     return pid, ready_read, continue_write, stdout, stderr
 
 
+def spawn_memory_observer_child(
+    lane: Lane,
+    row: performance_profile.PerformanceRow,
+    output: Path,
+) -> tuple[int, int, int, Path, Path, str, list[str]]:
+    """Fork one ptrace-stopped, non-timed memory-observer client.
+
+    The observer has the source family's unchanged timed arguments but a
+    separately linked binary.  Its finite R/C envelope is intentionally the
+    only difference visible to this diagnostic child.
+    """
+
+    require(row.memory_artifact in lane.binaries,
+            f"staged {lane.name} lane lacks memory observer for {row.name}")
+    ready_read, ready_write = os.pipe()
+    continue_read, continue_write = os.pipe()
+    stdout = output / "stdout"
+    stderr = output / "stderr"
+    binary = lane.binaries[row.memory_artifact]
+    arguments = virtual_arguments(row, lane)
+    pid = os.fork()
+    if pid == 0:
+        try:
+            os.close(ready_read)
+            os.close(continue_write)
+            ptrace(PTRACE_TRACEME, 0)
+            os.kill(os.getpid(), signal.SIGSTOP)
+            child_exec(
+                lane.root, binary, arguments, lane.environment, stdout, stderr,
+                ready_write=ready_write, continue_read=continue_read,
+            )
+        except BaseException:
+            os._exit(127)
+    os.close(ready_write)
+    os.close(continue_read)
+    return pid, ready_read, continue_write, stdout, stderr, binary, arguments
+
+
+def read_observer_ready(descriptor: int, timeout: float, *, row: str, phase: str) -> None:
+    """Require one bounded ready byte for one declared observer phase."""
+
+    readable, _, _ = select.select([descriptor], [], [], timeout)
+    if not readable:
+        raise AdapterError(f"memory observer {row}/{phase} did not reach its ready checkpoint")
+    received = os.read(descriptor, 1)
+    require(received == b"R", f"memory observer {row}/{phase} ready byte differs")
+
+
+def write_observer_continue(descriptor: int, *, row: str, phase: str) -> None:
+    """Release exactly one observer checkpoint after its raw snapshot."""
+
+    written = os.write(descriptor, b"C")
+    require(written == 1, f"memory observer {row}/{phase} continue byte was partial")
+
+
+def observer_mapping_record(checkout: Path, pid: int, lane: Lane, output: Path) -> dict[str, Any]:
+    """Retain one complete root-bounded maps observation at a checkpoint."""
+
+    observed = observed_mappings(pid, lane.root, output / "maps.raw")
+    return {
+        "raw": retained_identity(checkout, observed["raw"]),
+        "paths": [recorded_path(checkout, Path(path)) for path in observed["paths"]],
+    }
+
+
+def observer_checkpoint(
+    checkout: Path,
+    lane: Lane,
+    row: performance_profile.PerformanceRow,
+    probe: Path,
+    pid: int,
+    output: Path,
+    index: int,
+    phase: str,
+) -> dict[str, Any]:
+    """Capture raw PSS, mappings, and private-cgroup state before one C."""
+
+    checkpoint_root = output / f"checkpoint-{index:02d}-{phase}"
+    checkpoint_root.mkdir(parents=True, exist_ok=False)
+    memory, memory_raw = capture_proc_memory_snapshot(pid, checkpoint_root)
+    peak, peak_raw = capture_cgroup_number(
+        probe / "memory.peak", checkpoint_root / "memory-peak.raw",
+        f"memory observer {row.name}/{phase} memory.peak",
+    )
+    memory_stat, memory_stat_raw = capture_cgroup_stat(
+        probe / "memory.stat", checkpoint_root / "memory-stat.raw",
+        f"memory observer {row.name}/{phase} memory.stat",
+    )
+    return {
+        "index": index,
+        "phase": phase,
+        "ready": "R",
+        "continue": "C",
+        "memory": {
+            **memory,
+            "raw": {name: retained_identity(checkout, path) for name, path in sorted(memory_raw.items())},
+        },
+        "mappings": observer_mapping_record(checkout, pid, lane, checkpoint_root),
+        "cgroup_memory": {
+            "memory_peak_bytes": peak,
+            "memory_stat": memory_stat,
+            "raw": {
+                "memory_peak": retained_identity(checkout, peak_raw),
+                "memory_stat": retained_identity(checkout, memory_stat_raw),
+            },
+        },
+    }
+
+
+def memory_observer_probe(
+    checkout: Path,
+    lane: Lane,
+    row: performance_profile.PerformanceRow,
+    session: CgroupSession | None,
+    raw_root: Path,
+    timeout: float,
+    client_cpu: int,
+    peer_cpu: int | None,
+    allowed_affinity: Sequence[int],
+) -> dict[str, Any]:
+    """Collect every declared R/C memory plateau for one provider and row.
+
+    This path is diagnostic-only.  It uses a fresh private cgroup leaf and
+    migrates the stopped Python child at the selected observer ``execve``
+    entry, before the observer can allocate its main-state or plateau data.
+    No Docker-parent cgroup value, post-ready migration, or estimated setup
+    subtraction enters the result.
+    """
+
+    observer_binary = lane.binaries.get(row.memory_artifact)
+    arguments = virtual_arguments(row, lane)
+    observer_invocation = {
+        "timed_binary": virtual_binary(row, lane),
+        "arguments": arguments,
+        "memory_artifact": row.memory_artifact,
+        "observer_binary": observer_binary,
+        "phases": list(row.memory_phases),
+        "protocol": performance_profile.OBSERVER_PROTOCOL,
+    }
+    base = raw_root / f"memory-observer-{lane.name}-{row.name}"
+    base.mkdir(parents=True, exist_ok=True)
+    if session is None:
+        return {
+            "status": "unsupported",
+            "protocol": performance_profile.OBSERVER_PROTOCOL,
+            "observer": observer_invocation,
+            "reason": "private delegated cgroup-v2/ptrace path is unavailable",
+        }
+
+    require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", row.name) is not None,
+            f"memory observer row has an unsafe cgroup label: {row.name}")
+    probe = session.fresh_probe(f"{lane.name}-observer-{row.name}")
+    pid: int | None = None
+    ready_read: int | None = None
+    continue_write: int | None = None
+    stdout = base / "stdout"
+    stderr = base / "stderr"
+    status: int | None = None
+    usage: resource.struct_rusage | None = None
+    timed_out = False
+    failure: str | None = None
+    migration: dict[str, Any] | None = None
+    checkpoints: list[dict[str, Any]] = []
+    after_peak: int | None = None
+    after_stat: dict[str, int] | None = None
+    final_raw: dict[str, Path] = {}
+    context: peers.PeerContext | None = None
+    peer_record: dict[str, Any] | None = None
+    try:
+        context = start_row_peer(
+            checkout, lane, row, base / "peer", client_cpu, peer_cpu, allowed_affinity, timeout,
+        )
+        pid, ready_read, continue_write, stdout, stderr, binary, child_arguments = spawn_memory_observer_child(
+            lane, row, base,
+        )
+        require(binary == observer_binary and child_arguments == arguments,
+                f"memory observer invocation drifted for {row.name}")
+        migration = ptrace_until_preexec(
+            pid,
+            session,
+            probe,
+            lane.root,
+            timeout,
+            expected_binary=binary,
+            expected_arguments=child_arguments,
+        )
+        for index, phase in enumerate(row.memory_phases):
+            read_observer_ready(ready_read, timeout, row=row.name, phase=phase)
+            checkpoint = observer_checkpoint(
+                checkout, lane, row, probe, pid, base, index, phase,
+            )
+            checkpoints.append(checkpoint)
+            write_observer_continue(continue_write, row=row.name, phase=phase)
+        status, usage, timed_out = wait_child(pid, timeout)
+        after_peak, final_raw["memory_peak_after_exit"] = capture_cgroup_number(
+            probe / "memory.peak", base / "memory-peak-after-exit.raw",
+            f"memory observer {row.name} memory.peak after exit",
+        )
+        after_stat, final_raw["memory_stat_after_exit"] = capture_cgroup_stat(
+            probe / "memory.stat", base / "memory-stat-after-exit.raw",
+            f"memory observer {row.name} memory.stat after exit",
+        )
+    except (OSError, ValueError, AdapterError, peers.PeerError) as error:
+        failure = str(error)
+    finally:
+        if pid is not None and status is None:
+            reaped = kill_and_reap_child(pid, timeout)
+            if reaped is None:
+                failure = failure or "memory observer child could not be reaped before cleanup deadline"
+            else:
+                status, usage = reaped
+                timed_out = True
+        for descriptor in (ready_read, continue_write):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+        if context is not None:
+            try:
+                peer_record, peer_failure = stop_row_peer(checkout, context)
+                failure = failure or peer_failure
+            except (OSError, AdapterError, peers.PeerError) as error:
+                failure = failure or f"memory observer peer cleanup failed: {error}"
+        cleanup_error = session.remove_probe(probe)
+        failure = failure or cleanup_error
+
+    stdout_bytes = stdout.read_bytes() if stdout.exists() else b""
+    stderr_bytes = stderr.read_bytes() if stderr.exists() else b""
+    child_ok = (
+        status is not None and usage is not None and not timed_out
+        and os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+        and stdout_bytes == EXPECTED_STDOUT and not stderr_bytes
+    )
+    complete_checkpoints = [checkpoint["phase"] for checkpoint in checkpoints] == list(row.memory_phases)
+    cgroup_ok = after_peak is not None and after_stat is not None and len(final_raw) == 2
+    result: dict[str, Any] = {
+        "status": "ok" if child_ok and complete_checkpoints and cgroup_ok and failure is None else "failed",
+        "protocol": performance_profile.OBSERVER_PROTOCOL,
+        "observer": observer_invocation,
+        "migration": migration,
+        "checkpoints": checkpoints,
+        "cgroup_memory": {
+            "status": "ok" if cgroup_ok and failure is None else "failed",
+            "memory_peak_after_exit_bytes": after_peak,
+            "memory_stat_after_exit": after_stat,
+            "raw": {name: retained_identity(checkout, path) for name, path in sorted(final_raw.items())},
+            "attribution_limit": "memory.peak can include warm file-cache charges; it is retained as cgroup high-water and is never reset, subtracted, or read from Docker's parent cgroup",
+        },
+        "child": status_record(status, timed_out) if status is not None else {"kind": "not-waited"},
+        "resources": rusage_record(usage) if usage is not None else {},
+        "stdout": retained_identity(checkout, stdout) if stdout.exists() else None,
+        "stderr": retained_identity(checkout, stderr) if stderr.exists() else None,
+        "stdout_sha256": sha256_bytes(stdout_bytes),
+        "stderr_sha256": sha256_bytes(stderr_bytes),
+        "peer": peer_record,
+    }
+    if failure is not None:
+        result["reason"] = failure
+    return result
+
+
+def memory_metric(reference: int, candidate: int) -> dict[str, Any]:
+    """Record one exact 0.90 memory threshold comparison without floats."""
+
+    require(type(reference) is int and reference >= 0 and type(candidate) is int and candidate >= 0,
+            "memory metric values are invalid")
+    if reference == 0:
+        return {
+            "reference": reference,
+            "candidate": candidate,
+            "threshold_numerator": 9,
+            "threshold_denominator": 10,
+            "release_gate": "reference-zero",
+        }
+    return {
+        "reference": reference,
+        "candidate": candidate,
+        "threshold_numerator": 9,
+        "threshold_denominator": 10,
+        "release_gate": "pass" if candidate * 10 <= reference * 9 else "fail",
+    }
+
+
+def memory_observer_comparison(reference: Mapping[str, Any], candidate: Mapping[str, Any]) -> dict[str, Any]:
+    """Derive PSS plateau and full-process peak comparisons from raw records."""
+
+    if reference.get("status") != "ok" or candidate.get("status") != "ok":
+        return {"status": "incomplete", "reason": "one provider memory observer is incomplete"}
+    try:
+        reference_checkpoints = reference["checkpoints"]
+        candidate_checkpoints = candidate["checkpoints"]
+        require(isinstance(reference_checkpoints, list) and isinstance(candidate_checkpoints, list)
+                and reference_checkpoints and candidate_checkpoints,
+                "memory observer checkpoints are absent")
+        reference_pss = max(item["memory"]["pss_kib"] for item in reference_checkpoints)
+        candidate_pss = max(item["memory"]["pss_kib"] for item in candidate_checkpoints)
+        reference_peak = reference["cgroup_memory"]["memory_peak_after_exit_bytes"]
+        candidate_peak = candidate["cgroup_memory"]["memory_peak_after_exit_bytes"]
+        return {
+            "status": "ok",
+            "pss_max_kib": memory_metric(reference_pss, candidate_pss),
+            "memory_peak_after_exit_bytes": memory_metric(reference_peak, candidate_peak),
+        }
+    except (AdapterError, KeyError, TypeError, ValueError) as error:
+        return {"status": "incomplete", "reason": str(error)}
+
+
+def collect_memory_observers(
+    checkout: Path,
+    lanes: Mapping[str, Lane],
+    rows: Sequence[performance_profile.PerformanceRow],
+    session: CgroupSession | None,
+    raw_root: Path,
+    timeout: float,
+    client_cpu: int,
+    peer_cpu: int | None,
+    allowed_affinity: Sequence[int],
+) -> dict[str, Any]:
+    """Run the finite non-timed observer envelope for every selected row."""
+
+    result: dict[str, Any] = {}
+    for row in rows:
+        invocation = {
+            "timed_binary": virtual_binary(row, lanes["musl"]),
+            "arguments": virtual_arguments(row, lanes["musl"]),
+            "memory_artifact": row.memory_artifact,
+            "observer_binary": lanes["musl"].binaries.get(row.memory_artifact),
+            "phases": list(row.memory_phases),
+            "protocol": performance_profile.OBSERVER_PROTOCOL,
+        }
+        require(invocation["timed_binary"] == virtual_binary(row, lanes["crabc"])
+                and invocation["arguments"] == virtual_arguments(row, lanes["crabc"])
+                and invocation["observer_binary"] == lanes["crabc"].binaries.get(row.memory_artifact),
+                f"provider observer invocation differs for {row.name}")
+        provider = {
+            lane_name: memory_observer_probe(
+                checkout, lane, row, session, raw_root, timeout,
+                # The peer helper must run outside the measured client CPU and
+                # receive the controller's original allowed mask.
+                client_cpu, peer_cpu, allowed_affinity,
+            )
+            for lane_name, lane in lanes.items()
+        }
+        result[row.name] = {
+            "invocation": invocation,
+            "musl": provider["musl"],
+            "crabc": provider["crabc"],
+            "comparison": memory_observer_comparison(provider["musl"], provider["crabc"]),
+        }
+    return result
+
+
 def memory_probe(checkout: Path, lane: Lane, session: CgroupSession, label: str, mode: str, raw_root: Path, timeout: float, *, capture_mappings: bool) -> dict[str, Any]:
     output = raw_root / f"memory-{lane.name}-{label}"
     output.mkdir(parents=True, exist_ok=True)
@@ -2112,7 +2825,16 @@ def fixed_strace_attach_command(trace: Path, pid: int) -> list[str]:
     return [evidence.FIXED_STRACE, "-f", "-qq", "-s", "4096", "-o", str(trace), "-p", str(pid)]
 
 
-def trace_diagnostic(checkout: Path, lane: Lane, row: performance_profile.PerformanceRow, output: Path, timeout: float) -> dict[str, Any]:
+def trace_diagnostic(
+    checkout: Path,
+    lane: Lane,
+    row: performance_profile.PerformanceRow,
+    output: Path,
+    timeout: float,
+    client_cpu: int,
+    peer_cpu: int | None,
+    allowed_affinity: Sequence[int],
+) -> dict[str, Any]:
     """Attach strace before direct child setup and retain every failed attempt.
 
     The initial SIGSTOP and attachment wait are polled with deadlines.  A
@@ -2129,6 +2851,14 @@ def trace_diagnostic(checkout: Path, lane: Lane, row: performance_profile.Perfor
     stderr.touch(exist_ok=False)
     markers = output / "markers"
     marker_fd = os.open(markers, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_CLOEXEC, 0o600)
+    # Network/DNS diagnostics execute the same client invocation as timed
+    # samples.  Their peer is deliberately fresh, pinned away from the client,
+    # and retained separately so a timed peer context cannot be recycled for a
+    # trace result.
+    context = start_row_peer(
+        checkout, lane, row, output / "peer", client_cpu, peer_cpu, allowed_affinity, timeout,
+    )
+    peer_record: dict[str, Any] | None = None
     pid = os.fork()
     if pid == 0:
         os.kill(os.getpid(), signal.SIGSTOP)
@@ -2229,6 +2959,13 @@ def trace_diagnostic(checkout: Path, lane: Lane, row: performance_profile.Perfor
     strace_stdout_path.write_bytes(tracer_stdout)
     strace_stderr_path.write_bytes(tracer_stderr)
 
+    try:
+        peer_record, peer_failure = stop_row_peer(checkout, context)
+        if peer_failure is not None:
+            reason = reason or peer_failure
+    except (OSError, AdapterError, peers.PeerError) as error:
+        reason = reason or f"diagnostic peer cleanup failed: {error}"
+
     raw_bytes = trace.read_bytes()
     raw = raw_bytes.decode("utf-8", errors="replace")
     marked = marker_summary(raw, MARKER_FD)
@@ -2240,6 +2977,7 @@ def trace_diagnostic(checkout: Path, lane: Lane, row: performance_profile.Perfor
     stderr_bytes = stderr.read_bytes()
     status_ok = (
         attached and status is not None and usage is not None and not timed_out
+        and reason is None
         and os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
         and stdout_bytes == EXPECTED_STDOUT and not stderr_bytes
         and marked.get("status") == "ok" and len(exec_lines) == 1
@@ -2262,6 +3000,7 @@ def trace_diagnostic(checkout: Path, lane: Lane, row: performance_profile.Perfor
         "workload_execve": {"path": expected_exec, "argv": [expected_exec, *expected_arguments]},
         "successful_workload_execve_trace_lines": exec_lines,
         "marker_writes_excluded_from_whole_process": True,
+        "peer": peer_record,
     }
     if reason is not None:
         result["reason"] = reason
@@ -2271,7 +3010,34 @@ def summarize_samples(samples: list[dict[str, Any]]) -> dict[str, dict[str, int]
     return aarch64_contract.summarize_samples(samples)
 
 
-def measure_pair(checkout: Path, lanes: Mapping[str, Lane], row: performance_profile.PerformanceRow, args: argparse.Namespace, raw_root: Path, seed: int) -> dict[str, Any]:
+def timed_measurements_are_complete(workloads: Mapping[str, Any]) -> bool:
+    """Return whether clients and syscall diagnostics completed successfully.
+
+    This deliberately does not inspect CPU, memory, or syscall *verdicts*.
+    A fully replayable red result is evidence, whereas a missing diagnostic or
+    failed client is incomplete measurement data.
+    """
+
+    return bool(workloads) and all(
+        isinstance(item, Mapping)
+        and item.get("comparison", {}).get("status") == "ok"
+        and all(item.get(lane, {}).get("syscalls", {}).get("status") == "ok" for lane in ("musl", "crabc"))
+        for item in workloads.values()
+    )
+
+
+def measure_pair(
+    checkout: Path,
+    lanes: Mapping[str, Lane],
+    row: performance_profile.PerformanceRow,
+    args: argparse.Namespace,
+    raw_root: Path,
+    seed: int,
+    launcher: TimingLauncher,
+    client_cpu: int,
+    peer_cpu: int | None,
+    allowed_affinity: Sequence[int],
+) -> dict[str, Any]:
     invocation = {
         "binary": virtual_binary(row, lanes["musl"]),
         "arguments": virtual_arguments(row, lanes["musl"]),
@@ -2287,7 +3053,10 @@ def measure_pair(checkout: Path, lanes: Mapping[str, Lane], row: performance_pro
     warmups: dict[str, list[dict[str, Any]]] = {"musl": [], "crabc": []}
     for lane_name in ("musl", "crabc"):
         for index in range(args.warmup):
-            sample = run_timed(checkout, lanes[lane_name], row, raw_root / f"warmup-{lane_name}-{row.name}-{index}", args.timeout)
+            sample = run_timed(
+                checkout, lanes[lane_name], row, raw_root / f"warmup-{lane_name}-{row.name}-{index}", args.timeout,
+                launcher, client_cpu, peer_cpu, allowed_affinity,
+            )
             sample["warmup_index"] = index
             warmups[lane_name].append(sample)
             if not valid_sample(sample):
@@ -2295,7 +3064,10 @@ def measure_pair(checkout: Path, lanes: Mapping[str, Lane], row: performance_pro
     observed: dict[str, list[dict[str, Any] | None]] = {"musl": [None] * args.samples, "crabc": [None] * args.samples}
     plan = aarch64_contract.paired_sample_plan(args.samples, seed)
     for order, (lane_name, index) in enumerate(plan):
-        sample = run_timed(checkout, lanes[lane_name], row, raw_root / f"sample-{lane_name}-{row.name}-{index}", args.timeout)
+        sample = run_timed(
+            checkout, lanes[lane_name], row, raw_root / f"sample-{lane_name}-{row.name}-{index}", args.timeout,
+            launcher, client_cpu, peer_cpu, allowed_affinity,
+        )
         sample["sample_index"] = index
         sample["execution_order"] = order
         if not valid_sample(sample):
@@ -2305,7 +3077,10 @@ def measure_pair(checkout: Path, lanes: Mapping[str, Lane], row: performance_pro
     result: dict[str, Any] = {"invocation": invocation}
     for lane_name in ("musl", "crabc"):
         samples = [item for item in observed[lane_name] if item is not None]
-        diagnostic = trace_diagnostic(checkout, lanes[lane_name], row, raw_root / f"diagnostic-{lane_name}-{row.name}", args.timeout) if not args.skip_syscalls else {"status": "skipped", "timing": False}
+        diagnostic = trace_diagnostic(
+            checkout, lanes[lane_name], row, raw_root / f"diagnostic-{lane_name}-{row.name}", args.timeout,
+            client_cpu, peer_cpu, allowed_affinity,
+        ) if not args.skip_syscalls else {"status": "skipped", "timing": False}
         result[lane_name] = {
             "status": "ok",
             "iterations_per_process": row.iterations,
@@ -2327,9 +3102,8 @@ def measure_pair(checkout: Path, lanes: Mapping[str, Lane], row: performance_pro
         comparison["status"] = "cpu-unsupported"
         comparison["cpu"] = {"release_gate": "unsupported", "reason": str(error)}
     if result["musl"]["syscalls"].get("status") == "ok" and result["crabc"]["syscalls"].get("status") == "ok":
-        comparison["syscall_gate"] = evidence.syscall_gate(
-            result["musl"]["syscalls"]["marked_region"],
-            result["crabc"]["syscalls"]["marked_region"],
+        comparison["syscall_gate"] = evidence.scorecard_syscall_gate(
+            result["musl"]["syscalls"], result["crabc"]["syscalls"],
             operations=row.operations,
         )
     else:
@@ -2502,7 +3276,7 @@ def plan_attempt_roster(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]
 
     root = repository_root()
     output = fresh_work_directory(root, args.work_dir)
-    product_path, _musl, _compiler, _cpu = validate_environment(args, root)
+    product_path, _musl, _compiler, _cpu, _allowed_affinity, _peer_cpu = validate_environment(args, root)
     require(git_clean(root), "attempt roster requires a clean source revision")
     product = record_product(root, product_path)
     qualification = dynamic_product_prerequisite(root, args.dynamic_qualification, product)
@@ -2570,7 +3344,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         # roots, or timed children.  The failed report still records the
         # attempted command's identity below.
         require_full_run_admission(args)
-        product, musl_root, musl_cc, cpu = validate_environment(args, root)
+        product, musl_root, musl_cc, cpu, allowed_affinity, peer_cpu = validate_environment(args, root)
         require(report["attempt"]["clean_revision"] is True, "performance evidence requires a clean source revision")
         selected = selected_rows(root, args.workload)
         state = BuildState(root=root, work=work, product=product, musl_cc=musl_cc, raw_root=raw_root / "build")
@@ -2593,12 +3367,20 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         report["product"] = {"before": record_product(root, product), "after": {}}
         report["attempt"]["roster"] = bind_attempt_roster(args, root, work, report["product"]["before"])
         report["tools"] = {
-            "before": tool_snapshot(root, product, musl_cc, cpu, raw_root / "image-tools.manifest"),
+            "before": tool_snapshot(
+                root, product, musl_cc, cpu, allowed_affinity, peer_cpu,
+                raw_root / "image-tools.manifest",
+            ),
             "after": {},
+            "host_cpuinfo_diagnostics": {
+                "before": capture_cpuinfo_diagnostic(root, raw_root / "host" / "cpuinfo.before.raw"),
+                "after": None,
+            },
             "compile_policy": {"flags": list(FIXED_COMPILE_FLAGS), "pie": "installed driver --dynamic-pie", "pic": "installed driver --dynamic-shared-object", "headers": "installed product usr/include"},
             "link_policy": {"binding": "now", "hash_style": "sysv", "runpath": APP_RUNPATH, "candidate": "installed bin/crabc-cc-dynamic", "reference": DEFAULT_MUSL_CC},
         }
         compile_required_objects(state, sources, selected)
+        compile_timing_launcher(state, sources["timing_launcher"])
         link_required_artifacts(state, selected)
         report["build"] = build_record(root, state)
         proof_path = work / "same-object-input-proof.json"
@@ -2620,6 +3402,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         cgroup_setup: dict[str, Any] = {"status": "not-created"}
         cleanup: dict[str, Any] = {"status": "not-created"}
         memory: dict[str, Any]
+        memory_observers: dict[str, Any]
         workloads: dict[str, Any] = {}
         try:
             if args.implementation_smoke:
@@ -2631,6 +3414,10 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
                 memory = {
                     name: {"status": "not-run-implementation-smoke", "reason": "implementation smoke omits memory diagnostics"}
                     for name in lanes
+                }
+                memory_observers = {
+                    "status": "not-run-implementation-smoke",
+                    "reason": "implementation smoke omits memory diagnostics",
                 }
             else:
                 try:
@@ -2645,6 +3432,10 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
                     name: live_memory_diagnostic(root, lane, cgroup, raw_root / "execution", args.timeout)
                     for name, lane in lanes.items()
                 }
+                memory_observers = collect_memory_observers(
+                    root, lanes, selected, cgroup, raw_root / "execution", args.timeout,
+                    cpu, peer_cpu, allowed_affinity,
+                )
             for name, lane in lanes.items():
                 # The chroot tree is retained evidence after timed children and
                 # diagnostics have finished.  Normalize it before sealing the
@@ -2663,8 +3454,11 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
                     missing.write_text("memory diagnostic unavailable\n", encoding="utf-8")
                     lane.observed_mappings = {"raw": retained_identity(root, missing), "paths": []}
             for index, row in enumerate(selected):
+                launcher = state.timing_launcher
+                require(launcher is not None, "timing launcher build is absent")
                 workloads[row.name] = measure_pair(
-                    root, lanes, row, args, raw_root / "execution", args.seed + index
+                    root, lanes, row, args, raw_root / "execution", args.seed + index,
+                    launcher, cpu, peer_cpu, allowed_affinity,
                 )
         finally:
             if cgroup is not None:
@@ -2688,12 +3482,19 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
             "cgroup_setup": cgroup_setup,
             "cgroup_cleanup": cleanup,
             "memory": memory,
+            "memory_observers": memory_observers,
             "workloads": workloads,
         }
         report["source"]["after"] = evidence.seal_files(source_paths)
         report["source"]["source_sha256_after"] = native_source_digest(root)
         report["product"]["after"] = record_product(root, product)
-        report["tools"]["after"] = tool_snapshot(root, product, musl_cc, cpu, raw_root / "image-tools.manifest")
+        report["tools"]["after"] = tool_snapshot(
+            root, product, musl_cc, cpu, allowed_affinity, peer_cpu,
+            raw_root / "image-tools.manifest",
+        )
+        report["tools"]["host_cpuinfo_diagnostics"]["after"] = capture_cpuinfo_diagnostic(
+            root, raw_root / "host" / "cpuinfo.after.raw",
+        )
         require(report["tools"]["before"] == report["tools"]["after"], "tool/image identity changed during performance attempt")
         require(git_clean(root), "source became dirty during performance attempt")
         require(git_revision(root) == report["attempt"]["source_revision"],
@@ -2705,12 +3506,19 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         require(report["product"]["before"] == report["product"]["after"],
                 "supplied dynamic product changed during performance attempt")
         paired_samples_complete = all(item.get("comparison", {}).get("status") == "ok" for item in workloads.values())
-        timed_complete = paired_samples_complete and all(
-            item.get("comparison", {}).get("syscall_gate", {}).get("status") == "pass"
-            and all(item.get(lane, {}).get("syscalls", {}).get("status") == "ok" for lane in ("musl", "crabc"))
-            for item in workloads.values()
+        # A measured red scorecard result is still complete evidence.  Keep
+        # successful clients, raw sample plans, and replayable diagnostics
+        # distinct from the numerical CPU/syscall verdicts they derive; the
+        # latter remain visible blockers in the report rather than making a
+        # complete failed measurement look like a missing measurement.
+        timed_complete = timed_measurements_are_complete(workloads)
+        observer_complete = isinstance(memory_observers, dict) and set(memory_observers) == {row.name for row in selected} and all(
+            item.get("musl", {}).get("status") == "ok"
+            and item.get("crabc", {}).get("status") == "ok"
+            and item.get("comparison", {}).get("status") == "ok"
+            for item in memory_observers.values()
         )
-        complete = timed_complete and all(value.get("status") == "ok" for value in memory.values())
+        complete = timed_complete and all(value.get("status") == "ok" for value in memory.values()) and observer_complete
         report["status"] = "implementation-smoke" if args.implementation_smoke and paired_samples_complete else "complete-evidence" if complete else "partial-evidence"
     except (AdapterError, evidence.EvidenceError, OSError) as error:
         report["failure"] = str(error)
@@ -2735,7 +3543,7 @@ def collect(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
     """
 
     root = repository_root()
-    product_path, _musl, _cc, _cpu = validate_environment(args, root)
+    product_path, _musl, _cc, _cpu, _allowed_affinity, _peer_cpu = validate_environment(args, root)
     product = record_product(root, product_path)
     require(git_clean(root), "three-run collector requires a clean source revision")
     _roster_path, roster = load_attempt_roster(root, args.attempt_roster, product)
