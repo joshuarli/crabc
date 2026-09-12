@@ -20,16 +20,14 @@ use core::mem::{align_of, offset_of, size_of};
 use super::{c_status, raw_syscall};
 
 unsafe extern "C" {
-    // __xstat.c names the public aliases. The archive therefore retains an
-    // application override, while the shared final link resolves the same
-    // source call to its localized defining body, as pinned musl does.
+    // musl's legacy __xstat.c deliberately names public aliases. The archive
+    // retains that source override point; the shared libc link selects its
+    // checked musl dynamic list to bind this ordinary internal call locally.
     // Private selected consumers such as fstat_inode use __fstat directly.
-    #[cfg_attr(feature = "x86-owned-dynamic-runtime", link_name = "__fstat")]
-    #[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), link_name = "fstat")]
-    fn legacy_fstat(file_descriptor: c_int, buffer: *mut Stat) -> c_int;
-    #[cfg_attr(feature = "x86-owned-dynamic-runtime", link_name = "__fstatat")]
-    #[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), link_name = "fstatat")]
-    fn legacy_fstatat(
+    #[link_name = "fstat"]
+    fn public_fstat(file_descriptor: c_int, buffer: *mut Stat) -> c_int;
+    #[link_name = "fstatat"]
+    fn public_fstatat(
         directory_fd: c_int,
         path: *const c_char,
         buffer: *mut Stat,
@@ -437,8 +435,8 @@ pub unsafe extern "C" fn __lxstat(
 /// Same as [`fstat`].
 ///
 /// Musl `src/stat/__xstat.c` names the public `fstat` spelling here. The
-/// archive therefore retains a strong application definition, while the
-/// shared final link resolves the source call to the localized `__fstat` body.
+/// archive retains a strong application definition; the shared libc link
+/// localizes this ordinary source call through its musl dynamic-list policy.
 #[no_mangle]
 pub unsafe extern "C" fn __fxstat(
     _version: c_int,
@@ -446,7 +444,7 @@ pub unsafe extern "C" fn __fxstat(
     buffer: *mut Stat,
 ) -> c_int {
     // SAFETY: forwarded unchanged to the ordinary C ABI boundary.
-    unsafe { legacy_fstat(file_descriptor, buffer) }
+    unsafe { public_fstat(file_descriptor, buffer) }
 }
 
 /// Historical descriptor-relative `stat` ABI spelling.
@@ -466,5 +464,5 @@ pub unsafe extern "C" fn __fxstatat(
     flags: c_int,
 ) -> c_int {
     // SAFETY: forwarded unchanged to the ordinary C ABI boundary.
-    unsafe { legacy_fstatat(directory_fd, path, buffer, flags) }
+    unsafe { public_fstatat(directory_fd, path, buffer, flags) }
 }

@@ -28,11 +28,10 @@ use core::mem::{align_of, offset_of, size_of};
 
 unsafe extern "C" {
     // ftime.c intentionally names the public spelling. The archive preserves
-    // that override point; lld's shared final link localizes the same source
-    // call to __clock_gettime, matching the pinned musl artifact.
-    #[cfg_attr(feature = "x86-owned-dynamic-runtime", link_name = "__clock_gettime")]
-    #[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), link_name = "clock_gettime")]
-    fn ftime_clock_gettime(clock_id: c_int, output: *mut c_void) -> c_int;
+    // that override point; the checked shared-libc dynamic list localizes the
+    // same ordinary source call without changing the source-selected name.
+    #[link_name = "clock_gettime"]
+    fn public_clock_gettime(clock_id: c_int, output: *mut c_void) -> c_int;
 }
 
 const CLOCK_REALTIME: c_int = 0;
@@ -85,7 +84,7 @@ pub unsafe extern "C" fn ftime(output: *mut Timeb) -> c_int {
     // SAFETY: this local record is writable exact x86 timespec storage. Musl
     // intentionally ignores the selected public clock_gettime return value.
     let _ = unsafe {
-        ftime_clock_gettime(
+        public_clock_gettime(
             CLOCK_REALTIME,
             (&mut snapshot as *mut Timespec).cast::<c_void>(),
         )

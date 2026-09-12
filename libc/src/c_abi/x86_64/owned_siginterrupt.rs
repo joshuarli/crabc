@@ -10,12 +10,11 @@ use core::ffi::{c_int, c_void};
 use super::signal_foundation::{PublicSigAction, PUBLIC_SIGSET_WORDS};
 
 unsafe extern "C" {
-    // siginterrupt.c uses public sigaction in both source calls. Preserve its
-    // archive override point while matching shared-link localization to
-    // __sigaction.
-    #[cfg_attr(feature = "x86-owned-dynamic-runtime", link_name = "__sigaction")]
-    #[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), link_name = "sigaction")]
-    fn source_sigaction(
+    // siginterrupt.c uses public sigaction in both source calls. The archive
+    // retains that override point; the checked shared-libc dynamic list
+    // localizes those ordinary calls without changing their source name.
+    #[link_name = "sigaction"]
+    fn public_sigaction(
         signal: c_int,
         action: *const c_void,
         old_action: *mut c_void,
@@ -33,11 +32,11 @@ pub extern "C" fn siginterrupt(signal: c_int, flag: c_int) -> c_int {
     // A failed source query leaves sa indeterminate; preserve the existing
     // Rust boundary's defined early error instead of reading uninitialized C
     // state. For valid application signals, this is musl's first action call.
-    if unsafe { source_sigaction(signal, core::ptr::null(),
+    if unsafe { public_sigaction(signal, core::ptr::null(),
         core::ptr::addr_of_mut!(action).cast()) } < 0 {
         return -1;
     }
     if flag != 0 { action.flags &= !SA_RESTART; }
     else { action.flags |= SA_RESTART; }
-    unsafe { source_sigaction(signal, core::ptr::addr_of!(action).cast(), core::ptr::null_mut()) }
+    unsafe { public_sigaction(signal, core::ptr::addr_of!(action).cast(), core::ptr::null_mut()) }
 }

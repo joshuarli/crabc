@@ -30,11 +30,10 @@ use core::{ffi::c_int, mem::MaybeUninit};
 use super::system_observation;
 
 unsafe extern "C" {
-    // getloadavg.c names public sysinfo. Preserve its archive override point
-    // while matching pinned shared-link localization to __lsysinfo.
-    #[cfg_attr(feature = "x86-owned-dynamic-runtime", link_name = "__lsysinfo")]
-    #[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), link_name = "sysinfo")]
-    fn source_sysinfo(output: *mut system_observation::SysInfo) -> c_int;
+    // getloadavg.c names public sysinfo. Preserve its archive override point;
+    // the checked shared-libc dynamic list localizes that ordinary source call.
+    #[link_name = "sysinfo"]
+    fn public_sysinfo(output: *mut system_observation::SysInfo) -> c_int;
 }
 
 const MAX_LOAD_AVERAGES: c_int = 3;
@@ -58,7 +57,7 @@ pub unsafe extern "C" fn getloadavg(output: *mut f64, count: c_int) -> c_int {
     // SAFETY: the local all-zero Rust record is a valid complete x86 public
     // sysinfo object. The selected C call retains the source's public/shared
     // ownership split and writes its fixed ABI prefix through this stack slot.
-    if unsafe { source_sysinfo(info.as_mut_ptr()) } != 0 {
+    if unsafe { public_sysinfo(info.as_mut_ptr()) } != 0 {
         return -1;
     }
     // SAFETY: all bytes were initialized to zero before Linux populated the

@@ -9,6 +9,8 @@ readonly MUSL_LIB=/opt/musl-1.2.6/lib/libc.so
 readonly MUSL_ARCHIVE=/opt/musl-1.2.6/lib/libc.a
 readonly CONTRACT_SOURCE="$ROOT/compat/x86_64/owned_syscall_alias_contract_probe.c"
 readonly OVERRIDE_SOURCE="$ROOT/compat/x86_64/owned_syscall_alias_override_probe.c"
+readonly SHARED_DYNAMIC_LIST_SOURCE="$ROOT/libc/src/c_abi/x86_64/owned_dynamic.list"
+readonly SHARED_DYNAMIC_LIST_PROBE="$ROOT/compat/x86_64/owned_shared_dynamic_list_probe.c"
 readonly READER="$ROOT/compat/x86_64/owned_syscall_alias_contract_reader.py"
 readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 
@@ -26,12 +28,12 @@ fail() {
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
 [ -n "${TMPDIR:-}" ] || fail 'requires checkout-local TMPDIR'
-for tool in chroot cmp python3 readelf realpath timeout; do
+for tool in chroot cmp grep python3 readelf realpath timeout; do
     command -v "$tool" >/dev/null 2>&1 || fail "missing $tool"
 done
 [ -x "$ORACLE_CC" ] && [ -f "$MUSL_LIB" ] && [ -f "$MUSL_ARCHIVE" ] ||
     fail 'missing pinned musl 1.2.6 toolchain or artifacts'
-for source in "$CONTRACT_SOURCE" "$OVERRIDE_SOURCE" "$READER"; do
+for source in "$CONTRACT_SOURCE" "$OVERRIDE_SOURCE" "$SHARED_DYNAMIC_LIST_SOURCE" "$SHARED_DYNAMIC_LIST_PROBE" "$READER"; do
     [ -f "$source" ] || fail "missing source $source"
 done
 
@@ -48,7 +50,12 @@ for path, label in ((temporary, 'TMPDIR'), (static, 'static product'), (dynamic,
 for path, label in ((static / 'bin/crabc-cc', 'static compiler'),
                     (static / 'usr/lib/libc.a', 'static libc'),
                     (dynamic / 'bin/crabc-cc-dynamic', 'dynamic compiler'),
-                    (dynamic / 'usr/lib/libc.so', 'dynamic libc')):
+                    (dynamic / 'usr/lib/libc.so', 'dynamic libc'),
+                    (dynamic / 'share/crabc/producer-tools.json', 'dynamic producer tools')):
+    if not path.is_file() or path.is_symlink():
+        raise SystemExit(f'owned syscall alias contract missing physical {label}: {path}')
+for path, label in ((root / 'libc/src/c_abi/x86_64/owned_dynamic.list', 'shared dynamic-list'),
+                    (root / 'compat/x86_64/owned_shared_dynamic_list_probe.c', 'shared dynamic-list probe')):
     if not path.is_file() or path.is_symlink():
         raise SystemExit(f'owned syscall alias contract missing physical {label}: {path}')
 PY
@@ -85,6 +92,151 @@ same_transcript() {
     cmp "$WORK/$expected.stderr" "$WORK/$actual.stderr" || fail "$actual stderr differs from $expected"
     cmp "$WORK/$expected.status" "$WORK/$actual.status" || fail "$actual status differs from $expected"
 }
+
+assert_relocation() {
+    local path="$1" expression="$2"
+    grep -Eq "$expression" "$path" || fail "expected relocation $expression in $path"
+}
+
+assert_no_relocation() {
+    local path="$1" expression="$2"
+    if grep -Eq "$expression" "$path"; then
+        fail "unexpected relocation $expression in $path"
+    fi
+}
+
+# musl's configure passes dynamic.list only to the libc shared link. Its data
+# entries remain interposable for copy relocations, while its allocator family
+# is an intentional function exception. This non-executing two-object link
+# preserves the prior missing-policy RED and proves the selected scope with
+# the same pinned LLD recorded by the candidate product.
+run shared-dynamic-list-source python3 -B - "$SHARED_DYNAMIC_LIST_SOURCE" \
+    "$WORK/shared-dynamic-list-source.json" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import re
+import sys
+
+source = Path(sys.argv[1])
+output = Path(sys.argv[2])
+expected_hash = '264ae3bf630a7f6d894a51f91f9acae45b89a5f639537353d03af1a04e9da0f9'
+members = (
+    'environ', '__environ', 'stdin', 'stdout', 'stderr',
+    'malloc', 'calloc', 'realloc', 'free', 'memalign', 'posix_memalign',
+    'aligned_alloc', 'malloc_usable_size',
+    'timezone', 'daylight', 'tzname', '__timezone', '__daylight', '__tzname',
+    'signgam', '__signgam', 'optarg', 'optind', 'opterr', 'optopt', 'optreset',
+    '__optreset', 'getdate_err', 'h_errno', 'program_invocation_name',
+    'program_invocation_short_name', '__progname', '__progname_full', '__stack_chk_guard',
+)
+allocation = (
+    'malloc', 'calloc', 'realloc', 'free', 'memalign', 'posix_memalign',
+    'aligned_alloc', 'malloc_usable_size',
+)
+text = source.read_text(encoding='utf-8')
+if hashlib.sha256(text.encode()).hexdigest() != expected_hash:
+    raise SystemExit('shared dynamic-list differs from pinned musl 1.2.6')
+if re.fullmatch(r'\s*\{\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*;\s*)*\}\s*;\s*', text) is None:
+    raise SystemExit('shared dynamic-list syntax differs')
+actual = tuple(re.findall(r'([A-Za-z_][A-Za-z0-9_]*)\s*;', text))
+if actual != members:
+    raise SystemExit('shared dynamic-list member/order differs')
+output.write_text(json.dumps({
+    'source': str(source), 'sha256': expected_hash,
+    'data_symbols': [member for member in members if member not in allocation],
+    'allocation_entrypoints': list(allocation),
+}, sort_keys=True) + '\n', encoding='utf-8')
+PY
+
+# Bind the selected source list to the supplied libc artifact rather than
+# merely proving what a fresh ad-hoc LLD invocation would do.
+run shared-dynamic-list-product-provenance python3 -B - \
+    "$DYNAMIC_PRODUCT/share/crabc/libc-shared.provenance.json" \
+    "$WORK/shared-dynamic-list-source.json" "$WORK/shared-dynamic-list-product-provenance.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+provenance_path, source_path, output_path = map(Path, sys.argv[1:])
+provenance = json.loads(provenance_path.read_text(encoding='utf-8'))
+source = json.loads(source_path.read_text(encoding='utf-8'))
+expected_source = {
+    'path': 'libc/src/c_abi/x86_64/owned_dynamic.list',
+    'sha256': source['sha256'],
+    'mode': 0o644,
+}
+selected = provenance.get('shared_dynamic_list')
+if not isinstance(selected, dict) or selected.get('source') != expected_source:
+    raise SystemExit('candidate shared provenance does not bind the selected musl dynamic-list')
+if selected.get('data_symbols') != source['data_symbols']:
+    raise SystemExit('candidate shared provenance data interposition scope differs')
+if selected.get('allocation_entrypoints') != source['allocation_entrypoints']:
+    raise SystemExit('candidate shared provenance allocator interposition scope differs')
+command = provenance.get('libc_shared_link_command')
+if not isinstance(command, list) or not all(isinstance(item, str) for item in command):
+    raise SystemExit('candidate shared provenance lacks final libc link command')
+expected_flag = '--dynamic-list=$SOURCE/libc/src/c_abi/x86_64/owned_dynamic.list'
+if command.count(expected_flag) != 1:
+    raise SystemExit('candidate libc link command does not select exactly one checked dynamic-list')
+if any(item in {'-Bsymbolic', '-Bsymbolic-functions'} for item in command):
+    raise SystemExit('candidate libc link command replaces musl dynamic-list policy')
+output_path.write_text(json.dumps({
+    'dynamic_list': selected,
+    'libc_shared_link_command': command,
+}, sort_keys=True) + '\n', encoding='utf-8')
+PY
+
+run shared-dynamic-list-linker-path python3 -B - "$DYNAMIC_PRODUCT/share/crabc/producer-tools.json" \
+    "$WORK/shared-dynamic-list-linker.txt" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+record = json.loads(Path(sys.argv[1]).read_text(encoding='utf-8'))
+output = Path(sys.argv[2])
+target = record.get('target')
+sysroot = record.get('rustc', {}).get('sysroot')
+if not isinstance(target, str) or not isinstance(sysroot, str):
+    raise SystemExit('candidate producer tools lack target/sysroot')
+linker = Path(sysroot) / 'lib/rustlib' / target / 'bin/gcc-ld/ld.lld'
+if not linker.is_file() or linker.is_symlink():
+    raise SystemExit(f'candidate pinned LLD is not a physical file: {linker}')
+output.write_text(str(linker) + '\n', encoding='utf-8')
+PY
+readonly SHARED_LINKER="$(cat "$WORK/shared-dynamic-list-linker.txt")"
+
+compile_shared_dynamic_list_object() {
+    local stem="$1"
+    shift
+    run "$stem-compile" "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" --dynamic-shared-object \
+        -std=c11 -fno-builtin -fno-stack-protector "$@" -c "$SHARED_DYNAMIC_LIST_PROBE" \
+        -o "$WORK/$stem.o"
+}
+
+compile_shared_dynamic_list_object shared-dynamic-list-provider -DCRABC_SHARED_DYNAMIC_LIST_PROVIDER
+compile_shared_dynamic_list_object shared-dynamic-list-caller
+run shared-dynamic-list-no-policy-red-link "$SHARED_LINKER" -shared --hash-style=sysv \
+    "$WORK/shared-dynamic-list-provider.o" "$WORK/shared-dynamic-list-caller.o" \
+    -o "$WORK/shared-dynamic-list-no-policy.so"
+readelf -rW "$WORK/shared-dynamic-list-no-policy.so" >"$WORK/shared-dynamic-list-no-policy.relocations.txt"
+# This is the focused RED: without musl's list, an ordinary internal function
+# call is still a PLT relocation and therefore can be preempted.
+assert_relocation "$WORK/shared-dynamic-list-no-policy.relocations.txt" \
+    'R_X86_64_JUMP_SLOT.*ordinary_local_call'
+
+run shared-dynamic-list-selected-link "$SHARED_LINKER" -shared --hash-style=sysv \
+    "--dynamic-list=$SHARED_DYNAMIC_LIST_SOURCE" \
+    "$WORK/shared-dynamic-list-provider.o" "$WORK/shared-dynamic-list-caller.o" \
+    -o "$WORK/shared-dynamic-list-selected.so"
+readelf -rW "$WORK/shared-dynamic-list-selected.so" >"$WORK/shared-dynamic-list-selected.relocations.txt"
+readelf --dyn-syms -W "$WORK/shared-dynamic-list-selected.so" >"$WORK/shared-dynamic-list-selected.dynsym.txt"
+# Ordinary functions become local calls. The exact musl exceptions remain
+# dynamic: `optind` is copy-relocation-capable data and `malloc` is the
+# deliberate allocator interposition family. Neither test image executes.
+assert_no_relocation "$WORK/shared-dynamic-list-selected.relocations.txt" 'ordinary_local_call'
+assert_relocation "$WORK/shared-dynamic-list-selected.relocations.txt" 'R_X86_64_GLOB_DAT.*optind'
+assert_relocation "$WORK/shared-dynamic-list-selected.relocations.txt" 'R_X86_64_JUMP_SLOT.*malloc'
 
 compile_candidate_object() {
     local stem="$1" source="$2"
@@ -176,6 +328,7 @@ readelf --dyn-syms --wide "$MUSL_LIB" >"$WORK/musl-dynamic-symbols.txt"
 readelf --dyn-syms --wide "$DYNAMIC_PRODUCT/usr/lib/libc.so" >"$WORK/candidate-dynamic-symbols.txt"
 readelf --symbols --wide "$MUSL_LIB" >"$WORK/musl-shared-symbols.txt"
 readelf --symbols --wide "$DYNAMIC_PRODUCT/usr/lib/libc.so" >"$WORK/candidate-shared-symbols.txt"
+readelf -rW "$DYNAMIC_PRODUCT/usr/lib/libc.so" >"$WORK/candidate-shared-relocations.txt"
 readelf --symbols --wide "$MUSL_ARCHIVE" >"$WORK/musl-static-symbols.txt"
 readelf --symbols --wide "$STATIC_PRODUCT/usr/lib/libc.a" >"$WORK/candidate-static-symbols.txt"
 for binary in "$WORK"/dynamic-*-override; do
@@ -326,6 +479,20 @@ for path in sorted(work.glob('dynamic-*-override.symbols.txt')):
         row = one(table, name, path)
         if shape(row) != ('FUNC', 'GLOBAL', 'DEFAULT'):
             raise SystemExit(f'{path}: application override is not dynamic GLOBAL DEFAULT: {row}')
+PY
+
+python3 -B - "$WORK/candidate-shared-relocations.txt" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+relocations = Path(sys.argv[1]).read_text(encoding='utf-8')
+# These six musl callers name ordinary public aliases in source. The selected
+# shared link must bind those calls locally; explicit hidden source callers
+# are checked by the override workload above instead.
+for symbol in ('fstat', 'fstatat', 'clock_gettime', 'sysinfo', 'sigaction'):
+    if re.search(r'\b' + re.escape(symbol) + r'(?:@[^\s]+)?\b', relocations):
+        raise SystemExit(f'candidate shared libc retains a dynamic relocation for source-public {symbol}')
 PY
 
 printf 'owned syscall alias contract: PASS (pinned musl archive/shared aliases, static/static-PIE and shared PIE/non-PIE public overrides, source-shaped internal call paths); evidence: %s\n' "$WORK"

@@ -14,11 +14,10 @@ use super::{signal_control as control, signal_set_mutation,
 
 unsafe extern "C" {
     // These musl source files name public sigaction deliberately. The archive
-    // retains that override point; the shared final link localizes it to
-    // __sigaction, matching the pinned shared artifact.
-    #[cfg_attr(feature = "x86-owned-dynamic-runtime", link_name = "__sigaction")]
-    #[cfg_attr(not(feature = "x86-owned-dynamic-runtime"), link_name = "sigaction")]
-    fn source_sigaction(
+    // retains that override point; the checked shared-libc dynamic list
+    // localizes the ordinary source call without rewriting it to __sigaction.
+    #[link_name = "sigaction"]
+    fn public_sigaction(
         signal: c_int,
         action: *const c_void,
         old_action: *mut c_void,
@@ -63,7 +62,7 @@ pub extern "C" fn sigrelse(signal: c_int) -> c_int {
 #[no_mangle]
 pub extern "C" fn sigignore(signal: c_int) -> c_int {
     let ignored = action(SIG_IGN);
-    unsafe { source_sigaction(signal, core::ptr::addr_of!(ignored).cast(), core::ptr::null_mut()) }
+    unsafe { public_sigaction(signal, core::ptr::addr_of!(ignored).cast(), core::ptr::null_mut()) }
 }
 
 /// Replace a disposition and unblock its signal, or hold without replacing.
@@ -79,7 +78,7 @@ pub unsafe extern "C" fn sigset(signal: c_int, handler: usize) -> usize {
     let new_action = action(handler);
     let requested = if handler == SIG_HOLD { core::ptr::null() }
         else { core::ptr::addr_of!(new_action).cast() };
-    if unsafe { source_sigaction(signal, requested, core::ptr::addr_of_mut!(old_action).cast()) } < 0 {
+    if unsafe { public_sigaction(signal, requested, core::ptr::addr_of_mut!(old_action).cast()) } < 0 {
         return SIG_ERR;
     }
     let mut old_mask = [0u64; PUBLIC_SIGSET_WORDS];

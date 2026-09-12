@@ -46,6 +46,34 @@ archive and local/non-dynamic in the shared result, with no public alias. Its
 outer `__sigaction` body retains validation and selected SIGABRT serialization;
 the raw body retains action conversion and the syscall.
 
+## Shared-libc source-call policy
+
+Pinned musl's `configure` adds `--dynamic-list=dynamic.list` to the `libc.so`
+link through `LDFLAGS_ALL`; `Makefile` applies those flags only to the shared
+libc link. `libc/src/c_abi/x86_64/owned_dynamic.list` is the byte-identical
+musl 1.2.6 input (SHA-256
+`264ae3bf630a7f6d894a51f91f9acae45b89a5f639537353d03af1a04e9da0f9`).
+`scripts/build_x86_64_owned_dynamic_sysroot.py` checks its physical source,
+hash, syntax, order, and membership, passes it only to the native `libc.so`
+LLD invocation, and records both the selected categories and normalized final
+link command in `share/crabc/libc-shared.provenance.json`.
+
+The list has two deliberate categories. Its non-allocation names are public
+data that remains interposable for copy relocations. `malloc`, `calloc`,
+`realloc`, `free`, `memalign`, `posix_memalign`, `aligned_alloc`, and
+`malloc_usable_size` are function exceptions for allocator interposition; they
+are not data. The policy does not use `-Bsymbolic` or
+`-Bsymbolic-functions`, does not change weak public alias metadata, and does
+not apply to the loader, application DSOs, or static archives.
+
+That link policy lets the source keep musl's public spellings in
+`__fxstat`, `__fxstatat`, `ftime`, `getloadavg`, `sigignore`, and
+`siginterrupt`. The archive paths remain available to a strong application
+override. The shared link binds their ordinary libc calls locally. Selected
+source callers that actually name `__clock_gettime`, `__lseek`, `__munmap`, or
+`__sigaction` remain explicit hidden-body calls; the list never replaces those
+ownership choices.
+
 The runner first preserves a pinned-musl static and shared reference. It then
 links the same C calls through owned static ET_EXEC/static-PIE and owned shared
 PIE/non-PIE products, using both kernel and direct-interpreter entry. The
@@ -64,6 +92,16 @@ same-address bodies. `statvfs` and `fstatvfs` retain their local statfs bodies;
 selected tree search continues through hidden mapping bodies. The reader
 rejects a forwarding body that merely shares an archive member and zero
 `st_value` with an alias by also requiring the defining section and type.
+
+Before those runtime cases, the runner invokes the pinned LLD from the supplied
+product on a two-object PIC fixture. The preserved no-list control has an
+`ordinary_local_call` PLT relocation (the focused RED). The checked list
+removes that ordinary relocation while retaining `optind` `GLOB_DAT` and
+`malloc` `JUMP_SLOT` relocations. The fixture never executes, so it observes
+allocator interposition as ELF linkage only. It also rejects a supplied product
+whose shared provenance does not bind the selected list and final libc link
+command, then rejects a final `libc.so` that still dynamically relocates any
+of the six public-source caller paths.
 
 Run it only in the pinned native image with supplied products below the
 checkout's `.work` tree:

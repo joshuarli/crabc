@@ -812,6 +812,39 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self.assertFalse(output.exists())
         self.assertEqual((output.parent / (output.name + ".build") / "installed/partial-libc.so").read_bytes(), b"partial")
 
+    def test_shared_libc_dynamic_list_keeps_musl_data_and_allocator_exceptions(self):
+        """The shared libc link alone receives musl's finite interposition list."""
+
+        dynamic_list = producer.shared_libc_dynamic_list()
+        self.assertEqual(
+            dynamic_list["source"],
+            {
+                "path": "libc/src/c_abi/x86_64/owned_dynamic.list",
+                "sha256": producer.MUSL_1_2_6_DYNAMIC_LIST_SHA256,
+                "mode": 0o644,
+            },
+        )
+        self.assertEqual(dynamic_list["data_symbols"], list(producer.MUSL_1_2_6_DYNAMIC_LIST_DATA_SYMBOLS))
+        self.assertEqual(
+            dynamic_list["allocation_entrypoints"],
+            list(producer.MUSL_1_2_6_DYNAMIC_LIST_ALLOCATION_ENTRYPOINTS),
+        )
+        self.assertIn("optind", dynamic_list["data_symbols"])
+        self.assertNotIn("malloc", dynamic_list["data_symbols"])
+        self.assertIn("malloc_usable_size", dynamic_list["allocation_entrypoints"])
+
+        command = producer.shared_libc_link_command(
+            Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
+            Path("/private/objects"), ("one.o", "two.o"), Path("/private/builtins.a"),
+            Path("/private/usr/lib"),
+        )
+        self.assertEqual(command[:6], [
+            "/pinned/ld.lld", "-shared", "--hash-style=sysv", "-soname", "libc.so",
+            "--dynamic-list=" + str(producer.SHARED_LIBC_DYNAMIC_LIST),
+        ])
+        self.assertNotIn("-Bsymbolic", command)
+        self.assertNotIn("-Bsymbolic-functions", command)
+
     def test_producer_final_validation_failure_and_competing_publication_preserve_destination(self):
         for failure in ("invalid-payload", "competing-publication"):
             with self.subTest(failure=failure):
