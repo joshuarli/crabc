@@ -43,6 +43,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import run as aarch64_contract
 import x86_64_evidence as evidence
+import x86_64_profile as performance_profile
 
 
 SCHEMA = evidence.SCHEMA
@@ -586,6 +587,38 @@ def selected_workloads(values: list[str] | None) -> tuple[aarch64_contract.Workl
     return aarch64_contract.select_workloads(values)
 
 
+def performance_rows(root: Path) -> tuple[performance_profile.PerformanceRow, ...]:
+    """Return the closed timed and memory-observer contract for all 114 rows.
+
+    The historical workload definitions remain their sole owner for the frozen
+    74 invocations. The profile supplies the separate 40 native rows and the
+    finite observer envelope for every row; this adapter only joins those two
+    established contracts.
+    """
+
+    try:
+        return performance_profile.performance_rows(root, aarch64_contract.WORKLOADS)
+    except performance_profile.ProfileError as error:
+        raise AdapterError(str(error)) from error
+
+
+def selected_rows(root: Path, values: list[str] | None) -> tuple[performance_profile.PerformanceRow, ...]:
+    """Select exact names from the combined 114-row contract."""
+
+    rows = performance_rows(root)
+    if values is None:
+        return rows
+    by_name = {row.name: row for row in rows}
+    selected: list[performance_profile.PerformanceRow] = []
+    for name in values:
+        row = by_name.get(name)
+        require(row is not None, f"unknown native x86 performance workload: {name}")
+        require(row not in selected, f"native x86 performance workload repeats: {name}")
+        selected.append(row)
+    require(selected, "native x86 performance workload selection is empty")
+    return tuple(selected)
+
+
 @dataclass
 class ObjectRecord:
     name: str
@@ -635,10 +668,10 @@ class BuildState:
         return self.product / "bin/crabc-cc-dynamic"
 
 
-def make_generated_sources(state: BuildState, workloads: Sequence[aarch64_contract.Workload]) -> None:
+def make_generated_sources(state: BuildState, rows: Sequence[performance_profile.PerformanceRow]) -> None:
     generated = state.work / "build/generated"
     generated.mkdir(parents=True, exist_ok=True)
-    needed = {workload.name for workload in workloads}
+    needed = {row.name for row in rows if row.legacy}
     if "dlsym_1" in needed:
         path = generated / "symbols_1.c"
         path.write_text(evidence.generated_source_contents("symbols_1"), encoding="utf-8")
@@ -654,23 +687,60 @@ def make_generated_sources(state: BuildState, workloads: Sequence[aarch64_contra
             state.local_sources[f"graph:{name}"] = path
 
 
-def source_roster(root: Path, state: BuildState, workloads: Sequence[aarch64_contract.Workload]) -> tuple[dict[str, Path], dict[str, Path]]:
+def source_roster(
+    root: Path,
+    state: BuildState,
+    rows: Sequence[performance_profile.PerformanceRow],
+    *,
+    include_memory_observers: bool,
+) -> tuple[dict[str, Path], dict[str, Path]]:
+    """Seal exactly the selected timed and, when requested, observer sources."""
+
     fixtures = root / "compat/perf/fixtures"
-    sources: dict[str, Path] = {"workload": fixtures / evidence.STATIC_SOURCE_FILES["workload"]}
+    names = {row.name for row in rows}
+    legacy_families = {row.source_family for row in rows if row.legacy}
+    supplemental_families = {row.source_family for row in rows if not row.legacy}
+    sources: dict[str, Path] = {}
     headers = {
         name: fixtures / name
         for name in evidence.HEADER_FILES
     }
-    names = {workload.name for workload in workloads}
-    if "startup_constructor_destructor" in names:
+    if "workload" in legacy_families:
+        sources["workload"] = fixtures / evidence.STATIC_SOURCE_FILES["workload"]
+    if "constructor" in legacy_families:
         sources["constructor"] = fixtures / evidence.STATIC_SOURCE_FILES["constructor"]
-    if "startup_dependency_graph" in names:
+    if "graph" in legacy_families:
         sources["startup_graph"] = fixtures / evidence.STATIC_SOURCE_FILES["startup_graph"]
     if "dlsym_128" in names:
         sources["symbols_128"] = fixtures / evidence.STATIC_SOURCE_FILES["symbols_128"]
     if "loader_dynamic_tls_growth" in names:
         sources["tls_growth"] = fixtures / evidence.STATIC_SOURCE_FILES["tls_growth"]
     sources.update(state.local_sources)
+    try:
+        profile = performance_profile.load_profile(root)
+        fixtures_by_binary = performance_profile.supplemental_fixtures(profile)
+    except performance_profile.ProfileError as error:
+        raise AdapterError(str(error)) from error
+    for family in sorted(supplemental_families):
+        fixture = fixtures_by_binary.get(family)
+        require(fixture is not None, f"supplemental fixture source is absent: {family}")
+        sources[f"supplemental:{family}"] = root / fixture.source
+    if supplemental_families:
+        headers["x86_64_workload_protocol.h"] = root / "compat/perf/x86_64_workload_protocol.h"
+    if include_memory_observers:
+        for family in sorted(legacy_families):
+            artifact = performance_profile.LEGACY_MEMORY_ARTIFACTS.get(family)
+            source = performance_profile.LEGACY_MEMORY_SOURCES.get(family)
+            require(artifact is not None and source is not None, f"legacy memory observer source is absent: {family}")
+            sources[f"memory_observer:{artifact}"] = root / source
+        for family in sorted(supplemental_families):
+            artifact = performance_profile.SUPPLEMENTAL_MEMORY_ARTIFACTS.get(family)
+            source = performance_profile.SUPPLEMENTAL_MEMORY_SOURCES.get(family)
+            require(artifact is not None and source is not None, f"supplemental memory observer source is absent: {family}")
+            sources[f"memory_observer:{artifact}"] = root / source
+        headers["x86_64_memory_observer_protocol.h"] = root / "compat/perf/x86_64_memory_observer_protocol.h"
+        headers["x86_64_supplemental_memory_observer.h"] = root / "compat/perf/x86_64_supplemental_memory_observer.h"
+    headers["x86_64-profile.toml"] = root / performance_profile.PROFILE_RELATIVE_PATH
     for name, path in [*sources.items(), *headers.items()]:
         require(path.is_file() and not path.is_symlink(), f"performance source/header is absent: {name}")
     return sources, headers
@@ -703,9 +773,43 @@ def compile_object(state: BuildState, name: str, source: Path, *, shared: bool, 
     return record
 
 
-def compile_required_objects(state: BuildState, sources: Mapping[str, Path], workloads: Sequence[aarch64_contract.Workload]) -> None:
-    names = {workload.name for workload in workloads}
-    compile_object(state, "workload", sources["workload"], shared=False)
+def supplemental_compile_flags(root: Path, family: str) -> tuple[str, ...]:
+    """Translate the profile's closed source defines into driver flags."""
+
+    try:
+        fixtures = performance_profile.supplemental_fixtures(performance_profile.load_profile(root))
+    except performance_profile.ProfileError as error:
+        raise AdapterError(str(error)) from error
+    fixture = fixtures.get(family)
+    require(fixture is not None and fixture.c_standard == "c11", f"supplemental fixture compile contract differs: {family}")
+    return tuple(f"-D{value}" for value in fixture.compile_defines)
+
+
+def supplemental_link_flags(root: Path, family: str) -> tuple[str, ...]:
+    """Return the profile-owned provider flags for one supplemental family.
+
+    ``-pthread`` is a normal C driver spelling.  It deliberately reaches both
+    provider links: the installed driver forwards it to its C translation
+    policy, while the pinned musl compiler resolves pthread symbols from its
+    integrated libc without adding a second runtime input.
+    """
+
+    try:
+        fixtures = performance_profile.supplemental_fixtures(performance_profile.load_profile(root))
+    except performance_profile.ProfileError as error:
+        raise AdapterError(str(error)) from error
+    fixture = fixtures.get(family)
+    require(fixture is not None, f"supplemental fixture link contract is absent: {family}")
+    return fixture.link_flags
+
+
+def compile_required_objects(
+    state: BuildState,
+    sources: Mapping[str, Path],
+    rows: Sequence[performance_profile.PerformanceRow],
+) -> None:
+    if "workload" in sources:
+        compile_object(state, "workload", sources["workload"], shared=False)
     if "constructor" in sources:
         compile_object(state, "constructor", sources["constructor"], shared=False)
     if "startup_graph" in sources:
@@ -722,6 +826,11 @@ def compile_required_objects(state: BuildState, sources: Mapping[str, Path], wor
     for name, source in sorted(sources.items()):
         if name.startswith("graph:"):
             compile_object(state, name, source, shared=True)
+        elif name.startswith("supplemental:"):
+            family = name.removeprefix("supplemental:")
+            compile_object(state, name, source, shared=False, extra=supplemental_compile_flags(state.root, family))
+        elif name.startswith("memory_observer:"):
+            compile_object(state, name, source, shared=False)
 
 
 def candidate_link(
@@ -732,6 +841,7 @@ def candidate_link(
     shared: bool,
     direct: Sequence[Path] = (),
     transitive: Sequence[Path] = (),
+    link_flags: Sequence[str] = (),
 ) -> BuiltProvider:
     output = state.work / "build/candidate" / ("lib" if shared else "bin") / name
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -739,6 +849,7 @@ def candidate_link(
     command = [
         str(state.driver), mode, "--binding", "now", "--application-runpath", APP_RUNPATH,
         "--application-hash-style", "sysv",
+        *link_flags,
         *(str(item.object) for item in objects),
         *(argument for path in direct for argument in ("--application-dso", str(path))),
         *(argument for path in transitive for argument in ("--transitive-application-dso", str(path))),
@@ -782,6 +893,7 @@ def musl_link(
     shared: bool,
     direct: Sequence[Path] = (),
     closure: Sequence[Path] = (),
+    link_flags: Sequence[str] = (),
 ) -> BuiltProvider:
     output = state.work / "build/musl" / ("lib" if shared else "bin") / name
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -798,6 +910,7 @@ def musl_link(
         for directory in sorted({str(path.parent) for path in closure})
     )
     command = [str(state.musl_cc), *( ["-shared", f"-Wl,-soname,{name}"] if shared else ["-pie"] ), *linker_flags,
+               *link_flags,
                *(str(item.object) for item in objects), *(str(path) for path in direct), "-o", str(output)]
     capture = command_capture(command, state.root, state.raw_root / f"musl-link-{name}", f"musl link {name}")
     require(output.is_file(), f"pinned musl compiler did not produce output: {name}")
@@ -828,8 +941,8 @@ def assert_provider_dynamic(provider: BuiltProvider, root: Path, expected_needed
     require(parsed["hashes"] == ["sysv"], f"{label} hash style differs")
 
 
-def link_required_artifacts(state: BuildState, workloads: Sequence[aarch64_contract.Workload]) -> None:
-    names = {workload.name for workload in workloads}
+def link_required_artifacts(state: BuildState, rows: Sequence[performance_profile.PerformanceRow]) -> None:
+    names = {row.name for row in rows if row.legacy}
     # Link application-owned DSOs before their users.  Every matching pair
     # receives the same installed-header object; only provider closures vary.
     for dso_name, object_name in (("libsymbols_1.so", "symbols_1"), ("libsymbols_128.so", "symbols_128"), ("libsymbols_1024.so", "symbols_1024")):
@@ -895,41 +1008,86 @@ def link_required_artifacts(state: BuildState, workloads: Sequence[aarch64_contr
             "closure_needed": {name: list(root_closure_needed[name]) for name in sorted(root_closure_needed)},
         }
 
-    candidate_link(state, "workload", [state.objects["workload"]], shared=False)
-    musl_link(state, "workload", [state.objects["workload"]], shared=False)
-    assert_provider_dynamic(state.candidate["workload"], state.root, ["libc.so"], "candidate workload")
-    assert_provider_dynamic(state.musl["workload"], state.root, ["libc.so"], "musl workload")
-    if "constructor" in state.objects:
-        candidate_link(state, "constructor", [state.objects["constructor"]], shared=False)
-        musl_link(state, "constructor", [state.objects["constructor"]], shared=False)
-        assert_provider_dynamic(state.candidate["constructor"], state.root, ["libc.so"], "candidate constructor")
-        assert_provider_dynamic(state.musl["constructor"], state.root, ["libc.so"], "musl constructor")
-    if "startup_graph" in state.objects:
-        root_name = "libbench_graph_root.so"
-        closure = ("libbench_graph_mid_left.so", "libbench_graph_mid_right.so", "libbench_graph_leaf_left.so", "libbench_graph_leaf_right.so")
+    def link_plain_executable(name: str, object_name: str, *, link_flags: Sequence[str] = ()) -> None:
+        """Link one non-graph executable through both fixed providers."""
+
         candidate_link(
-            state, "graph", [state.objects["startup_graph"]], shared=False,
-            direct=[state.candidate[root_name].output], transitive=[state.candidate[name].output for name in closure],
+            state, name, [state.objects[object_name]], shared=False,
+            link_flags=link_flags,
         )
         musl_link(
-            state, "graph", [state.objects["startup_graph"]], shared=False,
+            state, name, [state.objects[object_name]], shared=False,
+            link_flags=link_flags,
+        )
+        assert_provider_dynamic(state.candidate[name], state.root, ["libc.so"], f"candidate {name}")
+        assert_provider_dynamic(state.musl[name], state.root, ["libc.so"], f"musl {name}")
+
+    def link_graph_executable(name: str, object_name: str) -> None:
+        """Link a graph consumer with only its root as an executable edge."""
+
+        root_name = "libbench_graph_root.so"
+        closure = (
+            "libbench_graph_mid_left.so", "libbench_graph_mid_right.so",
+            "libbench_graph_leaf_left.so", "libbench_graph_leaf_right.so",
+        )
+        candidate_link(
+            state, name, [state.objects[object_name]], shared=False,
+            direct=[state.candidate[root_name].output],
+            transitive=[state.candidate[item].output for item in closure],
+        )
+        musl_link(
+            state, name, [state.objects[object_name]], shared=False,
             direct=[state.musl[root_name].output],
-            closure=[state.musl[name].output for name in closure],
+            closure=[state.musl[item].output for item in closure],
         )
-        assert_provider_dynamic(state.candidate["graph"], state.root, [root_name, "libc.so"], "candidate graph startup")
-        assert_provider_dynamic(state.musl["graph"], state.root, [root_name, "libc.so"], "musl graph startup")
+        assert_provider_dynamic(state.candidate[name], state.root, [root_name, "libc.so"], f"candidate {name}")
+        assert_provider_dynamic(state.musl[name], state.root, [root_name, "libc.so"], f"musl {name}")
         evidence.validate_dynamic_graph_receipt(
-            checkout=state.root, product=state.product, receipt_path=state.candidate["graph"].receipt, output=state.candidate["graph"].output,
-            dynamic_raw=dynamic_raw_path(state.candidate["graph"], state.root), expected_direct=[root_name],
-            expected_needed=GRAPH_NEEDED, expected_search_path=APP_RUNPATH,
+            checkout=state.root, product=state.product,
+            receipt_path=state.candidate[name].receipt,
+            output=state.candidate[name].output,
+            dynamic_raw=dynamic_raw_path(state.candidate[name], state.root),
+            expected_direct=[root_name], expected_needed=GRAPH_NEEDED,
+            expected_search_path=APP_RUNPATH,
         )
-        state.graph_receipts["graph"] = {
-            "receipt": retained_identity(state.root, state.candidate["graph"].receipt),
-            "output": retained_identity(state.root, state.candidate["graph"].output),
-            "dynamic_raw": retained_identity(state.root, dynamic_raw_path(state.candidate["graph"], state.root)),
+        state.graph_receipts[name] = {
+            "receipt": retained_identity(state.root, state.candidate[name].receipt),
+            "output": retained_identity(state.root, state.candidate[name].output),
+            "dynamic_raw": retained_identity(state.root, dynamic_raw_path(state.candidate[name], state.root)),
             "direct_dsos": [root_name],
-            "closure_needed": {name: list(GRAPH_NEEDED[name]) for name in sorted(GRAPH_NEEDED)},
+            "closure_needed": {item: list(GRAPH_NEEDED[item]) for item in sorted(GRAPH_NEEDED)},
         }
+
+    if "workload" in state.objects:
+        link_plain_executable("workload", "workload")
+    if "constructor" in state.objects:
+        link_plain_executable("constructor", "constructor")
+    if "startup_graph" in state.objects:
+        link_graph_executable("graph", "startup_graph")
+
+    # The supplemental timed sources are separate C artifacts.  Compile once
+    # with installed headers, then link those exact object bytes through both
+    # providers.  The profile's normal C driver flags apply symmetrically.
+    for family in sorted(performance_profile.SUPPLEMENTAL_TIMED_SOURCES):
+        object_name = f"supplemental:{family}"
+        if object_name in state.objects:
+            link_plain_executable(family, object_name, link_flags=supplemental_link_flags(state.root, family))
+
+    # Memory observers are deliberately separate non-timed artifacts.  They
+    # use the same source family link policy, but never replace the timed
+    # binary in a CPU/syscall sample.
+    for family, artifact in sorted(performance_profile.LEGACY_MEMORY_ARTIFACTS.items()):
+        object_name = f"memory_observer:{artifact}"
+        if object_name not in state.objects:
+            continue
+        if family == "graph":
+            link_graph_executable(artifact, object_name)
+        else:
+            link_plain_executable(artifact, object_name)
+    for family, artifact in sorted(performance_profile.SUPPLEMENTAL_MEMORY_ARTIFACTS.items()):
+        object_name = f"memory_observer:{artifact}"
+        if object_name in state.objects:
+            link_plain_executable(artifact, object_name, link_flags=supplemental_link_flags(state.root, family))
 
 
 def build_record(root: Path, state: BuildState) -> dict[str, Any]:
@@ -1050,7 +1208,15 @@ def copy_candidate_product(product: Path, destination: Path) -> None:
     alias.symlink_to("ld-crabc-x86_64.so.1")
 
 
-def stage_lane(work: Path, state: BuildState, *, name: str, selected: Sequence[aarch64_contract.Workload], product: Path, musl_root: Path) -> Lane:
+def stage_lane(
+    work: Path,
+    state: BuildState,
+    *,
+    name: str,
+    selected: Sequence[performance_profile.PerformanceRow],
+    product: Path,
+    musl_root: Path,
+) -> Lane:
     lane_root = work / "execution/roots" / name
     lane_root.mkdir(parents=True, exist_ok=False)
     if name == "crabc":
@@ -1060,7 +1226,7 @@ def stage_lane(work: Path, state: BuildState, *, name: str, selected: Sequence[a
         stage_musl_runtime(lane_root, musl_root)
         provider = state.musl
     create_dev_null(lane_root)
-    binaries = {key: f"/app/bin/{key}" for key in ("workload", "constructor", "graph") if key in provider}
+    binaries = {key: f"/app/bin/{key}" for key in sorted(provider) if not key.endswith(".so")}
     for key, virtual in binaries.items():
         copy_file(provider[key].output, lane_root / virtual.lstrip("/"))
     dsos: dict[str, str] = {}
@@ -1075,7 +1241,7 @@ def stage_lane(work: Path, state: BuildState, *, name: str, selected: Sequence[a
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_bytes(io_bytes)
     span_inputs: dict[str, str] = {}
-    if any(workload.fixture_mode == "span_matrix" for workload in selected):
+    if any(row.legacy and row.fixture_mode == "span_matrix" for row in selected):
         for input_name, offset in (("span-aligned.bin", 0), ("span-unaligned.bin", 3)):
             virtual = f"/app/input/{input_name}"
             aarch64_contract.stage_cache_span_source(lane_root / virtual.lstrip("/"), span_bytes=aarch64_contract.CACHE_SPAN_BYTES, offset=offset)
@@ -1096,12 +1262,16 @@ def stage_lane(work: Path, state: BuildState, *, name: str, selected: Sequence[a
     return Lane(name=name, root=lane_root, binaries=binaries, dsos=dsos, io_file=io_file, span_inputs=span_inputs, environment=environment)
 
 
-def virtual_arguments(workload: aarch64_contract.Workload, lane: Lane) -> list[str]:
+def virtual_arguments(row: performance_profile.PerformanceRow, lane: Lane) -> list[str]:
     # A focused smoke may select a row that does not need any loader fixture.
     # `workload_arguments` only consumes the corresponding value for the rows
     # that declare it, so a physical sentinel keeps that narrow smoke from
     # accidentally requiring unrelated DSOs while never making an absent DSO
     # usable by a selected row.
+    if not row.legacy:
+        return list(row.arguments)
+    workload = row.legacy_workload
+    require(workload is not None, f"legacy workload is absent for {row.name}")
     dso = lambda name: Path(lane.dsos.get(name, "/missing"))
     return aarch64_contract.workload_arguments(
         workload,
@@ -1114,9 +1284,9 @@ def virtual_arguments(workload: aarch64_contract.Workload, lane: Lane) -> list[s
     )
 
 
-def virtual_binary(workload: aarch64_contract.Workload, lane: Lane) -> str:
-    key = "workload" if workload.binary == "workload" else "constructor" if workload.binary == "constructor" else "graph" if workload.binary == "graph" else ""
-    require(key in lane.binaries, f"staged {lane.name} lane lacks binary for {workload.name}")
+def virtual_binary(row: performance_profile.PerformanceRow, lane: Lane) -> str:
+    key = row.timed_artifact
+    require(key in lane.binaries, f"staged {lane.name} lane lacks binary for {row.name}")
     return lane.binaries[key]
 
 
@@ -1253,14 +1423,14 @@ def child_exec(root: Path, binary: str, arguments: Sequence[str], environment: M
             os._exit(127)
 
 
-def run_timed(checkout: Path, lane: Lane, workload: aarch64_contract.Workload, output: Path, timeout: float) -> dict[str, Any]:
+def run_timed(checkout: Path, lane: Lane, row: performance_profile.PerformanceRow, output: Path, timeout: float) -> dict[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     stdout = output / "stdout"
     stderr = output / "stderr"
     started = time.monotonic_ns()
     pid = os.fork()
     if pid == 0:
-        child_exec(lane.root, virtual_binary(workload, lane), virtual_arguments(workload, lane), lane.environment, stdout, stderr)
+        child_exec(lane.root, virtual_binary(row, lane), virtual_arguments(row, lane), lane.environment, stdout, stderr)
     status, usage, timed_out = wait_child(pid, timeout)
     stdout_bytes = stdout.read_bytes() if stdout.exists() else b""
     stderr_bytes = stderr.read_bytes() if stderr.exists() else b""
@@ -1910,7 +2080,7 @@ def fixed_strace_attach_command(trace: Path, pid: int) -> list[str]:
     return [evidence.FIXED_STRACE, "-f", "-qq", "-s", "4096", "-o", str(trace), "-p", str(pid)]
 
 
-def trace_diagnostic(checkout: Path, lane: Lane, workload: aarch64_contract.Workload, output: Path, timeout: float) -> dict[str, Any]:
+def trace_diagnostic(checkout: Path, lane: Lane, row: performance_profile.PerformanceRow, output: Path, timeout: float) -> dict[str, Any]:
     """Attach strace before direct child setup and retain every failed attempt.
 
     The initial SIGSTOP and attachment wait are polled with deadlines.  A
@@ -1931,7 +2101,7 @@ def trace_diagnostic(checkout: Path, lane: Lane, workload: aarch64_contract.Work
     if pid == 0:
         os.kill(os.getpid(), signal.SIGSTOP)
         child_exec(
-            lane.root, virtual_binary(workload, lane), virtual_arguments(workload, lane), lane.environment,
+            lane.root, virtual_binary(row, lane), virtual_arguments(row, lane), lane.environment,
             stdout, stderr, marker_fd=marker_fd,
         )
 
@@ -2030,8 +2200,8 @@ def trace_diagnostic(checkout: Path, lane: Lane, workload: aarch64_contract.Work
     raw_bytes = trace.read_bytes()
     raw = raw_bytes.decode("utf-8", errors="replace")
     marked = marker_summary(raw, MARKER_FD)
-    expected_exec = virtual_binary(workload, lane)
-    expected_arguments = virtual_arguments(workload, lane)
+    expected_exec = virtual_binary(row, lane)
+    expected_arguments = virtual_arguments(row, lane)
     whole_process = whole_process_summary_from_workload_execve(raw, expected_exec, expected_arguments, MARKER_FD)
     exec_lines = [whole_process["boundary_trace_line"]] if whole_process.get("status") == "ok" else []
     stdout_bytes = stdout.read_bytes()
@@ -2069,22 +2239,22 @@ def summarize_samples(samples: list[dict[str, Any]]) -> dict[str, dict[str, int]
     return aarch64_contract.summarize_samples(samples)
 
 
-def measure_pair(checkout: Path, lanes: Mapping[str, Lane], workload: aarch64_contract.Workload, args: argparse.Namespace, raw_root: Path, seed: int) -> dict[str, Any]:
+def measure_pair(checkout: Path, lanes: Mapping[str, Lane], row: performance_profile.PerformanceRow, args: argparse.Namespace, raw_root: Path, seed: int) -> dict[str, Any]:
     invocation = {
-        "binary": virtual_binary(workload, lanes["musl"]),
-        "arguments": virtual_arguments(workload, lanes["musl"]),
-        "fixture_mode": workload.fixture_mode,
-        "iterations_per_process": workload.iterations,
+        "binary": virtual_binary(row, lanes["musl"]),
+        "arguments": virtual_arguments(row, lanes["musl"]),
+        "fixture_mode": row.fixture_mode,
+        "iterations_per_process": row.iterations,
     }
     require(
-        invocation["binary"] == virtual_binary(workload, lanes["crabc"])
-        and invocation["arguments"] == virtual_arguments(workload, lanes["crabc"]),
-        f"{workload.name} lane invocation differs",
+        invocation["binary"] == virtual_binary(row, lanes["crabc"])
+        and invocation["arguments"] == virtual_arguments(row, lanes["crabc"]),
+        f"{row.name} lane invocation differs",
     )
     warmups: dict[str, list[dict[str, Any]]] = {"musl": [], "crabc": []}
     for lane_name in ("musl", "crabc"):
         for index in range(args.warmup):
-            sample = run_timed(checkout, lanes[lane_name], workload, raw_root / f"warmup-{lane_name}-{workload.name}-{index}", args.timeout)
+            sample = run_timed(checkout, lanes[lane_name], row, raw_root / f"warmup-{lane_name}-{row.name}-{index}", args.timeout)
             sample["warmup_index"] = index
             warmups[lane_name].append(sample)
             if not valid_sample(sample):
@@ -2092,7 +2262,7 @@ def measure_pair(checkout: Path, lanes: Mapping[str, Lane], workload: aarch64_co
     observed: dict[str, list[dict[str, Any] | None]] = {"musl": [None] * args.samples, "crabc": [None] * args.samples}
     plan = aarch64_contract.paired_sample_plan(args.samples, seed)
     for order, (lane_name, index) in enumerate(plan):
-        sample = run_timed(checkout, lanes[lane_name], workload, raw_root / f"sample-{lane_name}-{workload.name}-{index}", args.timeout)
+        sample = run_timed(checkout, lanes[lane_name], row, raw_root / f"sample-{lane_name}-{row.name}-{index}", args.timeout)
         sample["sample_index"] = index
         sample["execution_order"] = order
         if not valid_sample(sample):
@@ -2102,10 +2272,10 @@ def measure_pair(checkout: Path, lanes: Mapping[str, Lane], workload: aarch64_co
     result: dict[str, Any] = {"invocation": invocation}
     for lane_name in ("musl", "crabc"):
         samples = [item for item in observed[lane_name] if item is not None]
-        diagnostic = trace_diagnostic(checkout, lanes[lane_name], workload, raw_root / f"diagnostic-{lane_name}-{workload.name}", args.timeout) if not args.skip_syscalls else {"status": "skipped", "timing": False}
+        diagnostic = trace_diagnostic(checkout, lanes[lane_name], row, raw_root / f"diagnostic-{lane_name}-{row.name}", args.timeout) if not args.skip_syscalls else {"status": "skipped", "timing": False}
         result[lane_name] = {
             "status": "ok",
-            "iterations_per_process": workload.iterations,
+            "iterations_per_process": row.iterations,
             "warmup_processes": args.warmup,
             "warmups": warmups[lane_name],
             "sample_count": args.samples,
@@ -2364,10 +2534,12 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
         require_full_run_admission(args)
         product, musl_root, musl_cc, cpu = validate_environment(args, root)
         require(report["attempt"]["clean_revision"] is True, "performance evidence requires a clean source revision")
-        selected = selected_workloads(args.workload)
+        selected = selected_rows(root, args.workload)
         state = BuildState(root=root, work=work, product=product, musl_cc=musl_cc, raw_root=raw_root / "build")
         make_generated_sources(state, selected)
-        sources, headers = source_roster(root, state, selected)
+        sources, headers = source_roster(
+            root, state, selected, include_memory_observers=not args.implementation_smoke,
+        )
         for generated in state.local_sources.values():
             normalize_retained_path(root, generated)
         source_paths = {
@@ -2452,9 +2624,9 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
                     missing.parent.mkdir(parents=True, exist_ok=True)
                     missing.write_text("memory diagnostic unavailable\n", encoding="utf-8")
                     lane.observed_mappings = {"raw": retained_identity(root, missing), "paths": []}
-            for index, workload in enumerate(selected):
-                workloads[workload.name] = measure_pair(
-                    root, lanes, workload, args, raw_root / "execution", args.seed + index
+            for index, row in enumerate(selected):
+                workloads[row.name] = measure_pair(
+                    root, lanes, row, args, raw_root / "execution", args.seed + index
                 )
         finally:
             if cgroup is not None:
@@ -2471,7 +2643,7 @@ def run_attempt(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
             "raw": raw_registry(root, raw_root),
         }
         report["measurement"] = {
-            "selected_workloads": [workload.name for workload in selected],
+            "selected_workloads": [row.name for row in selected],
             "samples": args.samples,
             "warmup": args.warmup,
             "seed": args.seed,
@@ -2538,7 +2710,7 @@ def collect(args: argparse.Namespace) -> tuple[Path, dict[str, Any]]:
 def check(args: argparse.Namespace) -> evidence.CheckedReport:
     root = repository_root()
     report = physical_path(args.report, "collector report")
-    result = evidence.validate_collector_report(root, report, [workload.name for workload in aarch64_contract.WORKLOADS])
+    result = evidence.validate_collector_report(root, report, [row.name for row in performance_rows(root)])
     print(json.dumps({"evidence_valid": result.evidence_valid, "release_qualified": result.release_qualified, "blockers": list(result.blockers)}, sort_keys=True))
     return result
 

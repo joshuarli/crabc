@@ -32,6 +32,12 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import x86_64_profile as performance_profile
+
+
 SCHEMA = 1
 KIND = "crabc-native-x86_64-c-performance"
 SOURCE_MOUNT = "/workspace"
@@ -74,15 +80,25 @@ ABSENT_SCORECARD_OBLIGATIONS = {
 
 # Full qualification builds this finite output set once per provider.  The
 # staged roots must contain these exact copied bytes; a report cannot point its
-# parsed link evidence at one ELF while executing another.
+# parsed link evidence at one ELF while executing another.  Six memory-only
+# observers are separate ELF artifacts, not replacements for the 74 frozen or
+# 40 supplemental timed artifacts.
+SUPPLEMENTAL_TIMED_LINK_NAMES = frozenset(performance_profile.SUPPLEMENTAL_TIMED_SOURCES)
+LEGACY_MEMORY_LINK_NAMES = frozenset(performance_profile.LEGACY_MEMORY_ARTIFACTS.values())
+SUPPLEMENTAL_MEMORY_LINK_NAMES = frozenset(performance_profile.SUPPLEMENTAL_MEMORY_ARTIFACTS.values())
 FULL_LINK_NAMES = frozenset({
     "workload", "constructor", "graph",
     "libsymbols_1.so", "libsymbols_128.so", "libsymbols_1024.so",
     *(f"libbench_tls_growth_{index}.so" for index in range(8)),
     "libbench_graph_leaf_left.so", "libbench_graph_leaf_right.so",
     "libbench_graph_mid_left.so", "libbench_graph_mid_right.so", "libbench_graph_root.so",
+    *SUPPLEMENTAL_TIMED_LINK_NAMES,
+    *LEGACY_MEMORY_LINK_NAMES,
+    *SUPPLEMENTAL_MEMORY_LINK_NAMES,
 })
-GRAPH_LINK_NAMES = frozenset({"libbench_graph_root.so", "graph"})
+GRAPH_LINK_NAMES = frozenset({
+    "libbench_graph_root.so", "graph", "x86_64_memory_observer_graph",
+})
 GRAPH_NEEDED = {
     "libbench_graph_leaf_left.so": ["libc.so"],
     "libbench_graph_leaf_right.so": ["libc.so"],
@@ -90,7 +106,9 @@ GRAPH_NEEDED = {
     "libbench_graph_mid_right.so": ["libbench_graph_leaf_right.so", "libc.so"],
     "libbench_graph_root.so": ["libbench_graph_mid_left.so", "libbench_graph_mid_right.so", "libc.so"],
     "graph": ["libbench_graph_root.so", "libc.so"],
+    "x86_64_memory_observer_graph": ["libbench_graph_root.so", "libc.so"],
 }
+GRAPH_DSO_NAMES = frozenset(name for name in GRAPH_NEEDED if name.endswith(".so"))
 GRAPH_SOURCES = {
     "libbench_graph_leaf_left.so": "int bench_graph_leaf_left(void) { return 7; }\n",
     "libbench_graph_leaf_right.so": "int bench_graph_leaf_right(void) { return 11; }\n",
@@ -112,16 +130,41 @@ HEADER_FILES = (
     "pthread_mutex_uncontended_contract.h",
     "tls_growth_contract.h",
 )
+FULL_HEADER_PATHS = {
+    **{name: f"compat/perf/fixtures/{name}" for name in HEADER_FILES},
+    "x86_64_workload_protocol.h": "compat/perf/x86_64_workload_protocol.h",
+    "x86_64_memory_observer_protocol.h": "compat/perf/x86_64_memory_observer_protocol.h",
+    "x86_64_supplemental_memory_observer.h": "compat/perf/x86_64_supplemental_memory_observer.h",
+    "x86_64-profile.toml": "compat/perf/x86_64-profile.toml",
+}
 FULL_OBJECT_NAMES = frozenset({
     "workload", "constructor", "startup_graph", "symbols_1", "symbols_128", "symbols_1024",
     *(f"tls_{index}" for index in range(8)),
     *(f"graph:{name}" for name in GRAPH_SOURCES),
+    *(f"supplemental:{name}" for name in SUPPLEMENTAL_TIMED_LINK_NAMES),
+    *(f"memory_observer:{name}" for name in LEGACY_MEMORY_LINK_NAMES),
+    *(f"memory_observer:{name}" for name in SUPPLEMENTAL_MEMORY_LINK_NAMES),
 })
 FULL_SOURCE_NAMES = frozenset({
     *STATIC_SOURCE_FILES,
     "symbols_1", "symbols_1024",
     *(f"graph:{name}" for name in GRAPH_SOURCES),
+    *(f"supplemental:{name}" for name in SUPPLEMENTAL_TIMED_LINK_NAMES),
+    *(f"memory_observer:{name}" for name in LEGACY_MEMORY_LINK_NAMES),
+    *(f"memory_observer:{name}" for name in SUPPLEMENTAL_MEMORY_LINK_NAMES),
 })
+FULL_SOURCE_PATHS = {
+    **{name: f"compat/perf/fixtures/{filename}" for name, filename in STATIC_SOURCE_FILES.items()},
+    **{f"supplemental:{name}": path for name, path in performance_profile.SUPPLEMENTAL_TIMED_SOURCES.items()},
+    **{
+        f"memory_observer:{artifact}": performance_profile.LEGACY_MEMORY_SOURCES[family]
+        for family, artifact in performance_profile.LEGACY_MEMORY_ARTIFACTS.items()
+    },
+    **{
+        f"memory_observer:{artifact}": performance_profile.SUPPLEMENTAL_MEMORY_SOURCES[family]
+        for family, artifact in performance_profile.SUPPLEMENTAL_MEMORY_ARTIFACTS.items()
+    },
+}
 
 
 def generated_source_contents(name: str) -> str:
@@ -736,30 +779,44 @@ def _performance_contract(checkout_text: str) -> Any:
 
 
 def canonical_workload_invocations(checkout: Path) -> dict[str, dict[str, Any]]:
-    """Return the exact staged binary/argv/iteration contract for every row."""
+    """Return the exact staged binary/argv/iteration contract for all 114 rows."""
 
     contract = _performance_contract(str(checkout.resolve(strict=True)))
     result: dict[str, dict[str, Any]] = {}
-    for workload in contract.WORKLOADS:
-        arguments = contract.workload_arguments(
-            workload,
-            Path("/app/lib/libsymbols_1.so"),
-            Path("/app/lib/libsymbols_128.so"),
-            Path("/app/lib/libsymbols_1024.so"),
-            Path("/app/lib/libbench_graph_root.so"),
-            Path("/app/input/io-fixture.bin"),
-            Path("/app/input/span-aligned.bin"),
-            Path("/app/input/span-unaligned.bin"),
-            Path("/app/input/span-destination.bin"),
-            Path("/app/lib"),
-        )
-        binary = {"workload": "/app/bin/workload", "constructor": "/app/bin/constructor", "graph": "/app/bin/graph"}.get(workload.binary)
-        require(binary is not None, f"unknown frozen workload binary: {workload.name}")
-        result[workload.name] = {
+    try:
+        rows = performance_profile.performance_rows(checkout, contract.WORKLOADS)
+    except performance_profile.ProfileError as error:
+        raise EvidenceError(str(error)) from error
+    for row in rows:
+        if row.legacy:
+            workload = row.legacy_workload
+            require(workload is not None, f"legacy row lost its frozen workload: {row.name}")
+            arguments = contract.workload_arguments(
+                workload,
+                Path("/app/lib/libsymbols_1.so"),
+                Path("/app/lib/libsymbols_128.so"),
+                Path("/app/lib/libsymbols_1024.so"),
+                Path("/app/lib/libbench_graph_root.so"),
+                Path("/app/input/io-fixture.bin"),
+                Path("/app/input/span-aligned.bin"),
+                Path("/app/input/span-unaligned.bin"),
+                Path("/app/input/span-destination.bin"),
+                Path("/app/lib"),
+            )
+            binary = {
+                "workload": "/app/bin/workload",
+                "constructor": "/app/bin/constructor",
+                "graph": "/app/bin/graph",
+            }.get(row.timed_artifact)
+            require(binary is not None, f"unknown frozen workload binary: {row.name}")
+        else:
+            binary = f"/app/bin/{row.timed_artifact}"
+            arguments = list(row.arguments)
+        result[row.name] = {
             "binary": binary,
             "arguments": arguments,
-            "fixture_mode": workload.fixture_mode,
-            "iterations_per_process": workload.iterations,
+            "fixture_mode": row.fixture_mode,
+            "iterations_per_process": row.iterations,
         }
     return result
 
@@ -1467,19 +1524,21 @@ def _verify_attempt_source(
     require(isinstance(source, dict) and set(source) == {
         "before", "after", "source_sha256_before", "source_sha256_after",
     }, f"attempt {index} source fields differ")
-    expected_names = {f"source:{name}" for name in FULL_SOURCE_NAMES} | {f"header:{name}" for name in HEADER_FILES}
+    expected_names = {f"source:{name}" for name in FULL_SOURCE_NAMES} | {
+        f"header:{name}" for name in FULL_HEADER_PATHS
+    }
     require(isinstance(source["before"], dict) and set(source["before"]) == expected_names,
             f"attempt {index} source roster differs")
     verify_file_seal(checkout, SOURCE_MOUNT, source["before"], f"attempt {index} source before")
     verify_file_seal(checkout, SOURCE_MOUNT, source["after"], f"attempt {index} source after")
     require(source["before"] == source["after"], f"attempt {index} source changed during collection")
-    for name, filename in STATIC_SOURCE_FILES.items():
+    for name, relative in FULL_SOURCE_PATHS.items():
         record = source["before"][f"source:{name}"]
-        require(record["path"] == f"{SOURCE_MOUNT}/compat/perf/fixtures/{filename}",
-                f"attempt {index} static source path differs for {name}")
-    for header in HEADER_FILES:
+        require(record["path"] == f"{SOURCE_MOUNT}/{relative}",
+                f"attempt {index} fixed source path differs for {name}")
+    for header, relative in FULL_HEADER_PATHS.items():
         record = source["before"][f"header:{header}"]
-        require(record["path"] == f"{SOURCE_MOUNT}/compat/perf/fixtures/{header}",
+        require(record["path"] == f"{SOURCE_MOUNT}/{relative}",
                 f"attempt {index} header path differs for {header}")
     roster = attempt.get("attempt", {}).get("roster") if isinstance(attempt.get("attempt"), dict) else None
     request = roster.get("request") if isinstance(roster, dict) else None
@@ -1704,8 +1763,11 @@ def _expected_graph_record(name: str) -> tuple[list[str], dict[str, list[str]]]:
             ["libbench_graph_mid_left.so", "libbench_graph_mid_right.so"],
             {entry: list(GRAPH_NEEDED[entry]) for entry in closure_names},
         )
-    if name == "graph":
-        return (["libbench_graph_root.so"], {entry: list(value) for entry, value in GRAPH_NEEDED.items() if entry != "graph"})
+    if name in {"graph", "x86_64_memory_observer_graph"}:
+        return (
+            ["libbench_graph_root.so"],
+            {entry: list(GRAPH_NEEDED[entry]) for entry in sorted(GRAPH_DSO_NAMES)},
+        )
     raise EvidenceError(f"unrecognized dynamic graph link output: {name}")
 
 
@@ -1803,6 +1865,84 @@ def _verify_dynamic_graph_record(checkout: Path, attempt: Mapping[str, Any], can
     )
 
 
+def _supplemental_fixture_contract(checkout: Path) -> Mapping[str, performance_profile.SupplementalFixture]:
+    """Read the sealed profile's fixed source/flag contract for replay."""
+
+    try:
+        return performance_profile.supplemental_fixtures(performance_profile.load_profile(checkout))
+    except performance_profile.ProfileError as error:
+        raise EvidenceError(str(error)) from error
+
+
+def _object_source_owner(name: str) -> str:
+    if name.startswith("tls_"):
+        return "tls_growth"
+    return name
+
+
+def _expected_object_mode(name: str) -> str:
+    pie_objects = {
+        "workload", "constructor", "startup_graph",
+        *(f"supplemental:{artifact}" for artifact in SUPPLEMENTAL_TIMED_LINK_NAMES),
+        *(f"memory_observer:{artifact}" for artifact in LEGACY_MEMORY_LINK_NAMES),
+        *(f"memory_observer:{artifact}" for artifact in SUPPLEMENTAL_MEMORY_LINK_NAMES),
+    }
+    return "--dynamic-pie" if name in pie_objects else "--dynamic-shared-object"
+
+
+def _expected_object_defines(
+    checkout: Path,
+    name: str,
+) -> list[str]:
+    if name.startswith("tls_"):
+        suffix = name.removeprefix("tls_")
+        require(suffix.isdecimal() and 0 <= int(suffix) < 8,
+                f"unrecognized TLS object: {name}")
+        return [f"-DTLS_GROWTH_INDEX={suffix}"]
+    if name.startswith("supplemental:"):
+        artifact = name.removeprefix("supplemental:")
+        fixture = _supplemental_fixture_contract(checkout).get(artifact)
+        require(fixture is not None, f"supplemental compile contract is absent: {artifact}")
+        return [f"-D{value}" for value in fixture.compile_defines]
+    return []
+
+
+def _expected_link_flags(checkout: Path, name: str) -> list[str]:
+    """Return the profile-owned ordinary C flags for one executable link."""
+
+    if name in SUPPLEMENTAL_TIMED_LINK_NAMES:
+        fixture = _supplemental_fixture_contract(checkout).get(name)
+        require(fixture is not None, f"supplemental link contract is absent: {name}")
+        return list(fixture.link_flags)
+    for family, observer in performance_profile.SUPPLEMENTAL_MEMORY_ARTIFACTS.items():
+        if observer == name:
+            fixture = _supplemental_fixture_contract(checkout).get(family)
+            require(fixture is not None, f"supplemental observer link contract is absent: {name}")
+            return list(fixture.link_flags)
+    return []
+
+
+def _expected_link_object(name: str) -> str:
+    if name == "graph":
+        return "startup_graph"
+    if name in {"workload", "constructor"}:
+        return name
+    if name.startswith("libsymbols_"):
+        return name.removesuffix(".so").removeprefix("lib")
+    if name.startswith("libbench_tls_growth_"):
+        suffix = name.removesuffix(".so").removeprefix("libbench_tls_growth_")
+        require(suffix.isdecimal() and 0 <= int(suffix) < 8,
+                f"unrecognized TLS link output: {name}")
+        return f"tls_{suffix}"
+    if name.startswith("libbench_graph_"):
+        return f"graph:{name}"
+    if name in SUPPLEMENTAL_TIMED_LINK_NAMES:
+        return f"supplemental:{name}"
+    if name in LEGACY_MEMORY_LINK_NAMES or name in SUPPLEMENTAL_MEMORY_LINK_NAMES:
+        return f"memory_observer:{name}"
+    raise EvidenceError(f"unrecognized native performance link object: {name}")
+
+
 def _verify_attempt_build(checkout: Path, attempt: Mapping[str, Any], index: int) -> None:
     build = attempt["build"]
     require(isinstance(build, dict) and set(build) == {"objects", "links", "same_object_input_proof", "same_object_input_proof_file", "companion_same_object_input_proof"}, f"attempt {index} build fields differ")
@@ -1822,11 +1962,11 @@ def _verify_attempt_build(checkout: Path, attempt: Mapping[str, Any], index: int
         require(isinstance(name, str) and isinstance(item, dict) and set(item) == expected_object, f"attempt {index} object record differs")
         source = retained_file_identity(checkout, SOURCE_MOUNT, item["source"], f"attempt {index} source object {name}")
         object_file = retained_file_identity(checkout, SOURCE_MOUNT, item["object"], f"attempt {index} compiled object {name}")
-        source_owner = "tls_growth" if name.startswith("tls_") else name
+        source_owner = _object_source_owner(name)
         require(item["source"] == source_seal[f"source:{source_owner}"],
                 f"attempt {index} object {name} is not bound to its canonical sealed source")
         mode = item["mode"]
-        expected_mode = "--dynamic-pie" if name in {"workload", "constructor", "startup_graph"} else "--dynamic-shared-object"
+        expected_mode = _expected_object_mode(name)
         require(mode == expected_mode, f"attempt {index} object mode differs")
         command = item["compile_command"]
         require(isinstance(command, list) and all(isinstance(value, str) for value in command), f"attempt {index} compile command is absent")
@@ -1841,8 +1981,7 @@ def _verify_attempt_build(checkout: Path, attempt: Mapping[str, Any], index: int
                 and command[command.index("-o") + 1] == item["object"]["path"],
                 f"attempt {index} object compile input/output differs")
         extras = command[len(prefix):command.index("-c")]
-        require((not extras and not name.startswith("tls_"))
-                or (len(extras) == 1 and name.startswith("tls_") and re.fullmatch(r"-DTLS_GROWTH_INDEX=[0-7]", extras[0]) is not None),
+        require(extras == _expected_object_defines(checkout, name),
                 f"attempt {index} object compile defines differ")
         _verify_identity_tree(checkout, item["raw"], f"attempt {index} compile raw {name}")
         object_paths[str(item["object"]["path"])] = item["object"]
@@ -1864,6 +2003,9 @@ def _verify_attempt_build(checkout: Path, attempt: Mapping[str, Any], index: int
             require(isinstance(path, str) and path in object_paths and object_paths[path] == record, f"attempt {index} link uses an untracked object")
             shared_paths.append(path)
         require(len(shared_paths) == len(set(shared_paths)), f"attempt {index} link repeats an application object")
+        expected_object = objects[_expected_link_object(name)]["object"]
+        require(shared_paths == [expected_object["path"]],
+                f"attempt {index} link does not use its exact canonical object")
         providers: dict[str, Mapping[str, Any]] = {}
         for provider in ("candidate", "musl"):
             value = link[provider]
@@ -1879,6 +2021,12 @@ def _verify_attempt_build(checkout: Path, attempt: Mapping[str, Any], index: int
                 require(command[0] == FIXED_MUSL_COMPILER, f"attempt {index} musl link used a different compiler")
             require(command.count("-o") == 1 and command[command.index("-o") + 1] == value["output"]["path"],
                     f"attempt {index} {provider} link output differs")
+            expected_link_flags = _expected_link_flags(checkout, name)
+            for flag in expected_link_flags:
+                require(command.count(flag) == 1,
+                        f"attempt {index} {provider} link omitted profile flag {flag}")
+            require(command.count("-pthread") == expected_link_flags.count("-pthread"),
+                    f"attempt {index} {provider} link pthread policy differs")
             for path in shared_paths:
                 require(command.count(path) == 1, f"attempt {index} {provider} link did not receive the exact shared object")
             direct = value["direct_inputs"]

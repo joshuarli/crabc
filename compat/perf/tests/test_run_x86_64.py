@@ -187,6 +187,49 @@ class MuslRuntimeStagingTests(unittest.TestCase):
                 runner.evidence.inventory_tree(root)
 
 
+class PerformanceRowContractTests(unittest.TestCase):
+    def test_closed_114_row_timing_and_memory_artifact_roster(self) -> None:
+        """The observer envelope augments every frozen and supplemental row."""
+
+        rows = runner.performance_rows(ROOT)
+        by_name = {row.name: row for row in rows}
+
+        self.assertEqual(len(rows), 114)
+        self.assertEqual(len(by_name), 114)
+        self.assertEqual(sum(row.legacy for row in rows), 74)
+        self.assertEqual(sum(not row.legacy for row in rows), 40)
+
+        startup = by_name["startup"]
+        self.assertEqual(startup.timed_artifact, "workload")
+        self.assertEqual(startup.memory_artifact, "x86_64_memory_observer_workload")
+        self.assertEqual(startup.memory_phases, ("main-initial", "main-final"))
+
+        tls = by_name["loader_dynamic_tls_growth"]
+        self.assertEqual(
+            tls.memory_phases,
+            (
+                "main-initial", *(f"tls-parent-load-{index}" for index in range(8)),
+                "tls-worker-complete", "main-final",
+            ),
+        )
+
+        allocator = by_name["allocator_live_32m"]
+        self.assertFalse(allocator.legacy)
+        self.assertEqual(allocator.timed_artifact, "x86_64_clock_allocator_workload")
+        self.assertEqual(allocator.arguments, ("live", "1", "128", "262144"))
+        self.assertEqual(allocator.memory_artifact, "x86_64_memory_observer_clock_allocator")
+        self.assertEqual(allocator.memory_phases, ("main-initial", "allocator-live", "main-final"))
+
+        network = by_name["resolver_dns_tcp"]
+        self.assertEqual(network.memory_artifact, "x86_64_memory_observer_network")
+        self.assertEqual(network.memory_phases, ("main-initial", "resolver-final-result-live", "main-final"))
+        self.assertTrue(network.requires_hermetic_resolver_files)
+
+        primitive = by_name["memmem_guard63"]
+        self.assertEqual(primitive.memory_artifact, "x86_64_memory_observer_primitive")
+        self.assertEqual(primitive.memory_phases, ("main-initial", "primitive-guard-window-live", "main-final"))
+
+
 class RosterBoundaryTests(unittest.TestCase):
     def test_unbound_smoke_does_not_claim_a_three_run_roster(self) -> None:
         args = type("Args", (), {"attempt_roster": None, "implementation_smoke": True})()

@@ -39,6 +39,48 @@ def resources(value: int) -> dict[str, int]:
     return {name: value for name in RESOURCE_FIELDS}
 
 
+class CanonicalProfileInvocationTests(unittest.TestCase):
+    def test_host_reader_reconstructs_all_114_timed_invocations(self) -> None:
+        invocations = evidence.canonical_workload_invocations(ROOT)
+        self.assertEqual(len(invocations), 114)
+        self.assertEqual(
+            invocations["allocator_live_32m"],
+            {
+                "binary": "/app/bin/x86_64_clock_allocator_workload",
+                "arguments": ["live", "1", "128", "262144"],
+                "fixture_mode": "live",
+                "iterations_per_process": 1,
+            },
+        )
+        self.assertEqual(
+            invocations["resolver_dns_tcp"]["arguments"],
+            ["resolver_dns_tcp", "1000", "tc.example.test.", "80", "198.51.100.45"],
+        )
+        self.assertEqual(
+            invocations["memmem_guard63"]["binary"],
+            "/app/bin/x86_64_primitive_boundary_workload",
+        )
+
+    def test_full_build_roster_keeps_timed_and_memory_artifacts_distinct(self) -> None:
+        """All 114 rows use 28 fixed provider outputs, never 114 rebuilds."""
+
+        self.assertEqual(len(evidence.FULL_LINK_NAMES), 28)
+        self.assertEqual(len(evidence.FULL_OBJECT_NAMES), 28)
+        self.assertIn("x86_64_clock_allocator_workload", evidence.FULL_LINK_NAMES)
+        self.assertIn("x86_64_memory_observer_clock_allocator", evidence.FULL_LINK_NAMES)
+        self.assertIn("x86_64_memory_observer_graph", evidence.GRAPH_LINK_NAMES)
+        self.assertEqual(
+            evidence._expected_link_object("x86_64_memory_observer_network"),
+            "memory_observer:x86_64_memory_observer_network",
+        )
+        self.assertEqual(
+            evidence._expected_link_flags(ROOT, "x86_64_memory_observer_clock_allocator"),
+            ["-pthread"],
+        )
+        self.assertIn("x86_64-profile.toml", evidence.FULL_HEADER_PATHS)
+        self.assertIn("diagnostic_marker.h", evidence.FULL_HEADER_PATHS)
+
+
 class RawTraceReplayTests(unittest.TestCase):
     def test_whole_process_begins_at_selected_execve_not_python_prelude(self) -> None:
         begin = "CRABC_PERF_BEGIN"
@@ -563,11 +605,10 @@ class SourceRosterReplayTests(unittest.TestCase):
             generated = work / "build/generated"
             generated.mkdir(parents=True)
             before: dict[str, dict[str, object]] = {}
-            fixtures = ROOT / "compat/perf/fixtures"
-            for name, filename in evidence.STATIC_SOURCE_FILES.items():
-                before[f"source:{name}"] = identity(fixtures / filename)
-            for header in evidence.HEADER_FILES:
-                before[f"header:{header}"] = identity(fixtures / header)
+            for name, relative in evidence.FULL_SOURCE_PATHS.items():
+                before[f"source:{name}"] = identity(ROOT / relative)
+            for header, relative in evidence.FULL_HEADER_PATHS.items():
+                before[f"header:{header}"] = identity(ROOT / relative)
             for name in ("symbols_1", "symbols_1024", *(f"graph:{entry}" for entry in evidence.GRAPH_SOURCES)):
                 path = generated / f"{name.removeprefix('graph:')}.c"
                 path.write_text(evidence.generated_source_contents(name), encoding="utf-8")
@@ -592,7 +633,7 @@ class SourceRosterReplayTests(unittest.TestCase):
             forged = copy.deepcopy(attempt)
             forged["source"]["before"]["source:workload"] = identity(foreign)
             forged["source"]["after"] = copy.deepcopy(forged["source"]["before"])
-            with self.assertRaisesRegex(evidence.EvidenceError, "static source path"):
+            with self.assertRaisesRegex(evidence.EvidenceError, "fixed source path"):
                 evidence._verify_attempt_source(
                     ROOT, forged, index=1, collector_revision=revision, collector_digest=digest,
                 )
