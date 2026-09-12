@@ -37,9 +37,12 @@ owners:
    priority-protect retains musl's unsupported status. Family closure and
    ordered qualification receipts remain open.
    Residual POSIX workloads and shared-state composition are integrated into
-   the expanded dynamic catalog. Fresh three-product qualification and the
-   complete six-static/twelve-dynamic POSIX family receipt remain required;
-   see [`owned-posix-runtime.md`](compat/x86_64/owned-posix-runtime.md).
+   the expanded dynamic catalog. The complete three-product gate and POSIX
+   workload matrix now have installed/extracted evidence and host replay,
+   alongside the installed pthread and loader component receipts. Complete
+   native aggregate evidence remains required for family closure; see
+   [`owned-posix-runtime.md`](compat/x86_64/owned-posix-runtime.md) and `plan.md`
+   for exact revisions and subsequent source changes.
    Full native OS-test and libc-test runners now expose the remaining runtime
    and fixture failures through independently checked source/object/link and
    execution-root evidence. Their incomplete results do not close the native

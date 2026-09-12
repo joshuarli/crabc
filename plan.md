@@ -2,31 +2,45 @@
 
 ## Active integration — 2026-09-12
 
-At `04c4cbd3`, the complete 70-case dynamic product gate passed across two
+At `5328cb94`, the complete 70-case dynamic product gate passed across two
 independent builds and the extracted package: 210 case receipts, identical
 product manifests and byte-identical packages. Host replay and explicit local
 publication passed. All 21 synthetic loader cases and all 34 frozen package
 corpus cases passed on each product. Evidence paths below are relative to
 `.work/worktrees/owned_posix_evidence_integration/` unless stated otherwise.
 The retained dynamic receipt is
-`.work/x86_64/tmp/materialized-dynamic.oVccqA/qualification.json`.
+`.work/x86_64/tmp/materialized-dynamic.jSrBIm/qualification.json`.
 
 The same revision passed reproducible static preparation and all eighteen
 POSIX workloads across all three static/dynamic product pairs. The matrix
 binds all 149 selected spellings to six static and twelve dynamic execution
-cells. Static preparation, the POSIX matrix, and the installed-loader component
-also passed host reconstruction:
+cells. The installed-loader component covers ten behaviors, and the pthread
+component covers fifteen behaviors with three passing composition runs.
+Static preparation, the POSIX matrix, and both components passed independent
+host reconstruction:
 
-- `.work/x86_64/posix-static-products-04c4cbd3/preparation.json`
-- `.work/x86_64/posix-family-04c4cbd3/execution.json`
-- `.work/x86_64/loader-family-04c4cbd3/receipt.json`
+- `.work/x86_64/posix-static-products-5328cb94/preparation.json`
+- `.work/x86_64/posix-family-5328cb94/execution.json`
+- `.work/x86_64/loader-family-5328cb94/receipt.json`
+- `.work/x86_64/pthread-family-5328cb94/receipt.json`
 
 These are component measurements; family and promotion flags remain false.
-The pthread component's three composition runs passed, but final collection
-failed because it treated the tracked roster as a mutable evidence path.
-`41c892cc` corrects source identity handling and removes duplicate validation
-within each coordinator phase. Eighteen focused tests pass. The retained run
-has no valid receipt; fresh execution and host reconstruction remain required.
+This fresh pthread receipt proves `41c892cc`'s correction to tracked source
+identity handling. The earlier `04c4cbd3` collection failed and still has no
+valid pthread receipt.
+
+The following integration batch adds explicit transitive application-DSO
+inputs to the installed dynamic driver. Only direct application roots enter
+the final link, while the complete declared dependency graph and typed input receipts
+remain validated. It also adds the fixed-mimalloc reset-advice retry/fallback
+matrix and the native performance supplement: forty fixed rows and a memory
+phase map for the seventy-four existing rows. The fixtures pass pinned native
+reduced correctness smokes; adapter collection and memory observers remain
+under implementation. Performance qualification still requires complete
+correctness closure. At integrated `54bb0eba`, all 85 focused tests and campaign
+contract validation pass; logs are under `.work/x86_64/integration-54bb0eba/`.
+These source changes require fresh product evidence at the next qualification
+checkpoint. They do not transfer the preceding revision's qualification.
 
 The full native libc-test measurement at `04c4cbd3` records 427 of 434 units
 passing, one missing-provider link (`functional/random`), and six runtime
@@ -89,8 +103,8 @@ The selection logs are under `.work/x86_64/wordexp-selection-review/`, including
 `combined-core-09afafea.log`, `selected-static-component.log`, and
 `result-private-first.log`; `selected-static-25-cases.log` records the expanded
 static gate. The former whole-input shell provider and its x86 scanner are
-retired. The complete dynamic product gate remains required after the final
-count fix and policy accounting. The fixed
+retired. The `5328cb94` dynamic product gate above includes the final count fix
+and policy accounting. The fixed
 musl observations and untouched upstream failures retain their raw outcomes;
 finite POSIX interpretations do not waive arbitrary failures. See
 [`owned-wordexp-engine.md`](compat/x86_64/owned-wordexp-engine.md).
@@ -104,7 +118,7 @@ The duplicate assertion is removed; the dedicated wordexp `nocmd-source`
 selector retains exact candidate and oracle results. The complete filename
 pattern workload then passes on that unchanged installed product in all four
 dynamic modes at `.work/x86_64/pattern-after-wordexp-selection/tmp/owned-pattern.Hx2iVv`.
-Fresh full product qualification remains required.
+The later `5328cb94` run above passes the complete product gate.
 
 At `3cc41ae8`, the next full product attempt passes the first 63 installed
 cases, including pattern and wordexp, but independent wordexp replay exposes
@@ -117,9 +131,11 @@ The version-5 wordexp receipt finishes retention before validating and
 publishing its report, with exact separate execution and retained modes.
 The isolated regression reproduces the mode change; all 58 wordexp-reader
 and dynamic-collector tests then pass, including receipt idempotence under
-a restrictive umask. Fresh native component replay and full product
-qualification remain required. Reproducible static preparation at this
-earlier revision passes, including host replay, at
+a restrictive umask. At `5328cb94`, all 100 installed dynamic wordexp cells
+pass; host reconstruction before and after repeated outer retention preserves
+the exact receipt and artifact inventory. The complete product run above also
+passes with the version-5 receipt. Reproducible static preparation at
+`3cc41ae8` also passes, including host replay, at
 `.work/x86_64/posix-static-products-3cc41ae8/preparation.json`.
 
 `024b1563` corrects demonstrated `fmaf`, `fmal`, `powf`, and `nextafterl`
