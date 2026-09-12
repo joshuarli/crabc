@@ -105,3 +105,59 @@ to its selected installed product, including every payload file and alias. It
 also requires `consumer-pie` and `consumer-non-pie` to be exact copies of their
 respective sealed executables before accepting either kernel or direct-loader
 runtime stream.
+
+
+## ELF alias and internal-binding contract
+
+`run_owned_pthread_alias_contract.sh STATIC_SYSROOT DYNAMIC_SYSROOT` checks the
+ELF binding boundary for the selected pthread, C11, and TSS bodies. It uses
+pinned musl 1.2.6 release commit
+`9fa28ece75d8a2191de7c5bb53bed224c5947417` as the source and artifact oracle.
+The relevant source files are `src/thread/pthread_cond_timedwait.c`,
+`pthread_create.c`, `pthread_detach.c`, `pthread_join.c`,
+`pthread_key_create.c`, `pthread_key_delete.c`, `pthread_getspecific.c`,
+`pthread_mutex_{lock,timedlock,trylock,unlock}.c`, `pthread_once.c`, and
+`pthread_{setcancelstate,testcancel}.c`.
+
+| Source provider form | Public weak aliases |
+| --- | --- |
+| hidden global `__pthread_cond_timedwait` | `pthread_cond_timedwait` |
+| hidden global `__pthread_create`, `__pthread_exit`, `__pthread_join` | `pthread_create`, `pthread_exit`, `pthread_join` |
+| source-local `__pthread_detach` | `pthread_detach`, `thrd_detach` |
+| source-local `__pthread_getspecific` | `pthread_getspecific`, `tss_get` |
+| hidden global `__pthread_key_create`, `__pthread_key_delete` | `pthread_key_create`, `pthread_key_delete` |
+| hidden global `__pthread_mutex_lock`, `__pthread_mutex_timedlock`, `__pthread_mutex_trylock`, `__pthread_mutex_unlock` | matching public mutex name |
+| hidden global `__pthread_once`, `__pthread_setcancelstate`, `__pthread_testcancel` | matching public name |
+
+The default static archive preserves the hidden global bodies already selected
+there. `pthread_cond_timedwait` and `pthread_mutex_timedlock` are the
+`x86-owned-static-runtime` additions. The two source-local bodies are retained
+through typed local references because the assembler `.set` alias alone is not
+a compiler reachability edge. `mq_notify` reaches the selected detach body
+directly, matching musl's internal nonpreemptible binding without changing its
+worker, cancellation, synchronization, or lifetime logic.
+
+The runner compiles one C11 application object once, links it with pinned musl,
+owned static `ET_EXEC`, static PIE, and owned shared PIE/non-PIE products, and
+runs each shared image through kernel and direct-loader entry. `readelf` checks
+one definition per public name, `FUNC WEAK DEFAULT` public aliases, exact
+member/value/type/section identity with their provider, archive hidden/global
+or source-local binding, and the shared dynamic export boundary. Its strong
+application `pthread_setcancelstate` override must handle the application's
+direct call while `pthread_join` keeps its internal
+`__pthread_setcancelstate` route, as `src/thread/pthread_join.c` requires. A
+worker result and `pthread_join` provide the completion edge; each command has
+a finite 45-second cap.
+
+Run this focused proof in the pinned native image with fresh matching products:
+
+```sh
+TMPDIR="$PWD/.work/x86_64/tmp" \
+  ./compat/x86_64/run_owned_pthread_alias_contract.sh \
+  .work/x86_64/pthread-alias-contract/static-product \
+  .work/x86_64/pthread-alias-contract/dynamic-product
+```
+
+This is an ELF and internal-binding proof for the listed bodies. It does not
+complete the pthread family, qualify the runtime, promote x86-64 support, or
+change the public-support boundary.

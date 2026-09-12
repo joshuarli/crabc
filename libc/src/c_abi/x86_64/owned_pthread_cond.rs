@@ -21,6 +21,15 @@
 
 use super::*;
 
+// Musl's source publishes pthread_cond_timedwait as a weak alias of this
+// hidden provider. The condition state machine stays exactly in `wait`; this
+// declaration changes only its ELF binding and internal call target.
+core::arch::global_asm!(
+    ".hidden __pthread_cond_timedwait",
+    ".weak pthread_cond_timedwait",
+    ".set pthread_cond_timedwait, __pthread_cond_timedwait",
+);
+
 const EINVAL: c_int = 22;
 const EINTR: c_int = 4;
 const ETIMEDOUT: c_int = 110;
@@ -317,7 +326,7 @@ pub(super) unsafe fn wait(condition: *mut c_void, mutex: *mut c_void,
 /// holds the mutex and retains predicate/object lifetimes. `deadline` points
 /// to a readable aligned native timespec. Deferred cancellation reacquires the
 /// mutex before user cleanup; asynchronous cancellation is not safe here.
-#[no_mangle]
+#[export_name = "__pthread_cond_timedwait"]
 pub unsafe extern "C" fn pthread_cond_timedwait(condition: *mut c_void,
     mutex: *mut c_void, deadline: *const c_void) -> c_int
 {

@@ -3,7 +3,7 @@
 //! Pinned musl 1.2.6 release commit
 //! 9fa28ece75d8a2191de7c5bb53bed224c5947417, MIT (`COPYRIGHT`):
 //! src/mq/mq_open.c, mq_close.c, mq_unlink.c, mq_getattr.c, mq_send.c,
-//! mq_receive.c, mq_timedsend.c, mq_timedreceive.c, and mq_notify.c map to
+//! mq_receive.c, mq_timedsend.c, mq_timedreceive.c, and src/mq/mq_notify.c map to
 //! the corresponding entries below. The existing mq_setattr leaf retains
 //! its shared record/syscall boundary. Linux/x86-64 has one native 64-bit
 //! time ABI, so the source's 32-bit/time64 compatibility branch is absent.
@@ -198,7 +198,10 @@ unsafe extern "C" fn notify_start(argument: *mut c_void) -> *mut c_void {
         posix_semaphore::sem_post(ptr::addr_of_mut!((*args).semaphore).cast());
     }
     if error != 0 { return ptr::null_mut(); }
-    unsafe { pthread_create_join::pthread_detach(pthread_identity::current_thread_pointer().cast()); }
+    // Musl's pthread_detach body is source-local and its public names are weak
+    // aliases. Keep this internal mq worker on the selected body, so an
+    // application pthread_detach override cannot interpose on its lifecycle.
+    unsafe { pthread_create_join::detach_selected_worker(pthread_identity::current_thread_pointer().cast()); }
     let mut cookie = [0_u8; 32];
     let length = unsafe { socket_transport::recv(socket, cookie.as_mut_ptr().cast(), cookie.len(), MSG_WAITALL_NOSIGNAL) };
     super::descriptor_io::close(socket);

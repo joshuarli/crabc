@@ -20,8 +20,10 @@
 //!   the explicitly signed encode/decode helpers.
 //! - `src/thread/thrd_exit.c` supplies the C11 `int` result conversion before
 //!   the selected worker exits.
-//! - `src/thread/thrd_detach.c` supplies the `thrd_success`/`thrd_error`
-//!   translation around pthread-style lifetime detachment.
+//! - `src/thread/pthread_detach.c::__pthread_detach` supplies the shared
+//!   detach body and its `weak_alias(__pthread_detach,thrd_detach)` source
+//!   binding. `thrd_detach` therefore retains the pthread body and its raw
+//!   pthread error result for an unadmitted handle, as musl does.
 //! - `src/thread/thrd_sleep.c` supplies C11's distinct sleep-status
 //!   translation: an interrupted relative realtime sleep is `-1`, while every
 //!   other `clock_nanosleep` failure is `-2`. This bounded x86 route delegates
@@ -137,27 +139,6 @@ pub unsafe extern "C" fn thrd_join(thread: *mut c_void, result: *mut c_int) -> c
         };
     }
     THRD_SUCCESS
-}
-
-/// Detach one selected C11 worker with a prompt ownership transition.
-///
-/// This shares the sibling's result-neutral selected ownership state: it does
-/// not reinterpret a C11 result as a pthread pointer, wait for the worker, or
-/// reclaim a still-live stack/TLS mapping. A later selected create/join
-/// boundary reaps an exited detached worker after `CLONE_CHILD_CLEARTID`.
-///
-/// # Safety
-///
-/// `thread` must be a selected opaque handle. After success, it no longer
-/// denotes an admitted joinable C11 lifecycle handle.
-#[no_mangle]
-pub unsafe extern "C" fn thrd_detach(thread: *mut c_void) -> c_int {
-    // SAFETY: this C11 boundary retains the selected opaque-handle ownership
-    // contract and maps every selected pthread-style failure to thrd_error.
-    match unsafe { pthread_create_join::detach_selected_worker(thread) } {
-        0 => THRD_SUCCESS,
-        _ => THRD_ERROR,
-    }
 }
 
 /// Sleep for one C11 relative realtime interval through the selected syscall seam.

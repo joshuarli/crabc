@@ -41,6 +41,19 @@ use core::sync::atomic::{AtomicI32, AtomicU8, AtomicUsize, Ordering};
 
 use super::pthread_create_join;
 
+// Musl binds lifecycle code to these hidden source providers and exposes only
+// weak default public spellings. Keep Rust's direct calls on the same bodies
+// by exporting the providers under their source names instead of adding C
+// forwarding wrappers.
+core::arch::global_asm!(
+    ".hidden __pthread_setcancelstate",
+    ".weak pthread_setcancelstate",
+    ".set pthread_setcancelstate, __pthread_setcancelstate",
+    ".hidden __pthread_testcancel",
+    ".weak pthread_testcancel",
+    ".set pthread_testcancel, __pthread_testcancel",
+);
+
 #[cfg(feature = "x86-owned-static-runtime")]
 #[path = "owned_syscall_cancel.rs"]
 mod owned_syscall_cancel;
@@ -338,7 +351,7 @@ pub unsafe extern "C" fn pthread_cancel(thread: *mut c_void) -> c_int {
 /// Change cancellation enablement for the current selected pthread task.
 /// # Safety
 /// `old_state`, when non-null, designates aligned writable C `int` storage.
-#[no_mangle]
+#[export_name = "__pthread_setcancelstate"]
 pub unsafe extern "C" fn pthread_setcancelstate(state: c_int, old_state: *mut c_int) -> c_int {
     let state = match state {
         0 => PTHREAD_CANCEL_ENABLE,
@@ -399,7 +412,7 @@ pub unsafe extern "C" fn pthread_setcanceltype(type_: c_int, old_type: *mut c_in
 /// # Safety
 /// Any owned resource requiring cancellation cleanup has a registered cleanup
 /// handler or is otherwise safe to abandon at this cancellation point.
-#[no_mangle]
+#[export_name = "__pthread_testcancel"]
 pub unsafe extern "C" fn pthread_testcancel() {
     test_current_selected_pthread_cancellation();
 }

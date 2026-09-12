@@ -8529,7 +8529,8 @@ unsafe fn join_selected_worker_inner(
             "src/thread/pthread_create.c::start_c11",
             "src/thread/thrd_join.c",
             "src/thread/thrd_exit.c",
-            "src/thread/thrd_detach.c",
+            "src/thread/pthread_detach.c::__pthread_detach",
+            "weak_alias(__pthread_detach,thrd_detach)",
             "src/thread/thrd_sleep.c",
             "C11StartRoutine",
             "SelectedWorkerStart::C11",
@@ -8537,9 +8538,7 @@ unsafe fn join_selected_worker_inner(
             "fn thrd_create(",
             "fn thrd_join(",
             "fn thrd_exit(",
-            "fn thrd_detach(",
             "fn thrd_sleep(",
-            "detach_selected_worker",
             "super::clock_nanosleep::clock_nanosleep",
             "super::clock_nanosleep::CLOCK_REALTIME",
             "exit_selected_c11_worker",
@@ -10633,13 +10632,24 @@ unsafe fn join_selected_worker_inner(
         for name in (
             "pthread_mutexattr_setprotocol",
             "pthread_mutex_setprioceiling",
-            "pthread_mutex_timedlock",
         ):
             self.assertIn(
                 '#[cfg(feature = "x86-owned-static-runtime")]\n#[no_mangle]\n'
                 f'pub unsafe extern "C" fn {name}',
                 pthread_mutex,
             )
+        self.assertIn(
+            '#[cfg(feature = "x86-owned-static-runtime")]\n'
+            '#[export_name = "__pthread_mutex_timedlock"]\n'
+            'pub unsafe extern "C" fn pthread_mutex_timedlock',
+            pthread_mutex,
+        )
+        for required in (
+            '".hidden __pthread_mutex_timedlock"',
+            '".weak pthread_mutex_timedlock"',
+            '".set pthread_mutex_timedlock, __pthread_mutex_timedlock"',
+        ):
+            self.assertIn(required, pthread_mutex)
         for forbidden in (
             "pub unsafe extern \"C\" fn pthread_cond_",
             "pub unsafe extern \"C\" fn pthread_rwlock_",
@@ -11802,10 +11812,17 @@ unsafe fn join_selected_worker_inner(
                 "pthread_setspecific",
                 "tss_create",
                 "tss_delete",
-                "tss_get",
                 "tss_set",
             },
         )
+        for required in (
+            '".weak pthread_getspecific"',
+            '".set pthread_getspecific, __pthread_getspecific"',
+            '".weak tss_get"',
+            '".set tss_get, __pthread_getspecific"',
+            '#[linkage = "internal"]',
+        ):
+            self.assertIn(required, tsd)
         for forbidden in (
             'pub unsafe extern "C" fn pthread_cancel',
             'pub unsafe extern "C" fn pthread_exit',
@@ -11853,7 +11870,6 @@ unsafe fn join_selected_worker_inner(
         for wrapper_name, pthread_entry in (
             ("tss_create", "pthread_key_create(key, destructor)"),
             ("tss_delete", "pthread_key_delete(key)"),
-            ("tss_get", "pthread_getspecific(key)"),
             ("tss_set", "pthread_setspecific(key, value)"),
         ):
             wrapper = tsd.split(
@@ -12009,6 +12025,9 @@ unsafe fn join_selected_worker_inner(
         c11_lifecycle = (
             ROOT / "libc" / "src" / "c_abi" / "x86_64" / "c11_thread_lifecycle.rs"
         ).read_text(encoding="utf-8")
+        owned_message_queues = (
+            ROOT / "libc" / "src" / "c_abi" / "x86_64" / "owned_message_queues.rs"
+        ).read_text(encoding="utf-8")
         probe = (
             ROOT / "compat" / "x86_64" / "libc_pthread_detach_probe.c"
         ).read_text(encoding="utf-8")
@@ -12079,13 +12098,23 @@ unsafe fn join_selected_worker_inner(
         ):
             self.assertLess(detached_claim.index(earlier), detached_claim.index(later))
 
-        self.assertIn("src/thread/thrd_detach.c", c11_lifecycle)
-        c11_detach = c11_lifecycle.split("pub unsafe extern \"C\" fn thrd_detach", 1)[1].split(
-            "/// End the current selected C11 worker", 1
-        )[0]
-        self.assertIn("detach_selected_worker", c11_detach)
-        self.assertIn("THRD_SUCCESS", c11_detach)
-        self.assertIn("THRD_ERROR", c11_detach)
+        self.assertIn("src/thread/pthread_detach.c::__pthread_detach", c11_lifecycle)
+        self.assertIn("weak_alias(__pthread_detach,thrd_detach)", c11_lifecycle)
+        for required in (
+            '".weak pthread_detach"',
+            '".set pthread_detach, __pthread_detach"',
+            '".weak thrd_detach"',
+            '".set thrd_detach, __pthread_detach"',
+            '#[linkage = "internal"]',
+        ):
+            self.assertIn(required, pthread_create_join)
+        self.assertIn("src/mq/mq_notify.c", owned_message_queues)
+        self.assertIn(
+            "pthread_create_join::detach_selected_worker", owned_message_queues
+        )
+        self.assertNotIn(
+            "pthread_create_join::pthread_detach", owned_message_queues
+        )
 
         for required in (
             "run_pthread_round",

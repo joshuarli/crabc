@@ -22,8 +22,9 @@
 //! Musl's cleanup `undo` path resets a control after cancellation. That path,
 //! initializer `pthread_exit`/`thrd_exit`, recursive same-control entry,
 //! fork/atfork interaction, dynamic/loader TLS, TSS, general pthread/C11
-//! synchronization, musl's weak `pthread_once` ELF-alias binding, family
-//! promotion, and public x86 support remain outside this private artifact.
+//! synchronization, family promotion, and public x86 support remain outside
+//! this private artifact. Musl's weak `pthread_once` ELF-alias binding is
+//! retained as the provider boundary below; it does not widen this behavior.
 
 #[cfg(not(all(target_os = "linux", target_arch = "x86_64", target_endian = "little")))]
 compile_error!("the x86 pthread/C11 once leaf requires little-endian Linux/x86-64");
@@ -31,6 +32,15 @@ compile_error!("the x86 pthread/C11 once leaf requires little-endian Linux/x86-6
 use core::ffi::c_int;
 
 use super::{atomic, raw_syscall};
+
+// This is musl's `weak_alias(__pthread_once,pthread_once)` source form. The
+// Rust item retains its direct internal spelling while ELF callers receive a
+// weak public alias of the hidden provider.
+core::arch::global_asm!(
+    ".hidden __pthread_once",
+    ".weak pthread_once",
+    ".set pthread_once, __pthread_once",
+);
 
 const ONCE_INITIAL: c_int = 0;
 const ONCE_INITIALIZING: c_int = 1;
@@ -199,7 +209,7 @@ unsafe fn run_selected_once(control: *mut c_int, init_routine: OnceRoutine) -> c
 /// `pthread_exit`, `thrd_exit`, recursive same-control calls, fork/atfork
 /// transitions, and destruction or reuse of `control` while active. The
 /// routine and all callers must follow the selected private once protocol.
-#[no_mangle]
+#[export_name = "__pthread_once"]
 pub unsafe extern "C" fn pthread_once(
     control: *mut c_int,
     init_routine: Option<OnceRoutine>,

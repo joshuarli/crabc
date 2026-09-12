@@ -34,8 +34,8 @@
 //! their lifecycle, concurrent deletion/destructor interaction, cleanup
 //! ownership beyond the selected deferred-pthread exit ordering, main-thread
 //! process-exit destructors, dynamic or loader TLS/DTV, allocator lifecycle
-//! ordering, general TCB layout, and musl's weak/same-address TSD ELF aliases
-//! remain outside this artifact. The selected static fork transaction does
+//! ordering, and general TCB layout remain outside this artifact. The selected
+//! static fork transaction does
 //! lock this metadata before it snapshots the calling task's table, but it is
 //! not general all-thread key/TSD or dynamic-fork repair. Invalid/deleted keys
 //! and non-selected callers fail closed instead of relying on musl's unchecked
@@ -49,6 +49,23 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use super::{pthread_create_join, pthread_identity, static_tls};
+
+// Musl's key-create source exports hidden global providers. Its
+// `__pthread_getspecific` source body is static, with both pthread_getspecific
+// and tss_get as weak same-address aliases. Preserve those distinct source
+// linkage classes while Rust callers keep the direct item spellings below.
+core::arch::global_asm!(
+    ".hidden __pthread_key_create",
+    ".weak pthread_key_create",
+    ".set pthread_key_create, __pthread_key_create",
+    ".hidden __pthread_key_delete",
+    ".weak pthread_key_delete",
+    ".set pthread_key_delete, __pthread_key_delete",
+    ".weak pthread_getspecific",
+    ".set pthread_getspecific, __pthread_getspecific",
+    ".weak tss_get",
+    ".set tss_get, __pthread_getspecific",
+);
 
 const EAGAIN: c_int = 11;
 const EINVAL: c_int = 22;
@@ -224,7 +241,7 @@ fn current_selected_values() -> Option<*const SelectedTsdValues> {
 /// `key` must point to writable, aligned `pthread_key_t` storage. If present,
 /// `destructor` must remain valid whenever a selected worker with a non-null
 /// value for this key reaches its selected exit path.
-#[no_mangle]
+#[export_name = "__pthread_key_create"]
 pub unsafe extern "C" fn pthread_key_create(
     key: *mut c_uint,
     destructor: Option<TsdDestructor>,
@@ -275,7 +292,7 @@ pub unsafe extern "C" fn pthread_key_create(
 /// `key` must name an active key created through this selected artifact. The
 /// caller must not race a worker destructor that observes, deletes, or rearms
 /// this key; that broader musl interaction is deliberately outside the slice.
-#[no_mangle]
+#[export_name = "__pthread_key_delete"]
 pub unsafe extern "C" fn pthread_key_delete(key: c_uint) -> c_int {
     let Some(index) = key_index(key) else {
         return EINVAL;
@@ -315,7 +332,9 @@ pub unsafe extern "C" fn pthread_key_delete(key: c_uint) -> c_int {
 /// `key` must be the caller's active selected key. Returned values are opaque
 /// borrowed C pointers and may not be dereferenced unless the application
 /// still owns the referenced storage.
-#[no_mangle]
+#[export_name = "__pthread_getspecific"]
+#[linkage = "internal"]
+#[inline(never)]
 pub unsafe extern "C" fn pthread_getspecific(key: c_uint) -> *mut c_void {
     let Some(index) = key_index(key) else {
         return core::ptr::null_mut();
@@ -335,6 +354,12 @@ pub unsafe extern "C" fn pthread_getspecific(key: c_uint) -> *mut c_void {
     unlock_selected_tsd();
     value as *mut c_void
 }
+
+// See the matching detach provider: a local `export_name` needs an explicit
+// typed `used` reference because LLVM cannot see the assembler `.set` edge.
+#[used]
+#[linkage = "internal"]
+static KEEP_PTHREAD_GETSPECIFIC: unsafe extern "C" fn(c_uint) -> *mut c_void = pthread_getspecific;
 
 /// Store one selected current-thread value.
 ///
@@ -546,17 +571,6 @@ pub unsafe extern "C" fn tss_create(
 #[no_mangle]
 pub unsafe extern "C" fn tss_delete(key: c_uint) {
     let _ = unsafe { pthread_key_delete(key) };
-}
-
-/// Read one selected C11 TSS value.
-///
-/// # Safety
-///
-/// `key` and any returned opaque pointer have the same obligations as
-/// [`pthread_getspecific`].
-#[no_mangle]
-pub unsafe extern "C" fn tss_get(key: c_uint) -> *mut c_void {
-    unsafe { pthread_getspecific(key) }
 }
 
 /// Store one selected C11 TSS value.
