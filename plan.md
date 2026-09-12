@@ -41,7 +41,7 @@ under `.work/x86_64/{libc-test-measurement-04c4cbd3,os-measurement-04c4cbd3}/`.
 Finite crypt, atomic, credential, and `strptime` dispositions retain their
 original raw outcomes. The same-product crypt and atomic companions pass.
 The selected word-expansion engine and its finite policy proof are described
-below; fresh installed and aggregate measurements remain required. No
+below; complete aggregate qualification remains required. No
 disposition admits a BSD random provider failure. See
 [`owned-posix-native-dispositions.md`](compat/x86_64/owned-posix-native-dispositions.md).
 
@@ -58,16 +58,21 @@ for both contiguous and joined ambiguous arithmetic openings. The retained
 prove cleanup and accepted-prefix ownership at their respective revisions.
 Actual private spawn/wait and C/C.UTF-8 pathname/passwd fixtures pass.
 
-At `96a4a847`, the preceding 23-case installed object passed all 138 cells
-across six modes. Its retained receipt is
-`.work/x86_64/tmp/owned-wordexp-products.im0tid7y/owned-wordexp-products.json`.
-A full native libc-test run on that dynamic product retains 427 of 434
-passing comparisons, the random link blocker, and the same six failed
-comparisons. Wordexp has exactly 20 candidate and 104 oracle diagnostics,
-with raw status 1 on both sides and empty stderr. The complete unit's static
-and dynamic outcomes agree after only source-path and terminal-marker
-projection. Its report is
-`.work/x86_64/libc-test-wordexp-96a4a847/tmp/owned-libc-test.OUhkmM/libc-test.json`.
+At `59b5a64a`, the final 25-case installed object passed all 150 cells across
+six modes. Its retained receipt is
+`.work/x86_64/tmp/owned-wordexp-products.e8zvckbb/owned-wordexp-products.json`.
+Read-only replay from the checkout path passes with the separately captured
+`.work/x86_64/wordexp-inputs-59b5a64a/owned-wordexp-products.cngmeyn0/expected-native-inputs.json`.
+The full native libc-test run on that same dynamic product retains 427 of
+434 passing comparisons, the random link blocker, and the same six failed
+comparisons at
+`.work/x86_64/libc-test-wordexp-59b5a64a/tmp/owned-libc-test.zk5dUV/libc-test.json`.
+The isolated wordexp policy reader validates exactly 20 candidate and 104
+oracle diagnostics, raw status 1 on both sides and empty stderr, against the
+complete companion. Its observation is
+`.work/x86_64/wordexp-selection-review/finite-native-policy-59b5a64a.json`;
+it does not qualify the full native aggregate. The fixed diagnostic reference
+retains its earlier `96a4a847` measurement provenance.
 
 The final C review fixes fresh `WRDE_BADCHAR` count publication while retaining
 the exact append record. A new same-object selector proves the candidate's
@@ -84,9 +89,8 @@ The selection logs are under `.work/x86_64/wordexp-selection-review/`, including
 `combined-core-09afafea.log`, `selected-static-component.log`, and
 `result-private-first.log`; `selected-static-25-cases.log` records the expanded
 static gate. The former whole-input shell provider and its x86 scanner are
-retired. Fresh 150-cell six-mode installed evidence, full native libc-test
-measurement, and the complete dynamic product gate remain required after
-the final count fix and policy accounting. The fixed
+retired. The complete dynamic product gate remains required after the final
+count fix and policy accounting. The fixed
 musl observations and untouched upstream failures retain their raw outcomes;
 finite POSIX interpretations do not waive arbitrary failures. See
 [`owned-wordexp-engine.md`](compat/x86_64/owned-wordexp-engine.md).
@@ -104,7 +108,7 @@ comparisons; the three math comparisons fail because the oracle fails.
 `5cd0f0fb` and `0c2d4b40` add finite accounting that requires those exact
 candidate passes, pinned oracle failures, and 39 unchanged proof sources.
 It rejects candidate failures and any changed or unlisted outcome. This does
-not close the aggregate's remaining word-expansion or random blockers.
+not close the aggregate's remaining random-provider blocker.
 The dynamic measurement is retained at
 `.work/x86_64/libc-test-math-111a96b3/tmp/owned-libc-test.EeqmUv/libc-test.json`.
 Source mappings, numerical arguments, and reproduction commands are in
