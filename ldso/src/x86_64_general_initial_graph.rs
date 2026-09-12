@@ -250,7 +250,14 @@ unsafe fn run_with_initial_tls(
                 return Err(b"tlsstate\n");
             }
         };
-        if unsafe { super::x86_64_general_relocation::relocate_initial_graph(graph, objects) }.is_none() {
+        #[cfg(feature = "x86_64-owned-dynamic-runtime")]
+        let relocation = unsafe { super::x86_64_debugger::PreparedInitialDebugger::prepare(
+            &objects[..graph.object_count()]) }.and_then(|debugger| unsafe {
+                super::x86_64_general_relocation::relocate_initial_graph_with_debugger(graph, objects, &debugger)
+            });
+        #[cfg(not(feature = "x86_64-owned-dynamic-runtime"))]
+        let relocation = unsafe { super::x86_64_general_relocation::relocate_initial_graph(graph, objects) };
+        if relocation.is_none() {
             rollback_initial_tls_state(&mut state, GeneralInitialPreparationStage::Relocation);
             return Err(b"reloc\n");
         }
@@ -406,7 +413,7 @@ unsafe fn run_with_initial_tls(
     #[cfg(all(crabc_general_loader_libc_tls_runtime_v1, feature = "x86_64-owned-dynamic-runtime"))]
     let conventional_startup = unsafe { state.commit_runtime_v1(installed) };
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
-    unsafe { runtime_registry.publish(); }
+    unsafe { runtime_registry.publish(ldso_base); }
     #[cfg(feature = "x86_64-owned-dynamic-runtime")]
     if let Some(reservation) = conventional_startup {
         unsafe { super::x86_64_conventional_startup_v1::publish(reservation, installed); }

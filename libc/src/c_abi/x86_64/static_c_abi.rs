@@ -639,6 +639,12 @@ mod static_startup;
 #[cfg(feature = "x86-owned-dynamic-runtime")]
 #[path = "owned_dynamic_runtime.rs"]
 mod owned_dynamic_runtime;
+#[cfg(feature = "x86-owned-static-runtime")]
+#[path = "init_fini_defaults.rs"]
+mod init_fini_defaults;
+#[cfg(feature = "x86-owned-dynamic-runtime")]
+#[path = "loader_debug_abi.rs"]
+mod loader_debug_abi;
 #[path = "stack_chk_fail.rs"]
 mod stack_chk_fail;
 #[path = "process_globals.rs"]
