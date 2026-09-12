@@ -427,13 +427,18 @@ def inventory_tree(root: Path) -> list[dict[str, Any]]:
             # The supplied product deliberately carries the musl-loader
             # compatibility alias as a relative link.  Retain the spelling
             # rather than following it, then make the sealed inventory decide
-            # whether the staged root may contain it.  An absolute or parent
-            # traversal target could otherwise escape the chroot inventory.
+            # whether the staged root may contain it.  A relative target may
+            # legitimately climb from a canonical compatibility location to
+            # the root's shared ``/lib`` payload; containment is decided from
+            # its resolved destination below.
             target = os.readlink(path)
             target_path = Path(target)
-            require(target and not target_path.is_absolute() and ".." not in target_path.parts,
+            require(target and not target_path.is_absolute(),
                     f"runtime root symlink escapes its inventory: {relative}")
-            resolved_target = (path.parent / target_path).resolve(strict=True)
+            try:
+                resolved_target = (path.parent / target_path).resolve(strict=True)
+            except OSError as error:
+                raise EvidenceError(f"runtime root symlink target is unreadable: {relative}") from error
             try:
                 resolved_target.relative_to(root)
             except ValueError as error:

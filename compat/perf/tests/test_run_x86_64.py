@@ -168,6 +168,23 @@ class MuslRuntimeStagingTests(unittest.TestCase):
             self.assertEqual(os.readlink(interpreter), "../../../lib/ld-musl-x86_64.so.1")
             self.assertEqual(interpreter.resolve().read_bytes(), b"loader")
             self.assertEqual((root / "opt/musl-1.2.6/lib/libc.so").resolve().read_bytes(), b"libc")
+            inventory = runner.evidence.inventory_tree(root)
+            self.assertIn({
+                "path": "opt/musl-1.2.6/lib/ld-musl-x86_64.so.1",
+                "kind": "symlink",
+                "target": "../../../lib/ld-musl-x86_64.so.1",
+            }, inventory)
+
+    def test_inventory_rejects_relative_alias_that_resolves_outside_root(self) -> None:
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            root = directory / "root"
+            root.mkdir()
+            (directory / "outside").write_bytes(b"outside")
+            (root / "escape").symlink_to("../outside")
+
+            with self.assertRaisesRegex(runner.evidence.EvidenceError, "escapes its inventory"):
+                runner.evidence.inventory_tree(root)
 
 
 class RosterBoundaryTests(unittest.TestCase):
