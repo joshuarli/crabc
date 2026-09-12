@@ -123,6 +123,7 @@ unsafe fn fstatfs_raw(descriptor: c_int, output: *mut StatFs) -> i64 {
 /// point to writable storage for one complete Linux/x86-64 `struct statfs`.
 #[linkage = "internal"]
 #[export_name = "__statfs"]
+#[inline(never)]
 pub unsafe extern "C" fn statfs_body(path: *const c_char, output: *mut StatFs) -> c_int {
     // SAFETY: musl clears every public byte first; caller owns the full writable
     // output record and raw pathname contract.
@@ -138,6 +139,7 @@ pub unsafe extern "C" fn statfs_body(path: *const c_char, output: *mut StatFs) -
 /// writable storage for one complete Linux/x86-64 `struct statfs`.
 #[linkage = "internal"]
 #[export_name = "__fstatfs"]
+#[inline(never)]
 pub unsafe extern "C" fn fstatfs_body(descriptor: c_int, output: *mut StatFs) -> c_int {
     // SAFETY: musl clears every public byte first; caller owns the full writable
     // output record and raw descriptor contract.
@@ -146,9 +148,10 @@ pub unsafe extern "C" fn fstatfs_body(descriptor: c_int, output: *mut StatFs) ->
 }
 
 // statvfs.c deliberately makes these source bodies local, even in libc.a.
-// `linkage = "internal"` retains that local definition while the assembler
-// emits musl's weak public same-address aliases. Do not replace either with a
-// wrapper: statvfs/fstatvfs below must keep calling the local bodies.
+// `linkage = "internal"` retains that local definition while `inline(never)`
+// keeps its named ELF body alive for the assembler's weak same-address alias.
+// Do not replace either with a wrapper: statvfs/fstatvfs below must keep
+// calling the local bodies.
 core::arch::global_asm!(
     ".weak statfs",
     ".set statfs, __statfs",
