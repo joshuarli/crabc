@@ -147,6 +147,29 @@ class HostIdentityTests(unittest.TestCase):
         self.assertNotEqual(runner.cpuinfo_identity_sha256(before), runner.cpuinfo_identity_sha256(different_cpu))
 
 
+class MuslRuntimeStagingTests(unittest.TestCase):
+    def test_stage_keeps_the_fixed_musl_interpreter_path(self) -> None:
+        """The kernel follows the compiler-selected `/opt` PT_INTERP path."""
+
+        with tempfile.TemporaryDirectory(dir=WORK_ROOT) as temporary:
+            directory = Path(temporary)
+            musl = directory / "musl"
+            source_lib = musl / "lib"
+            source_lib.mkdir(parents=True)
+            (source_lib / "ld-musl-x86_64.so.1").write_bytes(b"loader")
+            (source_lib / "libc.so").write_bytes(b"libc")
+            root = directory / "root"
+            root.mkdir()
+
+            runner.stage_musl_runtime(root, musl)
+
+            interpreter = root / runner.evidence.FIXED_MUSL_LOADER.lstrip("/")
+            self.assertTrue(interpreter.is_symlink())
+            self.assertEqual(os.readlink(interpreter), "../../../lib/ld-musl-x86_64.so.1")
+            self.assertEqual(interpreter.resolve().read_bytes(), b"loader")
+            self.assertEqual((root / "opt/musl-1.2.6/lib/libc.so").resolve().read_bytes(), b"libc")
+
+
 class RosterBoundaryTests(unittest.TestCase):
     def test_unbound_smoke_does_not_claim_a_three_run_roster(self) -> None:
         args = type("Args", (), {"attempt_roster": None, "implementation_smoke": True})()

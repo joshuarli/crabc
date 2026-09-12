@@ -1763,7 +1763,7 @@ def _verify_readelf_record(
     if name.endswith(".so"):
         require(not interpreters, f"attempt {index} {provider} shared DSO has PT_INTERP")
     else:
-        expected_interpreter = "/lib/ld-crabc-x86_64.so.1" if provider == "candidate" else "/lib/ld-musl-x86_64.so.1"
+        expected_interpreter = "/lib/ld-crabc-x86_64.so.1" if provider == "candidate" else FIXED_MUSL_LOADER
         require(interpreters == [expected_interpreter], f"attempt {index} {provider} PT_INTERP differs for {name}")
 
 
@@ -2032,6 +2032,12 @@ def _verify_staged_runtime_inventory(
     copied("lib/ld-musl-x86_64.so.1", tools.get("musl_loader"), "musl loader")
     copied("lib/libc.so", tools.get("musl_libc"), "musl libc")
     copied("usr/lib/libc.so", tools.get("musl_libc"), "musl usr libc")
+    for name, target in {
+        FIXED_MUSL_LOADER.lstrip("/"): "../../../lib/ld-musl-x86_64.so.1",
+        FIXED_MUSL_LIBC.lstrip("/"): "../../../lib/libc.so",
+    }.items():
+        require(entries.get(name) == {"path": name, "kind": "symlink", "target": target},
+                f"attempt {index} musl canonical runtime alias differs")
 
 
 def _verify_attempt_execution(checkout: Path, attempt: Mapping[str, Any], index: int) -> None:

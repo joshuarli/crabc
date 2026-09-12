@@ -542,10 +542,17 @@ class StagedRuntimeReplayTests(unittest.TestCase):
             {"path": "lib/ld-musl-x86_64.so.1", "kind": "file", "mode": 0o755, "sha256": "c" * 64, "bytes": 7},
             {"path": "lib/libc.so", "kind": "file", "mode": 0o755, "sha256": "d" * 64, "bytes": 7},
             {"path": "usr/lib/libc.so", "kind": "file", "mode": 0o755, "sha256": "d" * 64, "bytes": 7},
+            {"path": "opt/musl-1.2.6/lib/ld-musl-x86_64.so.1", "kind": "symlink", "target": "../../../lib/ld-musl-x86_64.so.1"},
+            {"path": "opt/musl-1.2.6/lib/libc.so", "kind": "symlink", "target": "../../../lib/libc.so"},
         ]
         evidence._verify_staged_runtime_inventory(
             musl_inventory, "musl", {}, {"musl_loader": loader, "musl_libc": libc}, index=1,
         )
+        missing_interpreter = musl_inventory[:-2]
+        with self.assertRaisesRegex(evidence.EvidenceError, "canonical runtime alias"):
+            evidence._verify_staged_runtime_inventory(
+                missing_interpreter, "musl", {}, {"musl_loader": loader, "musl_libc": libc}, index=1,
+            )
 
 
 class SourceRosterReplayTests(unittest.TestCase):

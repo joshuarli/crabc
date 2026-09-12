@@ -1004,6 +1004,30 @@ def copy_file(source: Path, destination: Path) -> None:
     shutil.copy2(source, destination)
 
 
+def stage_musl_runtime(root: Path, musl_root: Path) -> None:
+    """Stage musl at both its canonical interpreter and library locations.
+
+    The pinned compiler emits the kernel-visible absolute interpreter
+    ``/opt/musl-1.2.6/lib/ld-musl-x86_64.so.1``. It must remain unmodified.
+    A relative alias from that canonical path to the staged ``/lib`` payload
+    keeps one retained loader/libc byte source while making the selected
+    `PT_INTERP` path reachable inside the private chroot.
+    """
+
+    staged = {
+        "ld-musl-x86_64.so.1": root / "lib/ld-musl-x86_64.so.1",
+        "libc.so": root / "lib/libc.so",
+    }
+    for name, destination in staged.items():
+        copy_file(musl_root / "lib" / name, destination)
+    copy_file(musl_root / "lib/libc.so", root / "usr/lib/libc.so")
+    canonical = root / evidence.FIXED_MUSL_LOADER.lstrip("/")
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    for name, destination in staged.items():
+        alias = canonical.parent / name
+        alias.symlink_to(os.path.relpath(destination, alias.parent))
+
+
 def create_dev_null(root: Path) -> None:
     path = root / "dev/null"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1033,11 +1057,7 @@ def stage_lane(work: Path, state: BuildState, *, name: str, selected: Sequence[a
         copy_candidate_product(product, lane_root)
         provider = state.candidate
     else:
-        (lane_root / "lib").mkdir(parents=True, exist_ok=True)
-        (lane_root / "usr/lib").mkdir(parents=True, exist_ok=True)
-        copy_file(musl_root / "lib/ld-musl-x86_64.so.1", lane_root / "lib/ld-musl-x86_64.so.1")
-        copy_file(musl_root / "lib/libc.so", lane_root / "lib/libc.so")
-        copy_file(musl_root / "lib/libc.so", lane_root / "usr/lib/libc.so")
+        stage_musl_runtime(lane_root, musl_root)
         provider = state.musl
     create_dev_null(lane_root)
     binaries = {key: f"/app/bin/{key}" for key in ("workload", "constructor", "graph") if key in provider}
