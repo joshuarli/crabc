@@ -8,6 +8,7 @@ readonly BUILDER="$ROOT_DIR/scripts/build_x86_64_owned_sysroot.py"
 readonly PROBE="$ROOT_DIR/compat/x86_64/owned_wordexp_probe.c"
 readonly POSIX_PROBE="$ROOT_DIR/compat/x86_64/owned_wordexp_posix_probe.c"
 readonly ENGINE_PROBE="$ROOT_DIR/compat/x86_64/owned_wordexp_engine_probe.c"
+readonly SOURCE_POLICY_PROBE="$ROOT_DIR/compat/x86_64/owned_wordexp_source_policy_probe.c"
 readonly SYMBOLS=(wordexp wordfree)
 
 fail() { printf 'ERROR: x86 owned wordexp: %s\n' "$*" >&2; exit 1; }
@@ -69,7 +70,7 @@ cd "$ROOT_DIR"
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -I"$ROOT_DIR/include" -E -H "$PROBE" \
 	>/dev/null 2>"$trace"
 for header in errno.h wordexp.h stdio.h stdlib.h string.h unistd.h features.h bits/alltypes.h \
-    fcntl.h signal.h stddef.h sys/types.h sys/wait.h; do
+    fcntl.h signal.h stddef.h sys/stat.h sys/types.h sys/wait.h; do
 	grep -Fq "$ROOT_DIR/include/$header" "$trace" ||
 		fail "fixture did not use project $header"
 done
@@ -77,6 +78,8 @@ grep -Fq "$POSIX_PROBE" "$trace" ||
 	fail "fixture did not include the POSIX correction cells"
 grep -Fq "$ENGINE_PROBE" "$trace" ||
 	fail "fixture did not include the engine C ABI cells"
+grep -Fq "$SOURCE_POLICY_PROBE" "$trace" ||
+	fail "fixture did not include the upstream policy observation cells"
 
 # This deliberately pins the semantic oracle to a separately linked musl
 # static ET_EXEC. Pinned-musl static PIE is a known wrapper diagnostic, while

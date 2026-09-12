@@ -458,6 +458,69 @@ class OwnedWordexpEnvironmentTests(unittest.TestCase):
 
 
 class OwnedWordexpEngineResultTests(unittest.TestCase):
+    def test_source_policy_companion_rejects_changed_missing_reordered_or_extra_observations(self) -> None:
+        module = load_module()
+        outcomes = (
+            (0, 0, "-"), (2, 0, "-"), (2, 0, "-"), (2, 0, "-"), (2, 0, "-"),
+            (5, 0, "-"), (5, 0, "-"), (5, 0, "-"), (2, 0, "-"),
+            (0, 1, "9:230a6563686f20785c"), (5, 0, "-"), (2, 0, "-"),
+            (0, 1, "0:"), (4, 0, "-"), (4, 0, "-"), (0, 2, "1:31,1:31"),
+            (2, 0, "-"), (2, 0, "-"), (2, 0, "-"), (2, 0, "-"),
+        )
+        transcript = b"".join(
+            f"owned-wordexp-source-policy: case={index:02d} status={status} count={count} "
+            f"wordhex={words} stderrhex=- effect=0 env=0\n".encode()
+            for index, (status, count, words) in enumerate(outcomes, 1))
+        self.assertEqual(module.WORD_EXP_CASES["source-policy"][2], transcript)
+        oracle = (b"0\n", module.SOURCE_POLICY_ORACLE_TRACE, b"")
+        candidate = (b"0\n", transcript, b"")
+        with unittest.mock.patch.object(module, "_result_streams", side_effect=[oracle, candidate]):
+            module._assert_case_results(ROOT, "source-policy", {}, {}, "source-policy")
+        for side, original in enumerate((oracle, candidate)):
+            lines = original[1].splitlines(keepends=True)
+            changed_traces = (
+                b"".join(lines[1:]), b"".join(reversed(lines)), original[1] + lines[-1],
+                original[1].replace(b"env=0", b"env=1", 1),
+                original[1].replace(b"effect=0", b"effect=1", 1),
+                original[1].replace(b"status=0", b"status=5", 1),
+                original[1].replace(b"count=0", b"count=1", 1),
+                original[1].replace(b"stderrhex=-", b"stderrhex=78", 1),
+                original[1].replace(b"wordhex=-", b"wordhex=!record", 1),
+                original[1].replace(b"wordhex=-", b"wordhex=0:", 1),
+                b"owned-wordexp-source-policy: PASS\n",
+            )
+            for changed in (*((b"0\n", trace, b"") for trace in changed_traces),
+                            (b"1\n", original[1], b""), (b"0\n", original[1], b"diagnostic\n")):
+                streams = [oracle, candidate]
+                streams[side] = changed
+                with self.subTest(side=side, changed=changed):
+                    with unittest.mock.patch.object(module, "_result_streams", side_effect=streams):
+                        with self.assertRaises(module.EvidenceError):
+                            module._assert_case_results(ROOT, "source-policy", {}, {}, "source-policy")
+        with unittest.mock.patch.object(module, "_result_streams", side_effect=[oracle, oracle]):
+            with self.assertRaises(module.EvidenceError):
+                module._assert_case_results(ROOT, "source-policy", {}, {}, "source-policy")
+
+    def test_badchar_record_requires_zero_candidate_count_and_exact_source_observation(self) -> None:
+        module = load_module()
+        case = "badchar-record"
+        oracle = (b"0\n", b"owned-wordexp-badchar-record: SOURCE-RED fresh-count-unchanged\n", b"")
+        candidate = (b"0\n", b"owned-wordexp-badchar-record: PASS\n", b"")
+        with unittest.mock.patch.object(module, "_result_streams", side_effect=[oracle, candidate]):
+            module._assert_case_results(ROOT, case, {}, {}, case)
+        for changed_oracle, changed_candidate in (
+            (candidate, candidate), (oracle, oracle),
+            ((b"1\n", oracle[1], b""), candidate),
+            (oracle, (b"1\n", candidate[1], b"")),
+            ((b"0\n", oracle[1] + b"extra\n", b""), candidate),
+            (oracle, (b"0\n", candidate[1], b"unexpected diagnostic\n")),
+            ((b"0\n", oracle[1], b"unexpected diagnostic\n"), candidate),
+        ):
+            with self.subTest(oracle=changed_oracle, candidate=changed_candidate):
+                with unittest.mock.patch.object(module, "_result_streams", side_effect=[changed_oracle, changed_candidate]):
+                    with self.assertRaises(module.EvidenceError):
+                        module._assert_case_results(ROOT, case, {}, {}, case)
+
     def test_quiet_source_observation_requires_exact_pinned_diagnostic(self) -> None:
         module = load_module()
         candidate = (b"0\n", b"owned-wordexp: PASS\n", b"")

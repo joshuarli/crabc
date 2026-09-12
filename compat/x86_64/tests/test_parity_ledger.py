@@ -5935,6 +5935,12 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/native-strptime-reference/strptime.c",
             "compat/x86_64/native-strptime-reference/COPYRIGHT",
             "compat/x86_64/native-strptime-reference/README.md",
+            "compat/x86_64/owned_wordexp_upstream_policy.py",
+            "compat/x86_64/owned_wordexp_upstream_policy_diagnostics.json",
+            "compat/x86_64/owned_wordexp_source_policy_probe.c",
+            "compat/x86_64/owned-wordexp-upstream-policy.md",
+            "compat/x86_64/owned_wordexp_evidence.py",
+            "compat/x86_64/tests/test_owned_wordexp_upstream_policy.py",
             "compat/x86_64/atomic_addressable_abi_dynamic_main.c",
             "compat/x86_64/run_owned_atomic_addressable_profile.sh",
             "compat/x86_64/owned_atomic_addressable_profile.py",
@@ -5949,11 +5955,13 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             family["native_evidence"][0]["command"],
             "./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE "
-            "--atomic-addressable-profile FILE --output NEW_DIR",
+            "--atomic-addressable-profile FILE --wordexp-profile FILE --wordexp-expected-native-inputs FILE --output NEW_DIR",
         )
         for phrase in (
             "credential, crypt, and addressable-atomic",
             "fixed strptime source-and-POSIX contract",
+            "twenty candidate and 104 oracle wordexp diagnostics",
+            "independently captured native-input seal",
             "56 retained-pending-c-abi-policy rows",
             "Musl or C++ header parity",
         ):
@@ -5973,6 +5981,21 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ledger.LedgerError, "must own .*strptime.c"):
             ledger.validate_ledger(changed)
+
+        for argument in ("--wordexp-profile FILE ", "--wordexp-expected-native-inputs FILE "):
+            changed = self.data()
+            changed_family = self.family(changed, "libc.posix-runtime")
+            changed_family["native_evidence"][0]["command"] = family["native_evidence"][0]["command"].replace(argument, "")
+            with self.subTest(argument=argument), self.assertRaisesRegex(ledger.LedgerError, "finite native profile command"):
+                ledger.require_posix_native_profile_companions(changed_family)
+
+        for owner in ("compat/x86_64/owned_wordexp_upstream_policy_diagnostics.json",
+                      "compat/x86_64/owned_wordexp_source_policy_probe.c"):
+            changed = self.data()
+            changed_family = self.family(changed, "libc.posix-runtime")
+            changed_family["source_owners"].remove(owner)
+            with self.subTest(owner=owner), self.assertRaisesRegex(ledger.LedgerError, "must own"):
+                ledger.require_posix_native_profile_companions(changed_family)
 
     def test_uio_cxx_archive_linkage_stays_a_closed_cxx_consumer_artifact(self) -> None:
         data = self.data()

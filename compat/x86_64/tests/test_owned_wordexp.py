@@ -32,6 +32,8 @@ class OwnedWordexpContracts(unittest.TestCase):
             "errno = ERANGE", "errno != ERANGE", "owned-wordexp: PASS",
             "owned-wordexp-shell-unavailable: PASS",
             '#include "owned_wordexp_posix_probe.c"',
+            '#include "owned_wordexp_source_policy_probe.c"',
+            '--source-policy', 'wordexp_source_policy_run()', '--badchar-record',
         ):
             self.assertIn(boundary, source)
 
@@ -130,6 +132,9 @@ class OwnedWordexpContracts(unittest.TestCase):
             "MODULE = \"libc/src/c_abi/x86_64/owned_wordexp.rs\"",
             "ENGINE = \"libc/src/c_abi/x86_64/owned_wordexp_engine.rs\"",
             "installed header trace omitted the POSIX correction cells",
+            "SOURCE_POLICY_PROBE", "owned-wordexp-upstream-policy.md",
+            "installed header trace omitted the upstream policy observation cells",
+            "SOURCE_POLICY_CANDIDATE_TRACE", "SOURCE_POLICY_ORACLE_TRACE",
         ):
             self.assertIn(boundary, source)
 

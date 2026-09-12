@@ -1,4 +1,4 @@
-"""The native aggregate requires its matrix, two companions, and fresh output."""
+"""The native aggregate requires its matrix, companion seals, and fresh output."""
 import json
 import os
 from pathlib import Path
@@ -25,6 +25,10 @@ class OwnedPosixNativeDispatchTests(unittest.TestCase):
         self.crypt.write_text('{}\n')
         self.atomic = self.state / 'atomic addressable profile.json'
         self.atomic.write_text('{}\n')
+        self.wordexp = self.state / 'wordexp profile.json'
+        self.wordexp.write_text('{}\n')
+        self.wordexp_inputs = self.state / 'wordexp expected inputs.json'
+        self.wordexp_inputs.write_text('{}\n')
         self.output = self.state / 'fresh native'
         self.capture = self.work / 'docker.jsonl'
         docker = self.work / 'docker'
@@ -48,20 +52,19 @@ class OwnedPosixNativeDispatchTests(unittest.TestCase):
         expected = ['--family-execution', '/workspace/.work/x86_64/family execution.json',
                     '--crypt-profile', '/workspace/.work/x86_64/crypt profile.json',
                     '--atomic-addressable-profile', '/workspace/.work/x86_64/atomic addressable profile.json',
+                    '--wordexp-profile', '/workspace/.work/x86_64/wordexp profile.json',
+                    '--wordexp-expected-native-inputs', '/workspace/.work/x86_64/wordexp expected inputs.json',
                     '--output', '/workspace/.work/x86_64/fresh native']
-        for receipt, crypt, atomic, output in ((self.receipt, self.crypt, self.atomic, self.output),
-                (self.receipt.relative_to(ROOT), self.crypt.relative_to(ROOT), self.atomic.relative_to(ROOT),
-                 self.output.relative_to(ROOT)),
-                (expected[1], expected[3], expected[5], expected[7])):
-            with self.subTest(receipt=receipt):
-                result = self.invoke(['--family-execution', str(receipt),
-                    '--crypt-profile', str(crypt), '--atomic-addressable-profile', str(atomic),
-                    '--output', str(output)])
+        paths = (self.receipt, self.crypt, self.atomic, self.wordexp, self.wordexp_inputs, self.output)
+        for supplied in (paths, tuple(path.relative_to(ROOT) for path in paths), tuple(expected[1::2])):
+            with self.subTest(paths=supplied):
+                arguments = [part for flag, path in zip(expected[::2], supplied) for part in (flag, str(path))]
+                result = self.invoke(arguments)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 runs = [a for a in map(json.loads, self.capture.read_text().splitlines()) if a[0] == 'run']
                 self.assertEqual(len(runs), 1)
                 argv = runs[0]
-                self.assertEqual(argv[-12:], ['python3', '-B',
+                self.assertEqual(argv[-16:], ['python3', '-B',
                     '/workspace/compat/x86_64/owned_posix_native_execution.py', 'run', *expected])
                 for flag in ('--network=none', '--cap-add=SYS_ADMIN', '--cap-add=SYS_CHROOT',
                              '--security-opt=apparmor=unconfined', '--security-opt=seccomp=unconfined'):
@@ -73,32 +76,20 @@ class OwnedPosixNativeDispatchTests(unittest.TestCase):
     def test_bad_requests_do_not_invoke_docker_or_create_output(self):
         valid = ['--family-execution', str(self.receipt), '--crypt-profile', str(self.crypt),
                  '--atomic-addressable-profile', str(self.atomic),
+                 '--wordexp-profile', str(self.wordexp),
+                 '--wordexp-expected-native-inputs', str(self.wordexp_inputs),
                  '--output', str(self.output)]
-        alias = self.state / 'alias'
-        alias.symlink_to(self.receipt)
-        crypt_alias = self.state / 'crypt alias'
-        crypt_alias.symlink_to(self.crypt)
-        atomic_alias = self.state / 'atomic alias'
-        atomic_alias.symlink_to(self.atomic)
-        invalid = [[], valid[:2], valid[:4], valid[:6], valid[:-1], valid + valid[:2], valid + valid[2:4],
-                   valid + valid[4:6],
-                   valid + ['--timeout', '1'],
-                   ['--family-execution', '', *valid[2:]],
-                   ['--family-execution', str(alias), *valid[2:]],
-                   ['--family-execution', str(self.state), *valid[2:]],
-                   [*valid[:2], *valid[4:]],
-                   [*valid[:2], '--crypt-profile', str(crypt_alias), *valid[4:]],
-                   [*valid[:2], '--crypt-profile', str(self.state), *valid[4:]],
-                   [*valid[:2], '--crypt-profile', str(self.state / 'missing.json'), *valid[4:]],
-                   [*valid[:2], '--crypt-profile', '/workspace/etc/crypt.json', *valid[4:]],
-                   [*valid[:4], *valid[6:]],
-                   [*valid[:4], '--atomic-addressable-profile', str(atomic_alias), *valid[6:]],
-                   [*valid[:4], '--atomic-addressable-profile', str(self.state), *valid[6:]],
-                   [*valid[:4], '--atomic-addressable-profile', str(self.state / 'missing.json'), *valid[6:]],
-                   [*valid[:4], '--atomic-addressable-profile', '/workspace/etc/atomic.json', *valid[6:]],
-                   [*valid[:6], '--output', str(self.receipt)],
-                   [*valid[:6], '--output', str(self.state / 'missing/fresh')],
-                   [*valid[:6], '--output', '/workspace/etc/fresh']]
+        invalid = [[], valid[:-1], valid + ['--timeout', '1']]
+        for index in range(0, len(valid), 2):
+            invalid.extend((valid[:index] + valid[index + 2:], valid + valid[index:index + 2]))
+        for index, receipt in enumerate((self.receipt, self.crypt, self.atomic, self.wordexp, self.wordexp_inputs)):
+            offset = index * 2
+            alias = self.state / f'alias-{index}'
+            alias.symlink_to(receipt)
+            for path in ('', alias, self.state, self.state / 'missing.json', '/workspace/etc/profile.json'):
+                invalid.append([*valid[:offset + 1], str(path), *valid[offset + 2:]])
+        for output in (self.receipt, self.state / 'missing/fresh', '/workspace/etc/fresh'):
+            invalid.append([*valid[:-1], str(output)])
         before = set(self.state.rglob('*'))
         for arguments in invalid:
             with self.subTest(arguments=arguments):

@@ -235,14 +235,17 @@ remain unchanged. A null replacement receipt at the composite boundary is an
 unmet condition; the child stress receipt retains its null field because the
 composite owns this binding.
 
-`./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --output NEW_DIR`
+`./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --wordexp-profile FILE --wordexp-expected-native-inputs FILE --output NEW_DIR`
 executes this contract through `owned_posix_native_execution.py`. Its
 `native-execution.json` binds all five source-aware component observations and
 all three I/O replay receipts, including the eighteen cells. The crypt
-companion must use the identical installed product. Only the finite existing
-credential and crypt profile differences in `owned-posix-native-dispositions.md`
-can qualify with raw failure; original sources, counts, statuses, and diagnostics
-remain intact. Every other failure remains incomplete. Host validation
+and atomic companions must use the identical installed product. The wordexp
+companion must validate with the separately captured native-input seal and
+contain all four dynamic `source-policy` cells for that same product.
+Only the finite credential, crypt, atomic-addressability, strptime, wordexp,
+and corrected-math dispositions in `owned-posix-native-dispositions.md`
+can qualify with raw failure; original sources, counts, statuses, and
+diagnostics remain intact. Every other failure remains incomplete. Host validation
 reconstructs those bindings without running target programs. See
 `owned-posix-native-execution.md` for inputs, failure retention, and the exact
 non-promoting completion boundary.

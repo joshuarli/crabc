@@ -321,10 +321,14 @@ static int source_nocmd_case(void)
  * linking it unchanged to the pinned-musl oracle and every owned product. */
 #include "owned_wordexp_posix_probe.c"
 #include "owned_wordexp_engine_probe.c"
+#include "owned_wordexp_source_policy_probe.c"
 
 int main(int argc, char *argv[])
 {
     int result;
+
+    if (argc == 2 && strcmp(argv[1], "--source-policy") == 0)
+        return wordexp_source_policy_run();
 
     if (argc == 2 && strncmp(argv[1], "--engine-", 9) == 0)
         return wordexp_engine_run_selector(argv[1]);

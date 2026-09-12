@@ -616,7 +616,7 @@ Native Linux/x86-64 staged-foundation evidence commands:
   owned-posix-composition [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test shared POSIX process state and cancellation
   owned-posix-static-products WORK prepare two reproducible static trees and an extracted tree
   owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR  execute the prepared static and dynamic POSIX family matrix
-  owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --output NEW_DIR  execute the five native POSIX components on the matrix's installed product
+  owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --wordexp-profile FILE --wordexp-expected-native-inputs FILE --output NEW_DIR  execute the five native POSIX components on the matrix's installed product
   owned-pthread-family --family-execution FILE --output NEW_DIR [--jobs 1|2|3]  validate installed pthread/TLS behavior on the matrix products
   owned-pthread-family-composition --static-sysroot STATIC DYNAMIC  replay the bounded supplied-product C11/TLS composition
   owned-posix-filesystem [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]  test installed POSIX filesystem provider composition
@@ -2789,8 +2789,8 @@ prepare_owned_posix_family_arguments() {
 }
 
 prepare_owned_posix_native_arguments() {
-    local family_receipt='' crypt_receipt='' atomic_receipt='' output=''
-    local expected='usage: ./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --output NEW_DIR'
+    local family_receipt='' crypt_receipt='' atomic_receipt='' wordexp_receipt='' wordexp_inputs='' output=''
+    local expected='usage: ./scripts/dev-x86_64.sh owned-posix-native --family-execution FILE --crypt-profile FILE --atomic-addressable-profile FILE --wordexp-profile FILE --wordexp-expected-native-inputs FILE --output NEW_DIR'
     while [ "$#" -gt 0 ]; do
         [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$expected"
         case "$1" in
@@ -2806,6 +2806,14 @@ prepare_owned_posix_native_arguments() {
                 [ -z "$atomic_receipt" ] || fail "$expected"
                 atomic_receipt="$2"
                 ;;
+            --wordexp-profile)
+                [ -z "$wordexp_receipt" ] || fail "$expected"
+                wordexp_receipt="$2"
+                ;;
+            --wordexp-expected-native-inputs)
+                [ -z "$wordexp_inputs" ] || fail "$expected"
+                wordexp_inputs="$2"
+                ;;
             --output)
                 [ -z "$output" ] || fail "$expected"
                 output="$2"
@@ -2814,12 +2822,16 @@ prepare_owned_posix_native_arguments() {
         esac
         shift 2
     done
-    [ -n "$family_receipt" ] && [ -n "$crypt_receipt" ] && [ -n "$atomic_receipt" ] && [ -n "$output" ] || fail "$expected"
+    [ -n "$family_receipt" ] && [ -n "$crypt_receipt" ] && [ -n "$atomic_receipt" ] && \
+        [ -n "$wordexp_receipt" ] && [ -n "$wordexp_inputs" ] && [ -n "$output" ] || fail "$expected"
     family_receipt="$(translate_owned_posix_product "$family_receipt" receipt-file)" || exit 2
     crypt_receipt="$(translate_owned_posix_product "$crypt_receipt" receipt-file)" || exit 2
     atomic_receipt="$(translate_owned_posix_product "$atomic_receipt" receipt-file)" || exit 2
+    wordexp_receipt="$(translate_owned_posix_product "$wordexp_receipt" receipt-file)" || exit 2
+    wordexp_inputs="$(translate_owned_posix_product "$wordexp_inputs" receipt-file)" || exit 2
     output="$(translate_owned_posix_product "$output" fresh-output)" || exit 2
-    POSIX_NATIVE_ARGUMENTS=(--family-execution "$family_receipt" --crypt-profile "$crypt_receipt" --atomic-addressable-profile "$atomic_receipt" --output "$output")
+    POSIX_NATIVE_ARGUMENTS=(--family-execution "$family_receipt" --crypt-profile "$crypt_receipt" --atomic-addressable-profile "$atomic_receipt" \
+        --wordexp-profile "$wordexp_receipt" --wordexp-expected-native-inputs "$wordexp_inputs" --output "$output")
 }
 
 prepare_owned_pthread_family_arguments() {

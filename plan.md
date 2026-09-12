@@ -39,10 +39,10 @@ utmp, account-file, and `rand`/`srand` gaps are repaired. Both raw reports remai
 under `.work/x86_64/{libc-test-measurement-04c4cbd3,os-measurement-04c4cbd3}/`.
 
 Finite crypt, atomic, credential, and `strptime` dispositions retain their
-original raw outcomes. The same-product crypt and atomic companions pass;
-these dispositions admit no BSD random or word-expansion failure. The new
-owned expansion engine is selected as described below; fresh installed and
-aggregate measurements remain required. See
+original raw outcomes. The same-product crypt and atomic companions pass.
+The selected word-expansion engine and its finite policy proof are described
+below; fresh installed and aggregate measurements remain required. No
+disposition admits a BSD random provider failure. See
 [`owned-posix-native-dispositions.md`](compat/x86_64/owned-posix-native-dispositions.md).
 
 The native x86 word-expansion provider now selects the owned parser and
@@ -51,18 +51,42 @@ and transactional C result owner. Ordinary expansion works without `/bin/sh`;
 undefined variables have typed `WRDE_BADVAL` errors, and only selected command
 bodies run through the shell. Integrated checks pass 57 core/process tests,
 all six retained arithmetic-delimiter line-join comparisons, and the static
-C gate's 23 cases in both ET_EXEC and static-PIE modes. The final core worker
+C gate's 25 cases in both ET_EXEC and static-PIE modes. The final core worker
 also passes 48 core tests, 907 extended cases, and allocation-failure sweeps
 for both contiguous and joined ambiguous arithmetic openings. The retained
 224-point core sweep and the selected private C result-allocation witness
 prove cleanup and accepted-prefix ownership at their respective revisions.
 Actual private spawn/wait and C/C.UTF-8 pathname/passwd fixtures pass.
 
+At `96a4a847`, the preceding 23-case installed object passed all 138 cells
+across six modes. Its retained receipt is
+`.work/x86_64/tmp/owned-wordexp-products.im0tid7y/owned-wordexp-products.json`.
+A full native libc-test run on that dynamic product retains 427 of 434
+passing comparisons, the random link blocker, and the same six failed
+comparisons. Wordexp has exactly 20 candidate and 104 oracle diagnostics,
+with raw status 1 on both sides and empty stderr. The complete unit's static
+and dynamic outcomes agree after only source-path and terminal-marker
+projection. Its report is
+`.work/x86_64/libc-test-wordexp-96a4a847/tmp/owned-libc-test.OUhkmM/libc-test.json`.
+
+The final C review fixes fresh `WRDE_BADCHAR` count publication while retaining
+the exact append record. A new same-object selector proves the candidate's
+zero count against musl's unchanged sentinel. The separate twenty-input
+`source-policy` selector checks every reviewed status, word, captured
+diagnostic, command effect, and parent-environment effect. Its fixed musl
+trace remains distinct from the required candidate trace. Native accounting
+requires a fully validated companion on the same dynamic product and a
+separately captured native-input seal; it retains the upstream unit's failed
+raw status. See
+[`owned-wordexp-upstream-policy.md`](compat/x86_64/owned-wordexp-upstream-policy.md).
+
 The selection logs are under `.work/x86_64/wordexp-selection-review/`, including
 `combined-core-09afafea.log`, `selected-static-component.log`, and
-`result-private-first.log`. The former whole-input shell provider and its x86
-scanner are retired. Fresh six-mode installed evidence, full native libc-test
-measurement, and the complete dynamic product gate remain required. The fixed
+`result-private-first.log`; `selected-static-25-cases.log` records the expanded
+static gate. The former whole-input shell provider and its x86 scanner are
+retired. Fresh 150-cell six-mode installed evidence, full native libc-test
+measurement, and the complete dynamic product gate remain required after
+the final count fix and policy accounting. The fixed
 musl observations and untouched upstream failures retain their raw outcomes;
 finite POSIX interpretations do not waive arbitrary failures. See
 [`owned-wordexp-engine.md`](compat/x86_64/owned-wordexp-engine.md).

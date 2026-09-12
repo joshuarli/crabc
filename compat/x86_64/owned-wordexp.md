@@ -135,6 +135,14 @@ the first unquoted right brace closes the parameter, and the final naked
 brace is `WRDE_BADCHAR`. These are specific source-test interpretations,
 not permission to waive another candidate outcome or close the raw aggregate.
 
+The [upstream-policy companion](owned-wordexp-upstream-policy.md) makes all
+twenty reviewed inputs direct C observations. Its `source-policy` selector
+retains every status, count, word byte, diagnostic byte, command effect, and
+parent-environment effect in order. The reader requires the complete fixed
+musl trace separately from the complete required candidate trace. The
+fixture's status zero means collection completed; it never waives a changed
+observation or relabels the untouched upstream unit as passing.
+
 ## Native evidence
 
 `./scripts/dev-x86_64.sh libc-owned-wordexp` exercises the same C object in
@@ -167,7 +175,10 @@ After validating the report, the runner prints its retained directory with the
 catalog's `evidence:` marker, followed by the report path on the final line.
 
 The version-4 receipt uses one finite case registry in
-`compat/x86_64/owned_wordexp_evidence.py`. It requires the candidate's exact
+`compat/x86_64/owned_wordexp_evidence.py`: 25 cases in each product mode,
+including the fresh BADCHAR record and twenty-input upstream-policy selectors.
+That yields 150 cells with both products or 100 with only the supplied
+dynamic product. It requires the candidate's exact
 positive status and transcript in each declared cell, separately checks the
 fixed oracle observation below, and rejects unexpected diagnostic bytes.
 The same policy validates the focused static component runner. Each actual

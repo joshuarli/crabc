@@ -38,6 +38,7 @@ TARGET = "x86_64-unknown-linux-musl"
 PROBE = "compat/x86_64/owned_wordexp_probe.c"
 POSIX_PROBE = "compat/x86_64/owned_wordexp_posix_probe.c"
 ENGINE_PROBE = "compat/x86_64/owned_wordexp_engine_probe.c"
+SOURCE_POLICY_PROBE = "compat/x86_64/owned_wordexp_source_policy_probe.c"
 MODULE = "libc/src/c_abi/x86_64/owned_wordexp.rs"
 ENGINE = "libc/src/c_abi/x86_64/owned_wordexp_engine.rs"
 PROCESS = "libc/src/c_abi/x86_64/owned_wordexp_process.rs"
@@ -47,8 +48,8 @@ DOC = "compat/x86_64/owned-wordexp.md"
 RUNNER = "compat/x86_64/run_owned_wordexp.sh"
 LEGACY_RUNNER = "compat/x86_64/run_libc_owned_wordexp.sh"
 HEADERS = ("errno.h", "wordexp.h", "stdio.h", "stdlib.h", "string.h", "unistd.h", "features.h",
-           "bits/alltypes.h", "fcntl.h", "signal.h", "stddef.h", "sys/types.h", "sys/wait.h")
-SOURCES = (PROBE, POSIX_PROBE, ENGINE_PROBE, MODULE, ENGINE, PROCESS, PATHS, RESULTS, DOC, RUNNER, LEGACY_RUNNER,
+           "bits/alltypes.h", "fcntl.h", "signal.h", "stddef.h", "sys/stat.h", "sys/types.h", "sys/wait.h")
+SOURCES = (PROBE, POSIX_PROBE, ENGINE_PROBE, SOURCE_POLICY_PROBE, MODULE, ENGINE, PROCESS, PATHS, RESULTS, DOC, RUNNER, LEGACY_RUNNER,
            "libc/src/c_abi/x86_64/static_c_abi.rs", "libc/build.rs",
            "libc/src/c_abi/x86_64/owned_pattern.rs", "libc/src/c_abi/x86_64/owned_fnmatch.rs",
            "libc/src/c_abi/x86_64/owned_glob.rs",
@@ -56,6 +57,7 @@ SOURCES = (PROBE, POSIX_PROBE, ENGINE_PROBE, MODULE, ENGINE, PROCESS, PATHS, RES
            "compat/x86_64/owned-wordexp-paths.md", "compat/x86_64/owned-wordexp-results.md",
            "compat/x86_64/owned-wordexp-pattern-boundary.md",
            "compat/x86_64/owned-wordexp-engine-abi.md",
+           "compat/x86_64/owned-wordexp-upstream-policy.md",
            "compat/x86_64/owned_wordexp_evidence.py",
            "compat/x86_64/owned_dynamic_receipt.py",
            "compat/x86_64/owned_posix_product_evidence.py", "compat/x86_64/owned_crypt_runtime_evidence.py",
@@ -67,6 +69,53 @@ NULL_FIXTURE_PATH = "dev/null"
 NULL_FIXTURE_MAJOR = 1
 NULL_FIXTURE_MINOR = 3
 NULL_FIXTURE_MODE = 0o666
+# Exact twenty-row policies from the same installed-header object. These
+# contain successful word bytes, captured diagnostics, command effects, and
+# parent-environment effects; process status zero means fixture completion.
+# See owned-wordexp-upstream-policy.md for the per-input standards basis.
+SOURCE_POLICY_CANDIDATE_TRACE = b"""owned-wordexp-source-policy: case=01 status=0 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=02 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=03 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=04 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=05 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=06 status=5 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=07 status=5 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=08 status=5 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=09 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=10 status=0 count=1 wordhex=9:230a6563686f20785c stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=11 status=5 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=12 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=13 status=0 count=1 wordhex=0: stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=14 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=15 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=16 status=0 count=2 wordhex=1:31,1:31 stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=17 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=18 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=19 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=20 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+"""
+SOURCE_POLICY_ORACLE_TRACE = b"""owned-wordexp-source-policy: case=01 status=0 count=1 wordhex=1:32 stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=02 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202229220a effect=0 env=0
+owned-wordexp-source-policy: case=03 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202228220a effect=0 env=0
+owned-wordexp-source-policy: case=04 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202229220a effect=0 env=0
+owned-wordexp-source-policy: case=05 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520303a2073796e746178206572726f723a20756e6578706563746564202228220a effect=0 env=0
+owned-wordexp-source-policy: case=06 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=07 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=08 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=09 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=10 status=0 count=1 wordhex=3:78270a stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=11 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=12 status=0 count=1 wordhex=5:247b41427d stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=13 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=14 status=4 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=15 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520303a2061726974686d657469632073796e746178206572726f720a effect=1 env=0
+owned-wordexp-source-policy: case=16 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=17 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520313a2073796e746178206572726f723a206d697373696e6720272929270a effect=0 env=0
+owned-wordexp-source-policy: case=18 status=5 count=0 wordhex=- stderrhex=73683a206576616c3a206c696e6520323a2073796e746178206572726f723a206d697373696e6720272929270a effect=0 env=0
+owned-wordexp-source-policy: case=19 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+owned-wordexp-source-policy: case=20 status=2 count=0 wordhex=- stderrhex=- effect=0 env=0
+"""
+
 # Every entry uses the same installed-header object. `shell_case` controls the
 # sealed private fixture, while `arguments` select one public C observation.
 # `source-match` is an ordinary musl control. The other named policies retain
@@ -96,6 +145,8 @@ WORD_EXP_CASES = {
     "engine-parameter-word": ("normal", ("--engine-parameter-word",), b"owned-wordexp-engine-parameter-word: PASS\n", "engine-source-red"),
     "engine-diagnostics": ("normal", ("--engine-diagnostics",), b"owned-wordexp-engine-diagnostics: PASS\n", "engine-source-red"),
     "engine-sigpipe": ("normal", ("--engine-sigpipe",), b"owned-wordexp-engine-sigpipe: PASS\n", "engine-source-red"),
+    "badchar-record": ("normal", ("--badchar-record",), b"owned-wordexp-badchar-record: PASS\n", "badchar-record-source-red"),
+    "source-policy": ("normal", ("--source-policy",), SOURCE_POLICY_CANDIDATE_TRACE, "upstream-source-policy"),
 }
 # Exact source transcripts for the new direct C boundary cases. A source RED
 # never permits the selected candidate to fail, even with the same transcript.
@@ -882,6 +933,16 @@ def _assert_case_results(root: Path, case: str, oracle: Mapping[str, Any], candi
                 oracle_stdout != ENGINE_SOURCE_OBSERVATIONS[case] or oracle_stderr or
                 candidate_status != b"0\n" or candidate_stdout != expected_candidate_stdout or candidate_stderr):
             fail(f"{description} engine source observation or positive candidate result differs")
+    elif comparison == "upstream-source-policy":
+        if (oracle_status != b"0\n" or oracle_stdout != SOURCE_POLICY_ORACLE_TRACE or oracle_stderr or
+                candidate_status != b"0\n" or candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} finite upstream policy source or candidate trace differs")
+    elif comparison == "badchar-record-source-red":
+        if (oracle_status != b"0\n" or
+                oracle_stdout != b"owned-wordexp-badchar-record: SOURCE-RED fresh-count-unchanged\n" or
+                oracle_stderr or candidate_status != b"0\n" or
+                candidate_stdout != expected_candidate_stdout or candidate_stderr):
+            fail(f"{description} fresh BADCHAR count source observation or candidate record differs")
     elif comparison == "quiet-source-red":
         # The ordinary source workload carries an unterminated quote through
         # a no-SHOWERR call. Its pinned-musl stderr is source-control evidence;
@@ -1030,6 +1091,8 @@ def _validate_header_trace(root: Path, trace: Path, dynamic: Path) -> dict[str, 
         fail("installed header trace omitted the POSIX correction cells")
     if _mounted(root, root / ENGINE_PROBE) not in text:
         fail("installed header trace omitted the engine C ABI cells")
+    if _mounted(root, root / SOURCE_POLICY_PROBE) not in text:
+        fail("installed header trace omitted the upstream policy observation cells")
     return _checkout_identity(root, trace, "installed wordexp header trace")
 
 
