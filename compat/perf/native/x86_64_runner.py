@@ -23,7 +23,7 @@ import sys
 import tempfile
 import time
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping, Sequence
 
 
@@ -139,6 +139,70 @@ PATH_DEPENDENCY_SOURCE_KINDS = {
     "rustix@1.1.4": "rustix",
     "rustybench@0.1.0": "rustybench",
     "rustybench-macros@0.1.0": "rustybench",
+}
+
+
+# The dispatcher runs this companion in one fixed execution namespace.  Report
+# replay translates these recorded locations back to independent host inputs;
+# it never lets a retained absolute path choose a different container mount.
+EXECUTION_ROOT = "/workspace"
+EXPECTED_EXECUTION_SOURCES = {
+    "rustybench": "/inputs/rustybench",
+    "rustix": "/inputs/rustix",
+    "crabc_rs": f"{EXECUTION_ROOT}/crabc-rs",
+    "frozen_source": f"{EXECUTION_ROOT}/compat/perf/native/src/main.rs",
+}
+
+EXPECTED_RUSTC_FIELDS = {
+    "release": "1.99.0-nightly",
+    "commit-hash": "89c61a7545da48b06116675b888398d02a4064c7",
+    "host": "x86_64-unknown-linux-musl",
+}
+EXPECTED_CARGO_VERSION = "cargo 1.99.0-nightly (3efb1f477 2026-07-17)"
+EXPECTED_INSTALLED_TARGETS = ["x86_64-unknown-linux-musl"]
+
+# Cargo metadata's resolve nodes are the target-filtered active package graph,
+# including exact activated features.  The lock alone cannot prove this: it
+# retains packages that a particular feature-selected benchmark need not use.
+EXPECTED_ACTIVE_FEATURES: dict[str, dict[str, tuple[str, ...]]] = {
+    "crabc": {
+        "bitflags@2.13.2": (),
+        "crabc-core@0.3.0": ("default",),
+        "crabc-perf-native-x86@0.0.0": ("crabc",),
+        "crabc-rs@0.3.0": (),
+        "itoa@1.0.18": (),
+        "lexopt@0.3.2": (),
+        "mini-internal@0.1.46": (),
+        "miniserde@0.1.46": ("default", "std"),
+        "proc-macro2@1.0.107": ("default", "proc-macro"),
+        "quote@1.0.47": ("default", "proc-macro"),
+        "regex-lite@0.1.9": ("default", "std", "string"),
+        "rustybench@0.1.0": (),
+        "rustybench-macros@0.1.0": (),
+        "syn@3.0.5": ("clone-impls", "default", "derive", "parsing", "printing", "proc-macro"),
+        "unicode-ident@1.0.24": (),
+        "zmij@1.0.23": (),
+    },
+    "rustix": {
+        "bitflags@2.13.2": ("std",),
+        "crabc-perf-native-x86@0.0.0": ("rustix",),
+        "errno@0.3.14": ("std",),
+        "itoa@1.0.18": (),
+        "lexopt@0.3.2": (),
+        "libc@0.2.189": ("std",),
+        "linux-raw-sys@0.12.1": ("auxvec", "elf", "errno", "general", "ioctl", "no_std", "prctl"),
+        "mini-internal@0.1.46": (),
+        "miniserde@0.1.46": ("default", "std"),
+        "proc-macro2@1.0.107": ("default", "proc-macro"),
+        "quote@1.0.47": ("default", "proc-macro"),
+        "regex-lite@0.1.9": ("default", "std", "string"),
+        "rustix@1.1.4": ("alloc", "fs", "process", "std", "time"),
+        "rustybench@0.1.0": (),
+        "rustybench-macros@0.1.0": (),
+        "syn@3.0.5": ("clone-impls", "default", "derive", "parsing", "printing", "proc-macro"),
+        "unicode-ident@1.0.24": (),
+        "zmij@1.0.23": (),
+    },
 }
 EXPECTED_ROWS = (
     {
@@ -313,11 +377,36 @@ def _work_path_from_record(root: Path, value: object, label: str) -> Path:
     return require_private_work_path(root, _physical_existing(root, "repository root") / value)
 
 
-def _require_execution_path_for_logical(value: object, logical: str, label: str) -> None:
-    """Bind an absolute Docker execution path to one retained work path."""
+def _execution_logical_path(logical: object, label: str) -> PurePosixPath:
+    if not isinstance(logical, str) or not logical:
+        raise RunnerError(f"{label} must name a non-empty logical execution path")
+    path = PurePosixPath(logical)
+    if (
+        path.is_absolute()
+        or str(path) != logical
+        or any(part in (".", "..") for part in path.parts)
+    ):
+        raise RunnerError(f"{label} has an unsafe logical execution path")
+    return path
 
-    if not isinstance(value, str) or not value.startswith("/") or not value.endswith(f"/{logical}"):
+
+def _execution_path_for_logical(logical: object, label: str) -> str:
+    return str(PurePosixPath(EXECUTION_ROOT) / _execution_logical_path(logical, label))
+
+
+def _require_execution_path_for_logical(value: object, logical: str, label: str) -> None:
+    """Bind a raw command path to this runner's sole Docker work namespace."""
+
+    expected = _execution_path_for_logical(logical, label)
+    if value != expected:
         raise RunnerError(f"{label} does not name its retained execution path")
+
+
+def _validate_execution_sources(value: object) -> Mapping[str, str]:
+    sources = _require_exact_keys(value, set(EXPECTED_EXECUTION_SOURCES), "execution source locations")
+    if sources != EXPECTED_EXECUTION_SOURCES:
+        raise RunnerError("execution source locations differ from the fixed Docker mounts")
+    return sources  # type: ignore[return-value]
 
 
 def file_identity(path: Path) -> dict[str, Any]:
@@ -1051,6 +1140,16 @@ def _read_affinity_proof(descriptor: int, timeout_seconds: float, label: str) ->
     return raw
 
 
+def _kill_owned_process_group(process: subprocess.Popen[bytes]) -> None:
+    """Kill this command's private session group without touching ambient jobs."""
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        # The leader and all descendants have already gone away.
+        pass
+
+
 def _run_retained_command(
     invocation: Path,
     *,
@@ -1110,19 +1209,32 @@ def _run_retained_command(
         try:
             returncode = process.wait(timeout=timeout_seconds)
         except subprocess.TimeoutExpired as error:
+            _kill_owned_process_group(process)
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait(timeout=5)
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired as reap_error:
+                raise RunnerError(f"{stage} timed out and its leader could not be reaped") from reap_error
             raise RunnerError(f"{stage} exceeded its {timeout_seconds:g}s deadline") from error
     finally:
+        # The command leader can exit successfully while a descendant keeps its
+        # inherited private process group alive.  Kill that owned group even on
+        # success; returncode was collected first, so this never rewrites the
+        # measured command status.  start_new_session confines the signal to
+        # this retained command's private session rather than the caller.
+        _kill_owned_process_group(process)
         if process.poll() is None:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.wait(timeout=5)
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _kill_owned_process_group(process)
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Preserve the primary command/affinity failure.  The
+                    # child remains in its private session and has received
+                    # SIGKILL; a later process cannot be reached through this
+                    # retained PID before the current leader is reaped.
+                    pass
     elapsed_wall_ns = time.monotonic_ns() - started
     return {
         "argv": list(argv),
@@ -1146,18 +1258,57 @@ def _tool_path(name: str, environment: Mapping[str, str]) -> Path:
     return _physical_existing(Path(value), f"pinned tool {name}")
 
 
+def _tool_argv(name: str) -> list[str]:
+    if name == "rustc":
+        return ["rustc", "-Vv"]
+    if name == "cargo":
+        return ["cargo", "-V"]
+    if name == "rustup":
+        return ["rustup", "target", "list", "--installed"]
+    raise RunnerError(f"unknown pinned tool: {name}")
+
+
+def _validate_pinned_tool_output(name: str, text: object) -> None:
+    """Replay the exact tool identity parsed during collection."""
+
+    if not isinstance(text, str):
+        raise RunnerError(f"pinned {name} output must be text")
+    if name == "rustc":
+        fields: dict[str, str] = {}
+        for line in text.splitlines():
+            if ": " not in line:
+                continue
+            key, value = line.split(": ", 1)
+            if key in fields:
+                raise RunnerError(f"pinned rustc {key} is duplicated")
+            fields[key] = value
+        for key, expected in EXPECTED_RUSTC_FIELDS.items():
+            if fields.get(key) != expected:
+                raise RunnerError(f"pinned rustc {key} differs")
+        return
+    if name == "cargo":
+        if text.strip() != EXPECTED_CARGO_VERSION:
+            raise RunnerError("pinned cargo identity differs")
+        return
+    if name == "rustup":
+        if text.splitlines() != EXPECTED_INSTALLED_TARGETS:
+            raise RunnerError("pinned Rust target roster differs")
+        return
+    raise RunnerError(f"unknown pinned tool: {name}")
+
+
 def _capture_tool_versions(
     invocation: Path,
     environment: Mapping[str, str],
     cpu: int,
 ) -> dict[str, Any]:
     tools: dict[str, Any] = {}
-    for name, arguments in (("rustc", ["-Vv"]), ("cargo", ["-V"]), ("rustup", ["target", "list", "--installed"])):
+    for name in ("rustc", "cargo", "rustup"):
         path = _tool_path(name, environment)
         command = _run_retained_command(
             invocation,
             stage=f"tool-{name}",
-            argv=[name, *arguments],
+            argv=_tool_argv(name),
             cwd=invocation,
             environment=environment,
             cpu=cpu,
@@ -1170,24 +1321,9 @@ def _capture_tool_versions(
             "file": file_identity(path),
             "command": command,
         }
-    rustc_text = Path(tools["rustc"]["command"]["stdout_path"]).read_text(encoding="utf-8")
-    required_rustc = {
-        "release": "1.99.0-nightly",
-        "commit-hash": "89c61a7545da48b06116675b888398d02a4064c7",
-        "host": "x86_64-unknown-linux-musl",
-    }
-    observed_rustc = dict(
-        line.split(": ", 1) for line in rustc_text.splitlines() if ": " in line
-    )
-    for key, expected in required_rustc.items():
-        if observed_rustc.get(key) != expected:
-            raise RunnerError(f"pinned rustc {key} differs")
-    cargo_text = Path(tools["cargo"]["command"]["stdout_path"]).read_text(encoding="utf-8").strip()
-    if cargo_text != "cargo 1.99.0-nightly (3efb1f477 2026-07-17)":
-        raise RunnerError("pinned cargo identity differs")
-    installed_targets = Path(tools["rustup"]["command"]["stdout_path"]).read_text(encoding="utf-8").splitlines()
-    if installed_targets != ["x86_64-unknown-linux-musl"]:
-        raise RunnerError("pinned Rust target roster differs")
+    for name in ("rustc", "cargo", "rustup"):
+        text = Path(tools[name]["command"]["stdout_path"]).read_text(encoding="utf-8")
+        _validate_pinned_tool_output(name, text)
     return tools
 
 
@@ -1319,6 +1455,178 @@ def _classify_dependency_path(
     raise RunnerError(f"Cargo package source is outside the admitted source roots: {package_root}")
 
 
+def _metadata_package_key(record: Mapping[str, Any], label: str) -> str:
+    name = record.get("name")
+    version = record.get("version")
+    if not isinstance(name, str) or not name or not isinstance(version, str) or not version:
+        raise RunnerError(f"{label} lacks a package name/version")
+    return f"{name}@{version}"
+
+
+def _metadata_manifest_path(value: object, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise RunnerError(f"{label} must retain an absolute Cargo.toml path")
+    path = PurePosixPath(value)
+    if (
+        not path.is_absolute()
+        or str(path) != value
+        or path.name != "Cargo.toml"
+        or any(part in (".", "..") for part in path.parts)
+    ):
+        raise RunnerError(f"{label} must retain a safe absolute Cargo.toml path")
+    return value
+
+
+def _active_metadata_packages(
+    profile: Mapping[str, Any],
+    backend: str,
+    metadata_value: object,
+    *,
+    workspace_manifest: str,
+) -> list[dict[str, Any]]:
+    """Parse Cargo's target-filtered resolve as the active graph contract.
+
+    The separately retained package records only bind host source trees.  This
+    parser is deliberately the authority for selected ids, names, versions,
+    source fields, and activated features, so replay cannot mix a different
+    raw metadata response with a previously reported graph.
+    """
+
+    if backend not in BACKENDS:
+        raise RunnerError(f"unknown dependency backend: {backend}")
+    workspace_manifest = _metadata_manifest_path(workspace_manifest, f"{backend} workspace manifest")
+    metadata = _require_mapping(metadata_value, f"Cargo {backend} metadata")
+    packages_value = metadata.get("packages")
+    if not isinstance(packages_value, list):
+        raise RunnerError(f"Cargo {backend} metadata lacks packages")
+    package_by_id: dict[str, Mapping[str, Any]] = {}
+    for index, package_value in enumerate(packages_value):
+        package = _require_mapping(package_value, f"Cargo {backend} package {index}")
+        package_id = package.get("id")
+        if not isinstance(package_id, str) or not package_id or package_id in package_by_id:
+            raise RunnerError(f"Cargo {backend} package ids differ")
+        _metadata_package_key(package, f"Cargo {backend} package {index}")
+        source = package.get("source")
+        if source is not None and not isinstance(source, str):
+            raise RunnerError(f"Cargo {backend} package source differs")
+        _metadata_manifest_path(package.get("manifest_path"), f"Cargo {backend} package manifest")
+        package_by_id[package_id] = package
+
+    resolve = _require_exact_keys(metadata.get("resolve"), {"root", "nodes"}, f"Cargo {backend} resolve")
+    root_id = resolve["root"]
+    nodes_value = resolve["nodes"]
+    if not isinstance(root_id, str) or root_id not in package_by_id or not isinstance(nodes_value, list):
+        raise RunnerError(f"Cargo {backend} resolve root/nodes differ")
+    workspace_root = str(PurePosixPath(workspace_manifest).parent)
+    if metadata.get("workspace_root") != workspace_root:
+        raise RunnerError(f"Cargo {backend} metadata workspace root differs")
+    for key in ("workspace_members", "workspace_default_members"):
+        if metadata.get(key) != [root_id]:
+            raise RunnerError(f"Cargo {backend} metadata {key} differs")
+
+    active: list[dict[str, Any]] = []
+    active_ids: set[str] = set()
+    for index, node_value in enumerate(nodes_value):
+        node = _require_mapping(node_value, f"Cargo {backend} resolve node {index}")
+        package_id = node.get("id")
+        features = node.get("features")
+        if not isinstance(package_id, str) or package_id not in package_by_id or package_id in active_ids:
+            raise RunnerError(f"Cargo {backend} resolve package ids differ")
+        if (
+            not isinstance(features, list)
+            or not all(isinstance(feature, str) and feature for feature in features)
+            or features != sorted(set(features))
+        ):
+            raise RunnerError(f"Cargo {backend} resolve feature roster differs")
+        package = package_by_id[package_id]
+        active_ids.add(package_id)
+        active.append(
+            {
+                "id": package_id,
+                "name": package["name"],
+                "version": package["version"],
+                "source": package.get("source"),
+                "manifest_path": package["manifest_path"],
+                "features": list(features),
+            }
+        )
+    if root_id not in active_ids:
+        raise RunnerError(f"Cargo {backend} resolve omits its workspace root")
+    root_package = package_by_id[root_id]
+    if (
+        _metadata_package_key(root_package, f"Cargo {backend} workspace root") != "crabc-perf-native-x86@0.0.0"
+        or root_package.get("source") is not None
+        or root_package.get("manifest_path") != workspace_manifest
+    ):
+        raise RunnerError(f"Cargo {backend} workspace root differs")
+
+    active.sort(key=lambda record: (str(record["name"]), str(record["version"])))
+    validate_active_dependency_roster(profile, backend, active)
+    expected_features = EXPECTED_ACTIVE_FEATURES.get(backend)
+    if expected_features is None:
+        raise RunnerError(f"runner lacks an active feature contract for {backend}")
+    if set(expected_features) != {_metadata_package_key(record, f"Cargo {backend} active package") for record in active}:
+        raise RunnerError(f"Cargo {backend} active feature roster differs")
+    for record in active:
+        key = _metadata_package_key(record, f"Cargo {backend} active package")
+        if record["features"] != list(expected_features[key]):
+            raise RunnerError(f"Cargo {backend} active feature roster differs for {key}")
+
+    policy = _require_mapping(profile.get("dependency_policy"), "dependency policy")
+    forbidden_value = policy.get("forbidden_active_packages")
+    if not isinstance(forbidden_value, list) or not all(isinstance(value, str) for value in forbidden_value):
+        raise RunnerError("dependency policy must list forbidden package names")
+    forbidden = set(forbidden_value)
+    names = {str(record["name"]) for record in active}
+    if names & forbidden:
+        raise RunnerError(f"Cargo {backend} selected a forbidden package")
+    if any(
+        record["name"] == "rustybench" and "quanta-timer" in record["features"]
+        for record in active
+    ):
+        raise RunnerError("Cargo selected Rustybench's forbidden quanta-timer feature")
+    required = {"rustybench", "rustybench-macros", "regex-lite", "lexopt", "miniserde"}
+    if not required <= names:
+        raise RunnerError(f"Cargo {backend} omits a normal Rustybench dependency")
+    return active
+
+
+def _metadata_claims(records: Iterable[Mapping[str, Any]], label: str) -> list[dict[str, Any]]:
+    claims: list[dict[str, Any]] = []
+    for index, value in enumerate(records):
+        record = _require_mapping(value, f"{label} package {index}")
+        package_id = record.get("id")
+        if not isinstance(package_id, str) or not package_id:
+            raise RunnerError(f"{label} package ids differ")
+        _metadata_package_key(record, f"{label} package {index}")
+        source = record.get("source")
+        if source is not None and not isinstance(source, str):
+            raise RunnerError(f"{label} package source differs")
+        claims.append(
+            {
+                "id": package_id,
+                "name": record["name"],
+                "version": record["version"],
+                "source": source,
+            }
+        )
+    claims.sort(key=lambda record: (str(record["name"]), str(record["version"])))
+    return claims
+
+
+def _validate_metadata_claims(
+    backend: str,
+    active: Iterable[Mapping[str, Any]],
+    claims: Iterable[Mapping[str, Any]],
+) -> None:
+    """Require reported graph identities to be rebuilt from raw metadata."""
+
+    raw_claims = _metadata_claims(active, f"Cargo {backend} metadata")
+    retained_claims = _metadata_claims(claims, f"{backend} retained dependency graph")
+    if raw_claims != retained_claims:
+        raise RunnerError(f"{backend} retained dependency graph differs from raw Cargo metadata")
+
+
 def _capture_dependency_graph(
     root: Path,
     profile: Mapping[str, Any],
@@ -1331,54 +1639,26 @@ def _capture_dependency_graph(
     backend: str,
     command: Mapping[str, Any],
 ) -> dict[str, Any]:
+    """Capture source-tree identities for the exact raw Cargo resolve graph."""
+
+    del invocation  # The command stdout, not the invocation path, owns the graph.
     metadata_path = Path(command["stdout_path"])
     try:
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RunnerError(f"Cargo {backend} metadata is malformed: {error}") from error
     metadata_mapping = _require_mapping(metadata, f"Cargo {backend} metadata")
+    workspace_manifest = str(workspace / "Cargo.toml")
+    active = _active_metadata_packages(
+        profile, backend, metadata_mapping, workspace_manifest=workspace_manifest,
+    )
     _lock_registry_checksums(workspace / "Cargo.lock", metadata_mapping, backend)
-    packages = metadata_mapping.get("packages")
-    resolve = _require_mapping(metadata_mapping.get("resolve"), f"Cargo {backend} resolve")
-    nodes = resolve.get("nodes")
-    if not isinstance(packages, list) or not isinstance(nodes, list):
-        raise RunnerError(f"Cargo {backend} metadata has no resolved package roster")
-    package_by_id: dict[str, Mapping[str, Any]] = {}
-    for package in packages:
-        parsed = _require_mapping(package, f"Cargo {backend} package")
-        package_id = parsed.get("id")
-        if not isinstance(package_id, str):
-            raise RunnerError(f"Cargo {backend} package lacks an id")
-        package_by_id[package_id] = parsed
-    active_ids: list[str] = []
-    policy = _require_mapping(profile.get("dependency_policy"), "dependency policy")
-    forbidden = policy.get("forbidden_active_packages")
-    if not isinstance(forbidden, list) or not all(isinstance(value, str) for value in forbidden):
-        raise RunnerError("dependency policy must list forbidden package names")
-    for node in nodes:
-        parsed = _require_mapping(node, f"Cargo {backend} resolve node")
-        package_id = parsed.get("id")
-        if not isinstance(package_id, str) or package_id not in package_by_id:
-            raise RunnerError(f"Cargo {backend} resolve node has an unknown package")
-        package = package_by_id[package_id]
-        if package.get("name") in forbidden:
-            raise RunnerError(f"Cargo {backend} selected forbidden package {package.get('name')!r}")
-        if package.get("name") == "rustybench" and "quanta-timer" in parsed.get("features", []):
-            raise RunnerError("Cargo selected Rustybench's forbidden quanta-timer feature")
-        active_ids.append(package_id)
-    if len(active_ids) != len(set(active_ids)):
-        raise RunnerError(f"Cargo {backend} resolve roster has duplicate package ids")
-    required_names = {"rustybench", "rustybench-macros", "regex-lite", "lexopt", "miniserde"}
-    active_names = {str(package_by_id[package_id].get("name")) for package_id in active_ids}
-    if not required_names <= active_names:
-        raise RunnerError(f"Cargo {backend} omits a normal Rustybench dependency")
     records: list[dict[str, Any]] = []
-    for package_id in sorted(active_ids):
-        package = package_by_id[package_id]
-        manifest_text = package.get("manifest_path")
-        if not isinstance(manifest_text, str):
-            raise RunnerError(f"Cargo {backend} package has no manifest path")
-        package_root = _physical_existing(Path(manifest_text).parent, f"Cargo {backend} package root")
+    for package in active:
+        package_root = _physical_existing(
+            Path(str(package["manifest_path"])).parent,
+            f"Cargo {backend} package root",
+        )
         source_kind, relative = _classify_dependency_path(
             package_root,
             workspace=workspace,
@@ -1389,10 +1669,10 @@ def _capture_dependency_graph(
         )
         records.append(
             {
-                "id": package_id,
-                "name": package.get("name"),
-                "version": package.get("version"),
-                "source": package.get("source"),
+                "id": package["id"],
+                "name": package["name"],
+                "version": package["version"],
+                "source": package["source"],
                 "source_kind": source_kind,
                 "relative": relative,
                 "tree": tree_identity(package_root),
@@ -1830,7 +2110,9 @@ def _validate_command(root: Path, record: object, *, cpu: int, label: str) -> Ma
     argv = mapping["argv"]
     if not isinstance(argv, list) or not argv or not all(isinstance(item, str) for item in argv):
         raise RunnerError(f"{label} argv must be a non-empty string list")
-    _work_path_from_record(root, mapping["cwd"], f"{label} cwd")
+    cwd = _work_path_from_record(root, mapping["cwd"], f"{label} cwd")
+    if cwd.is_symlink() or not cwd.is_dir():
+        raise RunnerError(f"{label} cwd must be a real directory")
     if mapping["returncode"] != 0:
         raise RunnerError(f"{label} retained a failing command")
     child_pid = _nonnegative_int(mapping["child_pid"], f"{label} child_pid")
@@ -1844,24 +2126,25 @@ def _validate_command(root: Path, record: object, *, cpu: int, label: str) -> Ma
     return mapping
 
 
+def _require_workspace_cwd(root: Path, command: Mapping[str, Any], workspace: Path, label: str) -> None:
+    expected = _work_relative(root, workspace)
+    if command.get("cwd") != expected:
+        raise RunnerError(f"{label} workspace cwd differs")
+
+
 def _validate_tool_record(root: Path, record: object, *, cpu: int, name: str) -> None:
     mapping = _require_exact_keys(record, {"path", "file", "command"}, f"tool {name}")
     if not isinstance(mapping["path"], str) or not mapping["path"].startswith("/"):
         raise RunnerError(f"tool {name} must retain its absolute image path")
     _require_exact_keys(mapping["file"], {"sha256", "size", "mode"}, f"tool {name} file")
     command = _validate_command(root, mapping["command"], cpu=cpu, label=f"tool {name}")
-    expected = [name]
-    if name == "rustc":
-        expected.append("-Vv")
-    elif name == "cargo":
-        expected.append("-V")
-    else:
-        expected.extend(["target", "list", "--installed"])
-    if command["argv"] != expected:
+    if command["argv"] != _tool_argv(name):
         raise RunnerError(f"tool {name} invocation differs")
+    stdout = _work_path_from_record(root, command["stdout"]["path"], f"tool {name} stdout")
+    _validate_pinned_tool_output(name, stdout.read_text(encoding="utf-8"))
 
 
-def _validate_rendered_workspace(root: Path, report: Mapping[str, Any]) -> Path:
+def _validate_rendered_workspace(root: Path, report: Mapping[str, Any]) -> tuple[Path, Mapping[str, str]]:
     rendered = _require_exact_keys(
         report.get("rendered"),
         {
@@ -1900,11 +2183,7 @@ def _validate_rendered_workspace(root: Path, report: Mapping[str, Any]) -> Path:
         raise RunnerError("private absent fixture name differs")
     if os.path.lexists(link.parent / absent_name):
         raise RunnerError("private absent fixture path now exists")
-    execution_sources = _require_exact_keys(
-        rendered["execution_sources"], {"rustybench", "rustix", "crabc_rs", "frozen_source"}, "execution source locations"
-    )
-    if not all(isinstance(value, str) and value.startswith("/") for value in execution_sources.values()):
-        raise RunnerError("execution source locations must retain absolute Docker paths")
+    execution_sources = _validate_execution_sources(rendered["execution_sources"])
     manifest_text = manifest.read_text(encoding="utf-8")
     for key in ("rustybench", "rustix", "crabc_rs"):
         if json.dumps(execution_sources[key]) not in manifest_text:
@@ -1914,42 +2193,76 @@ def _validate_rendered_workspace(root: Path, report: Mapping[str, Any]) -> Path:
         raise RunnerError("retained fixture source does not bind its execution frozen source path")
     if "@" in manifest_text or "@CRABC_NATIVE_FROZEN_SOURCE@" in fixture_source:
         raise RunnerError("retained workspace still has an unresolved source marker")
-    return workspace
+    return workspace, execution_sources
 
 
-def _dependency_base(
+def _execution_dependency_bases(
     root: Path,
     *,
     workspace: Path,
     cargo_home: Path,
     rustybench_source: Path,
     rustix_source: Path,
-    kind: str,
-) -> Path:
+    execution_sources: Mapping[str, str],
+    workspace_execution_manifest: str,
+    cargo_home_execution: str,
+) -> tuple[tuple[str, PurePosixPath, Path], ...]:
+    """Map the fixed Docker source roots to independently supplied host roots."""
+
+    workspace_execution_manifest = _metadata_manifest_path(
+        workspace_execution_manifest, "Cargo metadata workspace manifest",
+    )
+    cargo_home_execution_path = _execution_path_for_logical(
+        _work_relative(root, cargo_home), "retained Cargo home",
+    )
+    if cargo_home_execution != cargo_home_execution_path:
+        raise RunnerError("Cargo metadata CARGO_HOME execution path differs")
     root_physical = _physical_existing(root, "repository root")
-    values = {
-        "workspace": workspace,
-        "rustybench": rustybench_source,
-        "rustix": rustix_source,
-        "crabc-rs": root_physical / "crabc-rs",
-        "crabc-core": root_physical / "crabc-core",
-        "cargo-registry": cargo_home / "registry/src",
-    }
-    if kind not in values:
-        raise RunnerError(f"retained dependency has an unadmitted source kind: {kind!r}")
-    return _physical_existing(values[kind], f"retained {kind} source base")
+    values = (
+        ("workspace", str(PurePosixPath(workspace_execution_manifest).parent), workspace),
+        ("rustybench", execution_sources["rustybench"], rustybench_source),
+        ("rustix", execution_sources["rustix"], rustix_source),
+        ("crabc-rs", execution_sources["crabc_rs"], root_physical / "crabc-rs"),
+        ("crabc-core", f"{EXECUTION_ROOT}/crabc-core", root_physical / "crabc-core"),
+        ("cargo-registry", f"{cargo_home_execution}/registry/src", cargo_home / "registry/src"),
+    )
+    bases: list[tuple[str, PurePosixPath, Path]] = []
+    for kind, execution_base_text, host_base in values:
+        execution_base = PurePosixPath(execution_base_text)
+        if (
+            not execution_base.is_absolute()
+            or str(execution_base) != execution_base_text
+            or any(part in (".", "..") for part in execution_base.parts)
+        ):
+            raise RunnerError(f"{kind} execution source root differs")
+        bases.append((kind, execution_base, _physical_existing(host_base, f"retained {kind} source base")))
+    return tuple(sorted(bases, key=lambda value: len(value[1].parts), reverse=True))
 
 
-def _safe_relative(value: object, label: str) -> Path:
-    if not isinstance(value, str) or Path(value).is_absolute():
-        raise RunnerError(f"{label} must be a relative source path")
-    path = Path(value)
-    if any(component in ("", ".", "..") for component in path.parts if component != "."):
-        if path.as_posix() != ".":
-            raise RunnerError(f"{label} has an unsafe source path")
-    if ".." in path.parts:
-        raise RunnerError(f"{label} has an unsafe source path")
-    return path
+def _map_execution_package_root(
+    raw_manifest: object,
+    *,
+    bases: Sequence[tuple[str, PurePosixPath, Path]],
+    label: str,
+) -> tuple[str, str, Path]:
+    """Translate one raw Cargo manifest location through an admitted root only."""
+
+    raw_path = PurePosixPath(_metadata_manifest_path(raw_manifest, label))
+    raw_root = raw_path.parent
+    for kind, execution_base, host_base in bases:
+        try:
+            relative = raw_root.relative_to(execution_base)
+        except ValueError:
+            continue
+        relative_text = relative.as_posix()
+        host_root = _physical_existing(host_base / Path(relative_text), label)
+        if not _within(host_root, host_base):
+            raise RunnerError(f"{label} escapes its mapped {kind} host root")
+        manifest = _physical_existing(host_root / "Cargo.toml", f"{label} host Cargo.toml")
+        if manifest.parent != host_root or manifest.is_symlink() or not manifest.is_file():
+            raise RunnerError(f"{label} mapped Cargo.toml differs")
+        return kind, relative_text, host_root
+    raise RunnerError(f"{label} is outside the fixed execution source roots")
 
 
 def _validate_dependency_graph(
@@ -1961,53 +2274,73 @@ def _validate_dependency_graph(
     cargo_home: Path,
     rustybench_source: Path,
     rustix_source: Path,
+    execution_sources: Mapping[str, str],
+    cargo_home_execution: str,
+    metadata_command: Mapping[str, Any],
     backend: str,
 ) -> None:
+    """Replay source records by rebuilding them from metadata command stdout."""
+
     mapping = _require_exact_keys(graph, {"metadata", "packages"}, f"{backend} dependency graph")
+    _require_same(
+        mapping["metadata"], metadata_command.get("stdout"),
+        f"{backend} dependency metadata command stdout",
+    )
     metadata_path = _verify_retained_file(root, mapping["metadata"], f"{backend} Cargo metadata")
-    metadata = _require_mapping(_load_json_file(metadata_path, f"{backend} Cargo metadata"), f"{backend} Cargo metadata")
+    metadata = _require_mapping(
+        _load_json_file(metadata_path, f"{backend} Cargo metadata"),
+        f"{backend} Cargo metadata",
+    )
+    metadata_argv = metadata_command.get("argv")
+    if not isinstance(metadata_argv, list) or len(metadata_argv) < 4 or not isinstance(metadata_argv[3], str):
+        raise RunnerError(f"{backend} Cargo metadata command argv differs")
+    active = _active_metadata_packages(
+        profile, backend, metadata, workspace_manifest=metadata_argv[3],
+    )
     _lock_registry_checksums(workspace / "Cargo.lock", metadata, backend)
+
     packages = mapping["packages"]
     if not isinstance(packages, list) or not packages:
         raise RunnerError(f"{backend} dependency graph must retain package records")
     package_mappings = [
-        _require_mapping(record, f"{backend} dependency package {index}")
-        for index, record in enumerate(packages)
-    ]
-    validate_active_dependency_roster(profile, backend, package_mappings)
-    ids: set[str] = set()
-    names: set[str] = set()
-    policy = _require_mapping(profile.get("dependency_policy"), "dependency policy")
-    forbidden = set(policy["forbidden_active_packages"])
-    for index, record in enumerate(package_mappings):
-        parsed = _require_exact_keys(
+        _require_exact_keys(
             record, {"id", "name", "version", "source", "source_kind", "relative", "tree"},
             f"{backend} dependency package {index}",
         )
-        package_id = parsed["id"]
-        name = parsed["name"]
-        if not isinstance(package_id, str) or not isinstance(name, str) or package_id in ids:
-            raise RunnerError(f"{backend} dependency package roster differs")
-        if name in forbidden:
-            raise RunnerError(f"{backend} dependency graph selected forbidden {name}")
-        ids.add(package_id)
-        names.add(name)
-        base = _dependency_base(
-            root,
-            workspace=workspace,
-            cargo_home=cargo_home,
-            rustybench_source=rustybench_source,
-            rustix_source=rustix_source,
-            kind=parsed["source_kind"],
+        for index, record in enumerate(packages)
+    ]
+    _validate_metadata_claims(backend, active, package_mappings)
+    bases = _execution_dependency_bases(
+        root,
+        workspace=workspace,
+        cargo_home=cargo_home,
+        rustybench_source=rustybench_source,
+        rustix_source=rustix_source,
+        execution_sources=execution_sources,
+        workspace_execution_manifest=metadata_argv[3],
+        cargo_home_execution=cargo_home_execution,
+    )
+    rebuilt: list[dict[str, Any]] = []
+    for package in active:
+        package_key = _metadata_package_key(package, f"Cargo {backend} active package")
+        source_kind, relative, package_root = _map_execution_package_root(
+            package["manifest_path"], bases=bases, label=f"Cargo {backend} package {package_key}",
         )
-        package_root = _physical_existing(base / _safe_relative(parsed["relative"], f"{backend} dependency package"), "dependency package")
-        if not _within(package_root, base):
-            raise RunnerError(f"{backend} dependency package escapes its retained source root")
-        verify_tree_identity(package_root, parsed["tree"], f"{backend} dependency {name}")
-    validate_dependency_source_kinds(backend, package_mappings)
-    required = {"rustybench", "rustybench-macros", "regex-lite", "lexopt", "miniserde"}
-    if not required <= names:
-        raise RunnerError(f"{backend} dependency graph omits a normal Rustybench package")
+        rebuilt.append(
+            {
+                "id": package["id"],
+                "name": package["name"],
+                "version": package["version"],
+                "source": package["source"],
+                "source_kind": source_kind,
+                "relative": relative,
+                "tree": tree_identity(package_root),
+            }
+        )
+    rebuilt.sort(key=lambda record: (str(record["name"]), str(record["version"])))
+    validate_active_dependency_roster(profile, backend, rebuilt)
+    validate_dependency_source_kinds(backend, rebuilt)
+    _require_same(rebuilt, package_mappings, f"{backend} dependency graph rebuilt from Cargo metadata")
 
 
 def _validate_build(
@@ -2020,6 +2353,8 @@ def _validate_build(
     cargo_home: Path,
     rustybench_source: Path,
     rustix_source: Path,
+    execution_sources: Mapping[str, str],
+    cargo_home_execution: str,
     backend: str,
     cpu: int,
 ) -> Path:
@@ -2027,6 +2362,7 @@ def _validate_build(
         record, {"command", "artifact", "elf", "metadata_command", "dependency_graph"}, f"{backend} build"
     )
     command = _validate_command(root, mapping["command"], cpu=cpu, label=f"{backend} Cargo build")
+    _require_workspace_cwd(root, command, workspace, f"{backend} Cargo build")
     argv = command["argv"]
     target = _require_mapping(profile.get("execution"), "profile execution")["target"]
     workspace_logical = _work_relative(root, workspace)
@@ -2058,6 +2394,7 @@ def _validate_build(
     readelf_path = _work_path_from_record(root, readelf["stdout"]["path"], f"{backend} readelf stdout")
     _validate_elf_text(readelf_path.read_text(encoding="utf-8"), backend)
     metadata_command = _validate_command(root, mapping["metadata_command"], cpu=cpu, label=f"{backend} Cargo metadata")
+    _require_workspace_cwd(root, metadata_command, workspace, f"{backend} Cargo metadata")
     expected_metadata_tail = [
         "--format-version=1", "--locked", "--offline", "--no-default-features", "--features", backend,
         "--filter-platform", target,
@@ -2081,6 +2418,9 @@ def _validate_build(
         cargo_home=cargo_home,
         rustybench_source=rustybench_source,
         rustix_source=rustix_source,
+        execution_sources=execution_sources,
+        cargo_home_execution=cargo_home_execution,
+        metadata_command=metadata_command,
         backend=backend,
     )
     return artifact
@@ -2094,6 +2434,7 @@ def _validate_invocation(
     expected_backend: str,
     expected_kind: str,
     artifact: Path,
+    workspace: Path,
     cpu: int,
 ) -> None:
     required_keys = {"backend", "kind", "command"}
@@ -2109,6 +2450,7 @@ def _validate_invocation(
     command = _validate_command(
         root, command_without_logical, cpu=cpu, label=f"{expected_backend} {expected_kind} invocation"
     )
+    _require_workspace_cwd(root, command, workspace, f"{expected_backend} {expected_kind} invocation")
     if not isinstance(logical_argv, list) or not all(isinstance(item, str) for item in logical_argv):
         raise RunnerError(f"{expected_backend} {expected_kind} invocation lacks logical argv")
     expected_program = _work_relative(root, artifact)
@@ -2202,7 +2544,7 @@ def validate_report(
     }
     if plan["normal_contract"] != expected_normal:
         raise RunnerError("report normal geometry differs")
-    workspace = _validate_rendered_workspace(root, report)
+    workspace, execution_sources = _validate_rendered_workspace(root, report)
     environment = _require_exact_keys(report["environment"], {"build", "client", "scrubbed_ambient_keys"}, "report environment")
     build_environment = _require_mapping(environment["build"], "report build environment")
     client_environment = _require_mapping(environment["client"], "report client environment")
@@ -2214,6 +2556,11 @@ def validate_report(
         isinstance(value, str) for value in client_environment.values()
     ):
         raise RunnerError("report client environment shape differs")
+    cargo_home_execution = _execution_path_for_logical(
+        _work_relative(root, cargo_home), "report Cargo home",
+    )
+    if build_environment.get("CARGO_HOME") != cargo_home_execution:
+        raise RunnerError("report build CARGO_HOME execution path differs")
     if (
         build_environment.get("CARGO_NET_OFFLINE") != "true"
         or build_environment.get("CARGO_ENCODED_RUSTFLAGS") != ""
@@ -2249,9 +2596,6 @@ def validate_report(
     tools = _require_exact_keys(report["tools"], {"rustc", "cargo", "rustup"}, "report tools")
     for name in ("rustc", "cargo", "rustup"):
         _validate_tool_record(root, tools[name], cpu=cpu, name=name)
-    rustc_stdout = _work_path_from_record(root, tools["rustc"]["command"]["stdout"]["path"], "rustc stdout").read_text(encoding="utf-8")
-    if "release: 1.99.0-nightly" not in rustc_stdout or "host: x86_64-unknown-linux-musl" not in rustc_stdout:
-        raise RunnerError("retained rustc identity differs")
     builds = _require_exact_keys(report["builds"], set(BACKENDS), "report builds")
     artifacts: dict[str, Path] = {}
     for backend in BACKENDS:
@@ -2264,6 +2608,8 @@ def validate_report(
             cargo_home=cargo_home,
             rustybench_source=rustybench_source,
             rustix_source=rustix_source,
+            execution_sources=execution_sources,
+            cargo_home_execution=cargo_home_execution,
             backend=backend,
             cpu=cpu,
         )
@@ -2282,6 +2628,7 @@ def validate_report(
             expected_backend=backend,
             expected_kind=kind,
             artifact=artifacts[backend],
+            workspace=workspace,
             cpu=cpu,
         )
 
