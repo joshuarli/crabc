@@ -121,7 +121,7 @@ class OwnedWordexpContracts(unittest.TestCase):
     def test_retained_six_mode_evidence_keeps_source_reds_separate_from_positive_cells(self) -> None:
         source = EVIDENCE.read_text(encoding="utf-8")
         for boundary in (
-            'crabc.x86_64-owned-wordexp-products/v4', "POSIX_PROBE",
+            'crabc.x86_64-owned-wordexp-products/v5', "POSIX_PROBE",
             "WORD_EXP_CASES", "CELL_ENVIRONMENT", "posix-quiet-source-red",
             "posix-nocmd-source-red", "posix-nocmd-arithmetic-source-red",
             "posix-nocmd-continuation-source-red", "posix-nocmd-dollar-single-source-red",
