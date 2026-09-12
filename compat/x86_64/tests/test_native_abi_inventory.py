@@ -540,10 +540,25 @@ DYNAMIC = "Symbol table '.dynsym' contains 7 entries:\n" + SYMBOL_HEADER + """\
 """
 HEADER = """\
 ELF Header:
+  Magic:   7f 45 4c 46 02 01 01 03 00 00 00 00 00 00 00 00
   Class:                             ELF64
   Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - GNU
+  ABI Version:                       0
   Type:                              REL (Relocatable file)
   Machine:                           Advanced Micro Devices X86-64
+  Version:                           0x1
+  Entry point address:               0x0
+  Start of program headers:          0 (bytes into file)
+  Start of section headers:          256 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               64 (bytes)
+  Size of program headers:           0 (bytes)
+  Number of program headers:         0
+  Size of section headers:           64 (bytes)
+  Number of section headers:         5
+  Section header string table index: 4
 """
 SECTIONS = """\
 There are 5 section headers, starting at offset 0x100:
@@ -678,8 +693,10 @@ class NativeAbiCompleteSymbolFactsTests(unittest.TestCase):
         sections = SECTIONS.replace("5 section headers", "4 section headers")
         sections = "\n".join(line for line in sections.splitlines() if ".symtab" not in line)
         sections = sections.replace("[ 4]", "[ 3]")
+        header = HEADER.replace("Number of section headers:         5", "Number of section headers:         4")
+        header = header.replace("Section header string table index: 4", "Section header string table index: 3")
         facts = inventory.parse_archive_elf_facts(
-            archive_blocks([HEADER]), archive_blocks([sections]), archive_blocks([""]),
+            archive_blocks([header]), archive_blocks([sections]), archive_blocks([""]),
             ["same.o"], expected_archive="/facts/lib.a",
         )
         self.assertEqual(facts[0]["symbol_tables"], [])
@@ -708,15 +725,74 @@ class NativeAbiCompleteSymbolFactsTests(unittest.TestCase):
             )
 
     def test_native_header_retains_both_readelf_version_fields_in_order(self) -> None:
-        header = HEADER + "  Version:                           1 (current)\n  Version:                           0x1\n"
         facts = inventory.parse_archive_elf_facts(
-            archive_blocks([header]), archive_blocks([SECTIONS]), archive_blocks([STATIC]),
+            archive_blocks([HEADER]), archive_blocks([SECTIONS]), archive_blocks([STATIC]),
             ["same.o"], expected_archive="/facts/lib.a",
         )
         self.assertEqual(
             [row["value"] for row in facts[0]["header"]["fields"] if row["name"] == "Version"],
             ["1 (current)", "0x1"],
         )
+
+    def test_pinned_flag_legend_truncated_after_first_line_is_rejected(self) -> None:
+        lines = SECTIONS.splitlines()
+        title = lines.index("Key to Flags:")
+        truncated = "\n".join(lines[:title + 2]) + "\n"
+        with self.assertRaises(inventory.InventoryError):
+            inventory.parse_elf_sections(truncated)
+
+    def test_first_archive_header_truncated_after_machine_is_rejected(self) -> None:
+        lines = HEADER.splitlines()
+        machine = next(i for i, line in enumerate(lines) if line.strip().startswith("Machine:"))
+        truncated = "\n".join(lines[:machine + 1]) + "\n"
+        with self.assertRaises(inventory.InventoryError):
+            inventory.parse_archive_elf_facts(
+                archive_blocks([truncated, HEADER]), archive_blocks([SECTIONS, SECTIONS]),
+                archive_blocks([STATIC, STATIC]), ["same.o", "same.o"], expected_archive="/facts/lib.a",
+            )
+
+    def test_every_pinned_header_field_occurrence_is_mandatory(self) -> None:
+        lines = HEADER.splitlines(keepends=True)
+        for index in range(1, len(lines)):
+            with self.subTest(omitted=lines[index]), self.assertRaises(inventory.InventoryError):
+                inventory.parse_archive_elf_facts(
+                    archive_blocks(["".join(lines[:index] + lines[index + 1:])]),
+                    archive_blocks([SECTIONS]), archive_blocks([STATIC]),
+                    ["same.o"], expected_archive="/facts/lib.a",
+                )
+        for header in (
+            HEADER.replace("Number of section headers:         5", "Number of section headers:         6"),
+            HEADER.replace("Number of section headers:         5", "Number of section headers:         five"),
+            HEADER.replace("  Version:                           0x1\n", "") + "  Version:                           0x1\n",
+        ):
+            with self.subTest(header=header), self.assertRaises(inventory.InventoryError):
+                inventory.parse_archive_elf_facts(
+                    archive_blocks([header]), archive_blocks([SECTIONS]), archive_blocks([STATIC]),
+                    ["same.o"], expected_archive="/facts/lib.a",
+                )
+
+    def test_pinned_flag_legend_requires_every_ordered_line_and_termination(self) -> None:
+        lines = SECTIONS.splitlines(keepends=True)
+        title = lines.index("Key to Flags:\n")
+        prefix, legend = lines[:title + 1], lines[title + 1:]
+        for modified in (
+            legend[:2], legend[:3], legend[1:], legend + legend[-1:],
+            [legend[1], legend[0], *legend[2:]],
+            [*legend[:-1], legend[-1].replace("specific)", "specific),")],
+        ):
+            with self.subTest(legend=modified), self.assertRaises(inventory.InventoryError):
+                inventory.parse_elf_sections("".join(prefix + modified))
+
+    def test_both_observed_pinned_flag_legend_endings_preserve_raw_lines(self) -> None:
+        # The pinned native archive displays R (retain) for its GNU ABI members,
+        # and omits that entry for the symbol-free member. Both are complete.
+        for ending in (
+            "  D (mbind), l (large), p (processor specific)",
+            "  R (retain), D (mbind), l (large), p (processor specific)",
+        ):
+            raw = SECTIONS.replace("  D (mbind), l (large), p (processor specific)", ending)
+            with self.subTest(ending=ending):
+                self.assertEqual(inventory.parse_elf_sections(raw)["flag_legend"][-1], ending)
 
 
 if __name__ == "__main__":

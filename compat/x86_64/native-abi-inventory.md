@@ -93,6 +93,18 @@ projection, static `nm` projection, report reader and ratchet remain unchanged.
   requires independent complete section evidence; a missing or unsupported
   member cannot become an empty successful observation.
 
+Completeness of these text streams is tied to the pinned GNU readelf's C-locale
+x86-64 display. The header requires all 19 ordered field occurrences, including
+the two distinct `Version` positions and the complete section metadata tail.
+The mandatory section count must agree with the section rows. The section
+display requires the complete four-line flag legend, ending with the pinned
+processor-specific entry. Both observed endings, with and without `R (retain)`,
+are admitted and preserved; a comma-continued prefix is incomplete. A tool update
+that changes either display requires an explicit parser change and retained
+native evidence. These display boundaries leave unknown symbol/section kinds,
+flags and reserved section-index spellings intact. They establish textual
+completeness and the documented joins, not full ELF validity.
+
 The archive API performs no extraction or tool invocation. Its caller must bind
 all four actual commands, pinned tool identities, unchanged archive bytes,
 stdout/stderr and successful exit statuses. Nonempty diagnostics cannot be

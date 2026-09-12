@@ -386,6 +386,27 @@ _SECTION_LINE = re.compile(
     r"(?P<entry_size>[0-9a-fA-F]+)\s+(?:(?P<flags>\S+)\s+)?"
     r"(?P<link>[0-9]+)\s+(?P<info>[0-9]+)\s+(?P<alignment>[0-9]+)\s*$"
 )
+# These are termination/occurrence contracts for the pinned GNU readelf's
+# C-locale x86-64 display, not an ELF specification or a cross-version parser.
+# A tool update changing either display requires an explicit parser update and
+# retained native evidence. Unknown symbol/section row metadata stays intact.
+_PINNED_SECTION_FLAG_LEGEND_PREFIX = (
+    "W (write), A (alloc), X (execute), M (merge), S (strings), I (info),",
+    "L (link order), O (extra OS processing required), G (group), T (TLS),",
+    "C (compressed), x (unknown), o (OS specific), E (exclude),",
+)
+_PINNED_SECTION_FLAG_LEGEND_ENDINGS = (
+    "D (mbind), l (large), p (processor specific)",
+    "R (retain), D (mbind), l (large), p (processor specific)",
+)
+_PINNED_ELF_HEADER_FIELDS = (
+    "Magic", "Class", "Data", "Version", "OS/ABI", "ABI Version", "Type",
+    "Machine", "Version", "Entry point address", "Start of program headers",
+    "Start of section headers", "Flags", "Size of this header",
+    "Size of program headers", "Number of program headers",
+    "Size of section headers", "Number of section headers",
+    "Section header string table index",
+)
 
 
 def parse_elf_symbol_tables(raw: str) -> list[dict[str, Any]]:
@@ -522,7 +543,11 @@ def parse_elf_sections(raw: str) -> dict[str, Any]:
             record["name"] = match.group("name") or ""
             record["flags"] = match.group("flags") or ""
             sections.append(record)
-    require(count is not None and saw_columns and saw_legend and bool(legend), "incomplete section header output")
+    require(count is not None and saw_columns and saw_legend, "incomplete section header output")
+    require(len(legend) == 4
+            and tuple(line.strip() for line in legend[:3]) == _PINNED_SECTION_FLAG_LEGEND_PREFIX
+            and legend[3].strip() in _PINNED_SECTION_FLAG_LEGEND_ENDINGS,
+            "incomplete or changed pinned readelf section flag legend")
     require([row["index"] for row in sections] == list(range(count)),
             "readelf section rows are missing, duplicated, reordered, or truncated")
     return {"section_count": count, "table_offset": offset, "sections": sections, "flag_legend": legend}
@@ -568,6 +593,8 @@ def _archive_fact_header(raw: str, description: str) -> dict[str, Any]:
         require(names[name] <= (2 if name == "Version" else 1),
                 f"{description} has a duplicate ELF header field: {name}")
         fields.append({"name": name, "value": match.group("value"), "raw": line})
+    require(tuple(field["name"] for field in fields) == _PINNED_ELF_HEADER_FIELDS,
+            f"{description} has incomplete or changed pinned readelf ELF header fields")
     identity = _readelf_header(raw, description)
     require(identity["Type"] == "REL (Relocatable file)", "archive fact member is not relocatable ELF")
     return {"identity": identity, "fields": fields}
@@ -603,10 +630,12 @@ def parse_archive_elf_facts(
         header = _archive_fact_header(headers[index], f"archive member {index}:{member}")
         section_facts = parse_elf_sections(sections[index])
         section_rows = section_facts["sections"]
-        for field in header["fields"]:
-            if field["name"] == "Number of section headers":
-                require(field["value"] == str(len(section_rows)),
-                        "archive ELF header section count differs from section rows")
+        # The complete header occurrence contract establishes exactly one count;
+        # an identity-only prefix must never make this cross-check optional.
+        section_count = next(field["value"] for field in header["fields"]
+                             if field["name"] == "Number of section headers")
+        require(section_count == str(len(section_rows)),
+                "archive ELF header section count differs from section rows")
         table_sections = [row for row in section_rows if row["type"] in {"SYMTAB", "DYNSYM"}]
         # readelf legitimately emits no text for an ELF member with no symbol
         # table. Only the independent complete section table can establish that.
