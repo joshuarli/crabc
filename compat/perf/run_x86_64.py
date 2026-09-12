@@ -473,6 +473,26 @@ def parse_needed(dynamic_raw: Path) -> list[str]:
     return evidence.parse_dynamic_section(dynamic_raw.read_text(encoding="utf-8", errors="replace"))["needed"]
 
 
+def cpuinfo_identity_sha256(raw: bytes) -> str:
+    """Hash CPU identity while excluding kernel frequency telemetry.
+
+    Linux regenerates ``cpu MHz`` and ``bogomips`` in ``/proc/cpuinfo`` from
+    live frequency state.  They are useful observations, but cannot be a
+    before/after tool identity because an otherwise valid fresh-process attempt
+    may change them while it is running.  The remaining `/proc/cpuinfo` fields
+    retain vendor, model, family, stepping, flags, topology, and cache identity.
+    """
+
+    volatile = {b"cpu MHz", b"bogomips"}
+    lines = []
+    for line in raw.splitlines():
+        name, separator, _value = line.partition(b":")
+        if separator and name.strip() in volatile:
+            continue
+        lines.append(line)
+    return sha256_bytes(b"\n".join(lines) + b"\n")
+
+
 def host_snapshot(cpu: int) -> dict[str, Any]:
     governors: dict[str, Any] = {}
     for name in ("scaling_governor", "scaling_available_governors"):
@@ -488,7 +508,7 @@ def host_snapshot(cpu: int) -> dict[str, Any]:
         "system": platform.system(),
         "machine": platform.machine(),
         "kernel_release": platform.release(),
-        "cpuinfo_sha256": evidence.sha256_file(Path("/proc/cpuinfo")) if Path("/proc/cpuinfo").is_file() else None,
+        "cpuinfo_sha256": cpuinfo_identity_sha256(Path("/proc/cpuinfo").read_bytes()) if Path("/proc/cpuinfo").is_file() else None,
         "benchmark_cpu": cpu,
         "affinity": sorted(os.sched_getaffinity(0)),
         "cache_topology": cache,

@@ -129,6 +129,24 @@ class ImageToolManifestEnvironmentTests(unittest.TestCase):
             self.assertTrue(retained.is_file())
 
 
+class HostIdentityTests(unittest.TestCase):
+    def test_cpu_identity_ignores_live_frequency_telemetry(self) -> None:
+        """A normal CPU-frequency change cannot invalidate one attempt."""
+
+        before = (
+            b"processor\t: 0\n"
+            b"vendor_id\t: GenuineIntel\n"
+            b"model name\t: Example CPU\n"
+            b"cpu MHz\t\t: 3200.000\n"
+            b"bogomips\t: 6400.00\n"
+        )
+        after = before.replace(b"3200.000", b"800.000").replace(b"6400.00", b"1600.00")
+        different_cpu = after.replace(b"Example CPU", b"Different CPU")
+
+        self.assertEqual(runner.cpuinfo_identity_sha256(before), runner.cpuinfo_identity_sha256(after))
+        self.assertNotEqual(runner.cpuinfo_identity_sha256(before), runner.cpuinfo_identity_sha256(different_cpu))
+
+
 class RosterBoundaryTests(unittest.TestCase):
     def test_unbound_smoke_does_not_claim_a_three_run_roster(self) -> None:
         args = type("Args", (), {"attempt_roster": None, "implementation_smoke": True})()
