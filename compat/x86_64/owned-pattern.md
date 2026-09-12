@@ -1,7 +1,8 @@
 # Owned C filename patterns
 
-`owned_pattern.rs` adds the public Linux/x86-64 `fnmatch`, `glob`, and
-`globfree` entries only to the planned `x86-owned-static-runtime` aggregate.
+`owned_fnmatch.rs` and `owned_glob.rs` provide the public Linux/x86-64
+`fnmatch`, `glob`, and `globfree` entries in the planned
+`x86-owned-static-runtime` aggregate.
 The frozen default static archive keeps its existing provider boundary. The
 same aggregate is inherited by the materialized dynamic product; this is not a
 claim that the broader pattern, locale, filesystem, account, or C-ABI family
@@ -43,6 +44,13 @@ file. The escaped-wildcard, nonmatching-range, nested-class, literal-prefix,
 recursive-separator, and dangling-link marker/errno regressions each execute
 in a separate timeout-contained chroot child before the full workload, so one
 source-loop failure cannot conceal a later boundary.
+
+Word-expansion preflight is covered by the separate installed `wordexp`
+component. Its `nocmd-source` selector in `owned_wordexp_probe.c` checks the
+owned evaluator's `WRDE_CMDSUB` result and musl's distinct `WRDE_BADCHAR`
+observation for the ambiguous subshell input, plus the ordinary command
+control. `owned_wordexp_evidence.py` requires each exact result; the filename
+pattern fixture does not carry the retired whole-input scanner expectation.
 
 The header provider catalog moves exactly `fnmatch`, `glob`, and `globfree`
 from the deferred text/locale group into the planned owned-static provider

@@ -68,9 +68,10 @@ All seven catalog workload identifiers now have source-bound focused runners:
 fixture replaces their retained objects, receipts, raw streams, or source
 identity checks.
 
-`dynamic-product.toml` now declares fifty required dynamic qualification
-cases. The full dynamic gate must execute and retain all fifty cases for the
-required products. Its complete result at `730cafc1` is recorded in `plan.md`.
+`dynamic-product.toml` declares seventy required dynamic qualification cases.
+The full dynamic gate must execute and retain its complete current roster for
+the required products. The earlier fifty-case result at `730cafc1` is historical;
+`plan.md` records later measurements and their exact source revisions.
 No individual dynamic case, including a three-product replay, is that aggregate.
 
 `owned_posix_family_workloads.py` makes the coordinator input executable:

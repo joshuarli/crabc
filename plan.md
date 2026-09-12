@@ -95,6 +95,17 @@ musl observations and untouched upstream failures retain their raw outcomes;
 finite POSIX interpretations do not waive arbitrary failures. See
 [`owned-wordexp-engine.md`](compat/x86_64/owned-wordexp-engine.md).
 
+At `b599efd2`, reproducible static preparation passes at
+`.work/x86_64/posix-static-products-b599efd2/preparation.json`. The complete
+dynamic run stops at `installed/pattern` because that fixture still requires
+the retired wordexp scanner's error code. Its retained failure is
+`.work/x86_64/tmp/materialized-dynamic.qQZYMq/qualification-cases/installed/pattern.log`.
+The duplicate assertion is removed; the dedicated wordexp `nocmd-source`
+selector retains exact candidate and oracle results. The complete filename
+pattern workload then passes on that unchanged installed product in all four
+dynamic modes at `.work/x86_64/pattern-after-wordexp-selection/tmp/owned-pattern.Hx2iVv`.
+Fresh full product qualification remains required.
+
 `024b1563` corrects demonstrated `fmaf`, `fmal`, `powf`, and `nextafterl`
 defects while preserving the pinned numerical algorithms. The integrated
 `math-scalar-corrections` proof passes 25,632 exact-dyadic cases and accounts
