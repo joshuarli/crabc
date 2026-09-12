@@ -217,8 +217,15 @@ class PerformanceRowContractTests(unittest.TestCase):
         self.assertFalse(allocator.legacy)
         self.assertEqual(allocator.timed_artifact, "x86_64_clock_allocator_workload")
         self.assertEqual(allocator.arguments, ("live", "1", "128", "262144"))
+        self.assertEqual(allocator.iterations, 1)
+        self.assertEqual(allocator.operations, 128)
         self.assertEqual(allocator.memory_artifact, "x86_64_memory_observer_clock_allocator")
         self.assertEqual(allocator.memory_phases, ("main-initial", "allocator-live", "main-final"))
+
+        self.assertEqual(by_name["allocator_live_4m"].operations, 8192)
+        self.assertEqual(by_name["allocator_refill_4m"].operations, 8192)
+        self.assertEqual(by_name["allocator_worker_local_64"].operations, 16384)
+        self.assertEqual(by_name["allocator_worker_local_4k"].operations, 16384)
 
         network = by_name["resolver_dns_tcp"]
         self.assertEqual(network.memory_artifact, "x86_64_memory_observer_network")

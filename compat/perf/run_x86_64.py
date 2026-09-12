@@ -2245,6 +2245,7 @@ def measure_pair(checkout: Path, lanes: Mapping[str, Lane], row: performance_pro
         "arguments": virtual_arguments(row, lanes["musl"]),
         "fixture_mode": row.fixture_mode,
         "iterations_per_process": row.iterations,
+        "operations_per_process": row.operations,
     }
     require(
         invocation["binary"] == virtual_binary(row, lanes["crabc"])
@@ -2276,6 +2277,7 @@ def measure_pair(checkout: Path, lanes: Mapping[str, Lane], row: performance_pro
         result[lane_name] = {
             "status": "ok",
             "iterations_per_process": row.iterations,
+            "operations_per_process": row.operations,
             "warmup_processes": args.warmup,
             "warmups": warmups[lane_name],
             "sample_count": args.samples,
@@ -2293,7 +2295,11 @@ def measure_pair(checkout: Path, lanes: Mapping[str, Lane], row: performance_pro
         comparison["status"] = "cpu-unsupported"
         comparison["cpu"] = {"release_gate": "unsupported", "reason": str(error)}
     if result["musl"]["syscalls"].get("status") == "ok" and result["crabc"]["syscalls"].get("status") == "ok":
-        comparison["syscall_gate"] = evidence.syscall_gate(result["musl"]["syscalls"]["marked_region"], result["crabc"]["syscalls"]["marked_region"])
+        comparison["syscall_gate"] = evidence.syscall_gate(
+            result["musl"]["syscalls"]["marked_region"],
+            result["crabc"]["syscalls"]["marked_region"],
+            operations=row.operations,
+        )
     else:
         comparison["syscall_gate"] = {"status": "fail", "violations": ["diagnostic is incomplete"]}
     result["comparison"] = comparison

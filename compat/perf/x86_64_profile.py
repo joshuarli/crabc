@@ -76,6 +76,7 @@ class PerformanceRow:
     arguments: tuple[str, ...]
     fixture_mode: str | None
     iterations: int
+    operations: int
     memory_artifact: str
     memory_phases: tuple[str, ...]
     requires_loopback_peer: bool
@@ -102,6 +103,7 @@ class SupplementalRow:
     binary: str
     mode: str
     iterations: int
+    operations: int
     argv: tuple[str, ...]
     observer_phase: str
     requires_loopback_peer: bool
@@ -219,6 +221,7 @@ def supplemental_rows(profile: Mapping[str, Any]) -> tuple[SupplementalRow, ...]
         binary = item.get("binary")
         mode = item.get("mode")
         iterations = item.get("iterations")
+        operations = item.get("operations")
         argv = item.get("argv")
         phase = item.get("observer_phase")
         loopback = item.get("requires_loopback_peer")
@@ -227,12 +230,15 @@ def supplemental_rows(profile: Mapping[str, Any]) -> tuple[SupplementalRow, ...]
                 and isinstance(binary, str) and binary in SUPPLEMENTAL_MEMORY_ARTIFACTS
                 and isinstance(mode, str) and mode
                 and type(iterations) is int and iterations > 0
+                and type(operations) is int and operations > 0
                 and isinstance(argv, list) and all(isinstance(value, str) and value for value in argv)
                 and isinstance(phase, str) and phase
                 and type(loopback) is bool and type(resolver) is bool,
                 "supplemental row values differ")
         names.add(name)
-        result.append(SupplementalRow(name, binary, mode, iterations, tuple(argv), phase, loopback, resolver))
+        result.append(SupplementalRow(
+            name, binary, mode, iterations, operations, tuple(argv), phase, loopback, resolver,
+        ))
     require(len(names) == 40, "supplemental rows repeat an id")
     return tuple(result)
 
@@ -302,6 +308,7 @@ def performance_rows(root: Path, legacy_workloads: Sequence[object]) -> tuple[Pe
             arguments=(),
             fixture_mode=getattr(workload, "fixture_mode"),
             iterations=int(getattr(workload, "iterations")),
+            operations=int(getattr(workload, "iterations")),
             memory_artifact=artifact,
             memory_phases=phases[name],
             requires_loopback_peer=False,
@@ -319,6 +326,7 @@ def performance_rows(root: Path, legacy_workloads: Sequence[object]) -> tuple[Pe
             arguments=(row.mode, str(row.iterations), *row.argv),
             fixture_mode=row.mode,
             iterations=row.iterations,
+            operations=row.operations,
             memory_artifact=SUPPLEMENTAL_MEMORY_ARTIFACTS[row.binary],
             memory_phases=("main-initial", row.observer_phase, "main-final"),
             requires_loopback_peer=row.requires_loopback_peer,

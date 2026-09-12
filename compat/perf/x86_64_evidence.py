@@ -817,24 +817,51 @@ def canonical_workload_invocations(checkout: Path) -> dict[str, dict[str, Any]]:
             "arguments": arguments,
             "fixture_mode": row.fixture_mode,
             "iterations_per_process": row.iterations,
+            "operations_per_process": row.operations,
         }
     return result
 
 
-def syscall_gate(reference: Mapping[str, Any], candidate: Mapping[str, Any]) -> dict[str, Any]:
-    """Apply the retained per-syscall 2R/reference-zero diagnostic rule."""
+def syscall_gate(
+    reference: Mapping[str, Any],
+    candidate: Mapping[str, Any],
+    *,
+    operations: int | None = None,
+) -> dict[str, Any]:
+    """Apply the retained per-syscall 2R/reference-zero diagnostic rule.
+
+    The normalizer uses exact numerator/denominator records instead of rounded
+    floats.  Some supplemental allocation routes take one argv iteration to
+    mean thousands of allocation operations, so their explicit profile count
+    is the denominator for the marked-region diagnostic.
+    """
 
     reference_calls = reference.get("calls")
     candidate_calls = candidate.get("calls")
     require(isinstance(reference_calls, dict) and isinstance(candidate_calls, dict), "syscall diagnostics lack calls")
+    require(operations is None or type(operations) is int and operations > 0,
+            "completed operation count is invalid")
     violations: list[str] = []
     names = sorted(set(reference_calls) | set(candidate_calls))
+    normalized_reference: dict[str, dict[str, int]] = {}
+    normalized_candidate: dict[str, dict[str, int]] = {}
     for name in names:
         ref = reference_calls.get(name, {"calls": 0, "errors": 0})
         cand = candidate_calls.get(name, {"calls": 0, "errors": 0})
         require(isinstance(ref, dict) and isinstance(cand, dict), "syscall entry is not an object")
         require(type(ref.get("calls")) is int and type(cand.get("calls")) is int, "syscall count is not integral")
         require(type(ref.get("errors")) is int and type(cand.get("errors")) is int, "syscall error count is not integral")
+        require(ref["calls"] >= 0 and cand["calls"] >= 0 and ref["errors"] >= 0 and cand["errors"] >= 0,
+                "syscall count is negative")
+        if operations is not None:
+            normalized_reference[name] = {
+                "calls_numerator": ref["calls"], "errors_numerator": ref["errors"],
+                "operations_denominator": operations,
+            }
+            normalized_candidate[name] = {
+                "calls_numerator": cand["calls"], "errors_numerator": cand["errors"],
+                "operations_denominator": operations,
+            }
         if ref["calls"] == 0:
             if cand["calls"] != 0:
                 violations.append(f"{name}: reference-zero but candidate made {cand['calls']} calls")
@@ -842,7 +869,14 @@ def syscall_gate(reference: Mapping[str, Any], candidate: Mapping[str, Any]) -> 
             violations.append(f"{name}: candidate {cand['calls']} exceeds 2R={2 * ref['calls']}")
         if cand["errors"] != ref["errors"]:
             violations.append(f"{name}: candidate/reference errors differ ({cand['errors']}/{ref['errors']})")
-    return {"status": "pass" if not violations else "fail", "violations": violations}
+    result: dict[str, Any] = {"status": "pass" if not violations else "fail", "violations": violations}
+    if operations is not None:
+        result.update({
+            "operations_per_process": operations,
+            "reference_per_operation": normalized_reference,
+            "candidate_per_operation": normalized_candidate,
+        })
+    return result
 
 
 def _receipt_contract(checkout: Path) -> Any:
@@ -1394,12 +1428,16 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
             plan_order = {(lane, sample_index): order for order, (lane, sample_index) in enumerate(plan)}
             for lane in ("musl", "crabc"):
                 lane_item = item[lane]
-                expected_lane = {"status", "iterations_per_process", "warmup_processes", "warmups", "sample_count", "samples", "summary", "syscalls"}
+                expected_lane = {
+                    "status", "iterations_per_process", "operations_per_process",
+                    "warmup_processes", "warmups", "sample_count", "samples", "summary", "syscalls",
+                }
                 require(isinstance(lane_item, dict) and set(lane_item) == expected_lane and lane_item["status"] == "ok",
                         f"{name}/{lane}: timed lane fields differ")
                 require(lane_item["iterations_per_process"] == invocation["iterations_per_process"]
+                        and lane_item["operations_per_process"] == invocation["operations_per_process"]
                         and lane_item["warmup_processes"] == FULL_WARMUP_COUNT and lane_item["sample_count"] == FULL_SAMPLE_COUNT,
-                        f"{name}/{lane}: row loop or warm-up contract differs")
+                        f"{name}/{lane}: row operation, loop, or warm-up contract differs")
                 warmups = lane_item["warmups"]
                 require(isinstance(warmups, list) and len(warmups) == FULL_WARMUP_COUNT, f"{name}/{lane}: warmup roster differs")
                 for warmup_index, warmup in enumerate(warmups):
@@ -1422,7 +1460,11 @@ def validate_measurement_attempt(checkout: Path, report: Mapping[str, Any], expe
             cpu = contract.bootstrap_cpu_ratio(reference_cpu, candidate_cpu, seed=seed, resamples=CPU_RESAMPLES)
             expected_cpu = {**cpu, "release_gate": "pass" if cpu["one_sided_95_upper"] <= 0.90 else "fail"}
             require(comparison["cpu"] == expected_cpu, f"{name}: bootstrap metric differs")
-            expected_gate = syscall_gate(item["musl"]["syscalls"]["marked_region"], item["crabc"]["syscalls"]["marked_region"])
+            expected_gate = syscall_gate(
+                item["musl"]["syscalls"]["marked_region"],
+                item["crabc"]["syscalls"]["marked_region"],
+                operations=invocation["operations_per_process"],
+            )
             require(comparison["syscall_gate"] == expected_gate, f"{name}: syscall gate provenance differs")
         memory = measurement.get("memory")
         require(isinstance(memory, dict) and set(memory) == {"musl", "crabc"}, "allocation memory diagnostics are absent")

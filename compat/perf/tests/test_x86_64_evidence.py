@@ -50,6 +50,7 @@ class CanonicalProfileInvocationTests(unittest.TestCase):
                 "arguments": ["live", "1", "128", "262144"],
                 "fixture_mode": "live",
                 "iterations_per_process": 1,
+                "operations_per_process": 128,
             },
         )
         self.assertEqual(
@@ -674,6 +675,7 @@ class SamplePlanReplayTests(unittest.TestCase):
                            for index in range(evidence.FULL_WARMUP_COUNT)]
                 lanes[lane] = {
                     "status": "ok", "iterations_per_process": invocation["iterations_per_process"],
+                    "operations_per_process": invocation["operations_per_process"],
                     "warmup_processes": evidence.FULL_WARMUP_COUNT, "warmups": warmups,
                     "sample_count": evidence.FULL_SAMPLE_COUNT, "samples": samples,
                     "summary": contract.summarize_samples(samples), "syscalls": {"marked_region": {"calls": {}}},
@@ -685,7 +687,10 @@ class SamplePlanReplayTests(unittest.TestCase):
                 "status": "ok", "seed": seed,
                 "sample_plan": [{"lane": lane, "sample_index": index} for lane, index in plan],
                 "cpu": {**cpu, "release_gate": "pass" if cpu["one_sided_95_upper"] <= 0.90 else "fail"},
-                "syscall_gate": {"status": "pass", "violations": []},
+                "syscall_gate": evidence.syscall_gate(
+                    {"calls": {}}, {"calls": {}},
+                    operations=invocation["operations_per_process"],
+                ),
             }
             mapping = {"raw": identity(empty), "paths": []}
             report = {
@@ -716,6 +721,9 @@ class SamplePlanReplayTests(unittest.TestCase):
                 bad_bootstrap = copy.deepcopy(report)
                 bad_bootstrap["measurement"]["workloads"][name]["comparison"]["cpu"]["one_sided_95_upper"] = 0.01
                 self.assertTrue(evidence.validate_measurement_attempt(ROOT, bad_bootstrap, [name], full=False))
+                bad_operations = copy.deepcopy(report)
+                bad_operations["measurement"]["workloads"][name]["crabc"]["operations_per_process"] = 2
+                self.assertTrue(evidence.validate_measurement_attempt(ROOT, bad_operations, [name], full=False))
                 extra = copy.deepcopy(report)
                 extra["measurement"]["workloads"]["cheap-substitute"] = copy.deepcopy(extra["measurement"]["workloads"][name])
                 self.assertTrue(evidence.validate_measurement_attempt(ROOT, extra, [name], full=False))
