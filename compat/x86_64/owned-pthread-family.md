@@ -133,17 +133,21 @@ The default static archive preserves the hidden global bodies already selected
 there. `pthread_cond_timedwait` and `pthread_mutex_timedlock` are the
 `x86-owned-static-runtime` additions. The two source-local bodies are retained
 through typed local references because the assembler `.set` alias alone is not
-a compiler reachability edge. `mq_notify` reaches the selected detach body
-directly, matching musl's internal nonpreemptible binding without changing its
-worker, cancellation, synchronization, or lifetime logic.
+a compiler reachability edge. `mq_notify` retains musl's public
+`pthread_detach` relocation instead of naming the source-local body, so a
+static application strong override may receive that source call. The alias
+work does not change its worker, cancellation, synchronization, or lifetime
+logic.
 
 The runner compiles one C11 application object once, links it with pinned musl,
 owned static `ET_EXEC`, static PIE, and owned shared PIE/non-PIE products, and
 runs each shared image through kernel and direct-loader entry. `readelf` checks
 one definition per public name, `FUNC WEAK DEFAULT` public aliases, exact
 member/value/type/section identity with their provider, archive hidden/global
-or source-local binding, and the shared dynamic export boundary. Its strong
-application `pthread_setcancelstate` override must handle the application's
+or source-local binding, and the shared dynamic export boundary. It also
+compares musl's and the candidate's `mq_notify` archive member: both retain a
+public `pthread_detach` relocation and neither names the source-local provider.
+Its strong application `pthread_setcancelstate` override must handle the application's
 direct call while `pthread_join` keeps its internal
 `__pthread_setcancelstate` route, as `src/thread/pthread_join.c` requires. A
 worker result and `pthread_join` provide the completion edge; each command has

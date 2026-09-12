@@ -12109,11 +12109,10 @@ unsafe fn join_selected_worker_inner(
         ):
             self.assertIn(required, pthread_create_join)
         self.assertIn("src/mq/mq_notify.c", owned_message_queues)
-        self.assertIn(
-            "pthread_create_join::detach_selected_worker", owned_message_queues
-        )
+        self.assertIn('#[link_name = "pthread_detach"]', owned_message_queues)
+        self.assertIn("source_pthread_detach(", owned_message_queues)
         self.assertNotIn(
-            "pthread_create_join::pthread_detach", owned_message_queues
+            "pthread_create_join::detach_selected_worker", owned_message_queues
         )
 
         for required in (

@@ -292,12 +292,36 @@ def static(path):
         require_same_definition(alias, target_row, path)
     return table
 
+def mq_notify_public_detach_relocation(path):
+    table = rows(path, {'.symtab'})
+    definitions = [row for row in table if row.name == 'mq_notify' and row.section != 'UND']
+    if len(definitions) != 1:
+        raise SystemExit(f'{path}: expected one mq_notify archive definition, found {definitions}')
+    member = definitions[0].member
+    references = [row for row in table if row.member == member and row.name == 'pthread_detach' and row.section == 'UND']
+    if len(references) != 1:
+        raise SystemExit(f'{path}: mq_notify must retain one public pthread_detach relocation, found {references}')
+    reference = references[0]
+    if shape(reference) != ('NOTYPE', 'GLOBAL', 'DEFAULT'):
+        raise SystemExit(f'{path}: mq_notify pthread_detach relocation drifted: {reference}')
+    local_references = [row for row in table if row.member == member and row.name == '__pthread_detach' and row.section == 'UND']
+    if local_references:
+        raise SystemExit(f'{path}: mq_notify must not name source-local __pthread_detach: {local_references}')
+    return reference
+
 musl_dynamic = dynamic(work / 'musl-dynamic-symbols.txt')
 candidate_dynamic = dynamic(work / 'candidate-dynamic-symbols.txt')
 musl_shared = shared(work / 'musl-shared-symbols.txt')
 candidate_shared = shared(work / 'candidate-shared-symbols.txt')
 musl_static = static(work / 'musl-static-symbols.txt')
 candidate_static = static(work / 'candidate-static-symbols.txt')
+musl_mq_detach = mq_notify_public_detach_relocation(work / 'musl-static-symbols.txt')
+candidate_mq_detach = mq_notify_public_detach_relocation(work / 'candidate-static-symbols.txt')
+if (shape(musl_mq_detach), musl_mq_detach.section) != (shape(candidate_mq_detach), candidate_mq_detach.section):
+    raise SystemExit(
+        'mq_notify pthread_detach relocation binding/type/section mismatch: '
+        f'{musl_mq_detach} != {candidate_mq_detach}'
+    )
 for name in aliases:
     for left, right, label in ((musl_dynamic, candidate_dynamic, 'dynamic'),
                                (musl_shared, candidate_shared, 'shared'),
@@ -312,4 +336,4 @@ for path in sorted(work.glob('dynamic-*-contract.symbols.txt')):
         raise SystemExit(f'{path}: application override is not dynamic GLOBAL DEFAULT: {row}')
 PY
 
-printf 'owned pthread alias contract: PASS (pinned musl archive/shared aliases, static/static-PIE and dynamic PIE/non-PIE strong public override, synchronous pthread_join hidden-provider route); evidence: %s\n' "$WORK"
+printf 'owned pthread alias contract: PASS (pinned musl archive/shared aliases, static/static-PIE and dynamic PIE/non-PIE strong public override, mq_notify public detach relocation, synchronous pthread_join hidden-provider route); evidence: %s\n' "$WORK"
