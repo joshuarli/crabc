@@ -34,13 +34,22 @@ inputs to the installed dynamic driver. Only direct application roots enter
 the final link, while the complete declared dependency graph and typed input receipts
 remain validated. It also adds the fixed-mimalloc reset-advice retry/fallback
 matrix and the native performance supplement: forty fixed rows and a memory
-phase map for the seventy-four existing rows. The fixtures pass pinned native
-reduced correctness smokes; adapter collection and memory observers remain
-under implementation. Performance qualification still requires complete
-correctness closure. At integrated `54bb0eba`, all 85 focused tests and campaign
+phase map for the seventy-four existing rows. At integrated `54bb0eba`, all 85 focused tests and campaign
 contract validation pass; logs are under `.work/x86_64/integration-54bb0eba/`.
 These source changes require fresh product evidence at the next qualification
 checkpoint. They do not transfer the preceding revision's qualification.
+
+The native C performance adapter now stages all 114 rows, launches timed
+clients through an isolated static supervisor, and collects separate memory
+observers with ordered live checkpoints and whole-process cgroup peaks.
+At `e54ccd35`, all 74 focused tests pass. Installed/extracted startup and
+dependency-graph smokes preserve the same workload-object proof; seven selected
+memory rows cover all six observer artifacts in both provider lanes. Independent
+host replay passes the retained timing, trace-root, PID, mapping, PSS, cgroup,
+and cleanup records. These bounded checks validate the collector. The retained
+syscall and memory comparisons remain non-passing; full performance collection
+still requires the complete correctness predecessor chain and three qualified
+scorecards. See [`compat/perf/README.md`](compat/perf/README.md).
 
 The full native libc-test measurement at `04c4cbd3` records 427 of 434 units
 passing, one missing-provider link (`functional/random`), and six runtime

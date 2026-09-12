@@ -1,5 +1,10 @@
 # musl–crabc performance evidence
 
+Active x86 work uses the [supplied-product C adapter](#native-x86-64-supplied-product-adapter)
+and the [Rust-facade companion](native/x86_64.md) through
+`./scripts/dev-x86_64.sh perf-c` and `perf-native`. The AArch64 commands below
+are preserved reference paths while that architecture's work is paused.
+
 `run.py` is the project’s controlled Linux/AArch64 performance matrix. It is
 not a replacement for the correctness suites and it does not turn a single
 machine’s result into a release gate. Its job is to give an optimization

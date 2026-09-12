@@ -48,6 +48,11 @@ owners:
    execution-root evidence. Their incomplete results do not close the native
    aggregate; current measurements and the integration sequence are in
    `plan.md`.
+   The native performance collector now covers the complete 114-row definition
+   with separate memory observers and an isolated timing launcher. Its bounded
+   native smokes and host replay pass; complete correctness-chain admission and
+   performance qualification remain open. See
+   [`compat/perf/README.md`](compat/perf/README.md).
    Do not restart an export-by-export queue.
 2. Allocator: use the contained `compat/allocator/run-x86_64.sh` launcher,
    then complete native x86 M2 qualification. Imported

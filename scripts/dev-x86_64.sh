@@ -197,6 +197,8 @@ Native Linux/x86-64 staged-foundation evidence commands:
   perf-c {plan|run|collect|check} ...  native supplied-product C performance adapter; use CRABC_X86_64_CORE_IMAGE=crabc-core-evidence:x86_64-native-perf
   perf-c-test  run focused native C-performance adapter and supplemental-fixture smoke tests in that image
   perf-c-memory-smoke <dynamic-product> <work-dir>  run the bounded native observer/cgroup collector smoke; never a scorecard result
+  perf-native {--prepare|--mode smoke|--validate-report REPORT} ...  pinned native Rust-facade performance companion
+  perf-native-test  run focused native Rust-facade performance runner tests
   musl-oracle  verify the pinned musl-1.2.6 x86 C/POSIX oracle toolchain
   linux-5-10-uapi  verify the fixed Linux 5.10 x86 exported-UAPI input
   header-abi-reference  verify the pinned x86 SysV LP64/x87 header baseline
@@ -2828,6 +2830,105 @@ prepare_native_c_performance_arguments() {
     [ "$dynamic_seen" -eq 1 ] && [ "$work_seen" -eq 1 ] || fail "native C-performance plan/run/collect requires --dynamic-product and --work-dir"
 }
 
+# Convert a path already admitted by translate_owned_posix_product back to its
+# actual host bind. Source inputs need this physical path for read-only Docker
+# mounts; retained-report replay uses it without entering a container.
+native_facade_performance_host_path() {
+    case "$1" in
+        /workspace/.work/x86_64/cargo|/workspace/.work/x86_64/cargo/*)
+            printf '%s%s\n' "$CARGO_VOLUME" "${1#/workspace/.work/x86_64/cargo}"
+            ;;
+        /workspace/.work/x86_64|/workspace/.work/x86_64/*)
+            printf '%s%s\n' "$WORK_DIR" "${1#/workspace/.work/x86_64}"
+            ;;
+        /workspace/*)
+            printf '%s/%s\n' "$ROOT_DIR" "${1#/workspace/}"
+            ;;
+        *) fail "native facade performance path is outside the source mount" ;;
+    esac
+}
+
+prepare_native_facade_performance_arguments() {
+    local mode='' report='' work_root='' rustybench_source='' rustix_source=''
+    local translated
+    NATIVE_FACADE_PERFORMANCE_ARGUMENTS=()
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --prepare)
+                [ -z "$mode" ] || fail "select exactly one native facade performance mode"
+                mode=prepare
+                shift
+                ;;
+            --mode)
+                [ "$#" -ge 2 ] && [ -z "$mode" ] || fail "--mode requires smoke or full"
+                case "$2" in smoke|full) mode="$2" ;; *) fail "--mode requires smoke or full" ;; esac
+                shift 2
+                ;;
+            --validate-report)
+                [ "$#" -ge 2 ] && [ -n "$2" ] && [ -z "$mode" ] && [ -z "$report" ] || fail "--validate-report requires one retained report"
+                mode=check
+                report="$2"
+                shift 2
+                ;;
+            --report|--work-root|--rustybench-source|--rustix-source)
+                [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != -* ]] || fail "$1 requires a physical checkout .work path"
+                case "$1" in
+                    --report) [ -z "$report" ] || fail "--report may appear once"; report="$2" ;;
+                    --work-root) [ -z "$work_root" ] || fail "--work-root may appear once"; work_root="$2" ;;
+                    --rustybench-source) [ -z "$rustybench_source" ] || fail "--rustybench-source may appear once"; rustybench_source="$2" ;;
+                    --rustix-source) [ -z "$rustix_source" ] || fail "--rustix-source may appear once"; rustix_source="$2" ;;
+                esac
+                shift 2
+                ;;
+            *) fail "unknown native facade performance argument: $1" ;;
+        esac
+    done
+    [ -n "$mode" ] || fail "perf-native requires --prepare, --mode smoke, or --validate-report REPORT"
+    NATIVE_FACADE_PERFORMANCE_MODE="$mode"
+    if [ "$mode" = full ]; then
+        # The runner owns the unconditional correctness-predecessor refusal.
+        # Deliver it before Docker setup, input preparation, or measurement.
+        NATIVE_FACADE_PERFORMANCE_ARGUMENTS=(--mode full)
+        return
+    fi
+    [ -n "$rustybench_source" ] && [ -n "$rustix_source" ] || fail "perf-native requires --rustybench-source and --rustix-source"
+    translated="$(translate_owned_posix_product "$rustybench_source")" || exit 2
+    NATIVE_FACADE_RUSTYBENCH_SOURCE="$(native_facade_performance_host_path "$translated")"
+    translated="$(translate_owned_posix_product "$rustix_source")" || exit 2
+    NATIVE_FACADE_RUSTIX_SOURCE="$(native_facade_performance_host_path "$translated")"
+    [[ "$NATIVE_FACADE_RUSTYBENCH_SOURCE" != *:* && "$NATIVE_FACADE_RUSTIX_SOURCE" != *:* ]] || \
+        fail "native facade source paths must not contain Docker mount syntax"
+    if [ "$mode" = check ]; then
+        translated="$(translate_owned_posix_product "$report" receipt-file)" || exit 2
+        NATIVE_FACADE_PERFORMANCE_ARGUMENTS=(
+            --validate-report "$(native_facade_performance_host_path "$translated")"
+            --rustybench-source "$NATIVE_FACADE_RUSTYBENCH_SOURCE"
+            --rustix-source "$NATIVE_FACADE_RUSTIX_SOURCE"
+        )
+    else
+        if [ -n "$work_root" ]; then
+            translated="$(translate_owned_posix_product "$work_root")" || exit 2
+        else
+            # WORK_DIR was already physically admitted at dispatcher startup
+            # and is bound at this fixed container path, including overrides.
+            translated=/workspace/.work/x86_64
+        fi
+        NATIVE_FACADE_PERFORMANCE_ARGUMENTS=(
+            --work-root "$translated"
+            --rustybench-source /inputs/rustybench
+            --rustix-source /inputs/rustix
+        )
+        if [ "$mode" = prepare ]; then
+            [ -z "$report" ] || fail "--prepare does not take --report"
+            NATIVE_FACADE_PERFORMANCE_ARGUMENTS+=(--prepare)
+        else
+            [ -n "$report" ] || fail "--mode smoke requires --report"
+            translated="$(translate_owned_posix_product "$report" fresh-output)" || exit 2
+            NATIVE_FACADE_PERFORMANCE_ARGUMENTS+=(--mode smoke --report "$translated")
+        fi
+    fi
+}
+
 prepare_owned_posix_family_arguments() {
     local static_receipt='' dynamic_receipt='' output=''
     local expected='usage: ./scripts/dev-x86_64.sh owned-posix-family --static-preparation FILE --dynamic-qualification FILE --output NEW_DIR'
@@ -3054,6 +3155,42 @@ run_in_container() {
         --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
         --volume "$TARGET_VOLUME:/workspace/target" \
         --volume "$CARGO_VOLUME:/workspace/.work/x86_64/cargo" \
+        "$IMAGE" "$@"
+}
+
+# The Rust-facade companion uses stock std as measurement infrastructure. Its
+# source inputs are read-only; only dependency preparation has network access.
+# The invoking user owns the private 0700/0600 evidence, so host replay can
+# inspect it without changing the file modes sealed by the collector.
+run_in_native_facade_performance_container() {
+    prepare_work_dir
+    local image_id
+    local -a network_arguments=()
+    [ "$NATIVE_FACADE_PERFORMANCE_MODE" = prepare ] || network_arguments=(--network none)
+    image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+    [ -n "$image_id" ] || fail "cannot resolve native Rust-facade performance image identity"
+    docker run --rm --init \
+        --user "$(id -u):$(id -g)" \
+        "${GIT_METADATA_MOUNT[@]}" \
+        --platform "$PLATFORM" \
+        "${network_arguments[@]}" \
+        --workdir /workspace \
+        --env CRABC_WORK_DIR=/workspace/.work/x86_64 \
+        --env TMPDIR=/workspace/.work/x86_64/tmp \
+        --env PYTHONDONTWRITEBYTECODE=1 \
+        --env GIT_OPTIONAL_LOCKS=0 \
+        --env GIT_CONFIG_COUNT=3 \
+        --env GIT_CONFIG_KEY_0=safe.directory \
+        --env GIT_CONFIG_VALUE_0=/workspace \
+        --env GIT_CONFIG_KEY_1=safe.directory \
+        --env GIT_CONFIG_VALUE_1=/inputs/rustybench \
+        --env GIT_CONFIG_KEY_2=safe.directory \
+        --env GIT_CONFIG_VALUE_2=/inputs/rustix \
+        --env CRABC_PERF_X86_IMAGE_ID="crabc-core-evidence@$image_id" \
+        --volume "$ROOT_DIR:/workspace" \
+        --volume "$TMP_DIR:/tmp" --volume "$WORK_DIR:/workspace/.work/x86_64" \
+        --volume "$NATIVE_FACADE_RUSTYBENCH_SOURCE:/inputs/rustybench:ro" \
+        --volume "$NATIVE_FACADE_RUSTIX_SOURCE:/inputs/rustix:ro" \
         "$IMAGE" "$@"
 }
 
@@ -6041,6 +6178,10 @@ case "$command" in
     perf-c-memory-smoke)
         [ "$#" -eq 2 ] || fail "perf-c-memory-smoke requires DYNAMIC_PRODUCT and fresh WORK_DIR"
         ;;
+    perf-native) ;;
+    perf-native-test)
+        [ "$#" -eq 0 ] || fail "perf-native-test takes no arguments"
+        ;;
     routine-c-abi-matrix)
         [ "$#" -eq 1 ] || fail "routine-c-abi-matrix requires exactly one family id"
         ensure_image
@@ -6298,6 +6439,10 @@ esac
 require_native_linux_x86_64_host
 
 case "$command" in
+    perf-native)
+        prepare_native_facade_performance_arguments "$@"
+        set -- "${NATIVE_FACADE_PERFORMANCE_ARGUMENTS[@]}"
+        ;;
     perf-c)
         prepare_native_c_performance_arguments "$@"
         set -- "${NATIVE_C_PERFORMANCE_ARGUMENTS[@]}"
@@ -6333,6 +6478,23 @@ case "$command" in
 esac
 
 case "$command" in
+    perf-native)
+        case "$NATIVE_FACADE_PERFORMANCE_MODE" in
+            check|full)
+                python3 -B "$ROOT_DIR/compat/perf/native/x86_64_runner.py" "$@"
+                ;;
+            *)
+                ensure_image
+                run_in_native_facade_performance_container python3 -B /workspace/compat/perf/native/x86_64_runner.py "$@"
+                ;;
+        esac
+        ;;
+    perf-native-test)
+        ensure_image
+        run_in_network_none_container python3 -B -m unittest \
+            compat/perf/native/tests/test_x86_64_runner.py \
+            compat/perf/native/tests/test_x86_64_dispatcher.py
+        ;;
     perf-c)
         if [ "$1" = check ]; then
             shift
