@@ -617,7 +617,7 @@
       "id": "callable-visibility",
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
       "schema": "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1",
-      "sha256": "76821632da8f0447255fdda6ddaab0856544b1558f0693d337410e0c4d64d6d5",
+      "sha256": "d28f8c6c82c79e16196020817f3054639a0643d6d37db958d709911bd84d5636",
       "summary": {
         "candidate_only_callable_count": 0,
         "candidate_public_header_count": 191,
@@ -721,7 +721,7 @@
       "id": "callable-disposition",
       "path": "compat/x86_64/header_callable_disposition.json",
       "schema": "crabc.x86_64-header-callable-disposition-report/v1",
-      "sha256": "cb69bed5e0ee33f845ace4aa7909a06647c14f5ac385091bfab102765b83674b",
+      "sha256": "5fa95d421d4f988d7ac94161b9147f9555ca6681a68a0abf545df273d98404e6",
       "summary": {
         "candidate_external_callable_count": 1525,
         "declared_unverified_feature_callable_count": 310,
@@ -807,7 +807,7 @@
     },
     {
       "path": "compat/x86_64/parity.toml",
-      "sha256": "b7105d7d141a24a03e2d505ccdc30675a01ffc4d443fac9c28ebd43b81238e5b"
+      "sha256": "bdfacde69fa08e650d12c6664f08e6cefe84bbafbebef27cf6fc396997f6bf14"
     },
     {
       "path": "compat/x86_64/public_headers.txt",
@@ -815,11 +815,11 @@
     },
     {
       "path": "compat/x86_64/static_c_abi_exports.txt",
-      "sha256": "2c32a23f90aa8ab0fa248b84708624f72ef715a0404e27d0c93732f171a11912"
+      "sha256": "88ef9d51eb6abd08d1a14a45c75dedc0412bb6ac9e364faf1e5aee5b59ed32c0"
     },
     {
       "path": "compat/x86_64/header_callable_inventory.json",
-      "sha256": "cdb228ef5d23699c256c12ed048abafdeda12bb6ed9fb5d73f65fd3b8ff9df36"
+      "sha256": "15aab9f01fff6e988424a853ad43ee617b2cb86c532a4c7440ec6e69ba7f44c9"
     },
     {
       "path": "compat/x86_64/header_callable_disposition.toml",
@@ -859,7 +859,7 @@
     },
     {
       "path": "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
-      "sha256": "76821632da8f0447255fdda6ddaab0856544b1558f0693d337410e0c4d64d6d5"
+      "sha256": "d28f8c6c82c79e16196020817f3054639a0643d6d37db958d709911bd84d5636"
     },
     {
       "path": "compat/x86_64/generated/header_abi_matrix/report.json",
@@ -871,7 +871,7 @@
     },
     {
       "path": "compat/x86_64/header_callable_disposition.json",
-      "sha256": "cb69bed5e0ee33f845ace4aa7909a06647c14f5ac385091bfab102765b83674b"
+      "sha256": "5fa95d421d4f988d7ac94161b9147f9555ca6681a68a0abf545df273d98404e6"
     },
     {
       "path": "compat/x86_64/headers_layouts_aggregate.py",

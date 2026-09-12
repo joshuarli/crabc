@@ -33,8 +33,8 @@ class OwnedVmVmlockTests(unittest.TestCase):
         )
         self.assertIn("pthread_vmlock::wait()", source)
 
-        mmap = body_after(source, "pub unsafe extern \"C\" fn mmap(")
-        munmap = body_after(source, "pub unsafe extern \"C\" fn munmap(")
+        mmap = body_after(source, "pub unsafe extern \"C\" fn __mmap(")
+        munmap = body_after(source, "pub unsafe extern \"C\" fn __munmap(")
         self.assertIn("selected_owned_vm_wait();", mmap)
         self.assertIn("selected_owned_vm_wait();", munmap)
 

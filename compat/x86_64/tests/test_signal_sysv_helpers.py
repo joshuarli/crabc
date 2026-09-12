@@ -100,7 +100,7 @@ class X86SignalSysvHelpersTests(unittest.TestCase):
         for required in (
             "XOPEN=700",
             "XOPEN=800",
-            "post-POSIX.1-2024",
+            "xopen800 -D_XOPEN_SOURCE=800",
             "CRABC_EXPECT_SYSV_SIGNAL_HELPERS",
             "CRABC_REQUIRE_SYSV_SIGNAL_HELPERS_HIDDEN",
             "retained a mangled",

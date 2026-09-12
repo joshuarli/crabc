@@ -123,6 +123,16 @@ matched pinned allocator object and owned compiler helpers. Cargo's stock
 compiler/runtime archive members are excluded. Allocator header dependency
 traces, source pin, flags, object hashes and exact tool identities are retained.
 PIC generated math remains source-oracle machinery, not an ambient runtime.
+For that link alone, `libc/src/c_abi/x86_64/owned_dynamic.list` is the checked
+byte-identical musl 1.2.6 `dynamic.list` input. It gives LLD musl's finite
+exception scope: public data remains interposable for copy relocations, and
+the listed allocator functions remain interposable by design. Ordinary shared
+libc calls bind locally without rewriting their source public spellings. The
+producer rejects a changed source/hash/order, records the selected data and
+allocator categories plus final normalized libc link command in
+`share/crabc/libc-shared.provenance.json`, and does not apply this policy to
+the loader, application DSOs, or static archives. It is deliberately not a
+blanket `-Bsymbolic` policy.
 The actual shared libc and loader must have no NEEDED, PT_INTERP, TEXTREL or
 absolute 32-bit dynamic relocations, and must have RELRO and an NX stack.
 Every application link records hashed inputs, exact command and checked LLD

@@ -10,7 +10,9 @@
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
-//! `src/time/clock_nanosleep.c` maps to [`clock_nanosleep`] below.  Musl
+//! `src/time/clock_nanosleep.c::__clock_nanosleep` maps to the strong internal
+//! body below, while `weak_alias(__clock_nanosleep, clock_nanosleep)` supplies
+//! the public C spelling. Musl
 //! special-cases a relative realtime request through `nanosleep` and rejects
 //! `CLOCK_THREAD_CPUTIME_ID` with `EINVAL` before the syscall. This bounded
 //! Linux-5.10 leaf retains the latter validation before cancellation. The owned
@@ -33,6 +35,15 @@ pub(super) const CLOCK_REALTIME: c_int = 0;
 const CLOCK_THREAD_CPUTIME_ID: c_int = 3;
 const EINVAL: c_int = 22;
 
+// Preserve musl's hidden internal body and weak public alias as one ELF
+// definition. A Rust forwarding wrapper would let an application override
+// change selected internal sleep ownership.
+core::arch::global_asm!(
+    ".hidden __clock_nanosleep",
+    ".weak clock_nanosleep",
+    ".set clock_nanosleep, __clock_nanosleep",
+);
+
 /// Sleep against one Linux clock using the POSIX `clock_nanosleep` result
 /// convention.
 ///
@@ -51,8 +62,9 @@ const EINVAL: c_int = 22;
 /// storage; Linux ignores it and supplies no remaining interval in that mode.
 /// The caller owns signal delivery, interruption, and any lifetime policy for
 /// both records.
+
 #[no_mangle]
-pub unsafe extern "C" fn clock_nanosleep(
+pub unsafe extern "C" fn __clock_nanosleep(
     clock_id: c_int,
     flags: c_int,
     request: *const c_void,

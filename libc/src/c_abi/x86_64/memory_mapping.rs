@@ -11,10 +11,10 @@
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
 //!
-//! - `src/mman/mmap.c` maps to [`mmap`].
-//! - `src/mman/munmap.c` maps to [`munmap`].
-//! - `src/mman/mprotect.c` maps to [`mprotect`].
-//! - `src/mman/madvise.c` maps to [`madvise`].
+//! - `src/mman/mmap.c` maps to [`__mmap`] and its weak `mmap` alias.
+//! - `src/mman/munmap.c` maps to [`__munmap`] and its weak `munmap` alias.
+//! - `src/mman/mprotect.c` maps to [`__mprotect`] and its weak `mprotect` alias.
+//! - `src/mman/madvise.c` maps to [`__madvise`] and its weak `madvise` alias.
 //! - `src/mman/posix_madvise.c` maps to [`posix_madvise`].
 //! - `src/mman/mincore.c` maps to [`mincore`].
 //!
@@ -94,7 +94,7 @@ fn selected_owned_vm_wait() {}
 /// first waits for the existing selected pthread VM-lifetime interval; the
 /// frozen archive retains its established no-op boundary.
 #[no_mangle]
-pub unsafe extern "C" fn mmap(
+pub unsafe extern "C" fn __mmap(
     address: *mut c_void,
     length: usize,
     protection: c_int,
@@ -154,7 +154,7 @@ pub unsafe extern "C" fn mmap(
 /// product waits for its existing selected pthread VM-lifetime interval before
 /// making the kernel request.
 #[no_mangle]
-pub unsafe extern "C" fn munmap(address: *mut c_void, length: usize) -> c_int {
+pub unsafe extern "C" fn __munmap(address: *mut c_void, length: usize) -> c_int {
     selected_owned_vm_wait();
     // SAFETY: the caller owns the Linux mapping-range lifetime and aliasing
     // contract.
@@ -176,7 +176,7 @@ pub unsafe extern "C" fn munmap(address: *mut c_void, length: usize) -> c_int {
 /// around altered access permissions. This selected boundary intentionally
 /// rounds the address and end exactly as pinned musl does.
 #[no_mangle]
-pub unsafe extern "C" fn mprotect(
+pub unsafe extern "C" fn __mprotect(
     address: *mut c_void,
     length: usize,
     protection: c_int,
@@ -208,7 +208,7 @@ pub unsafe extern "C" fn mprotect(
 /// The caller owns pointer validity, mapping lifetime, advice semantics, and
 /// concurrent access for the raw Linux request.
 #[no_mangle]
-pub unsafe extern "C" fn madvise(address: *mut c_void, length: usize, advice: c_int) -> c_int {
+pub unsafe extern "C" fn __madvise(address: *mut c_void, length: usize, advice: c_int) -> c_int {
     // SAFETY: the caller owns the complete raw Linux advice contract.
     let result = unsafe {
         raw_syscall::syscall3(
@@ -220,6 +220,25 @@ pub unsafe extern "C" fn madvise(address: *mut c_void, length: usize, advice: c_
     };
     c_status(result)
 }
+
+// Musl's mman wrappers define hidden implementation symbols and weak public
+// aliases in the same object. Preserve that one-address relationship so the
+// selected internal mapping owners cannot be redirected through application
+// mmap-family overrides.
+core::arch::global_asm!(
+    ".hidden __mmap",
+    ".weak mmap",
+    ".set mmap, __mmap",
+    ".hidden __munmap",
+    ".weak munmap",
+    ".set munmap, __munmap",
+    ".hidden __mprotect",
+    ".weak mprotect",
+    ".set mprotect, __mprotect",
+    ".hidden __madvise",
+    ".weak madvise",
+    ".set madvise, __madvise",
+);
 
 /// Give one POSIX memory-advice request its musl result convention.
 ///

@@ -8,11 +8,15 @@
 //! whole seconds, nanoseconds divided by one million, and two zero legacy
 //! fields into the caller's `struct timeb`.
 //!
-//! The exact source closure reaches the separately selected static
-//! [`super::clock_gettime`] boundary. Its valid-local-record Linux 5.10 path
-//! succeeds and preserves stale errno. Rust initializes the local record to
-//! make an otherwise unobservable failed-query path defined without selecting
-//! an error convention that musl's source does not provide for `ftime`.
+//! The exact source closure retains `ftime.c`'s public `clock_gettime` C
+//! spelling. The archive leaves that source call available to a strong
+//! application definition, while the shared final link resolves it to the
+//! localized `__clock_gettime` body. That remains distinct from selected
+//! callers that explicitly name the non-preemptible body in source. Its
+//! valid-local-record Linux 5.10 path succeeds and preserves stale errno.
+//! Rust initializes the local record to make an otherwise unobservable
+//! failed-query path defined without selecting an error convention that musl's
+//! source does not provide for `ftime`.
 //!
 //! This does not select `time`, `clock`, `gettimeofday`, calendar/timezone
 //! conversion, clock mutation, sleep, alarms, interval/POSIX timers,
@@ -21,6 +25,14 @@
 
 use core::ffi::{c_int, c_long, c_short, c_ushort, c_void};
 use core::mem::{align_of, offset_of, size_of};
+
+unsafe extern "C" {
+    // ftime.c intentionally names the public spelling. The archive preserves
+    // that override point; the checked shared-libc dynamic list localizes the
+    // same ordinary source call without changing the source-selected name.
+    #[link_name = "clock_gettime"]
+    fn public_clock_gettime(clock_id: c_int, output: *mut c_void) -> c_int;
+}
 
 const CLOCK_REALTIME: c_int = 0;
 const NANOSECONDS_PER_MILLISECOND: c_long = 1_000_000;
@@ -72,7 +84,7 @@ pub unsafe extern "C" fn ftime(output: *mut Timeb) -> c_int {
     // SAFETY: this local record is writable exact x86 timespec storage. Musl
     // intentionally ignores the selected public clock_gettime return value.
     let _ = unsafe {
-        super::clock_gettime::clock_gettime(
+        public_clock_gettime(
             CLOCK_REALTIME,
             (&mut snapshot as *mut Timespec).cast::<c_void>(),
         )

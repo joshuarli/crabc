@@ -60,16 +60,49 @@ assert_selected_c_abi_surface() {
     fi
 }
 
+assert_direct_raw_syscall_path() {
+    local symbol="$1"
+    local disassembly="$2"
+    local helper
+    local helper_disassembly
+    local index=0
+    local -a helpers
+
+    mapfile -t helpers < <(
+        awk '
+            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
+                helper = $0
+                sub(/^.*</, "", helper)
+                sub(/>.*/, "", helper)
+                if (!seen[helper]++) {
+                    print helper
+                }
+            }
+        ' "$disassembly"
+    )
+    for helper in "${helpers[@]}"; do
+        helper_disassembly="$work_dir/${symbol}-raw-syscall-${index}-disassembly"
+        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
+            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
+        index=$((index + 1))
+    done
+    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        [ "${#helpers[@]}" -gt 0 ]; then
+        return
+    fi
+    fail "${symbol} lacks a direct raw-syscall helper edge"
+}
+
 assert_named_syscall() {
     local symbol="$1"
     local syscall_word="$2"
     local disassembly="$work_dir/${symbol}-disassembly"
 
     objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|\\$)" "$disassembly" ||
+    grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|\$)" "$disassembly" ||
         fail "${symbol} lacks Linux syscall ${syscall_word}"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "${symbol} lacks its Linux syscall instruction"
+    assert_direct_raw_syscall_path "$symbol" "$disassembly"
 }
 
 assert_fixture_tls_capacity() {
@@ -149,7 +182,7 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" \
     "$expected_c_abi_symbols"
-for symbol in __errno_location madvise mincore mmap mprotect munmap posix_madvise; do
+for symbol in __errno_location __madvise __mmap __mprotect __munmap madvise mincore mmap mprotect munmap posix_madvise; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -172,7 +205,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location madvise mincore mmap mprotect munmap posix_madvise; do
+for symbol in __errno_location __madvise __mmap __mprotect __munmap madvise mincore mmap mprotect munmap posix_madvise; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done
@@ -203,10 +236,10 @@ objdump -d --disassemble=__errno_location "$candidate" >"$errno_disassembly"
 grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
     fail "candidate errno does not use direct fs initial TLS"
 
-assert_named_syscall mmap 9
-assert_named_syscall mprotect a
-assert_named_syscall munmap b
-assert_named_syscall madvise 1c
+assert_named_syscall __mmap 9
+assert_named_syscall __mprotect a
+assert_named_syscall __munmap b
+assert_named_syscall __madvise 1c
 assert_named_syscall posix_madvise 1c
 assert_named_syscall mincore 1b
 

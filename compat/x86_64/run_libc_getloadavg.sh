@@ -57,12 +57,63 @@ assert_fixture_tls_capacity() {
         fail "fixture TLS scratch is incompatible with PT_TLS alignment ${tls_alignment}"
 }
 
+assert_direct_raw_syscall_path() {
+    local symbol="$1"
+    local disassembly="$2"
+    local helper
+    local helper_disassembly
+    local index=0
+    local -a helpers
+
+    mapfile -t helpers < <(
+        awk '
+            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
+                helper = $0
+                sub(/^.*</, "", helper)
+                sub(/>.*/, "", helper)
+                if (!seen[helper]++) {
+                    print helper
+                }
+            }
+        ' "$disassembly"
+    )
+    for helper in "${helpers[@]}"; do
+        helper_disassembly="$work_dir/${symbol}-raw-syscall-${index}-disassembly"
+        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
+            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
+        index=$((index + 1))
+    done
+    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        [ "${#helpers[@]}" -gt 0 ]; then
+        return
+    fi
+    fail "${symbol} lacks a direct raw-syscall helper edge"
+}
+
+assert_archive_public_sysinfo_edge() {
+    awk '
+        /^[[:xdigit:]]+ <.*>:/ {
+            in_getloadavg = $0 ~ /<getloadavg>:/
+        }
+        in_getloadavg && /R_X86_64_PLT32[[:space:]]+sysinfo/ {
+            found = 1
+        }
+        END { exit !found }
+    ' "$archive_disassembly" ||
+        fail "getloadavg archive body does not retain its public sysinfo edge"
+}
+
 assert_getloadavg_syscall_path() {
+    local lsysinfo_disassembly="$work_dir/__lsysinfo-disassembly"
+
     objdump -d --disassemble=getloadavg "$candidate" >"$getloadavg_disassembly"
-    grep -Eq '\$0x63,%(e|r)ax' "$getloadavg_disassembly" ||
-        fail "getloadavg lacks Linux sysinfo=99"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$getloadavg_disassembly" ||
-        fail "getloadavg lacks its Linux syscall"
+    grep -Eq '(call|jmp).*<__lsysinfo>' "$getloadavg_disassembly" ||
+        fail "getloadavg does not directly reach __lsysinfo"
+    objdump -d --disassemble=__lsysinfo "$candidate" >"$lsysinfo_disassembly"
+    grep -Eq '\$0x63,%(e|r)(ax|di)' "$lsysinfo_disassembly" ||
+        fail "__lsysinfo lacks Linux sysinfo=99"
+    assert_direct_raw_syscall_path __lsysinfo "$lsysinfo_disassembly"
 }
 
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
@@ -81,7 +132,7 @@ target_dir="$work_dir/cargo-target"
 archive="$target_dir/x86_64-unknown-linux-musl/debug/libc.a"
 reference="$work_dir/musl-getloadavg-reference"
 candidate="$work_dir/crabc-static-getloadavg-candidate"
-trace="$work_dir/header-trace"; archive_symbols="$work_dir/archive-symbols"
+trace="$work_dir/header-trace"; archive_symbols="$work_dir/archive-symbols"; archive_disassembly="$work_dir/archive-disassembly"
 selected_symbols="$work_dir/selected-c-abi-symbols"; expected_symbols="$work_dir/expected-c-abi-symbols"
 symbols="$work_dir/candidate-symbols"; headers="$work_dir/candidate-program-headers"
 dynamic="$work_dir/candidate-dynamic"; relocs="$work_dir/candidate-relocations"
@@ -106,14 +157,16 @@ CARGO_TARGET_DIR="$target_dir" cargo rustc --locked -p crabc-libc --lib \
 [ -f "$archive" ] || fail "cargo did not emit the x86 static libc archive"
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for symbol in __errno_location getloadavg; do
+for symbol in __errno_location __lsysinfo getloadavg sysinfo; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
+objdump -dr "$archive" >"$archive_disassembly"
+assert_archive_public_sysinfo_edge
 
 "$ORACLE_CC" -std=c11 -D_GNU_SOURCE -DCRABC_GETLOADAVG_FREESTANDING \
     -I "$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
-    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
     compat/x86_64/libc_getloadavg_probe.c compat/x86_64/libc_getloadavg_start.S \
     "$archive" -o "$candidate"
 readelf --symbols --wide "$candidate" >"$symbols"
@@ -121,11 +174,11 @@ readelf --program-headers --wide "$candidate" >"$headers"
 readelf --dynamic --wide "$candidate" >"$dynamic" || true
 readelf --relocs --wide "$candidate" >"$relocs"
 objdump -d "$candidate" >"$disassembly"
-for symbol in __errno_location getloadavg; do
+for symbol in __errno_location __lsysinfo getloadavg sysinfo; do
     grep -Eq "[[:space:]]${symbol}$" "$symbols" ||
         fail "candidate lacks ${symbol}"
 done
-for symbol in sysinfo uname get_nprocs get_nprocs_conf get_phys_pages get_avphys_pages \
+for symbol in uname get_nprocs get_nprocs_conf get_phys_pages get_avphys_pages \
     sysconf getpagesize getdtablesize gethostid getloadavg_r; do
     if grep -Eq "[[:space:]]${symbol}$" "$symbols"; then
         fail "getloadavg candidate unexpectedly pulls ${symbol}"

@@ -643,14 +643,21 @@ unsafe fn join_selected_worker_inner(
         for required in (
             "musl 1.2.6 release commit",
             "src/stat/statvfs.c",
-            'extern "C" fn statfs',
-            'extern "C" fn fstatfs',
+            'pub unsafe extern "C" fn statfs_body',
+            'pub unsafe extern "C" fn fstatfs_body',
+            '#[export_name = "__statfs"]',
+            '#[export_name = "__fstatfs"]',
+            ".weak statfs",
+            ".set statfs, __statfs",
+            ".weak fstatfs",
+            ".set fstatfs, __fstatfs",
             'extern "C" fn statvfs',
             'extern "C" fn fstatvfs',
             "raw_syscall::SYS_STATFS",
             "raw_syscall::SYS_FSTATFS",
             "statvfs_from_statfs",
-            "c_status(result)",
+            "c_status(unsafe { statfs_raw(path, output) })",
+            "c_status(unsafe { fstatfs_raw(descriptor, output) })",
         ):
             self.assertIn(required, implementation)
         self.assertNotIn("crabc_core", implementation)
@@ -705,8 +712,10 @@ unsafe fn join_selected_worker_inner(
             "run_x86_statfs_reference.sh",
             "-nostdlib -static",
             "assert_capacity_syscall_paths",
-            "statfs lacks Linux syscall 137",
-            "fstatfs lacks Linux syscall 138",
+            "assert_local_weak_alias_body",
+            "__statfs lacks Linux syscall 137",
+            "__fstatfs lacks Linux syscall 138",
+            "direct raw-syscall helper edge",
             "assert_fixture_tls_capacity",
         ):
             self.assertIn(required, artifact_runner)
@@ -5014,8 +5023,8 @@ unsafe fn join_selected_worker_inner(
         for symbol in (
             'fn stat(',
             'fn lstat(',
-            'fn fstat(',
-            'fn fstatat(',
+            'fn __fstat(',
+            'fn __fstatat(',
             'fn __xstat(',
             'fn __lxstat(',
             'fn __fxstat(',
@@ -5202,7 +5211,7 @@ unsafe fn join_selected_worker_inner(
         self.assertIn('#[path = "signal_pending.rs"]', static_root)
         self.assertIn('#[path = "signal_set_mutation.rs"]', static_root)
         for symbol in (
-            "fn sigaction(",
+            "fn __sigaction(",
             "fn signal(",
             "fn sigemptyset(",
             "fn sigismember(",
@@ -5276,6 +5285,7 @@ unsafe fn join_selected_worker_inner(
             "R_X86_64_TPOFF",
             "candidate relocations retain a dynamic TLS model",
             "crabc_x86_64_signal_restorer",
+            "__libc_sigaction does not install the hidden restorer",
             "GLOBAL +HIDDEN",
             "mov rax, 15",
             "syscall",
@@ -8513,7 +8523,7 @@ unsafe fn join_selected_worker_inner(
             "fn thrd_join(",
             "fn thrd_exit(",
             "fn thrd_sleep(",
-            "super::clock_nanosleep::clock_nanosleep",
+            "super::clock_nanosleep::__clock_nanosleep",
             "super::clock_nanosleep::CLOCK_REALTIME",
             "exit_selected_c11_worker",
             "SelectedWorkerResultKind::C11",
@@ -8709,7 +8719,7 @@ unsafe fn join_selected_worker_inner(
             "const THRD_SLEEP_INTR: c_int = -1;",
             "const THRD_SLEEP_ERROR: c_int = -2;",
             "pub unsafe extern \"C\" fn thrd_sleep(",
-            "super::clock_nanosleep::clock_nanosleep(",
+            "super::clock_nanosleep::__clock_nanosleep(",
             "super::clock_nanosleep::CLOCK_REALTIME",
             "EINTR => THRD_SLEEP_INTR",
             "_ => THRD_SLEEP_ERROR",
@@ -14630,13 +14640,13 @@ unsafe fn join_selected_worker_inner(
             "fn write(",
             "fn pread(",
             "fn pwrite(",
-            "fn lseek(",
+            "fn __lseek(",
             "fn ftruncate(",
             "fn fsync(",
             "fn fdatasync(",
             "fn dup(",
             "fn dup2(",
-            "fn dup3(",
+            "fn __dup3(",
             "fn pipe(",
             "fn pipe2(",
         ):
@@ -14704,12 +14714,14 @@ unsafe fn join_selected_worker_inner(
             "candidate relocations retain a dynamic TLS model",
             "assert_named_syscall close 3",
             "assert_named_syscall pread 11",
-            "assert_named_syscall dup3 124",
+            "assert_named_syscall __lseek 8",
+            "assert_named_syscall __dup3 124",
             "assert_named_syscall pipe2 125",
+            "assert_direct_raw_syscall_path",
             "for syscall_word in 148 12 48; do",
             "sys/mman.h",
             "assert_ebusy_retry dup2",
-            "assert_ebusy_retry dup3",
+            "assert_ebusy_retry __dup3",
         ):
             self.assertIn(required, artifact_runner)
         self.assertNotIn("--whole-archive", artifact_runner)
@@ -14779,12 +14791,12 @@ unsafe fn join_selected_worker_inner(
             '#[path = "descriptor_io.rs"]',
         ):
             self.assertIn(module, static_root)
-        for symbol in ("fn fstat(", "fn fstatat("):
+        for symbol in ("fn __fstat(", "fn __fstatat("):
             self.assertIn(symbol, stat_compat)
         for symbol in ("fn open(", "fn openat(", "fn creat("):
             self.assertIn(symbol, descriptor_entry)
         self.assertIn("fcntl_no_argument", descriptor_control)
-        for symbol in ("fn read(", "fn pread(", "fn dup3("):
+        for symbol in ("fn read(", "fn pread(", "fn __dup3("):
             self.assertIn(symbol, descriptor_io)
         for required in (
             "#include <errno.h>",
@@ -14817,9 +14829,14 @@ unsafe fn join_selected_worker_inner(
             "R_X86_64_TPOFF",
             "assert_fcntl_no_argument_path",
             "assert_fcntl_scalar_path",
-            "assert_named_syscall fstat 5",
-            "assert_named_syscall fstatat 106",
-            "assert_named_syscall dup3 124",
+            "assert_direct_raw_syscall_path",
+            "assert_fourth_syscall_argument_path",
+            "zero third syscall word",
+            "open lacks Linux open=2",
+            "assert_named_syscall __fstat 5",
+            "assert_named_syscall __fstatat 106",
+            "assert_named_syscall __lseek 8",
+            "assert_named_syscall __dup3 124",
             "assert_named_syscall fsync 4a",
         ):
             self.assertIn(required, artifact_runner)
@@ -17067,7 +17084,7 @@ unsafe fn join_selected_worker_inner(
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "system_observation.rs"]', static_root)
-        for symbol in ("fn uname(", "fn sysinfo("):
+        for symbol in ("fn uname(", "fn __lsysinfo("):
             self.assertIn(symbol, system_observation)
         for required in (
             "musl 1.2.6 release commit",
@@ -17116,7 +17133,8 @@ unsafe fn join_selected_worker_inner(
             "R_X86_64_TPOFF",
             "candidate relocations retain a dynamic TLS model",
             "assert_named_syscall uname 3f",
-            "assert_named_syscall sysinfo 63",
+            "assert_named_syscall __lsysinfo 63",
+            "assert_direct_raw_syscall_path",
             "sys/utsname.h",
             "sys/sysinfo.h",
         ):
@@ -17508,8 +17526,9 @@ esac
             "src/legacy/getloadavg.c::getloadavg",
             "MAX_LOAD_AVERAGES: c_int = 3",
             "SI_LOAD_SCALE: f64 = 1.0 / 65_536.0",
-            "system_observation::sysinfo_raw",
-            "if c_status(raw_result) != 0",
+            '#[link_name = "sysinfo"]',
+            "fn public_sysinfo(output: *mut system_observation::SysInfo) -> c_int;",
+            "if unsafe { public_sysinfo(info.as_mut_ptr()) } != 0",
             'pub unsafe extern "C" fn getloadavg(output: *mut f64, count: c_int) -> c_int',
         ):
             self.assertIn(required, implementation)
@@ -17578,9 +17597,14 @@ esac
             "-Wl,-e,_start",
             "-Wl,--no-undefined",
             "--disassemble=getloadavg",
+            "-Wl,--gc-sections",
             "getloadavg candidate unexpectedly pulls",
             "candidate errno does not use direct fs initial TLS",
-            "getloadavg lacks Linux sysinfo=99",
+            "assert_archive_public_sysinfo_edge",
+            "getloadavg does not directly reach __lsysinfo",
+            "__lsysinfo lacks Linux sysinfo=99",
+            "direct raw-syscall helper edge",
+            "__lsysinfo getloadavg sysinfo",
             "sys/prctl.h",
         ):
             self.assertIn(required, artifact_runner)
@@ -26063,7 +26087,7 @@ esac
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "clock_gettime.rs"]', static_root)
-        self.assertIn("pub unsafe extern \"C\" fn clock_gettime(", clock_gettime)
+        self.assertIn("pub unsafe extern \"C\" fn __clock_gettime(", clock_gettime)
         for required in (
             "musl 1.2.6 release commit",
             "src/time/clock_gettime.c",
@@ -26106,8 +26130,10 @@ esac
             "-nostdlib -static",
             "-Wl,-e,_start",
             "R_X86_64_TPOFF",
+            "local symbol=__clock_gettime",
             "assert_named_syscall",
-            "clock_gettime lacks syscall 228",
+            "${symbol} lacks syscall 228",
+            "direct raw-syscall helper edge",
             "direct fs initial TLS",
         ):
             self.assertIn(required, artifact_runner)
@@ -27776,11 +27802,12 @@ esac
             "-Wl,-e,_start",
             "R_X86_64_TPOFF",
             "__vm_wait",
-            "assert_named_syscall mmap 9",
-            "assert_named_syscall mprotect a",
-            "assert_named_syscall munmap b",
-            "assert_named_syscall madvise 1c",
+            "assert_named_syscall __mmap 9",
+            "assert_named_syscall __mprotect a",
+            "assert_named_syscall __munmap b",
+            "assert_named_syscall __madvise 1c",
             "assert_named_syscall posix_madvise 1c",
+            "assert_direct_raw_syscall_path",
             "assert_named_syscall mincore 1b",
         ):
             self.assertIn(required, artifact_runner)
@@ -28217,7 +28244,7 @@ esac
         runner = RUNNER.read_text(encoding="utf-8")
 
         self.assertIn('#[path = "clock_nanosleep.rs"]', static_root)
-        self.assertIn("fn clock_nanosleep(", clock_nanosleep)
+        self.assertIn("fn __clock_nanosleep(", clock_nanosleep)
         for required in (
             "musl 1.2.6 release commit",
             "src/time/clock_nanosleep.c",
@@ -28268,7 +28295,8 @@ esac
             "-nostdlib -static",
             "-Wl,-e,_start",
             "R_X86_64_TPOFF",
-            "assert_named_syscall clock_nanosleep e6",
+            "assert_named_syscall __clock_nanosleep e6",
+            "assert_direct_raw_syscall_path",
             "%r10",
             "must return positive errors without touching errno TLS",
         ):

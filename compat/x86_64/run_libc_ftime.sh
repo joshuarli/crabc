@@ -61,31 +61,71 @@ assert_fixture_tls_capacity() {
         fail "fixture TLS alignment is incompatible"
 }
 
+assert_direct_raw_syscall_path() {
+    local symbol="$1"
+    local disassembly="$2"
+    local helper
+    local helper_disassembly
+    local index=0
+    local -a helpers
+
+    mapfile -t helpers < <(
+        awk '
+            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
+                helper = $0
+                sub(/^.*</, "", helper)
+                sub(/>.*/, "", helper)
+                if (!seen[helper]++) {
+                    print helper
+                }
+            }
+        ' "$disassembly"
+    )
+    for helper in "${helpers[@]}"; do
+        helper_disassembly="$work_dir/${symbol}-raw-syscall-${index}-disassembly"
+        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
+            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
+        index=$((index + 1))
+    done
+    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        [ "${#helpers[@]}" -gt 0 ]; then
+        return
+    fi
+    fail "${symbol} lacks a direct raw-syscall helper edge"
+}
+
+assert_archive_public_clock_gettime_edge() {
+    awk '
+        /^[[:xdigit:]]+ <.*>:/ {
+            in_ftime = $0 ~ /<ftime>:/
+        }
+        in_ftime && /R_X86_64_PLT32[[:space:]]+clock_gettime/ {
+            found = 1
+        }
+        END { exit !found }
+    ' "$archive_disassembly" ||
+        fail "ftime archive body does not retain its public clock_gettime edge"
+}
+
 assert_named_syscall() {
-    local symbol="$1" syscall_word="$2"
+    local symbol="$1"
+    local syscall_word="$2"
     local disassembly="$work_dir/${symbol}-disassembly"
 
     objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
-    grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|\\\$)" "$disassembly" ||
+    grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|\$)" "$disassembly" ||
         fail "${symbol} lacks Linux syscall 0x${syscall_word}"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "${symbol} lacks its named Linux syscall instruction"
+    assert_direct_raw_syscall_path "$symbol" "$disassembly"
 }
 
 assert_ftime_delegation() {
     local disassembly="$work_dir/ftime-disassembly"
 
     objdump -d --disassemble=ftime "$candidate" >"$disassembly"
-    if grep -Eq '(call|jmp).*<clock_gettime>' "$disassembly"; then
-        assert_named_syscall clock_gettime e4
-        return
-    fi
-    # The optimized final static link may inline the selected sibling. In that
-    # case, retain a direct check for precisely its clock_gettime syscall body.
-    grep -Eq '\$0xe4(,|[[:space:]]|\$)' "$disassembly" ||
-        fail "ftime neither delegates to nor inlines the selected clock_gettime seam"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "inlined ftime clock_gettime path lacks its syscall instruction"
+    grep -Eq '(call|jmp).*<__clock_gettime>' "$disassembly" ||
+        fail "ftime does not directly reach the selected __clock_gettime body"
+    assert_named_syscall __clock_gettime e4
 }
 
 require_native_linux_x86_64
@@ -137,7 +177,7 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 nm -A --defined-only "$archive" >"$archive_symbols"
 readelf --symbols --wide "$archive" >"$archive_elf_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_symbols" "$expected_symbols"
-for symbol in __errno_location __crabc_x86_static_tls_bootstrap ftime clock_gettime; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap ftime __clock_gettime clock_gettime; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
 done
@@ -145,6 +185,7 @@ grep -Eq 'GLOBAL +HIDDEN +.*__crabc_x86_static_tls_bootstrap$' "$archive_elf_sym
     fail "archive Static Initial TLS v1 bootstrap is not hidden"
 readelf --relocs --wide "$archive" >"$archive_relocations"
 objdump -dr "$archive" >"$archive_disassembly"
+assert_archive_public_clock_gettime_edge
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$archive_relocations" ||
     fail "archive errno lacks an initial-TLS TPOFF relocation"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' \
@@ -154,7 +195,7 @@ fi
 
 "$ORACLE_CC" -std=c11 -DCRABC_FTIME_FREESTANDING \
     -I"$ROOT_DIR/include" -nostdlib -static -fno-pie -no-pie -ffreestanding \
-    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined \
+    -fno-builtin -fno-stack-protector -Wl,-e,_start -Wl,--no-undefined -Wl,--gc-sections \
     compat/x86_64/libc_ftime_probe.c compat/x86_64/libc_ftime_start.S \
     "$archive" -o "$candidate"
 
@@ -163,7 +204,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location __crabc_x86_static_tls_bootstrap ftime clock_gettime; do
+for symbol in __errno_location __crabc_x86_static_tls_bootstrap ftime __clock_gettime clock_gettime; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
 done

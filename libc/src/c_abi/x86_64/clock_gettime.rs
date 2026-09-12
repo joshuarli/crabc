@@ -8,8 +8,10 @@
 //!
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
-//! `src/time/clock_gettime.c` maps to [`clock_gettime`] below. Musl may use
-//! its internal vDSO route before falling back to the kernel. This bounded
+//! `src/time/clock_gettime.c::__clock_gettime` maps to the strong internal
+//! body below, while `weak_alias(__clock_gettime, clock_gettime)` supplies the
+//! public C spelling. Musl may use its internal vDSO route before falling back
+//! to the kernel. This bounded
 //! static leaf records the intentional direct-syscall difference until a C
 //! runtime owns that resolver and its process-lifetime state.
 //!
@@ -20,6 +22,16 @@
 use core::ffi::{c_int, c_void};
 
 use super::{c_status, raw_syscall};
+
+// Musl keeps the implementation non-preemptible and publishes the ordinary C
+// spelling as a weak same-address alias. Keep the directives next to the Rust
+// body: a forwarding wrapper would change both the archive override point and
+// the ELF address contract. The final shared link localizes the hidden body.
+core::arch::global_asm!(
+    ".hidden __clock_gettime",
+    ".weak clock_gettime",
+    ".set clock_gettime, __clock_gettime",
+);
 
 /// Read one Linux clock through the ordinary POSIX C result convention.
 ///
@@ -34,8 +46,9 @@ use super::{c_status, raw_syscall};
 /// valid clocks through vDSO code before a kernel syscall would report EFAULT.
 /// The caller owns the clock identifier's meaning and the output record
 /// lifetime.
+
 #[no_mangle]
-pub unsafe extern "C" fn clock_gettime(clock_id: c_int, output: *mut c_void) -> c_int {
+pub unsafe extern "C" fn __clock_gettime(clock_id: c_int, output: *mut c_void) -> c_int {
     // SAFETY: the caller owns the raw Linux clock ID and output-pointer
     // contract. Linux/x86-64 receives these two words in rdi/rsi.
     let result = unsafe {

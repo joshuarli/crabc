@@ -33474,11 +33474,11 @@ def require_getloadavg_artifact(family: Mapping[str, Any]) -> None:
         "still-planned `libc.posix-runtime`",
         "pinned musl 1.2.6",
         "`int getloadavg(double *, int)`",
-        "private Linux `sysinfo` snapshot",
+        "separately selected public `sysinfo` alias",
         "count <= 0",
         "uninitialized local `struct sysinfo`",
         "raw errno and returns `-1` without output",
-        "public `sysinfo` or `uname`",
+        "localized `__lsysinfo` body",
         "`/proc`",
         "general `sysconf`",
         "general system-information capability",
@@ -33582,7 +33582,7 @@ def require_getloadavg_artifact(family: Mapping[str, Any]) -> None:
         any(
             "`-nostdlib -static`" in item
             and "direct initial-exec errno TLS" in item
-            and "public sysinfo/uname" in item
+            and "public sysinfo alias and hidden __lsysinfo body" in item
             and "Variant-II %fs:0" in item
             for item in prerequisites
         ),
@@ -33626,7 +33626,7 @@ def require_getloadavg_artifact(family: Mapping[str, Any]) -> None:
                 "four-request three-entry clamp",
                 "adjacent raw sysinfo=99 snapshot",
                 "PR_SET_NO_NEW_PRIVS/seccomp sysinfo=99 EPERM child",
-                "public sysinfo/uname",
+                "public sysinfo alias and hidden __lsysinfo body",
                 "source-undefined failed-sysinfo output path",
                 "family completion",
                 "promotion",
@@ -33680,8 +33680,9 @@ def require_getloadavg_artifact(family: Mapping[str, Any]) -> None:
         "src/legacy/getloadavg.c::getloadavg",
         "MAX_LOAD_AVERAGES: c_int = 3",
         "SI_LOAD_SCALE: f64 = 1.0 / 65_536.0",
-        "system_observation::sysinfo_raw",
-        "if c_status(raw_result) != 0",
+        '#[link_name = "sysinfo"]',
+        "fn public_sysinfo(output: *mut system_observation::SysInfo) -> c_int",
+        "if unsafe { public_sysinfo(info.as_mut_ptr()) } != 0",
         'pub unsafe extern "C" fn getloadavg(output: *mut f64, count: c_int) -> c_int',
     ):
         require(snippet in source, f"getloadavg implementation omits {snippet}")
@@ -33716,11 +33717,13 @@ def require_getloadavg_artifact(family: Mapping[str, Any]) -> None:
         "static_c_abi_exports.txt",
         "-nostdlib -static",
         "--no-undefined",
-        "for symbol in __errno_location getloadavg",
+        "for symbol in __errno_location __lsysinfo getloadavg sysinfo",
         "--disassemble=getloadavg",
+        "assert_archive_public_sysinfo_edge",
+        "getloadavg does not directly reach __lsysinfo",
         "getloadavg candidate unexpectedly pulls",
         "candidate errno does not use direct fs initial TLS",
-        "getloadavg lacks Linux sysinfo=99",
+        "__lsysinfo lacks Linux sysinfo=99",
         "sys/prctl.h",
     ):
         require(snippet in runner, f"getloadavg runner omits {snippet}")

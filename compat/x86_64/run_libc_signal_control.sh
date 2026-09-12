@@ -139,20 +139,20 @@ if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|
     "$archive_relocations"; then
     fail "archive selects dynamic TLS or an unowned runtime dependency"
 fi
-# The shared `sigaction_impl` must materialize the exact hidden restorer
-# address, rather than merely retaining an unrelated syscall-15 symbol in the
-# archive. The candidate execution below then proves a delivered handler
-# returns through that installed trampoline.
+# The strong internal `__libc_sigaction` body must materialize the exact
+# hidden restorer address, rather than merely retaining an unrelated syscall-15
+# symbol in the archive. The candidate execution below then proves a delivered
+# handler returns through that installed trampoline.
 awk '
     /^[[:xdigit:]]+ <.*>:/ {
-        in_sigaction_impl = $0 ~ /signal_control.*sigaction_impl/
+        in_libc_sigaction = $0 ~ /<__libc_sigaction>:/
     }
-    in_sigaction_impl && /R_X86_64_32S[[:space:]]+crabc_x86_64_signal_restorer/ {
+    in_libc_sigaction && /R_X86_64_32S[[:space:]]+crabc_x86_64_signal_restorer/ {
         found = 1
     }
     END { exit !found }
 ' "$archive_disassembly" \
-    || fail "sigaction implementation does not install the hidden restorer"
+    || fail "__libc_sigaction does not install the hidden restorer"
 
 # The archive's Rust codegen-member boundaries are not part of this artifact's
 # contract. Discard unreachable sections before asserting that this final

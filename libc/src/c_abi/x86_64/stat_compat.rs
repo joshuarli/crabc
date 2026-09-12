@@ -19,6 +19,22 @@ use core::mem::{align_of, offset_of, size_of};
 
 use super::{c_status, raw_syscall};
 
+unsafe extern "C" {
+    // musl's legacy __xstat.c deliberately names public aliases. The archive
+    // retains that source override point; the shared libc link selects its
+    // checked musl dynamic list to bind this ordinary internal call locally.
+    // Private selected consumers such as fstat_inode use __fstat directly.
+    #[link_name = "fstat"]
+    fn public_fstat(file_descriptor: c_int, buffer: *mut Stat) -> c_int;
+    #[link_name = "fstatat"]
+    fn public_fstatat(
+        directory_fd: c_int,
+        path: *const c_char,
+        buffer: *mut Stat,
+        flags: c_int,
+    ) -> c_int;
+}
+
 const AT_FDCWD: c_int = -100;
 const AT_SYMLINK_NOFOLLOW: c_int = 0x100;
 
@@ -99,7 +115,7 @@ impl PathMetadata {
 #[cfg(feature = "x86-owned-static-runtime")]
 pub(super) unsafe fn fstat_inode(descriptor: c_int) -> Option<u64> {
     let mut metadata: Stat = unsafe { core::mem::zeroed() };
-    if unsafe { fstat(descriptor, &mut metadata) } == 0 { Some(metadata.inode) } else { None }
+    if unsafe { __fstat(descriptor, &mut metadata) } == 0 { Some(metadata.inode) } else { None }
 }
 
 /// Return the two metadata words consumed by musl's `ftok` formula.
@@ -303,7 +319,7 @@ pub unsafe extern "C" fn lstat(path: *const c_char, buffer: *mut Stat) -> c_int 
 /// `buffer` must point to writable storage for one complete x86 `struct stat`
 /// record. `file_descriptor` is passed directly to Linux `fstat(2)`.
 #[no_mangle]
-pub unsafe extern "C" fn fstat(file_descriptor: c_int, buffer: *mut Stat) -> c_int {
+pub unsafe extern "C" fn __fstat(file_descriptor: c_int, buffer: *mut Stat) -> c_int {
     // SAFETY: the C caller owns the descriptor and output-pointer contract.
     let result = unsafe {
         raw_syscall::syscall2(
@@ -319,7 +335,7 @@ pub unsafe extern "C" fn fstat(file_descriptor: c_int, buffer: *mut Stat) -> c_i
 ///
 /// This keeps `Stat`'s exact x86 layout and field ownership in this module
 /// while allowing a selected C ABI leaf to validate a descriptor before it
-/// assumes ownership. Unlike [`fstat`], this helper returns the raw Linux
+/// assumes ownership. Unlike [`__fstat`], this helper returns the raw Linux
 /// errno to its sibling so that sibling can preserve its own C error boundary.
 ///
 /// # Safety
@@ -357,7 +373,7 @@ pub(super) unsafe fn fstat_mode(file_descriptor: c_int) -> Result<u32, c_int> {
 /// point to writable storage for one complete x86 `struct stat` record.
 /// `directory_fd` and `flags` are direct Linux `newfstatat(2)` arguments.
 #[no_mangle]
-pub unsafe extern "C" fn fstatat(
+pub unsafe extern "C" fn __fstatat(
     directory_fd: c_int,
     path: *const c_char,
     buffer: *mut Stat,
@@ -367,6 +383,19 @@ pub unsafe extern "C" fn fstatat(
     // the raw `newfstatat` pointer obligations.
     unsafe { newfstatat(directory_fd, path, buffer, flags) }
 }
+
+// Pinned musl's fstat.c/fstatat.c keep these bodies hidden and publish weak
+// public aliases at the same address. Private selected consumers can call the
+// hidden bodies, while the legacy __fxstat wrappers below preserve their own
+// source-level public fstat/fstatat relocations.
+core::arch::global_asm!(
+    ".hidden __fstat",
+    ".weak fstat",
+    ".set fstat, __fstat",
+    ".hidden __fstatat",
+    ".weak fstatat",
+    ".set fstatat, __fstatat",
+);
 
 /// Historical `stat` ABI spelling. The version is an ABI selector only; Linux
 /// uses the one current x86 `struct stat` record selected above.
@@ -403,7 +432,11 @@ pub unsafe extern "C" fn __lxstat(
 ///
 /// # Safety
 ///
-/// Same as [`fstat`].
+/// Same as [`__fstat`].
+///
+/// Musl `src/stat/__xstat.c` names the public `fstat` spelling here. The
+/// archive retains a strong application definition; the shared libc link
+/// localizes this ordinary source call through its musl dynamic-list policy.
 #[no_mangle]
 pub unsafe extern "C" fn __fxstat(
     _version: c_int,
@@ -411,14 +444,17 @@ pub unsafe extern "C" fn __fxstat(
     buffer: *mut Stat,
 ) -> c_int {
     // SAFETY: forwarded unchanged to the ordinary C ABI boundary.
-    unsafe { fstat(file_descriptor, buffer) }
+    unsafe { public_fstat(file_descriptor, buffer) }
 }
 
 /// Historical descriptor-relative `stat` ABI spelling.
 ///
 /// # Safety
 ///
-/// Same as [`fstatat`].
+/// Same as [`__fstatat`].
+///
+/// Musl `src/stat/__xstat.c` likewise names public `fstatat`: its archive and
+/// shared final-link ownership follow the same split as [`__fxstat`].
 #[no_mangle]
 pub unsafe extern "C" fn __fxstatat(
     _version: c_int,
@@ -428,5 +464,5 @@ pub unsafe extern "C" fn __fxstatat(
     flags: c_int,
 ) -> c_int {
     // SAFETY: forwarded unchanged to the ordinary C ABI boundary.
-    unsafe { fstatat(directory_fd, path, buffer, flags) }
+    unsafe { public_fstatat(directory_fd, path, buffer, flags) }
 }

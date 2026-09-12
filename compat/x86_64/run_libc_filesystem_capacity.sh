@@ -34,15 +34,97 @@ assert_fixture_tls_capacity() {
     (( filesz == 0 && memsz > 0 && memsz <= INITIAL_TLS_BYTES )) || fail "PT_TLS exceeds fixture scratch"
     (( alignment > 0 && alignment <= INITIAL_TLS_ALIGNMENT && INITIAL_TLS_ALIGNMENT % alignment == 0 )) || fail "PT_TLS alignment incompatible"
 }
+assert_direct_raw_syscall_path() {
+    local symbol="$1"
+    local disassembly="$2"
+    local helper
+    local helper_disassembly
+    local index=0
+    local -a helpers
+
+    mapfile -t helpers < <(
+        awk '
+            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
+                helper = $0
+                sub(/^.*</, "", helper)
+                sub(/>.*/, "", helper)
+                if (!seen[helper]++) {
+                    print helper
+                }
+            }
+        ' "$disassembly"
+    )
+    for helper in "${helpers[@]}"; do
+        helper_disassembly="$work_dir/${symbol}-raw-syscall-${index}-disassembly"
+        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
+            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
+        index=$((index + 1))
+    done
+    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        [ "${#helpers[@]}" -gt 0 ]; then
+        return
+    fi
+    fail "${symbol} lacks a direct raw-syscall helper edge"
+}
+
+assert_local_weak_alias_body() {
+    local public_symbol="$1"
+    local body_symbol="$2"
+    local disassembly="$3"
+    local body_address body_size body_binding body_visibility body_section
+    local public_address public_size public_binding public_visibility public_section
+    local body_stop
+    local -a body_rows public_rows
+
+    mapfile -t body_rows < <(
+        awk -v symbol="$body_symbol" '
+            $4 == "FUNC" && $7 != "UND" && $NF == symbol {
+                print $2, $3, $5, $6, $7
+            }
+        ' "$candidate_symbols"
+    )
+    [ "${#body_rows[@]}" -eq 1 ] ||
+        fail "candidate must define exactly one local ${body_symbol} body"
+    read -r body_address body_size body_binding body_visibility body_section \
+        <<<"${body_rows[0]}"
+    [ "$body_binding" = LOCAL ] && [ "$body_visibility" = DEFAULT ] &&
+        [ "$body_size" -gt 0 ] ||
+        fail "${body_symbol} is not a sized local default body"
+
+    mapfile -t public_rows < <(
+        awk -v symbol="$public_symbol" '
+            $4 == "FUNC" && $7 != "UND" && $NF == symbol {
+                print $2, $3, $5, $6, $7
+            }
+        ' "$candidate_symbols"
+    )
+    [ "${#public_rows[@]}" -eq 1 ] ||
+        fail "candidate must define exactly one public ${public_symbol} alias"
+    read -r public_address public_size public_binding public_visibility public_section \
+        <<<"${public_rows[0]}"
+    [ "$public_binding" = WEAK ] && [ "$public_visibility" = DEFAULT ] ||
+        fail "${public_symbol} is not a weak default alias"
+    [ "$public_address" = "$body_address" ] &&
+        [ "$public_size" = "$body_size" ] &&
+        [ "$public_section" = "$body_section" ] ||
+        fail "${public_symbol} is not the same-address ${body_symbol} alias"
+
+    body_stop=$((16#$body_address + body_size))
+    objdump -d --start-address="0x$body_address" --stop-address="$body_stop" \
+        "$candidate" >"$disassembly"
+}
+
 assert_capacity_syscall_paths() {
-    local statfs_disassembly="$work_dir/statfs-disassembly"
-    local fstatfs_disassembly="$work_dir/fstatfs-disassembly"
-    objdump -d --disassemble=statfs "$candidate" >"$statfs_disassembly"
-    objdump -d --disassemble=fstatfs "$candidate" >"$fstatfs_disassembly"
-    grep -Eq '\$0x89,%(e|r)ax' "$statfs_disassembly" || fail "statfs lacks Linux syscall 137"
-    grep -Eq '\$0x8a,%(e|r)ax' "$fstatfs_disassembly" || fail "fstatfs lacks Linux syscall 138"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$statfs_disassembly" || fail "statfs lacks syscall"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$fstatfs_disassembly" || fail "fstatfs lacks syscall"
+    local statfs_disassembly="$work_dir/__statfs-disassembly"
+    local fstatfs_disassembly="$work_dir/__fstatfs-disassembly"
+
+    assert_local_weak_alias_body statfs __statfs "$statfs_disassembly"
+    assert_local_weak_alias_body fstatfs __fstatfs "$fstatfs_disassembly"
+    grep -Eq '\$0x89,%(e|r)(ax|di)' "$statfs_disassembly" || fail "__statfs lacks Linux syscall 137"
+    grep -Eq '\$0x8a,%(e|r)(ax|di)' "$fstatfs_disassembly" || fail "__fstatfs lacks Linux syscall 138"
+    assert_direct_raw_syscall_path __statfs "$statfs_disassembly"
+    assert_direct_raw_syscall_path __fstatfs "$fstatfs_disassembly"
 }
 
 require_native_linux_x86_64

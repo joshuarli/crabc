@@ -360,7 +360,7 @@ pub unsafe extern "C" fn pwrite(
 /// The kernel validates `whence` and the descriptor. This leaf does not add a
 /// filesystem-position policy or synchronize shared open-file descriptions.
 #[no_mangle]
-pub extern "C" fn lseek(file_descriptor: c_int, offset: c_long, whence: c_int) -> c_long {
+pub extern "C" fn __lseek(file_descriptor: c_int, offset: c_long, whence: c_int) -> c_long {
     // SAFETY: all three arguments are scalar Linux words; x86's third syscall
     // word is rdx and the kernel validates descriptor/offset/whence semantics.
     let result = unsafe {
@@ -476,7 +476,7 @@ pub extern "C" fn dup2(old_descriptor: c_int, new_descriptor: c_int) -> c_int {
 /// flags use `dup3` with the matching transient-`EBUSY` retry loop. This leaf
 /// does not define a broader descriptor-lifetime policy.
 #[no_mangle]
-pub extern "C" fn dup3(
+pub extern "C" fn __dup3(
     old_descriptor: c_int,
     new_descriptor: c_int,
     flags: c_int,
@@ -490,6 +490,18 @@ pub extern "C" fn dup3(
         c_status(retry_dup3(old_descriptor, new_descriptor, flags))
     }
 }
+
+// Musl's lseek.c and dup3.c retain hidden internal bodies so selected libc
+// clients do not cross an application's public override. The public names are
+// weak aliases of those exact bodies, not forwarding wrappers.
+core::arch::global_asm!(
+    ".hidden __lseek",
+    ".weak lseek",
+    ".set lseek, __lseek",
+    ".hidden __dup3",
+    ".weak dup3",
+    ".set dup3, __dup3",
+);
 
 /// Create an unflagged pipe through Linux `pipe(2)`.
 ///

@@ -46,7 +46,7 @@ const MAP_ANONYMOUS: c_int = 0x20;
 const ENOMEM: c_int = 12;
 
 unsafe extern "C" {
-    #[link_name = "mmap"]
+    #[link_name = "__mmap"]
     fn selected_mmap(
         address: *mut c_void,
         length: usize,
@@ -56,7 +56,7 @@ unsafe extern "C" {
         offset: i64,
     ) -> *mut c_void;
 
-    #[link_name = "munmap"]
+    #[link_name = "__munmap"]
     fn selected_munmap(address: *mut c_void, length: usize) -> c_int;
 }
 

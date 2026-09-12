@@ -10,6 +10,8 @@
 _Exit
 ___environ
 __aio_atfork
+__clock_gettime
+__clock_nanosleep
 __crabc_x86_fixed_graph_dlfcn_record
 __crabc_x86_static_tls_bootstrap
 __ctype_b_loc
@@ -19,6 +21,7 @@ __ctype_toupper_loc
 __cxa_atexit
 __cxa_finalize
 __dn_expand
+__dup3
 __duplocale
 __environ
 __errno_location
@@ -36,6 +39,8 @@ __freelocale
 __fseeko
 __fseterr
 __fsetlocking
+__fstat
+__fstatat
 __ftello
 __funcs_on_exit
 __futimesat
@@ -75,11 +80,18 @@ __ldso_atfork
 __lgammal_r
 __libc_current_sigrtmax
 __libc_current_sigrtmin
+__libc_sigaction
 __libc_start_main
+__lseek
+__lsysinfo
 __lxstat
+__madvise
 __membarrier_init
 __memcpy_fwd
 __memrchr
+__mmap
+__mprotect
+__munmap
 __newlocale
 __nl_langinfo
 __nl_langinfo_l
@@ -109,6 +121,7 @@ __pthread_testcancel
 __qsort_r
 __sched_cpucount
 __setjmp
+__sigaction
 __signbit
 __signbitf
 __signbitl

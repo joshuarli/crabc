@@ -57,6 +57,40 @@ assert_selected_c_abi_surface() {
     fi
 }
 
+assert_direct_raw_syscall_path() {
+    local symbol="$1"
+    local disassembly="$2"
+    local helper
+    local helper_disassembly
+    local index=0
+    local -a helpers
+
+    mapfile -t helpers < <(
+        awk '
+            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
+                helper = $0
+                sub(/^.*</, "", helper)
+                sub(/>.*/, "", helper)
+                if (!seen[helper]++) {
+                    print helper
+                }
+            }
+        ' "$disassembly"
+    )
+    for helper in "${helpers[@]}"; do
+        helper_disassembly="$work_dir/${symbol}-raw-syscall-${index}-disassembly"
+        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
+            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
+        index=$((index + 1))
+    done
+    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        [ "${#helpers[@]}" -gt 0 ]; then
+        return
+    fi
+    fail "${symbol} lacks a direct raw-syscall helper edge"
+}
+
 assert_named_syscall() {
     local symbol="$1"
     local syscall_word="$2"
@@ -70,8 +104,7 @@ assert_named_syscall() {
         grep -Eq "\\\$0x${syscall_word}" "$disassembly" \
             || fail "${symbol} lacks the fixed syscall ${syscall_word}"
     fi
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" \
-        || fail "${symbol} lacks its named Linux syscall"
+    assert_direct_raw_syscall_path "$symbol" "$disassembly"
 }
 
 assert_ebusy_retry() {
@@ -134,7 +167,7 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
-for symbol in __errno_location close read write pread pwrite lseek ftruncate \
+for symbol in __errno_location __lseek __dup3 close read write pread pwrite lseek ftruncate \
     fsync fdatasync dup dup2 dup3 pipe pipe2; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" \
         || fail "archive does not define ${symbol}"
@@ -166,7 +199,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location close read write pread pwrite lseek ftruncate \
+for symbol in __errno_location __lseek __dup3 close read write pread pwrite lseek ftruncate \
     fsync fdatasync dup dup2 dup3 pipe pipe2; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
@@ -208,13 +241,13 @@ assert_named_syscall close 3
 assert_named_syscall read 0
 assert_named_syscall write 1
 assert_named_syscall pread 11
-assert_named_syscall lseek 8
+assert_named_syscall __lseek 8
 assert_named_syscall ftruncate 4d
 assert_named_syscall fsync 4a
 assert_named_syscall fdatasync 4b
 assert_named_syscall dup 20
 assert_named_syscall dup2 21
-assert_named_syscall dup3 124
+assert_named_syscall __dup3 124
 assert_named_syscall pipe 16
 assert_named_syscall pipe2 125
 
@@ -231,7 +264,7 @@ for register in '%r10' '%r8' '%r9'; do
         || fail "pwritev2 lacks the x86 ${register} argument path"
 done
 assert_ebusy_retry dup2
-assert_ebusy_retry dup3
+assert_ebusy_retry __dup3
 
 "$candidate"
 

@@ -163,7 +163,7 @@ pub unsafe extern "C" fn thrd_sleep(
     // x86 timespec-pointer contract. Its direct result is zero or positive
     // errno and it intentionally does not publish errno through TLS.
     match unsafe {
-        super::clock_nanosleep::clock_nanosleep(
+        super::clock_nanosleep::__clock_nanosleep(
             super::clock_nanosleep::CLOCK_REALTIME,
             0,
             duration,

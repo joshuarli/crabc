@@ -392,7 +392,7 @@ unsafe fn semaphore_timedwait_result(
         }
         // Preserve the source's internal realtime clock/error convention.
         if unsafe {
-            super::clock_gettime::clock_gettime(
+            super::clock_gettime::__clock_gettime(
                 0,
                 core::ptr::addr_of_mut!(relative).cast(),
             )

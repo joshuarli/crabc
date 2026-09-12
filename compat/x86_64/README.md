@@ -132,6 +132,14 @@ interposition. Its [component record](owned-stdio-allocator-interposition.md)
 binds the retained upstream `flockfile-list` order to the installed PLT
 allocator boundary and stale-lock storage check.
 
+[owned-syscall-alias-contract.md](owned-syscall-alias-contract.md) records the
+focused musl-shaped weak syscall alias and interposition proof for supplied
+native static and dynamic products. It checks exact archive/shared ELF
+definition identity, selected internal/public caller ownership, and the
+musl-shaped shared-libc dynamic-list policy for ordinary local calls plus data
+and allocator interposition exceptions; it is private component evidence, not
+product qualification or public support.
+
 `./scripts/dev-x86_64.sh owned-c-allocation-interposition` is the focused
 dynamic allocation-boundary check for caller-owned `asprintf` bytes, passwd
 temporary `getline` cleanup, and AIO list-state ownership. Its [component record](owned-c-allocation-interposition.md)

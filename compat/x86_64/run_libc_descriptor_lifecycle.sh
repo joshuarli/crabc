@@ -89,12 +89,13 @@ assert_fcntl_no_argument_path() {
     fi
     helper="$(helper_symbol fcntl_no_argument)"
     objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
-    grep -Eq '\$0x48,%(e|r)ax' "$helper_disassembly" ||
+    grep -Eq '\$0x48,%(e|r)(ax|di)' "$helper_disassembly" ||
         fail "F_GETFD/F_GETFL helper lacks Linux fcntl=72"
-    grep -Eq 'xor[[:space:]].*%(e|r)dx' "$helper_disassembly" ||
-        fail "F_GETFD/F_GETFL helper does not supply rdx=0"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
-        fail "F_GETFD/F_GETFL helper lacks its Linux syscall"
+    # `syscall3` receives its third Linux word as its fourth SysV argument;
+    # the raw helper owns the rcx-to-rdx kernel-ABI move.
+    grep -Eq 'xor[[:space:]].*%(e|r)cx' "$helper_disassembly" ||
+        fail "F_GETFD/F_GETFL helper does not supply its zero third syscall word"
+    assert_direct_raw_syscall_path "$helper" "$helper_disassembly"
 }
 
 assert_fcntl_scalar_path() {
@@ -117,10 +118,80 @@ assert_fcntl_scalar_path() {
         END { exit setfl_largefile_rule_seen ? 0 : 1 }
     ' "$helper_disassembly" ||
         fail "F_SETFL helper lacks musl's command-path O_LARGEFILE rule"
-    grep -Eq '\$0x48,%(e|r)ax' "$helper_disassembly" ||
+    grep -Eq '\$0x48,%(e|r)(ax|di)' "$helper_disassembly" ||
         fail "F_SETFD/F_SETFL helper lacks Linux fcntl=72"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
-        fail "F_SETFD/F_SETFL helper lacks its Linux syscall"
+    assert_direct_raw_syscall_path "$helper" "$helper_disassembly"
+}
+
+assert_direct_raw_syscall_path() {
+    local symbol="$1"
+    local disassembly="$2"
+    local helper
+    local helper_disassembly
+    local index=0
+    local -a helpers
+
+    mapfile -t helpers < <(
+        awk '
+            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
+                helper = $0
+                sub(/^.*</, "", helper)
+                sub(/>.*/, "", helper)
+                if (!seen[helper]++) {
+                    print helper
+                }
+            }
+        ' "$disassembly"
+    )
+    for helper in "${helpers[@]}"; do
+        helper_disassembly="$work_dir/${symbol}-raw-syscall-${index}-disassembly"
+        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
+            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
+        index=$((index + 1))
+    done
+    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        [ "${#helpers[@]}" -gt 0 ]; then
+        return
+    fi
+    fail "${symbol} lacks a direct raw-syscall helper edge"
+}
+
+assert_fourth_syscall_argument_path() {
+    local symbol="$1"
+    local disassembly="$2"
+    local helper
+    local helper_disassembly
+    local index=0
+    local -a helpers
+
+    if grep -Fq '%r10' "$disassembly"; then
+        assert_direct_raw_syscall_path "$symbol" "$disassembly"
+        return
+    fi
+    mapfile -t helpers < <(
+        awk '
+            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
+                helper = $0
+                sub(/^.*</, "", helper)
+                sub(/>.*/, "", helper)
+                if (!seen[helper]++) {
+                    print helper
+                }
+            }
+        ' "$disassembly"
+    )
+    [ "${#helpers[@]}" -gt 0 ] ||
+        fail "${symbol} lacks a direct raw-syscall fourth-argument edge"
+    for helper in "${helpers[@]}"; do
+        helper_disassembly="$work_dir/${symbol}-fourth-argument-${index}-disassembly"
+        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
+        grep -Fq '%r10' "$helper_disassembly" ||
+            fail "${symbol} direct raw-syscall helper lacks the x86 r10 fourth-argument path"
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
+            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
+        index=$((index + 1))
+    done
 }
 
 assert_named_syscall() {
@@ -130,14 +201,15 @@ assert_named_syscall() {
 
     objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
     if [ "$syscall_word" = 0 ]; then
-        grep -Eq 'xor[[:space:]]+%eax,%eax|mov[[:space:]]+\$0x0,%eax' "$disassembly" ||
+        # An inline syscall takes its number in rax; the outlined raw helper
+        # takes it as its first SysV argument in rdi.
+        grep -Eq 'xor[[:space:]]+%eax,%eax|xor[[:space:]]+%rax,%rax|xor[[:space:]]+%edi,%edi|xor[[:space:]]+%rdi,%rdi|mov[[:space:]]+\$0x0,%(e|r)(ax|di)' "$disassembly" ||
             fail "${symbol} lacks fixed syscall zero setup"
     else
         grep -Eq "\\\$0x${syscall_word}(,|[[:space:]]|$)" "$disassembly" ||
             fail "${symbol} lacks fixed syscall ${syscall_word}"
     fi
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
-        fail "${symbol} lacks its named Linux syscall"
+    assert_direct_raw_syscall_path "$symbol" "$disassembly"
 }
 
 assert_fixture_tls_capacity() {
@@ -208,7 +280,7 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib \
 
 nm -A --defined-only "$archive" >"$archive_symbols"
 assert_selected_c_abi_surface "$archive" "$selected_c_abi_symbols" "$expected_c_abi_symbols"
-for symbol in __errno_location open openat creat fcntl read write pread pwrite \
+for symbol in __errno_location __fstat __fstatat __lseek __dup3 open openat creat fcntl read write pread pwrite \
     lseek fstat fstatat dup dup2 dup3 ftruncate fsync fdatasync close; do
     grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$archive_symbols" ||
         fail "archive does not define ${symbol}"
@@ -232,7 +304,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location open openat creat fcntl read write pread pwrite \
+for symbol in __errno_location __fstat __fstatat __lseek __dup3 open openat creat fcntl read write pread pwrite \
     lseek fstat fstatat dup dup2 dup3 ftruncate fsync fdatasync close; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" ||
         fail "candidate does not define ${symbol}"
@@ -264,28 +336,29 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" ||
 
 # Keep this one composed proof tied to the selected Linux entry points.
 assert_named_syscall openat 101
-assert_named_syscall fstat 5
-assert_named_syscall fstatat 106
+assert_named_syscall __fstat 5
+assert_named_syscall __fstatat 106
 assert_fcntl_no_argument_path
 assert_fcntl_scalar_path
 assert_named_syscall close 3
 assert_named_syscall read 0
 assert_named_syscall write 1
 assert_named_syscall pread 11
-assert_named_syscall lseek 8
+assert_named_syscall __lseek 8
 assert_named_syscall ftruncate 4d
 assert_named_syscall fsync 4a
 assert_named_syscall fdatasync 4b
 assert_named_syscall dup 20
 assert_named_syscall dup2 21
-assert_named_syscall dup3 124
+assert_named_syscall __dup3 124
 
 open_disassembly="$work_dir/open-disassembly"
 objdump -d --disassemble=open "$candidate" >"$open_disassembly"
-grep -Eq '\$0x2,%(e|r)ax' "$open_disassembly" || fail "open lacks Linux open=2"
+grep -Eq '\$0x2,%(e|r)(ax|di)' "$open_disassembly" || fail "open lacks Linux open=2"
+assert_direct_raw_syscall_path open "$open_disassembly"
 openat_disassembly="$work_dir/openat-disassembly"
 objdump -d --disassemble=openat "$candidate" >"$openat_disassembly"
-grep -Fq '%r10' "$openat_disassembly" || fail "openat lacks x86 fourth-argument r10 path"
+assert_fourth_syscall_argument_path openat "$openat_disassembly"
 
 if "$candidate"; then :; else
     status=$?

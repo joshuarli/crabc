@@ -25,6 +25,31 @@ LOADER_PROVENANCE_SCHEMA = "crabc.x86_64-owned-loader-provenance/v1"
 LOADER_FEATURE = "x86_64-owned-dynamic-runtime"
 LOADER_ARTIFACT = "lib/ld-crabc-x86_64.so.1"
 LOADER_DEPENDENCY_ARTIFACT = "libldso.so"
+# This is the checked byte-for-byte musl 1.2.6 `dynamic.list` input.  Musl
+# configure adds it only to libc's shared link: public data remains available
+# for copy relocations, and the listed allocation entrypoints deliberately
+# remain interposable.  It is not a substitute for the source's explicit
+# public versus hidden internal calls, and it must never be applied to the
+# loader, application DSOs, or static archives.
+SHARED_LIBC_DYNAMIC_LIST = ROOT / "libc/src/c_abi/x86_64/owned_dynamic.list"
+MUSL_1_2_6_DYNAMIC_LIST_SHA256 = "264ae3bf630a7f6d894a51f91f9acae45b89a5f639537353d03af1a04e9da0f9"
+MUSL_1_2_6_DYNAMIC_LIST_MEMBERS = (
+    "environ", "__environ", "stdin", "stdout", "stderr",
+    "malloc", "calloc", "realloc", "free", "memalign", "posix_memalign",
+    "aligned_alloc", "malloc_usable_size",
+    "timezone", "daylight", "tzname", "__timezone", "__daylight", "__tzname",
+    "signgam", "__signgam", "optarg", "optind", "opterr", "optopt", "optreset",
+    "__optreset", "getdate_err", "h_errno", "program_invocation_name",
+    "program_invocation_short_name", "__progname", "__progname_full", "__stack_chk_guard",
+)
+MUSL_1_2_6_DYNAMIC_LIST_ALLOCATION_ENTRYPOINTS = (
+    "malloc", "calloc", "realloc", "free", "memalign", "posix_memalign",
+    "aligned_alloc", "malloc_usable_size",
+)
+MUSL_1_2_6_DYNAMIC_LIST_DATA_SYMBOLS = tuple(
+    member for member in MUSL_1_2_6_DYNAMIC_LIST_MEMBERS
+    if member not in MUSL_1_2_6_DYNAMIC_LIST_ALLOCATION_ENTRYPOINTS
+)
 sys.path.insert(0, str(ROOT / "compat/x86_64"))
 import crabc_cc_owned_dynamic as installed_driver
 import owned_static_sysroot_package as shared_package
@@ -67,6 +92,10 @@ def _source_file_identity(path: Path, description: str) -> dict[str, object]:
 def _normalized_loader_argument(argument: str, stage: Path) -> str:
     """Replace build-local prefixes without changing an arbitrary argument."""
 
+    if argument.startswith("--dynamic-list="):
+        return "--dynamic-list=" + _normalized_loader_argument(
+            argument.removeprefix("--dynamic-list="), stage
+        )
     for physical, replacement in ((stage.resolve(), "$BUILD"), (ROOT.resolve(), "$SOURCE")):
         spelling = str(physical)
         if argument == spelling:
@@ -74,6 +103,53 @@ def _normalized_loader_argument(argument: str, stage: Path) -> str:
         if argument.startswith(spelling + os.sep):
             return replacement + argument[len(spelling):]
     return argument
+
+
+def shared_libc_dynamic_list() -> dict[str, object]:
+    """Read only the pinned musl shared-libc interposition exception list.
+
+    `--dynamic-list` has a deliberately narrow meaning here.  The ordinary
+    exported functions bind locally within `libc.so`; listed data remains
+    interposable for copy relocations, while the allocation family remains
+    interposable as musl's explicit function exception.  The input is exact so
+    a future change cannot silently widen either category.
+    """
+
+    identity = _source_file_identity(SHARED_LIBC_DYNAMIC_LIST, "native libc shared dynamic-list")
+    if identity["sha256"] != MUSL_1_2_6_DYNAMIC_LIST_SHA256:
+        raise common.BuildError("native libc shared dynamic-list differs from pinned musl 1.2.6")
+    try:
+        text = SHARED_LIBC_DYNAMIC_LIST.read_text(encoding="utf-8")
+    except OSError as error:
+        raise common.BuildError("native libc shared dynamic-list cannot be read") from error
+    if re.fullmatch(r"\s*\{\s*(?:[A-Za-z_][A-Za-z0-9_]*\s*;\s*)*\}\s*;\s*", text) is None:
+        raise common.BuildError("native libc shared dynamic-list has unsupported syntax")
+    members = tuple(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*;", text))
+    if members != MUSL_1_2_6_DYNAMIC_LIST_MEMBERS:
+        raise common.BuildError("native libc shared dynamic-list member/order contract differs")
+    return {
+        "source": identity,
+        "data_symbols": list(MUSL_1_2_6_DYNAMIC_LIST_DATA_SYMBOLS),
+        "allocation_entrypoints": list(MUSL_1_2_6_DYNAMIC_LIST_ALLOCATION_ENTRYPOINTS),
+    }
+
+
+def shared_libc_link_command(
+    lld: Path,
+    dynamic_list: Path,
+    objects: Path,
+    selected: tuple[str, ...],
+    builtins: Path,
+    library: Path,
+) -> list[str]:
+    """Return the one musl-shaped shared-libc link, with no global policy leak."""
+
+    return [
+        str(lld), "-shared", "--hash-style=sysv", "-soname", "libc.so",
+        f"--dynamic-list={dynamic_list}",
+        "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
+        *(str(objects / item) for item in selected), str(builtins), "-o", str(library / "libc.so"),
+    ]
 
 
 def loader_dependency_provenance(dependencies: Path, artifact: Path) -> list[dict[str, object]]:
@@ -228,6 +304,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     objdump = common.producer_tool_path(tools, "llvm-objdump")
     rust_sysroot = common.pinned_rustc_sysroot(Path(rustup))
     lld = rust_sysroot / "lib/rustlib" / common.TARGET / "bin/gcc-ld/ld.lld"
+    shared_dynamic_list = shared_libc_dynamic_list()
     run = common.run
     dependency_file = stage / "allocator.d"
     c_flags = ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC",
@@ -276,9 +353,13 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     library = output / "usr/lib"
     library.mkdir(parents=True)
     common.copy_regular_tree(ROOT / "include", output / "usr/include")
-    run([str(lld), "-shared", "--hash-style=sysv", "-soname", "libc.so",
-         "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
-         *(str(objects / item) for item in selected), str(builtins), "-o", str(library / "libc.so")])
+    # Musl's configure applies its dynamic list to libc.so only. It binds
+    # ordinary internal libc calls locally without changing public weak alias
+    # metadata, while retaining its data and allocation interposition scope.
+    libc_shared_link_command = shared_libc_link_command(
+        lld, SHARED_LIBC_DYNAMIC_LIST, objects, selected, builtins, library
+    )
+    run(libc_shared_link_command)
     undefined = run([nm, "--undefined-only", str(library / "libc.so")]).decode().splitlines()
     allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
                "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",
@@ -342,6 +423,8 @@ def build_staged_payload(output: Path, stage: Path) -> None:
                   "allocator_flags": [flag.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for flag in c_flags],
                   "allocator_lifecycle_profile": allocator_lifecycle,
                   "libc_command": [arg.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for arg in libc_command],
+                  "libc_shared_link_command": [_normalized_loader_argument(arg, stage) for arg in libc_shared_link_command],
+                  "shared_dynamic_list": shared_dynamic_list,
                   "loader_imports": sorted(allowed)}
     common.write_json(metadata / "libc-shared.provenance.json", provenance)
     payload_files = {path.relative_to(output).as_posix(): common.sha256_file(path)

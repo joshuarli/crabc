@@ -29,10 +29,47 @@ assert_selected_c_abi_surface() {
     cmp -s "$expected_path" "$symbols_path" || { diff -u "$expected_path" "$symbols_path" >&2 || true; fail "selected static C ABI export surface drifted"; }
 }
 
+assert_direct_raw_syscall_path() {
+    local symbol="$1"
+    local disassembly="$2"
+    local helper
+    local helper_disassembly
+    local index=0
+    local -a helpers
+
+    mapfile -t helpers < <(
+        awk '
+            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
+                helper = $0
+                sub(/^.*</, "", helper)
+                sub(/>.*/, "", helper)
+                if (!seen[helper]++) {
+                    print helper
+                }
+            }
+        ' "$disassembly"
+    )
+    for helper in "${helpers[@]}"; do
+        helper_disassembly="$work_dir/${symbol}-raw-syscall-${index}-disassembly"
+        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
+            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
+        index=$((index + 1))
+    done
+    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        [ "${#helpers[@]}" -gt 0 ]; then
+        return
+    fi
+    fail "${symbol} lacks a direct raw-syscall helper edge"
+}
+
 assert_named_syscall() {
-    objdump -d --disassemble=clock_gettime "$candidate" >"$work_dir/clock_gettime-disassembly"
-    grep -Eq '\$0xe4(,|[[:space:]]|$)' "$work_dir/clock_gettime-disassembly" || fail "clock_gettime lacks syscall 228"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$work_dir/clock_gettime-disassembly" || fail "clock_gettime lacks syscall instruction"
+    local symbol=__clock_gettime
+    local disassembly="$work_dir/${symbol}-disassembly"
+
+    objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
+    grep -Eq '\$0xe4(,|[[:space:]]|$)' "$disassembly" || fail "${symbol} lacks syscall 228"
+    assert_direct_raw_syscall_path "$symbol" "$disassembly"
 }
 
 require_native_linux_x86_64
@@ -60,7 +97,7 @@ CARGO_TARGET_DIR="$cargo_target" cargo rustc --locked -p crabc-libc --lib --targ
 [ -f "$archive" ] || fail "cargo did not emit x86 static libc archive"
 nm -A --defined-only "$archive" >"$work_dir/archive-symbols"
 assert_selected_c_abi_surface "$archive" "$work_dir/selected-symbols" "$work_dir/expected-symbols"
-for symbol in __errno_location clock_gettime; do grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$work_dir/archive-symbols" || fail "archive does not define ${symbol}"; done
+for symbol in __errno_location __clock_gettime clock_gettime; do grep -Eq "[[:space:]][TW][[:space:]]${symbol}$" "$work_dir/archive-symbols" || fail "archive does not define ${symbol}"; done
 readelf --relocs --wide "$archive" >"$work_dir/archive-relocations"
 grep -Eq 'R_X86_64_TPOFF(32|64)?' "$work_dir/archive-relocations" || fail "archive errno lacks TPOFF relocation"
 if grep -Eq 'TLSGD|TLSLD|TLSDESC|GOTTPOFF|DTPMOD(64)?|__tls_get_addr|crabc_core|mimalloc|sha_crypt' "$work_dir/archive-relocations"; then fail "archive selects dynamic TLS or unowned dependency"; fi
@@ -71,7 +108,7 @@ readelf --program-headers --wide "$candidate" >"$work_dir/candidate-program-head
 readelf --dynamic --wide "$candidate" >"$work_dir/candidate-dynamic" || true
 readelf --relocs --wide "$candidate" >"$work_dir/candidate-relocations"
 objdump -d "$candidate" >"$work_dir/candidate-disassembly"
-for symbol in __errno_location clock_gettime; do grep -Eq "[[:space:]]${symbol}$" "$work_dir/candidate-symbols" || fail "candidate does not define ${symbol}"; done
+for symbol in __errno_location __clock_gettime clock_gettime; do grep -Eq "[[:space:]]${symbol}$" "$work_dir/candidate-symbols" || fail "candidate does not define ${symbol}"; done
 unresolved_symbols="$(awk '$7 == "UND" && NF >= 8 { print }' "$work_dir/candidate-symbols")"
 [ -z "$unresolved_symbols" ] || { printf '%s\n' "$unresolved_symbols" >&2; fail "candidate retains unresolved symbol"; }
 if grep -Eq 'Requesting program interpreter|INTERP' "$work_dir/candidate-program-headers" || grep -Eq 'NEEDED' "$work_dir/candidate-dynamic"; then fail "candidate selects dynamic runtime"; fi

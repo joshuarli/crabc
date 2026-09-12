@@ -11,23 +11,31 @@
 //! Translation provenance is pinned musl 1.2.6 release commit
 //! `9fa28ece75d8a2191de7c5bb53bed224c5947417`, under musl's MIT license:
 //! `src/legacy/getloadavg.c::getloadavg` maps directly to [`getloadavg`]. Its
-//! local public `struct sysinfo` and `sysinfo(&si)` call map to the existing
-//! private [`super::system_observation::SysInfo`] and `sysinfo_raw` seam. The
-//! raw status still travels through the shared C error translator just as
-//! musl's public `sysinfo` wrapper does. With the function's valid local
-//! record, Linux 5.10 completes that syscall; musl's subsequent read after a
-//! failed `sysinfo` has no usable output contract. This safe Rust leaf returns
-//! `-1` after publishing that raw errno instead of materializing arbitrary
-//! failed-call load values, and does not select that source-undefined path.
+//! local public `struct sysinfo` and `sysinfo(&si)` call retain musl's source
+//! spelling: the archive leaves it available to an application override, and
+//! the shared final link resolves it to the localized `__lsysinfo` body. With
+//! the function's valid local record, Linux 5.10 completes that syscall;
+//! musl's subsequent read after a failed `sysinfo` has no usable output
+//! contract. This safe Rust leaf returns `-1` after the C boundary publishes
+//! that errno instead of materializing arbitrary failed-call load values, and
+//! does not select that source-undefined path.
 //!
-//! This private compatibility artifact does not select public `sysinfo` or
-//! `uname`, processor/page-count helpers, `/proc`, `sysconf`, allocation,
+//! This private compatibility artifact reaches the separately selected public
+//! `sysinfo` alias; it does not select `uname`, processor/page-count helpers,
+//! `/proc`, `sysconf`, allocation,
 //! locale, loader, libc.so, CRT, sysroot, family completion, promotion, or
 //! public x86 support.
 
 use core::{ffi::c_int, mem::MaybeUninit};
 
-use super::{c_status, system_observation};
+use super::system_observation;
+
+unsafe extern "C" {
+    // getloadavg.c names public sysinfo. Preserve its archive override point;
+    // the checked shared-libc dynamic list localizes that ordinary source call.
+    #[link_name = "sysinfo"]
+    fn public_sysinfo(output: *mut system_observation::SysInfo) -> c_int;
+}
 
 const MAX_LOAD_AVERAGES: c_int = 3;
 const SI_LOAD_SCALE: f64 = 1.0 / 65_536.0;
@@ -47,14 +55,10 @@ pub unsafe extern "C" fn getloadavg(output: *mut f64, count: c_int) -> c_int {
 
     let returned_count = count.min(MAX_LOAD_AVERAGES);
     let mut info = MaybeUninit::<system_observation::SysInfo>::zeroed();
-    // SAFETY: this private all-zero record has the complete public x86
-    // `struct sysinfo` layout. Linux writes its fixed ABI prefix through a
-    // valid stack pointer, exactly as musl's local source record does.
-    let raw_result = unsafe { system_observation::sysinfo_raw(info.as_mut_ptr()) };
-    // Keep musl's public sysinfo error translation. Its C source subsequently
-    // reads an uninitialized local record on failure, so it has no usable
-    // output contract; retain the errno but make that unselected path safe.
-    if c_status(raw_result) != 0 {
+    // SAFETY: the local all-zero Rust record is a valid complete x86 public
+    // sysinfo object. The selected C call retains the source's public/shared
+    // ownership split and writes its fixed ABI prefix through this stack slot.
+    if unsafe { public_sysinfo(info.as_mut_ptr()) } != 0 {
         return -1;
     }
     // SAFETY: all bytes were initialized to zero before Linux populated the

@@ -59,6 +59,40 @@ assert_selected_c_abi_surface() {
     fi
 }
 
+assert_direct_raw_syscall_path() {
+    local symbol="$1"
+    local disassembly="$2"
+    local helper
+    local helper_disassembly
+    local index=0
+    local -a helpers
+
+    mapfile -t helpers < <(
+        awk '
+            /(call|jmp).*<[^>]*raw_syscall[^>]*>/ {
+                helper = $0
+                sub(/^.*</, "", helper)
+                sub(/>.*/, "", helper)
+                if (!seen[helper]++) {
+                    print helper
+                }
+            }
+        ' "$disassembly"
+    )
+    for helper in "${helpers[@]}"; do
+        helper_disassembly="$work_dir/${symbol}-raw-syscall-${index}-disassembly"
+        objdump -d --disassemble="$helper" "$candidate" >"$helper_disassembly"
+        grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$helper_disassembly" ||
+            fail "${symbol} direct raw-syscall helper lacks syscall instruction"
+        index=$((index + 1))
+    done
+    if grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" ||
+        [ "${#helpers[@]}" -gt 0 ]; then
+        return
+    fi
+    fail "${symbol} lacks a direct raw-syscall helper edge"
+}
+
 assert_named_syscall() {
     local symbol="$1"
     local syscall_word="$2"
@@ -67,8 +101,7 @@ assert_named_syscall() {
     objdump -d --disassemble="$symbol" "$candidate" >"$disassembly"
     grep -Eq "\\\$0x${syscall_word}" "$disassembly" \
         || fail "${symbol} lacks the fixed syscall ${syscall_word}"
-    grep -Eq '[[:space:]]syscall([[:space:]]|$)' "$disassembly" \
-        || fail "${symbol} lacks its named Linux syscall"
+    assert_direct_raw_syscall_path "$symbol" "$disassembly"
 }
 
 require_native_linux_x86_64
@@ -150,7 +183,7 @@ readelf --program-headers --wide "$candidate" >"$candidate_program_headers"
 readelf --dynamic --wide "$candidate" >"$candidate_dynamic" || true
 readelf --relocs --wide "$candidate" >"$candidate_relocations"
 objdump -d "$candidate" >"$candidate_disassembly"
-for symbol in __errno_location uname sysinfo; do
+for symbol in __errno_location __lsysinfo uname sysinfo; do
     grep -Eq "[[:space:]]${symbol}$" "$candidate_symbols" \
         || fail "candidate does not define ${symbol}"
 done
@@ -183,7 +216,7 @@ grep -Eq '%fs:0x0|%fs:-' "$errno_disassembly" \
 # observation run. Their one-pointer calling convention has no stack or r10
 # argument path to infer.
 assert_named_syscall uname 3f
-assert_named_syscall sysinfo 63
+assert_named_syscall __lsysinfo 63
 
 if "$candidate"; then
     :

@@ -1110,7 +1110,7 @@ unsafe extern "C" fn io_thread(context: *mut c_void) -> *mut c_void {
         queue_link_head(queue, ptr::addr_of_mut!(worker.link));
 
         if (*queue).initialized == 0 {
-            let position = descriptor_io::lseek(descriptor, 0, SEEK_CUR);
+            let position = descriptor_io::__lseek(descriptor, 0, SEEK_CUR);
             (*queue).seekable = c_int::from(position >= 0);
             let flags = raw_syscall::syscall2(
                 raw_syscall::SYS_FCNTL,
