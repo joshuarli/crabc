@@ -170,5 +170,19 @@ relocation proof is the byte-identical reviewed
 `bbb8e460abfd44a50850f2fe4f5e7395db1a7ee8391f5be5f18d26a36a21d475`);
 the utmpx reader admits its exact source byte in the collector roster. It then
 derives the eight-alias component projection itself.
+
+The same source roster admits the exact
+`compat/x86_64/owned_posix_product_evidence.py` mode boundary from commit
+`aa8345d3a4f1352284aad11ab1b3b1341b522056` (SHA-256
+`b43a58a70bbcb71d33b20c28be9b32fbd5e8b51e6cac7f7cab2ec97b8a9f2c41).
+Before any retained link receipt is read, its product validator requires the
+raw physical modes for every link input: static `crt1.o`, `rcrt1.o`, `crti.o`,
+`crtn.o`, `libc.a`, and `libcrabc-builtins.a` are `0644`; dynamic `crt1.o`,
+`Scrt1.o`, `crti.o`, `crtn.o`, `crabc-dynamic-attach.o`, and
+`libcrabc-builtins.a` are `0644`, while dynamic `libc.so` is `0755`. These
+values come from the collector source policy, not a retained tree or manifest
+row that a forged receipt can rewrite. The paired dynamic producer source
+explicitly materializes its shared library and attachment object at those
+modes before packaging.
 The projection explicitly remains component complete only; family completion,
 runtime qualification, and public support remain false.
