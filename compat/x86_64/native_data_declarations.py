@@ -11,8 +11,15 @@ from __future__ import annotations
 
 import copy
 from pathlib import Path
+import sys
 import tomllib
 from typing import Any, Mapping, Sequence
+
+
+MODULE_DIRECTORY = Path(__file__).resolve().parent
+if str(MODULE_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIRECTORY))
+import header_declaration_inventory as declaration_inventory
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -182,13 +189,15 @@ def _validate_site(raw: object, profile_sets: Mapping[str, Sequence[str]], descr
 def _validate_installed_object(raw: Mapping[str, Any], profile_sets: Mapping[str, Sequence[str]], index: int) -> dict[str, Any]:
     keys = {
         "id", "name", "declaration_kind", "declaration", "c_abi_type", "source_mutable", "header_storage_kind",
-        "qual_type", "object_qualifier", "pointer_target_mutability", "array_extent", "layout_evidence", "sites",
+        "qual_type", "desugared_qual_type_observation", "object_qualifier", "pointer_target_mutability", "array_extent", "layout_evidence", "sites",
     }
     result = _common_object_fields(raw, keys, f"installed data object {index}")
     require(result["declaration_kind"] == "installed-variable", f"installed data object {result['name']} kind differs")
     require(raw["header_storage_kind"] == "installed-variable", f"{result['name']} header storage kind differs")
     result["header_storage_kind"] = "installed-variable"
     result["qual_type"] = string(raw["qual_type"], f"{result['name']} qual_type")
+    require(raw["desugared_qual_type_observation"] == "not-emitted", f"{result['name']} desugared type observation differs")
+    result["desugared_qual_type_observation"] = raw["desugared_qual_type_observation"]
     result["object_qualifier"] = string(raw["object_qualifier"], f"{result['name']} object qualifier")
     result["pointer_target_mutability"] = string(raw["pointer_target_mutability"], f"{result['name']} pointer target mutability")
     result["array_extent"] = string(raw["array_extent"], f"{result['name']} array extent")
@@ -207,7 +216,7 @@ def _validate_accessor_object(raw: Mapping[str, Any], index: int) -> dict[str, A
         "id", "name", "declaration_kind", "declaration", "c_abi_type", "source_mutable", "header_storage_kind",
         "macro_header", "macro_candidate_line", "macro_reference_line", "macro_profiles", "macro_form", "macro_replacement",
         "accessor_name", "accessor_header", "accessor_candidate_line", "accessor_reference_line", "accessor_qual_types",
-        "accessor_storage_class", "accessor_linkage_status", "accessor_definition_observation",
+        "accessor_desugared_qual_type_observation", "accessor_storage_class", "accessor_linkage_status", "accessor_definition_observation",
     }
     result = _common_object_fields(raw, keys, f"accessor macro object {index}")
     require(result["declaration_kind"] == "accessor-macro", f"accessor macro object {result['name']} kind differs")
@@ -227,6 +236,8 @@ def _validate_accessor_object(raw: Mapping[str, Any], index: int) -> dict[str, A
     result["accessor_reference_line"] = integer(raw["accessor_reference_line"], f"{result['name']} accessor reference line")
     types = exact_keys(raw["accessor_qual_types"], {"c", "cxx"}, f"{result['name']} accessor type map")
     result["accessor_qual_types"] = {language: string(types[language], f"{result['name']} accessor {language} type") for language in ("c", "cxx")}
+    require(raw["accessor_desugared_qual_type_observation"] == "not-emitted", f"{result['name']} accessor desugared type observation differs")
+    result["accessor_desugared_qual_type_observation"] = raw["accessor_desugared_qual_type_observation"]
     require(raw["accessor_storage_class"] == "none", f"{result['name']} accessor storage observation differs")
     result["accessor_storage_class"] = None
     require(raw["accessor_linkage_status"] == "unresolved-from-json", f"{result['name']} accessor linkage status differs")
@@ -288,6 +299,24 @@ def load_contract(path: Path = CONTRACT_PATH) -> dict[str, Any]:
     }
 
 
+def _reviewed_contract(contract: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Accept only the exact normalized contract loaded from reviewed TOML.
+
+    The optional argument exists for callers that already loaded this module's
+    normalized contract.  It is not a second policy authority: a mapping that
+    changes a type, site, or profile rule cannot turn a forged receipt into a
+    proof result.
+    """
+    canonical = load_contract()
+    if contract is not None:
+        require(isinstance(contract, Mapping), "native data declaration contract is invalid")
+        require(
+            declaration_inventory.strict_equal(contract, canonical),
+            "supplied declaration contract differs from reviewed canonical contract",
+        )
+    return canonical
+
+
 def validate_selected_object_contracts(
     selected_objects: Sequence[Mapping[str, Any]],
     contract: Mapping[str, Any] | None = None,
@@ -298,11 +327,8 @@ def validate_selected_object_contracts(
     declaration-facing fields are consumed here; ELF placement and provider
     ownership remain selection's separate responsibilities.
     """
-    if contract is None:
-        contract = load_contract()
-    require(isinstance(contract, Mapping), "native data declaration contract is invalid")
-    contract_objects = contract.get("objects")
-    require(isinstance(contract_objects, list), "native data declaration contract objects are invalid")
+    reviewed_contract = _reviewed_contract(contract)
+    contract_objects = reviewed_contract["objects"]
     require(isinstance(selected_objects, Sequence) and not isinstance(selected_objects, (str, bytes)), "selected object contracts are invalid")
     require(len(selected_objects) == len(contract_objects), "selected object contract roster count differs")
     expected = {item["id"]: item for item in contract_objects}
@@ -327,34 +353,82 @@ def validate_selected_object_contracts(
         normalized.append(copy.deepcopy(reviewed))
     return normalized
 
-
 def _report_envelope(envelope: Mapping[str, Any]) -> tuple[Mapping[str, Any], Mapping[str, Any]]:
+    """Require a complete, internally consistent replay envelope.
+
+    The declaration-inventory reader remains responsible for authenticating raw
+    compiler artifacts and retained inputs.  This adapter does not replay them
+    a second time, but it refuses a selected-row projection: the finite roster,
+    collection summary, and status must still reproduce from the full report.
+    """
     exact_keys(envelope, {"current_selecting_source", "report"}, "replayed header declaration envelope")
     current = exact_keys(envelope["current_selecting_source"], {"matches_retained", "differences"}, "replayed header current source")
-    boolean(current["matches_retained"], "replayed header current source match")
-    require(isinstance(current["differences"], list), "replayed header current source differences are invalid")
+    source_matches = boolean(current["matches_retained"], "replayed header current source match")
+    differences = current["differences"]
+    require(isinstance(differences, list), "replayed header current source differences are invalid")
+    require(
+        source_matches is (not bool(differences)),
+        "replayed header current source match differs from differences",
+    )
     report = envelope["report"]
     require(isinstance(report, Mapping), "replayed header declaration report is invalid")
-    require(report.get("schema") == HEADER_REPORT_SCHEMA, "replayed header declaration report schema differs")
-    require(report.get("target") == TARGET, "replayed header declaration report target differs")
-    scope = report.get("scope")
-    require(isinstance(scope, Mapping), "replayed header declaration report scope is invalid")
-    required_scope = {
-        "compiler_ast_json": True,
-        "compiler_preprocessor_records": True,
-        "header_text_parsing": False,
-        "layout_evaluation": False,
-        "macro_events_before_collapse": True,
-        "provider_selection": False,
-        "runtime": False,
-        "variable_occurrences_before_collapse": True,
-    }
-    for field, expected in required_scope.items():
-        require(scope.get(field) is expected, f"replayed header declaration report scope {field} differs")
-    for field in ("occurrences", "macro_events", "final_active_macros"):
-        require(isinstance(report.get(field), list), f"replayed header declaration report {field} is invalid")
-    return current, report
+    try:
+        declaration_inventory.require_report_keys(report)
+        inputs = report["inputs"]
+        expected_jobs = declaration_inventory.expected_job_identities(inputs)
+        exceptions = declaration_inventory.configured_oracle_exceptions(inputs)
+    except declaration_inventory.HeaderDeclarationInventoryError as error:
+        raise NativeDataDeclarationsError(str(error)) from error
 
+    jobs = report["jobs"]
+    require(len(jobs) == len(expected_jobs), "replayed header declaration job roster differs")
+    for ordinal, (job, expected) in enumerate(zip(jobs, expected_jobs)):
+        require(isinstance(job, Mapping), f"replayed header declaration job {ordinal} is invalid")
+        require(type(job.get("ordinal")) is int and job["ordinal"] == ordinal, f"replayed header declaration job {ordinal} ordinal differs")
+        tree, header, profile = expected
+        require(
+            job.get("tree") == tree and job.get("header") == header and job.get("profile") == profile,
+            f"replayed header declaration job {ordinal} identity differs",
+        )
+        expected_status = "oracle-not-applicable" if tree == "reference" and (header, profile) in exceptions else "ok"
+        require(job.get("status") == expected_status, f"replayed header declaration job {ordinal} status differs")
+
+    occurrences = report["occurrences"]
+    macro_events = report["macro_events"]
+    active = report["final_active_macros"]
+    for label, records in (("occurrences", occurrences), ("macro events", macro_events), ("final active macros", active)):
+        require(all(isinstance(record, Mapping) for record in records), f"replayed header declaration {label} are invalid")
+    collection = report["collection"]
+    require(isinstance(collection, Mapping), "replayed header declaration collection is invalid")
+    workers = collection.get("workers")
+    timeout = collection.get("compiler_job_timeout_seconds")
+    require(type(workers) is int and workers > 0, "replayed header declaration workers are invalid")
+    require(type(timeout) is float and timeout > 0.0, "replayed header declaration timeout is invalid")
+    try:
+        reproduced = declaration_inventory.build_report(
+            inputs=inputs,
+            jobs=jobs,
+            occurrences=occurrences,
+            macro_events=macro_events,
+            final_active_macros=active,
+            workers=workers,
+            timeout_seconds=timeout,
+        )
+    except (declaration_inventory.HeaderDeclarationInventoryError, KeyError, TypeError, ValueError) as error:
+        raise NativeDataDeclarationsError(f"replayed header declaration report is not derivable: {error}") from error
+    require(
+        declaration_inventory.strict_equal(collection, reproduced["collection"]),
+        "replayed header declaration collection differs from raw roster",
+    )
+    require(
+        declaration_inventory.strict_equal(report["summary"], reproduced["summary"]),
+        "replayed header declaration summary differs from raw facts",
+    )
+    require(
+        declaration_inventory.strict_equal(report["status"], reproduced["status"]),
+        "replayed header declaration status differs from raw facts",
+    )
+    return current, report
 
 def _source(record: Mapping[str, Any], description: str) -> Mapping[str, Any]:
     source = record.get("source")
@@ -367,9 +441,9 @@ def _source(record: Mapping[str, Any], description: str) -> Mapping[str, Any]:
 
 def _type(record: Mapping[str, Any], description: str) -> Mapping[str, Any]:
     value = record.get("type")
-    require(isinstance(value, Mapping), f"{description} type is invalid")
-    string(value.get("qual_type"), f"{description} qual_type")
-    desugared = value.get("desugared_qual_type")
+    value = exact_keys(value, {"qual_type", "desugared_qual_type"}, f"{description} type")
+    string(value["qual_type"], f"{description} qual_type")
+    desugared = value["desugared_qual_type"]
     require(desugared is None or isinstance(desugared, str) and bool(desugared), f"{description} desugared type is invalid")
     return value
 
@@ -382,9 +456,12 @@ def _source_matches(
     header: str,
     line: int,
     description: str,
+    direct: bool,
 ) -> None:
     require(record.get("tree") == tree, f"{description} tree differs")
-    require(record.get("input_header") == header, f"{description} direct input header differs")
+    input_header = string(record.get("input_header"), f"{description} input header")
+    if direct:
+        require(input_header == header, f"{description} direct input header differs")
     source = _source(record, description)
     require(source["include_root"] == root, f"{description} source root differs")
     require(source["declaring_header"] == header, f"{description} physical header differs")
@@ -405,9 +482,15 @@ def _linkage_and_name(
     require(record.get("source_language") == language, f"{description} source language differs")
     require(record.get("mangled_name_observation") == name, f"{description} {'C++ ' if language == 'cxx' else ''}linker name differs")
     require(record.get("linkage_status") == linkage_status, f"{description} linkage status differs")
-    require(record.get("storage_class_observation") == storage, f"{description} storage observation differs")
+    require(
+        "storage_class_observation" in record and record["storage_class_observation"] == storage,
+        f"{description} storage observation differs",
+    )
     require(record.get("definition_observation") == definition, f"{description} definition observation differs")
-    require(record.get("tls_observation") is None, f"{description} TLS observation differs")
+    require(
+        "tls_observation" in record and record["tls_observation"] is None,
+        f"{description} TLS observation differs",
+    )
     linkage = record.get("linkage_specifier_languages")
     require(isinstance(linkage, list) and all(isinstance(item, str) and item for item in linkage), f"{description} linkage specifier context is invalid")
     if language == "c":
@@ -416,27 +499,58 @@ def _linkage_and_name(
         require(bool(linkage) and all(item == "C" for item in linkage), f"{description} C++ language linkage differs")
 
 
-def _direct_variable_records(
+def _selected_variable_records(
     occurrences: Sequence[Any],
     item: Mapping[str, Any],
     *,
     tree: str,
-) -> list[Mapping[str, Any]]:
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+    """Validate every selected physical occurrence before keeping its direct subset."""
     root = "candidate-header-root" if tree == "candidate" else "pinned-musl-header-root"
-    headers = {site["header"] for site in item["sites"]}
-    named: list[Mapping[str, Any]] = []
+    sites = {site["header"]: site for site in item["sites"]}
+    selected: list[Mapping[str, Any]] = []
     direct: list[Mapping[str, Any]] = []
     for ordinal, raw in enumerate(occurrences):
         if not isinstance(raw, Mapping) or raw.get("tree") != tree or raw.get("name") != item["name"]:
             continue
         require(raw.get("kind") == "variable", f"{item['name']} has a non-variable declaration occurrence")
         source = _source(raw, f"{item['name']} occurrence {ordinal}")
-        require(source["include_root"] == root, f"{item['name']} occurrence source root differs")
-        require(source["declaring_header"] in headers, f"{item['name']} physical declaration header differs")
-        named.append(raw)
-        if raw.get("input_header") == source["declaring_header"]:
+        header = source["declaring_header"]
+        require(header in sites, f"{item['name']} physical declaration header differs")
+        site = sites[header]
+        profile = string(raw.get("profile"), f"{item['name']} selected physical declaration profile")
+        require(profile in site["profiles"], f"{item['name']} selected physical declaration profile differs")
+        input_header = string(raw.get("input_header"), f"{item['name']} selected physical declaration input header")
+        is_direct = input_header == header
+        description = f"{item['name']} direct declaration" if is_direct else f"{item['name']} selected physical declaration"
+        _source_matches(
+            raw,
+            tree=tree,
+            root=root,
+            header=header,
+            line=site["candidate_line"] if tree == "candidate" else site["reference_line"],
+            description=description,
+            direct=is_direct,
+        )
+        type_info = _type(raw, description)
+        require(type_info["qual_type"] == item["qual_type"], f"{item['name']} declaration type differs")
+        require(
+            type_info["desugared_qual_type"] is None,
+            f"{item['name']} declaration desugared type differs",
+        )
+        _linkage_and_name(
+            raw,
+            name=item["name"],
+            language=PROFILE_LANGUAGES[profile],
+            linkage_status="source-external-declaration",
+            storage="extern",
+            definition="extern-declaration-without-initializer",
+            description=description,
+        )
+        selected.append(raw)
+        if is_direct:
             direct.append(raw)
-    return direct
+    return selected, direct
 
 
 def _validate_variable_object(occurrences: Sequence[Any], item: Mapping[str, Any]) -> dict[str, Any]:
@@ -446,10 +560,11 @@ def _validate_variable_object(occurrences: Sequence[Any], item: Mapping[str, Any
             key = (site["header"], profile)
             require(key not in expected, f"{item['name']} direct declaration profile is duplicated in the contract")
             expected[key] = site
-    desugared: dict[str, list[str | None]] = {}
-    evidence_counts: dict[str, int] = {}
+    direct_counts: dict[str, int] = {}
+    selected_counts: dict[str, int] = {}
+    transitive_counts: dict[str, int] = {}
     for tree in ("candidate", "reference"):
-        direct = _direct_variable_records(occurrences, item, tree=tree)
+        selected, direct = _selected_variable_records(occurrences, item, tree=tree)
         seen: dict[tuple[str, str], Mapping[str, Any]] = {}
         for record in direct:
             header = record.get("input_header")
@@ -459,59 +574,36 @@ def _validate_variable_object(occurrences: Sequence[Any], item: Mapping[str, Any
             require(key not in seen, f"{item['name']} direct declaration repeats {header}:{profile}")
             seen[key] = record
         require(set(seen) == set(expected), f"{item['name']} direct declaration profile roster differs")
-        values: list[str | None] = []
-        for key, site in expected.items():
-            record = seen[key]
-            line = site["candidate_line"] if tree == "candidate" else site["reference_line"]
-            _source_matches(
-                record,
-                tree=tree,
-                root="candidate-header-root" if tree == "candidate" else "pinned-musl-header-root",
-                header=site["header"],
-                line=line,
-                description=f"{item['name']} direct declaration",
-            )
-            type_info = _type(record, f"{item['name']} direct declaration")
-            require(type_info["qual_type"] == item["qual_type"], f"{item['name']} declaration type differs")
-            values.append(type_info["desugared_qual_type"])
-            language = PROFILE_LANGUAGES[key[1]]
-            _linkage_and_name(
-                record,
-                name=item["name"],
-                language=language,
-                linkage_status="source-external-declaration",
-                storage="extern",
-                definition="extern-declaration-without-initializer",
-                description=f"{item['name']} direct declaration",
-            )
-        desugared[tree] = sorted(values, key=lambda value: "" if value is None else value)
-        evidence_counts[tree] = len(direct)
+        direct_counts[tree] = len(direct)
+        selected_counts[tree] = len(selected)
+        transitive_counts[tree] = len(selected) - len(direct)
     return {
         "id": item["id"],
         "name": item["name"],
         "declaration_kind": item["declaration_kind"],
         "header_storage_kind": item["header_storage_kind"],
         "qual_type": item["qual_type"],
-        "desugared_qual_type_observation": desugared,
+        "desugared_qual_type_observation": item["desugared_qual_type_observation"],
         "source_mutable": item["source_mutable"],
         "object_qualifier": item["object_qualifier"],
         "pointer_target_mutability": item["pointer_target_mutability"],
         "array_extent": item["array_extent"],
         "layout_evidence": item["layout_evidence"],
-        "direct_header_profile_occurrence_counts": evidence_counts,
+        "direct_header_profile_occurrence_counts": direct_counts,
+        "selected_physical_occurrence_counts": selected_counts,
+        "selected_transitive_occurrence_counts": transitive_counts,
         "proof": {
-            "candidate_reference_declaration_agreement": "proved-against-reviewed-direct-rules",
+            "candidate_reference_declaration_agreement": "proved-against-reviewed-direct-and-transitive-physical-rules",
             "direct_header_profile": "proved",
-            "qualified_type": "proved",
-            "linker_name": "proved",
-            "language_linkage": "proved",
-            "storage_and_tls": "proved",
+            "qualified_type": "proved-for-selected-physical-occurrences",
+            "linker_name": "proved-for-selected-physical-occurrences",
+            "language_linkage": "proved-for-selected-physical-occurrences",
+            "storage_and_tls": "proved-for-selected-physical-occurrences",
             "object_layout": "not-evaluated-by-declaration-inventory",
             "provider_selection": "not-evaluated",
             "runtime": "not-evaluated",
         },
     }
-
 
 def _macro_source_matches(
     record: Mapping[str, Any],
@@ -520,10 +612,13 @@ def _macro_source_matches(
     tree: str,
     line_key: str,
     description: str,
+    direct: bool,
 ) -> None:
     root = "candidate-header-root" if tree == "candidate" else "pinned-musl-header-root"
     require(record.get("tree") == tree, f"{description} tree differs")
-    require(record.get("input_header") == item["macro_header"], f"{description} direct input header differs")
+    input_header = string(record.get("input_header"), f"{description} input header")
+    if direct:
+        require(input_header == item["macro_header"], f"{description} direct input header differs")
     source = _source(record, description)
     require(source["include_root"] == root, f"{description} source root differs")
     require(source["declaring_header"] == item["macro_header"], f"{description} physical header differs")
@@ -533,8 +628,16 @@ def _macro_source_matches(
     require(record.get("replacement") == item["macro_replacement"], f"{description} replacement differs")
 
 
-def _direct_macro_records(records: Sequence[Any], item: Mapping[str, Any], *, tree: str, description: str) -> list[Mapping[str, Any]]:
+def _selected_macro_records(
+    records: Sequence[Any],
+    item: Mapping[str, Any],
+    *,
+    tree: str,
+    line_key: str,
+    description: str,
+) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
     root = "candidate-header-root" if tree == "candidate" else "pinned-musl-header-root"
+    selected: list[Mapping[str, Any]] = []
     direct: list[Mapping[str, Any]] = []
     for ordinal, raw in enumerate(records):
         if not isinstance(raw, Mapping) or raw.get("tree") != tree or raw.get("name") != item["name"]:
@@ -542,9 +645,42 @@ def _direct_macro_records(records: Sequence[Any], item: Mapping[str, Any], *, tr
         source = _source(raw, f"{description} {ordinal}")
         require(source["include_root"] == root, f"{description} source root differs")
         require(source["declaring_header"] == item["macro_header"], f"{description} physical header differs")
-        if raw.get("input_header") == item["macro_header"]:
+        profile = string(raw.get("profile"), f"{description} profile")
+        require(profile in PROFILE_LANGUAGES, f"{description} profile is unknown")
+        input_header = string(raw.get("input_header"), f"{description} input header")
+        is_direct = input_header == item["macro_header"]
+        record_description = description if is_direct else f"{item['name']} selected physical {description}"
+        _macro_source_matches(
+            raw,
+            item,
+            tree=tree,
+            line_key=line_key,
+            description=record_description,
+            direct=is_direct,
+        )
+        selected.append(raw)
+        if is_direct:
             direct.append(raw)
-    return direct
+    return selected, direct
+
+
+def _direct_by_profile(
+    records: Sequence[Mapping[str, Any]],
+    *,
+    item: Mapping[str, Any],
+    description: str,
+) -> dict[str, Mapping[str, Any]]:
+    by_profile: dict[str, Mapping[str, Any]] = {}
+    for record in records:
+        profile = record.get("profile")
+        require(isinstance(profile, str), f"{item['name']} {description} profile is invalid")
+        require(profile not in by_profile, f"{item['name']} {description} repeats profile {profile}")
+        by_profile[profile] = record
+    require(
+        set(by_profile) == set(item["macro_profiles"]),
+        f"{item['name']} {'final ' if description == 'final macro' else ''}macro profile roster differs",
+    )
+    return by_profile
 
 
 def _validate_h_errno(occurrences: Sequence[Any], macro_events: Sequence[Any], active: Sequence[Any], item: Mapping[str, Any]) -> dict[str, Any]:
@@ -553,33 +689,39 @@ def _validate_h_errno(occurrences: Sequence[Any], macro_events: Sequence[Any], a
             if isinstance(raw, Mapping) and raw.get("tree") == tree and raw.get("name") == item["name"]:
                 raise NativeDataDeclarationsError(f"{item['name']} accessor macro is reclassified as a header declaration")
     expected_profiles = set(item["macro_profiles"])
-    counts: dict[str, dict[str, int]] = {}
+    direct_counts: dict[str, dict[str, int]] = {}
+    selected_counts: dict[str, dict[str, int]] = {}
+    transitive_counts: dict[str, dict[str, int]] = {}
     for field, records in (("macro event", macro_events), ("final macro", active)):
         for tree in ("candidate", "reference"):
-            direct = _direct_macro_records(records, item, tree=tree, description=f"{item['name']} {field}")
-            by_profile: dict[str, Mapping[str, Any]] = {}
-            for record in direct:
-                profile = record.get("profile")
-                require(isinstance(profile, str), f"{item['name']} {field} profile is invalid")
-                require(profile not in by_profile, f"{item['name']} {field} repeats profile {profile}")
-                by_profile[profile] = record
-            require(set(by_profile) == expected_profiles, f"{item['name']} {'final ' if field == 'final macro' else ''}macro profile roster differs")
+            selected, direct = _selected_macro_records(
+                records,
+                item,
+                tree=tree,
+                line_key="macro_candidate_line" if tree == "candidate" else "macro_reference_line",
+                description=f"{item['name']} {field}",
+            )
+            by_profile = _direct_by_profile(direct, item=item, description=field)
             for profile, record in by_profile.items():
-                require(profile in PROFILE_LANGUAGES, f"{item['name']} {field} profile is unknown")
+                require(profile in expected_profiles, f"{item['name']} {field} profile differs")
                 if field == "macro event":
                     require(record.get("event") == "define", f"{item['name']} macro event differs")
-                _macro_source_matches(
-                    record,
-                    item,
-                    tree=tree,
-                    line_key="macro_candidate_line" if tree == "candidate" else "macro_reference_line",
-                    description=f"{item['name']} {field}",
-                )
-            counts.setdefault(tree, {})[field] = len(direct)
-    accessor_counts: dict[str, int] = {}
+            for record in selected:
+                profile = record["profile"]
+                require(profile in expected_profiles, f"{item['name']} selected physical {field} profile differs")
+                if field == "macro event":
+                    require(record.get("event") == "define", f"{item['name']} macro event differs")
+            direct_counts.setdefault(tree, {})[field] = len(direct)
+            selected_counts.setdefault(tree, {})[field] = len(selected)
+            transitive_counts.setdefault(tree, {})[field] = len(selected) - len(direct)
+
+    accessor_direct_counts: dict[str, int] = {}
+    accessor_selected_counts: dict[str, int] = {}
+    accessor_transitive_counts: dict[str, int] = {}
     for tree in ("candidate", "reference"):
         root = "candidate-header-root" if tree == "candidate" else "pinned-musl-header-root"
-        direct: list[Mapping[str, Any]] = []
+        selected_accessors: list[Mapping[str, Any]] = []
+        direct_accessors: list[Mapping[str, Any]] = []
         for ordinal, raw in enumerate(occurrences):
             if not isinstance(raw, Mapping) or raw.get("tree") != tree or raw.get("name") != item["accessor_name"]:
                 continue
@@ -587,37 +729,46 @@ def _validate_h_errno(occurrences: Sequence[Any], macro_events: Sequence[Any], a
             source = _source(raw, f"{item['name']} accessor {ordinal}")
             require(source["include_root"] == root, f"{item['name']} accessor source root differs")
             require(source["declaring_header"] == item["accessor_header"], f"{item['name']} accessor physical header differs")
-            if raw.get("input_header") == item["accessor_header"]:
-                direct.append(raw)
-        by_profile: dict[str, Mapping[str, Any]] = {}
-        for record in direct:
-            profile = record.get("profile")
-            require(isinstance(profile, str), f"{item['name']} accessor profile is invalid")
-            require(profile not in by_profile, f"{item['name']} accessor repeats profile {profile}")
-            by_profile[profile] = record
-        require(set(by_profile) == expected_profiles, f"{item['name']} accessor profile roster differs")
-        for profile, record in by_profile.items():
-            language = PROFILE_LANGUAGES[profile]
+            profile = string(raw.get("profile"), f"{item['name']} accessor profile")
+            require(profile in expected_profiles, f"{item['name']} accessor profile differs")
+            input_header = string(raw.get("input_header"), f"{item['name']} accessor input header")
+            is_direct = input_header == item["accessor_header"]
+            description = f"{item['name']} accessor" if is_direct else f"{item['name']} selected physical accessor"
             _source_matches(
-                record,
+                raw,
                 tree=tree,
                 root=root,
                 header=item["accessor_header"],
                 line=item["accessor_candidate_line"] if tree == "candidate" else item["accessor_reference_line"],
-                description=f"{item['name']} accessor",
+                description=description,
+                direct=is_direct,
             )
-            type_info = _type(record, f"{item['name']} accessor")
+            type_info = _type(raw, description)
+            language = PROFILE_LANGUAGES[profile]
             require(type_info["qual_type"] == item["accessor_qual_types"][language], f"{item['name']} accessor type differs")
+            require(type_info["desugared_qual_type"] is None, f"{item['name']} accessor desugared type differs")
             _linkage_and_name(
-                record,
+                raw,
                 name=item["accessor_name"],
                 language=language,
                 linkage_status=item["accessor_linkage_status"],
                 storage=item["accessor_storage_class"],
                 definition=item["accessor_definition_observation"],
-                description=f"{item['name']} accessor",
+                description=description,
             )
-        accessor_counts[tree] = len(direct)
+            selected_accessors.append(raw)
+            if is_direct:
+                direct_accessors.append(raw)
+        by_profile: dict[str, Mapping[str, Any]] = {}
+        for record in direct_accessors:
+            profile = record.get("profile")
+            require(isinstance(profile, str), f"{item['name']} accessor profile is invalid")
+            require(profile not in by_profile, f"{item['name']} accessor repeats profile {profile}")
+            by_profile[profile] = record
+        require(set(by_profile) == expected_profiles, f"{item['name']} accessor profile roster differs")
+        accessor_direct_counts[tree] = len(direct_accessors)
+        accessor_selected_counts[tree] = len(selected_accessors)
+        accessor_transitive_counts[tree] = len(selected_accessors) - len(direct_accessors)
     return {
         "id": item["id"],
         "name": item["name"],
@@ -629,14 +780,19 @@ def _validate_h_errno(occurrences: Sequence[Any], macro_events: Sequence[Any], a
         "macro_replacement": item["macro_replacement"],
         "accessor_name": item["accessor_name"],
         "accessor_qual_types": copy.deepcopy(item["accessor_qual_types"]),
+        "accessor_desugared_qual_type_observation": item["accessor_desugared_qual_type_observation"],
         "accessor_linkage_status": item["accessor_linkage_status"],
-        "macro_direct_occurrence_counts": counts,
-        "accessor_direct_occurrence_counts": accessor_counts,
+        "macro_direct_occurrence_counts": direct_counts,
+        "macro_selected_physical_occurrence_counts": selected_counts,
+        "macro_selected_transitive_occurrence_counts": transitive_counts,
+        "accessor_direct_occurrence_counts": accessor_direct_counts,
+        "accessor_selected_physical_occurrence_counts": accessor_selected_counts,
+        "accessor_selected_transitive_occurrence_counts": accessor_transitive_counts,
         "proof": {
-            "macro_profile_and_expansion": "proved",
+            "macro_profile_and_expansion": "proved-for-selected-physical-occurrences",
             "header_storage_kind": "proved-accessor-macro-not-object",
-            "accessor_qualified_type": "proved",
-            "accessor_linker_name": "proved",
+            "accessor_qualified_type": "proved-for-selected-physical-occurrences",
+            "accessor_linker_name": "proved-for-selected-physical-occurrences",
             "accessor_language_linkage": "proved-where-clang-recorded-linkage-context",
             "accessor_linkage_status": "unresolved-from-json",
             "accessor_runtime_storage": "not-proved-by-declaration-inventory",
@@ -644,7 +800,6 @@ def _validate_h_errno(occurrences: Sequence[Any], macro_events: Sequence[Any], a
             "runtime": "not-evaluated",
         },
     }
-
 
 def _validate_abi_only(occurrences: Sequence[Any], macro_events: Sequence[Any], active: Sequence[Any], item: Mapping[str, Any]) -> dict[str, Any]:
     for label, records in (("header declaration", occurrences), ("macro event", macro_events), ("final active macro", active)):
@@ -682,8 +837,6 @@ def account_declarations(
     retained raw-derived facts; it does not re-run that replay or a compiler.
     A valid result is deliberately scoped to public-data header declarations.
     """
-    if contract is None:
-        contract = load_contract()
     reviewed = validate_selected_object_contracts(selected_objects, contract)
     current, report = _report_envelope(header_report_envelope)
     occurrences = report["occurrences"]

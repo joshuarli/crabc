@@ -6,12 +6,17 @@ from __future__ import annotations
 import copy
 import importlib.util
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[3]
-MODULE_PATH = ROOT / "compat" / "x86_64" / "native_data_declarations.py"
+COMPAT_X86 = ROOT / "compat" / "x86_64"
+MODULE_PATH = COMPAT_X86 / "native_data_declarations.py"
+if str(COMPAT_X86) not in sys.path:
+    sys.path.insert(0, str(COMPAT_X86))
+import header_declaration_inventory as HEADER_INVENTORY
 
 
 def load_module(name: str, path: Path):
@@ -35,7 +40,8 @@ class NativeDataDeclarationsTests(unittest.TestCase):
     def selected_objects(self):
         return [copy.deepcopy(item) for item in self.contract()["objects"]]
 
-    def report_envelope(self):
+    def selected_slice_envelope(self):
+        """Deliberately incomplete selected projection used for admission REDs."""
         contract = self.contract()
         languages = contract["profile_languages"]
         occurrences = []
@@ -161,10 +167,79 @@ class NativeDataDeclarationsTests(unittest.TestCase):
             },
         }
 
-    def account(self, envelope=None, selected_objects=None):
+    def report_envelope(self):
+        """Build a self-consistent full inventory envelope from physical rows."""
+        envelope = self.selected_slice_envelope()
+        report = envelope["report"]
+        occurrences = report["occurrences"]
+
+        # `in6addr_any` is physically declared by netinet/in.h when arpa/inet.h
+        # includes it.  Keep that selected transitive observation so this fixture
+        # exercises the same site/type/linkage rule as the retained full receipt.
+        for tree in ("candidate", "reference"):
+            direct = next(
+                item
+                for item in occurrences
+                if item["kind"] == "variable"
+                and item["name"] == "in6addr_any"
+                and item["tree"] == tree
+                and item["profile"] == "c11-gnu"
+            )
+            transitive = copy.deepcopy(direct)
+            transitive["input_header"] = "arpa/inet.h"
+            occurrences.append(transitive)
+
+        headers = sorted(
+            {item["source"]["declaring_header"] for item in occurrences}
+            | {item["source"]["declaring_header"] for item in report["macro_events"]}
+            | {"arpa/inet.h"}
+        )
+        with (COMPAT_X86 / "header_callable_inventory.toml").open("rb") as stream:
+            profiles = tomllib.load(stream)["profile"]
+        inputs = {
+            "selection_source": {
+                "candidate_headers": headers,
+                "pinned_headers": headers,
+                "profiles": profiles,
+                "oracle_not_applicable": [],
+            },
+        }
+        jobs = [
+            {"ordinal": ordinal, "tree": tree, "header": header, "profile": profile, "status": "ok"}
+            for ordinal, (tree, header, profile) in enumerate(HEADER_INVENTORY.expected_job_identities(inputs))
+        ]
+        complete = HEADER_INVENTORY.build_report(
+            inputs=inputs,
+            jobs=jobs,
+            occurrences=occurrences,
+            macro_events=report["macro_events"],
+            final_active_macros=report["final_active_macros"],
+            workers=1,
+            timeout_seconds=1.0,
+        )
+        envelope["report"] = complete
+        return envelope
+
+    def refresh_report(self, envelope):
+        """Keep a deliberate raw-fact mutation internally self-consistent."""
+        report = envelope["report"]
+        complete = HEADER_INVENTORY.build_report(
+            inputs=report["inputs"],
+            jobs=report["jobs"],
+            occurrences=report["occurrences"],
+            macro_events=report["macro_events"],
+            final_active_macros=report["final_active_macros"],
+            workers=report["collection"]["workers"],
+            timeout_seconds=report["collection"]["compiler_job_timeout_seconds"],
+        )
+        for field in ("collection", "summary", "status"):
+            report[field] = complete[field]
+
+    def account(self, envelope=None, selected_objects=None, contract=None):
         return ADAPTER.account_declarations(
             self.report_envelope() if envelope is None else envelope,
             self.selected_objects() if selected_objects is None else selected_objects,
+            contract=contract,
         )
 
     def test_accounts_selected_declarations_without_claiming_provider_or_layout_closure(self) -> None:
@@ -180,6 +255,7 @@ class NativeDataDeclarationsTests(unittest.TestCase):
         self.assertEqual(records["stdin"]["object_qualifier"], "const-pointer-object")
         self.assertEqual(records["_ns_flagdata"]["array_extent"], "incomplete")
         self.assertEqual(records["_ns_flagdata"]["layout_evidence"], "not-proved-by-declaration-inventory")
+        self.assertEqual(records["in6addr_any"]["selected_physical_occurrence_counts"]["candidate"], 8)
         self.assertEqual(records["h_errno"]["header_storage_kind"], "accessor-macro-not-object")
         self.assertEqual(records["h_errno"]["accessor_name"], "__h_errno_location")
         self.assertEqual(records["__timezone"]["header_storage_kind"], "abi-only-absence")
@@ -195,6 +271,27 @@ class NativeDataDeclarationsTests(unittest.TestCase):
         self.assertFalse(account["source_receipt"]["current_selecting_source_matches_retained"])
         self.assertEqual(account["source_receipt"]["current_selecting_source_differences"], envelope["current_selecting_source"]["differences"])
 
+    def test_selected_only_slice_cannot_issue_proved_status(self) -> None:
+        with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "declaration inventory report keys changed"):
+            self.account(envelope=self.selected_slice_envelope())
+
+    def test_current_source_match_cannot_have_differences(self) -> None:
+        envelope = self.report_envelope()
+        envelope["current_selecting_source"]["differences"] = [{"path": "include/stdio.h", "kind": "sha256-differs"}]
+        with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "current source match differs from differences"):
+            self.account(envelope=envelope)
+
+    def test_full_envelope_roster_and_summary_must_reproduce(self) -> None:
+        wrong_status = self.report_envelope()
+        wrong_status["report"]["jobs"][0]["status"] = "oracle-not-applicable"
+        with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "replayed header declaration job 0 status differs"):
+            self.account(envelope=wrong_status)
+
+        wrong_summary = self.report_envelope()
+        wrong_summary["report"]["summary"]["occurrence_count"] += 1
+        with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "replayed header declaration summary differs from raw facts"):
+            self.account(envelope=wrong_summary)
+
     def test_omitted_selected_direct_declaration_rejects(self) -> None:
         envelope = self.report_envelope()
         envelope["report"]["occurrences"] = [
@@ -207,6 +304,7 @@ class NativeDataDeclarationsTests(unittest.TestCase):
                 and item["profile"] == "c11-gnu"
             )
         ]
+        self.refresh_report(envelope)
         with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "stdin direct declaration profile roster differs"):
             self.account(envelope=envelope)
 
@@ -216,8 +314,43 @@ class NativeDataDeclarationsTests(unittest.TestCase):
             if item["kind"] == "variable" and item["name"] == "stdin" and item["tree"] == "candidate":
                 item["type"]["qual_type"] = "FILE *"
                 break
+        self.refresh_report(envelope)
         with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "stdin declaration type differs"):
             self.account(envelope=envelope)
+
+    def test_direct_desugared_type_drift_rejects(self) -> None:
+        envelope = self.report_envelope()
+        for item in envelope["report"]["occurrences"]:
+            if (
+                item["kind"] == "variable"
+                and item["name"] == "stdin"
+                and item["tree"] == "candidate"
+                and item["input_header"] == item["source"]["declaring_header"]
+            ):
+                item["type"]["desugared_qual_type"] = "forged-desugared-type"
+                break
+        self.refresh_report(envelope)
+        with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "stdin declaration desugared type differs"):
+            self.account(envelope=envelope)
+
+    def test_missing_selected_type_or_tls_observation_rejects_as_contract_error(self) -> None:
+        missing_type = self.report_envelope()
+        for item in missing_type["report"]["occurrences"]:
+            if item["kind"] == "variable" and item["name"] == "stdin" and item["tree"] == "candidate":
+                del item["type"]["desugared_qual_type"]
+                break
+        self.refresh_report(missing_type)
+        with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "stdin direct declaration type fields differ"):
+            self.account(envelope=missing_type)
+
+        missing_tls = self.report_envelope()
+        for item in missing_tls["report"]["occurrences"]:
+            if item["kind"] == "variable" and item["name"] == "stdin" and item["tree"] == "candidate":
+                del item["tls_observation"]
+                break
+        self.refresh_report(missing_tls)
+        with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "stdin direct declaration TLS observation differs"):
+            self.account(envelope=missing_tls)
 
     def test_wrong_cxx_linker_name_rejects(self) -> None:
         envelope = self.report_envelope()
@@ -225,7 +358,23 @@ class NativeDataDeclarationsTests(unittest.TestCase):
             if item["kind"] == "variable" and item["name"] == "stdin" and item["tree"] == "candidate" and item["source_language"] == "cxx":
                 item["mangled_name_observation"] = "_Z5stdin"
                 break
+        self.refresh_report(envelope)
         with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, r"stdin direct declaration C\+\+ linker name differs"):
+            self.account(envelope=envelope)
+
+    def test_transitive_selected_declaration_linker_name_rejects(self) -> None:
+        envelope = self.report_envelope()
+        for item in envelope["report"]["occurrences"]:
+            if (
+                item["kind"] == "variable"
+                and item["name"] == "in6addr_any"
+                and item["tree"] == "candidate"
+                and item["input_header"] != item["source"]["declaring_header"]
+            ):
+                item["mangled_name_observation"] = "_Z16in6addr_any_forged"
+                break
+        self.refresh_report(envelope)
+        with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "in6addr_any selected physical declaration linker name differs"):
             self.account(envelope=envelope)
 
     def test_h_errno_macro_profile_and_expansion_changes_reject(self) -> None:
@@ -234,6 +383,7 @@ class NativeDataDeclarationsTests(unittest.TestCase):
             if item["name"] == "h_errno" and item["tree"] == "candidate" and item["profile"] == "c11-bsd":
                 item["profile"] = "c11-strict"
                 break
+        self.refresh_report(profile_changed)
         with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "h_errno final macro profile roster differs"):
             self.account(envelope=profile_changed)
 
@@ -242,8 +392,22 @@ class NativeDataDeclarationsTests(unittest.TestCase):
             if item["name"] == "h_errno" and item["tree"] == "candidate":
                 item["replacement"] = " (h_errno)"
                 break
+        self.refresh_report(expansion_changed)
         with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "h_errno macro event replacement differs"):
             self.account(envelope=expansion_changed)
+
+    def test_caller_contract_cannot_weaken_reviewed_contract(self) -> None:
+        envelope = self.report_envelope()
+        weakened = self.contract()
+        for item in weakened["objects"]:
+            if item["name"] == "stdin":
+                item["qual_type"] = "FILE *"
+        for item in envelope["report"]["occurrences"]:
+            if item["kind"] == "variable" and item["name"] == "stdin":
+                item["type"]["qual_type"] = "FILE *"
+        self.refresh_report(envelope)
+        with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "supplied declaration contract differs from reviewed canonical contract"):
+            self.account(envelope=envelope, contract=weakened)
 
     def test_selected_abi_only_kind_reclassification_rejects(self) -> None:
         selected = self.selected_objects()
@@ -277,6 +441,7 @@ class NativeDataDeclarationsTests(unittest.TestCase):
                 "tls_observation": None,
             }
         )
+        self.refresh_report(envelope)
         with self.assertRaisesRegex(ADAPTER.NativeDataDeclarationsError, "__timezone ABI-only name appears as a header declaration"):
             self.account(envelope=envelope)
 
