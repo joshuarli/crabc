@@ -1,0 +1,83 @@
+# Installed pthread consumes an opaque prepared TLS token. These names are
+# process-private loader operations, not new libc exports or public C headers.
+schema = "crabc.x86_64-prepared-worker-tls-contract/v1"
+id = "x86-prepared-worker-tls"
+status = "implemented-unqualified"
+target = "x86_64-unknown-linux-musl"
+
+[worker_token]
+owner = "ldso/src/x86_64_initial_worker_tls.rs:WorkerTlsAllocation"
+consumer = "libc/src/c_abi/x86_64/dynamic_tls.rs:StaticInitialTlsBlock"
+size_bytes = 32
+alignment_bytes = 8
+fields = ["mapping:*mut u8", "mapping_size:usize", "thread_pointer:*mut u8", "allocation_id:usize"]
+identity = "exact-live-mapping-span-thread-pointer-nonzero-allocation-id"
+release = "after-clear-child-tid-registry-withdrawal-and-reader-quiescence"
+
+[descriptor]
+owner = "ldso/src/x86_64_general_initial_tls_state.rs:GeneralLoaderLibcTlsRuntimeV1"
+size_bytes = 72
+alignment_bytes = 8
+initial_generation = 1
+role = "private-process-lifetime-initial-tls-provenance"
+current_view = "ldso/src/x86_64_runtime_tls_view.rs:RuntimeTlsView"
+current_view_tcb_offset = 24
+require_installed_import = false
+
+[operation.__crabc_x86_64_initial_tls_allocate]
+producer = "ldso/src/x86_64_initial_worker_tls.rs:allocate"
+producer_signature = "unsafe extern C fn(*mut WorkerTlsAllocation) -> i32"
+consumer = "libc/src/c_abi/x86_64/dynamic_tls.rs:allocate_thread"
+consumer_signature = "unsafe extern C fn(*mut StaticInitialTlsBlock) -> i32"
+role = "prepare-current-generation-before-clone_settls"
+
+[operation.__crabc_x86_64_initial_tls_release]
+producer = "ldso/src/x86_64_initial_worker_tls.rs:release"
+producer_signature = "unsafe extern C fn(*const WorkerTlsAllocation) -> i64"
+consumer = "libc/src/c_abi/x86_64/dynamic_tls.rs:release_thread"
+consumer_signature = "unsafe extern C fn(*const StaticInitialTlsBlock) -> i64"
+role = "exact-token-release-after-worker-quiescence"
+
+[operation.__crabc_x86_64_resolve_initial_tls]
+producer = "ldso/src/x86_64_initial_graph.rs:__tls_get_addr"
+producer_signature = "unsafe extern C fn(*const TlsIndex) -> *mut c_void"
+consumer = "libc/src/c_abi/x86_64/dynamic_tls.rs:__tls_get_addr"
+consumer_signature = "unsafe extern C fn(*const c_void) -> *mut c_void"
+role = "resolve-two-native-word-module-offset-on-owned-thread"
+
+[[legacy_replacement]]
+name = "__rc_clone"
+owner = "libc/src/c_abi/x86_64/pthread_create_join.rs:__crabc_x86_pthread_clone"
+role = "prepared-pthread-clone-stack-tid-and-tls-token"
+[[legacy_replacement]]
+name = "__rc_init_thread_tls"
+owner = "libc/src/c_abi/x86_64/pthread_create_join.rs:create_selected_worker_with_attributes"
+role = "consume-already-initialized-token-before-clone"
+[[legacy_replacement]]
+name = "__rc_tls_block_size"
+owner = "libc/src/c_abi/x86_64/pthread_create_join.rs:create_selected_worker_with_attributes"
+role = "consume-already-initialized-token-before-clone"
+[[legacy_replacement]]
+name = "__rc_tls_block_size_for"
+owner = "libc/src/c_abi/x86_64/pthread_create_join.rs:reclaim_withdrawn_selected_worker"
+role = "exact-token-release-not-arbitrary-fs-reconstruction"
+[[legacy_replacement]]
+name = "__rc_tls_base_offset_for"
+owner = "libc/src/c_abi/x86_64/pthread_create_join.rs:reclaim_withdrawn_selected_worker"
+role = "exact-token-release-not-arbitrary-fs-reconstruction"
+[[legacy_replacement]]
+name = "__rc_create_thread_tls"
+owner = "libc/src/c_abi/x86_64/dynamic_tls.rs:allocate_thread"
+role = "no-separate-native-caller-or-allocation-query-export"
+[[legacy_replacement]]
+name = "__rc_tls_base_offset"
+owner = "libc/src/c_abi/x86_64/dynamic_tls.rs:allocate_thread"
+role = "no-separate-native-caller-or-allocation-query-export"
+
+[limits]
+public_exports_added = false
+public_facade_runtime_v1 = false
+static_main_tls_replaced = false
+general_pthread_qualification = false
+family_completion = false
+promotion_ready = false

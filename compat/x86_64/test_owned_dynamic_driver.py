@@ -812,8 +812,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self.assertFalse(output.exists())
         self.assertEqual((output.parent / (output.name + ".build") / "installed/partial-libc.so").read_bytes(), b"partial")
 
-    def test_shared_libc_dynamic_list_keeps_musl_data_and_allocator_exceptions(self):
-        """The shared libc link alone receives musl's finite interposition list."""
+    def test_shared_libc_link_keeps_musl_exceptions_and_errno_private_alias(self):
+        """The shared libc link keeps both finite policies separate."""
 
         dynamic_list = producer.shared_libc_dynamic_list()
         self.assertEqual(
@@ -833,15 +833,32 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         self.assertNotIn("malloc", dynamic_list["data_symbols"])
         self.assertIn("malloc_usable_size", dynamic_list["allocation_entrypoints"])
 
+        private_stage = Path(self.temporary.name) / "errno-private"
+        private_stage.mkdir()
+        private_aliases = producer.shared_libc_errno_private_aliases(private_stage)
+        self.assertEqual(
+            private_aliases["source"],
+            {
+                "path": "libc/src/c_abi/x86_64/owned_errno_private_aliases.list",
+                "sha256": producer.ERRNO_PRIVATE_ALIAS_LIST_SHA256,
+                "mode": 0o644,
+            },
+        )
+        self.assertEqual(private_aliases["members"], ["___errno_location"])
+        self.assertEqual(private_aliases["member_count"], 1)
+        self.assertEqual(private_aliases["linker_policy"], "exact-local-symbols")
+
         command = producer.shared_libc_link_command(
             Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
-            Path("/private/mimalloc-hidden.exports"), Path("/private/objects"),
+            Path("/private/mimalloc-hidden.exports"), Path("/private/errno-private.exports"),
+            Path("/private/objects"),
             ("one.o", "two.o"), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
         )
         self.assertEqual(command, [
             "/pinned/ld.lld", "-shared", "--hash-style=sysv", "-soname", "libc.so",
             "--dynamic-list=" + str(producer.SHARED_LIBC_DYNAMIC_LIST),
             "--version-script=/private/mimalloc-hidden.exports",
+            "--version-script=/private/errno-private.exports",
             "--exclude-libs=libcrabc-builtins.a",
             "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
             "/private/objects/one.o", "/private/objects/two.o", "/private/libcrabc-builtins.a",
@@ -855,7 +872,8 @@ class InstalledDynamicDriverTests(unittest.TestCase):
 
         command = producer.shared_libc_link_command(
             Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
-            Path("/private/mimalloc-hidden.exports"), Path("/private/objects"),
+            Path("/private/mimalloc-hidden.exports"), Path("/private/errno-private.exports"),
+            Path("/private/objects"),
             ("one.o",), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
         )
         self.assertIn("--exclude-libs=libcrabc-builtins.a", command)

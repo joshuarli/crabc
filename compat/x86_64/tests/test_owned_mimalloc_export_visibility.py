@@ -48,9 +48,10 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
         source = BUILDER.read_text(encoding="utf-8")
         self.assertIn("shared_libc_mimalloc_hidden_exports", source)
         self.assertIn('f"--version-script={mimalloc_hidden_exports}"', source)
+        self.assertIn('f"--version-script={errno_private_aliases}"', source)
         self.assertIn('"linker_policy": "exact-local-symbols"', source)
         self.assertIn('"shared_mimalloc_hidden_exports": shared_mimalloc_hidden_exports', source)
-        self.assertEqual(source.count("--version-script="), 2)
+        self.assertEqual(source.count("--version-script="), 3)
         static_builder = (ROOT / "scripts/build_x86_64_owned_sysroot.py").read_text(encoding="utf-8")
         self.assertNotIn("owned_mimalloc_hidden", static_builder)
 
