@@ -24,7 +24,7 @@ require_tool() { command -v "$1" >/dev/null 2>&1 || fail "requires $1"; }
 
 [ "$#" -le 1 ] || fail "usage: $0 [ABSOLUTE_DYNAMIC_PRODUCT]"
 readonly SUPPLIED_PRODUCT="${1:-}"
-if [ -n "$SUPPLIED_PRODUCT" ]; then
+if [ "$#" -eq 1 ]; then
     [[ "$SUPPLIED_PRODUCT" = /* ]] || fail "supplied dynamic product must use an absolute path"
 fi
 [ "$(uname -s)" = Linux ] || fail "requires native Linux"
@@ -34,7 +34,11 @@ for tool in chroot nm objdump python3 readelf sha256sum timeout; do require_tool
 for input in "$READER" "$BUILDER" "$DIRECT" "$DSO" "$DSO_CONSUMER" "$INTERPOSE"; do
     [ -f "$input" ] || fail "missing input $input"
 done
-WORK_DIR="$(python3 -B "$READER" validate-work-dir --root "$ROOT_DIR" --work "$WORK_DIR_REQUEST")"
+work_admission=(validate-work-dir --root "$ROOT_DIR" --work "$WORK_DIR_REQUEST")
+if [ -n "$SUPPLIED_PRODUCT" ]; then
+    work_admission+=(--product "$SUPPLIED_PRODUCT")
+fi
+WORK_DIR="$(python3 -B "$READER" "${work_admission[@]}")"
 [ ! -e "$WORK_DIR" ] && [ ! -L "$WORK_DIR" ] || fail "work directory must be fresh: $WORK_DIR"
 mkdir -p "$WORK_DIR/raw"
 readonly WORK_DIR

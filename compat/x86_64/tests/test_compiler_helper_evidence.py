@@ -4,7 +4,9 @@ from __future__ import annotations
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -20,6 +22,34 @@ SPEC.loader.exec_module(EVIDENCE)
 
 
 class CompilerHelperEvidenceTests(unittest.TestCase):
+    def test_supplied_product_runner_rejects_overlap_and_empty_argument_before_writes(self):
+        scratch = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        runner = ROOT / EVIDENCE.SHARED_PLACEMENT_RUNNER
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            product = Path(temporary) / "sealed-product"
+            product.mkdir()
+            marker = product / "sealed-input"
+            marker.write_bytes(b"unchanged\n")
+            environment = dict(os.environ,
+                CRABC_X86_COMPILER_HELPER_IMAGE="crabc-core-evidence@sha256:" + "0" * 64,
+                CRABC_COMPILER_HELPER_SHARED_WORK_DIR=str(product / "new-review"))
+            result = subprocess.run(["bash", str(runner), str(product)], cwd=ROOT,
+                                    env=environment, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(sorted(path.relative_to(product).as_posix() for path in product.rglob("*")),
+                             ["sealed-input"], result.stderr)
+            self.assertEqual(marker.read_bytes(), b"unchanged\n")
+            # A missing image stops the legacy empty-argument branch before it
+            # can build anything, while the argument contract must reject first.
+            environment["CRABC_X86_COMPILER_HELPER_IMAGE"] = ""
+            environment["CRABC_COMPILER_HELPER_SHARED_WORK_DIR"] = str(Path(temporary) / "empty-review")
+            result = subprocess.run(["bash", str(runner), ""], cwd=ROOT,
+                                    env=environment, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("supplied dynamic product", result.stderr)
+            self.assertFalse((Path(temporary) / "empty-review").exists())
+
     def _temporary_work(self, temporary: str) -> Path:
         work = Path(temporary) / "aggregate"
         (work / "raw").mkdir(parents=True)

@@ -722,7 +722,7 @@ def _physical_file(path: Path, description: str) -> Path:
     return path
 
 
-def checkout_work_directory(root: Path, path: Path) -> Path:
+def checkout_work_directory(root: Path, path: Path, *, product: Path | None = None) -> Path:
     """Resolve a not-yet-created runner directory beneath physical x86 work.
 
     A runner accepts a caller path before it creates it, so a lexical prefix is
@@ -737,6 +737,12 @@ def checkout_work_directory(root: Path, path: Path) -> Path:
     resolved = Path(path).absolute().resolve(strict=False)
     require(resolved != allowed and resolved.is_relative_to(allowed),
             "compiler-helper work directory must be a physical checkout .work/x86_64 descendant")
+    if product is not None:
+        supplied = _physical_directory(product, "compiler-helper supplied dynamic product")
+        require(supplied != allowed and supplied.is_relative_to(allowed),
+                "compiler-helper supplied dynamic product escapes checkout .work/x86_64")
+        require(not resolved.is_relative_to(supplied),
+                "compiler-helper work directory overlaps the supplied dynamic product")
     return resolved
 
 
@@ -1295,6 +1301,7 @@ def main(argv: list[str] | None = None) -> int:
     work_directory = commands.add_parser("validate-work-dir", allow_abbrev=False)
     work_directory.add_argument("--root", required=True, type=Path)
     work_directory.add_argument("--work", required=True, type=Path)
+    work_directory.add_argument("--product", type=Path)
     product_admission = commands.add_parser("validate-materialized-product", allow_abbrev=False)
     product_admission.add_argument("--root", required=True, type=Path)
     product_admission.add_argument("--product", required=True, type=Path)
@@ -1335,7 +1342,7 @@ def main(argv: list[str] | None = None) -> int:
             validate_source_seal(args.source)
             print("compiler-helper source seal valid")
         elif args.command == "validate-work-dir":
-            print(checkout_work_directory(args.root, args.work))
+            print(checkout_work_directory(args.root, args.work, product=args.product))
         elif args.command == "validate-materialized-product":
             print(validate_materialized_dynamic_product(args.root, args.product))
         elif args.command == "write-fixture-report":

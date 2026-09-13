@@ -98,6 +98,8 @@ checkout-local path as the runner's sole argument. The owning product reader
 admits it before and after execution, and fixtures still run in a separate
 copy. That path omits only `product-build`; it retains every placement,
 ordinary-consumer, interposition, source-seal, and product-invariance check.
+Output paths inside the supplied physical product are rejected before creating
+the evidence directory, so an invalid invocation preserves the sealed input.
 
 At that supplied-product boundary, an aggregate receipt is optional but
 meaningful only when present: the reader first replays it, then requires its
