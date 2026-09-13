@@ -228,9 +228,14 @@ its current collector and selected product source, static preparation, complete
 ELF facts/base inventory, selected static archive and driver, shared libc,
 loader, manifest, dynamic materialization state, driver, producer-tools and
 shared-provenance bytes, selected dynamic list, and retained source snapshots
-to the same selection transaction. The state record must match the
-reader-validated retained dynamic tree and its manifest before it can enter the
-selector's post-attachment recheck.
+to the same selection transaction. It also binds each concrete installed input
+used by the sealed final links: static `crt1.o`, `rcrt1.o`, `crti.o`, `crtn.o`,
+`libc.a`, and `libcrabc-builtins.a`; and dynamic `crt1.o`, `Scrt1.o`, `crti.o`,
+`crtn.o`, `libc.so`, `libcrabc-builtins.a`, and
+`crabc-dynamic-attach.o`. Each retained file must be physical, have the digest
+recorded by its retained product manifest, and have the same bytes and mode as
+the selected current product before it enters the selector's post-attachment
+recheck. The dynamic state follows the same retained-tree/manifest binding.
 The reader retains its pinned image, musl oracle tools, exact 47 command
 envelopes, and native semantic/override/interposition controls; the selector
 does not replace those retained executions with ambient host tools.

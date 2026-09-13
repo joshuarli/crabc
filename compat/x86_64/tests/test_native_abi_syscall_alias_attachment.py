@@ -37,6 +37,28 @@ PRIVATE_SOURCES = (
     'libc/src/c_abi/x86_64/signal_control.rs',
     'compat/x86_64/owned-syscall-alias-contract.md',
 )
+STATIC_LINK_INPUTS = {
+    'static_crt1': 'usr/lib/crt1.o',
+    'static_rcrt1': 'usr/lib/rcrt1.o',
+    'static_crti': 'usr/lib/crti.o',
+    'static_crtn': 'usr/lib/crtn.o',
+    'static_libc': 'usr/lib/libc.a',
+    'static_builtins': 'usr/lib/libcrabc-builtins.a',
+}
+DYNAMIC_LINK_INPUTS = {
+    'dynamic_crt1': 'usr/lib/crt1.o',
+    'dynamic_Scrt1': 'usr/lib/Scrt1.o',
+    'dynamic_crti': 'usr/lib/crti.o',
+    'dynamic_crtn': 'usr/lib/crtn.o',
+    'dynamic_libc': 'usr/lib/libc.so',
+    'dynamic_builtins': 'usr/lib/libcrabc-builtins.a',
+    'dynamic_attach': 'usr/lib/crabc-dynamic-attach.o',
+}
+RECEIPT_PRODUCT_INPUTS = (
+    'selected_dynamic_list', 'static_libc', 'static_driver', 'static_manifest',
+    'dynamic_libc', 'dynamic_driver', 'dynamic_loader', 'dynamic_manifest',
+    'dynamic_producer_tools', 'dynamic_shared_provenance',
+)
 
 
 class FakeSyscallReader:
@@ -142,10 +164,8 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
         self.static = self.work / 'static'
         self.dynamic = self.work / 'dynamic'
         for path, payload in (
-            (self.static / 'share/crabc/manifest.json', b'static manifest\n'),
             (self.static / 'bin/crabc-cc', b'static driver\n'),
             (self.static / 'usr/lib/libc.a', b'static archive\n'),
-            (self.dynamic / 'share/crabc/manifest.json', b'dynamic manifest\n'),
             (self.dynamic / 'share/crabc/dynamic-product-state.json', b'dynamic state\n'),
             (self.dynamic / 'share/crabc/libc-shared.provenance.json', b'dynamic provenance\n'),
             (self.dynamic / 'share/crabc/producer-tools.json', b'dynamic tools\n'),
@@ -155,10 +175,34 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
         ):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload)
+        for key, relative in STATIC_LINK_INPUTS.items():
+            path = self.static / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_bytes((key + '\n').encode())
+        for key, relative in DYNAMIC_LINK_INPUTS.items():
+            path = self.dynamic / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if not path.exists():
+                path.write_bytes((key + '\n').encode())
+        static_manifest = self.static / 'share/crabc/manifest.json'
+        static_manifest.parent.mkdir(parents=True, exist_ok=True)
+        static_manifest.write_text(json.dumps({
+            'installed': {'files': {
+                relative: hashlib.sha256((self.static / relative).read_bytes()).hexdigest()
+                for relative in STATIC_LINK_INPUTS.values()
+            }},
+        }, sort_keys=True))
         state_path = self.dynamic / 'share/crabc/dynamic-product-state.json'
         manifest_path = self.dynamic / 'share/crabc/manifest.json'
         manifest_path.write_text(json.dumps({
-            'files': {'share/crabc/dynamic-product-state.json': hashlib.sha256(state_path.read_bytes()).hexdigest()},
+            'files': {
+                'share/crabc/dynamic-product-state.json': hashlib.sha256(state_path.read_bytes()).hexdigest(),
+                **{
+                    relative: hashlib.sha256((self.dynamic / relative).read_bytes()).hexdigest()
+                    for relative in DYNAMIC_LINK_INPUTS.values()
+                },
+            },
         }, sort_keys=True))
         self.base = self._write('base-inventory.json', b'base\n')
         self.elf = self._write('elf-facts.json', b'elf\n')
@@ -211,7 +255,7 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
             'static_preparation': self._receipt_pair(selection.file_identity(self.preparation)),
             'elf_facts': self._receipt_pair(selection.file_identity(self.elf)),
             'base_inventory': self._receipt_pair(selection.file_identity(self.base)),
-            **{name: self._receipt_pair(value) for name, value in self.products.items() if name != 'dynamic_state'},
+            **{name: self._receipt_pair(self.products[name]) for name in RECEIPT_PRODUCT_INPUTS},
             'dynamic_linker': self._receipt_pair(selection.file_identity(self.dynamic_linker)),
             'oracle_compiler': self._receipt_pair(selection.file_identity(self.oracle_compiler)),
             'oracle_shared': self._receipt_pair(selection.file_identity(self.oracle_shared)),
@@ -224,11 +268,19 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
             'dynamic_linker', 'oracle_compiler', 'oracle_shared', 'oracle_archive',
         })
         retained_dynamic = self.work / 'products/dynamic'
-        for relative in ('share/crabc/manifest.json', 'share/crabc/dynamic-product-state.json'):
-            source = self.dynamic / relative
-            retained = retained_dynamic / relative
-            retained.parent.mkdir(parents=True, exist_ok=True)
-            retained.write_bytes(source.read_bytes())
+        retained_static = self.work / 'products/static'
+        for root, retained_root, relatives in (
+            (self.static, retained_static, ('share/crabc/manifest.json', *STATIC_LINK_INPUTS.values())),
+            (self.dynamic, retained_dynamic, (
+                'share/crabc/manifest.json', 'share/crabc/dynamic-product-state.json', *DYNAMIC_LINK_INPUTS.values(),
+            )),
+        ):
+            for relative in relatives:
+                source = root / relative
+                retained = retained_root / relative
+                retained.parent.mkdir(parents=True, exist_ok=True)
+                retained.write_bytes(source.read_bytes())
+                retained.chmod(source.stat().st_mode & 0o7777)
 
         reader = FakeSyscallReader({})
         return {
@@ -352,6 +404,8 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
             'static_manifest', 'static_driver', 'static_libc', 'dynamic_manifest', 'dynamic_state',
             'dynamic_driver', 'dynamic_libc', 'dynamic_loader', 'dynamic_shared_provenance',
             'dynamic_producer_tools', 'selected_dynamic_list',
+            'static_crt1', 'static_rcrt1', 'static_crti', 'static_crtn', 'static_builtins',
+            'dynamic_crt1', 'dynamic_Scrt1', 'dynamic_crti', 'dynamic_crtn', 'dynamic_builtins', 'dynamic_attach',
         })
         self.assertEqual(companion['projection']['aliases'], [list(pair) for pair in ALIASES])
 
@@ -455,6 +509,79 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
             selection.native_syscall_alias_adapter(
                 self.report_path, facts=self.facts, measurement=self.measurement,
                 paths=self.paths, source=self.source,
+            )
+
+    def test_adapter_rejects_current_link_inputs_outside_the_retained_product_manifests(self) -> None:
+        """Every exact CRT, builtins, and dynamic-attach byte is receipt-bound."""
+        for product, records in ((self.static, STATIC_LINK_INPUTS), (self.dynamic, DYNAMIC_LINK_INPUTS)):
+            for name, relative in records.items():
+                with self.subTest(name=name):
+                    receipt = self._receipt()
+                    current = product / relative
+                    original = current.read_bytes()
+                    current.write_bytes(b'changed current link input: ' + name.encode() + b'\n')
+                    with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader(receipt)), \
+                         self.assertRaisesRegex(selection.SelectionError, name):
+                        selection.native_syscall_alias_adapter(
+                            self.report_path, facts=self.facts, measurement=self.measurement,
+                            paths=self.paths, source=self.source,
+                        )
+                    current.write_bytes(original)
+
+    def test_adapter_rejects_current_link_input_mode_substitutions(self) -> None:
+        for product, name, relative in (
+            (self.static, 'static_crt1', STATIC_LINK_INPUTS['static_crt1']),
+            (self.static, 'static_builtins', STATIC_LINK_INPUTS['static_builtins']),
+            (self.dynamic, 'dynamic_Scrt1', DYNAMIC_LINK_INPUTS['dynamic_Scrt1']),
+            (self.dynamic, 'dynamic_attach', DYNAMIC_LINK_INPUTS['dynamic_attach']),
+            (self.dynamic, 'dynamic_builtins', DYNAMIC_LINK_INPUTS['dynamic_builtins']),
+        ):
+            with self.subTest(name=name):
+                receipt = self._receipt()
+                current = product / relative
+                original_mode = current.stat().st_mode & 0o7777
+                current.chmod(0o600)
+                with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader(receipt)), \
+                     self.assertRaisesRegex(selection.SelectionError, name):
+                    selection.native_syscall_alias_adapter(
+                        self.report_path, facts=self.facts, measurement=self.measurement,
+                        paths=self.paths, source=self.source,
+                    )
+                current.chmod(original_mode)
+
+    def test_adapter_rejects_retained_link_inputs_unsealed_by_the_product_manifests(self) -> None:
+        for product, retained_root, records in (
+            (self.static, self.work / 'products/static', STATIC_LINK_INPUTS),
+            (self.dynamic, self.work / 'products/dynamic', DYNAMIC_LINK_INPUTS),
+        ):
+            for name, relative in records.items():
+                with self.subTest(name=name):
+                    receipt = self._receipt()
+                    retained = retained_root / relative
+                    changed = b'changed retained link input: ' + name.encode() + b'\n'
+                    retained.write_bytes(changed)
+                    with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader(receipt)), \
+                         self.assertRaisesRegex(selection.SelectionError, 'sealed by its manifest'):
+                        selection.native_syscall_alias_adapter(
+                            self.report_path, facts=self.facts, measurement=self.measurement,
+                            paths=self.paths, source=self.source,
+                        )
+
+    def test_runtime_recheck_rejects_link_input_changed_after_receipt_attachment(self) -> None:
+        receipt = self._receipt()
+        with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader(receipt)):
+            companion = selection.native_syscall_alias_adapter(
+                self.report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        assert companion is not None
+        changed = self.static / STATIC_LINK_INPUTS['static_crti']
+        changed.write_bytes(b'changed after syscall receipt attachment\n')
+        with mock.patch.object(selection, 'selection_source', return_value=copy.deepcopy(self.source)), \
+             self.assertRaisesRegex(selection.SelectionError, 'syscall alias static_crti changed'):
+            selection._recheck_runtime_receipt_cohort(
+                paths=self.paths, facts=self.facts, measurement=self.measurement, source=self.source,
+                registry=None, pthread=None, syscall_alias=companion,
             )
 
     def test_attachment_selects_and_discharges_only_the_thirteen_global_hidden_bodies(self) -> None:

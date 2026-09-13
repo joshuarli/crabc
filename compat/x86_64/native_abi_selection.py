@@ -151,6 +151,23 @@ SYSCALL_ALIAS_LIMITS = [
     'Only the fourteen named public aliases, thirteen explicitly selected private global-hidden bodies, and two local statfs bodies are attached to complete candidate ELF observations.',
     'The receipt discharges only the thirteen private-body receipt requirements. Public alias import reasons, unowned observations, local bodies, syscall behavior generally, family completion, promotion and public support remain separate.',
 ]
+SYSCALL_ALIAS_STATIC_LINK_INPUTS = (
+    ('static_crt1', 'usr/lib/crt1.o'),
+    ('static_rcrt1', 'usr/lib/rcrt1.o'),
+    ('static_crti', 'usr/lib/crti.o'),
+    ('static_crtn', 'usr/lib/crtn.o'),
+    ('static_libc', 'usr/lib/libc.a'),
+    ('static_builtins', 'usr/lib/libcrabc-builtins.a'),
+)
+SYSCALL_ALIAS_DYNAMIC_LINK_INPUTS = (
+    ('dynamic_crt1', 'usr/lib/crt1.o'),
+    ('dynamic_Scrt1', 'usr/lib/Scrt1.o'),
+    ('dynamic_crti', 'usr/lib/crti.o'),
+    ('dynamic_crtn', 'usr/lib/crtn.o'),
+    ('dynamic_libc', 'usr/lib/libc.so'),
+    ('dynamic_builtins', 'usr/lib/libcrabc-builtins.a'),
+    ('dynamic_attach', 'usr/lib/crabc-dynamic-attach.o'),
+)
 
 
 def _stdio_alias_reader():
@@ -3797,48 +3814,95 @@ def _syscall_alias_projection(reader: Any) -> dict[str, Any]:
 
 
 def _syscall_alias_product_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
-    """Return the selected files that the finite alias runner actually consumes."""
-    return {
+    """Return the selected files consumed by the finite alias runner.
+
+    The regular runtime records retain the receipts' direct inputs.  The
+    static and dynamic driver receipts also consume the exact CRT, libc,
+    builtins, and dynamic-attachment files below.  Keep that finite link
+    roster here so direct attachment and the transaction recheck cannot omit
+    an installed driver input merely because it was sealed through a retained
+    product manifest rather than copied as a top-level reader input.
+    """
+    records = {
         **_runtime_attachment_identities(paths),
         'dynamic_producer_tools': file_identity(paths['dynamic_product'] / 'share/crabc/producer-tools.json'),
         'selected_dynamic_list': file_identity(ROOT / 'libc/src/c_abi/x86_64/owned_dynamic.list'),
     }
+    for product_key, relative in SYSCALL_ALIAS_STATIC_LINK_INPUTS:
+        records.setdefault(product_key, file_identity(paths['static_product'] / relative))
+    for product_key, relative in SYSCALL_ALIAS_DYNAMIC_LINK_INPUTS:
+        records.setdefault(product_key, file_identity(paths['dynamic_product'] / relative))
+    return records
 
 
-def _syscall_retained_dynamic_state(report_path: Path, roots: Mapping[str, Any],
-                                    inputs: Mapping[str, Any]) -> dict[str, Any]:
-    """Return the state byte record from the reader-validated dynamic tree.
+def _syscall_retained_link_inputs(report_path: Path, roots: Mapping[str, Any],
+                                  inputs: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Bind the exact static and dynamic driver inputs to retained manifests.
 
-    The owning v2 reader authenticates this retained tree through its dynamic
-    manifest and materialization-state contract. The selector must nevertheless
-    bind the selected current state to that retained byte record before adding
-    it to the companion/recheck cohort; a current-only state identity would
-    otherwise have no receipt authority.
+    The owning v2 reader validates complete retained product trees, including
+    the static preparation/tree relationship and dynamic materialization
+    state.  The selector still needs byte-and-mode identities for every
+    concrete installed input consumed by the four static and four dynamic
+    final-link receipts.  This closed roster retains no broad product-tree or
+    prefix authority: it is the union of those driver input records, reusing
+    the existing libc identities, plus the existing dynamic state recheck.
     """
-    dynamic = exact(roots.get('dynamic'), {'original', 'retained'}, 'syscall alias dynamic retained product')
-    require(dynamic['retained'] == 'products/dynamic', 'syscall alias dynamic retained tree path differs')
-    retained_root = physical_work_path(report_path.parent / dynamic['retained'], directory=True)
-    def retained_file(relative: str, description: str) -> dict[str, Any]:
-        value = retained_root / relative
-        require(value.is_file() and not value.is_symlink() and value.resolve() == value,
-                f'{description} is not a physical retained product file')
-        return file_identity(value)
-    retained_manifest = retained_file('share/crabc/manifest.json', 'syscall alias retained dynamic manifest')
-    require(_syscall_receipt_input(inputs['dynamic_manifest'], 'syscall alias dynamic manifest')
-            == _identity_payload(retained_manifest, 'syscall alias retained dynamic manifest'),
-            'syscall alias retained dynamic manifest differs from its receipt input')
-    state_path = retained_root / 'share/crabc/dynamic-product-state.json'
-    manifest_path = retained_root / 'share/crabc/manifest.json'
-    retained_state = retained_file('share/crabc/dynamic-product-state.json', 'syscall alias retained dynamic state')
-    manifest = read_json(manifest_path)
-    files = manifest.get('files') if type(manifest) is dict else None
-    require(type(files) is dict
-            and files.get('share/crabc/dynamic-product-state.json') == retained_state['sha256'],
-            'syscall alias retained dynamic state is not sealed by its manifest')
-    require(same(retained_manifest, file_identity(manifest_path))
-            and same(retained_state, file_identity(state_path)),
-            'syscall alias retained dynamic tree changed during selector binding')
-    return retained_state
+    expected = {
+        'static': {
+            'manifest_input': 'static_manifest',
+            'manifest_path': 'share/crabc/manifest.json',
+            'manifest_files': lambda manifest: manifest.get('installed', {}).get('files')
+            if type(manifest.get('installed')) is dict else None,
+            'records': SYSCALL_ALIAS_STATIC_LINK_INPUTS,
+            'extra_records': (),
+        },
+        'dynamic': {
+            'manifest_input': 'dynamic_manifest',
+            'manifest_path': 'share/crabc/manifest.json',
+            'manifest_files': lambda manifest: manifest.get('files'),
+            'records': SYSCALL_ALIAS_DYNAMIC_LINK_INPUTS,
+            'extra_records': (('dynamic_state', 'share/crabc/dynamic-product-state.json'),),
+        },
+    }
+    retained: dict[str, dict[str, Any]] = {}
+    snapshots: list[tuple[Path, dict[str, Any]]] = []
+    for product, contract in expected.items():
+        root = exact(roots.get(product), {'original', 'retained'}, f'syscall alias {product} retained product')
+        require(root['retained'] == 'products/' + product,
+                f'syscall alias {product} retained tree path differs')
+        retained_root = physical_work_path(report_path.parent / root['retained'], directory=True)
+
+        def retained_file(relative: str, description: str) -> tuple[Path, dict[str, Any]]:
+            value = retained_root / relative
+            require(value.is_file() and not value.is_symlink() and value.resolve() == value,
+                    f'{description} is not a physical retained product file')
+            identity_value = file_identity(value)
+            snapshots.append((value, identity_value))
+            return value, identity_value
+
+        manifest_path, retained_manifest = retained_file(
+            contract['manifest_path'], f'syscall alias retained {product} manifest',
+        )
+        require(_syscall_receipt_input(inputs[contract['manifest_input']], f'syscall alias {product} manifest')
+                == _identity_payload(retained_manifest, f'syscall alias retained {product} manifest'),
+                f'syscall alias retained {product} manifest differs from its receipt input')
+        manifest = read_json(manifest_path)
+        files = contract['manifest_files'](manifest) if type(manifest) is dict else None
+        require(type(files) is dict, f'syscall alias retained {product} manifest file roster differs')
+        for product_key, relative in (*contract['records'], *contract['extra_records']):
+            display_name = 'dynamic state' if product_key == 'dynamic_state' else product_key
+            _path, identity_value = retained_file(relative, f'syscall alias retained {display_name}')
+            require(files.get(relative) == identity_value['sha256'],
+                    f'syscall alias retained {display_name} is not sealed by its manifest')
+            retained[product_key] = identity_value
+    require(set(retained) == {
+        *(name for name, _relative in SYSCALL_ALIAS_STATIC_LINK_INPUTS),
+        *(name for name, _relative in SYSCALL_ALIAS_DYNAMIC_LINK_INPUTS),
+        'dynamic_state',
+    }, 'syscall alias retained link input roster differs')
+    require(all(same(identity_value, file_identity(path)) for path, identity_value in snapshots),
+            'syscall alias retained product tree changed during selector binding')
+    return retained
 
 
 def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
@@ -3913,9 +3977,10 @@ def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str
                     and type(roots[name]['original']) is str and Path(roots[name]['original']).is_absolute()
                     and roots[name]['retained'] == 'products/' + name for name in roots),
             'syscall alias retained product roots differ')
-    retained_dynamic_state = _syscall_retained_dynamic_state(report_path, roots, inputs)
-    _require_same_identity_payload(retained_dynamic_state, products['dynamic_state'],
-                                   'syscall alias dynamic state')
+    retained_link_inputs = _syscall_retained_link_inputs(report_path, roots, inputs)
+    for name, retained_identity in retained_link_inputs.items():
+        display_name = 'dynamic state' if name == 'dynamic_state' else name
+        _require_same_identity_payload(retained_identity, products[name], f'syscall alias {display_name}')
     facts_artifacts = facts.get('artifacts')
     require(type(facts_artifacts) is dict, 'syscall alias public ELF artifact roster differs')
     for artifact_key, name in (('candidate-static', 'static_libc'), ('candidate-shared', 'dynamic_libc'),
