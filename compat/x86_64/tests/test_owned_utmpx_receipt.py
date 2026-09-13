@@ -33,10 +33,24 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             path.write_text(json.dumps(value, sort_keys=True) + "\n", encoding="utf-8")
 
     def command_fixture(self) -> None:
-        base = ["/usr/bin/true"]
+        base = ["python3", "-B", "-"]
         for role in receipt.COMMAND_ROLES:
             argv = list(base)
-            if role == "dynamic-driver-compile":
+            if role.startswith("header-"):
+                tree = "oracle" if role.startswith("header-oracle-") else "project"
+                include = [] if tree == "oracle" else ["-I", "/workspace/include"]
+                c_object = "/workspace/.work/utmpx-receipt/owned-utmpx-receipt/" + tree + "-header-c.o"
+                cxx_object = "/workspace/.work/utmpx-receipt/owned-utmpx-receipt/" + tree + "-header-cxx.o"
+                if role.endswith("-c"):
+                    argv = ["/usr/local/bin/crabc-x86_64-musl-gcc", "-std=c11", "-D_GNU_SOURCE", "-fno-builtin",
+                            *include, "-H", "-c", "/workspace/compat/x86_64/owned_utmpx_header_abi_probe.c", "-o", c_object]
+                elif role.endswith("-cxx"):
+                    argv = ["/usr/local/bin/crabc-x86_64-musl-gcc", "-x", "c++", "-std=c++17", "-D_GNU_SOURCE",
+                            "-fno-builtin", "-nostdinc++", *include, "-c",
+                            "/workspace/compat/x86_64/owned_utmpx_header_abi_probe.cpp", "-o", cxx_object]
+                else:
+                    argv = ["python3", "-B", "-", c_object, cxx_object]
+            elif role == "dynamic-driver-compile":
                 argv = ["/workspace/.work/utmpx-receipt/inputs/dynamic/bin/crabc-cc-dynamic", "--dynamic-pie", "-std=c11", "-fno-builtin", "-c",
                         "/workspace/compat/x86_64/owned_utmpx_probe.c", "-o", "/workspace/.work/utmpx-receipt/owned-utmpx-receipt/workload.o"]
             elif role == "oracle-link":
@@ -87,7 +101,7 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             self.write(self.commands / (role + ".json"), {
                 "schema": receipt.COMMAND_SCHEMA, "role": role,
                 "cwd": "/workspace/.work/utmpx-receipt/owned-utmpx-receipt" if role.startswith("static-link-") else "/workspace",
-                "status": 0, "program": "/usr/bin/true", "argv": argv,
+                "status": 0, "program": receipt.expected_command_program(argv[0]), "argv": argv,
             })
 
     def symbol_fixture(self) -> None:
@@ -130,7 +144,7 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         record = json.loads(forged.read_text(encoding="utf-8"))
         record["argv"] = ["/bin/true"]
         self.write(forged, record)
-        with self.assertRaisesRegex(receipt.ReceiptError, "oracle link command"):
+        with self.assertRaisesRegex(receipt.ReceiptError, "command executable"):
             receipt.command_records(self.workspace)
         self.command_fixture()
         forged = self.commands / "runtime-dynamic-pie-direct-ordinary.json"
@@ -138,6 +152,13 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         record["argv"][6] = "/workspace/forged-chroot"
         self.write(forged, record)
         with self.assertRaisesRegex(receipt.ReceiptError, "runtime-dynamic-pie-direct-ordinary runtime command"):
+            receipt.command_records(self.workspace)
+        self.command_fixture()
+        forged = self.commands / "archive-symbols.json"
+        record = json.loads(forged.read_text(encoding="utf-8"))
+        record["program"] = "/bin/bash"
+        self.write(forged, record)
+        with self.assertRaisesRegex(receipt.ReceiptError, "program does not match"):
             receipt.command_records(self.workspace)
 
     def test_tampered_alias_address_in_raw_symbol_stream_is_rejected(self) -> None:

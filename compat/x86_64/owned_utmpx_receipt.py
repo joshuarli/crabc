@@ -630,6 +630,20 @@ def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None =
             "shared": {name: shared[name][1] for name in sorted(shared)}, "executables": executables}
 
 
+def expected_command_program(argv0: str) -> str:
+    """Resolve a retained command's executable from the trusted image roster."""
+    require(type(argv0) is str and argv0, "retained command has no executable")
+    if argv0.startswith(SOURCE_MOUNT + "/"):
+        return argv0
+    manifest = trusted_image_manifest()
+    if Path(argv0).is_absolute():
+        require(argv0 in manifest["files"], "retained command executable is not an allowed image input")
+        return argv0
+    matches = [path for path in manifest["files"] if Path(path).name == argv0]
+    require(len(matches) == 1, "retained command executable is not uniquely pinned")
+    return matches[0]
+
+
 def command_records(workspace: Path) -> dict[str, Any]:
     directory = workspace / ".work/utmpx-receipt/owned-utmpx-receipt/commands"
     require(directory.is_dir() and not directory.is_symlink(), "command roster directory is missing")
@@ -648,6 +662,8 @@ def command_records(workspace: Path) -> dict[str, Any]:
                 f"command {role} program differs")
         require(type(value["argv"]) is list and value["argv"] and all(type(item) is str for item in value["argv"]),
                 f"command {role} argv differs")
+        require(value["program"] == expected_command_program(value["argv"][0]),
+                f"command {role} program does not match its executable")
         records[role] = value
     raw = SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt"
     require(records["archive-symbols"]["cwd"] == SOURCE_MOUNT and records["archive-symbols"]["argv"] ==
@@ -667,6 +683,24 @@ def command_records(workspace: Path) -> dict[str, Any]:
         byte_role = "executable-symbol-bytes-" + linkage
         require(records[byte_role]["cwd"] == SOURCE_MOUNT and records[byte_role]["argv"] ==
                 ["readelf", "--symbols", "--wide", raw + "/" + executable], byte_role + " command differs")
+    for tree in ("oracle", "project"):
+        include = [] if tree == "oracle" else ["-I", SOURCE_MOUNT + "/include"]
+        c_object = raw + "/" + tree + "-header-c.o"
+        cxx_object = raw + "/" + tree + "-header-cxx.o"
+        c_role = "header-" + tree + "-c"
+        cxx_role = "header-" + tree + "-cxx"
+        judge_role = "header-" + tree + "-undefined-judge"
+        require(records[c_role]["cwd"] == SOURCE_MOUNT and records[c_role]["argv"] ==
+                ["/usr/local/bin/crabc-x86_64-musl-gcc", "-std=c11", "-D_GNU_SOURCE", "-fno-builtin",
+                 *include, "-H", "-c", SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_header_abi_probe.c", "-o", c_object],
+                c_role + " command differs")
+        require(records[cxx_role]["cwd"] == SOURCE_MOUNT and records[cxx_role]["argv"] ==
+                ["/usr/local/bin/crabc-x86_64-musl-gcc", "-x", "c++", "-std=c++17", "-D_GNU_SOURCE",
+                 "-fno-builtin", "-nostdinc++", *include, "-c",
+                 SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_header_abi_probe.cpp", "-o", cxx_object],
+                cxx_role + " command differs")
+        require(records[judge_role]["cwd"] == SOURCE_MOUNT and records[judge_role]["argv"] ==
+                ["python3", "-B", "-", c_object, cxx_object], judge_role + " command differs")
     for linkage in ("static", "static-pie", "pie", "non-pie"):
         role = "sealed-link-" + linkage
         product = SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/" + ("static" if linkage.startswith("static") else "dynamic")
@@ -706,6 +740,40 @@ def command_records(workspace: Path) -> dict[str, Any]:
                 and argv[5:7] == ["chroot", root] and argv[7:] == suffix,
                 f"{role} runtime command envelope differs")
     return records
+
+
+def validate_header_bytes(workspace: Path) -> dict[str, str]:
+    """Reconstruct the compiled C/C++ header declarations from retained objects."""
+    raw = workspace / ".work/utmpx-receipt/owned-utmpx-receipt"
+    expected_names = {*STRONG, *WEAK}
+    objects: dict[str, Path] = {}
+    for tree in ("oracle", "project"):
+        trace = regular(raw / (tree + "-header.trace"), tree + " header trace")
+        if tree == "project":
+            require((SOURCE_MOUNT + "/include/utmpx.h").encode("utf-8") in trace.read_bytes(),
+                    "project header witness did not include the copied utmpx header")
+        for language in ("c", "cxx"):
+            label = tree + "-" + language
+            object_file = regular(raw / (tree + "-header-" + language + ".o"), label + " header object")
+            rows = expected_symbol_rows(object_file, SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/" + object_file.name,
+                                        frozenset({".symtab"}))
+            undefined = {row[9] for row in rows if row[8] == "UND" and row[9] in expected_names}
+            require(undefined == expected_names, label + " header declarations differ")
+            objects[label] = object_file
+    expected_inputs = {
+        SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_header_abi_probe.c": workspace / "compat/x86_64/owned_utmpx_header_abi_probe.c",
+        SOURCE_MOUNT + "/compat/x86_64/owned_utmpx_header_abi_probe.cpp": workspace / "compat/x86_64/owned_utmpx_header_abi_probe.cpp",
+        **{SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/" + path.name: path for path in objects.values()},
+    }
+    rows: dict[str, str] = {}
+    for line in regular(raw / "header-input.sha256", "header input hashes").read_text(encoding="ascii").splitlines():
+        fields = line.split(maxsplit=1)
+        require(len(fields) == 2 and SHA_RE.fullmatch(fields[0]) is not None and fields[1] not in rows,
+                "header input hash row differs")
+        rows[fields[1]] = fields[0]
+    require(set(rows) == set(expected_inputs) and all(rows[name] == digest(path) for name, path in expected_inputs.items()),
+            "header input hashes do not describe retained source and objects")
+    return {name: digest(path) for name, path in sorted(objects.items())}
 
 
 def validate_runtime_bytes(workspace: Path) -> dict[str, str]:
@@ -986,7 +1054,7 @@ def validate_report(path: Path) -> dict[str, Any]:
     links = rebuild_links(workspace, products, value["tools"])
     validate_link_identity_bytes(workspace, links)
     same(value["links"], links, "reported link identities differ")
-    symbols = validate_symbol_bytes(workspace, products, links)
+    symbols = {"headers": validate_header_bytes(workspace), **validate_symbol_bytes(workspace, products, links)}
     same(value["symbols"], symbols, "reported symbol facts differ")
     runtime = validate_runtime_bytes(workspace)
     same(value["runtime"], runtime, "reported runtime facts differ")
@@ -1076,6 +1144,8 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
         copy_product(stage / "inputs/dynamic", workspace / ".work/utmpx-receipt/inputs/dynamic")
         needed = [
             "archive-symbols.txt", "archive-symbol-bytes.txt", "dynamic-symbols.txt", "compile.json", "workload.o", "link-identities.json",
+            "header-input.sha256", "oracle-header.trace", "project-header.trace", "oracle-header-c.o", "oracle-header-cxx.o",
+            "project-header-c.o", "project-header-cxx.o",
             "oracle", "oracle-ordinary.stdout", "oracle-ordinary.stderr", "oracle-ordinary.status",
             "static-static", "static-static.receipt.json", "static-static.receipt.map", "static-static.receipt.trace", "static-static-symbols.txt", "static-static-symbol-bytes.txt",
             "static-static-pie", "static-static-pie.receipt.json", "static-static-pie.receipt.map", "static-static-pie.receipt.trace", "static-static-pie-symbols.txt", "static-static-pie-symbol-bytes.txt",
@@ -1143,7 +1213,8 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
                   "commands": {role: identity(workspace, workspace / ".work/utmpx-receipt/owned-utmpx-receipt/commands" / (role + ".json")) for role in sorted(COMMAND_ROLES)},
                   "symbols": {}, "runtime": validate_runtime_bytes(workspace), "links": {}, "projection": {}}
         report["links"] = rebuild_links(workspace, product_paths, tools)
-        report["symbols"] = validate_symbol_bytes(workspace, product_paths, report["links"])
+        report["symbols"] = {"headers": validate_header_bytes(workspace),
+                             **validate_symbol_bytes(workspace, product_paths, report["links"])}
         report["projection"] = {
             "selected_aliases": [list(pair) for pair in ALIASES], "component_complete": True,
             "family_complete": False, "runtime_qualified": False, "public_support": False,

@@ -121,7 +121,8 @@ The receipt copies the exact selected source and runner inputs; the static
 preparation plus its before/after whole-source seals; both complete product
 trees, manifests, and the dynamic materialization state; command programs and
 linker; installed-driver object/dependency record; sealed-link receipts and
-sidecars; raw archive/shared/final-executable symbol streams; and every raw
+sidecars; raw archive/shared/final-executable symbol streams; retained C/C++
+header-witness objects and their source-hash input file; and every raw
 oracle/candidate process stream. The preparation primary tree must equal the
 copied static tree and its full source digest must equal the materialized
 dynamic state digest, so static and dynamic products form one exact current
@@ -135,8 +136,9 @@ command. It admits only the exact committed collector/source epoch: it reads
 the trusted local checkout HEAD without invoking Git, verifies each retained
 source blob and mode against both the captured tree and the trusted local
 checkout, and requires the static-preparation source revision to equal that
-same HEAD. It admits a command program only when its retained bytes equal the
-trusted immutable-image manifest or its copied owned product bytes. It then
+same HEAD. It requires every command record's program to be the executable
+named by its exact argv, and admits that program only when its retained bytes
+equal the trusted immutable-image manifest or its copied owned product bytes. It then
 rehashes product trees, manifests, materialization state, object/dependency
 records, and raw streams; reconstructs every retained
 archive/shared/final `readelf` symbol row from the actual ELF or ar bytes;
