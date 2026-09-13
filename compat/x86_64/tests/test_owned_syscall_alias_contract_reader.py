@@ -12,8 +12,12 @@ SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
 
 from owned_syscall_alias_contract_reader import (
+    ALIASES,
+    GLOBAL_HIDDEN,
+    LOCAL_BODIES,
     PUBLIC_ALIAS_SOURCE_CALLERS,
     SymbolRow,
+    main,
     require_same_probe_object,
     same_definition,
 )
@@ -71,6 +75,15 @@ class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
                 ("sigset", "sigaction"),
             ),
         )
+
+    def test_component_projection_keeps_private_and_source_local_bodies_distinct(self) -> None:
+        self.assertEqual(len(ALIASES), 14)
+        self.assertEqual(len(GLOBAL_HIDDEN), 13)
+        self.assertEqual(LOCAL_BODIES, ("__statfs", "__fstatfs"))
+        self.assertIn("__libc_sigaction", GLOBAL_HIDDEN)
+
+    def test_collect_rejects_an_unbound_elf_input_boundary(self) -> None:
+        self.assertEqual(main(["collect"]), 2)
 
 
 if __name__ == "__main__":
