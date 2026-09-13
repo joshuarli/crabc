@@ -519,6 +519,21 @@ def execution_roots(root: Path, work: Path, dynamic_product: Path) -> dict[str,A
     return result
 
 
+def prepare_execution_roots(root: Path, work: Path) -> None:
+    """Create the private oracle root with its recorded directory mode.
+
+    A setgid output parent propagates that bit to a newly created `lib/`
+    directory. The root is a disposable fixture, so clear inheritance before
+    sealing its exact 0755 payload rather than weakening the root-mode check.
+    """
+    oracle_root=work/'oracle-root'
+    ordinary.prepare_oracle_execution_root(root,work,oracle_root)
+    library=inventory.physical_directory(oracle_root/'lib','oracle execution library directory')
+    library.chmod(0o755)
+    require(stat.S_IMODE(library.stat().st_mode)==0o755,
+            'oracle execution library directory mode differs')
+
+
 def dso_observations(root: Path, work: Path, inputs: Mapping[str,Any], tools: Mapping[str,Any]) -> dict[str,Any]:
     result={}; product=root/inputs['dynamic_product']['path']
     linker={key:tools['linker']['original'][key] for key in ('path','sha256')}
@@ -719,7 +734,7 @@ def collect(root: Path, output: Path, **paths: Path) -> Path:
         collector.run(label,spec['argv'],cwd=root if spec['cwd']=='/workspace' else output)
     # Separate private roots; the supplied, sealed product is never a fixture
     # destination. Its full payload, each DSO and each executable are rejoined.
-    ordinary.prepare_oracle_execution_root(root,output,output/'oracle-root')
+    prepare_execution_roots(root,output)
     shutil.copytree(paths['dynamic_product'],output/'candidate-root',symlinks=True)
     for owner in ('candidate','oracle'):
         execution=output/(owner+'-root')

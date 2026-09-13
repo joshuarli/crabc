@@ -158,6 +158,21 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
             with self.assertRaises(EVIDENCE.inventory.InventoryError):
                 EVIDENCE.rust_tools(work,record)
 
+    def test_oracle_execution_root_clears_inherited_setgid_mode(self):
+        import tempfile
+        from unittest.mock import patch
+        base=ROOT/'.work/x86_64/prepared-worker-tls-development'
+        base.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=base) as directory:
+            work=Path(directory)
+            work.chmod(0o2775)
+            oracle=work/'oracle-root'
+            def prepare(_root,_work,target):
+                (target/'lib').mkdir(parents=True)
+            with patch.object(EVIDENCE.ordinary,'prepare_oracle_execution_root',side_effect=prepare):
+                EVIDENCE.prepare_execution_roots(ROOT,work)
+            self.assertEqual((oracle/'lib').stat().st_mode & 0o7777,0o755)
+
     def test_command_replay_rejects_rebound_nonzero_status_and_changed_argv(self):
         import tempfile
         import json
