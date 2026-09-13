@@ -1,0 +1,905 @@
+# Exact native owner policy; complete observations and unresolved evidence stay separate.
+schema = "crabc.x86_64-native-abi-selection/v1"
+target = "x86_64-unknown-linux-musl"
+
+[inputs]
+frozen_baseline = "compat/x86_64/aarch64_frozen_baseline.json"
+coverage = "compat/crabc-rs/coverage.toml"
+frozen_dynamic = "compat/abi/musl-1.2.6/aarch64/libc.so.dynamic.tsv"
+frozen_static = "compat/abi/musl-1.2.6/aarch64/libc.a.static.tsv"
+callable_inventory = "compat/x86_64/header_callable_inventory.json"
+callable_disposition = "compat/x86_64/header_callable_disposition.json"
+parity = "compat/x86_64/parity.toml"
+
+[[profiles]]
+id = "reference"
+artifacts = ["reference-static", "reference-shared"]
+feature_root = "pinned-musl-1.2.6"
+
+[[profiles]]
+id = "owned-static"
+artifacts = ["candidate-static", "static-crt1.o", "static-Scrt1.o", "static-rcrt1.o", "static-crti.o", "static-crtn.o", "static-builtins"]
+feature_root = "libc/x86-owned-static-runtime"
+
+[[profiles]]
+id = "owned-dynamic"
+artifacts = ["candidate-shared", "candidate-loader", "dynamic-crt1.o", "dynamic-Scrt1.o", "dynamic-crti.o", "dynamic-crtn.o", "dynamic-crabc-dynamic-attach.o", "dynamic-builtins"]
+feature_root = "libc/x86-owned-dynamic-runtime"
+
+[[owner_groups]]
+id = "declared-callable-providers"
+selector = "header-providers"
+disposition = "public-provider"
+owner = "checked-header-provider-routing"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["compat/x86_64/header_callable_disposition.toml", "compat/x86_64/feature_archive_roster.py", "libc/src/c_abi/x86_64/static_c_abi.rs"]
+members = []
+members_file = ""
+expected_type = "FUNC"
+delegated_members = ["atomic_flag_clear", "atomic_flag_clear_explicit", "atomic_flag_test_and_set", "atomic_flag_test_and_set_explicit", "atomic_signal_fence", "atomic_thread_fence", "tgkill"]
+placement_metadata = {}
+reason = "Installed native external functions select their checked provider routes. Declaration, exact binding, extraction and family evidence remain separate."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "feature-abi-only-callables"
+selector = "feature-abi-only"
+disposition = "public-provider"
+owner = "checked-feature-abi-only-routing"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["compat/x86_64/feature_archive_roster.py", "compat/x86_64/parity.toml"]
+members = []
+members_file = ""
+expected_type = "FUNC"
+delegated_members = ["_dl_debug_state", "_fini", "_init"]
+placement_metadata = {}
+reason = "Exact ABI-only FUNC provider members from the selected feature roster; no OBJECT inference."
+static_metadata_rule = "selected-native-oracle-function"
+
+[[owner_groups]]
+id = "allocator-shared-local"
+selector = "exact-file-members"
+disposition = "private-provider"
+owner = "bundled-C-allocator-placement"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/owned_mimalloc_hidden.list", "compat/x86_64/owned-mimalloc-export-visibility.md"]
+members = []
+members_file = "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
+expected_type = ""
+delegated_members = []
+placement_metadata = {"candidate-shared" = {"binding" = "LOCAL"}}
+reason = "Exact owner list selects LOCAL shared symtab and absence from dynsym while preserving static providers; no allocator metadata analysis or inherited policy for other owners."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "owned-compiler-helper-archive"
+selector = "explicit"
+disposition = "private-provider"
+owner = "builtins"
+family = "crt.static-pie"
+artifacts = ["static-builtins", "dynamic-builtins"]
+sources = ["builtins/src/lib.rs", "builtins/build_x86_64.py"]
+members = ["__addoti4", "__ashlti3", "__ashrti3", "__bswapdi2", "__bswapsi2", "__bswapti2", "__clzti2", "__ctzti2", "__divmodti4", "__divti3", "__ffsti2", "__lshrti3", "__modti3", "__muldc3", "__muloti4", "__multi3", "__parityti2", "__popcountdi2", "__popcountti2", "__suboti4", "__udivmodti4", "__udivti3", "__umodti3"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {}
+reason = "Named source compiler helpers have selected builtins archive placements. Any libc/interpreter exposure is a separate unresolved placement decision."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "debug-state-views"
+selector = "explicit"
+disposition = "public-provider"
+owner = "loader-debugger-abi"
+family = "ldso.dynamic-runtime"
+artifacts = ["candidate-shared", "candidate-loader"]
+sources = ["libc/src/c_abi/x86_64/loader_debug_abi.rs", "ldso/src/x86_64_debugger.rs", "compat/x86_64/loader-debug-crt-abi.md"]
+members = ["_dl_debug_state"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-shared" = {"binding" = "WEAK", "visibility" = "DEFAULT"}, "candidate-loader" = {"binding" = "WEAK", "visibility" = "DEFAULT"}}
+reason = "Independent weak libc and loader definitions; only loader definition must equal r_brk and stay locally bound."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "crt-defaults-and-fragments"
+selector = "explicit"
+disposition = "public-provider"
+owner = "crt-init-fini"
+family = "crt.dynamic-startup"
+artifacts = ["candidate-static", "candidate-shared", "static-crti.o", "dynamic-crti.o"]
+sources = ["libc/src/c_abi/x86_64/init_fini_defaults.rs", "crt/src/lib.rs", "compat/x86_64/loader-debug-crt-abi.md"]
+members = ["_init", "_fini"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"binding" = "WEAK", "visibility" = "DEFAULT"}, "candidate-shared" = {"binding" = "WEAK", "visibility" = "DEFAULT"}, "static-crti.o" = {"binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-crti.o" = {"binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "Weak inert libc defaults coexist with strong CRT fragments; zero-size FUNC fragments are legitimate and lifecycle evidence remains required."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
+id = "public-project-function-extensions"
+selector = "explicit"
+disposition = "public-provider"
+owner = "source-selected-native-extensions"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/atomic.rs", "libc/src/c_abi/x86_64/thread_signal.rs", "compat/x86_64/header_callable_extension_contract.toml"]
+members = ["atomic_flag_clear", "atomic_flag_clear_explicit", "atomic_flag_test_and_set", "atomic_flag_test_and_set_explicit", "atomic_signal_fence", "atomic_thread_fence", "tgkill"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}, "candidate-shared" = {"type" = "FUNC", "binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+static_metadata_rule = "explicit"
+reason = "Six addressable atomic functions and tgkill have explicit native source contracts independent of oracle presence."
+
+[[structural_groups]]
+id = "loader-entry-stages"
+members = ["__dls2b", "__dls3", "_dlstart"]
+sources = ["ldso/src/lib.rs", "ldso/src/x86_64_initial_graph.rs", "compat/x86_64/loader-debug-crt-abi.md"]
+disposition = "structural-replacement"
+reason = "Real native process entry, relocation, TLS and startup replace old named stages; no returning trampoline."
+requirements = ["current source-bound owning component and consumer semantics receipt"]
+
+[[structural_groups]]
+id = "auxv-owner"
+members = ["__auxv"]
+sources = ["libc/src/c_abi/x86_64/auxv_observation.rs"]
+disposition = "structural-replacement"
+reason = "Validated initial auxv is installed before constructors and observed by getauxval; no selected raw-global consumer."
+requirements = ["current source-bound owning component and consumer semantics receipt"]
+
+[[structural_groups]]
+id = "loader-registration-operations"
+members = ["__ldso_register_dlopen", "__ldso_register_dlsym", "__ldso_register_dlclose", "__ldso_register_dlerror"]
+sources = ["libc/src/c_abi/x86_64/general_dlfcn.rs", "ldso/src/x86_64_runtime_registry.rs"]
+disposition = "structural-replacement"
+reason = "Direct loader operations and thread-local libc diagnostics replace mutable callback registration."
+requirements = ["current source-bound owning component and consumer semantics receipt"]
+
+[[structural_groups]]
+id = "loader-always-atomic-guard"
+members = ["__ldso_register_mark_multithreaded"]
+sources = ["ldso/src/x86_64_runtime_lock.rs", "ldso/src/x86_64_initial_worker_tls.rs"]
+disposition = "structural-replacement"
+reason = "Graph lock is atomic from first transaction; worker TLS preparation acquires it before clone."
+requirements = ["current source-bound owning component and consumer semantics receipt"]
+
+[[structural_groups]]
+id = "pthread-prepared-token"
+members = ["__rc_clone", "__rc_init_thread_tls", "__rc_tls_block_size", "__rc_tls_block_size_for", "__rc_tls_base_offset_for", "__rc_create_thread_tls", "__rc_tls_base_offset"]
+sources = ["libc/src/c_abi/x86_64/pthread_create_join.rs", "ldso/src/x86_64_initial_worker_tls.rs"]
+disposition = "structural-replacement"
+reason = "Actual pthread consumer uses prepared mapping/thread-pointer/generation token before clone and exact release at exit/reap; raw process clone is not the replacement."
+requirements = ["current source-bound owning component and consumer semantics receipt"]
+
+[[structural_groups]]
+id = "local-sigsetjmp-tail"
+members = ["__sigsetjmp_tail"]
+sources = ["libc/src/c_abi/x86_64/setjmp.rs"]
+disposition = "structural-replacement"
+reason = "Local native assembly owns saved-mask/control-transfer tail."
+requirements = ["current source-bound owning component and consumer semantics receipt"]
+
+[[structural_groups]]
+id = "largefile-fopen-macro"
+members = ["fopen64"]
+sources = ["include/stdio.h", "compat/x86_64/parity.toml"]
+disposition = "structural-replacement"
+reason = "Selected LARGEFILE64_SOURCE macro names fopen; frozen AArch64 forwarding implementation is preserved."
+requirements = ["current source-bound owning component and consumer semantics receipt"]
+
+[[structural_groups]]
+id = "native-inverse-trig-owners"
+members = ["__invtrigl_R", "__pio2_hi", "__pio2_lo"]
+sources = ["libc/src/c_abi/x86_64/math_x87_extended.rs"]
+disposition = "structural-replacement"
+reason = "Native public long-double algorithms own the selected behavior without fabricated generic-source helpers."
+requirements = ["current source-bound owning component and consumer semantics receipt"]
+
+[[structural_groups]]
+id = "native-signal-restorer"
+members = ["__restore"]
+sources = ["libc/src/c_abi/x86_64/signal_foundation.rs"]
+disposition = "structural-replacement"
+reason = "Selected hidden native rt_sigreturn restorer owns the return protocol."
+requirements = ["current source-bound owning component and consumer semantics receipt"]
+
+[[structural_groups]]
+id = "native-runtime-facade-protocol-open"
+members = ["__crabc_runtime_v1"]
+sources = ["crabc-rs/src/lib.rs", "compat/x86_64/native-abi-selection.md"]
+disposition = "unresolved"
+reason = "No current native getter import does not establish full native cfile/dl/runtime_thread consumer parity."
+requirements = ["explicit native facade consumer/protocol selection and complete evidence"]
+
+[[structural_groups]]
+id = "unattributed-static-source"
+members = ["DW.ref.endhostent", "__stack_chk_fail_local"]
+sources = ["SCOPE.md", "compat/x86_64/native-abi-selection.md"]
+disposition = "unresolved"
+reason = "Exact source attribution remains unresolved; no unwinder investigation is authorized."
+requirements = ["authorized exact owner accounting; retained d8 source audit267e737f only preserves unresolved observations"]
+
+[[structural_groups]]
+id = "restricted-static-source"
+members = ["__mi_theap_cached", "__mi_theap_default", "__mi_theap_main", "_mi_cpu_movsb_max", "_mi_cpu_stosb_max", "_mi_page_empty", "_mi_page_map", "_mi_process_is_initialized", "_mi_theap_empty", "_mi_theap_empty_wrong", "heap_main", "theap_main"]
+sources = ["SCOPE.md", "compat/x86_64/native-abi-selection.md"]
+disposition = "unresolved"
+reason = "Exact source attribution remains unresolved by restriction; no allocator metadata investigation or inherited shared visibility waiver."
+requirements = ["authorized exact owner accounting; retained d8 source audit267e737f only preserves unresolved observations"]
+
+[[object_contracts]]
+id = "object:___environ"
+name = "___environ"
+sources = ["libc/src/c_abi/x86_64/environment_runtime.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__environ"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "One pointer object naming a null-terminated environment vector; 8 bytes describes the pointer, not vector/strings."
+c_abi_type = "char **"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__daylight"
+name = "__daylight"
+sources = ["libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Whether the selected timezone has daylight-saving rules."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__environ"
+name = "__environ"
+sources = ["libc/src/c_abi/x86_64/environment_runtime.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "One pointer object naming a null-terminated environment vector; 8 bytes describes the pointer, not vector/strings."
+c_abi_type = "char **"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__optpos"
+name = "__optpos"
+sources = ["libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Internal current short-option byte position, part of frozen addressable ABI."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__optreset"
+name = "__optreset"
+sources = ["libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "One mutable parser reset flag; optreset weak alias shares the canonical source definition."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__progname"
+name = "__progname"
+sources = ["libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Process diagnostic name pointer: basename for __progname, full argv[0] for __progname_full. Storage size does not describe the borrowed character string."
+c_abi_type = "char *"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__progname_full"
+name = "__progname_full"
+sources = ["libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Process diagnostic name pointer: basename for __progname, full argv[0] for __progname_full. Storage size does not describe the borrowed character string."
+c_abi_type = "char *"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__signgam"
+name = "__signgam"
+sources = ["libc/src/c_abi/x86_64/math_special_musl_x86_64.S"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Shared gamma-sign result; ordinary lgamma variants update it, while *_r forms accept an explicit sign output."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__stack_chk_guard"
+name = "__stack_chk_guard"
+sources = ["libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs", "libc/src/c_abi/x86_64/static_tls.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Addressable compiler guard equals the AT_RANDOM-derived word with byte one cleared. The separate x86 compiler TCB slot at FS+40 and worker copies are not ELF TLS definitions of this object."
+c_abi_type = "uintptr_t / machine word"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__timezone"
+name = "__timezone"
+sources = ["libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Seconds west of UTC for the standard timezone."
+c_abi_type = "long"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:__tzname"
+name = "__tzname"
+sources = ["libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 16
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Two name pointers (standard/daylight), not sixteen bytes of character names; pointees are cached name buffers or mapped TZif abbreviations."
+c_abi_type = "char *[2]"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:_dl_debug_addr"
+name = "_dl_debug_addr"
+sources = ["libc/src/c_abi/x86_64/loader_debug_abi.rs"]
+artifacts = ["candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "Mutable libc pointer slot to one loader-owned 40-byte repr(C) rendezvous. The pointee owns real link-map references; it is not an eight-byte r_debug and not a copied loader graph."
+c_abi_type = "struct r_debug * protocol view; source uses void *"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:_environ"
+name = "_environ"
+sources = ["libc/src/c_abi/x86_64/environment_runtime.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__environ"
+declaration = "Exact spelling is absent from the entire installed include/ source tree; selection is ABI-only, not header-derived."
+meaning = "One pointer object naming a null-terminated environment vector; 8 bytes describes the pointer, not vector/strings."
+c_abi_type = "char **"
+source_mutable = true
+declaration_kind = "abi-only"
+
+[[object_contracts]]
+id = "object:_ns_flagdata"
+name = "_ns_flagdata"
+sources = ["include/arpa/nameser.h", "libc/src/c_abi/x86_64/ns_flagdata.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 128
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern const struct _ns_flagdata _ns_flagdata[];"
+meaning = "Sixteen immutable mask/shift records, 8 bytes each, consumed by the installed ns_msg_getflag macro. This is a table object, not a pointer."
+c_abi_type = "const struct _ns_flagdata[16] (provider bound; installed extern array is incomplete)"
+source_mutable = false
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:daylight"
+name = "daylight"
+sources = ["include/time.h", "libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = "__daylight"
+declaration = "extern int daylight;"
+meaning = "Whether the selected timezone has daylight-saving rules."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:environ"
+name = "environ"
+sources = ["include/unistd.h", "libc/src/c_abi/x86_64/environment_runtime.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__environ"
+declaration = "extern char **environ;"
+meaning = "One pointer object naming a null-terminated environment vector; 8 bytes describes the pointer, not vector/strings."
+c_abi_type = "char **"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:getdate_err"
+name = "getdate_err"
+sources = ["include/time.h", "libc/src/c_abi/x86_64/owned_getdate.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern int getdate_err;"
+meaning = "Shared getdate error indicator. Callers serialize getdate, the shared result record, and accesses to this integer."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:h_errno"
+name = "h_errno"
+sources = ["include/netdb.h", "libc/src/c_abi/x86_64/h_errno.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "accessor-macro-not-object-declaration"
+meaning = "Global main-task legacy resolver-status fallback. The accessor selects this object for the authenticated main task and separate selected-worker resolver/TLS storage for workers; the exported object is not STT_TLS."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "accessor-macro"
+
+[[object_contracts]]
+id = "object:in6addr_any"
+name = "in6addr_any"
+sources = ["include/netinet/in.h", "libc/src/c_abi/x86_64/in6addr_any.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 16
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern const struct in6_addr in6addr_any, in6addr_loopback;"
+meaning = "Sixteen zero address bytes."
+c_abi_type = "const struct in6_addr"
+source_mutable = false
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:in6addr_loopback"
+name = "in6addr_loopback"
+sources = ["include/netinet/in.h", "libc/src/c_abi/x86_64/in6addr_loopback.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 16
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern const struct in6_addr in6addr_any, in6addr_loopback;"
+meaning = "Fifteen zero address bytes followed by byte 1."
+c_abi_type = "const struct in6_addr"
+source_mutable = false
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:optarg"
+name = "optarg"
+sources = ["include/getopt.h", "include/unistd.h", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "extern char *optarg;; extern char *optarg;"
+meaning = "Borrowed current option-argument pointer."
+c_abi_type = "char *"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:opterr"
+name = "opterr"
+sources = ["include/getopt.h", "include/unistd.h", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern int optind, opterr, optopt;; extern int optind, opterr, optopt, optreset;"
+meaning = "Diagnostic-output enable flag initialized to 1."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:optind"
+name = "optind"
+sources = ["include/getopt.h", "include/unistd.h", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern int optind, opterr, optopt;; extern int optind, opterr, optopt, optreset;"
+meaning = "Next argv index; initialized to 1; caller reset to 0 restarts parsing."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:optopt"
+name = "optopt"
+sources = ["include/getopt.h", "include/unistd.h", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = ""
+declaration = "extern int optind, opterr, optopt;; extern int optind, opterr, optopt, optreset;"
+meaning = "Current rejected option code initialized to 0."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:optreset"
+name = "optreset"
+sources = ["include/getopt.h", "include/unistd.h", "libc/src/c_abi/x86_64/process_globals.rs", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = "__optreset"
+declaration = "extern int optreset;; extern int optind, opterr, optopt, optreset;"
+meaning = "One mutable parser reset flag; optreset weak alias shares the canonical source definition."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:program_invocation_name"
+name = "program_invocation_name"
+sources = ["include/errno.h", "libc/src/c_abi/x86_64/process_globals.rs", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__progname_full"
+declaration = "extern char *program_invocation_short_name, *program_invocation_name;"
+meaning = "Process diagnostic name pointer: basename for __progname, full argv[0] for __progname_full. Storage size does not describe the borrowed character string."
+c_abi_type = "char *"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:program_invocation_short_name"
+name = "program_invocation_short_name"
+sources = ["include/errno.h", "libc/src/c_abi/x86_64/process_globals.rs", "libc/src/getopt_exports.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__progname"
+declaration = "extern char *program_invocation_short_name, *program_invocation_name;"
+meaning = "Process diagnostic name pointer: basename for __progname, full argv[0] for __progname_full. Storage size does not describe the borrowed character string."
+c_abi_type = "char *"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:signgam"
+name = "signgam"
+sources = ["include/math.h", "libc/src/c_abi/x86_64/math_special_musl_x86_64.S"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 4
+alignment_bytes = 4
+alias_target = "__signgam"
+declaration = "extern int signgam;"
+meaning = "Shared gamma-sign result; ordinary lgamma variants update it, while *_r forms accept an explicit sign output."
+c_abi_type = "int"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:stderr"
+name = "stderr"
+sources = ["include/stdio.h", "libc/src/c_abi/x86_64/owned_static_stdio.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "extern FILE *const stderr;"
+meaning = "Pointer object naming its distinct mutable STDERR_STREAM. Eight bytes is not sizeof(FILE) or the private StandardStream."
+c_abi_type = "FILE *const (installed declaration)"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:stdin"
+name = "stdin"
+sources = ["include/stdio.h", "libc/src/c_abi/x86_64/owned_static_stdio.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "extern FILE *const stdin;"
+meaning = "Pointer object naming its distinct mutable STDIN_STREAM. Eight bytes is not sizeof(FILE) or the private StandardStream."
+c_abi_type = "FILE *const (installed declaration)"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:stdout"
+name = "stdout"
+sources = ["include/stdio.h", "libc/src/c_abi/x86_64/owned_static_stdio.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "GLOBAL"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = ""
+declaration = "extern FILE *const stdout;"
+meaning = "Pointer object naming its distinct mutable STDOUT_STREAM. Eight bytes is not sizeof(FILE) or the private StandardStream."
+c_abi_type = "FILE *const (installed declaration)"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:timezone"
+name = "timezone"
+sources = ["include/time.h", "libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 8
+alignment_bytes = 8
+alias_target = "__timezone"
+declaration = "extern long timezone;"
+meaning = "Seconds west of UTC for the standard timezone."
+c_abi_type = "long"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[object_contracts]]
+id = "object:tzname"
+name = "tzname"
+sources = ["include/time.h", "libc/src/c_abi/x86_64/owned_timezone.rs"]
+artifacts = ["candidate-static", "candidate-shared"]
+type = "OBJECT"
+binding = "WEAK"
+visibility = "DEFAULT"
+size_bytes = 16
+alignment_bytes = 8
+alias_target = "__tzname"
+declaration = "extern char *tzname[2];"
+meaning = "Two name pointers (standard/daylight), not sixteen bytes of character names; pointees are cached name buffers or mapped TZif abbreviations."
+c_abi_type = "char *[2]"
+source_mutable = true
+declaration_kind = "installed-variable"
+
+[[private_protocols]]
+id = "loader-runtime-operations"
+members = ["__crabc_x86_64_runtime_open", "__crabc_x86_64_runtime_symbol", "__crabc_x86_64_runtime_close", "__crabc_x86_64_runtime_address", "__crabc_x86_64_runtime_information", "__crabc_x86_64_runtime_iterate", "__crabc_x86_64_runtime_fork_prepare", "__crabc_x86_64_runtime_fork_complete", "__crabc_x86_64_reset_current_tls_v1"]
+sources = ["ldso/src/x86_64_general_relocation.rs", "ldso/src/x86_64_runtime_registry.rs", "libc/src/c_abi/x86_64/dynamic_tls.rs", "libc/src/c_abi/x86_64/general_dlfcn.rs"]
+consumer_artifacts = ["candidate-shared"]
+endpoint_kind = "source-dispatch-operation"
+endpoint = "x86_64_runtime_registry::runtime_function exact table to private functions"
+signature = "Exact extern C signatures in the selected consumer and resolver source; per-operation signature proof remains required."
+requirements = ["current signature and exact relocation-admission evidence", "graph rollback/reentry/fork and thread-local diagnostic component evidence"]
+reason = "Strong GLOBAL DEFAULT UND NOTYPE/FUNC with GLOB_DAT/JUMP_SLOT and zero addend resolve through source dispatch; this branch has no caller-object allowlist."
+provider_artifacts = []
+provider_metadata = {}
+signature_status = "source-mapped-unverified"
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_runtime_open"
+producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "runtime_open", "parameters" = ["*const u8", "i32", "*mut i32"], "result" = "*mut c_void", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/general_dlfcn.rs", "function" = "__crabc_x86_64_runtime_open", "parameters" = ["*const u8", "c_int", "*mut c_int"], "result" = "*mut c_void", "abi" = "C", "unsafe" = true}
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_runtime_symbol"
+producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "runtime_symbol", "parameters" = ["*mut c_void", "*const u8", "usize", "*mut i32"], "result" = "*mut c_void", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/general_dlfcn.rs", "function" = "__crabc_x86_64_runtime_symbol", "parameters" = ["*mut c_void", "*const u8", "usize", "*mut c_int"], "result" = "*mut c_void", "abi" = "C", "unsafe" = true}
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_runtime_close"
+producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "runtime_close", "parameters" = ["*mut c_void"], "result" = "i32", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/general_dlfcn.rs", "function" = "__crabc_x86_64_runtime_close", "parameters" = ["*mut c_void"], "result" = "c_int", "abi" = "C", "unsafe" = true}
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_runtime_address"
+producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "runtime_address_info", "parameters" = ["usize", "*mut AddressInfo"], "result" = "i32", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/general_dlfcn.rs", "function" = "__crabc_x86_64_runtime_address", "parameters" = ["usize", "*mut c_void"], "result" = "c_int", "abi" = "C", "unsafe" = true}
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_runtime_information"
+producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "runtime_information", "parameters" = ["*mut c_void", "*mut *mut c_void"], "result" = "i32", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/general_dlfcn.rs", "function" = "__crabc_x86_64_runtime_information", "parameters" = ["*mut c_void", "*mut *mut c_void"], "result" = "c_int", "abi" = "C", "unsafe" = true}
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_runtime_iterate"
+producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "runtime_iterate", "parameters" = ["ProgramHeaderCallback", "*mut c_void"], "result" = "i32", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/general_dlfcn.rs", "function" = "__crabc_x86_64_runtime_iterate", "parameters" = ["unsafe extern C fn(*mut c_void, usize, *mut c_void) -> c_int", "*mut c_void"], "result" = "c_int", "abi" = "C", "unsafe" = true}
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_runtime_fork_prepare"
+producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "runtime_fork_prepare", "parameters" = ["i32"], "result" = "i32", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/dynamic_tls.rs", "function" = "__crabc_x86_64_runtime_fork_prepare", "parameters" = ["c_int"], "result" = "c_int", "abi" = "C", "unsafe" = true}
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_runtime_fork_complete"
+producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "runtime_fork_complete", "parameters" = ["i32", "i32", "i32"], "result" = "()", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/dynamic_tls.rs", "function" = "__crabc_x86_64_runtime_fork_complete", "parameters" = ["c_int", "c_int", "c_int"], "result" = "()", "abi" = "C", "unsafe" = true}
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_reset_current_tls_v1"
+producer = {"source" = "ldso/src/x86_64_runtime_registry.rs", "function" = "reset_current_tls", "parameters" = [], "result" = "i32", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/dynamic_tls.rs", "function" = "__crabc_x86_64_reset_current_tls_v1", "parameters" = [], "result" = "c_int", "abi" = "C", "unsafe" = true}
+
+[[private_protocols]]
+id = "loader-worker-tls-operations"
+members = ["__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release", "__crabc_x86_64_resolve_initial_tls"]
+sources = ["ldso/src/x86_64_general_relocation.rs", "ldso/src/x86_64_initial_graph.rs", "ldso/src/x86_64_initial_worker_tls.rs", "libc/src/c_abi/x86_64/dynamic_tls.rs", "libc/src/c_abi/x86_64/pthread_create_join.rs"]
+consumer_artifacts = ["candidate-shared"]
+endpoint_kind = "source-dispatch-operation"
+endpoint = "x86_64_initial_worker_tls::runtime_function exact table"
+signature = "Exact allocation token/resolve/release signatures from source; not interchangeable word arguments."
+requirements = ["prepared token layout, allocation-before-clone and exit/reap release receipt"]
+reason = "Private direct resolver operations own prepared worker TLS; same-name public loader exports are not required."
+provider_artifacts = []
+provider_metadata = {}
+signature_status = "source-mapped-unverified"
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_initial_tls_allocate"
+producer = {"source" = "ldso/src/x86_64_initial_worker_tls.rs", "function" = "allocate", "parameters" = ["*mut WorkerTlsAllocation"], "result" = "i32", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/dynamic_tls.rs", "function" = "__crabc_x86_64_initial_tls_allocate", "parameters" = ["*mut StaticInitialTlsBlock"], "result" = "c_int", "abi" = "C", "unsafe" = true}
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_initial_tls_release"
+producer = {"source" = "ldso/src/x86_64_initial_worker_tls.rs", "function" = "release", "parameters" = ["*const WorkerTlsAllocation"], "result" = "i64", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/dynamic_tls.rs", "function" = "__crabc_x86_64_initial_tls_release", "parameters" = ["*const StaticInitialTlsBlock"], "result" = "i64", "abi" = "C", "unsafe" = true}
+
+[[private_protocols.operations]]
+name = "__crabc_x86_64_resolve_initial_tls"
+producer = {"source" = "ldso/src/x86_64_initial_graph.rs", "function" = "__tls_get_addr", "parameters" = ["*const TlsIndex"], "result" = "*mut c_void", "abi" = "C", "unsafe" = true}
+consumer = {"source" = "libc/src/c_abi/x86_64/dynamic_tls.rs", "function" = "__crabc_x86_64_resolve_initial_tls", "parameters" = ["*const c_void"], "result" = "*mut c_void", "abi" = "C", "unsafe" = true}
+
+[[private_protocols]]
+id = "loader-libc-tls-descriptor-v1"
+members = ["__crabc_x86_64_loader_tls_runtime_v1"]
+sources = ["ldso/src/x86_64_initial_graph.rs", "libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs"]
+consumer_artifacts = ["candidate-shared"]
+endpoint_kind = "descriptor"
+endpoint = "LoaderLibcTlsRuntimeV1 selected weak descriptor wire"
+signature = "16-byte header and72-byte record; exact magic/version/size/mode/owner/generation contract."
+requirements = ["exact descriptor admission/layout and release READY publication before TCB/DTV read", "static mode no-loader-import boundary", "pointer lifetime, worker mapping generation and fork ownership evidence"]
+reason = "Specific TLS descriptor; it does not replace full RuntimeV1 facade consumer parity."
+provider_artifacts = ["candidate-loader"]
+provider_metadata = {"type" = "OBJECT", "size_bytes" = 72, "alignment_bytes" = 8}
+signature_status = "source-mapped-unverified"
+operations = []
+
+[requirements]
+declaration_companion = true
+semantic_receipts = true
+family_receipts = true
+same_source_products = true
