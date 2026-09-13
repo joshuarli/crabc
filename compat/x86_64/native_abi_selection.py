@@ -192,6 +192,22 @@ UTMPX_DYNAMIC_LINK_INPUTS = (
     ('dynamic_builtins', 'usr/lib/libcrabc-builtins.a'),
     ('dynamic_attach', 'usr/lib/crabc-dynamic-attach.o'),
 )
+PTHREAD_TIMED_FEATURE_RECEIPT_REQUIREMENT = 'source-selected alias requires exact feature archive selection and component receipt'
+PTHREAD_TIMED_FEATURE_LIMITS = [
+    'Only the four source-selected pthread timed aliases are joined to their existing feature-alias receipt requirements.',
+    'The four private provider spellings are finite observations needed to prove those aliases. This receipt creates no private-owner group, changes no older pthread alias receipt, and does not qualify pthread semantics, a family, promotion, or public support.',
+]
+PTHREAD_TIMED_STATIC_LINK_INPUTS = (
+    ('static_crt1', 'usr/lib/crt1.o'), ('static_rcrt1', 'usr/lib/rcrt1.o'),
+    ('static_crti', 'usr/lib/crti.o'), ('static_crtn', 'usr/lib/crtn.o'),
+    ('static_libc', 'usr/lib/libc.a'), ('static_builtins', 'usr/lib/libcrabc-builtins.a'),
+)
+PTHREAD_TIMED_DYNAMIC_LINK_INPUTS = (
+    ('dynamic_crt1', 'usr/lib/crt1.o'), ('dynamic_scrt1', 'usr/lib/Scrt1.o'),
+    ('dynamic_crti', 'usr/lib/crti.o'), ('dynamic_crtn', 'usr/lib/crtn.o'),
+    ('dynamic_attach', 'usr/lib/crabc-dynamic-attach.o'), ('dynamic_builtins', 'usr/lib/libcrabc-builtins.a'),
+    ('dynamic_libc', 'usr/lib/libc.so'),
+)
 
 
 def _stdio_alias_reader():
@@ -251,6 +267,14 @@ def _utmpx_reader():
         return importlib.import_module('owned_utmpx_receipt')
     except (ImportError, OSError, ValueError) as error:
         raise SelectionError(f'cannot load utmpx receipt reader: {error}') from error
+
+
+def _pthread_timed_feature_reader():
+    """Load the finite timed-pthread receipt owner at the attachment boundary."""
+    try:
+        return importlib.import_module('owned_pthread_timed_feature_contract_reader')
+    except (ImportError, OSError, ValueError) as error:
+        raise SelectionError(f'cannot load pthread timed receipt reader: {error}') from error
 
 
 def _utmpx_source_files() -> tuple[str, ...]:
@@ -2270,7 +2294,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                                     stdio_alias_contract: Mapping[str, Any] | None = None,
                                     crt_startup: Mapping[str, Any] | None = None,
                                     syscall_alias: Mapping[str, Any] | None = None,
-                                    utmpx: Mapping[str, Any] | None = None) -> None:
+                                    utmpx: Mapping[str, Any] | None = None,
+                                    pthread_timed: Mapping[str, Any] | None = None) -> None:
     """Keep runtime attachments within the same source/product transaction.
 
     Both owning readers validate their receipts before the selector's placement
@@ -2280,7 +2305,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
     """
     if (registry is None and pthread is None and prepared_worker is None
             and errno_storage is None and c_allocator_boundary is None
-            and stdio_alias_contract is None and crt_startup is None and syscall_alias is None and utmpx is None):
+            and stdio_alias_contract is None and crt_startup is None and syscall_alias is None and utmpx is None
+            and pthread_timed is None):
         return
     require(same(source, selection_source()), 'selection source changed during runtime receipt attachment')
     reports = _measurement_report_bindings(measurement, 'runtime receipt')
@@ -2410,6 +2436,39 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
         require(report_path.is_file() and report_path.resolve() == report_path
                 and same(report, file_identity(report_path)),
                 'utmpx report changed during attachment')
+    if pthread_timed is not None:
+        reader = _pthread_timed_feature_reader()
+        require(same(pthread_timed.get('source_inputs'), {
+            name: file_identity(ROOT / name) for name in _pthread_timed_source_files(reader)
+        }), 'pthread timed source inputs changed during attachment')
+        collector_inputs = pthread_timed.get('collector_inputs')
+        require(type(collector_inputs) is dict and set(collector_inputs) == {'probe', 'reader', 'runner'},
+                'pthread timed collector input roster differs during attachment')
+        for name, relative in ((name, reader.COLLECTOR_PATHS[name]) for name in ('probe', 'reader', 'runner')):
+            _require_same_identity_payload(collector_inputs[name], file_identity(ROOT / relative),
+                                           f'pthread timed {name} changed during attachment')
+        records = pthread_timed.get('products')
+        require(type(records) is dict and type(records.get('product_report')) is dict
+                and type(records['product_report'].get('path')) is str,
+                'pthread timed product anchor differs during attachment')
+        expected_products = _pthread_timed_product_identities(paths, Path(records['product_report']['path']))
+        require(set(records) == set(expected_products), 'pthread timed product roster differs during attachment')
+        for name in expected_products:
+            _require_same_identity_payload(records[name], expected_products[name],
+                                           f'pthread timed {name} changed during attachment')
+        require(same(pthread_timed.get('measurement_reports'), reports),
+                'pthread timed public replay binding changed during attachment')
+        report = pthread_timed.get('report')
+        require(type(report) is dict and type(report.get('path')) is str,
+                'pthread timed report identity differs during attachment')
+        report_path = physical_work_path(Path(report['path']), directory=False)
+        require(same(report, file_identity(report_path)), 'pthread timed report changed during attachment')
+        before = file_identity(report_path)
+        try:
+            reader.validate_report(report_path)
+        except (KeyError, TypeError, ValueError, OSError, reader.ReceiptError) as error:
+            raise SelectionError(f'pthread timed component changed during attachment: {error}') from error
+        require(same(before, file_identity(report_path)), 'pthread timed report changed during final replay')
 
 
 def loader_runtime_registry_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
@@ -4182,6 +4241,386 @@ def attach_native_utmpx(accounting: Mapping[str, Any], companion: Mapping[str, A
              'complete_elf_occurrence_count': occurrence_count}]
 
 
+def _pthread_timed_product_identities(paths: Mapping[str, Path], product_anchor: Path) -> dict[str, dict[str, Any]]:
+    """Return only the current files consumed by the timed receipt.
+
+    The reader consumes the loader-debug component receipt as its product
+    anchor, the two manifests/state that anchor describes, the two drivers,
+    three final ELF artifacts, static preparation, and the thirteen concrete
+    static/dynamic link inputs.  Keep this explicit: a runtime attachment
+    must not acquire authority over unrelated provenance files merely because
+    they sit beside an installed product.
+    """
+    records = {
+        'product_report': file_identity(product_anchor),
+        'static_manifest': file_identity(paths['static_product'] / 'share/crabc/manifest.json'),
+        'static_driver': file_identity(paths['static_product'] / 'bin/crabc-cc'),
+        'static_libc': file_identity(paths['static_product'] / 'usr/lib/libc.a'),
+        'static_preparation': file_identity(paths['static_preparation']),
+        'dynamic_manifest': file_identity(paths['dynamic_product'] / 'share/crabc/manifest.json'),
+        'dynamic_state': file_identity(paths['dynamic_product'] / inventory.DYNAMIC_STATE_RELATIVE),
+        'dynamic_driver': file_identity(paths['dynamic_product'] / 'bin/crabc-cc-dynamic'),
+        'dynamic_libc': file_identity(paths['dynamic_product'] / 'usr/lib/libc.so'),
+        'dynamic_loader': file_identity(paths['dynamic_product'] / 'lib/ld-crabc-x86_64.so.1'),
+    }
+    for name, relative in PTHREAD_TIMED_STATIC_LINK_INPUTS:
+        records[name] = file_identity(paths['static_product'] / relative)
+    for name, relative in PTHREAD_TIMED_DYNAMIC_LINK_INPUTS:
+        records[name] = file_identity(paths['dynamic_product'] / relative)
+    return records
+
+
+def _pthread_timed_source_files(reader: Any) -> tuple[str, ...]:
+    names = (*reader.COLLECTOR_PATHS.values(), *reader.SOURCE_CONTRACT_PATHS,
+             'compat/x86_64/tests/test_native_abi_pthread_timed_attachment.py',
+             'compat/x86_64/native-abi-selection.md')
+    require(len(names) == len(set(names)), 'pthread timed source roster duplicates a path')
+    return tuple(names)
+
+
+def _pthread_timed_source_link_input_modes() -> dict[str, dict[str, int]]:
+    """Read the mode roster from the collector-owned product validator."""
+    projection = exact(product_evidence.link_input_mode_projection(), {'static', 'dynamic'},
+                       'pthread timed shared link-input mode policy')
+    result: dict[str, dict[str, int]] = {}
+    for family, records in (('static', PTHREAD_TIMED_STATIC_LINK_INPUTS),
+                            ('dynamic', PTHREAD_TIMED_DYNAMIC_LINK_INPUTS)):
+        modes = exact(projection[family], {relative for _name, relative in records},
+                      f'pthread timed {family} shared source mode roster')
+        require(all(type(mode) is int and not isinstance(mode, bool) and 0 <= mode <= 0o777
+                    for mode in modes.values()),
+                f'pthread timed {family} shared source mode value differs')
+        result[family] = dict(modes)
+    return result
+
+
+def _pthread_timed_report_artifact(report_path: Path, artifacts: Mapping[str, Any], relative: object,
+                                   description: str) -> dict[str, Any]:
+    """Read one physical retained receipt artifact without trusting its path."""
+    require(type(relative) is str and relative and not Path(relative).is_absolute()
+            and '..' not in Path(relative).parts,
+            f'{description} retained path differs')
+    value = exact(artifacts.get(relative), {'path', 'sha256', 'size', 'mode'}, description + ' artifact')
+    require(value['path'] == relative, f'{description} retained artifact path differs')
+    retained = physical_work_path(report_path.parent / relative, directory=False)
+    _require_same_identity_payload(value, file_identity(retained), f'{description} retained')
+    return value
+
+
+def _pthread_timed_retained_input(report_path: Path, report: Mapping[str, Any], name: str) -> dict[str, Any]:
+    inputs = report.get('inputs')
+    artifacts = report.get('artifacts')
+    require(type(inputs) is dict and type(artifacts) is dict, 'pthread timed retained input account differs')
+    row = exact(inputs.get(name), {'original_path', 'retained'}, f'pthread timed {name} input')
+    return _pthread_timed_report_artifact(report_path, artifacts, row['retained'], f'pthread timed {name}')
+
+
+def _pthread_timed_selected_product_artifacts(report_path: Path, report: Mapping[str, Any],
+                                               products: Mapping[str, Any], source: Mapping[str, Any]) -> None:
+    """Join retained anchor and sidecars to their direct current counterparts."""
+    artifacts = report.get('artifacts')
+    selected = report.get('selected_products')
+    require(type(artifacts) is dict and type(selected) is dict, 'pthread timed selected products differ')
+    selected = exact(selected, {'anchor', 'static', 'dynamic'}, 'pthread timed selected products')
+    anchor = exact(selected['anchor'], {'report', 'schema', 'source_commit', 'source_sha256'},
+                   'pthread timed selected product anchor')
+    require(anchor['schema'] == 'crabc.x86_64-loader-debug-crt-abi/v1'
+            and anchor['source_commit'] == source['revision']
+            and anchor['source_sha256'] == source['content_sha256'],
+            'pthread timed selected product anchor source differs')
+    static = exact(selected['static'], {'manifest', 'driver', 'libc', 'original_paths'},
+                   'pthread timed selected static product')
+    dynamic = exact(selected['dynamic'], {'manifest', 'state', 'driver', 'libc', 'loader', 'original_paths'},
+                    'pthread timed selected dynamic product')
+    for relative, current_name in (
+        (anchor['report'], 'product_report'),
+        (static['manifest'], 'static_manifest'), (static['driver'], 'static_driver'),
+        (static['libc'], 'static_libc'), (dynamic['manifest'], 'dynamic_manifest'),
+        (dynamic['state'], 'dynamic_state'), (dynamic['driver'], 'dynamic_driver'),
+        (dynamic['libc'], 'dynamic_libc'), (dynamic['loader'], 'dynamic_loader'),
+    ):
+        retained = _pthread_timed_report_artifact(
+            report_path, artifacts, relative, f'pthread timed selected {current_name}'
+        )
+        _require_same_identity_payload(retained, products[current_name], f'pthread timed selected {current_name}')
+
+
+def native_pthread_timed_feature_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                                         measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                                         source: Mapping[str, Any],
+                                         product_anchor: Path | None) -> dict[str, Any] | None:
+    """Bind the finite four-alias pthread timed receipt to one selected cohort."""
+    if report_path is None:
+        return None
+    require(product_anchor is not None, 'pthread timed receipt requires its current loader-debug product anchor')
+    product_anchor = physical_work_path(product_anchor, directory=False)
+    require(product_anchor.is_relative_to(ROOT / '.work'),
+            'pthread timed product anchor must belong to the selecting checkout .work')
+    reader = _pthread_timed_feature_reader()
+    require(Path(reader.ROOT) == ROOT and Path(reader.__file__).resolve().parent == MODULE_DIR,
+            'pthread timed reader belongs to a different checkout')
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    try:
+        report = reader.validate_report(report_path)
+    except (KeyError, TypeError, ValueError, OSError, reader.ReceiptError) as error:
+        raise SelectionError(f'pthread timed component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'pthread timed report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'pthread timed selection source')
+    require(source['clean'] is True, 'pthread timed selection source is not clean')
+    _measurement_source_matches(source, measurement, 'pthread timed')
+    measurement_reports = _measurement_report_bindings(measurement, 'pthread timed')
+    require(report.get('schema') == reader.SCHEMA and report.get('status') == reader.STATUS
+            and report.get('component') == reader.COMPONENT
+            and report.get('public_support') is False and report.get('family_complete') is False
+            and report.get('promotion_ready') is False, 'pthread timed receipt boundary differs')
+    selected = report.get('selected_source')
+    require(type(selected) is dict and selected.get('revision') == source['revision']
+            and selected.get('source_sha256') == source['content_sha256'],
+            'pthread timed selected source differs from selection')
+    collector = report.get('collector')
+    require(type(collector) is dict and type(collector.get('source_before')) is dict
+            and type(collector.get('source_after')) is dict, 'pthread timed collector source differs')
+    for phase in ('source_before', 'source_after'):
+        row = collector[phase]
+        require(row.get('revision') == source['revision'] and row.get('content_sha256') == source['content_sha256'],
+                f'pthread timed collector {phase} differs from selection')
+    artifacts = report.get('artifacts')
+    files = selected.get('files') if type(selected) is dict else None
+    collector_files = collector.get('files')
+    require(type(artifacts) is dict and type(files) is dict and type(collector_files) is dict
+            and set(files) == set(reader.SOURCE_CONTRACT_PATHS)
+            and set(collector_files) == set(reader.COLLECTOR_PATHS), 'pthread timed source roster differs')
+    for relative in reader.SOURCE_CONTRACT_PATHS:
+        value = files.get(relative)
+        require(type(value) is dict and same(value, artifacts.get(value.get('path'))),
+                f'pthread timed selected source artifact differs: {relative}')
+        _require_same_identity_payload(value, file_identity(ROOT / relative),
+                                       f'pthread timed selected source {relative}')
+    for name, relative in reader.COLLECTOR_PATHS.items():
+        value = collector_files.get(name)
+        require(type(value) is dict and same(value, artifacts.get(value.get('path'))),
+                f'pthread timed collector source artifact differs: {relative}')
+        _require_same_identity_payload(value, file_identity(ROOT / relative),
+                                       f'pthread timed collector source {relative}')
+    link_input_modes = _pthread_timed_source_link_input_modes()
+    require(report.get('product_input_modes') == link_input_modes,
+            'pthread timed source-owned link input modes differ')
+    products = _pthread_timed_product_identities(paths, product_anchor)
+    inputs = report.get('inputs')
+    require(type(inputs) is dict and set(inputs) == set(reader.INPUT_NAMES),
+            'pthread timed retained input roster differs')
+    collector_inputs = {
+        'probe': file_identity(ROOT / reader.COLLECTOR_PATHS['probe']),
+        'reader': file_identity(ROOT / reader.COLLECTOR_PATHS['reader']),
+        'runner': file_identity(ROOT / reader.COLLECTOR_PATHS['runner']),
+    }
+    for name, current in collector_inputs.items():
+        retained = _pthread_timed_retained_input(report_path, report, name)
+        _require_same_identity_payload(retained, current, f'pthread timed {name}')
+    receipt_inputs = {
+        'product_report': 'product_report',
+        'static_driver': 'static_driver', 'static_libc': 'static_libc',
+        'dynamic_driver': 'dynamic_driver', 'dynamic_libc': 'dynamic_libc', 'dynamic_loader': 'dynamic_loader',
+        'static_preparation': 'static_preparation',
+        **{name: name for name, _relative in PTHREAD_TIMED_STATIC_LINK_INPUTS},
+        **{name: name for name, _relative in PTHREAD_TIMED_DYNAMIC_LINK_INPUTS},
+    }
+    for receipt_name, current_name in receipt_inputs.items():
+        retained = _pthread_timed_retained_input(report_path, report, receipt_name)
+        _require_same_identity_payload(retained, products[current_name], f'pthread timed {current_name}')
+    for family, records in (('static', PTHREAD_TIMED_STATIC_LINK_INPUTS),
+                            ('dynamic', PTHREAD_TIMED_DYNAMIC_LINK_INPUTS)):
+        expected = link_input_modes[family]
+        for name, relative in records:
+            require(products[name]['mode'] == expected[relative], f'pthread timed {name} source-bound mode differs')
+    _pthread_timed_selected_product_artifacts(report_path, report, products, source)
+    facts_artifacts = facts.get('artifacts')
+    require(type(facts_artifacts) is dict, 'pthread timed public ELF artifact roster differs')
+    for artifact, name in (('candidate-static', 'static_libc'), ('candidate-shared', 'dynamic_libc'),
+                           ('candidate-loader', 'dynamic_loader')):
+        row = facts_artifacts.get(artifact)
+        require(type(row) is dict and 'identity' in row, f'pthread timed public ELF artifact differs: {artifact}')
+        _require_same_identity_payload(row['identity'], products[name], f'pthread timed public ELF {artifact}')
+    require(report.get('coverage') == reader._coverage() and report.get('feature_source') == reader.evaluate_feature_source(ROOT),
+            'pthread timed feature contract differs')
+    require(tuple(reader.FEATURE_ALIASES) == tuple(reader.ALIASES)
+            and tuple(reader.ARCHIVE_HIDDEN) == tuple(provider for _public, provider in reader.FEATURE_ALIASES)
+            and tuple(reader.ARCHIVE_LOCAL) == (),
+            'pthread timed finite provider roster differs')
+    aliases = [{'public': public, 'provider': provider} for public, provider in reader.FEATURE_ALIASES]
+    observations = report.get('alias_observations')
+    require(type(observations) is dict and observations.get('aliases') == aliases
+            and observations.get('archive_hidden_providers') == list(reader.ARCHIVE_HIDDEN)
+            and observations.get('archive_local_providers') == list(reader.ARCHIVE_LOCAL),
+            'pthread timed alias observations differ')
+    source_inputs = {name: file_identity(ROOT / name) for name in _pthread_timed_source_files(reader)}
+    return {'status': 'pthread-timed-observed-with-boundaries', 'reader': file_identity(Path(reader.__file__)),
+            'report': before, 'source': copy.deepcopy(source), 'source_inputs': source_inputs,
+            'products': {name: copy.deepcopy(products[name]) for name in sorted(products)},
+            'collector_inputs': collector_inputs, 'measurement_reports': measurement_reports, 'aliases': aliases,
+            'observations': copy.deepcopy(observations), 'limits': list(PTHREAD_TIMED_FEATURE_LIMITS)}
+
+
+def _pthread_timed_named_rows(occurrences: Mapping[int, Mapping[str, Any]], name: str) -> list[dict[str, Any]]:
+    """Limit the logical join to one explicit name without filtering raw facts."""
+    return [dict(value) for value in occurrences.values()
+            if type(value.get('row')) is dict and value['row'].get('name') == name]
+
+
+def _pthread_timed_one_row(rows: Sequence[Mapping[str, Any]], *, artifact: str, table: str,
+                           binding: str, visibility: str | None, description: str) -> dict[str, Any]:
+    matches = [row for row in rows if row.get('artifact_key') == artifact and row.get('table') == table
+               and row.get('role') == 'definition' and row.get('row', {}).get('type') == 'FUNC'
+               and row['row'].get('binding') == binding
+               and (visibility is None or row['row'].get('visibility') == visibility)]
+    require(len(matches) == 1, f'{description} exact candidate occurrence differs')
+    return dict(matches[0])
+
+
+def _pthread_timed_feature_contract(value: object, *, alias: str, provider: str) -> dict[str, Any]:
+    """Keep the receipt tied to the existing selected feature route."""
+    require(type(value) is dict, f'pthread timed feature contract differs: {alias}')
+    require(value.get('name') == alias and value.get('target') == provider
+            and value.get('binding') == 'weak-same-address'
+            and value.get('owner') == 'x86-owned-static-runtime'
+            and value.get('state') == 'planned'
+            and value.get('evidence_record') is None
+            and value.get('runner') == 'compat/x86_64/run_owned_static_sysroot.sh'
+            and value.get('feature_selection_source') == 'scripts/build_x86_64_owned_sysroot.py'
+            and value.get('enabled_features') == ['x86-owned-static-runtime']
+            and value.get('sources') == ['compat/x86_64/feature_archive_roster.py', 'compat/x86_64/parity.toml'],
+            f'pthread timed feature contract differs: {alias}')
+    require(type(value.get('baseline_features')) is list and value['baseline_features'],
+            f'pthread timed feature baseline differs: {alias}')
+    return copy.deepcopy(value)
+
+
+def attach_native_pthread_timed_feature(accounting: Mapping[str, Any],
+                                        companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Discharge only four existing selected feature-alias receipt reasons.
+
+    Private spellings are joined as finite physical observations.  They remain
+    outside the selection owner model: this attachment neither creates a
+    hidden-provider group nor alters their existing accounting state.
+    """
+    if companion is None:
+        return []
+    companion = exact(companion, {
+        'status', 'reader', 'report', 'source', 'source_inputs', 'products', 'collector_inputs',
+        'measurement_reports', 'aliases', 'observations', 'limits',
+    }, 'pthread timed companion')
+    require(companion['status'] == 'pthread-timed-observed-with-boundaries'
+            and companion['limits'] == PTHREAD_TIMED_FEATURE_LIMITS,
+            'pthread timed companion boundary differs')
+    reader = _pthread_timed_feature_reader()
+    require(same(companion['source_inputs'], {
+        name: file_identity(ROOT / name) for name in _pthread_timed_source_files(reader)
+    }), 'pthread timed companion source inputs changed')
+    aliases = tuple((str(public), str(provider)) for public, provider in reader.FEATURE_ALIASES)
+    require(aliases == tuple(reader.ALIASES) and len(aliases) == 4
+            and len({name for pair in aliases for name in pair}) == 8,
+            'pthread timed finite alias/provider cardinality differs')
+    require(companion['aliases'] == [{'public': public, 'provider': provider} for public, provider in aliases],
+            'pthread timed companion alias roster differs')
+    observations = exact(companion['observations'], {
+        'aliases', 'archive_hidden_providers', 'archive_local_providers', 'alias_shapes', 'same_definition',
+    }, 'pthread timed companion observations')
+    require(observations['aliases'] == companion['aliases']
+            and observations['archive_hidden_providers'] == [provider for _public, provider in aliases]
+            and observations['archive_local_providers'] == [],
+            'pthread timed companion private observation roster differs')
+    shapes = exact(observations['alias_shapes'], {'dynamic', 'shared', 'static'},
+                   'pthread timed companion alias shapes')
+    for placement in ('dynamic', 'shared', 'static'):
+        require(shapes[placement] == {public: ['FUNC', 'WEAK', 'DEFAULT'] for public, _provider in aliases},
+                f'pthread timed companion {placement} alias shapes differ')
+    definitions = exact(observations['same_definition'], {'musl_shared', 'musl_static', 'shared', 'static'},
+                       'pthread timed companion definition domains')
+    for placement in definitions:
+        require(type(definitions[placement]) is dict and set(definitions[placement]) == {public for public, _ in aliases},
+                f'pthread timed companion {placement} definition roster differs')
+        for public, provider in aliases:
+            pair = exact(definitions[placement][public], {'alias', 'provider'},
+                         f'pthread timed companion {placement} {public} definition')
+            require(pair['alias'].get('name') == public and pair['provider'].get('name') == provider,
+                    f'pthread timed companion {placement} {public} definition differs')
+    records, _placements, occurrences = _accounting_indexes(accounting, description='pthread timed attachment')
+    occurrence_count = len(occurrences)
+    expected_indices: set[int] = set()
+    joins: list[dict[str, Any]] = []
+    for public, provider in aliases:
+        public_rows = _pthread_timed_named_rows(occurrences, public)
+        provider_rows = _pthread_timed_named_rows(occurrences, provider)
+        static_alias = _pthread_timed_one_row(
+            public_rows, artifact='candidate-static', table='.symtab', binding='WEAK', visibility='DEFAULT',
+            description=f'pthread timed alias {public} static',
+        )
+        shared_dyn_alias = _pthread_timed_one_row(
+            public_rows, artifact='candidate-shared', table='.dynsym', binding='WEAK', visibility='DEFAULT',
+            description=f'pthread timed alias {public} shared dynsym',
+        )
+        shared_alias = _pthread_timed_one_row(
+            public_rows, artifact='candidate-shared', table='.symtab', binding='WEAK', visibility='DEFAULT',
+            description=f'pthread timed alias {public} shared symtab',
+        )
+        static_provider = _pthread_timed_one_row(
+            provider_rows, artifact='candidate-static', table='.symtab', binding='GLOBAL', visibility='HIDDEN',
+            description=f'pthread timed provider {provider} static',
+        )
+        shared_provider = _pthread_timed_one_row(
+            provider_rows, artifact='candidate-shared', table='.symtab', binding='LOCAL', visibility=None,
+            description=f'pthread timed provider {provider} shared symtab',
+        )
+        expected_indices.update((static_alias['index'], shared_dyn_alias['index'], shared_alias['index'],
+                                 static_provider['index'], shared_provider['index']))
+        require(same_definition_domain(static_alias, static_provider)
+                and same_definition_domain(shared_alias, shared_provider),
+                f'pthread timed alias definition domain differs: {public}')
+        record = records.get((public, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider',
+                f'pthread timed selected public alias differs: {public}')
+        feature = record.get('function_alias_requirements')
+        require(type(feature) is list and len(feature) == 1,
+                f'pthread timed feature alias requirement differs: {public}')
+        feature_contract = _pthread_timed_feature_contract(feature[0], alias=public, provider=provider)
+        function_observations = accounting.get('function_alias_observations')
+        require(type(function_observations) is list, 'pthread timed feature archive observations differ')
+        matching = [row for row in function_observations
+                    if type(row) is dict and same(row.get('identity'), record['identity'])
+                    and same(row.get('target'), identity(provider))]
+        require(len(matching) == 1 and matching[0].get('artifact_key') == 'candidate-static'
+                and matching[0].get('same_domain_pairs') == [[static_alias['index'], static_provider['index']]]
+                and same(matching[0].get('feature_contract'), feature_contract)
+                and matching[0].get('feature_archive_receipt_proven') is False
+                and matching[0].get('runtime_semantics_proven') is False,
+                f'pthread timed feature archive observation differs: {public}')
+        _remove_identity_requirements(accounting, record, (PTHREAD_TIMED_FEATURE_RECEIPT_REQUIREMENT,),
+                                      description=f'pthread timed alias {public}')
+        joins.append({
+            'alias': public, 'provider': provider,
+            'static_alias_occurrence_index': static_alias['index'],
+            'shared_dynsym_alias_occurrence_index': shared_dyn_alias['index'],
+            'shared_symtab_alias_occurrence_index': shared_alias['index'],
+            'static_provider_occurrence_index': static_provider['index'],
+            'shared_provider_occurrence_index': shared_provider['index'],
+            'requirements_discharged': [PTHREAD_TIMED_FEATURE_RECEIPT_REQUIREMENT],
+        })
+    names = {name for pair in aliases for name in pair}
+    actual_indices = {row['index'] for row in occurrences.values()
+                      if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
+                      and type(row.get('row')) is dict and row['row'].get('name') in names}
+    require(actual_indices == expected_indices,
+            'pthread timed candidate alias/provider occurrence roster differs')
+    require(len(joins) == 4 and len(occurrences) == occurrence_count,
+            'pthread timed finite attachment cardinality differs')
+    return [{
+        'aliases': joins,
+        'requirements_discharged': [PTHREAD_TIMED_FEATURE_RECEIPT_REQUIREMENT],
+        'complete_elf_occurrence_count': occurrence_count,
+    }]
+
+
 def _syscall_receipt_input(value: object, description: str) -> dict[str, Any]:
     """Read one syscall receipt input without accepting its container path as ours."""
     record = exact(value, {'original', 'retained'}, description)
@@ -5930,7 +6369,11 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   stdio_alias_contract_report: Path | None = None,
                   crt_startup_report: Path | None = None,
                   syscall_alias_contract_report: Path | None = None,
-                  utmpx_receipt_report: Path | None = None) -> dict[str, Any]:
+                  utmpx_receipt_report: Path | None = None,
+                  pthread_timed_feature_report: Path | None = None) -> dict[str, Any]:
+    if pthread_timed_feature_report is not None:
+        require(ordinary_link_report is not None and loader_debug_report is not None,
+                'pthread timed receipt requires the complete public-data loader-debug anchor pair')
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -5969,6 +6412,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     utmpx_receipt_companion = native_utmpx_adapter(
         utmpx_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+    )
+    pthread_timed_feature_companion = native_pthread_timed_feature_adapter(
+        pthread_timed_feature_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+        product_anchor=loader_debug_report,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -6018,6 +6465,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     crt_descriptor_handoff_joins = attach_native_crt_descriptor_handoff(accounting, crt_startup_companion)
     syscall_alias_contract_joins = attach_native_syscall_alias(accounting, syscall_alias_contract_companion)
     utmpx_receipt_joins = attach_native_utmpx(accounting, utmpx_receipt_companion)
+    pthread_timed_feature_joins = attach_native_pthread_timed_feature(accounting, pthread_timed_feature_companion)
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
@@ -6026,6 +6474,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         stdio_alias_contract=stdio_alias_contract_companion,
         crt_startup=crt_startup_companion, syscall_alias=syscall_alias_contract_companion,
         utmpx=utmpx_receipt_companion,
+        pthread_timed=pthread_timed_feature_companion,
     )
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
@@ -6064,6 +6513,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'syscall_alias_contract_joins': syscall_alias_contract_joins,
             'utmpx_receipt_companion': utmpx_receipt_companion,
             'utmpx_receipt_joins': utmpx_receipt_joins,
+            'pthread_timed_feature_companion': pthread_timed_feature_companion,
+            'pthread_timed_feature_joins': pthread_timed_feature_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -6083,6 +6534,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  crt_startup_report: Path | None = None,
                  syscall_alias_contract_report: Path | None = None,
                  utmpx_receipt_report: Path | None = None,
+                 pthread_timed_feature_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -6100,7 +6552,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            stdio_alias_contract_report=stdio_alias_contract_report,
                            crt_startup_report=crt_startup_report,
                            syscall_alias_contract_report=syscall_alias_contract_report,
-                           utmpx_receipt_report=utmpx_receipt_report)
+                           utmpx_receipt_report=utmpx_receipt_report,
+                           pthread_timed_feature_report=pthread_timed_feature_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -6119,6 +6572,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     crt_startup_report: Path | None = None,
                     syscall_alias_contract_report: Path | None = None,
                     utmpx_receipt_report: Path | None = None,
+                    pthread_timed_feature_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -6138,7 +6592,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              stdio_alias_contract_report=stdio_alias_contract_report,
                              crt_startup_report=crt_startup_report,
                              syscall_alias_contract_report=syscall_alias_contract_report,
-                             utmpx_receipt_report=utmpx_receipt_report)
+                             utmpx_receipt_report=utmpx_receipt_report,
+                             pthread_timed_feature_report=pthread_timed_feature_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -6165,6 +6620,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--crt-startup-report', type=Path)
     parser.add_argument('--syscall-alias-contract-report', type=Path)
     parser.add_argument('--utmpx-receipt-report', type=Path)
+    parser.add_argument('--pthread-timed-feature-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -6180,7 +6636,8 @@ def main(argv: Sequence[str]) -> int:
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
                                                 'stdio_alias_contract_report', 'crt_startup_report',
-                                                'syscall_alias_contract_report', 'utmpx_receipt_report')}
+                                                'syscall_alias_contract_report', 'utmpx_receipt_report',
+                                                'pthread_timed_feature_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)

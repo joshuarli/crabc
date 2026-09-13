@@ -291,6 +291,36 @@ receipt requirement for it. It does not change public imports, establish utmp
 semantics, complete a family, qualify runtime support, or promote public
 support.
 
+`--pthread-timed-feature-report REPORT` is independently optional, but it
+requires the current `--loader-debug-abi-report REPORT` product anchor. Its
+process-free owner reader replays the finite current receipt for
+`pthread_cond_timedwait`, `pthread_mutex_timedlock`, `pthread_timedjoin_np`,
+and `pthread_tryjoin_np`, with their respective implementation spellings
+`__pthread_cond_timedwait`, `__pthread_mutex_timedlock`,
+`__pthread_timedjoin_np`, and `__pthread_tryjoin_np`. The selector seals the
+receipt before and after replay, then binds its collector and selected source,
+the retained loader-debug anchor, full static preparation, static/dynamic
+manifests and dynamic state, drivers, libc archive/shared object, loader, and
+every sealed static/dynamic CRT, builtins, and dynamic-attach input to the
+current product transaction. The six static link inputs and seven dynamic
+inputs use the same finite source-owned mode policy as their owner reader;
+retained-tree or report mode fields cannot authorize a changed role. It
+replays the retained receipt again during the transaction-final check, so a
+changed copied stream, object, command input, or retained product cannot pass
+because the outer report JSON remained unchanged.
+
+`attach_native_pthread_timed_feature` maps only those four existing
+`source-selected alias requires exact feature archive selection and component
+receipt` reasons. It requires each public alias as a candidate static
+`FUNC WEAK DEFAULT` definition plus shared `.dynsym` and `.symtab` forms, and
+each private spelling as the receipt's candidate static `FUNC GLOBAL HIDDEN`
+and shared local `.symtab` definition in the same definition domains. The
+private spellings are finite physical observations; this creates no hidden
+owner group or private-body receipt reason. The older 17-alias pthread receipt,
+other imports, all unowned rows, and all unnamed rows remain unchanged. This
+attachment does not prove pthread semantics, family completion, runtime
+qualification, promotion, or public support.
+
 These runtime attachments run before the one public declaration-envelope replay
 and are rechecked after their scoped joins. Their source/product/ELF cohort is
 therefore shared with the selection transaction without rereading the header

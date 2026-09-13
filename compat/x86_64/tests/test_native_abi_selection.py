@@ -470,6 +470,22 @@ class PathAndCommandTests(unittest.TestCase):
         self.assertEqual(build.call_args.kwargs['ordinary_link_report'], Path('.work/ordinary/report.json'))
         self.assertEqual(build.call_args.kwargs['loader_debug_report'], Path('.work/loader/report.json'))
 
+    def test_cli_threads_pthread_timed_receipt_with_its_product_anchor(self):
+        arguments = ['build-report']
+        for flag in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):
+            arguments += ['--' + flag, '.work/not-present']
+        arguments += [
+            '--output', '.work/output',
+            '--public-data-ordinary-link-report', '.work/ordinary/report.json',
+            '--loader-debug-abi-report', '.work/loader/report.json',
+            '--pthread-timed-feature-report', '.work/pthread-timed/report.json',
+        ]
+        report = {'identities': [], 'occurrences': [], 'closure': {'complete': False, 'blockers': []}}
+        with mock.patch.object(selection, 'build_report', return_value=report) as build:
+            self.assertEqual(selection.main(arguments), 0)
+        self.assertEqual(build.call_args.kwargs['pthread_timed_feature_report'], Path('.work/pthread-timed/report.json'))
+        self.assertEqual(build.call_args.kwargs['loader_debug_report'], Path('.work/loader/report.json'))
+
     def test_cli_threads_the_ordinary_declaration_receipt_only_with_its_header_envelope(self):
         arguments = ['build-report']
         for flag in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):
