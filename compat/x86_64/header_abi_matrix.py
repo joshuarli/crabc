@@ -1332,6 +1332,150 @@ def compiler_profile(
     )
 
 
+@dataclass(frozen=True)
+class RawCompilerProfileResult:
+    """One isolated compiler row with its uncollapsed AST and PP evidence.
+
+    The declaration inventory owns persistence and interpretation of these
+    artifacts.  This narrow adapter only preserves the ABI matrix's established
+    compiler argv, timeout, process-group cancellation, and isolated TMPDIR
+    behavior so the existing matrix continues to expose exactly its prior
+    canonical-fact output by default.
+    """
+
+    ast_command: tuple[str, ...]
+    ast_returncode: int
+    ast_stderr: str
+    ast_stdout: str
+    detail: str
+    preprocess_command: tuple[str, ...] | None
+    preprocess_returncode: int | None
+    preprocess_stderr: str | None
+    preprocess_stdout: str | None
+    source: Path
+    status: str
+
+
+def compiler_profile_raw_artifacts(
+    *,
+    compiler: str,
+    profile: callable_inventory.Profile,
+    header: str,
+    header_root: Path,
+    resource_include: Path,
+    linux_uapi_include: Path,
+    work_dir: Path,
+    timeout_seconds: float = DEFAULT_COMPILER_JOB_TIMEOUT_SECONDS,
+    job_control: CompilerJobControl | None = None,
+) -> RawCompilerProfileResult:
+    """Compile one direct include while retaining raw AST and PP outputs.
+
+    This is deliberately parallel to :func:`compiler_profile`; callers that
+    need raw provenance can retain it, while the established matrix remains
+    free to collapse declaration forms as before.
+    """
+    temporary_directory = work_dir / "tmp"
+    temporary_directory.mkdir(exist_ok=True)
+    require(
+        temporary_directory.is_dir() and not temporary_directory.is_symlink(),
+        f"compiler job temporary directory is unsafe: {temporary_directory}",
+    )
+    source = work_dir / ("probe.cpp" if profile.language == "cxx" else "probe.c")
+    source.write_text(f"#include <{header}>\n", encoding="utf-8")
+    ast_command = tuple(
+        callable_inventory.compiler_command(
+            compiler,
+            profile,
+            header_root,
+            resource_include,
+            linux_uapi_include,
+            source,
+            ast=True,
+            preprocess=False,
+        )
+    )
+    ast_result = run_compiler_command(
+        ast_command,
+        timeout_seconds=timeout_seconds,
+        job_control=job_control,
+        temporary_directory=temporary_directory,
+    )
+    if ast_result.returncode != 0:
+        diagnostic = next(
+            (line.strip() for line in ast_result.stderr.splitlines() if line.strip()),
+            "compiler produced no diagnostic",
+        )
+        return RawCompilerProfileResult(
+            ast_command=ast_command,
+            ast_returncode=ast_result.returncode,
+            ast_stderr=ast_result.stderr,
+            ast_stdout=ast_result.stdout,
+            detail=diagnostic,
+            preprocess_command=None,
+            preprocess_returncode=None,
+            preprocess_stderr=None,
+            preprocess_stdout=None,
+            source=source,
+            status="failed",
+        )
+    try:
+        ast = json.loads(ast_result.stdout)
+    except json.JSONDecodeError as error:
+        raise HeaderAbiMatrixError(
+            f"compiler did not emit JSON AST for {header}:{profile.identifier}: {error}"
+        ) from error
+    require(isinstance(ast, Mapping), f"compiler AST root is invalid for {header}:{profile.identifier}")
+    preprocess_command = tuple(
+        callable_inventory.compiler_command(
+            compiler,
+            profile,
+            header_root,
+            resource_include,
+            linux_uapi_include,
+            source,
+            ast=False,
+            preprocess=True,
+        )
+    )
+    macro_result = run_compiler_command(
+        preprocess_command,
+        timeout_seconds=timeout_seconds,
+        job_control=job_control,
+        temporary_directory=temporary_directory,
+    )
+    if macro_result.returncode != 0:
+        diagnostic = next(
+            (line.strip() for line in macro_result.stderr.splitlines() if line.strip()),
+            "compiler produced no diagnostic",
+        )
+        return RawCompilerProfileResult(
+            ast_command=ast_command,
+            ast_returncode=ast_result.returncode,
+            ast_stderr=ast_result.stderr,
+            ast_stdout=ast_result.stdout,
+            detail=diagnostic,
+            preprocess_command=preprocess_command,
+            preprocess_returncode=macro_result.returncode,
+            preprocess_stderr=macro_result.stderr,
+            preprocess_stdout=macro_result.stdout,
+            source=source,
+            status="failed",
+        )
+    return RawCompilerProfileResult(
+        ast_command=ast_command,
+        ast_returncode=ast_result.returncode,
+        ast_stderr=ast_result.stderr,
+        ast_stdout=ast_result.stdout,
+        detail="compiler AST and preprocessor raw declaration records",
+        preprocess_command=preprocess_command,
+        preprocess_returncode=macro_result.returncode,
+        preprocess_stderr=macro_result.stderr,
+        preprocess_stdout=macro_result.stdout,
+        source=source,
+        status="ok",
+    )
+
+
 def collect_tree(
     *,
     tree: str,
