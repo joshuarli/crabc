@@ -81,6 +81,7 @@ EXPECTED_TBSS = b"initial-tbss=8192,worker=isolated\n"
 # its canonical system location available while excluding inherited host
 # configuration, then seal this exact environment in every outer transcript.
 WORKLOAD_ENVIRONMENT = {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+DLFCN_SKIP_SEARCH_ENV = "CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH"
 
 
 class RuntimeRegistryEvidenceError(RuntimeError):
@@ -495,7 +496,8 @@ def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path,
     physical_directory(output.parent, "component output parent")
     output.mkdir(mode=0o700)
     source = inventory.collector_source_seal()
-    environment = {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output), "CRABC_GENERAL_DYNAMIC_ENTRY_MODE": "--dynamic-pie"}
+    environment = {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output), "CRABC_GENERAL_DYNAMIC_ENTRY_MODE": "--dynamic-pie",
+                   DLFCN_SKIP_SEARCH_ENV: "1"}
     dlfcn: dict[str, object] = {}
     for mode in DLOPEN_MODES:
         before = set(output.glob("general-dynamic-dlopen.*"))
@@ -601,7 +603,8 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
         record = exact(dlfcn[mode], {"command", "observation"}, f"general dlfcn {mode}")
         _validate_command(output, record["command"], f"dlfcn-{mode}",
                           ["bash", str(ROOT / "compat/x86_64/run_general_dynamic_dlopen.sh"), str(Path(dynamic_product).absolute())],
-                          {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output), "CRABC_GENERAL_DYNAMIC_ENTRY_MODE": f"--dynamic-{mode}"})
+                          {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output), "CRABC_GENERAL_DYNAMIC_ENTRY_MODE": f"--dynamic-{mode}",
+                           DLFCN_SKIP_SEARCH_ENV: "1"})
         observation = record["observation"]
         require(isinstance(observation, dict) and observation.get("entry_mode") == mode
                 and observation.get("driver_mode") == DLOPEN_DRIVER_MODES[mode],

@@ -9,6 +9,13 @@ readonly installed="$1"
 readonly driver="$installed/bin/crabc-cc-dynamic"
 readonly entry_mode="${CRABC_GENERAL_DYNAMIC_ENTRY_MODE:---dynamic-pie}"
 case "$entry_mode" in --dynamic-pie|--dynamic-non-pie) ;; *) exit 2 ;; esac
+# The runtime-registry attachment consumes the six dlfcn calls and its
+# 41-module behavior only. Its supplied-product container has SYS_CHROOT but
+# intentionally lacks the separate search leaf's proc-mount authority. Keep
+# the normal runner complete by default; a sealed caller must explicitly opt
+# into this bounded path and records that omission in its own receipt.
+readonly skip_search="${CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH:-0}"
+case "$skip_search" in 0|1) ;; *) exit 2 ;; esac
 python3 -B - "$ROOT" "${TMPDIR:-}" <<'PY'
 from pathlib import Path
 import sys
@@ -129,4 +136,8 @@ LD_LIBRARY_PATH="$work/oracle" timeout 20 "$work/oracle/scope" >"$work/oracle-sc
 cmp "$work/scope.stdout" "$work/oracle-scope.stdout"
 printf 'general runtime scope: PASS (musl differential, caller RTLD_NEXT and promotion); evidence: %s\n' "$work"
 
-bash "$ROOT/compat/x86_64/run_general_dynamic_search.sh" "$installed"
+if [ "$skip_search" = 0 ]; then
+    bash "$ROOT/compat/x86_64/run_general_dynamic_search.sh" "$installed"
+else
+    printf 'general dynamic search: SKIPPED (separate proc-mount component; bounded dlfcn-only capture)\n'
+fi

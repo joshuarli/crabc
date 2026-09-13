@@ -33,6 +33,11 @@ mode, operation, scenario, raw stream, link receipt or supplied-product match
 is rejected.  The fork reader remains its own workload-specific 100-cell
 receipt; this component only joins it to the same authenticated product.
 
+The collector seals `CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH=1`.  The
+unchanged default runner still executes its trailing proc-mount search leaf;
+that separate component needs different authority and is recorded as skipped,
+not passed, by this dlfcn-only attachment.
+
 This is source, import-placement, relocation-admission and finite behavior
 evidence.  It does not prove RuntimeV1 worker protocol semantics, CRT startup
 structure, general loader qualification, public ABI selection, family

@@ -54,6 +54,11 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
     def test_workload_environment_retains_the_existing_chroot_search_path(self):
         self.assertIn("/usr/sbin", EVIDENCE.WORKLOAD_ENVIRONMENT["PATH"].split(":"))
 
+    def test_bounded_dlfcn_capture_explicitly_excludes_the_separate_proc_mount_search_leaf(self):
+        self.assertEqual(EVIDENCE.DLFCN_SKIP_SEARCH_ENV, "CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH")
+        runner = (ROOT / "compat/x86_64/run_general_dynamic_dlopen.sh").read_text(encoding="utf-8")
+        self.assertIn(EVIDENCE.DLFCN_SKIP_SEARCH_ENV, runner)
+
     def test_contract_rejects_ambiguous_unknown_and_promoting_operation(self):
         contract = self.contract()
         contract["operation"].append({"name": "__crabc_x86_64_runtime_unknown", "resolver": "unknown",
