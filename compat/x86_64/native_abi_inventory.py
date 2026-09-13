@@ -364,6 +364,303 @@ def parse_static_symbols(raw: str, *, expected_archive: str | None = None) -> li
     return records
 
 
+# These opt-in projections deliberately do not feed the v1 report. A future
+# collector must bind the additional commands and artifacts in its own schema;
+# a successful text projection alone is not a source-bound ELF observation.
+_SYMBOL_FIELD = r"(?:<[^>\n]+>:\s*[0-9]+|[^\s<>]+)"
+_COMPLETE_SYMBOL_LINE = re.compile(
+    r"^\s*(?P<number>[0-9]+):\s+(?P<value>[0-9a-fA-F]+)\s+"
+    r"(?P<size>0x[0-9a-fA-F]+|[0-9]+)\s+"
+    rf"(?P<symbol_type>{_SYMBOL_FIELD})\s+(?P<binding>{_SYMBOL_FIELD})\s+"
+    rf"(?P<visibility>{_SYMBOL_FIELD})\s+"
+    r"(?:(?P<other>\[<other>:\s*[0-9a-fA-F]+\])\s+)?"
+    r"(?P<section>\S+)(?:\s+(?P<name>.*\S))?\s*$"
+)
+_SYMBOL_TABLE = re.compile(r"^Symbol table '(?P<name>[^']+)' contains (?P<count>[0-9]+) entr(?:y|ies):$")
+_SYMBOL_COLUMNS = "Num: Value Size Type Bind Vis Ndx Name".split()
+_SECTION_COUNT = re.compile(r"^There are (?P<count>[0-9]+) section headers, starting at offset (?P<offset>0x[0-9a-fA-F]+):$")
+_SECTION_LINE = re.compile(
+    r"^\s*\[\s*(?P<index>[0-9]+)\]\s+(?:(?P<name>.*?)\s+)?"
+    r"(?P<type>\S+)\s+(?P<address>[0-9a-fA-F]{16})\s+"
+    r"(?P<offset>[0-9a-fA-F]+)\s+(?P<size>[0-9a-fA-F]+)\s+"
+    r"(?P<entry_size>[0-9a-fA-F]+)\s+(?:(?P<flags>\S+)\s+)?"
+    r"(?P<link>[0-9]+)\s+(?P<info>[0-9]+)\s+(?P<alignment>[0-9]+)\s*$"
+)
+# These are termination/occurrence contracts for the pinned GNU readelf's
+# C-locale x86-64 display, not an ELF specification or a cross-version parser.
+# A tool update changing either display requires an explicit parser update and
+# retained native evidence. Unknown symbol/section row metadata stays intact.
+_PINNED_SECTION_FLAG_LEGEND_PREFIX = (
+    "W (write), A (alloc), X (execute), M (merge), S (strings), I (info),",
+    "L (link order), O (extra OS processing required), G (group), T (TLS),",
+    "C (compressed), x (unknown), o (OS specific), E (exclude),",
+)
+_PINNED_SECTION_FLAG_LEGEND_ENDINGS = (
+    "D (mbind), l (large), p (processor specific)",
+    "R (retain), D (mbind), l (large), p (processor specific)",
+)
+_PINNED_ELF_HEADER_FIELDS = (
+    "Magic", "Class", "Data", "Version", "OS/ABI", "ABI Version", "Type",
+    "Machine", "Version", "Entry point address", "Start of program headers",
+    "Start of section headers", "Flags", "Size of this header",
+    "Size of program headers", "Number of program headers",
+    "Size of section headers", "Number of section headers",
+    "Section header string table index",
+)
+
+
+def parse_elf_symbol_tables(raw: str) -> list[dict[str, Any]]:
+    """Project complete C-locale GNU readelf --wide --symbols output.
+
+    Table and row ordinals, raw names/rows, undefined/local/hidden definitions,
+    unknown kinds/bindings and st_other decorations survive. No ABI selection,
+    deduplication, demangling or name-prefix rule is applied. Symbol size is
+    decimal (or readelf's explicit hex); value and COMMON alignment are hex.
+    This is a textual projection, not proof that ELF string bytes are lossless
+    in readelf's display. Diagnostics and artifact identity belong to callers.
+    """
+
+    tables: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    saw_columns = False
+
+    def finish() -> None:
+        if current is not None:
+            require(saw_columns, "readelf symbol table lacks column header")
+            require(
+                [row["row_index"] for row in current["rows"]] == list(range(current["row_count"])),
+                "readelf symbol rows are missing, duplicated, reordered, or truncated",
+            )
+
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        table = _SYMBOL_TABLE.fullmatch(stripped)
+        if table:
+            finish()
+            current = {
+                "table_index": len(tables), "name": table.group("name"),
+                "row_count": int(table.group("count")), "rows": [],
+            }
+            tables.append(current)
+            saw_columns = False
+            continue
+        require(current is not None, f"readelf symbol output precedes a table: {line}")
+        if stripped.split() == _SYMBOL_COLUMNS:
+            require(not saw_columns and not current["rows"], "duplicate or misplaced symbol column header")
+            saw_columns = True
+            continue
+        require(saw_columns, "readelf symbol table lacks column header")
+        match = _COMPLETE_SYMBOL_LINE.fullmatch(line)
+        require(match is not None, f"malformed complete symbol row: {line}")
+        raw_name = match.group("name")
+        version_index = None
+        if raw_name is not None:
+            decoration = re.search(r" \(([0-9]+)\)$", raw_name)
+            if decoration is not None and "@" in raw_name[:decoration.start()]:
+                version_index = int(decoration.group(1))
+                raw_name = raw_name[:decoration.start()]
+                require(version_index > 0, "readelf version index must be positive")
+            name, version, version_default = _split_version(raw_name)
+            require("@" not in name and (version is None or "@" not in version),
+                    f"invalid symbol version: {raw_name}")
+        else:
+            name, version, version_default = None, None, False
+        size = match.group("size")
+        section = match.group("section")
+        current["rows"].append({
+            "row_index": int(match.group("number")), "raw": line,
+            "raw_name": raw_name, "name": name,
+            "type": match.group("symbol_type"), "binding": match.group("binding"),
+            "visibility": match.group("visibility"), "other": match.group("other"),
+            "version": version, "version_default": version_default,
+            "version_index": version_index, "value": match.group("value"),
+            "size": size, "size_bytes": int(size, 16 if size.startswith("0x") else 10),
+            "section_index": section,
+            "common_alignment": int(match.group("value"), 16) if section == "COM" else None,
+        })
+    finish()
+    require(bool(tables), "readelf output has no symbol table")
+    return tables
+
+
+def parse_dynamic_symbol_rows(raw: str) -> list[dict[str, Any]]:
+    """Retain every dynsym row; parse_dynamic_symbols remains the v1 public view."""
+
+    tables = parse_elf_symbol_tables(raw)
+    require(len(tables) == 1 and tables[0]["name"] == ".dynsym", "expected exactly one .dynsym table")
+    return tables[0]["rows"]
+
+
+def parse_elf_sections(raw: str) -> dict[str, Any]:
+    """Project complete ELF64 GNU readelf --wide --section-headers output.
+
+    Section indexes define placement domains even when names repeat. Alignment
+    is sh_addralign, not an inferred symbol alignment. Hex quantities remain
+    raw strings; indexes, link/info and alignment are decimal integers.
+    """
+
+    count: int | None = None
+    offset: str | None = None
+    saw_title = False
+    saw_columns = False
+    saw_legend = False
+    legend: list[str] = []
+    sections: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        declaration = _SECTION_COUNT.fullmatch(stripped)
+        if declaration:
+            require(count is None and not saw_title, "duplicate or misplaced section count")
+            count, offset = int(declaration.group("count")), declaration.group("offset")
+        elif stripped == "Section Headers:":
+            require(count is not None and not saw_title, "duplicate or misplaced section title")
+            saw_title = True
+        elif stripped.split() == "[Nr] Name Type Address Off Size ES Flg Lk Inf Al".split():
+            require(saw_title and not saw_columns, "duplicate or misplaced section columns")
+            saw_columns = True
+        elif stripped == "Key to Flags:":
+            require(saw_columns and not saw_legend, "duplicate or misplaced section flag legend")
+            saw_legend = True
+        elif saw_legend:
+            # Preserve the display legend but do not let an appended row become
+            # invisible once the table has allegedly ended.
+            require(not stripped.startswith("[") and "(" in stripped and ")" in stripped,
+                    f"unrecognized section flag legend: {line}")
+            legend.append(line)
+        else:
+            require(saw_columns, f"readelf section output precedes its columns: {line}")
+            match = _SECTION_LINE.fullmatch(line)
+            require(match is not None, f"malformed section row: {line}")
+            record: dict[str, Any] = {"raw": line}
+            for field in ("index", "link", "info", "alignment"):
+                record[field] = int(match.group(field))
+            for field in ("type", "address", "offset", "size", "entry_size"):
+                record[field] = match.group(field)
+            record["name"] = match.group("name") or ""
+            record["flags"] = match.group("flags") or ""
+            sections.append(record)
+    require(count is not None and saw_columns and saw_legend, "incomplete section header output")
+    require(len(legend) == 4
+            and tuple(line.strip() for line in legend[:3]) == _PINNED_SECTION_FLAG_LEGEND_PREFIX
+            and legend[3].strip() in _PINNED_SECTION_FLAG_LEGEND_ENDINGS,
+            "incomplete or changed pinned readelf section flag legend")
+    require([row["index"] for row in sections] == list(range(count)),
+            "readelf section rows are missing, duplicated, reordered, or truncated")
+    return {"section_count": count, "table_offset": offset, "sections": sections, "flag_legend": legend}
+
+
+def _archive_fact_blocks(raw: str, members: Sequence[str], expected_archive: str) -> list[str]:
+    """Require the complete ar order, not a name-keyed approximation of it."""
+
+    names: list[str] = []
+    blocks: list[list[str]] = []
+    for line in raw.splitlines():
+        label = _FILE_LINE.fullmatch(line)
+        if label:
+            require(label.group("archive") == expected_archive, "readelf output names a different archive")
+            names.append(label.group("bracket_member") or label.group("paren_member") or "")
+            blocks.append([])
+        elif blocks:
+            blocks[-1].append(line)
+        else:
+            require(not line.strip(), f"unlabelled archive fact output: {line}")
+    require(names == list(members), "readelf archive member order/count differs from ar roster")
+    return ["\n".join(lines) for lines in blocks]
+
+
+def _archive_fact_header(raw: str, description: str) -> dict[str, Any]:
+    """Retain all header rows, including readelf's two distinct Version fields."""
+
+    fields: list[dict[str, str]] = []
+    names: Counter[str] = Counter()
+    saw_header = False
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        if line.strip() == "ELF Header:":
+            require(not saw_header, f"{description} has duplicate ELF headers")
+            saw_header = True
+            continue
+        match = _ELF_FIELD.fullmatch(line)
+        require(saw_header and line.startswith("  ") and match is not None,
+                f"{description} has malformed ELF header output: {line}")
+        name = match.group("name")
+        names[name] += 1
+        require(names[name] <= (2 if name == "Version" else 1),
+                f"{description} has a duplicate ELF header field: {name}")
+        fields.append({"name": name, "value": match.group("value"), "raw": line})
+    require(tuple(field["name"] for field in fields) == _PINNED_ELF_HEADER_FIELDS,
+            f"{description} has incomplete or changed pinned readelf ELF header fields")
+    identity = _readelf_header(raw, description)
+    require(identity["Type"] == "REL (Relocatable file)", "archive fact member is not relocatable ELF")
+    return {"identity": identity, "fields": fields}
+
+
+def parse_archive_elf_facts(
+    headers_raw: str, sections_raw: str, symbols_raw: str, members: Sequence[str],
+    *, expected_archive: str,
+) -> list[dict[str, Any]]:
+    """Join complete native REL member headers, sections and symbol tables.
+
+    Inputs are three separate successful, diagnostic-free GNU readelf commands
+    (-hW, -SW, -sW) against the same unchanged archive and its ar t roster. The
+    caller must bind those command/artifact facts; this parser performs no tool
+    calls or extraction. Every stream must match the entire roster in order.
+    Missing/unsupported members raise instead of assigning a duplicate-name
+    diagnostic to an invented occurrence. All occurrences are zero-based.
+
+    A definition's placement domain is archive identity + member_index +
+    symbol-table section_index + symbol row's section_index, never just the
+    member/section name or nm value. Equal placements do not select ABI aliases.
+    """
+
+    require(bool(expected_archive) and bool(members), "archive facts require an archive and member roster")
+    require(all(isinstance(member, str) and member and "\n" not in member for member in members),
+            "invalid archive fact member roster")
+    headers = _archive_fact_blocks(headers_raw, members, expected_archive)
+    sections = _archive_fact_blocks(sections_raw, members, expected_archive)
+    symbols = _archive_fact_blocks(symbols_raw, members, expected_archive)
+    occurrences: Counter[str] = Counter()
+    facts: list[dict[str, Any]] = []
+    for index, member in enumerate(members):
+        header = _archive_fact_header(headers[index], f"archive member {index}:{member}")
+        section_facts = parse_elf_sections(sections[index])
+        section_rows = section_facts["sections"]
+        # The complete header occurrence contract establishes exactly one count;
+        # an identity-only prefix must never make this cross-check optional.
+        section_count = next(field["value"] for field in header["fields"]
+                             if field["name"] == "Number of section headers")
+        require(section_count == str(len(section_rows)),
+                "archive ELF header section count differs from section rows")
+        table_sections = [row for row in section_rows if row["type"] in {"SYMTAB", "DYNSYM"}]
+        # readelf legitimately emits no text for an ELF member with no symbol
+        # table. Only the independent complete section table can establish that.
+        tables = parse_elf_symbol_tables(symbols[index]) if symbols[index].strip() else []
+        require(len(tables) == len(table_sections), "archive symbol/section table counts differ")
+        for table, section in zip(tables, table_sections):
+            require(table["name"] == section["name"], "archive symbol table order/name differs from sections")
+            require(int(section["entry_size"], 16) == 24, "native ELF64 symbol entry size is not 24")
+            require(int(section["size"], 16) == table["row_count"] * 24, "archive symbol table row count differs from section size")
+            require(section["link"] < len(section_rows) and section_rows[section["link"]]["type"] == "STRTAB",
+                    "archive symbol table lacks its string table section")
+            table["section_index"] = section["index"]
+            for row in table["rows"]:
+                ndx = row["section_index"]
+                if ndx.isdecimal():
+                    require(int(ndx) < len(section_rows), "archive symbol section index is absent")
+        facts.append({
+            "archive": expected_archive, "member": member, "member_index": index,
+            "member_occurrence": occurrences[member], "header": header,
+            "header_raw": headers[index], **section_facts, "symbol_tables": tables,
+        })
+        occurrences[member] += 1
+    return facts
+
+
 def require_static_members_present(records: Sequence[Mapping[str, str]], members: Sequence[str]) -> None:
     missing = sorted({record["archive_member"] for record in records} - set(members))
     if missing:

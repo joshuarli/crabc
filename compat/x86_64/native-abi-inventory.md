@@ -63,3 +63,72 @@ evidence. The corresponding collector, replay reader, and focused tests are
 `compat/x86_64/native_abi_inventory.py`,
 `compat/x86_64/tests/test_native_abi_inventory.py`, and
 `compat/x86_64/tests/test_native_abi_inventory_dispatcher.py`.
+
+Complete symbol and archive facts are available through opt-in parsing APIs in
+`native_abi_inventory.py`. They are prerequisites for a future versioned
+collector and selection contract; the v1 collector, command roster, public
+projection, static `nm` projection, report reader and ratchet remain unchanged.
+
+- `parse_dynamic_symbol_rows(raw)` requires exactly one complete `.dynsym`
+  table and retains every row, including the unnamed zero row, local and hidden
+  definitions, undefined imports, unknown kinds/bindings and extra `st_other`
+  bits. `parse_elf_symbol_tables(raw)` does the same for every table in
+  `readelf --wide --symbols` output. Both preserve table/row order, raw rows and
+  displayed names, version/defaultness and the displayed version index. Repeated
+  names are facts, not deduplicated identities. `parse_dynamic_symbols(raw)` is
+  still the existing public v1 projection.
+- `parse_elf_sections(raw)` requires complete native ELF64
+  `readelf --wide --section-headers` output. It retains section indexes and names,
+  types (including unknown types), addresses, offsets, sizes, entry sizes, flags,
+  links, info and alignment, together with raw rows and the flag legend.
+- `parse_archive_elf_facts(headers_raw, sections_raw, symbols_raw, members,
+  expected_archive=...)` joins three separate `readelf -hW`, `-SW`, `-sW`
+  outputs with the exact `ar t` roster. Every stream must name the same archive
+  and match the complete member order. The result records zero-based
+  `member_index` and zero-based `member_occurrence`; duplicate member names are
+  never dictionary keys. Each member must be native ELF64 little-endian x86-64
+  relocatable ELF. Every symbol table binds to its section index in section
+  order, with its exact ELF64 entry size, row count and string-table link.
+  Numeric symbol section indexes must exist. A member without a symbol table
+  requires independent complete section evidence; a missing or unsupported
+  member cannot become an empty successful observation.
+
+Completeness of these text streams is tied to the pinned GNU readelf's C-locale
+x86-64 display. The header requires all 19 ordered field occurrences, including
+the two distinct `Version` positions and the complete section metadata tail.
+The mandatory section count must agree with the section rows. The section
+display requires the complete four-line flag legend, ending with the pinned
+processor-specific entry. Both observed endings, with and without `R (retain)`,
+are admitted and preserved; a comma-continued prefix is incomplete. A tool update
+that changes either display requires an explicit parser change and retained
+native evidence. These display boundaries leave unknown symbol/section kinds,
+flags and reserved section-index spellings intact. They establish textual
+completeness and the documented joins, not full ELF validity.
+
+The archive API performs no extraction or tool invocation. Its caller must bind
+all four actual commands, pinned tool identities, unchanged archive bytes,
+stdout/stderr and successful exit statuses. Nonempty diagnostics cannot be
+silently passed off as a complete observation. GNU readelf archive traversal
+order supplies the occurrence domain; name-based extraction would overwrite
+duplicate members and cannot substitute for this evidence. The APIs accept
+retained raw bytes as text and fail on malformed, missing, repeated or reordered
+rows. They do not provide a fallback to `nm` or a smaller public symbol view.
+
+For a static definition, compare the archive identity, member ordinal, symbol
+table section index, definition section index and value before considering an
+alias. Same names or zero `nm` values across members or sections prove nothing.
+Section `alignment` is `sh_addralign`; it is not a promise that every contained
+symbol has that alignment. Symbol `common_alignment` records the hexadecimal
+`st_value` alignment for `COM` rows. `size` and `value` preserve readelf spelling;
+`size_bytes` also provides the numeric decimal/explicit-hex size. No function
+size comparison, alias group, binding or visibility observation selects public
+ABI policy by itself. Readelf's displayed names are not a claim of lossless ELF
+string bytes; an exact byte-name contract requires separately bound ELF facts.
+
+The complete-projection regressions are
+`NativeAbiCompleteSymbolFactsTests` in the existing inventory test module, so
+`./scripts/dev-x86_64.sh native-abi-inventory-test` includes them. They cover
+private/import/data/TLS/COMMON rows, unusual GNU display fields, duplicate
+members and sections, and malformed or incomplete joins. Native fixture
+inspection builds only small ELF/archive test inputs; it does not rebuild or
+qualify runtime products, select exports, or change any promotion flag.
