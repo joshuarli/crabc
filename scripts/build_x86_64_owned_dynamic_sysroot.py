@@ -32,7 +32,14 @@ LOADER_DEPENDENCY_ARTIFACT = "libldso.so"
 # public versus hidden internal calls, and it must never be applied to the
 # loader, application DSOs, or static archives.
 SHARED_LIBC_DYNAMIC_LIST = ROOT / "libc/src/c_abi/x86_64/owned_dynamic.list"
+# This is an exact, reviewed local-symbol contract for the one bundled C
+# allocator member selected by `libmimalloc-sys` 0.1.49. It names its 172
+# upstream `mimalloc.h` declarations and 252 non-header implementation names;
+# it is not a prefix rule and does not select a different object or backend.
+SHARED_LIBC_MIMALLOC_HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
 MUSL_1_2_6_DYNAMIC_LIST_SHA256 = "264ae3bf630a7f6d894a51f91f9acae45b89a5f639537353d03af1a04e9da0f9"
+MIMALLOC_V3_HIDDEN_LIST_SHA256 = "cd537f6579018bbba79d831ee148a7b07f51a0f3bda538a27970724751d78873"
+MIMALLOC_V3_HIDDEN_LIST_COUNT = 424
 MUSL_1_2_6_DYNAMIC_LIST_MEMBERS = (
     "environ", "__environ", "stdin", "stdout", "stderr",
     "malloc", "calloc", "realloc", "free", "memalign", "posix_memalign",
@@ -92,10 +99,9 @@ def _source_file_identity(path: Path, description: str) -> dict[str, object]:
 def _normalized_loader_argument(argument: str, stage: Path) -> str:
     """Replace build-local prefixes without changing an arbitrary argument."""
 
-    if argument.startswith("--dynamic-list="):
-        return "--dynamic-list=" + _normalized_loader_argument(
-            argument.removeprefix("--dynamic-list="), stage
-        )
+    for option in ("--dynamic-list=", "--version-script="):
+        if argument.startswith(option):
+            return option + _normalized_loader_argument(argument.removeprefix(option), stage)
     for physical, replacement in ((stage.resolve(), "$BUILD"), (ROOT.resolve(), "$SOURCE")):
         spelling = str(physical)
         if argument == spelling:
@@ -134,9 +140,46 @@ def shared_libc_dynamic_list() -> dict[str, object]:
     }
 
 
+def shared_libc_mimalloc_hidden_exports(stage: Path) -> dict[str, object]:
+    """Materialize the exact local-only list for this one shared libc link.
+
+    The selected `libmimalloc-sys` 0.1.49 member retains all of these global
+    definitions in `libc.a`.  Its upstream header and implementation spellings
+    are not installed crabc headers, and this version script changes only their
+    physical visibility in `libc.so`.  Keep the source list exact: a glob or
+    prefix would silently capture a later contract.
+    """
+
+    identity = _source_file_identity(
+        SHARED_LIBC_MIMALLOC_HIDDEN_LIST, "native libc mimalloc hidden-export list"
+    )
+    if identity["sha256"] != MIMALLOC_V3_HIDDEN_LIST_SHA256:
+        raise common.BuildError("native libc mimalloc hidden-export list differs from its reviewed contract")
+    try:
+        members = tuple(SHARED_LIBC_MIMALLOC_HIDDEN_LIST.read_text(encoding="utf-8").splitlines())
+    except OSError as error:
+        raise common.BuildError("native libc mimalloc hidden-export list cannot be read") from error
+    if (len(members) != MIMALLOC_V3_HIDDEN_LIST_COUNT or not members
+            or any(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", member) is None for member in members)
+            or members != tuple(sorted(set(members)))):
+        raise common.BuildError("native libc mimalloc hidden-export list member/order contract differs")
+    script = stage / "libc-mimalloc-hidden.exports"
+    script.write_text("{\n  local:\n" + "".join(f"    {member};\n" for member in members) + "};\n",
+                      encoding="utf-8")
+    script.chmod(0o600)
+    return {
+        "source": identity,
+        "member_count": len(members),
+        "members": list(members),
+        "linker_script_sha256": common.sha256_file(script),
+        "linker_policy": "exact-local-symbols",
+    }
+
+
 def shared_libc_link_command(
     lld: Path,
     dynamic_list: Path,
+    mimalloc_hidden_exports: Path,
     objects: Path,
     selected: tuple[str, ...],
     builtins: Path,
@@ -146,7 +189,7 @@ def shared_libc_link_command(
 
     return [
         str(lld), "-shared", "--hash-style=sysv", "-soname", "libc.so",
-        f"--dynamic-list={dynamic_list}",
+        f"--dynamic-list={dynamic_list}", f"--version-script={mimalloc_hidden_exports}",
         "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
         *(str(objects / item) for item in selected), str(builtins), "-o", str(library / "libc.so"),
     ]
@@ -305,6 +348,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     rust_sysroot = common.pinned_rustc_sysroot(Path(rustup))
     lld = rust_sysroot / "lib/rustlib" / common.TARGET / "bin/gcc-ld/ld.lld"
     shared_dynamic_list = shared_libc_dynamic_list()
+    shared_mimalloc_hidden_exports = shared_libc_mimalloc_hidden_exports(stage)
     run = common.run
     dependency_file = stage / "allocator.d"
     c_flags = ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC",
@@ -357,7 +401,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     # ordinary internal libc calls locally without changing public weak alias
     # metadata, while retaining its data and allocation interposition scope.
     libc_shared_link_command = shared_libc_link_command(
-        lld, SHARED_LIBC_DYNAMIC_LIST, objects, selected, builtins, library
+        lld, SHARED_LIBC_DYNAMIC_LIST, stage / "libc-mimalloc-hidden.exports", objects, selected, builtins, library
     )
     run(libc_shared_link_command)
     undefined = run([nm, "--undefined-only", str(library / "libc.so")]).decode().splitlines()
@@ -425,6 +469,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
                   "libc_command": [arg.replace(str(stage), "$BUILD").replace(str(ROOT), "$SOURCE") for arg in libc_command],
                   "libc_shared_link_command": [_normalized_loader_argument(arg, stage) for arg in libc_shared_link_command],
                   "shared_dynamic_list": shared_dynamic_list,
+                  "shared_mimalloc_hidden_exports": shared_mimalloc_hidden_exports,
                   "loader_imports": sorted(allowed)}
     common.write_json(metadata / "libc-shared.provenance.json", provenance)
     payload_files = {path.relative_to(output).as_posix(): common.sha256_file(path)

@@ -107,12 +107,16 @@ land together; a raw musl comparison still records it as an extra identity.
 
 The bundled C allocator's upstream API is not an installed crabc API.
 `libc/src/allocator_mimalloc.rs` owns the public allocation wrappers and states
-that backend `mi_*` names are private. Select non-public shared visibility for
-the explicitly enumerated backend definitions, including both upstream-header
-and non-header names. Preserve the static provider graph, public allocation
-aliases, interposition, and allocator lifecycle. A prefix match is not the
-selection manifest, and a desired hidden disposition cannot be reported as an
-observed hidden symbol before the product demonstrates it.
+that backend `mi_*` names are private. The exact 424-name
+`libc/src/c_abi/x86_64/owned_mimalloc_hidden.list` selects non-public shared
+visibility for 172 upstream-header and 252 non-header definitions. The shared
+builder localizes those definitions with an exact version script; it preserves
+the static provider graph, public allocation aliases, interposition, and
+allocator lifecycle. The [visibility component](owned-mimalloc-export-visibility.md)
+requires their absence from dynsym, their LOCAL shared symtab definitions,
+and preserved static providers and surviving public metadata. This placement
+contract supplies the allocator portion of the complete selection manifest;
+it does not select visibility for any other runtime owner.
 
 The private feature witnesses have actual evidence consumers. Crypt helper
 names, private musl alias targets, process/runtime seams, compiler helpers,
