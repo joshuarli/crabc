@@ -22,6 +22,23 @@ from compat.x86_64.tests.test_native_abi_inventory import HEADER, SECTIONS, STAT
 
 
 class CompleteElfFactTests(unittest.TestCase):
+    def test_final_exec_and_pie_headers_keep_exact_distinct_type_contracts(self):
+        descriptions = {'REL': 'REL (Relocatable file)', 'DYN': 'DYN (Shared object file)',
+                        'EXEC': 'EXEC (Executable file)',
+                        'PIE': 'DYN (Position-Independent Executable file)'}
+        for selected, description in descriptions.items():
+            header = HEADER.replace(descriptions['REL'], description)
+            observed = facts.inventory.parse_elf_facts(header, SECTIONS, STATIC, expected_type=selected)
+            self.assertEqual(observed['header']['identity']['Type'], description)
+            self.assertEqual(observed['header_raw'], header)
+            for crossed in descriptions:
+                if crossed != selected:
+                    with self.subTest(selected=selected, crossed=crossed):
+                        with self.assertRaises(facts.inventory.InventoryError):
+                            facts.inventory.parse_elf_facts(header, SECTIONS, STATIC, expected_type=crossed)
+            with self.assertRaises(facts.inventory.InventoryError):
+                facts.inventory.parse_elf_facts(header, SECTIONS, '', expected_type=selected)
+
     def test_complete_shared_fact_join_does_not_accept_an_omitted_symbol_table(self):
         header = HEADER.replace('REL (Relocatable file)', 'DYN (Shared object file)')
         observed = facts.inventory.parse_elf_facts(header, SECTIONS, STATIC, expected_type='DYN')
