@@ -93,6 +93,9 @@ HEADER_CALLABLE_VISIBILITY_MATRIX_REPORT_PATH = (
 HEADER_CALLABLE_VISIBILITY_MATRIX_RUNNER_PATH = (
     ROOT / "compat" / "x86_64" / "run_header_callable_visibility_matrix.sh"
 )
+HEADER_CALLABLE_EXTENSION_CONTRACT_PATH = (
+    ROOT / "compat" / "x86_64" / "header_callable_extension_contract.toml"
+)
 HEADER_ABI_MATRIX_CONTRACT_PATH = ROOT / "compat" / "x86_64" / "header_abi_matrix.toml"
 HEADER_ABI_MATRIX_REPORT_PATH = (
     ROOT / "compat" / "x86_64" / "generated" / "header_abi_matrix" / "report.json"
@@ -186,7 +189,7 @@ EXPECTED_TARGET = "x86_64-unknown-linux-musl"
 EXPECTED_PLATFORM = "Linux/x86-64 little-endian"
 EXPECTED_KERNEL_MSRV = "5.10"
 EXPECTED_HEADER_LAYOUT_SCHEMA = "crabc.x86_64-headers-layouts/v1"
-EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v18"
+EXPECTED_HEADER_LAYOUT_FOUNDATION_SCHEMA = "crabc.x86_64-headers-layouts-foundation/v19"
 EXPECTED_HEADER_LAYOUTS_AGGREGATE_COMMAND = "./scripts/dev-x86_64.sh headers-layouts-aggregate"
 EXPECTED_HEADER_COMPLETION_ALGORITHM = "header-foundation-v1"
 EXPECTED_HEADER_COMPLETION_INSTALLED_SURFACE_KEYS = [
@@ -453,8 +456,9 @@ EXPECTED_HEADER_ABI_MATRIX_COMMAND = "./scripts/dev-x86_64.sh header-abi-matrix"
 EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "candidate_public_header_count": 191,
     "comparison_counts": {
+        "candidate-only-reviewed-native-callable-extension": 28,
         "candidate-only-reviewed-project-c-abi-extension": 56,
-        "matched": 1280,
+        "matched": 1252,
         "oracle-not-applicable": 1,
     },
     "complete": False,
@@ -467,6 +471,8 @@ EXPECTED_HEADER_ABI_MATRIX_SUMMARY = {
     "mismatch_row_count": 0,
     "pinned_public_header_count": 183,
     "profile_count": 7,
+    "reviewed_native_callable_extension_fact_count": 28,
+    "reviewed_native_callable_extension_row_count": 28,
     "row_count": 1337,
 }
 EXPECTED_HEADER_RECORD_LAYOUT_MATRIX_COMMAND = (
@@ -517,10 +523,11 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "candidate_only_identity_count": 0,
     "candidate_only_identity_kind_counts": {},
     "candidate_public_header_count": 191,
-    "comparable_row_count": 1280,
+    "comparable_row_count": 1252,
     "comparison_counts": {
+        "candidate-only-reviewed-native-callable-extension": 28,
         "candidate-only-reviewed-project-c-abi-extension": 56,
-        "matched": 1280,
+        "matched": 1252,
         "oracle-not-applicable": 1,
     },
     "complete": False,
@@ -541,10 +548,13 @@ EXPECTED_HEADER_DECLARATION_MACRO_VISIBILITY_MATRIX_SUMMARY = {
     "project_only_row_count": 56,
     "reference_only_identity_count": 0,
     "reference_only_identity_kind_counts": {},
+    "reviewed_native_callable_extension_identity_count": 28,
+    "reviewed_native_callable_extension_row_count": 28,
     "row_count": 1337,
     "source_form_comparison_counts": {
+        "candidate-only-reviewed-native-callable-extension": 28,
         "candidate-only-reviewed-project-c-abi-extension": 56,
-        "matched": 1280,
+        "matched": 1252,
         "oracle-not-applicable": 1,
     },
     "source_form_difference_count": 0,
@@ -2778,6 +2788,7 @@ def require_header_callable_visibility_matrix(
         isinstance(matrix["scope"], str)
         and "callable name-and-class visibility" in matrix["scope"]
         and "prototype and macro-replacement equality" in matrix["scope"]
+        and "reviewed native callable extension" in matrix["scope"]
         and "archive linkage, runtime behavior, family promotion, and public support" in matrix["scope"],
         "header-foundation callable visibility matrix must retain its non-completion scope",
     )
@@ -2791,6 +2802,7 @@ def require_header_callable_visibility_matrix(
         contract.inventory == ROOT / "compat" / "x86_64" / "header_callable_inventory.json"
         and contract.public_headers == PUBLIC_HEADER_INVENTORY_PATH
         and contract.generated_report == report_path
+        and contract.callable_extension_contract == HEADER_CALLABLE_EXTENSION_CONTRACT_PATH
         and contract.profiles == expected_profiles,
         "callable visibility matrix contract inputs drifted",
     )
@@ -2808,12 +2820,13 @@ def require_header_callable_visibility_matrix(
     require(
         summary
         == {
-            "candidate_only_callable_count": 0,
+            "candidate_only_callable_count": 28,
             "candidate_public_header_count": 191,
-            "comparable_row_count": 1280,
+            "comparable_row_count": 1252,
             "comparison_counts": {
+                "candidate-only-reviewed-native-callable-extension": 28,
                 "candidate-only-reviewed-project-c-abi-extension": 56,
-                "matched": 1280,
+                "matched": 1252,
                 "oracle-not-applicable": 1,
             },
             "complete": False,
@@ -2831,6 +2844,8 @@ def require_header_callable_visibility_matrix(
             "project_only_header_count": 8,
             "project_only_row_count": 56,
             "reference_only_callable_count": 0,
+            "reviewed_native_callable_extension_callable_count": 28,
+            "reviewed_native_callable_extension_row_count": 28,
             "row_count": 1337,
         },
         "callable visibility matrix finite baseline drifted",
@@ -2844,6 +2859,7 @@ def require_header_callable_visibility_matrix(
         and scope.get("prototype_or_macro_replacement_equality") is False
         and scope.get("noncallable_abi") is False
         and scope.get("linkage_or_runtime") is False
+        and scope.get("reviewed_native_callable_extensions") is True
         and scope.get("family_promotion") is False
         and scope.get("public_support") is False,
         "callable visibility matrix scope drifted",
@@ -2936,6 +2952,7 @@ def require_header_abi_matrix(manifest: Mapping[str, Any]) -> int:
         and "named typedefs" in scope
         and "macro replacement forms" in scope
         and "record byte layouts" in scope
+        and "reviewed native callable extension" in scope
         and "archive linkage, runtime behavior, family promotion, or public support" in scope,
         "header-foundation prototype/layout matrix must retain its partial scope",
     )
@@ -2950,6 +2967,7 @@ def require_header_abi_matrix(manifest: Mapping[str, Any]) -> int:
     require(
         contract.generated_report == report_path
         and contract.public_headers == PUBLIC_HEADER_INVENTORY_PATH
+        and contract.callable_extension_contract == HEADER_CALLABLE_EXTENSION_CONTRACT_PATH
         and contract.callable_inventory
         == ROOT / "compat" / "x86_64" / "header_callable_inventory.json",
         "header ABI matrix contract inputs drifted",
@@ -3201,6 +3219,7 @@ def require_header_declaration_macro_visibility_matrix(
         and "named function, typedef, record, enum, variable, and macro identities" in scope
         and "same-identity source-form differences" in scope
         and "checked candidate fact summaries and digests" in scope
+        and "reviewed native callable extension" in scope
         and "declaration-form equality, macro replacements, record byte layouts" in scope
         and "archive linkage, runtime behavior, family promotion, and public support" in scope,
         "header-foundation declaration/macro visibility matrix must retain its partial scope",
@@ -3222,6 +3241,7 @@ def require_header_declaration_macro_visibility_matrix(
         contract.source_abi_contract == HEADER_ABI_MATRIX_CONTRACT_PATH
         and contract.source_abi_report == HEADER_ABI_MATRIX_REPORT_PATH
         and contract.callable_visibility_contract == HEADER_CALLABLE_VISIBILITY_MATRIX_CONTRACT_PATH
+        and contract.callable_extension_contract == HEADER_CALLABLE_EXTENSION_CONTRACT_PATH
         and contract.public_headers == PUBLIC_HEADER_INVENTORY_PATH
         and contract.generated_report == report_path
         and contract.profiles == EXPECTED_HEADER_FOUNDATION_CLOSURE_PROFILES,
@@ -3246,6 +3266,7 @@ def require_header_declaration_macro_visibility_matrix(
         and scope_report.get("record_byte_layouts") is False
         and scope_report.get("archive_linkage") is False
         and scope_report.get("runtime") is False
+        and scope_report.get("reviewed_native_callable_extensions") is True
         and scope_report.get("family_promotion") is False
         and scope_report.get("public_support") is False,
         "declaration/macro visibility matrix scope drifted",
@@ -3503,8 +3524,8 @@ def validate_header_layout_foundation_manifest(
             "state": "partial-verified",
             "owner": "libc.headers-layouts",
             "command": EXPECTED_HEADER_CALLABLE_PROVIDER_LINKAGE_AUDIT_COMMAND,
-            "candidate_external_callable_count": 1525,
-            "default_static_callable_count": 1119,
+            "candidate_external_callable_count": 1526,
+            "default_static_callable_count": 1123,
             "verified_feature_callable_count": 78,
             "verified_feature_profile_count": 28,
             "topology_only_profile_count": 1,
@@ -3567,8 +3588,8 @@ def validate_header_layout_foundation_manifest(
             "command": EXPECTED_HEADER_CALLABLE_DISPOSITION_COMMAND,
             "contract": "compat/x86_64/header_callable_disposition.toml",
             "report": "compat/x86_64/header_callable_disposition.json",
-            "candidate_external_callable_count": 1525,
-            "default_static_callable_count": 1119,
+            "candidate_external_callable_count": 1526,
+            "default_static_callable_count": 1123,
             "verified_feature_callable_count": 78,
             "missing_reference_declaration_name_count": 0,
             "missing_reference_declaration_record_count": 0,
@@ -3586,6 +3607,7 @@ def validate_header_layout_foundation_manifest(
     require(
         isinstance(description, str)
         and "selected external callable names" in description
+        and "reviewed native callable extension" in description
         and "exact roster-derived direct additions" in description
         and "derived deferred planned-provider complement" in description
         and "Zero missing pinned-musl declaration names" in description
@@ -3724,6 +3746,9 @@ def validate_header_layout_foundation_manifest(
         "compat/x86_64/header_callable_inventory.toml",
         "compat/x86_64/header_callable_inventory.py",
         "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_extension_contract.toml",
+        "compat/x86_64/header_callable_extension_contract.py",
+        "compat/x86_64/tests/test_header_callable_extension_contract.py",
         "compat/x86_64/header_callable_disposition.toml",
         "compat/x86_64/header_callable_disposition.py",
         "compat/x86_64/header_callable_disposition.json",
@@ -6715,9 +6740,10 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
         "foundation-verified `libc.headers-layouts`",
         "1,337-row direct-public-include C11/C++17 identity matrix",
         "zero comparable declaration-or-macro identity mismatch rows",
-        "1,280 matched identity rows",
+        "1,252 matched identity rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
+        "28 reviewed native callable extension rows",
         "checked candidate fact summaries and digests",
         "zero same-identity source-form differences",
         "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -6737,6 +6763,9 @@ def require_all_header_declaration_macro_feature_visibility_artifact(
         "compat/x86_64/generated/header_abi_matrix/report.json",
         "compat/x86_64/header_callable_visibility_matrix.toml",
         "compat/x86_64/header_callable_visibility_matrix.py",
+        "compat/x86_64/header_callable_extension_contract.toml",
+        "compat/x86_64/header_callable_extension_contract.py",
+        "compat/x86_64/tests/test_header_callable_extension_contract.py",
         "compat/x86_64/header_callable_inventory.toml",
         "compat/x86_64/header_callable_inventory.py",
         "compat/x86_64/header_callable_inventory.json",
@@ -6790,6 +6819,7 @@ def require_all_header_callable_feature_visibility_artifact(
         "zero current comparable callable name/class mismatch rows",
         "one current oracle-not-applicable `aio.h` row",
         "56 project-only header/profile rows",
+        "28 reviewed native callable extension rows",
         "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
         require(phrase in description, f"callable visibility artifact description omits {phrase}")
@@ -6798,6 +6828,9 @@ def require_all_header_callable_feature_visibility_artifact(
     )
     for owner in (
         "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_extension_contract.toml",
+        "compat/x86_64/header_callable_extension_contract.py",
+        "compat/x86_64/tests/test_header_callable_extension_contract.py",
         "compat/x86_64/header_callable_visibility_matrix.toml",
         "compat/x86_64/header_callable_visibility_matrix.py",
         "compat/x86_64/generated/header_callable_visibility_matrix/report.json",
@@ -6835,6 +6868,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     for phrase in (
         "foundation-verified `libc.headers-layouts`",
         "current names",
+        "reviewed native callable extension",
         "default-static",
         "verified feature-provider",
         "planned owned-static provider",
@@ -6853,6 +6887,9 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     for owner in (
         "compat/x86_64/header_callable_disposition.toml",
         "compat/x86_64/header_callable_disposition.py",
+        "compat/x86_64/header_callable_extension_contract.toml",
+        "compat/x86_64/header_callable_extension_contract.py",
+        "compat/x86_64/tests/test_header_callable_extension_contract.py",
         "compat/x86_64/header_callable_disposition.json",
         "compat/x86_64/header_callable_linkage_audit.py",
         "compat/x86_64/header_callable_inventory.toml",
@@ -6915,6 +6952,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
             "missing_reference_declaration_record_count",
             "missing_reference_declaration_routing_complete",
             "primary_disposition_exact_coverage",
+            "reviewed_native_callable_extension_provider_route_count",
             "undispositioned_candidate_callable_count",
             "undispositioned_missing_reference_name_count",
             "unprovided_callable_count",
@@ -6933,6 +6971,21 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
     require(
         all(type(value) is int and value >= 0 for value in provider_counts.values()),
         "header callable disposition provider counts are invalid",
+    )
+    reviewed_routes = report.get("reviewed_callable_extension_provider_routes")
+    require(
+        reviewed_routes
+        == [
+            {
+                "candidate_external_present": True,
+                "header": "signal.h",
+                "name": "tgkill",
+                "provider_route": "default-static",
+            }
+        ]
+        and summary["reviewed_native_callable_extension_provider_route_count"]
+        == len(reviewed_routes),
+        "header callable disposition reviewed extension provider route drifted",
     )
     deferred_resolution_counts = summary["deferred_resolution_counts"]
     require(
@@ -6982,6 +7035,7 @@ def require_header_callable_disposition_artifact(family: Mapping[str, Any]) -> N
             "family_promotion": False,
             "header_ownership_routing": True,
             "public_support": False,
+            "reviewed_native_callable_extension_provider_routes": True,
             "runtime_semantics": False,
         },
         "header callable disposition scope drifted",
@@ -7134,9 +7188,10 @@ def require_all_header_prototype_layout_artifact(
         "foundation-verified `libc.headers-layouts`",
         "compiler-derived 1,337-row direct-public-include C11/C++17 matrix",
         "zero current comparable prototype or named source-form mismatch rows",
-        "1,280 matched rows",
+        "1,252 matched rows",
         "one current oracle-not-applicable `aio.h:c11-strict` row",
         "56 project-only header/profile rows",
+        "28 reviewed native callable extension rows",
         "does not classify raw spelling differences as ABI differences",
         "record byte layouts, anonymous declarations, inline behavior, archive linkage, runtime behavior, family promotion, or public x86 support",
     ):
@@ -7148,6 +7203,9 @@ def require_all_header_prototype_layout_artifact(
         "compat/x86_64/header_callable_inventory.toml",
         "compat/x86_64/header_callable_inventory.py",
         "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_extension_contract.toml",
+        "compat/x86_64/header_callable_extension_contract.py",
+        "compat/x86_64/tests/test_header_callable_extension_contract.py",
         "compat/x86_64/header_abi_matrix.toml",
         "compat/x86_64/header_abi_matrix.py",
         "compat/x86_64/generated/header_abi_matrix/report.json",

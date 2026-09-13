@@ -31,6 +31,37 @@ DISPOSITION = load_module("header_callable_disposition_test", SCRIPT)
 
 
 class HeaderCallableDispositionTests(unittest.TestCase):
+    def test_reviewed_native_callable_extension_provider_route_is_exact(self) -> None:
+        """Provider routing is separate from the candidate-only header fact."""
+
+        contract = DISPOSITION.load_contract()
+        routes = DISPOSITION.reviewed_provider_routes(
+            contract,
+            candidate_external=("kill", "tgkill"),
+            static_exports=("kill", "tgkill"),
+            default_static=("kill", "tgkill"),
+        )
+        self.assertEqual(
+            routes,
+            [
+                {
+                    "candidate_external_present": True,
+                    "header": "signal.h",
+                    "name": "tgkill",
+                    "provider_route": "default-static",
+                }
+            ],
+        )
+        with self.assertRaisesRegex(
+            DISPOSITION.HeaderCallableDispositionError, "default static"
+        ):
+            DISPOSITION.reviewed_provider_routes(
+                contract,
+                candidate_external=("kill", "tgkill"),
+                static_exports=("kill",),
+                default_static=("kill",),
+            )
+
     def test_rand_pair_is_owned_while_bsd_state_apis_remain_deferred(self) -> None:
         primary = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))["primary_disposition"]
         owned = next(row for row in primary["declared_unverified_feature_archives"]
@@ -129,6 +160,20 @@ class HeaderCallableDispositionTests(unittest.TestCase):
         self.assertTrue(summary["header_ownership_routing_complete"])
         self.assertFalse(summary["header_declaration_parity_complete"])
         self.assertFalse(summary["final_provider_archive_closure_complete"])
+        self.assertEqual(
+            report["reviewed_callable_extension_provider_routes"],
+            [
+                {
+                    "candidate_external_present": True,
+                    "header": "signal.h",
+                    "name": "tgkill",
+                    "provider_route": "default-static",
+                }
+            ],
+        )
+        self.assertEqual(
+            summary["reviewed_native_callable_extension_provider_route_count"], 1
+        )
 
     def test_classic_netdb_names_have_the_planned_owned_static_provider(self) -> None:
         report = json.loads(CHECKED_REPORT.read_text(encoding="utf-8"))

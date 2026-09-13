@@ -3,13 +3,14 @@
 # makes remaining prototype and named noncallable source differences finite;
 # it is not a substitute for ABI classification, archive extraction, behavior,
 # or the final header-family promotion aggregate.
-schema = "crabc.x86_64-header-abi-matrix/v1"
+schema = "crabc.x86_64-header-abi-matrix/v2"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
 oracle = "Pinned musl 1.2.6"
 public_headers = "compat/x86_64/public_headers.txt"
 callable_inventory = "compat/x86_64/header_callable_inventory.json"
 generated_report = "compat/x86_64/generated/header_abi_matrix/report.json"
+callable_extension_contract = "compat/x86_64/header_callable_extension_contract.toml"
 
 [policy]
 compiler_ast_json = true
@@ -23,6 +24,7 @@ archive_linkage = false
 runtime = false
 family_promotion = false
 public_support = false
+reviewed_native_callable_extensions = true
 
 [work_package]
 target_family = "libc.headers-layouts"
@@ -31,7 +33,7 @@ blocker = "The current all-header callable report has names/classes only, so pro
 prerequisites = ["oracle.musl-toolchain", "libc.errno-tls"]
 dependent_work = ["libc.posix-runtime", "libc.pthread-tls", "libc.text-math-locale-stdio", "libc.c-abi-compat", "sysroot.static-tls", "ldso.dynamic-runtime"]
 baseline_contract = "Pinned musl 1.2.6 public headers, Linux 5.10 UAPI input, the frozen AArch64 capability ledger, and System V AMD64 LP64/x87 ABI."
-source_owners = ["compat/x86_64/header_abi_matrix.toml", "compat/x86_64/header_abi_matrix.py", "compat/x86_64/run_header_abi_matrix.sh", "compat/x86_64/tests/test_header_abi_matrix.py", "compat/x86_64/header_callable_inventory.toml", "compat/x86_64/header_callable_inventory.py", "compat/x86_64/header_callable_inventory.json", "compat/x86_64/public_headers.txt", "compat/x86_64/headers-layouts-foundation.toml", "compat/x86_64/parity.toml", "compat/x86_64/validate_parity_ledger.py", "scripts/dev-x86_64.sh"]
+source_owners = ["compat/x86_64/header_abi_matrix.toml", "compat/x86_64/header_abi_matrix.py", "compat/x86_64/run_header_abi_matrix.sh", "compat/x86_64/tests/test_header_abi_matrix.py", "compat/x86_64/header_callable_inventory.toml", "compat/x86_64/header_callable_inventory.py", "compat/x86_64/header_callable_inventory.json", "compat/x86_64/header_callable_extension_contract.toml", "compat/x86_64/header_callable_extension_contract.py", "compat/x86_64/tests/test_header_callable_extension_contract.py", "compat/x86_64/public_headers.txt", "compat/x86_64/headers-layouts-foundation.toml", "compat/x86_64/parity.toml", "compat/x86_64/validate_parity_ledger.py", "scripts/dev-x86_64.sh"]
 focused_evidence_command = "./scripts/dev-x86_64.sh header-abi-matrix"
 family_aggregate_command = "./scripts/dev-x86_64.sh campaign-family libc.headers-layouts"
 product_command = "./scripts/dev-x86_64.sh campaign-static"

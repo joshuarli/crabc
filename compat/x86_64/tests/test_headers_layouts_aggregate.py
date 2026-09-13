@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import dataclasses
 import importlib.util
+import json
 import subprocess
 import sys
 import tempfile
@@ -210,6 +211,8 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
         self.assertIn("compat/x86_64/headers_layouts_aggregate.py", paths)
         self.assertIn("compat/x86_64/run_headers_layouts_aggregate.sh", paths)
         self.assertIn("compat/x86_64/header_callable_disposition.py", paths)
+        self.assertIn("compat/x86_64/header_callable_extension_contract.toml", paths)
+        self.assertIn("compat/x86_64/header_callable_extension_contract.py", paths)
         self.assertIn("compat/x86_64/header_callable_linkage_audit.py", paths)
         self.assertIn("compat/x86_64/header_record_layout_matrix.toml", paths)
         self.assertIn("compat/x86_64/header_record_layout_matrix.py", paths)
@@ -217,6 +220,56 @@ class HeadersLayoutsAggregateTests(unittest.TestCase):
             "compat/x86_64/generated/header_record_layout_matrix/report.json", paths
         )
         self.assertTrue(set(AGGREGATE.runner_paths()).issubset(paths))
+
+    def test_generic_disposition_requires_the_reviewed_extension_route(self) -> None:
+        """A raw callable extension cannot be omitted from aggregate routing."""
+
+        work_root = ROOT / ".work" / "x86_64" / "headers-layouts-aggregate-tests"
+        work_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=work_root) as temporary:
+            temporary_root = Path(temporary)
+            foundation: dict[str, object] = {}
+            reports: dict[str, Path] = {}
+            for identifier, table, schema, path_key in AGGREGATE.GENERIC_REPORTS:
+                report_path = temporary_root / f"{identifier}.json"
+                summary: dict[str, object]
+                if identifier == "callable-disposition":
+                    summary = {
+                        "candidate_external_callable_count": 1526,
+                        "reviewed_native_callable_extension_provider_route_count": 1,
+                    }
+                else:
+                    summary = {"profile_count": 7, "row_count": 1337}
+                report_path.write_text(
+                    json.dumps(
+                        {
+                            "schema": schema,
+                            "target": AGGREGATE.TARGET,
+                            "platform": AGGREGATE.PLATFORM,
+                            "oracle": AGGREGATE.ORACLE,
+                            "summary": summary,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                foundation[table] = {
+                    path_key: report_path.relative_to(ROOT).as_posix(),
+                }
+                reports[identifier] = report_path
+
+            observed = AGGREGATE.generic_reports(foundation)
+            self.assertEqual(
+                [record["id"] for record in observed],
+                [record[0] for record in AGGREGATE.GENERIC_REPORTS],
+            )
+
+            broken = json.loads(reports["callable-disposition"].read_text(encoding="utf-8"))
+            broken["summary"]["reviewed_native_callable_extension_provider_route_count"] = 0
+            reports["callable-disposition"].write_text(json.dumps(broken), encoding="utf-8")
+            with self.assertRaisesRegex(
+                AGGREGATE.AggregateError, "reviewed extension route"
+            ):
+                AGGREGATE.generic_reports(foundation)
 
     def test_all_header_dimensions_independently_block_completion(self) -> None:
         contract = self.assessment_contract()

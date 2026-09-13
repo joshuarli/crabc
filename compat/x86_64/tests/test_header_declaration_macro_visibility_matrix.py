@@ -8,6 +8,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -63,6 +64,112 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
             1,
         )
 
+    def test_reviewed_native_callable_extension_derives_one_identity(self) -> None:
+        """The exact source exception is retained by the identity projection."""
+
+        contract = MATRIX.load_contract()
+        source_row = {
+            "candidate": {
+                "count": 1,
+                "kind_counts": {"function": 1},
+                "sha256": "1" * 64,
+            },
+            "candidate_status": "ok",
+            "comparison": "candidate-only-reviewed-native-callable-extension",
+            "difference": {
+                "candidate_only": [
+                    {
+                        "kind": "function",
+                        "name": "tgkill",
+                        "signature": "int (int, int, int)|mangled=tgkill",
+                    }
+                ],
+                "candidate_only_count": 1,
+                "incompatible": [],
+                "incompatible_count": 0,
+                "matched_count": 0,
+                "reference_only": [],
+                "reference_only_count": 0,
+            },
+            "header": "signal.h",
+            "profile": "cxx17-strict",
+            "reference": {"count": 0, "kind_counts": {}, "sha256": "2" * 64},
+            "reference_status": "ok",
+        }
+
+        row = MATRIX.derive_row(source_row, contract)
+
+        self.assertEqual(
+            row["comparison"], "candidate-only-reviewed-native-callable-extension"
+        )
+        self.assertEqual(row["candidate_only"], [{"kind": "function", "name": "tgkill"}])
+        self.assertEqual(
+            row["disposition"],
+            "retained-reviewed-native-c-abi-callable-extension",
+        )
+
+        bad_source_row = dict(source_row)
+        bad_difference = dict(source_row["difference"])
+        bad_difference["candidate_only"] = [
+            {
+                "kind": "function",
+                "name": "tgkill",
+                "signature": "int (int, int, int)|mangled=_Z6tgkilliii",
+            }
+        ]
+        bad_source_row["difference"] = bad_difference
+        with self.assertRaisesRegex(
+            MATRIX.HeaderDeclarationMacroVisibilityMatrixError, "signature"
+        ):
+            MATRIX.derive_row(bad_source_row, contract)
+
+    def test_reviewed_extension_keeps_its_matched_identities(self) -> None:
+        """The exact delta cannot erase matching transitive declarations."""
+
+        contract = MATRIX.load_contract()
+        source_row = {
+            "candidate": {
+                "count": 3,
+                "kind_counts": {"function": 3},
+                "sha256": "3" * 64,
+            },
+            "candidate_status": "ok",
+            "comparison": "candidate-only-reviewed-native-callable-extension",
+            "difference": {
+                "candidate_only": [
+                    {
+                        "kind": "function",
+                        "name": "tgkill",
+                        "signature": "int (int, int, int)|mangled=tgkill",
+                    }
+                ],
+                "candidate_only_count": 1,
+                "incompatible": [],
+                "incompatible_count": 0,
+                "matched_count": 2,
+                "reference_only": [],
+                "reference_only_count": 0,
+            },
+            "header": "signal.h",
+            "profile": "c11-gnu",
+            "reference": {
+                "count": 2,
+                "kind_counts": {"function": 2},
+                "sha256": "4" * 64,
+            },
+            "reference_status": "ok",
+        }
+        source = {"profiles": list(contract.profiles), "rows": [source_row]}
+
+        with patch.object(MATRIX, "load_source_report", return_value=source):
+            report = MATRIX.build_report(contract)
+
+        self.assertEqual(report["summary"]["matched_identity_count"], 2)
+        self.assertEqual(
+            report["summary"]["reviewed_native_callable_extension_identity_count"], 1
+        )
+        self.assertEqual(report["summary"]["candidate_only_identity_count"], 0)
+
     def test_identity_only_difference_strips_signatures_but_remains_a_mismatch(self) -> None:
         source_difference = {
             "candidate_only": [
@@ -103,11 +210,19 @@ class HeaderDeclarationMacroVisibilityMatrixTests(unittest.TestCase):
         self.assertEqual(
             report["summary"]["comparison_counts"],
             {
+                "candidate-only-reviewed-native-callable-extension": 28,
                 "candidate-only-reviewed-project-c-abi-extension": 56,
-                "matched": 1280,
+                "matched": 1252,
                 "oracle-not-applicable": 1,
             },
         )
+        self.assertEqual(
+            report["summary"]["reviewed_native_callable_extension_identity_count"], 28
+        )
+        self.assertEqual(
+            report["summary"]["reviewed_native_callable_extension_row_count"], 28
+        )
+        self.assertEqual(report["summary"]["matched_identity_count"], 294885)
         self.assertEqual(report["summary"]["source_form_difference_count"], 0)
         self.assertEqual(report["summary"]["source_form_difference_row_count"], 0)
         self.assertEqual(report["summary"]["source_form_only_difference_row_count"], 0)

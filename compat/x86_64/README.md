@@ -119,6 +119,23 @@ It keeps historical missing, unexpected, and metadata differences visible and
 does not turn the floor into ABI compatibility, family completion, promotion,
 or public support.
 
+[header_callable_extension_contract.toml](header_callable_extension_contract.toml)
+defines the one exact native callable extension that shares a pathname with
+pinned musl: `signal.h`'s `tgkill(int, int, int)`. The generic callable,
+declaration-form, declaration-identity, and provider-routing readers retain
+its raw candidate-only facts instead of relabeling them musl-matched. The
+record fixes its physical declaration header, C linkage spelling, signature,
+four visible compiler profiles, three configured C-hidden profiles, and the
+seven direct include roots through which the declaration is visible, plus its
+ordered component evidence mapping. Those four profile rows and seven roots
+remain 28 raw candidate-only observations. The
+existing `cxx17-strict` matrix profile has no configured defines but Clang
+predefines `_GNU_SOURCE`; it is therefore an observed GNU surface rather than
+a strict-C++ exception. The native thread-signal component separately keeps an
+explicit `-U_GNU_SOURCE -U_BSD_SOURCE -U_DEFAULT_SOURCE -U_ALL_SOURCE` C++
+probe to prove true strict absence. This finite accounting remains private and
+does not promote the header or runtime family.
+
 [locale-alias-contract.md](locale-alias-contract.md) records the pinned-musl
 weak public/strong internal locale and time alias mechanism, including the
 installed-product interposition proof. It remains a private component result

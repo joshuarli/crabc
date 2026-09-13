@@ -3,8 +3,9 @@
 # This freezes the direct-public-include comparison boundary without claiming
 # general header ABI parity. `header_callable_inventory.json` owns compiler
 # collection; this contract only defines how its already-observed callable
-# surfaces are compared and how the eight project-only paths stay explicit.
-schema = "crabc.x86_64-header-callable-feature-visibility-matrix/v1"
+# surfaces are compared, how the eight project-only paths stay explicit, and
+# how one exact reviewed native callable extension retains its raw difference.
+schema = "crabc.x86_64-header-callable-feature-visibility-matrix/v2"
 target = "x86_64-unknown-linux-musl"
 platform = "Linux/x86-64 little-endian"
 oracle = "Pinned musl 1.2.6"
@@ -13,6 +14,7 @@ public_headers = "compat/x86_64/public_headers.txt"
 generated_report = "compat/x86_64/generated/header_callable_visibility_matrix/report.json"
 pinned_public_header_count = 183
 candidate_public_header_count = 191
+callable_extension_contract = "compat/x86_64/header_callable_extension_contract.toml"
 profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
 
 [policy]
@@ -25,6 +27,7 @@ noncallable_abi = false
 linkage_or_runtime = false
 family_promotion = false
 public_support = false
+reviewed_native_callable_extensions = true
 
 # This callable inventory observes one exceptional pinned-musl source outcome,
 # not a candidate waiver. The empty-TU closure separately records its broader

@@ -4092,7 +4092,7 @@ class X86ParityLedgerTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v18"
+            manifest["schema"], "crabc.x86_64-headers-layouts-foundation/v19"
         )
         self.assertEqual(manifest["status"], "foundation-verified")
         self.assertEqual(manifest["family"], "libc.headers-layouts")
@@ -4117,6 +4117,12 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/header_callable_visibility_matrix.toml",
             headers_layouts["source_owners"],
         )
+        for owner in (
+            "compat/x86_64/header_callable_extension_contract.toml",
+            "compat/x86_64/header_callable_extension_contract.py",
+            "compat/x86_64/tests/test_header_callable_extension_contract.py",
+        ):
+            self.assertIn(owner, headers_layouts["source_owners"])
         self.assertIn(
             "compat/x86_64/header_callable_disposition.toml",
             headers_layouts["source_owners"],
@@ -4284,8 +4290,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             feature_visibility["comparison_counts"],
             {
+                "candidate-only-reviewed-native-callable-extension": 28,
                 "candidate-only-reviewed-project-c-abi-extension": 56,
-                "matched": 1280,
+                "matched": 1252,
                 "oracle-not-applicable": 1,
             },
         )
@@ -4310,8 +4317,9 @@ class X86ParityLedgerTests(unittest.TestCase):
         self.assertEqual(
             prototype_layout["comparison_counts"],
             {
+                "candidate-only-reviewed-native-callable-extension": 28,
                 "candidate-only-reviewed-project-c-abi-extension": 56,
-                "matched": 1280,
+                "matched": 1252,
                 "oracle-not-applicable": 1,
             },
         )
@@ -4336,6 +4344,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             disposition["command"],
             "./scripts/dev-x86_64.sh header-callable-disposition",
         )
+        self.assertEqual(disposition["candidate_external_callable_count"], 1526)
+        self.assertEqual(disposition["default_static_callable_count"], 1123)
+        self.assertEqual(disposition["verified_feature_callable_count"], 78)
         for field in (
             "declared_unverified_feature_callable_count",
             "unprovided_callable_count",
@@ -4355,6 +4366,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             provider_audit["command"],
             "./scripts/dev-x86_64.sh header-callable-provider-linkage-audit",
         )
+        self.assertEqual(provider_audit["candidate_external_callable_count"], 1526)
+        self.assertEqual(provider_audit["default_static_callable_count"], 1123)
+        self.assertEqual(provider_audit["verified_feature_callable_count"], 78)
+        self.assertEqual(provider_audit["verified_feature_profile_count"], 28)
         for field in (
             "declared_unverified_feature_callable_count",
             "unprovided_callable_count",
@@ -5446,6 +5461,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/generated/header_abi_matrix/report.json",
             "compat/x86_64/header_callable_visibility_matrix.toml",
             "compat/x86_64/header_callable_visibility_matrix.py",
+            "compat/x86_64/header_callable_extension_contract.toml",
+            "compat/x86_64/header_callable_extension_contract.py",
+            "compat/x86_64/tests/test_header_callable_extension_contract.py",
             "compat/x86_64/header_callable_inventory.toml",
             "compat/x86_64/header_callable_inventory.py",
             "compat/x86_64/header_callable_inventory.json",
@@ -5459,9 +5477,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "foundation-verified `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 identity matrix",
             "zero comparable declaration-or-macro identity mismatch rows",
-            "1,280 matched identity rows",
+            "1,252 matched identity rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
+            "28 reviewed native callable extension rows",
             "checked candidate fact summaries and digests",
             "zero same-identity source-form differences",
             "does not compare declaration forms or macro replacements, record byte layouts, archive linkage, runtime behavior, family promotion, or public x86 support",
@@ -5503,6 +5522,7 @@ class X86ParityLedgerTests(unittest.TestCase):
             "zero current comparable callable name/class mismatch rows",
             "one current oracle-not-applicable `aio.h` row",
             "56 project-only header/profile rows",
+            "28 reviewed native callable extension rows",
             "does not compare prototypes or macro replacements, noncallable declarations, type/layout ABI, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):
             self.assertIn(phrase, artifact["description"])
@@ -5528,6 +5548,9 @@ class X86ParityLedgerTests(unittest.TestCase):
             "compat/x86_64/header_callable_inventory.toml",
             "compat/x86_64/header_callable_inventory.py",
             "compat/x86_64/header_callable_inventory.json",
+            "compat/x86_64/header_callable_extension_contract.toml",
+            "compat/x86_64/header_callable_extension_contract.py",
+            "compat/x86_64/tests/test_header_callable_extension_contract.py",
             "compat/x86_64/header_abi_matrix.toml",
             "compat/x86_64/header_abi_matrix.py",
             "compat/x86_64/generated/header_abi_matrix/report.json",
@@ -5541,9 +5564,10 @@ class X86ParityLedgerTests(unittest.TestCase):
             "foundation-verified `libc.headers-layouts`",
             "1,337-row direct-public-include C11/C++17 matrix",
             "zero current comparable prototype or named source-form mismatch rows",
-            "1,280 matched rows",
+            "1,252 matched rows",
             "`aio.h:c11-strict`",
             "56 project-only header/profile rows",
+            "28 reviewed native callable extension rows",
             "does not classify raw spelling differences as ABI differences",
             "record byte layouts, anonymous declarations, inline behavior, archive linkage, runtime behavior, family promotion, or public x86 support",
         ):

@@ -128,15 +128,19 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             report["summary"]["comparison_counts"],
             {
                 "candidate-only-reviewed-project-c-abi-extension": 56,
-                "matched": 1280,
+                "candidate-only-reviewed-native-callable-extension": 28,
+                "matched": 1252,
                 "oracle-not-applicable": 1,
             },
         )
-        self.assertEqual(report["summary"]["candidate_only_callable_count"], 0)
+        self.assertEqual(report["summary"]["candidate_only_callable_count"], 28)
         self.assertEqual(report["summary"]["reference_only_callable_count"], 0)
+        self.assertEqual(report["summary"]["reviewed_native_callable_extension_callable_count"], 28)
+        self.assertEqual(report["summary"]["reviewed_native_callable_extension_row_count"], 28)
         self.assertEqual(report["summary"]["mismatch_row_count"], 0)
         self.assertFalse(report["summary"]["complete"])
         self.assertFalse(report["scope"]["prototype_or_macro_replacement_equality"])
+        self.assertTrue(report["scope"]["reviewed_native_callable_extensions"])
         self.assertFalse(report["scope"]["noncallable_abi"])
         self.assertFalse(report["scope"]["linkage_or_runtime"])
         aio_row = next(
@@ -150,6 +154,19 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
         self.assertEqual(
             report["summary"]["oracle_not_applicable_candidate_visible_callable_count"],
             aio_row["candidate_callable_count"],
+        )
+        tgkill_rows = [
+            row
+            for row in report["rows"]
+            if row["comparison"] == "candidate-only-reviewed-native-callable-extension"
+        ]
+        self.assertEqual(len(tgkill_rows), 28)
+        self.assertTrue(
+            all(
+                row["candidate_only"] == [{"classification": "external", "name": "tgkill"}]
+                and row["reference_only"] == []
+                for row in tgkill_rows
+            )
         )
         stdatomic_cxx_rows = [
             row
@@ -231,6 +248,11 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
                     declared_symbols=("extension_only",),
                 ),
             ),
+            callable_extension_contract=ROOT / "compat" / "x86_64" / "header_callable_extension_contract.toml",
+            reviewed_callable_extensions=MATRIX.callable_extension_contract.CallableExtensionContract(
+                profiles=("c11-gnu",),
+                extensions=(),
+            ),
         )
         inventory = {
             "schema": MATRIX.INVENTORY_SCHEMA,
@@ -296,6 +318,7 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
             candidate_headers=("alpha.h", "beta.h", "extension.h"),
             input_digests={
                 "callable_inventory_sha256": "inventory",
+                "callable_extension_contract_sha256": "extension-contract",
                 "matrix_contract_sha256": "contract",
                 "public_header_inventory_sha256": "headers",
             },
@@ -338,6 +361,7 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
                 candidate_headers=("alpha.h", "beta.h", "extension.h"),
                 input_digests={
                     "callable_inventory_sha256": "inventory",
+                    "callable_extension_contract_sha256": "extension-contract",
                     "matrix_contract_sha256": "contract",
                     "public_header_inventory_sha256": "headers",
                 },
@@ -357,9 +381,106 @@ class HeaderCallableVisibilityMatrixTests(unittest.TestCase):
                 candidate_headers=("alpha.h", "beta.h", "extension.h"),
                 input_digests={
                     "callable_inventory_sha256": "inventory",
+                    "callable_extension_contract_sha256": "extension-contract",
                     "matrix_contract_sha256": "contract",
                     "public_header_inventory_sha256": "headers",
                 },
+            )
+
+    def test_reviewed_native_callable_extension_keeps_exact_raw_rows(self) -> None:
+        """A shared header exception cannot become a path-wide waiver."""
+
+        extension_contract = MATRIX.callable_extension_contract.load_contract()
+        extension = extension_contract.extensions[0]
+        headers = extension.visible_from_headers
+        profiles = extension_contract.profiles
+        contract = MATRIX.MatrixContract(
+            inventory=ROOT / "compat" / "x86_64" / "header_callable_inventory.json",
+            public_headers=ROOT / "compat" / "x86_64" / "public_headers.txt",
+            generated_report=ROOT / ".work" / "x86_64" / "header-callable-extension" / "synthetic-visibility.json",
+            profiles=profiles,
+            oracle_not_applicable={},
+            project_only_headers=(),
+            callable_extension_contract=ROOT
+            / "compat"
+            / "x86_64"
+            / "header_callable_extension_contract.toml",
+            reviewed_callable_extensions=extension_contract,
+        )
+        profile_runs = [
+            {"tree": tree, "profile": profile, "header": header, "status": "ok"}
+            for tree in ("candidate", "reference")
+            for profile in profiles
+            for header in headers
+        ]
+        target_records = [
+            {
+                "classification": extension.classification,
+                "declaration_kind": extension.declaration_kind,
+                "declaring_header": extension.header,
+                "line": 275,
+                "name": extension.name,
+                "origin_resolution": "physical",
+                "profile": profile,
+                "storage_class": "extern",
+                "tree": "candidate",
+                "type": extension.signature,
+                "visible_from_headers": list(headers),
+            }
+            for profile in extension.visible_profiles
+        ]
+        inventory = {
+            "schema": MATRIX.INVENTORY_SCHEMA,
+            "profiles": [{"id": profile} for profile in profiles],
+            "profile_runs": profile_runs,
+            "callables": target_records,
+        }
+        digests = {
+            "callable_inventory_sha256": "inventory",
+            "callable_extension_contract_sha256": "extension-contract",
+            "matrix_contract_sha256": "matrix-contract",
+            "public_header_inventory_sha256": "headers",
+        }
+
+        report = MATRIX.build_report(
+            contract=contract,
+            inventory=inventory,
+            pinned_headers=headers,
+            candidate_headers=headers,
+            input_digests=digests,
+        )
+
+        reviewed_rows = [
+            row
+            for row in report["rows"]
+            if row["comparison"]
+            == "candidate-only-reviewed-native-callable-extension"
+        ]
+        self.assertEqual(len(reviewed_rows), 28)
+        self.assertTrue(
+            all(
+                row["candidate_only"]
+                == [{"classification": "external", "name": "tgkill"}]
+                and row["reference_only"] == []
+                for row in reviewed_rows
+            )
+        )
+        self.assertEqual(report["summary"]["mismatch_row_count"], 0)
+        self.assertEqual(
+            report["summary"]["reviewed_native_callable_extension_callable_count"],
+            28,
+        )
+
+        extra_raw_record = dict(target_records[0])
+        extra_raw_record["name"] = "unreviewed"
+        extra_raw_record["visible_from_headers"] = ["signal.h"]
+        with self.assertRaisesRegex(MATRIX.MatrixError, "additional raw candidate-only"):
+            MATRIX.build_report(
+                contract=contract,
+                inventory={**inventory, "callables": [*target_records, extra_raw_record]},
+                pinned_headers=headers,
+                candidate_headers=headers,
+                input_digests=digests,
             )
 
     def test_statx_has_no_remaining_gnu_callable_visibility_gap(self) -> None:

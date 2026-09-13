@@ -38,11 +38,12 @@ if str(MODULE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(MODULE_DIRECTORY))
 
 import header_callable_inventory as callable_inventory
+import header_callable_extension_contract as callable_extension_contract
 
 
 CONTRACT_PATH = MODULE_DIRECTORY / "header_abi_matrix.toml"
-SCHEMA = "crabc.x86_64-header-abi-matrix-report/v1"
-CONTRACT_SCHEMA = "crabc.x86_64-header-abi-matrix/v1"
+SCHEMA = "crabc.x86_64-header-abi-matrix-report/v2"
+CONTRACT_SCHEMA = "crabc.x86_64-header-abi-matrix/v2"
 TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 ORACLE = "Pinned musl 1.2.6"
@@ -63,6 +64,7 @@ POLICY = {
     "runtime": False,
     "family_promotion": False,
     "public_support": False,
+    "reviewed_native_callable_extensions": True,
 }
 REPORT_SCOPE = {
     "compiler_derived": True,
@@ -75,6 +77,7 @@ REPORT_SCOPE = {
     "runtime": False,
     "family_promotion": False,
     "public_support": False,
+    "reviewed_native_callable_extensions": True,
 }
 WORK_PACKAGE_KEYS = {
     "target_family",
@@ -176,6 +179,8 @@ class MatrixContract:
     public_headers: Path
     callable_inventory: Path
     generated_report: Path
+    callable_extension_contract: Path
+    reviewed_callable_extensions: callable_extension_contract.CallableExtensionContract
     profiles: tuple[callable_inventory.Profile, ...]
     oracle_not_applicable: Mapping[tuple[str, str], str]
     work_package: Mapping[str, Any]
@@ -229,6 +234,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
         "public_headers",
         "callable_inventory",
         "generated_report",
+        "callable_extension_contract",
         "policy",
         "work_package",
         "oracle_not_applicable",
@@ -243,9 +249,27 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
     public_headers = repository_path(raw["public_headers"], "public_headers")
     callable_records = repository_path(raw["callable_inventory"], "callable_inventory")
     generated_report = repository_destination(raw["generated_report"], "generated_report")
+    callable_extension_contract_path = repository_path(
+        raw["callable_extension_contract"], "callable_extension_contract"
+    )
+    try:
+        reviewed_callable_extensions = callable_extension_contract.load_contract(
+            callable_extension_contract_path
+        )
+    except callable_extension_contract.CallableExtensionContractError as error:
+        raise HeaderAbiMatrixError(f"header ABI extension policy is invalid: {error}") from error
+    require(
+        callable_extension_contract_path == callable_extension_contract.CONTRACT_PATH,
+        "header ABI matrix extension policy contract drifted",
+    )
     inventory_contract = callable_inventory.load_contract()
     require(public_headers == inventory_contract.public_headers, "header ABI matrix public-header input drifted")
     require(callable_records == inventory_contract.generated_inventory, "header ABI matrix callable inventory drifted")
+    require(
+        tuple(profile.identifier for profile in inventory_contract.profiles)
+        == reviewed_callable_extensions.profiles,
+        "header ABI matrix extension policy profile roster drifted",
+    )
 
     work_package = raw["work_package"]
     require(isinstance(work_package, Mapping), "header ABI matrix work package is invalid")
@@ -295,6 +319,9 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
         "compat/x86_64/header_callable_inventory.toml",
         "compat/x86_64/header_callable_inventory.py",
         "compat/x86_64/header_callable_inventory.json",
+        "compat/x86_64/header_callable_extension_contract.toml",
+        "compat/x86_64/header_callable_extension_contract.py",
+        "compat/x86_64/tests/test_header_callable_extension_contract.py",
         "compat/x86_64/public_headers.txt",
         "compat/x86_64/headers-layouts-foundation.toml",
         "compat/x86_64/parity.toml",
@@ -327,6 +354,8 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
         public_headers=public_headers,
         callable_inventory=callable_records,
         generated_report=generated_report,
+        callable_extension_contract=callable_extension_contract_path,
+        reviewed_callable_extensions=reviewed_callable_extensions,
         profiles=inventory_contract.profiles,
         oracle_not_applicable=exceptions,
         work_package=dict(work_package),
@@ -1478,13 +1507,23 @@ def build_report(
                 else:
                     require(reference_result["status"] == "ok", f"reference ABI matrix row failed: {header}:{profile.identifier}: {reference_result['detail']}")
                     comparison = compare_facts(candidate_facts, reference_result["facts"])
+                    reviewed_extension = reviewed_declaration_difference(
+                        contract,
+                        header=header,
+                        profile=profile.identifier,
+                        difference=comparison,
+                    )
                     row.update(
                         {
-                            "comparison": "matched"
-                            if not comparison["candidate_only"]
-                            and not comparison["reference_only"]
-                            and not comparison["incompatible"]
-                            else "mismatch",
+                            "comparison": (
+                                callable_extension_contract.REVIEWED_COMPARISON
+                                if reviewed_extension is not None
+                                else "matched"
+                                if not comparison["candidate_only"]
+                                and not comparison["reference_only"]
+                                and not comparison["incompatible"]
+                                else "mismatch"
+                            ),
                             "difference": comparison,
                             "reference": facts_summary(reference_result["facts"]),
                         }
@@ -1493,6 +1532,9 @@ def build_report(
 
     comparison_counts = Counter(row["comparison"] for row in rows)
     mismatch_rows = [row for row in rows if row["comparison"] == "mismatch"]
+    reviewed_extension_rows = [
+        row for row in rows if row["comparison"] == callable_extension_contract.REVIEWED_COMPARISON
+    ]
     mismatch_fact_counts = Counter()
     for row in mismatch_rows:
         difference = row["difference"]
@@ -1511,6 +1553,7 @@ def build_report(
         "platform": PLATFORM,
         "oracle": ORACLE,
         "inputs": {
+            "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
             "compiler_collection_inputs_sha256": collection_inputs,
             "header_abi_matrix_contract_sha256": sha256_file(CONTRACT_PATH),
             "public_header_inventory_sha256": sha256_file(contract.public_headers),
@@ -1527,6 +1570,9 @@ def build_report(
             }
             for profile in contract.profiles
         ],
+        "reviewed_callable_extensions": [
+            extension.as_report() for extension in contract.reviewed_callable_extensions.extensions
+        ],
         "rows": rows,
         "summary": {
             "candidate_public_header_count": len(candidate_headers),
@@ -1537,6 +1583,11 @@ def build_report(
             "mismatch_row_count": len(mismatch_rows),
             "pinned_public_header_count": len(pinned_headers),
             "profile_count": len(contract.profiles),
+            "reviewed_native_callable_extension_fact_count": sum(
+                int(row["difference"]["candidate_only_count"])
+                for row in reviewed_extension_rows
+            ),
+            "reviewed_native_callable_extension_row_count": len(reviewed_extension_rows),
             "row_count": len(rows),
         },
     }
@@ -1544,6 +1595,26 @@ def build_report(
 
 def canonical_json(value: Mapping[str, Any]) -> str:
     return json.dumps(value, indent=2, sort_keys=True) + "\n"
+
+
+def reviewed_declaration_difference(
+    contract: MatrixContract,
+    *,
+    header: str,
+    profile: str,
+    difference: Mapping[str, Any],
+) -> callable_extension_contract.CallableExtension | None:
+    """Keep policy drift inside the ABI matrix's public error boundary."""
+
+    try:
+        return callable_extension_contract.review_declaration_difference(
+            contract.reviewed_callable_extensions,
+            header=header,
+            profile=profile,
+            difference=difference,
+        )
+    except callable_extension_contract.CallableExtensionContractError as error:
+        raise HeaderAbiMatrixError(f"header ABI extension policy rejected row: {error}") from error
 
 
 def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract) -> None:
@@ -1558,6 +1629,7 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract)
         "scope",
         "work_package",
         "profiles",
+        "reviewed_callable_extensions",
         "rows",
         "summary",
     }
@@ -1568,6 +1640,11 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract)
     scope = report["scope"]
     require(dict(scope) == REPORT_SCOPE if isinstance(scope, Mapping) else False, "checked header ABI matrix scope drifted")
     require(report["work_package"] == dict(contract.work_package), "checked header ABI matrix work package drifted")
+    require(
+        report["reviewed_callable_extensions"]
+        == [extension.as_report() for extension in contract.reviewed_callable_extensions.extensions],
+        "checked header ABI matrix reviewed extension roster drifted",
+    )
     profiles = report["profiles"]
     expected_profiles = [
         {
@@ -1593,6 +1670,8 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract)
     require(len(observed_row_order) == len(rows), "checked header ABI matrix contains a non-table row")
     comparison_counts = Counter()
     mismatch_fact_counts = Counter()
+    reviewed_extension_fact_count = 0
+    reviewed_extension_row_count = 0
     observed_oracle_not_applicable: set[tuple[str, str]] = set()
     for row in rows:
         assert isinstance(row, Mapping)
@@ -1621,7 +1700,10 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract)
             observed_oracle_not_applicable.add(key)
             continue
         require(row.get("reference_status") == "ok", f"checked header ABI matrix reference row failed: {header}:{profile}")
-        require(comparison in {"matched", "mismatch"}, f"checked header ABI matrix comparison drifted: {header}:{profile}")
+        require(
+            comparison in {"matched", "mismatch", callable_extension_contract.REVIEWED_COMPARISON},
+            f"checked header ABI matrix comparison drifted: {header}:{profile}",
+        )
         difference = row.get("difference")
         require(isinstance(difference, Mapping), f"checked header ABI matrix difference is invalid: {header}:{profile}")
         require(
@@ -1675,14 +1757,32 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract)
             isinstance(matched_count, int) and matched_count >= 0,
             f"checked header ABI matrix matched count is invalid: {header}:{profile}",
         )
-        if comparison == "matched":
+        reviewed_extension = reviewed_declaration_difference(
+            contract,
+            header=header,
+            profile=profile,
+            difference=difference,
+        )
+        if reviewed_extension is not None:
+            require(
+                comparison == callable_extension_contract.REVIEWED_COMPARISON,
+                f"checked header ABI matrix reviewed extension comparison drifted: {header}:{profile}",
+            )
+            reviewed_extension_fact_count += int(difference["candidate_only_count"])
+            reviewed_extension_row_count += 1
+        else:
+            require(
+                comparison != callable_extension_contract.REVIEWED_COMPARISON,
+                f"checked header ABI matrix has an unreviewed extension comparison: {header}:{profile}",
+            )
+        if reviewed_extension is None and comparison == "matched":
             require(
                 difference["candidate_only_count"] == 0
                 and difference["reference_only_count"] == 0
                 and incompatible_count == 0,
                 f"checked header ABI matrix matched row has differences: {header}:{profile}",
             )
-        else:
+        elif reviewed_extension is None:
             for name in ("candidate_only_count", "reference_only_count", "incompatible_count"):
                 count = difference.get(name)
                 require(isinstance(count, int) and count >= 0, f"checked header ABI matrix {name} is invalid: {header}:{profile}")
@@ -1703,12 +1803,18 @@ def validate_checked_report(report: Mapping[str, Any], contract: MatrixContract)
     require(summary.get("comparison_counts") == dict(sorted(comparison_counts.items())), "checked header ABI matrix comparison summary changed")
     require(summary.get("mismatch_fact_counts") == dict(sorted(mismatch_fact_counts.items())), "checked header ABI matrix fact summary changed")
     require(summary.get("mismatch_row_count") == comparison_counts["mismatch"], "checked header ABI matrix mismatch row count changed")
+    require(
+        summary.get("reviewed_native_callable_extension_fact_count") == reviewed_extension_fact_count
+        and summary.get("reviewed_native_callable_extension_row_count") == reviewed_extension_row_count,
+        "checked header ABI matrix reviewed extension summary changed",
+    )
     require(summary.get("complete") is False, "header ABI matrix must remain a partial report")
     inputs = report["inputs"]
     require(isinstance(inputs, Mapping), "checked header ABI matrix inputs are invalid")
     require(
         dict(inputs)
         == {
+            "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
             "compiler_collection_inputs_sha256": declaration_form_collection_input_digest(contract, ROOT / "include"),
             "header_abi_matrix_contract_sha256": sha256_file(CONTRACT_PATH),
             "public_header_inventory_sha256": sha256_file(contract.public_headers),

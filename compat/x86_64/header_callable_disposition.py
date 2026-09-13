@@ -39,11 +39,12 @@ from header_callable_linkage_audit import (  # noqa: E402
     load_static_exports,
     sha256_file,
 )
+import header_callable_extension_contract as callable_extension_contract
 
 
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "header_callable_disposition.toml"
-SCHEMA = "crabc.x86_64-header-callable-disposition-report/v1"
-CONTRACT_SCHEMA = "crabc.x86_64-header-callable-disposition/v1"
+SCHEMA = "crabc.x86_64-header-callable-disposition-report/v2"
+CONTRACT_SCHEMA = "crabc.x86_64-header-callable-disposition/v2"
 TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 ORACLE = "Pinned musl 1.2.6"
@@ -110,6 +111,8 @@ class DispositionContract:
     static_exports: Path
     parity_ledger: Path
     generated_report: Path
+    callable_extension_contract: Path
+    reviewed_callable_extensions: callable_extension_contract.CallableExtensionContract
     policy: dict[str, bool]
     work_package: dict[str, Any]
     deferred_owner_groups: tuple[DeferredOwnerGroup, ...]
@@ -314,6 +317,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> DispositionContract:
         "static_c_abi_exports",
         "parity_ledger",
         "generated_report",
+        "callable_extension_contract",
         "policy",
         "work_package",
         "deferred_owner_group",
@@ -333,15 +337,33 @@ def load_contract(path: Path = CONTRACT_PATH) -> DispositionContract:
         "runtime_semantics": False,
         "family_promotion": False,
         "public_support": False,
+        "reviewed_native_callable_extension_provider_routes": True,
     }
     require(policy == expected_policy, "header callable disposition policy drifted")
     parity_ledger = safe_project_file(raw.get("parity_ledger"), "parity_ledger")
+    callable_extension_contract_path = safe_project_file(
+        raw.get("callable_extension_contract"), "callable_extension_contract"
+    )
+    try:
+        reviewed_callable_extensions = callable_extension_contract.load_contract(
+            callable_extension_contract_path
+        )
+    except callable_extension_contract.CallableExtensionContractError as error:
+        raise HeaderCallableDispositionError(
+            f"header callable disposition extension policy is invalid: {error}"
+        ) from error
+    require(
+        callable_extension_contract_path == callable_extension_contract.CONTRACT_PATH,
+        "header callable disposition extension policy contract drifted",
+    )
     known_families = family_ids(parity_ledger)
     result = DispositionContract(
         callable_inventory=safe_project_file(raw.get("callable_inventory"), "callable_inventory"),
         static_exports=safe_project_file(raw.get("static_c_abi_exports"), "static_c_abi_exports"),
         parity_ledger=parity_ledger,
         generated_report=safe_project_destination(raw.get("generated_report"), "generated_report"),
+        callable_extension_contract=callable_extension_contract_path,
+        reviewed_callable_extensions=reviewed_callable_extensions,
         policy=dict(expected_policy),
         work_package=work_package(raw.get("work_package")),
         deferred_owner_groups=deferred_groups(raw.get("deferred_owner_group"), known_families),
@@ -404,6 +426,28 @@ def candidate_name_digest(names: Sequence[str]) -> str:
     return hashlib.sha256(("\n".join(names) + "\n").encode("utf-8")).hexdigest()
 
 
+def reviewed_provider_routes(
+    contract: DispositionContract,
+    *,
+    candidate_external: Sequence[str],
+    static_exports: Sequence[str],
+    default_static: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Keep declaration policy failures behind the routing report boundary."""
+
+    try:
+        return callable_extension_contract.validate_provider_routes(
+            contract.reviewed_callable_extensions,
+            candidate_external=candidate_external,
+            static_exports=static_exports,
+            default_static=default_static,
+        )
+    except callable_extension_contract.CallableExtensionContractError as error:
+        raise HeaderCallableDispositionError(
+            f"header callable disposition extension policy rejected provider routing: {error}"
+        ) from error
+
+
 def build_report(contract: DispositionContract) -> dict[str, Any]:
     try:
         inventory = load_inventory_json(contract.callable_inventory)
@@ -425,6 +469,12 @@ def build_report(contract: DispositionContract) -> dict[str, Any]:
     default_static = partition.get("default_static")
     require(isinstance(default_static, Mapping), "inventory default static provider is invalid")
     default_members = string_list(default_static.get("members"), "inventory default static members", allow_empty=True)
+    reviewed_extension_provider_routes = reviewed_provider_routes(
+        contract,
+        candidate_external=external,
+        static_exports=static_exports,
+        default_static=default_members,
+    )
     verified_feature_archives = checked_provider_rows(
         partition.get("verified_feature_archives"), "inventory verified feature providers"
     )
@@ -476,6 +526,7 @@ def build_report(contract: DispositionContract) -> dict[str, Any]:
         "platform": PLATFORM,
         "oracle": ORACLE,
         "inputs": {
+            "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
             "callable_inventory_sha256": sha256_file(contract.callable_inventory),
             "candidate_external_callable_sha256": candidate_name_digest(external),
             "parity_ledger_sha256": sha256_file(contract.parity_ledger),
@@ -483,6 +534,7 @@ def build_report(contract: DispositionContract) -> dict[str, Any]:
         },
         "scope": dict(contract.policy),
         "work_package": dict(contract.work_package),
+        "reviewed_callable_extension_provider_routes": reviewed_extension_provider_routes,
         "primary_disposition": {
             "kind": "candidate-external-callable-primary-disposition",
             "declared_unverified_feature_archives": declared_unverified_feature_archives,
@@ -505,6 +557,9 @@ def build_report(contract: DispositionContract) -> dict[str, Any]:
             "missing_reference_declaration_record_count": len(missing_records),
             "missing_reference_declaration_routing_complete": missing_reference_declaration_routing_complete,
             "primary_disposition_exact_coverage": not undispositioned and not unexpected_primary,
+            "reviewed_native_callable_extension_provider_route_count": len(
+                reviewed_extension_provider_routes
+            ),
             "undispositioned_candidate_callable_count": len(undispositioned),
             "undispositioned_missing_reference_name_count": len(undispositioned_missing),
             "unprovided_callable_count": counts["unprovided"],

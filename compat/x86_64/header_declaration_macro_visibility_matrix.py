@@ -29,12 +29,13 @@ if str(MODULE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(MODULE_DIRECTORY))
 
 import header_abi_matrix
+import header_callable_extension_contract as callable_extension_contract
 import header_callable_visibility_matrix as callable_visibility_matrix
 
 
 CONTRACT_PATH = MODULE_DIRECTORY / "header_declaration_macro_visibility_matrix.toml"
-SCHEMA = "crabc.x86_64-header-declaration-macro-feature-visibility-matrix-report/v1"
-CONTRACT_SCHEMA = "crabc.x86_64-header-declaration-macro-feature-visibility-matrix/v1"
+SCHEMA = "crabc.x86_64-header-declaration-macro-feature-visibility-matrix-report/v2"
+CONTRACT_SCHEMA = "crabc.x86_64-header-declaration-macro-feature-visibility-matrix/v2"
 TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 ORACLE = "Pinned musl 1.2.6"
@@ -70,6 +71,7 @@ POLICY = {
     "runtime": False,
     "family_promotion": False,
     "public_support": False,
+    "reviewed_native_callable_extensions": True,
 }
 WORK_PACKAGE_KEYS = {
     "target_family",
@@ -104,10 +106,12 @@ class MatrixContract:
     source_abi_contract: Path
     source_abi_report: Path
     callable_visibility_contract: Path
+    callable_extension_contract: Path
     public_headers: Path
     generated_report: Path
     profiles: tuple[str, ...]
     project_only_headers: tuple[str, ...]
+    reviewed_callable_extensions: callable_extension_contract.CallableExtensionContract
     oracle_not_applicable: Mapping[tuple[str, str], str]
     work_package: Mapping[str, Any]
 
@@ -163,6 +167,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
         "source_abi_contract",
         "source_abi_report",
         "callable_visibility_contract",
+        "callable_extension_contract",
         "public_headers",
         "generated_report",
         "pinned_public_header_count",
@@ -186,10 +191,21 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
     callable_visibility_contract_path = repository_path(
         raw["callable_visibility_contract"], "callable_visibility_contract"
     )
+    callable_extension_contract_path = repository_path(
+        raw["callable_extension_contract"], "callable_extension_contract"
+    )
     public_headers = repository_path(raw["public_headers"], "public_headers")
     generated_report = repository_destination(raw["generated_report"], "generated_report")
     abi_contract = header_abi_matrix.load_contract()
     callable_contract = callable_visibility_matrix.load_contract()
+    try:
+        reviewed_callable_extensions = callable_extension_contract.load_contract(
+            callable_extension_contract_path
+        )
+    except callable_extension_contract.CallableExtensionContractError as error:
+        raise HeaderDeclarationMacroVisibilityMatrixError(
+            f"declaration/macro extension policy is invalid: {error}"
+        ) from error
     require(
         source_abi_contract_path == header_abi_matrix.CONTRACT_PATH
         and source_abi_report == abi_contract.generated_report,
@@ -200,6 +216,12 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
         "declaration/macro visibility callable policy contract drifted",
     )
     require(
+        callable_extension_contract_path == callable_extension_contract.CONTRACT_PATH
+        and abi_contract.callable_extension_contract == callable_extension_contract_path
+        and callable_contract.callable_extension_contract == callable_extension_contract_path,
+        "declaration/macro visibility extension policy contract drifted",
+    )
+    require(
         public_headers == abi_contract.public_headers == callable_contract.public_headers,
         "declaration/macro visibility public header inventory drifted",
     )
@@ -208,6 +230,10 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
     require(
         profiles == tuple(profile.identifier for profile in abi_contract.profiles) == callable_contract.profiles,
         "declaration/macro visibility profile source drifted",
+    )
+    require(
+        reviewed_callable_extensions.profiles == profiles,
+        "declaration/macro visibility extension profile source drifted",
     )
     project_only_headers = tuple(header.path for header in callable_contract.project_only_headers)
     require(project_only_headers == PROJECT_ONLY_HEADERS, "declaration/macro visibility project-only paths drifted")
@@ -267,6 +293,9 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
         "compat/x86_64/generated/header_abi_matrix/report.json",
         "compat/x86_64/header_callable_visibility_matrix.toml",
         "compat/x86_64/header_callable_visibility_matrix.py",
+        "compat/x86_64/header_callable_extension_contract.toml",
+        "compat/x86_64/header_callable_extension_contract.py",
+        "compat/x86_64/tests/test_header_callable_extension_contract.py",
         "compat/x86_64/header_callable_inventory.toml",
         "compat/x86_64/header_callable_inventory.py",
         "compat/x86_64/header_callable_inventory.json",
@@ -308,10 +337,12 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
         source_abi_contract=source_abi_contract_path,
         source_abi_report=source_abi_report,
         callable_visibility_contract=callable_visibility_contract_path,
+        callable_extension_contract=callable_extension_contract_path,
         public_headers=public_headers,
         generated_report=generated_report,
         profiles=profiles,
         project_only_headers=project_only_headers,
+        reviewed_callable_extensions=reviewed_callable_extensions,
         oracle_not_applicable=exceptions,
         work_package=dict(work_package),
     )
@@ -421,6 +452,28 @@ def source_summary(value: object, location: str) -> dict[str, Any]:
     return {"count": count, "kind_counts": dict(kind_counts), "sha256": digest}
 
 
+def reviewed_declaration_difference(
+    contract: MatrixContract,
+    *,
+    header: str,
+    profile: str,
+    difference: Mapping[str, Any],
+) -> callable_extension_contract.CallableExtension | None:
+    """Keep policy drift inside this derived matrix's checked error boundary."""
+
+    try:
+        return callable_extension_contract.review_declaration_difference(
+            contract.reviewed_callable_extensions,
+            header=header,
+            profile=profile,
+            difference=difference,
+        )
+    except callable_extension_contract.CallableExtensionContractError as error:
+        raise HeaderDeclarationMacroVisibilityMatrixError(
+            f"declaration/macro extension policy rejected row: {error}"
+        ) from error
+
+
 def derive_row(source_row: Mapping[str, Any], contract: MatrixContract) -> dict[str, Any]:
     """Translate one validated source declaration-form row into identity evidence."""
 
@@ -457,6 +510,46 @@ def derive_row(source_row: Mapping[str, Any], contract: MatrixContract) -> dict[
                 "oracle_not_applicable_reason": contract.oracle_not_applicable[(header, profile)],
                 "reference": None,
                 "reference_status": "oracle-not-applicable",
+            }
+        )
+        return result
+
+    if source_comparison == callable_extension_contract.REVIEWED_COMPARISON:
+        require(source_row["reference_status"] == "ok", f"source reviewed extension reference drifted: {header}:{profile}")
+        source_difference = source_row.get("difference")
+        require(isinstance(source_difference, Mapping), f"source reviewed extension difference is invalid: {header}:{profile}")
+        extension = reviewed_declaration_difference(
+            contract,
+            header=header,
+            profile=profile,
+            difference=source_difference,
+        )
+        require(extension is not None, f"source reviewed extension is not approved: {header}:{profile}")
+        reference = source_summary(source_row["reference"], f"source reference {header}:{profile}")
+        difference = derive_visibility_difference(source_difference)
+        require(
+            difference["candidate_only"] == [{"kind": "function", "name": extension.name}]
+            and difference["reference_only"] == [],
+            f"source reviewed extension identity drifted: {header}:{profile}",
+        )
+        require(
+            candidate["count"] == difference["matched_count"] + len(difference["candidate_only"])
+            and reference["count"] == difference["matched_count"] + len(difference["reference_only"]),
+            f"derived reviewed extension dimensions drifted: {header}:{profile}",
+        )
+        result.update(
+            {
+                "candidate_only": difference["candidate_only"],
+                "comparison": source_comparison,
+                "disposition": extension.disposition,
+                "matched_identity_count": difference["matched_count"],
+                "reference": reference,
+                "reference_only": difference["reference_only"],
+                "reference_status": "ok",
+                "separately_accounted_source_form_difference_count": difference[
+                    "separately_accounted_source_form_difference_count"
+                ],
+                "source_form_comparison": source_comparison,
             }
         )
         return result
@@ -538,6 +631,8 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
     reference_only_identity_count = 0
     matched_identity_count = 0
     project_only_candidate_fact_count = 0
+    reviewed_native_callable_extension_identity_count = 0
+    reviewed_native_callable_extension_row_count = 0
     oracle_not_applicable_candidate_fact_count = 0
     source_form_difference_count = 0
     source_form_difference_row_count = 0
@@ -546,6 +641,14 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
         comparison = row["comparison"]
         if comparison == "candidate-only-reviewed-project-c-abi-extension":
             project_only_candidate_fact_count += int(row["candidate"]["count"])
+            continue
+        if comparison == callable_extension_contract.REVIEWED_COMPARISON:
+            reviewed_native_callable_extension_identity_count += len(row["candidate_only"])
+            reviewed_native_callable_extension_row_count += 1
+            # The reviewed difference is only tgkill. The same row can still
+            # carry inherited matching declarations, which remain part of
+            # matched identity accounting rather than disappearing here.
+            matched_identity_count += int(row["matched_identity_count"])
             continue
         if comparison == "oracle-not-applicable":
             oracle_not_applicable_candidate_fact_count += int(row["candidate"]["count"])
@@ -567,6 +670,11 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
     mismatch_rows = comparison_counts["mismatch"]
     oracle_rows = comparison_counts["oracle-not-applicable"]
     project_rows = comparison_counts["candidate-only-reviewed-project-c-abi-extension"]
+    reviewed_extension_rows = comparison_counts[callable_extension_contract.REVIEWED_COMPARISON]
+    require(
+        reviewed_extension_rows == reviewed_native_callable_extension_row_count,
+        "reviewed native callable extension declaration identity accounting drifted",
+    )
     summary = {
         "candidate_only_identity_count": candidate_only_identity_count,
         "candidate_only_identity_kind_counts": dict(sorted(candidate_only_kind_counts.items())),
@@ -591,6 +699,8 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
         "project_only_row_count": project_rows,
         "reference_only_identity_count": reference_only_identity_count,
         "reference_only_identity_kind_counts": dict(sorted(reference_only_kind_counts.items())),
+        "reviewed_native_callable_extension_identity_count": reviewed_native_callable_extension_identity_count,
+        "reviewed_native_callable_extension_row_count": reviewed_extension_rows,
         "row_count": len(rows),
         "source_form_comparison_counts": dict(sorted(source_form_counts.items())),
         "source_form_difference_count": source_form_difference_count,
@@ -604,6 +714,7 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
         "platform": PLATFORM,
         "oracle": ORACLE,
         "inputs": {
+            "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
             "callable_visibility_contract_sha256": sha256_file(contract.callable_visibility_contract),
             "declaration_macro_visibility_matrix_contract_sha256": sha256_file(CONTRACT_PATH),
             "public_header_inventory_sha256": sha256_file(contract.public_headers),
@@ -616,6 +727,9 @@ def build_report(contract: MatrixContract | None = None) -> dict[str, Any]:
         "project_only_headers": [
             {"disposition": "retained-reviewed-project-c-abi-extension", "path": header}
             for header in contract.project_only_headers
+        ],
+        "reviewed_callable_extensions": [
+            extension.as_report() for extension in contract.reviewed_callable_extensions.extensions
         ],
         "rows": rows,
         "summary": summary,

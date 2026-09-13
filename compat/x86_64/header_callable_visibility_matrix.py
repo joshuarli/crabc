@@ -23,10 +23,17 @@ from typing import Any, Mapping, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[2]
+MODULE_DIRECTORY = ROOT / "compat" / "x86_64"
+if str(MODULE_DIRECTORY) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIRECTORY))
+
+import header_callable_extension_contract as callable_extension_contract
+
+
 CONTRACT_PATH = ROOT / "compat" / "x86_64" / "header_callable_visibility_matrix.toml"
 INVENTORY_SCHEMA = "crabc.x86_64-header-callable-inventory-report/v2"
-SCHEMA = "crabc.x86_64-header-callable-feature-visibility-matrix-report/v1"
-CONTRACT_SCHEMA = "crabc.x86_64-header-callable-feature-visibility-matrix/v1"
+SCHEMA = "crabc.x86_64-header-callable-feature-visibility-matrix-report/v2"
+CONTRACT_SCHEMA = "crabc.x86_64-header-callable-feature-visibility-matrix/v2"
 TARGET = "x86_64-unknown-linux-musl"
 PLATFORM = "Linux/x86-64 little-endian"
 ORACLE = "Pinned musl 1.2.6"
@@ -50,6 +57,7 @@ POLICY = {
     "linkage_or_runtime": False,
     "family_promotion": False,
     "public_support": False,
+    "reviewed_native_callable_extensions": True,
 }
 PROJECT_ONLY_PATHS = (
     "daemon.h",
@@ -119,6 +127,8 @@ class MatrixContract:
     profiles: tuple[str, ...]
     oracle_not_applicable: Mapping[tuple[str, str], str]
     project_only_headers: tuple[ProjectOnlyHeader, ...]
+    callable_extension_contract: Path
+    reviewed_callable_extensions: callable_extension_contract.CallableExtensionContract
 
 
 def require(condition: bool, message: str) -> None:
@@ -256,6 +266,7 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
         "generated_report",
         "pinned_public_header_count",
         "candidate_public_header_count",
+        "callable_extension_contract",
         "policy",
         "profiles",
         "oracle_not_applicable",
@@ -271,6 +282,23 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
     require(profiles == PROFILES, "callable visibility matrix profile order changed")
     require(raw["pinned_public_header_count"] == 183, "callable visibility matrix pinned header count changed")
     require(raw["candidate_public_header_count"] == 191, "callable visibility matrix candidate header count changed")
+    callable_extension_contract_path = relative_project_path(
+        raw["callable_extension_contract"], "callable_extension_contract"
+    )
+    try:
+        reviewed_callable_extensions = callable_extension_contract.load_contract(
+            callable_extension_contract_path
+        )
+    except callable_extension_contract.CallableExtensionContractError as error:
+        raise MatrixError(f"callable visibility extension policy is invalid: {error}") from error
+    require(
+        callable_extension_contract_path == callable_extension_contract.CONTRACT_PATH,
+        "callable visibility matrix extension policy contract drifted",
+    )
+    require(
+        reviewed_callable_extensions.profiles == profiles,
+        "callable visibility matrix extension policy profile roster drifted",
+    )
 
     raw_na = raw["oracle_not_applicable"]
     require(isinstance(raw_na, list), "oracle_not_applicable must be an array")
@@ -306,6 +334,8 @@ def load_contract(path: Path = CONTRACT_PATH) -> MatrixContract:
         profiles=profiles,
         oracle_not_applicable=oracle_not_applicable,
         project_only_headers=project_only_headers,
+        callable_extension_contract=callable_extension_contract_path,
+        reviewed_callable_extensions=reviewed_callable_extensions,
     )
 
 
@@ -432,6 +462,46 @@ def validate_inventory_profiles(inventory: Mapping[str, Any], contract: MatrixCo
     require(tuple(observed_profiles) == contract.profiles, "callable inventory profile roster changed")
 
 
+def reviewed_inventory_rows(
+    contract: MatrixContract,
+    records: Sequence[Mapping[str, Any]],
+    *,
+    known_headers: frozenset[str],
+) -> frozenset[tuple[str, str]]:
+    """Keep the extension parser behind this matrix's checked error boundary."""
+
+    try:
+        return callable_extension_contract.validate_callable_inventory_records(
+            contract.reviewed_callable_extensions,
+            records,
+            known_headers=known_headers,
+        )
+    except callable_extension_contract.CallableExtensionContractError as error:
+        raise MatrixError(f"callable visibility extension policy rejected inventory: {error}") from error
+
+
+def reviewed_callable_difference(
+    contract: MatrixContract,
+    *,
+    header: str,
+    profile: str,
+    candidate_only: Sequence[Mapping[str, Any]],
+    reference_only: Sequence[Mapping[str, Any]],
+) -> callable_extension_contract.CallableExtension | None:
+    """Do not leak policy-parser failures through the runner entry point."""
+
+    try:
+        return callable_extension_contract.review_callable_difference(
+            contract.reviewed_callable_extensions,
+            header=header,
+            profile=profile,
+            candidate_only=candidate_only,
+            reference_only=reference_only,
+        )
+    except callable_extension_contract.CallableExtensionContractError as error:
+        raise MatrixError(f"callable visibility extension policy rejected row: {error}") from error
+
+
 def build_report(
     *,
     contract: MatrixContract,
@@ -457,6 +527,7 @@ def build_report(
 
     expected_digest_keys = {
         "callable_inventory_sha256",
+        "callable_extension_contract_sha256",
         "matrix_contract_sha256",
         "public_header_inventory_sha256",
     }
@@ -491,6 +562,13 @@ def build_report(
 
     known_headers = frozenset(candidate)
     units = direct_callable_units(inventory, known_headers=known_headers)
+    raw_callables = inventory.get("callables")
+    require(isinstance(raw_callables, list), "callable inventory callables are missing")
+    reviewed_extension_rows = reviewed_inventory_rows(
+        contract,
+        raw_callables,
+        known_headers=known_headers,
+    )
     project_only_by_path = {header.path: header for header in contract.project_only_headers}
     rows: list[dict[str, Any]] = []
     comparison_counts: Counter[str] = Counter()
@@ -498,6 +576,8 @@ def build_report(
     candidate_only_callable_count = 0
     reference_only_callable_count = 0
     project_only_callable_count = 0
+    reviewed_native_callable_extension_callable_count = 0
+    reviewed_native_callable_extension_row_count = 0
     oracle_not_applicable_candidate_visible_callable_count = 0
 
     for header in candidate:
@@ -545,7 +625,27 @@ def build_report(
                     matched = candidate_units & reference_units
                     candidate_only = candidate_units - reference_units
                     reference_only = reference_units - candidate_units
-                    comparison = "matched" if not candidate_only and not reference_only else "mismatch"
+                    reviewed_extension = reviewed_callable_difference(
+                        contract,
+                        header=header,
+                        profile=profile,
+                        candidate_only=canonical_units(candidate_only),
+                        reference_only=canonical_units(reference_only),
+                    )
+                    if reviewed_extension is not None:
+                        require(
+                            (header, profile) in reviewed_extension_rows,
+                            f"reviewed extension row is absent from compiler inventory: {header}:{profile}",
+                        )
+                        comparison = callable_extension_contract.REVIEWED_COMPARISON
+                        reviewed_native_callable_extension_callable_count += len(candidate_only)
+                        reviewed_native_callable_extension_row_count += 1
+                    else:
+                        require(
+                            (header, profile) not in reviewed_extension_rows,
+                            f"reviewed extension compiler row is missing its raw callable difference: {header}:{profile}",
+                        )
+                        comparison = "matched" if not candidate_only and not reference_only else "mismatch"
                     base.update(
                         {
                             "candidate_only": canonical_units(candidate_only),
@@ -564,6 +664,11 @@ def build_report(
     mismatch_rows = comparison_counts["mismatch"]
     oracle_not_applicable_rows = comparison_counts["oracle-not-applicable"]
     project_only_rows = comparison_counts["candidate-only-reviewed-project-c-abi-extension"]
+    reviewed_extension_rows = comparison_counts[callable_extension_contract.REVIEWED_COMPARISON]
+    require(
+        reviewed_extension_rows == reviewed_native_callable_extension_row_count,
+        "reviewed native callable extension row accounting drifted",
+    )
     incomplete_reasons: list[str] = []
     if mismatch_rows:
         incomplete_reasons.append(f"{mismatch_rows} comparable pinned header/profile rows have callable visibility differences")
@@ -579,6 +684,9 @@ def build_report(
         "scope": dict(POLICY),
         "profiles": list(contract.profiles),
         "project_only_headers": [header.as_report() for header in contract.project_only_headers],
+        "reviewed_callable_extensions": [
+            extension.as_report() for extension in contract.reviewed_callable_extensions.extensions
+        ],
         "rows": rows,
         "summary": {
             "candidate_only_callable_count": candidate_only_callable_count,
@@ -600,6 +708,10 @@ def build_report(
             "project_only_header_count": len(project_only),
             "project_only_row_count": project_only_rows,
             "reference_only_callable_count": reference_only_callable_count,
+            "reviewed_native_callable_extension_callable_count": (
+                reviewed_native_callable_extension_callable_count
+            ),
+            "reviewed_native_callable_extension_row_count": reviewed_extension_rows,
             "row_count": len(rows),
         },
     }
@@ -616,6 +728,7 @@ def build_file_report(contract: MatrixContract) -> dict[str, Any]:
         candidate_headers=candidate_headers,
         input_digests={
             "callable_inventory_sha256": sha256_file(contract.inventory),
+            "callable_extension_contract_sha256": sha256_file(contract.callable_extension_contract),
             "matrix_contract_sha256": sha256_file(CONTRACT_PATH),
             "public_header_inventory_sha256": sha256_file(contract.public_headers),
         },
