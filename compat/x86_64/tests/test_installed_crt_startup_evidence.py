@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import shutil
 import subprocess
 from unittest import mock
 from pathlib import Path
@@ -267,6 +268,48 @@ int main(void) {
                 else:self.assertEqual(changed[relocation+16:relocation+24],value.to_bytes(8,'little',signed=True))
             self.assertEqual(main.read_bytes(),before)
 
+    def test_actual_descriptor_endpoint_and_dso_roles_reject_substitution(self):
+        """A descriptor slot alone cannot turn a main image into the DSO fixture."""
+        review=reader.ROOT/'.work/x86_64/reviews/canonical-crt-e7091de1'
+        main=reader.ROOT/'.work/x86_64/descriptor-admission-diagnosis/root/owned-pie-normal'
+        source=reader.ROOT/'.work/x86_64/canonical-frozen-fed-negative-red'
+        if not (review/'descriptor-isolated-control.json').is_file() or not main.is_file():
+            self.skipTest('requires retained canonical descriptor control')
+        self.assertEqual(hashlib.sha256((review/'descriptor-isolated-control.json').read_bytes()).hexdigest(),
+                         '7122560c463d28ab00f944dc751a1178a6ef6ec473bae9eb69030ac2cd22dd68')
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory);shutil.copy2(main,work/'owned-pie-normal')
+            for name in (reader.DESCRIPTOR_DSO,reader.DESCRIPTOR_ENDPOINT):
+                shutil.copy2(source/name,work/name)
+            reader.prepare_descriptor_admission(work)
+            reader.descriptor_admission_elf_roles(reader.ROOT,work)
+            for name in (reader.DESCRIPTOR_ENDPOINT,reader.DESCRIPTOR_DSO):
+                path=work/name;before=path.read_bytes();path.write_bytes(main.read_bytes())
+                with self.subTest(replacement=name),self.assertRaises(reader.StartupEvidenceError):
+                    reader.descriptor_admission_elf_roles(reader.ROOT,work)
+                path.write_bytes(before)
+
+    def test_actual_descriptor_admission_rejects_invalid_dso_link_sidecars(self):
+        """The finite DSO and endpoint links cannot be replaced by unreadable receipts."""
+        review=reader.ROOT/'.work/x86_64/reviews/canonical-crt-e7091de1'
+        main=reader.ROOT/'.work/x86_64/descriptor-admission-diagnosis/root/owned-pie-normal'
+        source=reader.ROOT/'.work/x86_64/canonical-frozen-fed-negative-red'
+        if not (review/'descriptor-isolated-control.json').is_file() or not main.is_file():
+            self.skipTest('requires retained canonical descriptor control')
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory);shutil.copy2(main,work/'owned-pie-normal')
+            for name in (reader.DESCRIPTOR_DSO,reader.DESCRIPTOR_ENDPOINT):
+                shutil.copy2(source/name,work/name)
+                (work/(name+'.crabc-link.json')).write_text('not a link receipt\n')
+            subprocess.run(['cc','-std=c11','-fPIC','-c',str(reader.ROOT/'compat/x86_64/installed_crt_startup_descriptor_dso.c'),
+                            '-o',str(work/'descriptor-dso.o')],check=True,capture_output=True,text=True)
+            reader.prepare_descriptor_admission(work)
+            with self.assertRaises(reader.ordinary.PublicDataEvidenceError):
+                reader.descriptor_admission_observations(reader.ROOT,work,
+                    {'dynamic_product':{'path':'.work/unreachable'}},{})
+
     def test_candidate_root_rejects_self_sealed_loader_and_control_substitution(self):
         """The selected product tree and linked control determine execution bytes."""
         parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
@@ -339,6 +382,7 @@ int main(void) {
         self.assertEqual(len(contract['identities']),12)
         admission=contract['descriptor_handoff']['admission']
         self.assertEqual(set(admission['mutations']),set(reader.DESCRIPTOR_MUTATIONS))
+        self.assertEqual(admission['source_object']['relocation']['kind'],42)
         self.assertEqual(admission['rejection'],{'status':127,'stdout':'','stderr':'reloc\n'})
         reader.validate_contract(contract)
         for bad in ({**contract,'public_support':0},{**contract,'identities':contract['identities'][:-1]},

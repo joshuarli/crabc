@@ -17,6 +17,7 @@ sys.path.insert(0,str(Path(__file__).resolve().parent))
 import owned_stdio_alias_contract_reader as substrate
 import public_data_ordinary_link_evidence as ordinary
 import native_abi_inventory as inventory
+import owned_dynamic_receipt as dynamic_receipt
 import owned_posix_product_evidence as products
 import owned_posix_static_products as static_products
 import owned_dynamic_qualification as qualification
@@ -83,6 +84,9 @@ def expected_contract():
                     },
                     'dso':{'source':'compat/x86_64/installed_crt_startup_descriptor_dso.c',
                             'shared_object':DESCRIPTOR_DSO,'endpoint':DESCRIPTOR_ENDPOINT},
+                    'source_object':{'relocation':{'kind':42,'addend':-4,'symbol_type':'0',
+                                                    'binding':'WEAK','visibility':'DEFAULT',
+                                                    'symbol_section':0,'symbol_value':0}},
                     'entry_modes':['kernel','direct'],
                     'rejection':{'status':127,'stdout':'','stderr':'reloc\n'},
                 },
@@ -236,8 +240,10 @@ def plan(root,work,inputs,tools):
             add(name+'-link',argv)
     admission=expected_contract()['descriptor_handoff']['admission'];dso=admission['dso']
     add('descriptor-dso-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11',
-        p('installed_crt_startup_descriptor_dso.c'),'-o',p(dso['shared_object'])])
-    add('descriptor-dso-link',[tool('dynamic_driver'),'--dynamic-pie','--application-dso',
+        '-c',p('installed_crt_startup_descriptor_dso.c'),'-o',p('descriptor-dso.o')])
+    add('descriptor-dso-link',[tool('dynamic_driver'),'--dynamic-shared-object',p('descriptor-dso.o'),
+        '-o',p(dso['shared_object'])])
+    add('descriptor-endpoint-link',[tool('dynamic_driver'),'--dynamic-pie','--application-dso',
         p(dso['shared_object']),p('normal.o'),'-o',p(dso['endpoint'])])
     paths={**product_paths(root,inputs),**{case['name']:work/case['name'] for case in cases()},
            **{variant+'-object':work/(variant+'.o') for variant in ('normal','empty')}}
@@ -503,6 +509,155 @@ def mutate_descriptor_main(source,destination,label):
     destination.write_bytes(data);destination.chmod(source.stat().st_mode&0o777)
     return {'symbol_file_offset':symbol,'rela_file_offset':relocation,'field':field,'value':value}
 
+def descriptor_source_object(path):
+    """Require the one PIC object compiled from the retained DSO source."""
+    elf=Elf(path);require(elf.elf_type==1 and not elf.programs,'descriptor source object ELF type differs')
+    symbols=[]
+    for section_index,section in enumerate(elf.sections):
+        if section[1]!=2:continue
+        require(section[9]==24 and section[5]%24==0,'descriptor source object symtab differs')
+        for index in range(section[5]//24):
+            row=elf.symbol_row(section_index,index)
+            if row['name']==DESCRIPTOR:symbols.append((section_index,index,row))
+    require(len(symbols)==1,'descriptor source object symbol roster differs')
+    section_index,index,row=symbols[0]
+    require(same({key:row[key] for key in ('type','binding','visibility','section','value','size')},
+                 {'type':'0','binding':'WEAK','visibility':'DEFAULT','section':0,'value':0,'size':0}),
+            'descriptor source object symbol differs')
+    relocations=[]
+    for section in elf.sections:
+        if section[1]!=4 or section[6]!=section_index:continue
+        require(section[9]==24 and section[5]%24==0,'descriptor source object RELA differs')
+        for offset in range(0,section[5],24):
+            _,info,addend=elf.unpack('<QQq',section[4]+offset)
+            if info>>32==index:relocations.append((section[4]+offset,info,addend))
+    require(len(relocations)==1,'descriptor source object relocation roster differs')
+    relocation,info,addend=relocations[0]
+    policy=expected_contract()['descriptor_handoff']['admission']['source_object']['relocation']
+    actual={'kind':info&0xffffffff,'addend':addend,'symbol_type':row['type'],'binding':row['binding'],
+            'visibility':row['visibility'],'symbol_section':row['section'],'symbol_value':row['value']}
+    require(actual==policy,'descriptor source object relocation differs')
+    return {'symbol_file_offset':elf.sections[section_index][4]+index*24,'rela_file_offset':relocation,
+            'relocation':actual}
+
+def dynamic_names(path,require_table=False):
+    """Return exact dynamic NEEDED and SONAME records from one retained ELF."""
+    elf=Elf(path);needed=[];sonames=[];tables=[]
+    for section in elf.sections:
+        if section[1]!=6:continue
+        tables.append(section)
+        require(section[9]==16 and section[5]%16==0,'malformed dynamic section')
+        strings=elf.sections[section[6]]
+        require(strings[1]==3 and strings[4]+strings[5]<=len(elf.data),'invalid dynamic string table')
+        for index in range(section[5]//16):
+            tag,value=elf.unpack('<qQ',section[4]+index*16)
+            if tag==0:break
+            if tag not in (1,14):continue
+            require(value<strings[5],'invalid dynamic string offset')
+            begin=strings[4]+value;end=elf.data.find(b'\0',begin,strings[4]+strings[5])
+            require(end>=begin,'unterminated dynamic string')
+            (needed if tag==1 else sonames).append(elf.data[begin:end].decode('ascii'))
+    require(len(tables)==1 if require_table else len(tables)<=1,
+            'descriptor admission dynamic section roster differs')
+    return elf,needed,sonames
+
+def descriptor_admission_elf_roles(root,work):
+    """Bind the DSO and direct endpoint to their distinct installed ELF roles."""
+    policy=expected_contract()['descriptor_handoff']['admission'];dso_name=policy['dso']['shared_object']
+    dso=work/dso_name;endpoint=work/policy['dso']['endpoint']
+    require(all(path.is_file() and not path.is_symlink() for path in (dso,endpoint)),
+            'descriptor admission DSO/endpoint is absent')
+    dso_elf,dso_needed,dso_sonames=dynamic_names(dso,True)
+    require(dso_elf.elf_type==3 and not [program for program in dso_elf.programs if program[0]==3]
+            and dso_needed==['libc.so'] and dso_sonames==[dso_name],
+            'descriptor admission DSO role differs')
+    dso_symbol,dso_relocation,_=descriptor_slot(dso.read_bytes())
+    endpoint_elf,endpoint_needed,endpoint_sonames=dynamic_names(endpoint,True)
+    interpreters=[endpoint_elf.data[program[2]:program[2]+program[5]]
+                  for program in endpoint_elf.programs if program[0]==3]
+    require(endpoint_elf.elf_type==3 and interpreters==[b'/lib/ld-crabc-x86_64.so.1\0']
+            and endpoint_needed==[dso_name,'libc.so'] and endpoint_sonames==[],
+            'descriptor admission endpoint role differs')
+    endpoint_symbol,endpoint_relocation,_=descriptor_slot(endpoint.read_bytes())
+    return {'dso':{'identity':ident(root,dso),'symbol_file_offset':dso_symbol,
+                   'rela_file_offset':dso_relocation,'needed':dso_needed,'soname':dso_sonames[0]},
+            'endpoint':{'identity':ident(root,endpoint),'symbol_file_offset':endpoint_symbol,
+                        'rela_file_offset':endpoint_relocation,'needed':endpoint_needed,
+                        'interpreter':interpreters[0].decode('ascii').rstrip('\0')}}
+
+def descriptor_admission_roles(root,work):
+    """Bind the retained source object before its DSO and endpoint roles."""
+    object_path=work/'descriptor-dso.o'
+    require(object_path.is_file() and not object_path.is_symlink(),'descriptor admission source object is absent')
+    return {'source_object':{'identity':ident(root,object_path),**descriptor_source_object(object_path)},
+            **descriptor_admission_elf_roles(root,work)}
+
+def descriptor_receipt(root,work,inputs,tools,label,mode,workload,output,application_dsos):
+    """Validate the finite schema-2 receipt without widening ordinary link policy."""
+    product=root/inputs['dynamic_product']['path'];library=product/'usr/lib';receipt=work/(output.name+'.crabc-link.json')
+    record=ordinary.read_json(receipt,'descriptor '+label+' link receipt')
+    search=dynamic_receipt.validate(record,format=products.DYNAMIC_PRODUCT_FORMAT,
+                                    label='descriptor '+label+' link receipt',
+                                    fail=lambda message:require(False,message))
+    dynamic_receipt.require_runpath(search,'/usr/lib',label='descriptor '+label+' link receipt',
+                                    fail=lambda message:require(False,message))
+    require(search.schema==2 and record['mode']==mode and record['binding']=='now'
+            and record['runtime_imports']==[] and record['application_dsos']=={
+                path.name:ordinary.digest(path) for path in application_dsos}
+            and record['campaign_complete'] is False,
+            'descriptor '+label+' link receipt policy differs')
+    runtime=['crti.o','libc.so','crtn.o']+([] if mode=='shared' else ['Scrt1.o','crabc-dynamic-attach.o'])
+    archive=library/'libcrabc-builtins.a';runtime_paths=[library/name for name in runtime]
+    require(record['owned_runtime_inputs']==sorted(path.relative_to(product).as_posix()
+                                                    for path in [*runtime_paths,archive]),
+            'descriptor '+label+' runtime input roster differs')
+    expected_inputs=[*runtime_paths,workload,*application_dsos,archive]
+    require(type(record['input_receipts']) is list and len(record['input_receipts'])==len(expected_inputs),
+            'descriptor '+label+' input receipt roster differs')
+    for received,path in zip(record['input_receipts'],expected_inputs):
+        require(type(received) is dict and set(received)=={'path','sha256'}
+                and received=={'path':ordinary.mounted(root,path),'sha256':ordinary.digest(path)},
+                'descriptor '+label+' input receipt differs')
+    linker=tools['linker']['original'];require(type(linker) is dict and set(('path','sha256'))<=set(linker),
+                                                     'descriptor link tool identity differs')
+    require(record['resolved_linker']=={key:linker[key] for key in ('path','sha256')},
+            'descriptor '+label+' linker identity differs')
+    mounted=lambda path:ordinary.mounted(root,path)
+    common=[linker['path'],*(['-shared'] if mode=='shared' else ['-pie']),'--hash-style=sysv',
+            '-z','relro','-z','now','-z','noexecstack','-z','text','--no-undefined',
+            '--allow-shlib-undefined','--enable-new-dtags','-rpath','/usr/lib']
+    if mode=='shared':common+=['-soname',output.name]
+    else:common+=['--dynamic-linker','/lib/ld-crabc-x86_64.so.1',mounted(library/'Scrt1.o'),
+                  mounted(library/'crabc-dynamic-attach.o')]
+    command=[*common,mounted(library/'crti.o'),mounted(workload),*(mounted(path) for path in application_dsos),
+             mounted(library/'libc.so'),mounted(archive),mounted(library/'crtn.o'),'-o',mounted(output)]
+    require(record['link_command']==command,'descriptor '+label+' link command differs')
+    direct=([mounted(library/'crti.o'),mounted(workload)] if mode=='shared' else
+            [mounted(library/'Scrt1.o'),mounted(library/'crabc-dynamic-attach.o'),
+             mounted(library/'crti.o'),mounted(workload)])
+    direct += [*(mounted(path) for path in application_dsos),mounted(library/'libc.so'),mounted(library/'crtn.o')]
+    trace=record['link_trace'];require(type(trace) is list and all(type(item) is str for item in trace),
+                                        'descriptor '+label+' link trace differs')
+    seen=[]
+    for item in trace:
+        if item in direct:seen.append(item)
+        elif item==mounted(archive) or item.startswith(mounted(archive)+'(') and item.endswith(')'):continue
+        else:require(False,'descriptor '+label+' link trace admits an unbound input')
+    require(seen==direct,'descriptor '+label+' link trace differs')
+    manifest=product/'share/crabc/manifest.json'
+    require(record['output_path']==ordinary.mounted(root,output)
+            and record['output_sha256']==ordinary.digest(output)
+            and record['manifest_sha256']==ordinary.digest(manifest),
+            'descriptor '+label+' link output differs')
+    return {'receipt':ident(root,receipt),'workload':ident(root,workload),'output':ident(root,output),
+            'manifest':ident(root,manifest),'application_dsos':{path.name:ident(root,path) for path in application_dsos}}
+
+def descriptor_admission_links(root,work,inputs,tools):
+    policy=expected_contract()['descriptor_handoff']['admission'];dso=work/policy['dso']['shared_object']
+    return {'dso':descriptor_receipt(root,work,inputs,tools,'DSO','shared',work/'descriptor-dso.o',dso,()),
+            'endpoint':descriptor_receipt(root,work,inputs,tools,'endpoint','pie',work/'normal.o',
+                                           work/policy['dso']['endpoint'],(dso,))}
+
 def prepare_descriptor_admission(work):
     policy=expected_contract()['descriptor_handoff']['admission'];source=work/policy['main_case']
     require(source.is_file() and not source.is_symlink(),'descriptor admission main is absent')
@@ -514,7 +669,7 @@ def prepare_descriptor_admission(work):
             'descriptor admission DSO fixture is absent')
     descriptor_slot(dso.read_bytes());descriptor_slot(endpoint.read_bytes())
 
-def descriptor_admission_observations(root,work):
+def descriptor_admission_observations(root,work,inputs,tools):
     policy=expected_contract()['descriptor_handoff']['admission'];source=work/policy['main_case']
     before=source.read_bytes();symbol,relocation,info=descriptor_slot(before);mutations={}
     for label,entry in policy['mutations'].items():
@@ -524,31 +679,14 @@ def descriptor_admission_observations(root,work):
         else:struct.pack_into('<q',expected,relocation+16,entry['value'])
         require(actual==expected,'descriptor admission mutation bytes differ: '+label)
         mutations[label]={'identity':ident(root,path),'field':entry['field'],'value':entry['value']}
-    dso=work/policy['dso']['shared_object'];endpoint=work/policy['dso']['endpoint']
-    dso_symbol,dso_relocation,_=descriptor_slot(dso.read_bytes())
-    endpoint_symbol,endpoint_relocation,_=descriptor_slot(endpoint.read_bytes())
+    roles=descriptor_admission_roles(root,work)
+    links=descriptor_admission_links(root,work,inputs,tools)
     return {'main':ident(root,source),'symbol_file_offset':symbol,'rela_file_offset':relocation,
-            'mutations':mutations,
-            'dso':{'identity':ident(root,dso),'symbol_file_offset':dso_symbol,'rela_file_offset':dso_relocation},
-            'endpoint':{'identity':ident(root,endpoint),'symbol_file_offset':endpoint_symbol,'rela_file_offset':endpoint_relocation},
+            'mutations':mutations,**roles,'links':links,
             'entry_modes':list(policy['entry_modes']),'rejection':copy.deepcopy(policy['rejection'])}
 
 def needed_libraries(path):
-    elf=Elf(path);result=[]
-    for section in elf.sections:
-        if section[1]!=6:continue
-        require(section[9]==16 and section[5]%16==0,'malformed dynamic section')
-        strings=elf.sections[section[6]]
-        require(strings[1]==3 and strings[4]+strings[5]<=len(elf.data),'invalid dynamic string table')
-        for index in range(section[5]//16):
-            tag,value=elf.unpack('<qQ',section[4]+index*16)
-            if tag==0:break
-            if tag!=1:continue
-            require(value<strings[5],'invalid NEEDED string offset')
-            begin=strings[4]+value;end=elf.data.find(b'\0',begin,strings[4]+strings[5])
-            require(end>=begin,'unterminated NEEDED string')
-            result.append(elf.data[begin:end].decode('ascii'))
-    return result
+    return dynamic_names(path)[1]
 
 def executable_observations(root,work,inputs,tools,facts):
     result={};linker={k:tools['linker']['original'][k] for k in ('path','sha256')}
@@ -663,7 +801,7 @@ def observations(root,work,inputs,tools):
     return {'complete_elf_facts':facts,'product_placements':products_account,'product_relocations':relocations_account,
             'executables':executables_account,
             'descriptor_handoff':descriptor_handoff(relocations_account,executables_account),'roots':roots(root,work,inputs),
-            'descriptor_admission':descriptor_admission_observations(root,work),
+            'descriptor_admission':descriptor_admission_observations(root,work,inputs,tools),
             'runtime_labels':[cell['label'] for cell in runtime_cells()],
             'limits':{'descriptor_worker_lifecycle':'not requalified by startup receipt',
                       'failed_first_bootstrap':'source contract retained; dedicated runtime rejection receipt not supplied',
