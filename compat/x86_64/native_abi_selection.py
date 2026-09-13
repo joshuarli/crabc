@@ -43,6 +43,8 @@ import compiler_helper_evidence as compiler_helpers
 import owned_mimalloc_producer_metadata as producer_metadata
 import loader_runtime_registry_evidence as runtime_registry_evidence
 import owned_pthread_alias_contract_reader as pthread_alias_evidence
+import prepared_worker_tls_evidence as prepared_worker_evidence
+import owned_errno_storage_lifecycle as errno_storage_evidence
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -108,10 +110,28 @@ PTHREAD_ALIAS_LIMITS = [
     'The receipt binds named public weak aliases and the mq_notify public pthread_detach relocation; it does not select private provider spellings as new ABI identities.',
     'No general pthread family, cancellation, scheduling, lifecycle, promotion or public-support closure follows from this component receipt.',
 ]
+PREPARED_WORKER_TLS_LIMITS = [
+    'Only three private shared-libc TLS dispatch imports, seven retired prepared-token replacements, and one 72-byte loader descriptor are attached.',
+    'The owned CRT handoff carrier, a main-thread descriptor import, RuntimeV1 facade parity, general pthread qualification, family completion, promotion and public support remain open.',
+]
+ERRNO_STORAGE_LIFECYCLE_LIMITS = [
+    'Only __errno_location, __h_errno_location, h_errno and the private ___errno_location alias receive this storage/lifecycle account.',
+    'h_errno declaration and alignment proof, broad TLS/TCB semantics, loader evidence, family completion, promotion and public support remain open.',
+]
 RUNTIME_REGISTRY_REQUIREMENTS = (
     'current signature and exact relocation-admission evidence',
     'graph rollback/reentry/fork and thread-local diagnostic component evidence',
 )
+PREPARED_WORKER_TLS_REQUIREMENTS = (
+    'prepared token layout, allocation-before-clone and exit/reap release receipt',
+)
+PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS = (
+    'exact descriptor admission/layout and release READY publication before TCB/DTV read',
+    'static mode no-loader-import boundary',
+    'pointer lifetime, worker mapping generation and fork ownership evidence',
+)
+ERRNO_PRIVATE_ALIAS_GROUP = 'component-owned-errno-private-alias'
+ERRNO_STORAGE_LIFECYCLE_REQUIREMENT = 'current source-bound errno storage/lifecycle and private alias receipt'
 
 
 class SelectionError(ValueError):
@@ -604,6 +624,10 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
         'compat/x86_64/run_owned_pthread_alias_contract.sh',
         'compat/x86_64/tests/test_owned_pthread_alias_contract_reader.py',
         'compat/x86_64/owned-pthread-alias-contract.md',
+        *prepared_worker_evidence.SOURCE_PATHS,
+        'compat/x86_64/prepared-worker-tls.md',
+        'compat/x86_64/tests/test_prepared_worker_tls_evidence.py',
+        *errno_storage_evidence.SOURCE_FILES,
     })
     files.update(pthread_alias_evidence.SOURCE_CONTRACT_PATHS)
     for field in ('owner_groups', 'structural_groups', 'object_contracts', 'private_protocols'):
@@ -677,6 +701,10 @@ def expand_obligations(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -
                         metadata['size_bytes'] = int(frozen_row['size'])
                 metadata.update(group['placement_metadata'].get(artifact, {}))
                 record['expected_placements'].append({'artifact_key': artifact, 'metadata': metadata, 'metadata_rule': group['static_metadata_rule'] if artifact == 'candidate-static' else 'explicit'})
+            if group['id'] == ERRNO_PRIVATE_ALIAS_GROUP:
+                # Metadata selects this deliberately non-public provider, but
+                # cannot stand in for its source-bound alias/lifecycle receipt.
+                record['unresolved'].append(ERRNO_STORAGE_LIFECYCLE_REQUIREMENT)
     for name, owner in inputs['deferred'].items():
         record = obtain(name)
         require(record['selection'] is None, f'deferred/provider overlap: {name}')
@@ -869,6 +897,12 @@ def account_placements(expanded: Sequence[Mapping[str, Any]], facts: Mapping[str
                 if any(r['table'] == '.dynsym' and r['row']['section_index'] != 'UND'
                        for r in relevant if r['artifact_key'] == artifact_key):
                     record['unresolved'].append('private compiler-helper owner unexpectedly appears in shared dynsym')
+            elif record['selection']['disposition'] == 'private-provider':
+                # A reviewed private provider may intentionally be a LOCAL
+                # shared ``.symtab`` definition.  It still satisfies normal
+                # archive linking, but must never be promoted through the
+                # public ``.dynsym`` branch above.
+                candidates = [r for r in candidates if r['role'] in {'definition', 'local-definition'}]
             else:
                 candidates = [r for r in candidates if r['role'] == 'definition']
             definitions = []
@@ -1961,6 +1995,45 @@ def _current_product_identities(paths: Mapping[str, Path]) -> dict[str, dict[str
     return {name: file_identity(path) for name, path in records.items()}
 
 
+def _runtime_attachment_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+    """Return the finite file roster that runtime companions may authenticate.
+
+    Most existing companions bind the complete installed-product identity
+    roster.  The errno receipt additionally owns the shared-libc provenance
+    file, while the prepared-worker receipt intentionally has no claim over
+    either installed driver.  Keeping this wider roster separate prevents a
+    narrow component from accidentally inheriting unrelated product authority.
+    """
+    current = _current_product_identities(paths)
+    current['dynamic_shared_provenance'] = file_identity(
+        paths['dynamic_product'] / 'share/crabc/libc-shared.provenance.json'
+    )
+    return current
+
+
+def _errno_identity_payload(value: object, description: str) -> dict[str, Any]:
+    """Normalize the errno reader's path/hash/size identity for a byte join.
+
+    Its public schema deliberately does not assign a product-file mode.  The
+    selector separately seals current product modes before and after every
+    attachment, so this conversion never invents a mode assertion for the
+    owning reader.
+    """
+    row = exact(value, {'path', 'sha256', 'size_bytes'}, description)
+    require(type(row['path']) is str and row['path']
+            and type(row['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', row['sha256']) is not None
+            and type(row['size_bytes']) is int and not isinstance(row['size_bytes'], bool) and row['size_bytes'] >= 0,
+            f'{description} identity values differ')
+    return {'sha256': row['sha256'], 'size': row['size_bytes']}
+
+
+def _require_same_errno_identity(value: object, current: object, description: str) -> None:
+    observed = _errno_identity_payload(value, description + ' receipt')
+    selected = _identity_payload(current, description + ' selected')
+    require(observed == {key: selected[key] for key in ('sha256', 'size')},
+            f'{description} bytes differ')
+
+
 def _measurement_source_matches(source: Mapping[str, Any], measurement: Mapping[str, Any], description: str) -> None:
     candidate = measurement.get('candidate_build')
     require(type(candidate) is dict
@@ -1983,7 +2056,9 @@ def _measurement_report_bindings(measurement: Mapping[str, Any], description: st
 def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping[str, Any],
                                     measurement: Mapping[str, Any], source: Mapping[str, Any],
                                     registry: Mapping[str, Any] | None,
-                                    pthread: Mapping[str, Any] | None) -> None:
+                                    pthread: Mapping[str, Any] | None,
+                                    prepared_worker: Mapping[str, Any] | None = None,
+                                    errno_storage: Mapping[str, Any] | None = None) -> None:
     """Keep runtime attachments within the same source/product transaction.
 
     Both owning readers validate their receipts before the selector's placement
@@ -1991,7 +2066,7 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
     product or raw report cannot change in the interval before `report.json`
     is sealed.
     """
-    if registry is None and pthread is None:
+    if registry is None and pthread is None and prepared_worker is None and errno_storage is None:
         return
     require(same(source, selection_source()), 'selection source changed during runtime receipt attachment')
     reports = _measurement_report_bindings(measurement, 'runtime receipt')
@@ -2000,7 +2075,7 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
     ):
         require(same(reports[name], file_identity(paths[path_key])),
                 f'public ELF replay {name} changed during runtime receipt attachment')
-    current = _current_product_identities(paths)
+    current = _runtime_attachment_identities(paths)
     facts_artifacts = facts.get('artifacts')
     require(type(facts_artifacts) is dict, 'public ELF facts artifact roster changed during runtime receipt attachment')
     for current_name, artifact_key in (
@@ -2011,18 +2086,28 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                 f'public ELF facts omit {artifact_key} during runtime receipt attachment')
         _require_same_identity_payload(artifact['identity'], current[current_name],
                                        f'public ELF {artifact_key} during runtime receipt attachment')
-    for label, companion in (('runtime registry', registry), ('pthread alias', pthread)):
+    companion_rosters = (
+        ('runtime registry', registry, set(_current_product_identities(paths)), True),
+        ('pthread alias', pthread, set(_current_product_identities(paths)), True),
+        ('prepared worker TLS', prepared_worker, {
+            'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_state', 'dynamic_libc', 'dynamic_loader',
+        }, True),
+        ('errno storage lifecycle', errno_storage, {
+            'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_libc', 'dynamic_shared_provenance',
+        }, True),
+    )
+    for label, companion, expected_roster, needs_measurement_reports in companion_rosters:
         if companion is None:
             continue
         records = companion.get('products')
-        require(type(records) is dict and set(records) == set(current),
+        require(type(records) is dict and set(records) == expected_roster,
                 f'{label} product roster differs during attachment')
-        for name in current:
+        for name in expected_roster:
             _require_same_identity_payload(records[name], current[name],
                                            f'{label} {name} changed during attachment')
-        if label == 'runtime registry':
+        if needs_measurement_reports:
             require(same(companion.get('measurement_reports'), reports),
-                    'runtime registry public replay binding changed during attachment')
+                    f'{label} public replay binding changed during attachment')
         report = companion.get('report')
         require(type(report) is dict and type(report.get('path')) is str,
                 f'{label} report identity differs during attachment')
@@ -2439,6 +2524,616 @@ def attach_pthread_alias_contract(accounting: Mapping[str, Any], companion: Mapp
     }]
 
 
+def _runtime_facts_match_selected_products(facts: Mapping[str, Any], current: Mapping[str, Any], *,
+                                           label: str, artifacts: Sequence[tuple[str, str]]) -> None:
+    """Bind a component's named ELF observations to the selected raw facts."""
+    facts_artifacts = facts.get('artifacts')
+    require(type(facts_artifacts) is dict, f'public ELF facts artifact roster differs for {label}')
+    for current_name, artifact_key in artifacts:
+        artifact = facts_artifacts.get(artifact_key)
+        require(type(artifact) is dict and 'identity' in artifact,
+                f'public ELF facts omit {label} {artifact_key}')
+        _require_same_identity_payload(artifact['identity'], current[current_name],
+                                       f'public ELF/{label} {artifact_key}')
+
+
+def _prepared_runtime_projection(value: object) -> dict[str, Any]:
+    expected = {
+        'application_cells': {row['label']: dict(row) for row in prepared_worker_evidence.runtime_cells()},
+        'source_tests': list(prepared_worker_evidence.UNIT_TESTS),
+        'source_test_executable': 'loader-tests',
+        'source_root': prepared_worker_evidence.UNIT_ROOT,
+        'oracle_boundary': 'Common installed C TLS/callback lifecycle only; no musl token/view/unmap-layout claim.',
+        'owned_boundary': 'Live TLS and retained views mapped until quiescence; joined/reaped TLS and views unmapped.',
+    }
+    require(same(value, expected), 'prepared worker runtime observation roster differs')
+    return copy.deepcopy(expected)
+
+
+def prepared_worker_tls_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                                measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                                source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Replay and bind the finite prepared-worker TLS receipt once.
+
+    The owning reader already validates its source copies, tool commands and
+    runtime cells.  This adapter only joins its exact source/product/ELF facts
+    to the selection transaction; it does not manufacture a main-thread TLS
+    import or treat the owned CRT handoff carrier as this descriptor.
+    """
+    if report_path is None:
+        return None
+    require(Path(prepared_worker_evidence.__file__).resolve().parent == MODULE_DIR,
+            'prepared worker reader belongs to a different checkout')
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    try:
+        report = prepared_worker_evidence.validate_report(
+            ROOT, report_path,
+            **{key: paths[key] for key in
+               ('base_inventory', 'elf_report', 'static_preparation', 'static_product', 'dynamic_product')},
+        )
+    except (KeyError, TypeError, ValueError, OSError, prepared_worker_evidence.PreparedWorkerTlsError) as error:
+        raise SelectionError(f'prepared worker TLS component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'prepared worker TLS report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
+    _measurement_source_matches(source, measurement, 'prepared worker TLS')
+    measurement_reports = _measurement_report_bindings(measurement, 'prepared worker TLS')
+    report = exact(report, {
+        'schema', 'target', 'image', 'status', 'source_before', 'source_after', 'source_account', 'source_copies',
+        'inputs_before', 'inputs_after', 'tools', 'rust_tools', 'oracle', 'oracle_static_inputs', 'commands', 'links',
+        'observations',
+    }, 'prepared worker TLS reader report')
+    require(report['schema'] == prepared_worker_evidence.SCHEMA and report['target'] == prepared_worker_evidence.inventory.TARGET
+            and same(report['status'], prepared_worker_evidence.STATUS),
+            'prepared worker TLS reader report identity or status differs')
+    require(same(report['source_before'], source) and same(report['source_after'], source),
+            'prepared worker TLS source differs from selection')
+    require(type(report['image']) is str and bool(report['image']), 'prepared worker TLS image identity differs')
+    inputs = exact(report['inputs_before'], {'products', 'reports', 'elf'}, 'prepared worker TLS input binding')
+    require(same(report['inputs_after'], inputs), 'prepared worker TLS input binding changed')
+    products = exact(inputs['products'], {'source', 'static_preparation', 'dynamic_product'},
+                     'prepared worker TLS product binding')
+    expected_source = {'revision': source['revision'], 'content_sha256': source['content_sha256']}
+    require(same(products['source'], expected_source), 'prepared worker TLS product source differs')
+    static_preparation = exact(products['static_preparation'], {'receipt', 'source', 'primary'},
+                               'prepared worker TLS static preparation binding')
+    require(same(static_preparation['receipt'], measurement_reports['static_preparation'])
+            and same(static_preparation['source'], expected_source),
+            'prepared worker TLS static preparation differs from selection')
+    primary = exact(static_preparation['primary'], {'path', 'manifest'}, 'prepared worker TLS static primary')
+    dynamic_product = exact(products['dynamic_product'], {'path', 'manifest', 'state', 'manifest_sha256'},
+                            'prepared worker TLS dynamic product binding')
+    reports = exact(inputs['reports'], {'base_inventory', 'elf_report'}, 'prepared worker TLS report binding')
+    require(same(reports['base_inventory'], measurement_reports['base_inventory'])
+            and same(reports['elf_report'], measurement_reports['elf_report']),
+            'prepared worker TLS public replay report differs')
+    current = _runtime_attachment_identities(paths)
+    _require_same_identity_payload(primary['manifest'], current['static_manifest'],
+                                   'prepared worker TLS static manifest')
+    _require_same_identity_payload(dynamic_product['manifest'], current['dynamic_manifest'],
+                                   'prepared worker TLS dynamic manifest')
+    _require_same_identity_payload(dynamic_product['state'], current['dynamic_state'],
+                                   'prepared worker TLS dynamic state')
+    _runtime_facts_match_selected_products(
+        facts, current, label='prepared worker TLS',
+        artifacts=(('static_libc', 'candidate-static'), ('dynamic_libc', 'candidate-shared'),
+                   ('dynamic_loader', 'candidate-loader')),
+    )
+    expected_elf = prepared_worker_evidence.account_elf(facts)
+    require(same(inputs['elf'], expected_elf), 'prepared worker TLS selected ELF account differs')
+    expected_source_account = prepared_worker_evidence.account_source(ROOT)
+    require(same(report['source_account'], expected_source_account), 'prepared worker TLS source account differs')
+    require(type(report['source_copies']) is dict and set(report['source_copies']) == set(prepared_worker_evidence.SOURCE_PATHS),
+            'prepared worker TLS retained source roster differs')
+    observations = exact(report['observations'], {
+        'artifacts', 'worker_relocations', 'executables', 'dsos', 'runtime', 'unit_diagnostics', 'execution_roots',
+    }, 'prepared worker TLS observations')
+    try:
+        expected_relocations = prepared_worker_evidence.worker_relocations(
+            prepared_worker_evidence.Elf(paths['dynamic_product'] / 'usr/lib/libc.so')
+        )
+    except (ValueError, OSError, prepared_worker_evidence.PreparedWorkerTlsError) as error:
+        raise SelectionError(f'prepared worker TLS relocation account rejected: {error}') from error
+    require(same(observations['worker_relocations'], expected_relocations),
+            'prepared worker TLS relocation account differs')
+    runtime = _prepared_runtime_projection(observations['runtime'])
+    selected_products = {
+        name: copy.deepcopy(current[name]) for name in (
+            'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_state', 'dynamic_libc', 'dynamic_loader',
+        )
+    }
+    return {
+        'status': 'prepared-worker-tls-observed-with-boundaries',
+        'reader': file_identity(Path(prepared_worker_evidence.__file__)),
+        'contract': file_identity(prepared_worker_evidence.CONTRACT),
+        'report': before,
+        'source': copy.deepcopy(source),
+        'products': selected_products,
+        'measurement_reports': measurement_reports,
+        'account': {
+            'elf': copy.deepcopy(expected_elf),
+            'source': copy.deepcopy(expected_source_account),
+            'worker_relocations': copy.deepcopy(expected_relocations),
+            'runtime': runtime,
+        },
+        'limits': list(PREPARED_WORKER_TLS_LIMITS),
+    }
+
+
+def _errno_summary(value: object) -> dict[str, str]:
+    expected = {
+        'errno_public_accessor': 'GLOBAL DEFAULT FUNC',
+        'errno_allocator_alias': 'static WEAK HIDDEN same-address; shared LOCAL DEFAULT absent-dynsym',
+        'h_errno': 'GLOBAL DEFAULT OBJECT size=4 with GLOBAL DEFAULT accessor',
+        'execution': 'main/live-worker isolation, stable live locations, selected pthread EBUSY preserves errno, and loaded DSO access',
+        'worker_pointer_lifetime': 'never dereferenced after join',
+    }
+    require(same(value, expected), 'errno storage lifecycle summary differs')
+    return copy.deepcopy(expected)
+
+
+def _errno_alias_policy(value: object, description: str) -> dict[str, Any]:
+    """Validate the receipt's fixed one-name policy projection.
+
+    The owning reader validates the retained full shared-libc link command.
+    This join keeps only its deliberately compact policy projection, so it
+    checks the reviewed source/list/script constants directly instead of
+    synthesizing a partial command merely to reuse that reader's helper.
+    """
+    aliases = exact(value, {'source', 'member_count', 'members', 'linker_policy', 'linker_script_sha256'}, description)
+    source = exact(aliases['source'], {'path', 'sha256', 'mode'}, f'{description} source')
+    require(same(source, {
+        'path': errno_storage_evidence.SHARED_ALIAS_LIST,
+        'sha256': errno_storage_evidence.SHARED_ALIAS_LIST_SHA256,
+        'mode': 0o644,
+    }), f'{description} source differs')
+    require(type(aliases['member_count']) is int
+            and aliases['member_count'] == len(errno_storage_evidence.SHARED_ALIAS_MEMBERS)
+            and aliases['members'] == list(errno_storage_evidence.SHARED_ALIAS_MEMBERS)
+            and aliases['linker_policy'] == 'exact-local-symbols'
+            and aliases['linker_script_sha256'] == errno_storage_evidence.SHARED_ALIAS_LINKER_SCRIPT_SHA256,
+            f'{description} policy differs')
+    return copy.deepcopy(aliases)
+
+
+def errno_storage_lifecycle_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                                    measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                                    source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Replay and bind the finite errno storage/lifecycle receipt once.
+
+    The receipt owns public accessor behavior, the private local alias policy,
+    and live-worker observations.  It deliberately does not stand in for the
+    selected loader report, the h_errno header/declaration account, or the
+    generic object-layout proof.
+    """
+    if report_path is None:
+        return None
+    require(Path(errno_storage_evidence.__file__).resolve().parent == MODULE_DIR,
+            'errno storage reader belongs to a different checkout')
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    try:
+        report = errno_storage_evidence.validate_report(ROOT, report_path)
+    except (KeyError, TypeError, ValueError, OSError, errno_storage_evidence.ErrnoStorageEvidenceError) as error:
+        raise SelectionError(f'errno storage lifecycle component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'errno storage lifecycle report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
+    _measurement_source_matches(source, measurement, 'errno storage lifecycle')
+    measurement_reports = _measurement_report_bindings(measurement, 'errno storage lifecycle')
+    report = exact(report, {
+        'schema', 'target', 'work', 'source', 'products', 'shared_alias_link_policy', 'symbols', 'workload_symbols',
+        'objects', 'execution', 'dynamic_link_receipts', 'summary',
+    }, 'errno storage lifecycle reader report')
+    require(report['schema'] == errno_storage_evidence.SCHEMA and report['target'] == errno_storage_evidence.TARGET,
+            'errno storage lifecycle reader report identity differs')
+    receipt_source = exact(report['source'], {'schema', 'root', 'commit', 'status', 'files'},
+                           'errno storage lifecycle source snapshot')
+    require(receipt_source['schema'] == errno_storage_evidence.SNAPSHOT_SCHEMA
+            and receipt_source['root'] == str(ROOT)
+            and receipt_source['commit'] == source['revision'] and receipt_source['status'] == ''
+            and type(receipt_source['files']) is dict and set(receipt_source['files']) == set(errno_storage_evidence.SOURCE_FILES),
+            'errno storage lifecycle source differs from selection')
+    products = exact(report['products'], {'static', 'dynamic'}, 'errno storage lifecycle product record')
+    static_product = exact(products['static'], {'root', 'manifest', 'libc'}, 'errno storage lifecycle static product')
+    dynamic_product = exact(products['dynamic'], {'root', 'manifest', 'libc', 'libc_shared_provenance'},
+                            'errno storage lifecycle dynamic product')
+    current = _runtime_attachment_identities(paths)
+    for receipt, name in (
+        (static_product['manifest'], 'static_manifest'), (static_product['libc'], 'static_libc'),
+        (dynamic_product['manifest'], 'dynamic_manifest'), (dynamic_product['libc'], 'dynamic_libc'),
+        (dynamic_product['libc_shared_provenance'], 'dynamic_shared_provenance'),
+    ):
+        _require_same_errno_identity(receipt, current[name], f'errno storage lifecycle {name}')
+    _runtime_facts_match_selected_products(
+        facts, current, label='errno storage lifecycle',
+        artifacts=(('static_libc', 'candidate-static'), ('dynamic_libc', 'candidate-shared')),
+    )
+    alias_policy = _errno_alias_policy(report['shared_alias_link_policy'], 'errno storage lifecycle receipt')
+    require(type(report['symbols']) is dict and set(report['symbols']) == set(errno_storage_evidence.SYMBOL_INPUTS)
+            and type(report['workload_symbols']) is dict and set(report['workload_symbols']) == set(errno_storage_evidence.WORKLOAD_SYMBOL_INPUTS)
+            and type(report['objects']) is dict and set(report['objects']) == set(errno_storage_evidence.OBJECTS)
+            and type(report['execution']) is dict and set(report['execution']) == set(errno_storage_evidence.RUN_LABELS)
+            and type(report['dynamic_link_receipts']) is dict and set(report['dynamic_link_receipts']) == set(errno_storage_evidence.DYNAMIC_LINKS),
+            'errno storage lifecycle retained evidence roster differs')
+    summary = _errno_summary(report['summary'])
+    selected_products = {
+        name: copy.deepcopy(current[name]) for name in (
+            'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_libc', 'dynamic_shared_provenance',
+        )
+    }
+    return {
+        'status': 'errno-storage-lifecycle-observed-with-boundaries',
+        'reader': file_identity(Path(errno_storage_evidence.__file__)),
+        'report': before,
+        'source': copy.deepcopy(source),
+        'products': selected_products,
+        'measurement_reports': measurement_reports,
+        'account': {
+            'public_symbols': list(errno_storage_evidence.PUBLIC_SYMBOLS),
+            'private_alias': errno_storage_evidence.ALIAS,
+            'shared_alias_policy': copy.deepcopy(alias_policy),
+            'summary': summary,
+            'execution_labels': list(errno_storage_evidence.RUN_LABELS),
+        },
+        'limits': list(ERRNO_STORAGE_LIFECYCLE_LIMITS),
+    }
+
+
+def _accounting_indexes(accounting: Mapping[str, Any], *, description: str) -> tuple[dict[tuple[str, str | None, bool], dict[str, Any]],
+                                                                                      dict[tuple[tuple[str, str | None, bool], str], dict[str, Any]],
+                                                                                      dict[int, dict[str, Any]]]:
+    records = {identity_key(record['identity']): record for record in accounting['identities']}
+    require(len(records) == len(accounting['identities']), f'duplicate identities before {description}')
+    placements = {(identity_key(row['identity']), row['artifact_key']): row for row in accounting['placement_joins']}
+    require(len(placements) == len(accounting['placement_joins']), f'duplicate placement joins before {description}')
+    occurrences = {row['index']: row for row in accounting['occurrences']}
+    require(len(occurrences) == len(accounting['occurrences']), f'duplicate occurrences before {description}')
+    return records, placements, occurrences
+
+
+def _selected_placement(placements: Mapping[tuple[tuple[str, str | None, bool], str], Mapping[str, Any]],
+                        occurrences: Mapping[int, Mapping[str, Any]], *, name: str, artifact_key: str,
+                        table: str, role: str, metadata: Mapping[str, Any], description: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    key = (name, None, False)
+    join = placements.get((key, artifact_key))
+    require(join is not None and join.get('placement_observed') is True
+            and join.get('definition_count') == 1 and len(join.get('occurrence_indices', [])) == 1
+            and _metadata_difference_rows_are_empty(join.get('metadata_differences'), description),
+            f'{description} selected placement differs')
+    expected = join.get('expected_metadata')
+    require(type(expected) is dict and all(expected.get(field) == value for field, value in metadata.items()),
+            f'{description} selected metadata differs')
+    occurrence = occurrences.get(join['occurrence_indices'][0])
+    require(occurrence is not None and occurrence.get('artifact_key') == artifact_key
+            and occurrence.get('table') == table and occurrence.get('role') == role
+            and same(row_identity(occurrence['row']), identity(name))
+            and all(occurrence['row'].get(field) == value for field, value in metadata.items()),
+            f'{description} selected occurrence differs')
+    return dict(join), dict(occurrence)
+
+
+def _remove_identity_requirements(accounting: Mapping[str, Any], record: Mapping[str, Any],
+                                  requirements: Sequence[str], *, description: str) -> None:
+    require(all(reason in record['unresolved'] for reason in requirements),
+            f'{description} requirements are absent before attachment')
+    record['unresolved'] = [reason for reason in record['unresolved'] if reason not in requirements]
+    key = identity_key(record['identity'])
+    accounting['blockers'][:] = [
+        blocker for blocker in accounting['blockers']
+        if not (blocker.get('code') == 'identity-unresolved'
+                and identity_key(blocker.get('identity', {})) == key
+                and blocker.get('reason') in requirements)
+    ]
+
+
+def _prepared_observation_occurrence(occurrences: Mapping[int, Mapping[str, Any]], *, artifact_key: str,
+                                     table: str, observation: Mapping[str, Any], description: str) -> dict[str, Any]:
+    observed = exact(observation, {'table_index', 'row_index', 'row'}, description)
+    row = observed['row']
+    require(type(row) is dict and type(row.get('name')) is str and row['name'], f'{description} raw row differs')
+    matches = [candidate for candidate in occurrences.values()
+               if candidate.get('artifact_key') == artifact_key and candidate.get('table') == table
+               and candidate.get('row', {}).get('row_index') == observed['row_index']
+               and same(candidate.get('row'), row)]
+    require(len(matches) == 1, f'{description} does not bind one selected occurrence')
+    return dict(matches[0])
+
+
+def attach_prepared_worker_tls(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Attach only the worker TLS source-dispatch and descriptor evidence."""
+    if companion is None:
+        return []
+    companion = exact(companion, {
+        'status', 'reader', 'contract', 'report', 'source', 'products', 'measurement_reports', 'account', 'limits',
+    }, 'prepared worker TLS companion')
+    require(companion['status'] == 'prepared-worker-tls-observed-with-boundaries'
+            and companion['limits'] == PREPARED_WORKER_TLS_LIMITS,
+            'prepared worker TLS companion boundary differs')
+    account = exact(companion['account'], {'elf', 'source', 'worker_relocations', 'runtime'},
+                    'prepared worker TLS companion account')
+    elf_account = exact(account['elf'], {
+        'operations', 'descriptor_named_elf_observations', 'descriptor_installed_import_required',
+        'legacy_named_shared_loader_rows',
+    }, 'prepared worker TLS ELF account')
+    require(elf_account['descriptor_installed_import_required'] is False
+            and elf_account['legacy_named_shared_loader_rows'] == [],
+            'prepared worker TLS imported legacy/descriptor policy differs')
+    source_account = exact(account['source'], {
+        'source_files', 'operations', 'source_signatures', 'legacy_replacement', 'worker_token', 'ordering',
+        'descriptor', 'descriptor_source_fields', 'scope',
+    }, 'prepared worker TLS source account')
+    require(source_account['operations'] == prepared_worker_evidence.OPERATIONS
+            and source_account['legacy_replacement'] == prepared_worker_evidence.expected_contract()['legacy_replacement']
+            and source_account['worker_token'] == {
+                'producer_fields': prepared_worker_evidence.TOKEN_FIELDS,
+                'consumer_fields': prepared_worker_evidence.TOKEN_FIELDS,
+                'size_bytes': 32, 'alignment_bytes': 8,
+            }
+            and source_account['scope'] == 'Source selection and lexical ordering; native execution/compiled unit receipts remain separate.',
+            'prepared worker TLS source account scope differs')
+    _prepared_runtime_projection(account['runtime'])
+    require(type(account['worker_relocations']) is dict and set(account['worker_relocations']) == set(prepared_worker_evidence.OPERATIONS),
+            'prepared worker TLS relocation roster differs')
+    records, placements, occurrences = _accounting_indexes(accounting, description='prepared worker TLS attachment')
+    protocol_joins = accounting['private_protocol_joins']
+    require(type(protocol_joins) is list, 'prepared worker TLS private protocol joins differ')
+    operation_joins: list[dict[str, Any]] = []
+    for name, operation in sorted(prepared_worker_evidence.OPERATIONS.items()):
+        key = (name, None, False)
+        record = records.get(key)
+        require(record is not None and record.get('selection', {}).get('disposition') == 'private-resolution-operation'
+                and record['selection'].get('owner') == 'loader-worker-tls-operations',
+                f'prepared worker TLS selected operation differs: {name}')
+        protocol = record['selection'].get('protocol')
+        require(type(protocol) is dict and protocol.get('id') == 'loader-worker-tls-operations'
+                and protocol.get('members') == list(prepared_worker_evidence.OPERATIONS)
+                and protocol.get('consumer_artifacts') == ['candidate-shared']
+                and protocol.get('provider_artifacts') == []
+                and protocol.get('requirements') == list(PREPARED_WORKER_TLS_REQUIREMENTS),
+                f'prepared worker TLS protocol differs: {name}')
+        source_operation = source_account['operations'].get(name)
+        require(source_operation == operation, f'prepared worker TLS source operation differs: {name}')
+        observed_tables = elf_account['operations'].get(name)
+        require(type(observed_tables) is dict and set(observed_tables) == {'.dynsym', '.symtab'},
+                f'prepared worker TLS selected operation table roster differs: {name}')
+        bound_indices: list[int] = []
+        for table in ('.dynsym', '.symtab'):
+            occurrence = _prepared_observation_occurrence(
+                occurrences, artifact_key='candidate-shared', table=table, observation=observed_tables[table],
+                description=f'prepared worker TLS {name} {table}',
+            )
+            require(occurrence['role'] == 'import' and same(row_identity(occurrence['row']), identity(name))
+                    and occurrence.get('accounting', {}).get('disposition') == 'private-resolution-operation'
+                    and occurrence['accounting'].get('owner') == 'loader-worker-tls-operations'
+                    and occurrence['accounting'].get('scope') == 'candidate-shared'
+                    and occurrence['accounting'].get('resolution_proven') is False,
+                    f'prepared worker TLS selected operation occurrence differs: {name} {table}')
+            resolution = occurrence['accounting'].get('resolution')
+            require(type(resolution) is dict and resolution.get('kind') == 'source-dispatch-operation'
+                    and type(resolution.get('operation')) is dict and resolution['operation'].get('name') == name,
+                    f'prepared worker TLS source-dispatch operation differs: {name} {table}')
+            occurrence['accounting']['resolution_proven'] = True
+            bound_indices.append(occurrence['index'])
+        join = next((row for row in protocol_joins
+                     if row.get('identity') == record['identity'] and row.get('artifact_key') == 'candidate-shared'
+                     and row.get('role') == 'consumer-import'), None)
+        require(join is not None and join.get('occurrence_indices') == bound_indices
+                and join.get('endpoint_kind') == 'source-dispatch-operation'
+                and join.get('relocation_lifecycle_proven') is False,
+                f'prepared worker TLS private operation join differs: {name}')
+        join['relocation_lifecycle_proven'] = True
+        _remove_identity_requirements(accounting, record, PREPARED_WORKER_TLS_REQUIREMENTS,
+                                      description=f'prepared worker TLS {name}')
+        operation_joins.append({
+            'identity': copy.deepcopy(record['identity']), 'role': operation['role'],
+            'artifact_key': 'candidate-shared', 'occurrence_indices': bound_indices,
+            'source_dispatch_proven': True,
+            'requirements_discharged': list(PREPARED_WORKER_TLS_REQUIREMENTS),
+        })
+    legacy_joins: list[dict[str, Any]] = []
+    structural_requirement = 'current source-bound owning component and consumer semantics receipt'
+    for legacy in source_account['legacy_replacement']:
+        legacy = exact(legacy, {'name', 'owner', 'role'}, 'prepared worker TLS legacy replacement')
+        name = legacy['name']
+        record = records.get((name, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'structural-replacement'
+                and record['selection'].get('owner') == 'pthread-prepared-token'
+                and record['selection'].get('reason') == 'Actual pthread consumer uses prepared mapping/thread-pointer/generation token before clone and exact release at exit/reap; raw process clone is not the replacement.',
+                f'prepared worker TLS legacy replacement selection differs: {name}')
+        _remove_identity_requirements(accounting, record, (structural_requirement,),
+                                      description=f'prepared worker TLS legacy replacement {name}')
+        legacy_joins.append({
+            'identity': copy.deepcopy(record['identity']), 'owner': legacy['owner'], 'role': legacy['role'],
+            'requirements_discharged': [structural_requirement],
+        })
+    require(len(legacy_joins) == len(prepared_worker_evidence.LEGACY),
+            'prepared worker TLS legacy replacement count differs')
+    descriptor_name = '__crabc_x86_64_loader_tls_runtime_v1'
+    descriptor = records.get((descriptor_name, None, False))
+    require(descriptor is not None and descriptor.get('selection', {}).get('disposition') == 'private-resolution-operation'
+            and descriptor['selection'].get('owner') == 'loader-libc-tls-descriptor-v1',
+            'prepared worker TLS descriptor selection differs')
+    descriptor_protocol = descriptor['selection'].get('protocol')
+    require(type(descriptor_protocol) is dict and descriptor_protocol.get('id') == 'loader-libc-tls-descriptor-v1'
+            and descriptor_protocol.get('members') == [descriptor_name]
+            and descriptor_protocol.get('consumer_artifacts') == ['candidate-shared']
+            and descriptor_protocol.get('provider_artifacts') == ['candidate-loader']
+            and descriptor_protocol.get('provider_metadata') == {'type': 'OBJECT', 'size_bytes': 72, 'alignment_bytes': 8}
+            and descriptor_protocol.get('requirements') == list(PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS),
+            'prepared worker TLS descriptor protocol differs')
+    source_descriptor = source_account['descriptor']
+    require(type(source_descriptor) is dict and source_descriptor.get('size_bytes') == 72
+            and source_descriptor.get('alignment_bytes') == 8
+            and source_descriptor.get('role') == 'private-process-lifetime-initial-tls-provenance',
+            'prepared worker TLS descriptor source account differs')
+    observed_descriptor = elf_account['descriptor_named_elf_observations']
+    require(type(observed_descriptor) is list, 'prepared worker TLS descriptor ELF observations differ')
+    descriptor_occurrences = []
+    for observation in observed_descriptor:
+        observation = exact(observation, {'artifact', 'table', 'row'}, 'prepared worker TLS descriptor observation')
+        require(observation['artifact'] in {'candidate-shared', 'candidate-loader'}
+                and observation['table'] in {'.dynsym', '.symtab'} and type(observation['row']) is dict,
+                'prepared worker TLS descriptor observation shape differs')
+        matches = [row for row in occurrences.values()
+                   if row.get('artifact_key') == observation['artifact'] and row.get('table') == observation['table']
+                   and same(row.get('row'), observation['row'])]
+        require(len(matches) == 1 and same(row_identity(matches[0]['row']), identity(descriptor_name)),
+                'prepared worker TLS descriptor observation does not bind selected ELF facts')
+        descriptor_occurrences.append(matches[0])
+    provider_join = next((row for row in protocol_joins
+                          if row.get('identity') == descriptor['identity'] and row.get('artifact_key') == 'candidate-loader'
+                          and row.get('role') == 'private-descriptor-definition'), None)
+    require(provider_join is not None and provider_join.get('binding_and_visibility_selection_complete') is False
+            and _metadata_difference_rows_are_empty(provider_join.get('metadata_differences'),
+                                                     'prepared worker TLS descriptor provider')
+            and len(provider_join.get('occurrence_indices', [])) == 1,
+            'prepared worker TLS descriptor provider placement differs')
+    provider_occurrence = occurrences.get(provider_join['occurrence_indices'][0])
+    require(provider_occurrence is not None and provider_occurrence in descriptor_occurrences
+            and provider_occurrence.get('artifact_key') == 'candidate-loader'
+            and provider_occurrence.get('role') == 'definition'
+            and provider_occurrence['row'].get('type') == 'OBJECT'
+            and provider_occurrence['row'].get('size_bytes') == 72,
+            'prepared worker TLS descriptor provider occurrence differs')
+    consumer_join = next((row for row in protocol_joins
+                          if row.get('identity') == descriptor['identity'] and row.get('artifact_key') == 'candidate-shared'
+                          and row.get('role') == 'consumer-import'), None)
+    require(consumer_join is not None and consumer_join.get('endpoint_kind') == 'descriptor'
+            and consumer_join.get('relocation_lifecycle_proven') is False,
+            'prepared worker TLS descriptor consumer join differs')
+    consumer_occurrences = [occurrences[index] for index in consumer_join.get('occurrence_indices', []) if index in occurrences]
+    require(len(consumer_occurrences) == len(consumer_join.get('occurrence_indices', []) )
+            and all(row in descriptor_occurrences and row.get('role') == 'import' for row in consumer_occurrences),
+            'prepared worker TLS descriptor consumer occurrence differs')
+    provider_join['binding_and_visibility_selection_complete'] = True
+    consumer_join['relocation_lifecycle_proven'] = True
+    descriptor_requirements = (*PREPARED_WORKER_TLS_DESCRIPTOR_REQUIREMENTS,
+                               'private descriptor exact binding/visibility selection and lifecycle proof remain required')
+    _remove_identity_requirements(accounting, descriptor, descriptor_requirements,
+                                  description='prepared worker TLS descriptor')
+    return [{
+        'operations': operation_joins,
+        'legacy_replacements': legacy_joins,
+        'descriptor': {
+            'identity': copy.deepcopy(descriptor['identity']),
+            'provider_occurrence_indices': list(provider_join['occurrence_indices']),
+            'consumer_occurrence_indices': list(consumer_join['occurrence_indices']),
+            'static_installed_import_required': False,
+            'owned_crt_handoff_carrier_attached': False,
+            'requirements_discharged': list(descriptor_requirements),
+        },
+    }]
+
+
+def _errno_provider_partition(inputs: Mapping[str, Any]) -> None:
+    """Use the already authenticated callable partition without rebuilding it."""
+    disposition = inputs.get('provider_disposition')
+    require(type(disposition) is dict, 'errno storage callable provider disposition differs')
+    default_static = disposition.get('default_static')
+    require(type(default_static) is dict and '__errno_location' in default_static.get('members', []),
+            'errno public accessor is absent from the default-static provider partition')
+    verified = disposition.get('verified_feature_archives')
+    h_errno = [row for row in verified if type(row) is dict and row.get('id') == 'x86-h-errno'] if type(verified) is list else []
+    require(len(h_errno) == 1 and h_errno[0].get('members') == ['__h_errno_location'],
+            'h_errno accessor feature provider partition differs')
+
+
+def attach_errno_storage_lifecycle(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None,
+                                   inputs: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Join the finite errno storage evidence without expanding its scope."""
+    if companion is None:
+        return []
+    companion = exact(companion, {
+        'status', 'reader', 'report', 'source', 'products', 'measurement_reports', 'account', 'limits',
+    }, 'errno storage lifecycle companion')
+    require(companion['status'] == 'errno-storage-lifecycle-observed-with-boundaries'
+            and companion['limits'] == ERRNO_STORAGE_LIFECYCLE_LIMITS,
+            'errno storage lifecycle companion boundary differs')
+    account = exact(companion['account'], {
+        'public_symbols', 'private_alias', 'shared_alias_policy', 'summary', 'execution_labels',
+    }, 'errno storage lifecycle companion account')
+    require(account['public_symbols'] == list(errno_storage_evidence.PUBLIC_SYMBOLS)
+            and account['private_alias'] == errno_storage_evidence.ALIAS
+            and account['execution_labels'] == list(errno_storage_evidence.RUN_LABELS),
+            'errno storage lifecycle finite identity roster differs')
+    _errno_summary(account['summary'])
+    _errno_alias_policy(account['shared_alias_policy'], 'errno storage lifecycle companion')
+    _errno_provider_partition(inputs)
+    records, placements, occurrences = _accounting_indexes(accounting, description='errno storage lifecycle attachment')
+    public_rows = []
+    for name, owner, metadata in (
+        ('__errno_location', 'checked-header-provider-routing', {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
+        ('__h_errno_location', 'x86-h-errno', {'type': 'FUNC', 'binding': 'GLOBAL', 'visibility': 'DEFAULT'}),
+        ('h_errno', 'object:h_errno', {'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size_bytes': 4}),
+    ):
+        record = records.get((name, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider'
+                and record['selection'].get('owner') == owner,
+                f'errno storage lifecycle selected owner differs: {name}')
+        static_join, static_occurrence = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-static', table='.symtab', role='definition',
+            metadata=metadata, description=f'errno storage lifecycle {name} static',
+        )
+        shared_join, shared_occurrence = _selected_placement(
+            placements, occurrences, name=name, artifact_key='candidate-shared', table='.dynsym', role='definition',
+            metadata=metadata, description=f'errno storage lifecycle {name} shared',
+        )
+        public_rows.append({
+            'identity': copy.deepcopy(record['identity']), 'owner': owner,
+            'static_occurrence_index': static_occurrence['index'], 'shared_occurrence_index': shared_occurrence['index'],
+            'static_placement_observed': static_join['placement_observed'],
+            'shared_placement_observed': shared_join['placement_observed'],
+        })
+    alias_record = records.get((errno_storage_evidence.ALIAS, None, False))
+    require(alias_record is not None and alias_record.get('selection', {}).get('disposition') == 'private-provider'
+            and alias_record['selection'].get('group') == ERRNO_PRIVATE_ALIAS_GROUP
+            and alias_record['selection'].get('owner') == 'x86-errno-storage-lifecycle',
+            'errno storage lifecycle private alias selection differs')
+    _static_alias_join, static_alias = _selected_placement(
+        placements, occurrences, name=errno_storage_evidence.ALIAS, artifact_key='candidate-static', table='.symtab',
+        role='definition', metadata={'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'HIDDEN'},
+        description='errno storage lifecycle private alias static',
+    )
+    _shared_alias_join, shared_alias = _selected_placement(
+        placements, occurrences, name=errno_storage_evidence.ALIAS, artifact_key='candidate-shared', table='.symtab',
+        role='local-definition', metadata={'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT'},
+        description='errno storage lifecycle private alias shared',
+    )
+    errno_static = next(row for row in public_rows if row['identity']['name'] == '__errno_location')
+    static_accessor = occurrences[errno_static['static_occurrence_index']]
+    shared_accessor = [row for row in occurrences.values()
+                       if row.get('artifact_key') == 'candidate-shared' and row.get('table') == '.symtab'
+                       and row.get('role') == 'definition' and row.get('row', {}).get('name') == '__errno_location'
+                       and row['row'].get('version') is None and row['row'].get('version_default') is False]
+    require(len(shared_accessor) == 1 and same_definition_domain(static_alias, static_accessor)
+            and same_definition_domain(shared_alias, shared_accessor[0]),
+            'errno storage lifecycle private alias no longer shares its selected definition')
+    leaks = [row for row in occurrences.values()
+             if row.get('artifact_key') == 'candidate-shared' and row.get('table') == '.dynsym'
+             and row.get('row', {}).get('section_index') != 'UND'
+             and row.get('row', {}).get('name') == errno_storage_evidence.ALIAS
+             and row['row'].get('version') is None and row['row'].get('version_default') is False]
+    require(not leaks, 'errno storage lifecycle private alias leaked into shared dynsym')
+    _remove_identity_requirements(
+        accounting, alias_record, (ERRNO_STORAGE_LIFECYCLE_REQUIREMENT,),
+        description='errno storage lifecycle private alias',
+    )
+    return [{
+        'public_identities': public_rows,
+        'private_alias': {
+            'identity': copy.deepcopy(alias_record['identity']),
+            'static_occurrence_index': static_alias['index'], 'shared_occurrence_index': shared_alias['index'],
+            'static_same_definition_target': static_accessor['index'],
+            'shared_same_definition_target': shared_accessor[0]['index'],
+            'shared_dynsym_absent': True,
+            'one_name_local_script_policy': copy.deepcopy(account['shared_alias_policy']),
+            'requirements_discharged': [ERRNO_STORAGE_LIFECYCLE_REQUIREMENT],
+        },
+        'runtime_summary': copy.deepcopy(account['summary']),
+        'limits': list(ERRNO_STORAGE_LIFECYCLE_LIMITS),
+    }]
+
+
 def _compiler_helper_shared_contract(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     """Authenticate the finite helper source selection before using its DSO view.
 
@@ -2644,10 +3339,18 @@ def bind_compiler_helper_shared_placement_joins(accounting: Mapping[str, Any], p
                 and type(occurrence['definition_section']) is dict
                 and occurrence['definition_section'].get('name') == projection['section'],
                 'compiler-helper private shared projection does not bind the selected ELF row')
+        # Complete facts retain the ELF null rows in both symbol tables.  Do
+        # not construct a logical identity until this is a named defining
+        # ``.dynsym`` row; an unrelated unnamed ``.symtab``/``.dynsym`` row
+        # is still retained in the report but cannot be compared as a helper
+        # export.
         leaked = [row for row in accounting['occurrences']
                   if row['artifact_key'] == COMPILER_HELPER_SHARED_ARTIFACT
-                  and same(row_identity(row['row']), identity_value)
-                  and row['table'] == '.dynsym' and row['row']['section_index'] != 'UND']
+                  and row['table'] == '.dynsym' and row['row'].get('section_index') != 'UND'
+                  and row['row'].get('name') == identity_value['name']
+                  and row['row'].get('version') == identity_value['version']
+                  and row['row'].get('version_default') == identity_value['version_default']
+                  and same(row_identity(row['row']), identity_value)]
         require(not leaked, 'compiler-helper private shared definition leaked into dynsym')
         result.append({
             **copy.deepcopy(pending_row),
@@ -2704,7 +3407,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                   compiler_helper_aggregate_report: Path | None = None,
                   loader_runtime_registry_report: Path | None = None,
-                  pthread_alias_contract_report: Path | None = None) -> dict[str, Any]:
+                  pthread_alias_contract_report: Path | None = None,
+                  prepared_worker_tls_report: Path | None = None,
+                  errno_storage_lifecycle_report: Path | None = None) -> dict[str, Any]:
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -2721,6 +3426,12 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     pthread_alias_contract_companion = pthread_alias_contract_adapter(
         pthread_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+    )
+    prepared_worker_tls_companion = prepared_worker_tls_adapter(
+        prepared_worker_tls_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+    )
+    errno_storage_lifecycle_companion = errno_storage_lifecycle_adapter(
+        errno_storage_lifecycle_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -2756,9 +3467,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     compiler_helper_import_joins = attach_compiler_helper_import(accounting, compiler_helper_companion)
     loader_runtime_registry_joins = attach_loader_runtime_registry(accounting, loader_runtime_registry_companion)
     pthread_alias_contract_joins = attach_pthread_alias_contract(accounting, pthread_alias_contract_companion)
+    prepared_worker_tls_joins = attach_prepared_worker_tls(accounting, prepared_worker_tls_companion)
+    errno_storage_lifecycle_joins = attach_errno_storage_lifecycle(
+        accounting, errno_storage_lifecycle_companion, inputs,
+    )
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
+        prepared_worker=prepared_worker_tls_companion, errno_storage=errno_storage_lifecycle_companion,
     )
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
@@ -2782,6 +3498,10 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'loader_runtime_registry_joins': loader_runtime_registry_joins,
             'pthread_alias_contract_companion': pthread_alias_contract_companion,
             'pthread_alias_contract_joins': pthread_alias_contract_joins,
+            'prepared_worker_tls_companion': prepared_worker_tls_companion,
+            'prepared_worker_tls_joins': prepared_worker_tls_joins,
+            'errno_storage_lifecycle_companion': errno_storage_lifecycle_companion,
+            'errno_storage_lifecycle_joins': errno_storage_lifecycle_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -2794,6 +3514,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  compiler_helper_aggregate_report: Path | None = None,
                  loader_runtime_registry_report: Path | None = None,
                  pthread_alias_contract_report: Path | None = None,
+                 prepared_worker_tls_report: Path | None = None,
+                 errno_storage_lifecycle_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -2804,7 +3526,9 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report,
                            compiler_helper_aggregate_report=compiler_helper_aggregate_report,
                            loader_runtime_registry_report=loader_runtime_registry_report,
-                           pthread_alias_contract_report=pthread_alias_contract_report)
+                           pthread_alias_contract_report=pthread_alias_contract_report,
+                           prepared_worker_tls_report=prepared_worker_tls_report,
+                           errno_storage_lifecycle_report=errno_storage_lifecycle_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -2816,6 +3540,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     compiler_helper_aggregate_report: Path | None = None,
                     loader_runtime_registry_report: Path | None = None,
                     pthread_alias_contract_report: Path | None = None,
+                    prepared_worker_tls_report: Path | None = None,
+                    errno_storage_lifecycle_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -2828,7 +3554,9 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report,
                              compiler_helper_aggregate_report=compiler_helper_aggregate_report,
                              loader_runtime_registry_report=loader_runtime_registry_report,
-                             pthread_alias_contract_report=pthread_alias_contract_report)
+                             pthread_alias_contract_report=pthread_alias_contract_report,
+                             prepared_worker_tls_report=prepared_worker_tls_report,
+                             errno_storage_lifecycle_report=errno_storage_lifecycle_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -2848,6 +3576,8 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--compiler-helper-aggregate-report', type=Path)
     parser.add_argument('--loader-runtime-registry-report', type=Path)
     parser.add_argument('--pthread-alias-contract-report', type=Path)
+    parser.add_argument('--prepared-worker-tls-report', type=Path)
+    parser.add_argument('--errno-storage-lifecycle-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -2860,7 +3590,8 @@ def main(argv: Sequence[str]) -> int:
                                                 'static_preparation', 'declaration_report', 'public_data_ordinary_link_report',
                                                 'loader_debug_abi_report', 'compiler_helper_aggregate_report',
                                                 'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
-                                                'pthread_alias_contract_report')}
+                                                'pthread_alias_contract_report', 'prepared_worker_tls_report',
+                                                'errno_storage_lifecycle_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)

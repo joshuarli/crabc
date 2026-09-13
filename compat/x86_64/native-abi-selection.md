@@ -130,6 +130,37 @@ record facts. They do not select a provider, establish `h_errno` storage
 lifecycle, erase language-linkage differences, or change the aggregate
 completion, family, promotion, or public-support flags.
 
+`--prepared-worker-tls-report REPORT` is independently optional. Its owner
+reader authenticates the same selected static preparation, dynamic product,
+complete ELF facts, and current source transaction before the selector joins
+three private shared-libc source-dispatch imports, the seven retired prepared
+worker-token names, and the 72-byte initial TLS descriptor. The join records
+the exact `.dynsym`/`.symtab` imports, the loader definition, and the
+descriptor consumer separately. It does not attach the distinct owned CRT
+handoff carrier, fabricate a main-thread descriptor import, or claim RuntimeV1
+facade parity, general pthread semantics, family completion, promotion, or
+public support.
+
+`--errno-storage-lifecycle-report REPORT` is also independently optional. Its
+owner reader and the selector bind the current static/dynamic manifests,
+`libc.a`, `libc.so`, shared-libc provenance, complete ELF observations, source
+snapshot, and report bytes before and after the attachment. The finite join
+accounts for `__errno_location`, `__h_errno_location`, `h_errno`, and the
+private `___errno_location` same-definition alias. The alias remains a static
+`WEAK HIDDEN` provider and a shared local `.symtab` definition with no shared
+dynamic export; it is never selected as a public callable. The runtime receipt
+proves main/live-worker accessor behavior and pointer lifetime within its own
+contract. Without that receipt, the private alias retains its own unresolved
+component requirement even when its static and shared metadata match. It does
+not prove the `h_errno` header macro/declaration, its
+alignment/layout requirement, broad TLS or loader behavior, family completion,
+promotion, or public support.
+
+Both runtime attachments run before the one public declaration-envelope replay
+and are rechecked after their scoped joins. Their source/product/ELF cohort is
+therefore shared with the selection transaction without rereading the header
+receipt or turning either component account into a generic runtime claim.
+
 ## Selection inputs and definition domains
 
 Keep the frozen AArch64 capability, header, and ABI inputs unchanged. Correlate

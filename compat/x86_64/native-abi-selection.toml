@@ -172,6 +172,22 @@ reason = "Five direct private C ABI bodies selected by x86-crypt. They are not s
 static_metadata_rule = "explicit"
 
 [[owner_groups]]
+id = "component-owned-errno-private-alias"
+selector = "explicit"
+disposition = "private-provider"
+owner = "x86-errno-storage-lifecycle"
+family = "libc.c-abi-compat"
+artifacts = ["candidate-static", "candidate-shared"]
+sources = ["libc/src/c_abi/x86_64/errno.rs", "libc/src/c_abi/x86_64/owned_errno_private_aliases.list", "compat/x86_64/owned_errno_storage_lifecycle.py", "compat/x86_64/owned-errno-storage-lifecycle.md"]
+members = ["___errno_location"]
+members_file = ""
+expected_type = "FUNC"
+delegated_members = []
+placement_metadata = {"candidate-static" = {"type" = "FUNC", "binding" = "WEAK", "visibility" = "HIDDEN"}, "candidate-shared" = {"type" = "FUNC", "binding" = "LOCAL", "visibility" = "DEFAULT"}}
+reason = "Exact errno private alias: the archive retains a WEAK HIDDEN same-definition spelling, while the shared libc localizes that spelling through the one-name reviewed version-script policy. It is not a public provider."
+static_metadata_rule = "explicit"
+
+[[owner_groups]]
 id = "source-owned-ctype-locator-bodies"
 selector = "explicit"
 disposition = "public-provider"

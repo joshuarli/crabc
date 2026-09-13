@@ -529,6 +529,41 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
         with self.assertRaisesRegex(selection.SelectionError, 'leaked into dynsym'):
             selection.bind_compiler_helper_shared_placement_joins(leaked, pending)
 
+    def test_owned_helper_leak_scan_retains_unnamed_symtab_and_dynsym_sentinels(self):
+        """ELF null rows are observations, never helper export identities."""
+        pending = copy.deepcopy(self.helper_pending[:1])
+        row = pending[0]
+        observed = {
+            'index': 17, 'artifact_key': 'candidate-shared', 'table': '.symtab',
+            'member_index': None, 'member_occurrence': None, 'role': 'local-definition',
+            'row': {
+                'name': row['identity']['name'], 'version': None, 'version_default': False,
+                'row_index': row['projection']['row_index'],
+                'section_index': str(row['projection']['section_index']),
+            },
+            'definition_section': {'name': row['projection']['section']},
+        }
+        null = {
+            'artifact_key': 'candidate-shared', 'member_index': None, 'member_occurrence': None,
+            'role': 'unnamed', 'definition_section': None,
+            'row': {'name': '', 'version': None, 'version_default': False, 'row_index': 0, 'section_index': 'UND'},
+        }
+        accounting = {
+            'placement_joins': [{
+                'identity': row['identity'], 'artifact_key': 'candidate-shared',
+                'expected_metadata': row['metadata'], 'placement_observed': True,
+                'metadata_differences': [{'occurrence_index': 17, 'fields': []}],
+                'definition_count': 1, 'occurrence_indices': [17],
+            }],
+            'occurrences': [
+                observed,
+                {**copy.deepcopy(null), 'index': 18, 'table': '.symtab'},
+                {**copy.deepcopy(null), 'index': 19, 'table': '.dynsym'},
+            ],
+        }
+        bound = selection.bind_compiler_helper_shared_placement_joins(accounting, pending)
+        self.assertEqual(bound[0]['occurrence_indices'], [17])
+
 
 if __name__ == '__main__':
     unittest.main()

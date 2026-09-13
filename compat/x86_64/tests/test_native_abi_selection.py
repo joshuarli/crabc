@@ -179,6 +179,20 @@ class SourceOwnerPolicyTests(unittest.TestCase):
             self.assertNotIn(name, selected)
             self.assertFalse(self.records[name]['selection'].get('group', '').startswith('source-owned-'))
 
+    def test_errno_private_alias_is_a_component_private_provider_not_a_source_owner_or_public_export(self):
+        record = self.records['___errno_location']
+        self.assertEqual(record['selection']['group'], selection.ERRNO_PRIVATE_ALIAS_GROUP)
+        self.assertEqual(record['selection']['disposition'], 'private-provider')
+        self.assertEqual(record['selection']['owner'], 'x86-errno-storage-lifecycle')
+        self.assertEqual(record['unresolved'], [selection.ERRNO_STORAGE_LIFECYCLE_REQUIREMENT])
+        placements = {row['artifact_key']: row['metadata'] for row in record['expected_placements']}
+        self.assertEqual(placements['candidate-static'], {
+            'type': 'FUNC', 'binding': 'WEAK', 'visibility': 'HIDDEN',
+        })
+        self.assertEqual(placements['candidate-shared'], {
+            'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT',
+        })
+
     def test_source_selected_public_static_functions_use_oracle_metadata_only_after_selection(self):
         for group in self.groups.values():
             if not group['id'].startswith('source-owned-') or group['disposition'] != 'public-provider':
@@ -1007,6 +1021,10 @@ class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
         self.assertIn('compat/x86_64/loader_runtime_registry_evidence.py', inputs['bindings'])
         self.assertIn('compat/x86_64/owned_pthread_alias_contract_reader.py', inputs['bindings'])
         self.assertIn('compat/x86_64/owned-pthread-alias-contract.md', inputs['bindings'])
+        self.assertIn('compat/x86_64/prepared_worker_tls_evidence.py', inputs['bindings'])
+        self.assertIn('compat/x86_64/prepared-worker-tls.md', inputs['bindings'])
+        self.assertIn('compat/x86_64/owned_errno_storage_lifecycle.py', inputs['bindings'])
+        self.assertIn('compat/x86_64/owned-errno-storage-lifecycle.md', inputs['bindings'])
 
     def test_checked_matrix_failure_cannot_be_projected_as_callable_evidence(self):
         contract = selection.load_contract()
