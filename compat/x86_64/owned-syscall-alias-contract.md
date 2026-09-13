@@ -140,3 +140,56 @@ is retained at
 `.work/worktrees/owned_posix_evidence_integration/.work/x86_64/syscall-integration/component-parent-review.json`.
 It binds the corrected harness inputs separately from the runtime pair and
 does not supply static preparation or product qualification for later source.
+
+## Current component receipt
+
+The historical pair is not selectable evidence: `1494e97c` is the older
+45-command source-recompiling harness, while `3bf0a0cb` records the corrected
+47-command runner against its then-current runtime pair. Neither establishes a
+current selected static preparation, dynamic product, complete ELF facts, or
+base inventory.
+
+`owned_syscall_alias_contract_reader.py` supplies that current boundary. Run
+`collect` only in the pinned core image, from a clean collector checkout, with
+fresh output below its `.work/x86_64` tree. The static product must be the
+`products/primary` payload beside the supplied preparation receipt. Full ELF
+facts must bind the exact `libc.a` and `libc.so` bytes, and its base-inventory
+binding must name the supplied inventory byte-for-byte.
+
+```sh
+CRABC_X86_SYSCALL_ALIAS_IMAGE_ID=crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d \
+python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py collect \
+  --output "$PWD/.work/x86_64/syscall-alias-receipt/current" \
+  --static-preparation "$PWD/.work/x86_64/public-data-products/static-a9c51887/preparation.json" \
+  --static-product "$PWD/.work/x86_64/public-data-products/static-a9c51887/products/primary" \
+  --dynamic-product "$PWD/.work/x86_64/loader-debug-abi/clean-a9c51887/component/dynamic-product" \
+  --elf-facts "$PWD/.work/x86_64/native-abi-elf-facts/clean-a9c51887/report.json" \
+  --base-inventory "$PWD/.work/x86_64/native-abi-inventory/clean-a9c51887/report.json" \
+  --image-id crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d
+
+python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py validate-report \
+  --report "$PWD/.work/x86_64/syscall-alias-receipt/current/report.json"
+```
+
+Collection retains the current runner's fixed 47 parameterized command
+argv/45-second-timeout/status/stdout/stderr envelopes and its two remaining raw
+source/ELF checks. The historical 45-command source-recompiling and historical
+47-command corrected epochs remain separate provenance. It also retains the
+normal and override objects, raw symbol/relocation/dynamic-list streams, full
+static and dynamic product trees, supplied preparation/facts/inventory inputs,
+collector and selected runtime source, and the exact host-replay tool bytes.
+Host `validate-report` only checks retained bytes; it does not invoke an
+ambient compiler, linker, or ELF reader. Its
+projection records the fourteen aliases, twelve alias-target global-hidden
+bodies plus private `__libc_sigaction` (thirteen global-hidden bodies total),
+and two source-local statfs bodies. This remains a
+component input for later selector discharge, never provider selection, family
+qualification, or support.
+
+A later selector may retain this report's path and SHA-256 with an exact
+`selection_projection` match after running `validate-report`. Its only
+component discharge is the named fourteen-alias/private-body projection above;
+the selector must keep full ELF facts as physical observations and join only
+its explicit named artifact roles. This receipt neither constructs identities
+from unnamed facts nor discharges the remaining private-body ownership
+blockers.
