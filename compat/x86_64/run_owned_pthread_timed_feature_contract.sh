@@ -17,7 +17,7 @@ readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 cd "$ROOT"
 
 usage() {
-    printf 'usage: %s [--receipt-dir DIR --product-report REPORT --historical-inputs INPUTS --historical-source-commit COMMIT] STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
+    printf 'usage: %s [--receipt-dir DIR --product-report REPORT --static-preparation PREPARATION --historical-inputs INPUTS --historical-source-commit COMMIT] STATIC_SYSROOT DYNAMIC_SYSROOT\n' "$0" >&2
     exit 2
 }
 
@@ -28,6 +28,7 @@ fail() {
 
 RECEIPT_DIR=""
 PRODUCT_REPORT=""
+STATIC_PREPARATION=""
 HISTORICAL_INPUTS=""
 HISTORICAL_SOURCE_COMMIT=""
 while [ "$#" -gt 0 ]; do
@@ -40,6 +41,11 @@ while [ "$#" -gt 0 ]; do
         --product-report)
             [ "$#" -ge 2 ] && [ -z "$PRODUCT_REPORT" ] || usage
             PRODUCT_REPORT="$2"
+            shift 2
+            ;;
+        --static-preparation)
+            [ "$#" -ge 2 ] && [ -z "$STATIC_PREPARATION" ] || usage
+            STATIC_PREPARATION="$2"
             shift 2
             ;;
         --historical-inputs)
@@ -58,9 +64,9 @@ while [ "$#" -gt 0 ]; do
 done
 [ "$#" -eq 2 ] || usage
 if [ -n "$RECEIPT_DIR" ]; then
-    [ -n "$PRODUCT_REPORT" ] && [ -n "$HISTORICAL_INPUTS" ] && [ -n "$HISTORICAL_SOURCE_COMMIT" ] || usage
+    [ -n "$PRODUCT_REPORT" ] && [ -n "$STATIC_PREPARATION" ] && [ -n "$HISTORICAL_INPUTS" ] && [ -n "$HISTORICAL_SOURCE_COMMIT" ] || usage
 else
-    [ -z "$PRODUCT_REPORT" ] && [ -z "$HISTORICAL_INPUTS" ] && [ -z "$HISTORICAL_SOURCE_COMMIT" ] || usage
+    [ -z "$PRODUCT_REPORT" ] && [ -z "$STATIC_PREPARATION" ] && [ -z "$HISTORICAL_INPUTS" ] && [ -z "$HISTORICAL_SOURCE_COMMIT" ] || usage
 fi
 [ "$(uname -s)" = Linux ] || fail 'requires native Linux'
 case "$(uname -m)" in x86_64|amd64) ;; *) fail "refuses emulation on $(uname -m)" ;; esac
@@ -93,16 +99,17 @@ print(candidate)
 PY
 )"
     PRODUCT_REPORT="$(realpath -e "$PRODUCT_REPORT")"
+    STATIC_PREPARATION="$(realpath -e "$STATIC_PREPARATION")"
     HISTORICAL_INPUTS="$(realpath -e "$HISTORICAL_INPUTS")"
 fi
-python3 -B - "$ROOT" "$TMPDIR" "$static_product" "$dynamic_product" "$RECEIPT_DIR" "$PRODUCT_REPORT" "$HISTORICAL_INPUTS" <<'PY'
+python3 -B - "$ROOT" "$TMPDIR" "$static_product" "$dynamic_product" "$RECEIPT_DIR" "$PRODUCT_REPORT" "$STATIC_PREPARATION" "$HISTORICAL_INPUTS" <<'PY'
 import hashlib
 import os
 from pathlib import Path
 import sys
 
 root, temporary, static, dynamic = (Path(value).resolve(strict=True) for value in sys.argv[1:5])
-receipt, product_report, historical = (sys.argv[5:])
+receipt, product_report, static_preparation, historical = (sys.argv[5:])
 retained_value = os.environ.get("CRABC_RETAINED_640C0939_ROOT")
 allowed = [root / ".work"]
 if retained_value:
@@ -128,6 +135,11 @@ for path, label in ((temporary, "TMPDIR"), (static, "static product"), (dynamic,
         raise SystemExit(f"owned pthread timed feature contract {label} must remain below checkout .work")
 for path, label in ((static / "bin/crabc-cc", "static compiler"),
                     (static / "usr/lib/libc.a", "static libc"),
+                    (static / "usr/lib/crt1.o", "static entry object"),
+                    (static / "usr/lib/rcrt1.o", "static PIE entry object"),
+                    (static / "usr/lib/crti.o", "static prologue object"),
+                    (static / "usr/lib/crtn.o", "static epilogue object"),
+                    (static / "usr/lib/libcrabc-builtins.a", "static builtins archive"),
                     (dynamic / "bin/crabc-cc-dynamic", "dynamic compiler"),
                     (dynamic / "usr/lib/libc.so", "dynamic libc"),
                     (dynamic / "lib/ld-crabc-x86_64.so.1", "dynamic loader")):
@@ -152,7 +164,7 @@ if receipt:
     for product, label in ((static, "static product"), (dynamic, "dynamic product")):
         if overlaps(receipt_path, product):
             raise SystemExit(f"owned pthread timed feature contract receipt directory overlaps {label}")
-    for path, label in ((Path(product_report), "product anchor"), (Path(historical), "historical input identities")):
+    for path, label in ((Path(product_report), "product anchor"), (Path(static_preparation), "static preparation"), (Path(historical), "historical input identities")):
         if not path.is_file() or path.is_symlink():
             raise SystemExit(f"owned pthread timed feature contract missing physical {label}: {path}")
 PY
@@ -179,9 +191,12 @@ fi
 if [ -n "$RECEIPT_DIR" ]; then
 python3 -B - "$WORK/input-identities.json" "$CONTRACT_SOURCE" "$READER" "$0" \
     "$ORACLE_CC" "$MUSL_LIB" "$MUSL_ARCHIVE" "$STATIC_PRODUCT/bin/crabc-cc" \
-    "$STATIC_PRODUCT/usr/lib/libc.a" "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" \
+    "$STATIC_PRODUCT/usr/lib/libc.a" "$STATIC_PRODUCT/usr/lib/crt1.o" \
+    "$STATIC_PRODUCT/usr/lib/rcrt1.o" "$STATIC_PRODUCT/usr/lib/crti.o" \
+    "$STATIC_PRODUCT/usr/lib/crtn.o" "$STATIC_PRODUCT/usr/lib/libcrabc-builtins.a" \
+    "$DYNAMIC_PRODUCT/bin/crabc-cc-dynamic" \
     "$DYNAMIC_PRODUCT/usr/lib/libc.so" "$DYNAMIC_PRODUCT/lib/ld-crabc-x86_64.so.1" \
-    "$PRODUCT_REPORT" <<'PY'
+    "$PRODUCT_REPORT" "$STATIC_PREPARATION" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -189,14 +204,15 @@ import sys
 
 output = Path(sys.argv[1])
 names = ("probe", "reader", "runner", "oracle_compiler", "musl_shared", "musl_archive",
-         "static_driver", "static_libc", "dynamic_driver", "dynamic_libc", "dynamic_loader",
-         "product_report")
+         "static_driver", "static_libc", "static_crt1", "static_rcrt1", "static_crti", "static_crtn", "static_builtins",
+         "dynamic_driver", "dynamic_libc", "dynamic_loader",
+         "product_report", "static_preparation")
 paths = [Path(value).resolve(strict=True) for value in sys.argv[2:]]
 output.write_text(json.dumps({
     "format": "owned-pthread-timed-feature-contract-inputs-v2",
     "inputs": {
         name: {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
-               "size": path.stat().st_size}
+               "size": path.stat().st_size, "mode": path.stat().st_mode & 0o777}
         for name, path in zip(names, paths)
     },
 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")

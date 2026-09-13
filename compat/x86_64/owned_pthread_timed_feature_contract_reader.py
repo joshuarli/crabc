@@ -26,6 +26,12 @@ import sys
 import tomllib
 from typing import Any, NamedTuple
 
+from owned_syscall_alias_authority import (RELOCATION_NAMES, archive_members, capture_git_objects, elf_bytes,
+                                           require_symbol_stream, section_name, source_tree)
+from owned_static_link_authority import (StaticFunctionContract, StaticLinkAuthorityError,
+                                         require_static_functions)
+from loader_debug_abi_evidence import Elf
+
 
 SCHEMA = "crabc.x86_64-owned-pthread-timed-feature-contract/v1"
 INPUT_SCHEMA = "owned-pthread-timed-feature-contract-inputs-v2"
@@ -37,6 +43,27 @@ MUSL_SOURCE_COMMIT = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
 SUCCESS_TRANSCRIPT = b"owned-pthread-timed-feature-contract-ok\n"
 TIMEOUT_SECONDS = 45
 INTERPRETER = "/lib/ld-crabc-x86_64.so.1"
+ROOT = Path(__file__).resolve().parents[2]
+PINNED_IMAGE = "sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
+IMAGE_PATH = "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+IMAGE_MANIFEST_PATH = ROOT / "compat/x86_64/owned_pthread_timed_feature_image_inputs.json"
+# The runner, reader, oracle wrapper, and supplied drivers consume only this
+# finite tool/image closure.  The checked-in manifest is validator authority;
+# reports copy its records but cannot choose paths, modes, or digests.
+IMAGE_COMMANDS = (
+    "bash", "cat", "chmod", "chroot", "cmp", "cp", "dirname", "git", "grep",
+    "mkdir", "mktemp", "python3", "readelf", "realpath", "timeout", "uname",
+    "gcc", "as", "ld", "rustup",
+)
+IMAGE_FIXED_PATHS = (
+    "/usr/local/bin/crabc-x86_64-musl-gcc",
+    "/opt/musl-1.2.6/lib/libc.so",
+    "/opt/musl-1.2.6/lib/libc.a",
+    "/opt/musl-1.2.6/lib/musl-gcc.specs",
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/bin/rustc",
+    "/opt/rustup/toolchains/nightly-2026-07-24-x86_64-unknown-linux-musl/lib/rustlib/x86_64-unknown-linux-musl/bin/gcc-ld/ld.lld",
+)
+IMAGE_MANIFEST_SOURCE = "compat/x86_64/owned_pthread_timed_feature_image_inputs.json"
 
 # This is the entire source-shaped public alias roster.  The report has no
 # extension hook: a later alias needs a separately reviewed component change.
@@ -68,6 +95,18 @@ CANDIDATE_STATIC_PROVIDER_SHAPES = {
 FINAL_STATIC_PROVIDER_SHAPES = {
     provider: ("FUNC", "LOCAL", "HIDDEN") for provider in ARCHIVE_HIDDEN
 }
+PTHREAD_STATIC_MEMBER = "c.c.9c0a881dcc98e279-cgu.0.rcgu.o"
+# The raw archive observation includes retained DWARF section relocations as
+# well as executable sections. This table only spells their readelf rendering;
+# it does not broaden the shared static linker authority's accepted relocation
+# forms for the four linked functions.
+RAW_ARCHIVE_RELOCATION_NAMES = {
+    **RELOCATION_NAMES,
+    9: "R_X86_64_GOTPCREL",
+    10: "R_X86_64_32",
+    22: "R_X86_64_GOTTPOFF",
+    42: "R_X86_64_REX_GOTPCRELX",
+}
 FEATURE = "x86-owned-static-runtime"
 FEATURE_ALIASES = ALIASES
 
@@ -89,7 +128,12 @@ COLLECTOR_PATHS = {
     "probe": "compat/x86_64/owned_pthread_timed_feature_contract_probe.c",
     "reader": "compat/x86_64/owned_pthread_timed_feature_contract_reader.py",
     "runner": "compat/x86_64/run_owned_pthread_timed_feature_contract.sh",
+    "syscall_authority": "compat/x86_64/owned_syscall_alias_authority.py",
+    "static_authority": "compat/x86_64/owned_static_link_authority.py",
+    "elf_authority": "compat/x86_64/loader_debug_abi_evidence.py",
+    "image_manifest": IMAGE_MANIFEST_SOURCE,
 }
+COLLECTOR_INPUTS = ("probe", "reader", "runner")
 INPUT_NAMES = (
     "probe",
     "reader",
@@ -99,10 +143,16 @@ INPUT_NAMES = (
     "musl_archive",
     "static_driver",
     "static_libc",
+    "static_crt1",
+    "static_rcrt1",
+    "static_crti",
+    "static_crtn",
+    "static_builtins",
     "dynamic_driver",
     "dynamic_libc",
     "dynamic_loader",
     "product_report",
+    "static_preparation",
 )
 HISTORICAL_INPUT_NAMES = (
     "dynamic_driver",
@@ -332,20 +382,21 @@ def artifact_record(root: Path, path: Path) -> dict[str, object]:
     resolved = path.resolve(strict=True)
     require(resolved.is_relative_to(root), f"artifact outside receipt root: {path}")
     relative = resolved.relative_to(root).as_posix()
-    return {"path": relative, "sha256": sha256(resolved), "size": resolved.stat().st_size}
+    return {"path": relative, "sha256": sha256(resolved), "size": resolved.stat().st_size, "mode": stat.S_IMODE(resolved.stat().st_mode)}
 
 
 def validate_retained_artifact(root: Path, record: object, label: str) -> Path:
     """Require a retained artifact to keep its exact path, bytes and size."""
 
     require(isinstance(record, dict), f"{label} artifact record must be an object")
-    require(set(record) == {"path", "sha256", "size"}, f"{label} artifact fields changed")
+    require(set(record) == {"path", "sha256", "size", "mode"}, f"{label} artifact fields changed")
     relative = _safe_relative(record["path"], label)
     digest = record["sha256"]
     size = record["size"]
     require(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
             f"{label} artifact digest is invalid")
     require(type(size) is int and size >= 0, f"{label} artifact size is invalid")
+    require(type(record["mode"]) is int and 0 <= record["mode"] <= 0o777, f"{label} artifact mode is invalid")
     root = root.resolve(strict=True)
     path = root / relative
     require(path.resolve(strict=False).is_relative_to(root), f"unsafe {label} artifact path")
@@ -360,7 +411,10 @@ def _copy_regular(source: Path, destination: Path, label: str) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
     require(not destination.exists() and not destination.is_symlink(), f"retained {label} already exists")
     shutil.copyfile(source, destination)
-    require(sha256(source) == sha256(destination), f"retained {label} copy changed bytes")
+    os.chmod(destination, stat.S_IMODE(source.stat().st_mode))
+    require(sha256(source) == sha256(destination)
+            and stat.S_IMODE(source.stat().st_mode) == stat.S_IMODE(destination.stat().st_mode),
+            f"retained {label} copy changed identity")
 
 
 def _git(root: Path, *arguments: str) -> bytes:
@@ -441,12 +495,12 @@ def _load_source_snapshot(path: Path) -> dict[str, object]:
 
 def _record_external(path: Path, label: str) -> dict[str, object]:
     require_regular(path, label)
-    return {"sha256": sha256(path), "size": path.stat().st_size}
+    return {"sha256": sha256(path), "size": path.stat().st_size, "mode": stat.S_IMODE(path.stat().st_mode)}
 
 
 def _validate_input_record(value: object, label: str) -> dict[str, object]:
     require(isinstance(value, dict), f"{label} input record must be an object")
-    require(set(value) == {"path", "sha256", "size"}, f"{label} input fields changed")
+    require(set(value) == {"path", "sha256", "size", "mode"}, f"{label} input fields changed")
     path = value["path"]
     require(isinstance(path, str) and path.startswith("/") and "\x00" not in path,
             f"{label} input path is invalid")
@@ -455,6 +509,7 @@ def _validate_input_record(value: object, label: str) -> dict[str, object]:
     require(isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
             f"{label} input digest is invalid")
     require(type(size) is int and size >= 0, f"{label} input size is invalid")
+    require(type(value["mode"]) is int and 0 <= value["mode"] <= 0o777, f"{label} input mode is invalid")
     return dict(value)
 
 
@@ -500,18 +555,185 @@ def _input_copy_path(name: str) -> str:
         "musl_archive": "retained/oracle/libc.a",
         "static_driver": "retained/products/static-driver",
         "static_libc": "retained/products/static-libc.a",
+        "static_crt1": "retained/products/static-crt1.o",
+        "static_rcrt1": "retained/products/static-rcrt1.o",
+        "static_crti": "retained/products/static-crti.o",
+        "static_crtn": "retained/products/static-crtn.o",
+        "static_builtins": "retained/products/static-builtins.a",
         "dynamic_driver": "retained/products/dynamic-driver",
         "dynamic_libc": "retained/products/dynamic-libc.so",
         "dynamic_loader": "retained/products/dynamic-loader",
         "product_report": "retained/products/anchor-report.json",
+        "static_preparation": "retained/products/static-preparation.json",
     }
     return paths[name]
 
 
 def _require_external_identity(path: Path, expected: Mapping[str, object], label: str) -> None:
     observed = _record_external(path, label)
-    require(observed == {"sha256": expected["sha256"], "size": expected["size"]},
+    require(observed == {"sha256": expected["sha256"], "size": expected["size"], "mode": expected["mode"]},
             f"{label} changed after input capture")
+
+
+def _image_record(path: Path) -> dict[str, object]:
+    resolved = path.resolve(strict=True)
+    require_regular(resolved, "resolved pinned image input")
+    return {
+        "path": str(resolved),
+        "sha256": sha256(resolved),
+        "size": resolved.stat().st_size,
+        "mode": stat.S_IMODE(resolved.stat().st_mode),
+    }
+
+
+def live_image_manifest() -> dict[str, object]:
+    """Regenerate the finite tool closure from the pinned evidence image."""
+
+    commands = [shutil.which(name, path=IMAGE_PATH) for name in IMAGE_COMMANDS]
+    require(all(commands), "pinned image lacks a pthread receipt command")
+    paths = [Path(str(path)) for path in commands]
+    paths.extend(Path(path) for path in IMAGE_FIXED_PATHS)
+    try:
+        for name in ("cc1", "collect2", "liblto_plugin.so"):
+            paths.append(Path(subprocess.check_output(
+                ["/usr/bin/gcc", "-print-prog-name=" + name], text=True
+            ).strip()))
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ReceiptError("pinned image GCC support identity is unavailable") from error
+    require(all(path.is_absolute() for path in paths), "pinned image tool placement differs")
+    return {
+        "schema": "crabc.x86_64-owned-pthread-timed-feature-image-inputs/v1",
+        "image": PINNED_IMAGE,
+        "path": IMAGE_PATH,
+        "files": {str(path): _image_record(path) for path in sorted(set(paths))},
+    }
+
+
+def trusted_image_manifest() -> dict[str, object]:
+    """Read the validator-owned image manifest; report JSON cannot replace it."""
+
+    value = load_json_object(IMAGE_MANIFEST_PATH, "trusted pthread image manifest")
+    require(set(value) == {"schema", "image", "path", "files"}
+            and value["schema"] == "crabc.x86_64-owned-pthread-timed-feature-image-inputs/v1"
+            and value["image"] == PINNED_IMAGE and value["path"] == IMAGE_PATH,
+            "trusted pthread image manifest differs")
+    files = value["files"]
+    require(isinstance(files, dict) and files, "trusted pthread image manifest has no files")
+    for invocation, record in files.items():
+        require(isinstance(invocation, str) and invocation.startswith("/")
+                and isinstance(record, dict) and set(record) == {"path", "sha256", "size", "mode"}
+                and isinstance(record["path"], str) and record["path"].startswith("/")
+                and isinstance(record["sha256"], str)
+                and re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is not None
+                and type(record["size"]) is int and record["size"] >= 0
+                and type(record["mode"]) is int and 0 <= record["mode"] <= 0o777,
+                "trusted pthread image input identity differs")
+    return value
+
+
+def _image_copy_path(invocation: str) -> str:
+    return "retained/image/" + hashlib.sha256(invocation.encode("utf-8")).hexdigest()
+
+
+def _copy_image_inputs(work: Path, manifest: Mapping[str, object]) -> None:
+    files = manifest["files"]
+    require(isinstance(files, dict), "trusted pthread image manifest files differ")
+    for invocation, record in files.items():
+        require(isinstance(invocation, str) and isinstance(record, dict), "trusted image input differs")
+        path = Path(str(record["path"]))
+        observed = _image_record(path)
+        require(observed == record, f"pinned image input changed before collection: {invocation}")
+        _copy_regular(path, work / _image_copy_path(invocation), f"pinned image input {invocation}")
+
+
+def _validate_image_inputs(
+    work: Path, value: object, artifacts: Mapping[str, object], collector_git_files: Mapping[str, tuple[int, bytes, bool]],
+) -> dict[str, object]:
+    """Replay every copied image input against validator source, path, bytes, and mode."""
+
+    require(IMAGE_MANIFEST_SOURCE in collector_git_files
+            and collector_git_files[IMAGE_MANIFEST_SOURCE][1] == IMAGE_MANIFEST_PATH.read_bytes(),
+            "retained image manifest does not match validator image authority")
+    manifest = trusted_image_manifest()
+    require(isinstance(value, dict) and set(value) == set(manifest["files"]),
+            "receipt image input roster differs")
+    for invocation, expected in manifest["files"].items():
+        binding = value[invocation]
+        require(isinstance(binding, dict) and set(binding) == {"path", "sha256", "size", "mode", "retained"}
+                and {key: binding[key] for key in ("path", "sha256", "size", "mode")} == expected
+                and binding["retained"] == _image_copy_path(invocation),
+                f"receipt image input identity differs: {invocation}")
+        retained = validate_retained_artifact(work, artifacts[str(binding["retained"])], f"image input {invocation}")
+        require({key: artifacts[str(binding["retained"])][key] for key in ("sha256", "size", "mode")} ==
+                {key: expected[key] for key in ("sha256", "size", "mode")},
+                f"retained image input differs: {invocation}")
+        require(retained == work / str(binding["retained"]), "retained image input path escaped receipt")
+    return manifest
+
+
+def require_archive_relocation_stream(path: Path, artifact: Path, logical_path: str) -> None:
+    """Derive the full archive ``readelf --relocs`` rendering from retained members.
+
+    The approved authority exposes the per-ELF relocation parser.  This finite
+    receipt also records the two selected archives, whose raw stream prefixes
+    each member with ``File:``.  Keep that archive framing here rather than
+    treating report-owned text as an observation.
+    """
+
+    try:
+        members = [(f"{logical_path}({name})", elf_bytes(body))
+                   for name, body in archive_members(artifact.read_bytes())]
+    except (OSError, ValueError) as error:
+        raise ReceiptError("retained archive relocation input differs") from error
+    expected: list[tuple[str, str]] = []
+    rows: list[tuple[str, int, int, str, int, str, int]] = []
+    for member, elf in members:
+        for section in elf.sections:
+            if section[1] != 4:
+                continue
+            require(section[9] == 24 and section[5] % 24 == 0,
+                    "retained archive relocation table differs")
+            expected.append((member, "Relocation section '%s' at offset 0x%x contains %d %s:" % (
+                section_name(elf, section), section[4], section[5] // 24,
+                "entry" if section[5] == 24 else "entries",
+            )))
+            for offset in range(0, section[5], 24):
+                destination, info, addend = elf.unpack("<QQq", section[4] + offset)
+                symbol = elf.symbol_row(section[6], info >> 32)
+                kind = info & 0xffffffff
+                require(kind in RAW_ARCHIVE_RELOCATION_NAMES, "unclassified archive ELF relocation")
+                name = symbol["name"]
+                if symbol["type"] == "3" and not name:
+                    name = section_name(elf, elf.sections[symbol["section"]])
+                rows.append((member, destination, info, RAW_ARCHIVE_RELOCATION_NAMES[kind],
+                             symbol["value"], name, addend))
+    actual_headers: list[tuple[str, str]] = []
+    actual_rows: list[tuple[str, int, int, str, int, str, int]] = []
+    member = ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("File: "):
+            member = line[6:]
+        elif line.startswith("Relocation section "):
+            actual_headers.append((member, line))
+        else:
+            match = re.fullmatch(r"\s*([0-9a-f]+)\s+([0-9a-f]+)\s+(R_X86_64_\w+)\s*(.*)", line)
+            if match:
+                destination, info, kind, tail = match.groups()
+                fields = tail.split()
+                if len(fields) == 1:
+                    value, name, addend = 0, "", int(fields[0], 16)
+                else:
+                    require(len(fields) == 4 and fields[2] in ("+", "-"),
+                            "malformed archive raw relocation target")
+                    value, name = int(fields[0], 16), fields[1].split("@", 1)[0]
+                    addend = int(fields[3], 16) * (1 if fields[2] == "+" else -1)
+                actual_rows.append((member, int(destination, 16), int(info, 16), kind, value, name, addend))
+            else:
+                require(not line.strip() or line.lstrip().startswith("Offset")
+                        or line == "There are no relocations in this file.",
+                        "unexpected archive raw relocation text")
+    require(actual_headers == expected, "raw archive relocation table header differs from ELF")
+    require(actual_rows == rows, f"raw archive relocations do not describe retained ELF: {path.name}")
 
 
 def _manifest_files(value: object, label: str) -> dict[str, str]:
@@ -661,6 +883,22 @@ def _validate_product_anchor(
     ):
         require(_same_external_record(_anchor_artifact(anchor, anchor_name, label), _record_external(path, label)),
                 f"selected product anchor does not bind {label}")
+
+    preparation = load_json_object(Path(str(inputs["static_preparation"]["path"])), "static preparation")
+    require(preparation.get("schema") == "crabc.x86_64-owned-posix-static-preparation/v1"
+            and preparation.get("status") == "prepared-unqualified", "static preparation boundary changed")
+    prepared_source = preparation.get("source")
+    require(isinstance(prepared_source, dict)
+            and prepared_source.get("revision") == anchor["source_commit"]
+            and prepared_source.get("content_sha256") == anchor["source_sha256"],
+            "static preparation source differs from selected products")
+    primary_build = preparation.get("steps", {}).get("primary-build", {})
+    require(primary_build.get("exit_status") == 0
+            and primary_build.get("command") == ["python3", "-B", "scripts/build_x86_64_owned_sysroot.py", "--output", ".work/x86_64/public-data-products/static-fed397b0/products/primary"],
+            "static preparation primary outer build differs")
+    primary = preparation.get("products", {}).get("primary", {})
+    require(isinstance(primary, dict) and primary.get("tree", {}).get("usr/lib/libc.a", {}).get("sha256") == inputs["static_libc"]["sha256"],
+            "static preparation primary tree does not bind selected libc archive")
 
     oracle = anchor.get("oracle")
     require(isinstance(oracle, dict)
@@ -935,6 +1173,20 @@ def evaluate_elf_headers(work: Path) -> dict[str, str]:
         require(binary_path.read_bytes()[:4] == b"\x7fELF", f"{binary}: retained output is not ELF")
         observed = _header_type(work / f"{binary}.file-header.txt")
         require(observed == expected, f"{binary}: expected ELF {expected}, found {observed}")
+        elf = Elf(binary_path)
+        require(elf.elf_type == {"REL": 1, "EXEC": 2, "DYN": 3}[expected],
+                f"{binary}: retained ELF bytes do not match its header observation")
+        interpreters = [program for program in elf.programs if program[0] == 3]
+        if binary in ("static-contract", "static-pie-contract", "oracle-contract", "contract.o"):
+            require(not interpreters, f"{binary}: static/relocatable output has an interpreter")
+        elif binary.startswith("musl-dynamic-"):
+            require(len(interpreters) == 1
+                    and elf.data[interpreters[0][2]:interpreters[0][2] + interpreters[0][5]].rstrip(b"\0")
+                    == b"/lib/ld-musl-x86_64.so.1", f"{binary}: musl dynamic interpreter differs")
+        else:
+            require(len(interpreters) == 1
+                    and elf.data[interpreters[0][2]:interpreters[0][2] + interpreters[0][5]].rstrip(b"\0")
+                    == INTERPRETER.encode(), f"{binary}: owned dynamic interpreter differs")
         result[binary] = observed
     return result
 
@@ -1168,7 +1420,8 @@ def _static_product_root(products: Mapping[str, object]) -> str:
 
 
 def _validate_dynamic_link_receipt(
-    path: Path, work: str, binary: str, artifacts: Mapping[str, object], products: Mapping[str, object]
+    path: Path, work: str, binary: str, artifacts: Mapping[str, object], products: Mapping[str, object],
+    image_manifest: Mapping[str, object],
 ) -> None:
     """Reconstruct the sealed dynamic driver's ordinary link route exactly."""
 
@@ -1250,6 +1503,10 @@ def _validate_dynamic_link_receipt(
     require(receipt["link_trace"] == expected_trace,
             f"{binary} dynamic link trace changed")
     linker = _resolved_linker_path(receipt["resolved_linker"], binary)
+    files = image_manifest.get("files")
+    require(isinstance(files, dict) and receipt["resolved_linker"] == {
+        "path": linker, "sha256": files.get(linker, {}).get("sha256"),
+    }, f"{binary} dynamic linker is not the trusted pinned LLD")
     expected_link = [linker]
     if expected_mode == "pie":
         expected_link.append("-pie")
@@ -1265,8 +1522,55 @@ def _validate_dynamic_link_receipt(
             f"{binary} dynamic linker command changed")
 
 
+def _static_admitted_inputs(
+    work: Path, work_path: str, binary: str, inputs: Mapping[str, Mapping[str, object]],
+) -> dict[str, Path | bytes]:
+    """Name every exact map owner needed by the finite static function proof."""
+
+    entry = "static_crt1" if binary == "static-contract" else "static_rcrt1"
+    admitted: dict[str, Path | bytes] = {
+        f"{work_path}/contract.o": work / "contract.o",
+        str(inputs[entry]["path"]): work / _input_copy_path(entry),
+        str(inputs["static_crti"]["path"]): work / _input_copy_path("static_crti"),
+        str(inputs["static_crtn"]["path"]): work / _input_copy_path("static_crtn"),
+    }
+    for input_name in ("static_libc", "static_builtins"):
+        original = str(inputs[input_name]["path"])
+        retained = work / _input_copy_path(input_name)
+        try:
+            members = list(archive_members(retained.read_bytes()))
+        except (OSError, ValueError) as error:
+            raise ReceiptError(f"retained {input_name} archive members differ") from error
+        require(members, f"retained {input_name} archive has no members")
+        for member, data in members:
+            owner = f"{original}({member})"
+            require(owner not in admitted, "static admitted owner is duplicated")
+            admitted[owner] = data
+    require(f"{inputs['static_libc']['path']}({PTHREAD_STATIC_MEMBER})" in admitted,
+            "selected static archive omits the pthread provider object")
+    return admitted
+
+
+def _static_function_contracts(
+    work_path: str, binary: str, inputs: Mapping[str, Mapping[str, object]],
+) -> tuple[StaticFunctionContract, ...]:
+    provider_owner = f"{inputs['static_libc']['path']}({PTHREAD_STATIC_MEMBER})"
+    entry = "static_crt1" if binary == "static-contract" else "static_rcrt1"
+    rows = [
+        StaticFunctionContract("main", f"{work_path}/contract.o", "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT"),
+        StaticFunctionContract("_start", str(inputs[entry]["path"]), "GLOBAL", "DEFAULT", "GLOBAL", "DEFAULT"),
+    ]
+    for public, provider in ALIASES:
+        rows.extend((
+            StaticFunctionContract(public, provider_owner, "WEAK", "DEFAULT", "WEAK", "DEFAULT"),
+            StaticFunctionContract(provider, provider_owner, "GLOBAL", "HIDDEN", "LOCAL", "HIDDEN"),
+        ))
+    return tuple(rows)
+
+
 def _validate_static_link_receipt(
-    work: Path, work_path: str, binary: str, artifacts: Mapping[str, object], products: Mapping[str, object]
+    work: Path, work_path: str, binary: str, artifacts: Mapping[str, object], products: Mapping[str, object],
+    inputs: Mapping[str, Mapping[str, object]], image_manifest: Mapping[str, object],
 ) -> None:
     """Bind the static driver's own map/trace receipt to ordinary extraction."""
 
@@ -1310,6 +1614,15 @@ def _validate_static_link_receipt(
     static_files = _manifest_files(installed.get("files"), "retained static manifest")
     root = _static_product_root(products)
     crt = expected_mode["crt_object"]
+    for input_name, installed_name in (
+        ("static_crt1", "usr/lib/crt1.o"),
+        ("static_rcrt1", "usr/lib/rcrt1.o"),
+        ("static_crti", "usr/lib/crti.o"),
+        ("static_crtn", "usr/lib/crtn.o"),
+        ("static_builtins", "usr/lib/libcrabc-builtins.a"),
+    ):
+        require(static_files.get(installed_name) == inputs[input_name]["sha256"],
+                f"{binary} selected static manifest does not bind {installed_name}")
     expected_inputs = {
         "crt-entry": (f"usr/lib/{crt}", static_files.get(f"usr/lib/{crt}")),
         "crt-prologue": ("usr/lib/crti.o", static_files.get("usr/lib/crti.o")),
@@ -1344,13 +1657,25 @@ def _validate_static_link_receipt(
     ]
     require(receipt["owned_link_contract"] == contract,
             f"{binary} static ordinary-link contract changed")
-    _resolved_linker_path(receipt["resolved_linker"], binary)
+    linker = _resolved_linker_path(receipt["resolved_linker"], binary)
+    files = image_manifest.get("files")
+    require(isinstance(files, dict) and receipt["resolved_linker"] == {
+        "path": linker, "sha256": files.get(linker, {}).get("sha256"),
+    }, f"{binary} static linker is not the trusted pinned LLD")
     trace_name = f"{binary}.link.trace"
     trace = (work / trace_name).read_text(encoding="utf-8").splitlines()
     require(trace.count(f"{work_path}/contract.o") == 1,
             f"{binary} static trace does not retain one contract object")
     require(any(line.startswith(f"{root}/usr/lib/libc.a(") for line in trace),
             f"{binary} static trace does not retain selected archive-member extraction")
+    try:
+        require_static_functions(
+            work / f"{binary}.link.map", work / binary,
+            _static_admitted_inputs(work, work_path, binary, inputs),
+            _static_function_contracts(work_path, binary, inputs),
+        )
+    except StaticLinkAuthorityError as error:
+        raise ReceiptError(f"{binary} selected static function authority differs: {error}") from error
 
 
 def _coverage() -> dict[str, object]:
@@ -1375,13 +1700,11 @@ def _coverage() -> dict[str, object]:
 
 def _expected_retained_paths() -> set[str]:
     paths = {
-        "retained/collector/probe.c",
-        "retained/collector/reader.py",
-        "retained/collector/runner.sh",
         "retained/oracle/compiler-wrapper",
         "retained/oracle/libc.so",
         "retained/oracle/libc.a",
         "retained/products/anchor-report.json",
+        "retained/products/static-preparation.json",
         "retained/products/static-manifest.json",
         "retained/products/dynamic-manifest.json",
         "retained/products/dynamic-state.json",
@@ -1392,6 +1715,9 @@ def _expected_retained_paths() -> set[str]:
         "retained/products/dynamic-loader",
         "retained/historical/input-identities.json",
     }
+    paths.update(_input_copy_path(name) for name in INPUT_NAMES)
+    paths.update(_collector_copy_path(name) for name in COLLECTOR_PATHS)
+    paths.update(_image_copy_path(invocation) for invocation in trusted_image_manifest()["files"])
     paths.update(f"retained/source/{relative}" for relative in SOURCE_CONTRACT_PATHS)
     paths.update(f"retained/runtime-roots/{root}.json" for root in ROOT_TREES)
     return paths
@@ -1411,9 +1737,11 @@ def _artifact_map(work: Path) -> dict[str, dict[str, object]]:
         for path in retained_root.rglob("*")
         if path.is_file() and not path.is_symlink()
     }
-    require(observed_retained == _expected_retained_paths(),
-            f"retained pthread receipt file roster changed: missing={sorted(_expected_retained_paths() - observed_retained)} extra={sorted(observed_retained - _expected_retained_paths())}")
-    expected = expected_direct | _expected_retained_paths()
+    expected_retained = _expected_retained_paths()
+    git_objects = {name for name in observed_retained if name.startswith("retained/source/git-objects/")}
+    require(git_objects and observed_retained == expected_retained | git_objects,
+            f"retained pthread receipt file roster changed: missing={sorted(expected_retained - observed_retained)} extra={sorted(observed_retained - expected_retained - git_objects)}")
+    expected = expected_direct | expected_retained | git_objects
     result: dict[str, dict[str, object]] = {}
     for relative in sorted(expected):
         path = work / relative
@@ -1429,17 +1757,56 @@ def _copy_input_set(work: Path, inputs: Mapping[str, Mapping[str, object]]) -> N
         _copy_regular(source, work / _input_copy_path(name), name)
 
 
-def _copy_source_contract(work: Path, root: Path, revision: str) -> None:
+def _collector_copy_path(name: str) -> str:
+    paths = {
+        "probe": "retained/collector/probe.c",
+        "reader": "retained/collector/reader.py",
+        "runner": "retained/collector/runner.sh",
+        "syscall_authority": "retained/collector/owned-syscall-alias-authority.py",
+        "static_authority": "retained/collector/owned-static-link-authority.py",
+        "elf_authority": "retained/collector/loader-debug-abi-evidence.py",
+        "image_manifest": "retained/collector/image-inputs.json",
+    }
+    require(name in paths, f"unknown collector authority source: {name}")
+    return paths[name]
+
+
+def _copy_collector_authority(
+    work: Path, git_files: Mapping[str, tuple[int, bytes, bool]],
+) -> None:
+    """Copy exact current Git bytes for every reader dependency used at replay."""
+
+    for name, relative in COLLECTOR_PATHS.items():
+        mode, data, symlink = git_files.get(relative, (None, None, None))
+        require(isinstance(mode, int) and isinstance(data, bytes) and symlink is False,
+                f"collector authority Git source is unavailable: {relative}")
+        destination = work / _collector_copy_path(name)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.exists() or destination.is_symlink():
+            require(name in COLLECTOR_INPUTS and not destination.is_symlink()
+                    and destination.read_bytes() == data
+                    and stat.S_IMODE(destination.stat().st_mode) == mode,
+                    f"collector authority already exists: {relative}")
+            continue
+        destination.write_bytes(data)
+        os.chmod(destination, mode)
+        require(destination.read_bytes() == data and stat.S_IMODE(destination.stat().st_mode) == mode,
+                f"collector authority copy changed: {relative}")
+
+
+def _copy_source_contract(
+    work: Path, root: Path, revision: str, git_files: Mapping[str, tuple[int, bytes, bool]],
+) -> None:
     for relative in SOURCE_CONTRACT_PATHS:
         destination = work / "retained/source" / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         require(not destination.exists() and not destination.is_symlink(),
                 f"retained component source already exists: {relative}")
-        try:
-            source = _git(root, "show", f"{revision}:{relative}")
-        except ReceiptError:
-            raise ReceiptError(f"selected source is missing {relative} at {revision}") from None
+        mode, source, symlink = git_files.get(relative, (None, None, None))
+        require(isinstance(mode, int) and isinstance(source, bytes) and symlink is False,
+                f"selected source is missing {relative} at {revision}")
         destination.write_bytes(source)
+        os.chmod(destination, mode)
         require_regular(destination, f"retained selected source {relative}")
 
 
@@ -1460,7 +1827,7 @@ def _selected_source_identity(root: Path, anchor: Mapping[str, object]) -> dict[
     return {"revision": revision, "tree": tree, "source_sha256": source_sha256}
 
 
-def _copy_product_sidecars(work: Path, product: Mapping[str, object]) -> None:
+def _copy_product_sidecars(work: Path, product: Mapping[str, object], inputs: Mapping[str, Mapping[str, object]]) -> None:
     for source, destination, label in (
         (product["static_manifest_path"], "retained/products/static-manifest.json", "static manifest"),
         (product["dynamic_manifest_path"], "retained/products/dynamic-manifest.json", "dynamic manifest"),
@@ -1489,6 +1856,9 @@ def _validate_selected_source(work: Path, source: Mapping[str, object], artifact
             "selected source fields changed")
     identity = _validate_source_identity({key: source[key] for key in ("revision", "tree", "source_sha256")},
                                         "selected source")
+    derived, git_files = source_tree(work / "retained", identity["revision"])
+    require(derived == {"revision": identity["revision"], "content_sha256": identity["source_sha256"]},
+            "selected source Git objects differ")
     files = source["files"]
     require(isinstance(files, dict) and tuple(sorted(files)) == tuple(sorted(SOURCE_CONTRACT_PATHS)),
             "selected source file roster changed")
@@ -1496,7 +1866,10 @@ def _validate_selected_source(work: Path, source: Mapping[str, object], artifact
     for relative in SOURCE_CONTRACT_PATHS:
         path_name = f"retained/source/{relative}"
         require(files[relative] == artifacts[path_name], f"selected source record changed: {relative}")
-        validate_retained_artifact(work, artifacts[path_name], f"selected source {relative}")
+        retained = validate_retained_artifact(work, artifacts[path_name], f"selected source {relative}")
+        require(relative in git_files and retained.read_bytes() == git_files[relative][1]
+                and stat.S_IMODE(retained.stat().st_mode) == git_files[relative][0],
+                f"selected source Git bytes or mode differ: {relative}")
         digest.update(relative.encode("utf-8") + b"\0")
         digest.update(bytes.fromhex(str(artifacts[path_name]["sha256"])))
     require(digest.hexdigest() == source["component_sha256"], "selected source component digest changed")
@@ -1509,19 +1882,24 @@ def _validate_collector(work: Path, collector: Mapping[str, object], artifacts: 
     require(before == after, "collector source changed during collection")
     snapshot_path = validate_retained_artifact(work, artifacts["source-before.json"], "source-before snapshot")
     require(_load_source_snapshot(snapshot_path) == before, "retained source-before snapshot changed")
+    derived, git_files = source_tree(work / "retained", before["revision"])
+    require(derived == {"revision": before["revision"], "content_sha256": before["source_sha256"]},
+            "collector source Git objects differ")
     files = collector["files"]
-    require(isinstance(files, dict) and tuple(sorted(files)) == ("probe", "reader", "runner"),
+    require(isinstance(files, dict) and tuple(sorted(files)) == tuple(sorted(COLLECTOR_PATHS)),
             "collector source roster changed")
-    for name, relative in (
-        ("probe", "retained/collector/probe.c"),
-        ("reader", "retained/collector/reader.py"),
-        ("runner", "retained/collector/runner.sh"),
-    ):
+    for name, tracked in COLLECTOR_PATHS.items():
+        relative = _collector_copy_path(name)
         require(files[name] == artifacts[relative], f"collector {name} record changed")
-        validate_retained_artifact(work, artifacts[relative], f"collector {name}")
-        require(artifacts[relative]["sha256"] == inputs[name]["sha256"]
-                and artifacts[relative]["size"] == inputs[name]["size"],
-                f"collector {name} differs from captured input")
+        retained = validate_retained_artifact(work, artifacts[relative], f"collector {name}")
+        require(tracked in git_files and retained.read_bytes() == git_files[tracked][1]
+                and stat.S_IMODE(retained.stat().st_mode) == git_files[tracked][0],
+                f"collector {name} Git bytes or mode differ")
+        if name in COLLECTOR_INPUTS:
+            require(artifacts[relative]["sha256"] == inputs[name]["sha256"]
+                    and artifacts[relative]["size"] == inputs[name]["size"]
+                    and artifacts[relative]["mode"] == inputs[name]["mode"],
+                    f"collector {name} differs from captured input")
 
 
 def _validate_selected_products(
@@ -1579,6 +1957,14 @@ def _validate_selected_products(
     for relative in (static["manifest"], static["driver"], static["libc"], dynamic["manifest"], dynamic["state"], dynamic["driver"], dynamic["libc"], dynamic["loader"]):
         validate_retained_artifact(work, artifacts[relative], f"selected product {relative}")
 
+    preparation = load_json_object(work / "retained/products/static-preparation.json", "retained static preparation")
+    require(preparation.get("schema") == "crabc.x86_64-owned-posix-static-preparation/v1"
+            and preparation.get("source", {}).get("revision") == source["revision"]
+            and preparation.get("source", {}).get("content_sha256") == source["source_sha256"],
+            "retained static preparation source changed")
+    require(preparation.get("steps", {}).get("primary-build", {}).get("exit_status") == 0
+            and preparation.get("products", {}).get("primary", {}).get("tree", {}).get("usr/lib/libc.a", {}).get("sha256") == artifacts[static["libc"]]["sha256"],
+            "retained static preparation primary build changed")
     static_manifest = load_json_object(work / str(static["manifest"]), "retained static manifest")
     dynamic_manifest = load_json_object(work / str(dynamic["manifest"]), "retained dynamic manifest")
     dynamic_state = load_json_object(work / str(dynamic["state"]), "retained dynamic state")
@@ -1669,7 +2055,8 @@ def _validate_inputs(work: Path, report_inputs: Mapping[str, object], artifacts:
         require(entry["retained"] == expected_copy, f"report input {name} retained path changed")
         retained = validate_retained_artifact(work, artifacts[expected_copy], f"retained input {name}")
         require(artifacts[expected_copy]["sha256"] == inputs[name]["sha256"]
-                and artifacts[expected_copy]["size"] == inputs[name]["size"],
+                and artifacts[expected_copy]["size"] == inputs[name]["size"]
+                and artifacts[expected_copy]["mode"] == inputs[name]["mode"],
                 f"retained input {name} differs from captured input")
         require(retained == work / expected_copy, f"retained input {name} escaped receipt root")
     return inputs
@@ -1728,7 +2115,7 @@ def validate_report(report_path: Path) -> dict[str, object]:
         "schema", "status", "component", "public_support", "family_complete", "promotion_ready",
         "collection", "selected_source", "collector", "inputs", "selected_products", "oracle",
         "historical_evidence", "coverage", "feature_source", "artifacts", "commands", "elf_headers",
-        "alias_observations", "final_extraction", "runtime_roots",
+        "alias_observations", "final_extraction", "runtime_roots", "image_inputs",
     }
     require(set(report) == expected_keys, "pthread alias receipt fields changed")
     require(report["schema"] == SCHEMA and report["status"] == STATUS and report["component"] == COMPONENT,
@@ -1736,7 +2123,14 @@ def validate_report(report_path: Path) -> dict[str, object]:
     require(report["public_support"] is False and report["family_complete"] is False
             and report["promotion_ready"] is False, "pthread alias receipt crossed its component boundary")
     artifacts = report["artifacts"]
-    require(isinstance(artifacts, dict) and set(artifacts) == _direct_work_files() | _expected_retained_paths(),
+    require(isinstance(artifacts, dict), "pthread alias artifacts are invalid")
+    git_objects = {
+        relative for relative in artifacts
+        if relative.startswith("retained/source/git-objects/")
+    }
+    require(git_objects and all(re.fullmatch(r"retained/source/git-objects/[0-9a-f]{40}", relative)
+                                is not None for relative in git_objects)
+            and set(artifacts) == _direct_work_files() | _expected_retained_paths() | git_objects,
             "pthread alias artifact roster changed")
     for relative, record in artifacts.items():
         require(relative == record.get("path") if isinstance(record, dict) else False,
@@ -1749,6 +2143,32 @@ def validate_report(report_path: Path) -> dict[str, object]:
     collector = report["collector"]
     require(isinstance(collector, dict), "collector is invalid")
     _validate_collector(work, collector, artifacts, inputs)
+    _, collector_git_files = source_tree(work / "retained", str(collector["source_before"]["revision"]))
+    image_manifest = _validate_image_inputs(work, report["image_inputs"], artifacts, collector_git_files)
+    # Raw readelf text is a diagnostic view only; derive it from retained ELF/archive bytes.
+    for stream, artifact, logical, tables in (
+        ("musl-dynamic-symbols.txt", "retained/oracle/libc.so", str(inputs["musl_shared"]["path"]), {".dynsym"}),
+        ("candidate-dynamic-symbols.txt", "retained/products/dynamic-libc.so", str(inputs["dynamic_libc"]["path"]), {".dynsym"}),
+        ("musl-shared-symbols.txt", "retained/oracle/libc.so", str(inputs["musl_shared"]["path"]), {".dynsym", ".symtab"}),
+        ("candidate-shared-symbols.txt", "retained/products/dynamic-libc.so", str(inputs["dynamic_libc"]["path"]), {".dynsym", ".symtab"}),
+        ("musl-static-symbols.txt", "retained/oracle/libc.a", str(inputs["musl_archive"]["path"]), {".symtab"}),
+        ("candidate-static-symbols.txt", "retained/products/static-libc.a", str(inputs["static_libc"]["path"]), {".symtab"}),
+    ):
+        require_symbol_stream(work / stream, work / artifact, logical, tables)
+    for stream, binary, tables in (
+        ("static-contract.symbols.txt", "static-contract", {".symtab"}),
+        ("static-pie-contract.symbols.txt", "static-pie-contract", {".dynsym", ".symtab"}),
+        ("dynamic-pie-contract.symbols.txt", "dynamic-pie-contract", {".dynsym", ".symtab"}),
+        ("dynamic-non-pie-contract.symbols.txt", "dynamic-non-pie-contract", {".dynsym", ".symtab"}),
+    ):
+        require_symbol_stream(work / stream, work / binary, "", tables)
+    require_archive_relocation_stream(
+        work / "musl-static-relocations.txt", work / "retained/oracle/libc.a", str(inputs["musl_archive"]["path"]),
+    )
+    require_archive_relocation_stream(
+        work / "candidate-static-relocations.txt", work / "retained/products/static-libc.a", str(inputs["static_libc"]["path"]),
+    )
+    require((work / "contract-compile.stdout").read_bytes() == b"", "compile stdout changed")
     selected = report["selected_products"]
     require(isinstance(selected, dict), "selected products are invalid")
     _validate_selected_products(work, selected, artifacts, source, inputs)
@@ -1776,10 +2196,13 @@ def validate_report(report_path: Path) -> dict[str, object]:
     _validate_runtime_roots(work, roots, artifacts, selected, oracle)
     for binary in ("dynamic-pie-contract", "dynamic-non-pie-contract"):
         _validate_dynamic_link_receipt(
-            work / f"{binary}.crabc-link.json", str(collection["work_path"]), binary, artifacts, selected
+            work / f"{binary}.crabc-link.json", str(collection["work_path"]), binary, artifacts, selected,
+            image_manifest,
         )
     for binary in ("static-contract", "static-pie-contract"):
-        _validate_static_link_receipt(work, str(collection["work_path"]), binary, artifacts, selected)
+        _validate_static_link_receipt(
+            work, str(collection["work_path"]), binary, artifacts, selected, inputs, image_manifest,
+        )
     return report
 
 
@@ -1803,9 +2226,16 @@ def collect_report(
             "collector product anchor path differs from captured input")
     product = _validate_product_anchor(product_report, inputs)
     selected_source = _selected_source_identity(root, product["anchor"])
+    trusted_image = trusted_image_manifest()
+    require(live_image_manifest() == trusted_image, "live image inputs differ from trusted pthread image manifest")
+    capture_git_objects(root, work / "retained", [str(selected_source["revision"]), str(current["revision"])])
+    _, selected_git_files = source_tree(work / "retained", str(selected_source["revision"]))
+    _, collector_git_files = source_tree(work / "retained", str(current["revision"]))
     _copy_input_set(work, inputs)
-    _copy_source_contract(work, root, str(selected_source["revision"]))
-    _copy_product_sidecars(work, product)
+    _copy_collector_authority(work, collector_git_files)
+    _copy_image_inputs(work, trusted_image)
+    _copy_source_contract(work, root, str(selected_source["revision"]), selected_git_files)
+    _copy_product_sidecars(work, product, inputs)
     _copy_historical(work, historical_inputs.resolve(strict=True))
     require(re.fullmatch(r"[0-9a-f]{40}", historical_source_commit) is not None,
             "historical source commit is invalid")
@@ -1831,11 +2261,11 @@ def collect_report(
         "collector": {
             "source_before": before,
             "source_after": current,
-            "files": {
-                "probe": artifacts["retained/collector/probe.c"],
-                "reader": artifacts["retained/collector/reader.py"],
-                "runner": artifacts["retained/collector/runner.sh"],
-            },
+            "files": {name: artifacts[_collector_copy_path(name)] for name in COLLECTOR_PATHS},
+        },
+        "image_inputs": {
+            invocation: {**record, "retained": _image_copy_path(invocation)}
+            for invocation, record in trusted_image["files"].items()
         },
         "inputs": {
             name: {"original_path": inputs[name]["path"], "retained": _input_copy_path(name)}
