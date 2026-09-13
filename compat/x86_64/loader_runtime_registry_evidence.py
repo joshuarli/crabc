@@ -31,7 +31,7 @@ import owned_posix_timers_evidence as timer_evidence
 
 ROOT = inventory.ROOT
 CONTRACT_PATH = ROOT / "compat/x86_64/loader-runtime-registry-private-resolution.toml"
-SCHEMA = "crabc.x86_64-loader-runtime-registry-private-resolution/v1"
+SCHEMA = "crabc.x86_64-loader-runtime-registry-private-resolution/v2"
 TARGET = "x86_64-unknown-linux-musl"
 FEATURE = "x86_64-owned-dynamic-runtime"
 RAW = "raw"
@@ -45,6 +45,10 @@ SOURCE_FILES = (
     "compat/x86_64/owned_dynamic_fork_evidence.py",
     "compat/x86_64/owned_posix_timers_evidence.py",
     "compat/x86_64/general_dynamic_tls_consumer.c",
+    "compat/x86_64/general_dynamic_fork_library.c",
+    "compat/x86_64/general_dynamic_fork_consumer.c",
+    "compat/x86_64/owned_posix_timers_probe.c",
+    "compat/x86_64/owned_posix_timers_tls.c",
     "ldso/Cargo.toml",
     "ldso/src/x86_64_runtime_registry.rs",
     "ldso/src/x86_64_initial_worker_tls.rs",
@@ -133,6 +137,67 @@ def identity(path: Path, *, logical_path: str | None = None) -> dict[str, object
         return inventory.file_record(path, logical_path=logical_path)
     except inventory.InventoryError as error:
         raise RuntimeRegistryEvidenceError(str(error)) from error
+
+
+def retained_checkout_path(root: Path, path: Path) -> str:
+    """Project an authenticated physical checkout path to its exact native mount.
+
+    Receipts retain the actually executed /workspace spelling. Host replay
+    resolves files beneath its one physical checkout; it does not rewrite
+    receipts or admit arbitrary prefixes, symlinks or outside-root aliases.
+    """
+    root = physical_directory(root, "registry checkout")
+    path = Path(path).absolute()
+    path = physical_directory(path, "registry checkout path") if path.is_dir() else physical_regular(path, "registry checkout path")
+    require(path.is_relative_to(root), "registry path escapes its physical checkout")
+    return str(Path("/workspace") / path.relative_to(root))
+
+
+def checkout_identity(root: Path, path: Path) -> dict[str, object]:
+    return identity(path, logical_path=retained_checkout_path(root, path))
+
+
+def runner_contract(output: Path, product: Path, label: str) -> tuple[list[str], dict[str, str]]:
+    runners = {"dlfcn-pie": "run_general_dynamic_dlopen.sh", "dlfcn-non-pie": "run_general_dynamic_dlopen.sh",
+               "fork": "run_general_dynamic_fork.sh", "timer-reset": "run_owned_posix_timers.sh"}
+    require(label in runners, "unknown registry runner role")
+    command = ["bash", retained_checkout_path(ROOT, ROOT / "compat/x86_64" / runners[label]),
+               retained_checkout_path(ROOT, product)]
+    environment = {**WORKLOAD_ENVIRONMENT, "TMPDIR": retained_checkout_path(ROOT, output)}
+    if label.startswith("dlfcn-"):
+        environment.update({"CRABC_GENERAL_DYNAMIC_ENTRY_MODE": "--dynamic-" + label.removeprefix("dlfcn-"),
+                            DLFCN_SKIP_SEARCH_ENV: "1"})
+    return command, environment
+
+
+def capture_replay_tools(output: Path) -> dict[str, object]:
+    tools = {role: inventory._snapshot_regular(output, Path(path), "inputs/tools/" + role, path)
+             for role, path in fork_evidence.REPLAY_TOOL_PATHS.items()}
+    make_retained_readable(output / "inputs")
+    for role in tools:
+        tools[role]["retained"] = inventory.file_record(output / "inputs/tools" / role, logical_path="inputs/tools/" + role)
+    return tools
+
+
+def replay_files(output: Path, fork_work: Path, timer_work: Path) -> dict[str, object]:
+    """Bind the finite already-produced preprocessing inputs; never rerun GCC."""
+    output = physical_directory(output, "runtime registry report root")
+    fork_work = physical_directory(fork_work, "fork replay work")
+    timer_work = physical_directory(timer_work, "timer replay work")
+    require(fork_work.is_relative_to(output), "fork replay work escapes report root")
+    require(timer_work.is_relative_to(output), "timer replay work escapes report root")
+    identifiers = [name for name, *_ in fork_evidence.DSO_TOPOLOGY] + [role for role, *_ in fork_evidence.CONSUMER_ROLES]
+    paths = [fork_work / directory / (name + suffix) for name in identifiers
+             for directory, suffix in (("dependencies", ".d"), ("preprocessed", ".i"))]
+    paths += [timer_work / (stem + suffix) for stem in ("probe.compile-audit", "tls.compile-audit")
+              for suffix in (".dependencies", ".headers", ".exit-status")]
+    result = {}
+    for path in paths:
+        relative = path.relative_to(output).as_posix()
+        result[relative] = identity(path, logical_path=relative)
+        if path.name.endswith(".exit-status"):
+            require(path.read_bytes() == b"0\n", "retained timer preprocessing status differs")
+    return result
 
 
 def read_json(path: Path, description: str) -> dict[str, Any]:
@@ -362,11 +427,11 @@ def validate_supplied_products(*, root: Path, base_inventory: Path, elf_report: 
     provenance = loader_provenance(root, Path(dynamic_product), facts)
     return {"contract": {"id": contract["id"], "status": contract["status"]},
             "source": inventory.collector_source_seal(), "source_resolution": source,
-            "source_files": source_records(root), "elf_report": identity(Path(elf_report)),
+            "source_files": source_records(root), "elf_report": checkout_identity(root, Path(elf_report)),
             "imports": imports, "loader": provenance,
-            "products": {"static": identity(Path(static_product) / "usr/lib/libc.a"),
-                         "dynamic_libc": identity(Path(dynamic_product) / "usr/lib/libc.so"),
-                         "dynamic_loader": identity(Path(dynamic_product) / "lib/ld-crabc-x86_64.so.1")}}
+            "products": {"static": checkout_identity(root, Path(static_product) / "usr/lib/libc.a"),
+                         "dynamic_libc": checkout_identity(root, Path(dynamic_product) / "usr/lib/libc.so"),
+                         "dynamic_loader": checkout_identity(root, Path(dynamic_product) / "lib/ld-crabc-x86_64.so.1")}}
 
 
 def _raw_record(output: Path, path: Path, logical: str) -> dict[str, object]:
@@ -561,13 +626,11 @@ def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path,
                                        dynamic_product=dynamic_product)
     output.mkdir(mode=0o700)
     source = inventory.collector_source_seal()
-    environment = {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output), "CRABC_GENERAL_DYNAMIC_ENTRY_MODE": "--dynamic-pie",
-                   DLFCN_SKIP_SEARCH_ENV: "1"}
+    tools = capture_replay_tools(output)
     dlfcn: dict[str, object] = {}
     for mode in DLOPEN_MODES:
         before = set(output.glob("general-dynamic-dlopen.*"))
-        environment["CRABC_GENERAL_DYNAMIC_ENTRY_MODE"] = f"--dynamic-{mode}"
-        command = ["bash", str(ROOT / "compat/x86_64/run_general_dynamic_dlopen.sh"), str(Path(dynamic_product).absolute())]
+        command, environment = runner_contract(output, Path(dynamic_product), f"dlfcn-{mode}")
         command_record = _capture(command, output=output, label=f"dlfcn-{mode}", environment=environment)
         work = _new_work(output, "general-dynamic-dlopen", before)
         make_retained_readable(work)
@@ -577,20 +640,23 @@ def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path,
         observation["entry_mode"] = mode
         dlfcn[mode] = {"command": command_record, "observation": observation}
     before = set(output.glob("general-dynamic-fork.*"))
-    fork_command = _capture(["bash", str(ROOT / "compat/x86_64/run_general_dynamic_fork.sh"), str(Path(dynamic_product).absolute())],
-                            output=output, label="fork", environment={**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output)})
+    command, environment = runner_contract(output, Path(dynamic_product), "fork")
+    fork_command = _capture(command, output=output, label="fork", environment=environment)
     fork_work = _new_work(output, "general-dynamic-fork", before)
     make_retained_readable(fork_work)
     fork_receipt = fork_evidence.validate_observations(Path(dynamic_product), fork_work)
     before = set(output.glob("owned-posix-timers.*"))
-    timer_command = _capture(["bash", str(ROOT / "compat/x86_64/run_owned_posix_timers.sh"), str(Path(dynamic_product).absolute())],
-                             output=output, label="timer-reset", environment={**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output)})
+    command, environment = runner_contract(output, Path(dynamic_product), "timer-reset")
+    timer_command = _capture(command, output=output, label="timer-reset", environment=environment)
     timer_work = _new_work(output, "owned-posix-timers", before)
     make_retained_readable(timer_work)
     timer = timer_observations(Path(dynamic_product), output, timer_work)
+    for role, path in fork_evidence.REPLAY_TOOL_PATHS.items():
+        require(same(tools[role]["original"], inventory.file_record(Path(path), logical_path=path)), "registry tool changed during collection")
     require(source == inventory.collector_source_seal(), "collector source changed during runtime observations")
     report = {"schema": SCHEMA, "target": TARGET, "status": {"family_completion": False, "promotion_ready": False},
               "source": source, "source_files": source_records(ROOT), "inputs": inputs,
+              "replay_inputs": {"tools": tools, "files": replay_files(output, fork_work, timer_work)},
               "dlfcn": dlfcn, "fork": {"command": fork_command, "work": str(fork_work.relative_to(output)), "receipt": fork_receipt},
               "timer_reset": {"command": timer_command, "observation": timer}}
     (output / "report.json").write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -627,16 +693,16 @@ def timer_source_test_observations(work: Path, output: Path) -> dict[str, object
     return captures
 
 
-def timer_observations(product: Path, output: Path, work: Path) -> dict[str, object]:
+def timer_observations(product: Path, output: Path, work: Path, *, replay: fork_evidence.RetainedRuntimeInputs | None = None) -> dict[str, object]:
     """Join timer reset raw executions and existing owned-link receipts."""
     product, output, work = physical_directory(product, "dynamic product"), physical_directory(output, "component output"), physical_directory(work, "timer work")
     require(work.is_relative_to(output), "timer work escapes retained component output")
     source_tests = timer_source_test_observations(work, output)
     app = timer_evidence.validate_timer_application_compile(product, ROOT / "compat/x86_64/owned_posix_timers_probe.c",
-                                                            work / "probe.o", work / "probe.compile-audit.json")
+                                                            work / "probe.o", work / "probe.compile-audit.json", replay=replay)
     tls = timer_evidence.validate_timer_tls_dso(product, ROOT / "compat/x86_64/owned_posix_timers_tls.c", work / "tls.o",
                                                 work / "tls.compile-audit.json", work / "libtimer-tls.so",
-                                                work / "libtimer-tls.so.crabc-link.json")
+                                                work / "libtimer-tls.so.crabc-link.json", replay=replay)
     links = read_json(work / "link-identities.json", "timer link identities")
     require(links.get("schema") == "crabc.x86_64-owned-posix-timers-link-identities/v1" and isinstance(links.get("links"), dict),
             "timer link identity receipt drifted")
@@ -644,8 +710,14 @@ def timer_observations(product: Path, output: Path, work: Path) -> dict[str, obj
     observed: dict[str, object] = {}
     for mode in TIMER_MODES:
         require(mode in links["links"], f"timer link receipt omits dynamic {mode}")
-        link = product_evidence.validate_link(product, work / "probe.o", work / f"dynamic-{mode}",
-                                             work / f"dynamic-{mode}.crabc-link.json", mode)
+        if replay is None:
+            link = product_evidence.validate_link(product, work / "probe.o", work / f"dynamic-{mode}",
+                                                 work / f"dynamic-{mode}.crabc-link.json", mode)
+        else:
+            link = product_evidence.validate_retained_link(replay.checkout, "/workspace", product, work / "probe.o", work / f"dynamic-{mode}",
+                work / f"dynamic-{mode}.crabc-link.json", mode,
+                {key: replay.tools["linker"]["original"][key] for key in ("path", "sha256")})
+            link = {**link, "product": replay.recorded(product)}
         require(links["links"][mode] == link, f"timer {mode} link identity no longer reconstructs")
         cells = {}
         for entry, stem in (("kernel", f"dynamic-{mode}-ordinary.stdout"), ("direct", f"direct-{mode}-ordinary.stdout")):
@@ -674,7 +746,7 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
     report_path = physical_regular(report_path, "runtime registry report")
     output = physical_directory(report_path.parent, "runtime registry report root")
     report = exact(read_json(report_path, "runtime registry report"),
-                   {"schema", "target", "status", "source", "source_files", "inputs", "dlfcn", "fork", "timer_reset"},
+                   {"schema", "target", "status", "source", "source_files", "inputs", "replay_inputs", "dlfcn", "fork", "timer_reset"},
                    "runtime registry report")
     require(report["schema"] == SCHEMA and report["target"] == TARGET
             and same(report["status"], {"family_completion": False, "promotion_ready": False}),
@@ -685,14 +757,15 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
                                        static_preparation=static_preparation, static_product=static_product,
                                        dynamic_product=dynamic_product)
     require(same(report["inputs"], inputs), "runtime registry supplied products/source drifted")
+    replay_inputs = exact(report["replay_inputs"], {"tools", "files"}, "registry retained replay inputs")
+    replay = fork_evidence.RetainedRuntimeInputs(ROOT, output, replay_inputs["tools"])
+    require(same(replay_inputs["files"], replay_files(output, output / report["fork"]["work"],
+        output / report["timer_reset"]["observation"]["work"])), "registry retained preprocessing files drifted")
     dlfcn = exact(report["dlfcn"], set(DLOPEN_MODES), "general dlfcn mode roster")
     reconstructed: dict[str, object] = {}
     for mode in DLOPEN_MODES:
         record = exact(dlfcn[mode], {"command", "observation"}, f"general dlfcn {mode}")
-        _validate_command(output, record["command"], f"dlfcn-{mode}",
-                          ["bash", str(ROOT / "compat/x86_64/run_general_dynamic_dlopen.sh"), str(Path(dynamic_product).absolute())],
-                          {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output), "CRABC_GENERAL_DYNAMIC_ENTRY_MODE": f"--dynamic-{mode}",
-                           DLFCN_SKIP_SEARCH_ENV: "1"})
+        _validate_command(output, record["command"], f"dlfcn-{mode}", *runner_contract(output, Path(dynamic_product), f"dlfcn-{mode}"))
         observation = record["observation"]
         require(isinstance(observation, dict) and observation.get("entry_mode") == mode
                 and observation.get("driver_mode") == DLOPEN_DRIVER_MODES[mode],
@@ -703,15 +776,13 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
         require(same(observation, current), f"general dlfcn {mode} retained artifacts do not reconstruct")
         reconstructed[mode] = current
     fork = exact(report["fork"], {"command", "work", "receipt"}, "fork observation")
-    _validate_command(output, fork["command"], "fork", ["bash", str(ROOT / "compat/x86_64/run_general_dynamic_fork.sh"), str(Path(dynamic_product).absolute())],
-                      {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output)})
-    fork_current = fork_evidence.validate_observations(Path(dynamic_product), physical_directory(output / fork["work"], "fork work"))
+    _validate_command(output, fork["command"], "fork", *runner_contract(output, Path(dynamic_product), "fork"))
+    fork_current = fork_evidence.validate_observations(Path(dynamic_product), physical_directory(output / fork["work"], "fork work"), replay=replay)
     require(same(fork["receipt"], fork_current), "fork retained receipt does not reconstruct")
     timer = exact(report["timer_reset"], {"command", "observation"}, "timer reset observation")
-    _validate_command(output, timer["command"], "timer-reset", ["bash", str(ROOT / "compat/x86_64/run_owned_posix_timers.sh"), str(Path(dynamic_product).absolute())],
-                      {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output)})
+    _validate_command(output, timer["command"], "timer-reset", *runner_contract(output, Path(dynamic_product), "timer-reset"))
     timer_current = timer_observations(Path(dynamic_product), output,
-                                       physical_directory(output / timer["observation"]["work"], "timer reset work"))
+                                       physical_directory(output / timer["observation"]["work"], "timer reset work"), replay=replay)
     require(same(timer["observation"], timer_current), "timer reset retained artifacts do not reconstruct")
     # Do not infer coverage from the runner names.  The report itself must name
     # each protocol operation/scenario and both required entry modes.

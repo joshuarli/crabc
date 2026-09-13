@@ -25,6 +25,79 @@ from owned_posix_product_evidence import DYNAMIC_PRODUCT_FORMAT
 
 
 class OwnedPosixTimersTests(unittest.TestCase):
+    def test_replay_compile_audit_uses_retained_compiler_and_never_imports_the_helper(self):
+        scratch_root = ROOT / ".work/x86_64/tmp"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch_root) as temporary:
+            root = Path(temporary)
+            product = root / "product"
+            headers = product / "usr/include"
+            headers.mkdir(parents=True)
+            header = headers / "timer.h"
+            header.write_text("/* installed */\n", encoding="utf-8")
+            manifest = product / "share/crabc/manifest.json"
+            manifest.parent.mkdir(parents=True)
+            manifest.write_text("{}\n", encoding="utf-8")
+            helper = manifest.parent / "crabc_cc_static.py"
+            helper.write_text("raise RuntimeError('host replay must not import me')\n", encoding="utf-8")
+            driver = product / "bin/crabc-cc-dynamic"
+            driver.parent.mkdir(parents=True)
+            driver.write_text("#!/bin/sh\n", encoding="utf-8")
+            driver.chmod(0o755)
+            source = root / "timer.c"
+            source.write_text("#include <timer.h>\n", encoding="utf-8")
+            object_path = root / "timer.o"
+            object_path.write_bytes(b"timer object")
+            dependencies = root / "timer.dependencies"
+            trace = root / "timer.headers"
+
+            class Replay:
+                def recorded(self, path):
+                    return "/workspace/" + Path(path).relative_to(root).as_posix()
+
+                def resolve(self, value):
+                    return root / Path(value).relative_to("/workspace")
+
+                def require_tool(self, role, value):
+                    self.role, self.value = role, value
+
+                def tool_path(self, role):
+                    self.tool_role = role
+                    return Path("/usr/bin/gcc")
+
+            replay = Replay()
+            dependencies.write_text(
+                f"timer.o: {replay.recorded(source)} {replay.recorded(header)}\n", encoding="utf-8"
+            )
+            trace.write_text(f". {replay.recorded(header)}\n", encoding="utf-8")
+            record = {
+                "schema": TIMER_WORKLOAD_COMPILE_AUDIT_SCHEMA,
+                "role": "application",
+                "product": {"path": replay.recorded(product),
+                            "manifest": {"path": replay.recorded(manifest), "sha256": timer_evidence._sha256(manifest)}},
+                "source": {"path": replay.recorded(source), "sha256": timer_evidence._sha256(source)},
+                "object": {"path": replay.recorded(object_path), "sha256": timer_evidence._sha256(object_path)},
+                "driver": {"path": replay.recorded(driver), "sha256": timer_evidence._sha256(driver)},
+                "compiler": {"path": "/usr/bin/gcc", "sha256": "a" * 64},
+                "compiler_helper": {"path": replay.recorded(helper), "sha256": timer_evidence._sha256(helper)},
+                "command": timer_evidence._compile_command("application", driver, source, object_path, replay=replay),
+                "dependency_command": timer_evidence._dependency_command("application", "/usr/bin/gcc", product, source, replay=replay),
+                "dependency_exit_status": 0,
+                "dependencies": {"path": replay.recorded(dependencies), "sha256": timer_evidence._sha256(dependencies)},
+                "header_trace": {"path": replay.recorded(trace), "sha256": timer_evidence._sha256(trace)},
+                "headers": [{"path": replay.recorded(header), "sha256": timer_evidence._sha256(header), "root": "installed"}],
+            }
+            audit = root / "audit.json"
+            _write_record(audit, record)
+            with patch.object(timer_evidence, "_dynamic_product", return_value=(product, manifest, driver)), \
+                 patch.object(timer_evidence, "_installed_compiler", side_effect=AssertionError("host replay imported helper")):
+                result = timer_evidence.validate_timer_application_compile(
+                    product, source, object_path, audit, replay=replay
+                )
+            self.assertEqual(replay.role, "compiler")
+            self.assertEqual(replay.tool_role, "compiler")
+            self.assertEqual(result["product"], replay.recorded(product))
+
     def compile_audit_fixture(self, temporary: Path):
         product = temporary / "product"
         headers = product / "usr/include"
