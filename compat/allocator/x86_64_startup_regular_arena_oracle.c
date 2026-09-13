@@ -12,6 +12,7 @@
 #define _GNU_SOURCE
 
 #include <stdbool.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,17 +42,25 @@ static bool set_source_environment(const char* scenario) {
       || setenv("mimalloc_allow_large_os_pages", "0", 1) != 0
       || setenv("mimalloc_allow_thp", "0", 1) != 0
       || setenv("mimalloc_use_numa_nodes", "1", 1) != 0) return false;
-  if (strcmp(scenario, "reuse") == 0 || strcmp(scenario, "ineligible") == 0) {
+  if (strcmp(scenario, "reuse") == 0 || strcmp(scenario, "reuse-disallow-os") == 0
+      || strcmp(scenario, "ineligible") == 0
+      || strcmp(scenario, "ineligible-disallow-os") == 0) {
     if (setenv("mimalloc_reserve_os_memory", "64M", 1) != 0) return false;
   } else if (strcmp(scenario, "failed") == 0) {
     /* `arena.c:1817-1821` rejects this one-slice managed region below the
      * source minimum. `init.c:576-579` deliberately ignores the failure. */
     if (setenv("mimalloc_reserve_os_memory", "1K", 1) != 0) return false;
-  } else if (strcmp(scenario, "absent") != 0) {
+  } else if (strcmp(scenario, "absent") != 0
+      && strcmp(scenario, "absent-disallow-os") != 0) {
     return false;
   }
-  return strcmp(scenario, "ineligible") != 0
-      || setenv("mimalloc_disallow_arena_alloc", "1", 1) == 0;
+  if ((strcmp(scenario, "ineligible") == 0
+      || strcmp(scenario, "ineligible-disallow-os") == 0)
+      && setenv("mimalloc_disallow_arena_alloc", "1", 1) != 0) return false;
+  return (strcmp(scenario, "reuse-disallow-os") != 0
+          && strcmp(scenario, "absent-disallow-os") != 0
+          && strcmp(scenario, "ineligible-disallow-os") != 0)
+      || setenv("mimalloc_disallow_os_alloc", "1", 1) == 0;
 }
 
 int main(int argc, char** argv) {
@@ -63,7 +72,10 @@ int main(int argc, char** argv) {
   mi_arena_t* const startup = registry_after_init == 1
       ? mi_arena_from_index(subproc, 0) : NULL;
 
+  errno = 0;
   void* const allocation = mi_malloc(79);
+  const size_t allocation_succeeded = allocation != NULL;
+  const size_t allocation_errno = (size_t)errno;
   mi_page_t* const page = allocation == NULL ? NULL : _mi_ptr_page(allocation);
   const bool client_is_arena_backed = page != NULL && page->memid.memkind == MI_MEM_ARENA;
   const bool client_uses_startup = client_is_arena_backed && startup != NULL
@@ -76,10 +88,12 @@ int main(int argc, char** argv) {
   const size_t arena_initially_committed = first_arena != NULL
       && first_arena->memid.initially_committed;
 
-  mi_free(allocation);
+  if (allocation != NULL) mi_free(allocation);
   const size_t registry_after_free = mi_arenas_get_count(subproc);
 
   puts(TRACE_BEGIN);
+  trace_unsigned("allocation_succeeded", allocation_succeeded);
+  trace_unsigned("allocation_errno", allocation_errno);
   trace_unsigned("registry_after_init", registry_after_init);
   trace_unsigned("client_is_arena_backed", client_is_arena_backed);
   trace_unsigned("client_startup_identity", client_startup_identity);
@@ -90,16 +104,25 @@ int main(int argc, char** argv) {
   puts(TRACE_END);
 
   const bool source_parent = strcmp(argv[1], "reuse") == 0
-      || strcmp(argv[1], "ineligible") == 0;
-  const bool direct_os = strcmp(argv[1], "ineligible") == 0;
-  const size_t expected_size = source_parent ? 64 * 1024 * 1024 : 128 * 1024 * 1024;
-  return allocation != NULL
+      || strcmp(argv[1], "reuse-disallow-os") == 0
+      || strcmp(argv[1], "ineligible") == 0
+      || strcmp(argv[1], "ineligible-disallow-os") == 0;
+  const bool source_enomem = strcmp(argv[1], "absent-disallow-os") == 0
+      || strcmp(argv[1], "ineligible-disallow-os") == 0;
+  const bool direct_os = strcmp(argv[1], "ineligible") == 0
+      || strcmp(argv[1], "ineligible-disallow-os") == 0;
+  const size_t expected_registry = source_parent || !source_enomem;
+  const size_t expected_size_with_parent = source_parent ? 64 * 1024 * 1024
+      : (source_enomem ? 0 : 128 * 1024 * 1024);
+  return allocation_succeeded == !source_enomem
+      && allocation_errno == (source_enomem ? ENOMEM : 0)
       && registry_after_init == (source_parent ? 1 : 0)
-      && client_is_arena_backed == !direct_os
-      && client_startup_identity == (strcmp(argv[1], "reuse") == 0 ? 1 : 2)
-      && registry_after_allocation == 1
-      && arena_size == expected_size
-      && arena_initially_committed
-      && registry_after_free == 1
+      && client_is_arena_backed == (!source_enomem && !direct_os)
+      && client_startup_identity == ((strcmp(argv[1], "reuse") == 0
+          || strcmp(argv[1], "reuse-disallow-os") == 0) ? 1 : 2)
+      && registry_after_allocation == expected_registry
+      && arena_size == expected_size_with_parent
+      && arena_initially_committed == expected_registry
+      && registry_after_free == expected_registry
       ? 0 : 2;
 }

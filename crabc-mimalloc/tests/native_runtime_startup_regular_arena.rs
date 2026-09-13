@@ -11,7 +11,7 @@ use std::process::Command;
 
 use crabc_mimalloc::__crabc_runtime::{
     TicketZeroPageAllocationResult, TicketZeroPageFreeResult, initialize_process,
-    native_runtime_lifecycle_test_audit,
+    native_runtime_first_arena_policy_test_audit,
     native_runtime_live_client_page_test_audit,
     native_runtime_live_client_uses_startup_regular_arena_test_audit,
     ticket_zero_allocate, ticket_zero_free,
@@ -30,25 +30,34 @@ const LAZY_RESERVE_BYTES: usize = 128 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Scenario {
     ReuseStartupRegular,
+    ReuseStartupRegularDisallowOs,
     FailedStartupRegularFallsBack,
     AbsentStartupRegularFallsBack,
+    AbsentStartupRegularDisallowOsFails,
     IneligibleStartupRegularUsesDirectOs,
+    IneligibleStartupRegularDisallowOsFails,
 }
 
 impl Scenario {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 7] = [
         Self::ReuseStartupRegular,
+        Self::ReuseStartupRegularDisallowOs,
         Self::FailedStartupRegularFallsBack,
         Self::AbsentStartupRegularFallsBack,
+        Self::AbsentStartupRegularDisallowOsFails,
         Self::IneligibleStartupRegularUsesDirectOs,
+        Self::IneligibleStartupRegularDisallowOsFails,
     ];
 
     fn key(self) -> &'static str {
         match self {
             Self::ReuseStartupRegular => "reuse",
+            Self::ReuseStartupRegularDisallowOs => "reuse-disallow-os",
             Self::FailedStartupRegularFallsBack => "failed",
             Self::AbsentStartupRegularFallsBack => "absent",
+            Self::AbsentStartupRegularDisallowOsFails => "absent-disallow-os",
             Self::IneligibleStartupRegularUsesDirectOs => "ineligible",
+            Self::IneligibleStartupRegularDisallowOsFails => "ineligible-disallow-os",
         }
     }
 
@@ -58,30 +67,67 @@ impl Scenario {
 
     fn startup_option(self) -> Option<&'static str> {
         match self {
-            Self::ReuseStartupRegular | Self::IneligibleStartupRegularUsesDirectOs => Some("64M"),
+            Self::ReuseStartupRegular
+            | Self::ReuseStartupRegularDisallowOs
+            | Self::IneligibleStartupRegularUsesDirectOs
+            | Self::IneligibleStartupRegularDisallowOsFails => Some("64M"),
             // Pinned `mi_reserve_os_memory_ex2` aligns this to one slice, then
             // `mi_manage_os_memory_ex2` rejects it below `MI_ARENA_MIN_SIZE`.
             // init.c ignores that error and the later first allocation may
             // take the ordinary fresh-arena fallback.
             Self::FailedStartupRegularFallsBack => Some("1K"),
-            Self::AbsentStartupRegularFallsBack => None,
+            Self::AbsentStartupRegularFallsBack | Self::AbsentStartupRegularDisallowOsFails => None,
         }
     }
 
     fn expected_startup_outcome(self) -> usize {
         match self {
-            Self::ReuseStartupRegular | Self::IneligibleStartupRegularUsesDirectOs => 1,
+            Self::ReuseStartupRegular
+            | Self::ReuseStartupRegularDisallowOs
+            | Self::IneligibleStartupRegularUsesDirectOs
+            | Self::IneligibleStartupRegularDisallowOsFails => 1,
             Self::FailedStartupRegularFallsBack => 2,
-            Self::AbsentStartupRegularFallsBack => 0,
+            Self::AbsentStartupRegularFallsBack | Self::AbsentStartupRegularDisallowOsFails => 0,
         }
     }
 
     fn expects_startup_parent(self) -> bool {
-        matches!(self, Self::ReuseStartupRegular | Self::IneligibleStartupRegularUsesDirectOs)
+        matches!(
+            self,
+            Self::ReuseStartupRegular
+                | Self::ReuseStartupRegularDisallowOs
+                | Self::IneligibleStartupRegularUsesDirectOs
+                | Self::IneligibleStartupRegularDisallowOsFails
+        )
+    }
+
+    fn disallows_arena_alloc(self) -> bool {
+        matches!(
+            self,
+            Self::IneligibleStartupRegularUsesDirectOs
+                | Self::IneligibleStartupRegularDisallowOsFails
+        )
     }
 
     fn expects_direct_os_client(self) -> bool {
         matches!(self, Self::IneligibleStartupRegularUsesDirectOs)
+    }
+
+    fn disallows_os_alloc(self) -> bool {
+        matches!(
+            self,
+            Self::ReuseStartupRegularDisallowOs
+                | Self::AbsentStartupRegularDisallowOsFails
+                | Self::IneligibleStartupRegularDisallowOsFails
+        )
+    }
+
+    fn expects_allocation_failure(self) -> bool {
+        matches!(
+            self,
+            Self::AbsentStartupRegularDisallowOsFails
+                | Self::IneligibleStartupRegularDisallowOsFails
+        )
     }
 }
 
@@ -89,7 +135,7 @@ impl Scenario {
 ///
 /// The parent creates it exclusively and removes it on every return/unwind.
 /// Each child gets only its path and appends no allocation address or lifecycle
-/// capability. This preserves observations from four fresh process images
+/// capability. This preserves observations from seven fresh process images
 /// without forwarding nested libtest summaries into the evidence parser.
 struct ChildTraceFile {
     path: PathBuf,
@@ -153,8 +199,11 @@ fn run_in_clean_source_environment() {
         if let Some(value) = scenario.startup_option() {
             command.env("mimalloc_reserve_os_memory", value);
         }
-        if scenario.expects_direct_os_client() {
+        if scenario.disallows_arena_alloc() {
             command.env("mimalloc_disallow_arena_alloc", "1");
+        }
+        if scenario.disallows_os_alloc() {
+            command.env("mimalloc_disallow_os_alloc", "1");
         }
         let output = command
             .output()
@@ -170,11 +219,11 @@ fn run_in_clean_source_environment() {
     }
 
     let trace = trace_file.read();
-    let expected_rows = Scenario::ALL.len() * 10;
+    let expected_rows = Scenario::ALL.len() * 11;
     assert_eq!(
         trace.lines().count(),
         expected_rows,
-        "each process-isolated source route writes its ten scalar observations\ntrace:\n{trace}",
+        "each process-isolated source route writes its eleven scalar observations\ntrace:\n{trace}",
     );
     println!();
     println!("{TRACE_BEGIN}");
@@ -194,10 +243,11 @@ fn startup_identity_scalar(
     }
 }
 
-fn append_trace(scenario: Scenario, values: [usize; 10]) {
+fn append_trace(scenario: Scenario, values: [usize; 11]) {
     let path = std::env::var_os(CHILD_TRACE_PATH)
         .expect("the source-startup child receives its parent-owned trace path");
     let names = [
+        "ticket_zero_result",
         "startup_outcome",
         "registry_after_init",
         "client_is_arena_backed",
@@ -235,16 +285,76 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
         initialize_process(current_page_size()),
         "the native runtime accepts the source startup option image"
     );
-    let registry_after_init = native_runtime_lifecycle_test_audit()
-        .map(|audit| audit.arena_registry_count)
-        .unwrap_or(0);
+    let initial = native_runtime_first_arena_policy_test_audit()
+        .expect("the active process exposes its zero-or-one first-arena policy state");
+    let registry_after_init = initial.arena_registry_count;
     assert_eq!(
         registry_after_init != 0,
         scenario.expects_startup_parent(),
         "only a successful 64-MiB source startup reservation publishes before ticket-zero allocation",
     );
 
-    let block = match ticket_zero_allocate(79, false) {
+    let allocation = ticket_zero_allocate(79, false);
+    let ticket_zero_result = match &allocation {
+        TicketZeroPageAllocationResult::Allocated(_) => 1,
+        TicketZeroPageAllocationResult::AllocationFailed => 0,
+        TicketZeroPageAllocationResult::Unavailable => 2,
+        TicketZeroPageAllocationResult::Retained => 3,
+    };
+    assert_eq!(
+        ticket_zero_result,
+        usize::from(!scenario.expects_allocation_failure()),
+        "the source disallow-OS path has a typed allocation failure, while an existing startup parent remains searchable",
+    );
+
+    if scenario.expects_allocation_failure() {
+        assert!(
+            matches!(&allocation, TicketZeroPageAllocationResult::AllocationFailed),
+            "the source direct-OS refusal must not become unavailable or terminally retained",
+        );
+        let retry = ticket_zero_allocate(79, false);
+        assert!(
+            matches!(&retry, TicketZeroPageAllocationResult::AllocationFailed),
+            "the source policy refusal remains retryable and must not retain a fresh sidecar owner",
+        );
+        let after = native_runtime_first_arena_policy_test_audit()
+            .expect("a failed first allocation leaves the process policy auditable");
+        assert_eq!(after.process_active, 1);
+        assert_eq!(after.startup_regular_reservation_outcome, scenario.expected_startup_outcome());
+        assert_eq!(after.vm_policy_disallow_arena_alloc, usize::from(scenario.disallows_arena_alloc()));
+        assert_eq!(after.vm_policy_disallow_os_alloc, 1);
+        assert_eq!(after.process_backing_first_arena_begin_count, 1);
+        assert_eq!(after.process_backing_vm_reservation_count, 0);
+        assert_eq!(after.arena_registry_count, usize::from(scenario.expects_startup_parent()));
+        assert_eq!(
+            after.process_arena_size,
+            if scenario.expects_startup_parent() { STARTUP_RESERVE_BYTES } else { 0 },
+        );
+        assert_eq!(
+            after.process_arena_initially_committed,
+            usize::from(scenario.expects_startup_parent()),
+        );
+        assert_eq!(after.page_map_registered_entry_count, 0);
+        append_trace(
+            scenario,
+            [
+                ticket_zero_result,
+                after.startup_regular_reservation_outcome,
+                registry_after_init,
+                0,
+                2,
+                after.process_backing_vm_reservation_count,
+                after.arena_registry_count,
+                after.process_arena_size,
+                after.process_arena_initially_committed,
+                after.arena_registry_count,
+                after.page_map_registered_entry_count,
+            ],
+        );
+        return;
+    }
+
+    let block = match allocation {
         TicketZeroPageAllocationResult::Allocated(block) => block,
         TicketZeroPageAllocationResult::Unavailable
         | TicketZeroPageAllocationResult::AllocationFailed
@@ -265,14 +375,16 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
         unsafe { native_runtime_live_client_page_test_audit(block) }.is_some(),
     );
     let client_startup_identity = startup_identity_scalar(block);
-    let live = native_runtime_lifecycle_test_audit()
-        .expect("the active source route exposes scalar lifecycle facts");
+    let live = native_runtime_first_arena_policy_test_audit()
+        .expect("the active source route exposes scalar first-arena facts");
     assert_eq!(
         live.startup_regular_reservation_outcome,
         scenario.expected_startup_outcome(),
         "the retained startup result distinguishes absent, published, and ignored failed source reservation",
     );
     assert_eq!(live.process_active, 1);
+    assert_eq!(live.vm_policy_disallow_arena_alloc, usize::from(scenario.expects_direct_os_client()));
+    assert_eq!(live.vm_policy_disallow_os_alloc, usize::from(scenario.disallows_os_alloc()));
     assert_eq!(live.process_backing_first_arena_begin_count, 1);
     assert!(live.page_map_registered_entry_count > 0);
     assert_eq!(live.process_arena_initially_committed, 1);
@@ -299,7 +411,7 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
     // SAFETY: `block` is the current unique result above and has not crossed
     // a thread or another allocation boundary.
     assert_eq!(unsafe { ticket_zero_free(block) }, TicketZeroPageFreeResult::Freed);
-    let after = native_runtime_lifecycle_test_audit()
+    let after = native_runtime_first_arena_policy_test_audit()
         .expect("the retained process arena remains auditable after client free");
     assert_eq!(after.startup_regular_reservation_outcome, scenario.expected_startup_outcome());
     assert_eq!(after.process_backing_vm_reservation_count, live.process_backing_vm_reservation_count);
@@ -311,6 +423,7 @@ fn runtime_ticket_zero_uses_source_startup_regular_arena_and_source_fallbacks() 
     append_trace(
         scenario,
         [
+            ticket_zero_result,
             live.startup_regular_reservation_outcome,
             registry_after_init,
             client_is_arena_backed,

@@ -1517,6 +1517,32 @@ impl MainStaticRuntimeFirstArenaPageAllocator {
                         None,
                     )
                 } else {
+                    let source_disallows_fresh_process_arena = matches!(
+                        reservation,
+                        MainStaticRuntimeFirstArenaReservation::Process { backing }
+                            if backing.process().policy().disallow_os_alloc()
+                    );
+                    if source_disallows_fresh_process_arena {
+                        // Pinned mimalloc v3.5.0 `src/arena.c:538-550` first
+                        // searches an existing arena, then rejects a fresh
+                        // reservation when `disallow_os_alloc` is set. The
+                        // source-start selection above already exhausted the
+                        // one eligible regular parent, so this is the exact
+                        // pre-reservation refusal. Keep the ticket-zero owner
+                        // retryable: no random image, sidecar mapping, or
+                        // PageMap entry has been consumed at this point.
+                        self.state = if page_map_lifecycle.finish().is_ok() {
+                            MainStaticRuntimeFirstArenaPageAllocatorState::AwaitingFreshPage {
+                                session,
+                                reservation,
+                                arena_storage,
+                            }
+                        } else {
+                            session.retain_terminal();
+                            MainStaticRuntimeFirstArenaPageAllocatorState::Retained
+                        };
+                        return None;
+                    }
                     let reservation_result = match reservation {
                         MainStaticRuntimeFirstArenaReservation::Legacy { .. } => {
                             Some(arena_storage.reserve_default_os_arena(page_map, required_size))

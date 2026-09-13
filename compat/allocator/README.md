@@ -1941,14 +1941,18 @@ The separate source-start regular-arena differential is available through:
 
 It direct-includes pinned release `src/init.c` and links the ordinary
 `src/arena.c` first-allocation route against one ordinary Rust runtime
-dependency. Four fresh process images compare 28 scalar values: a published
-64-MiB regular parent is reused before any lazy mapping; a rejected 1-KiB
-startup option and an absent option use the prior 128-MiB lazy fallback; and
-`disallow_arena_alloc=1` retains a published parent while taking direct OS
-allocation. The receipt records the complete C source roster, the full Rust
-allocator input tree, the exact locked integration invocation, and matching
-before/after candidate snapshots. Its reader contract can be checked without
-running a native oracle:
+dependency. Seven fresh process images compare 49 shared scalar values: a
+published 64-MiB regular parent is reused before any lazy mapping even with
+`disallow_os_alloc=1`; a rejected 1-KiB startup option and an absent option
+use the prior 128-MiB lazy fallback; an absent parent with
+`disallow_os_alloc=1` returns C ENOMEM and Rust's typed retryable refusal
+without a sidecar; and `disallow_arena_alloc=1` retains a published parent
+while taking direct OS allocation or, when combined with
+`disallow_os_alloc=1`, rejects that fallback with ENOMEM. The receipt also
+records the C allocation/errno and Rust typed-result/sidecar assertions, the
+complete C source roster, the full Rust allocator input tree, the exact locked
+integration invocation, and matching before/after candidate snapshots. Its
+reader contract can be checked without running a native oracle:
 
 ```sh
 ./compat/allocator/run-x86_64.sh allocator-startup-regular-arena --reader-tests
