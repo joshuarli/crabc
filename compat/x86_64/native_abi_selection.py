@@ -3846,6 +3846,28 @@ def _utmpx_product_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, 
     return records
 
 
+def _utmpx_source_link_input_modes() -> dict[str, dict[str, int]]:
+    """Read the finite utmpx mode policy from its shared owner source.
+
+    The utmpx receipt intentionally retains its v1 envelope.  Its replay
+    invokes ``owned_posix_product_evidence`` before trusting either copied
+    product tree, whose source-owned policy fixes these installed roles.
+    Direct attachment and the final transaction recheck need that same trusted
+    policy for their current and retained byte identities; neither a receipt
+    field nor a resealed manifest gets to choose a mode.
+    """
+    projection = exact(product_evidence.link_input_mode_projection(), {'static', 'dynamic'},
+                       'utmpx shared link-input mode policy')
+    result: dict[str, dict[str, int]] = {}
+    for family, records in (('static', UTMPX_STATIC_LINK_INPUTS), ('dynamic', UTMPX_DYNAMIC_LINK_INPUTS)):
+        modes = exact(projection[family], {relative for _name, relative in records},
+                      f'utmpx {family} shared source mode roster')
+        require(all(type(mode) is int and 0 <= mode <= 0o777 for mode in modes.values()),
+                f'utmpx {family} shared source mode value differs')
+        result[family] = dict(modes)
+    return result
+
+
 def _utmpx_retained_inputs(report_path: Path, report: Mapping[str, Any],
                            products: Mapping[str, Any],
                            link_input_modes: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -3972,8 +3994,8 @@ def native_utmpx_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
     reader = _utmpx_reader()
     require(Path(reader.ROOT) == ROOT and Path(reader.__file__).resolve().parent == MODULE_DIR,
             'utmpx reader belongs to a different checkout')
-    require(reader.SCHEMA == 'crabc.x86_64-owned-utmpx-receipt/v3',
-            'utmpx reader is not the current v3 receipt boundary')
+    require(reader.SCHEMA == 'crabc.x86_64-owned-utmpx-receipt/v1',
+            'utmpx reader is not the current v1 receipt boundary')
     report_path = physical_work_path(report_path, directory=False)
     before = file_identity(report_path)
     try:
@@ -3986,7 +4008,7 @@ def native_utmpx_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
     _measurement_source_matches(source, measurement, 'utmpx')
     measurement_reports = _measurement_report_bindings(measurement, 'utmpx')
     report = exact(report, {
-        'schema', 'image', 'source_tree', 'sources', 'products', 'product_cohort', 'link_input_modes', 'tools', 'commands',
+        'schema', 'image', 'source_tree', 'sources', 'products', 'product_cohort', 'tools', 'commands',
         'symbols', 'runtime', 'links', 'projection',
     }, 'utmpx reader report')
     require(report['schema'] == reader.SCHEMA and type(report['image']) is dict
@@ -4006,13 +4028,7 @@ def native_utmpx_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
     }, 'utmpx receipt product cohort')
     require(same(cohort['source'], {'revision': source['revision'], 'content_sha256': source['content_sha256']}),
             'utmpx receipt selected product source differs')
-    source_link_input_modes = getattr(reader, 'LINK_INPUT_MODES', None)
-    expected_link_input_modes = product_evidence.link_input_mode_projection()
-    require(type(source_link_input_modes) is dict and same(source_link_input_modes, expected_link_input_modes)
-            and same(report['link_input_modes'], expected_link_input_modes),
-            'utmpx source-bound link-input mode policy differs')
-    link_input_modes = exact(report['link_input_modes'], {'static', 'dynamic'},
-                             'utmpx source-bound link-input modes')
+    link_input_modes = _utmpx_source_link_input_modes()
     products = _utmpx_product_identities(paths)
     for family, records in (('static', UTMPX_STATIC_LINK_INPUTS), ('dynamic', UTMPX_DYNAMIC_LINK_INPUTS)):
         modes = exact(link_input_modes[family], {relative for _name, relative in records},

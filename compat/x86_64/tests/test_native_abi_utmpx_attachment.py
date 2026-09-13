@@ -34,13 +34,14 @@ DYNAMIC_LINK_INPUTS = {
 class FakeUtmpxReader:
     ROOT = ROOT
     __file__ = str(ROOT / 'compat/x86_64/owned_utmpx_receipt.py')
-    SCHEMA = 'crabc.x86_64-owned-utmpx-receipt/v3'
+    # The reader's retained-product replay imports the shared source policy;
+    # it deliberately keeps its existing v1 report envelope.
+    SCHEMA = 'crabc.x86_64-owned-utmpx-receipt/v1'
     PINNED_IMAGE = utmpx_reader.PINNED_IMAGE
     ALIASES = ALIASES
     STRONG = utmpx_reader.STRONG
     WEAK = utmpx_reader.WEAK
     SOURCES = utmpx_reader.SOURCES
-    LINK_INPUT_MODES = product_evidence.link_input_mode_projection()
     ReceiptError = ValueError
 
     def __init__(self, report: dict[str, object]):
@@ -190,7 +191,7 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
                 'static': {'workspace_path': '.work/utmpx-receipt/inputs/static', 'retained_tree': static_tree},
                 'dynamic': {'workspace_path': '.work/utmpx-receipt/inputs/dynamic', 'retained_tree': dynamic_tree},
             },
-            'product_cohort': cohort, 'link_input_modes': copy.deepcopy(FakeUtmpxReader.LINK_INPUT_MODES), 'tools': {}, 'commands': {},
+            'product_cohort': cohort, 'tools': {}, 'commands': {},
             'symbols': {
                 'headers': {},
                 'archive': {name: ('T' if name in FakeUtmpxReader.STRONG else 'W') for name in PROVIDERS},
@@ -260,6 +261,8 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
                                                          paths=self.paths, source=self.source))
 
     def test_adapter_binds_current_source_product_and_all_link_inputs(self) -> None:
+        self.assertEqual(selection._utmpx_source_link_input_modes(),
+                         product_evidence.link_input_mode_projection())
         companion = self._adapter()
         assert companion is not None
         self.assertEqual(companion['status'], 'utmpx-observed-with-boundaries')
@@ -272,6 +275,10 @@ class NativeUtmpxAttachmentTests(unittest.TestCase):
         wrong_product = self._receipt(); wrong_product['product_cohort']['dynamic_manifest']['sha256'] = '0' * 64
         with self.assertRaisesRegex(selection.SelectionError, 'dynamic manifest'):
             self._adapter(wrong_product)
+        unexpected_projection = self._receipt()
+        unexpected_projection['link_input_modes'] = product_evidence.link_input_mode_projection()
+        with self.assertRaisesRegex(selection.SelectionError, 'reader report fields differ'):
+            self._adapter(unexpected_projection)
 
     def test_adapter_rejects_state_crt_attach_builtins_and_mode_substitution(self) -> None:
         cases = (
