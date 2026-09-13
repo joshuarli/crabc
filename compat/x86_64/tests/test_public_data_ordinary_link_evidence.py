@@ -215,6 +215,45 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "raw path"):
             evidence.validate_command_records(self.root, work, inputs, tools, substituted)
 
+    def test_collector_command_writer_replays_root_and_output_working_directories(self) -> None:
+        inputs = self.admit()
+        work = self.root / ".work/collector-command-round-trip"
+        work.mkdir()
+        tools = {
+            name: {"original": {"path": "/sealed/" + name}}
+            for name in ("static_driver", "dynamic_driver", "oracle_wrapper", "compiler", "linker",
+                         "env", "readelf")
+        }
+        tools["chroot"] = {
+            "original": {"path": "/bin/coreutils"},
+            "invocation": {"path": "/usr/sbin/chroot", "physical_path": "/bin/coreutils"},
+        }
+        collector = evidence.Collector(self.root, work, self.preparation, self.static, self.dynamic)
+        commands = evidence.expected_commands(self.root, work, inputs, tools)
+        for label, command in commands.items():
+            cwd = work if label in {"static-link", "static-pie-link"} else None
+
+            def completed_process(argv, **kwargs):
+                self.assertEqual(argv, command["argv"])
+                self.assertEqual(kwargs["cwd"], self.root if cwd is None else work)
+                if label in evidence.EXECUTION_LABELS:
+                    kwargs["stdout"].write(evidence.EXPECTED_STDOUT)
+                return mock.Mock(wait=mock.Mock(return_value=0))
+
+            with mock.patch.object(evidence.subprocess, "Popen", side_effect=completed_process):
+                collector.run(label, command["argv"], cwd=cwd)
+        evidence.write_new_json(work / "commands.json", collector.commands)
+        replayed = evidence.read_json(work / "commands.json", "collector commands", list)
+        evidence.validate_command_records(self.root, work, inputs, tools, replayed)
+        for record in replayed:
+            expected_cwd = evidence.mounted(self.root, work) if record["label"] in {
+                "static-link", "static-pie-link"
+            } else "/workspace"
+            self.assertEqual(record["cwd"], expected_cwd)
+        replayed[0]["cwd"] = "/workspace/."
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "command differs"):
+            evidence.validate_command_records(self.root, work, inputs, tools, replayed)
+
     def test_chroot_commands_keep_the_sealed_multicall_invocation_spelling(self) -> None:
         inputs = self.admit()
         work = self.root / ".work/chroot-command"

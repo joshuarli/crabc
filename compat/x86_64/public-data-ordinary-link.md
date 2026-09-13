@@ -93,6 +93,9 @@ inputs or a purity claim.
 Host validation rechecks source/product admission, policy bytes and selected
 source paths, every retained raw stream, probe imports, static definitions,
 alignment, source-declared aliases, oracle capture, and candidate links.
+Command records use `/workspace` for the checkout working directory and the
+exact mounted output path for static links. The collector and replay reader
+require those same spellings; replay does not normalize altered transcripts.
 owned_posix_product_evidence.validate_retained_link maps recorded /workspace
 paths through the producing checkout and rehashes products, workload,
 executable, receipt, sidecars, and the sealed linker identity. It does not

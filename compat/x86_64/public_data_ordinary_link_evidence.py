@@ -186,10 +186,15 @@ def resolve_work_identity(root: Path, value: object, description: str) -> Path:
 
 
 def mounted(root: Path, path: Path) -> str:
+    """Use one mounted spelling, including the checkout root used as cwd.
+
+    Joining the relative path as a Path keeps the root at `/workspace`;
+    concatenating its `.` spelling would disagree with retained command replay.
+    """
     root = Path(root).absolute()
     path = Path(path).absolute()
     require(path.is_relative_to(root), "mounted path escapes checkout")
-    return SOURCE_MOUNT + "/" + path.relative_to(root).as_posix()
+    return (Path(SOURCE_MOUNT) / path.relative_to(root)).as_posix()
 
 
 def selected_objects(contract: Mapping[str, Any] | None = None) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
