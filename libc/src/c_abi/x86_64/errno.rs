@@ -34,16 +34,19 @@ pub unsafe extern "C" fn __errno_location() -> *mut c_int {
     core::ptr::addr_of_mut!(ERRNO)
 }
 
-/// Musl's internal spelling used by the bundled mimalloc C backend.
-///
-/// The public ABI remains `__errno_location`; this alias prevents an opt-in
-/// allocator artifact from importing a second errno owner merely because the
-/// backend was compiled against musl's hidden internal declaration.
+// Musl 1.2.6 `src/errno/__errno_location.c` publishes this allocator-facing
+// spelling with `weak_alias(__errno_location, ___errno_location)`.  It is a
+// hidden same-address alias in the archive, and shared linking localizes it
+// out of `.dynsym`; a separate Rust forwarding body would instead make it a
+// preemptible public export.  The allocator can therefore keep its internal
+// reference without creating a second errno owner, while ordinary C callers
+// continue to use only `__errno_location`.
 #[cfg(feature = "x86-allocator-runtime")]
-#[no_mangle]
-pub unsafe extern "C" fn ___errno_location() -> *mut c_int {
-    core::ptr::addr_of_mut!(ERRNO)
-}
+core::arch::global_asm!(
+    ".hidden ___errno_location",
+    ".weak ___errno_location",
+    ".set ___errno_location, __errno_location",
+);
 
 /// Publish one Linux error number in the calling thread's C `errno` slot.
 ///
