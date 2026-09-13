@@ -86,3 +86,49 @@ product replay paths. The `utmpx` case is mandatory in every dynamic product
 qualification. The owned-static callable roster accounts for all sixteen
 public names and the eight explicit same-address alias relationships;
 `utmpname` is itself the weak Rust provider for the shared name-rejection body.
+
+## Retained receipt boundary
+
+`compat/x86_64/owned_utmpx_receipt.py` adds a component-only receipt around the
+existing runner. It does not select aliases, change the runtime, or turn the
+historical RED into qualification. The collector has a deliberately narrow
+interface:
+
+```text
+python3 -B compat/x86_64/owned_utmpx_receipt.py collect \
+  --static-product /workspace/.work/.../static \
+  --dynamic-product /workspace/.work/.../dynamic \
+  --output /workspace/.work/.../owned-utmpx-receipt \
+  --image-id crabc-core-evidence@sha256:<pinned-image-digest>
+```
+
+It is invoked only from the pinned native `/workspace` mount after its caller
+has bound the image digest. It refuses a dirty source revision, same or
+symlinked product inputs, a pre-existing private evidence leaf, non-digest
+image spelling, or a runner that does not execute the full supplied
+static/static-PIE and dynamic PIE/non-PIE matrix. The ordinary
+`run_owned_utmpx.sh` lifecycle remains unchanged. Collection sets its private
+`CRABC_X86_64_RETAIN_UTMPX_COMMANDS=1` switch, which rejects every other value
+before evidence creation and uses a fixed private receipt leaf only for this
+mode.
+
+The receipt copies the exact selected source and runner inputs, both complete
+product trees (including modes and declared symlink), command programs and
+linker, installed-driver object/dependency record, sealed-link receipts and
+sidecars, raw archive/shared/final-executable symbol streams, and every raw
+oracle/candidate process stream. Command roles are a closed roster, with
+reconstructed installed-driver, musl link, owned static/static-PIE, dynamic
+PIE/non-PIE, symbol, sealed-link, and runtime envelopes. A report's status,
+counts, product digests, or projection cannot substitute for those bytes.
+
+`validate-report RECEIPT/report.json` is public host replay. It executes no
+command. It admits only the exact committed collector/source epoch: it reads
+the trusted local checkout HEAD without invoking Git, verifies each retained
+source blob and mode against the captured clean Git tree, and requires the
+local reader and retained-link parser bytes to match. It then rehashes tools,
+product trees, object/dependency records, and raw streams; reconstructs every
+retained archive/shared/final `readelf` symbol row from the actual ELF or ar
+bytes; uses the existing bounded retained-link parser on all four copied
+links; and derives the eight-alias component projection itself.
+The projection explicitly remains component complete only; family completion,
+runtime qualification, and public support remain false.

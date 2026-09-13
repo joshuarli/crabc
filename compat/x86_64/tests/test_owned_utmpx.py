@@ -99,6 +99,20 @@ class OwnedUtmpxTests(unittest.TestCase):
             finally:
                 link.unlink(missing_ok=True)
 
+    def test_invalid_receipt_retention_switch_is_rejected_before_evidence_creation(self) -> None:
+        scratch = ROOT / ".work/x86_64/tmp"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="utmpx-retention.", dir=scratch) as temporary:
+            result = subprocess.run(
+                ["bash", str(RUNNER)], cwd=ROOT,
+                env={**os.environ, "TMPDIR": temporary, "CRABC_X86_64_RETAIN_UTMPX_COMMANDS": "yes"},
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.stdout, "")
+            self.assertIn("CRABC_X86_64_RETAIN_UTMPX_COMMANDS must be unset or 1", result.stderr)
+            self.assertEqual(list(Path(temporary).iterdir()), [])
+
     def test_archive_symbol_judge_rejects_duplicate_wrong_binding(self) -> None:
         source = RUNNER.read_text(encoding="utf-8")
         function_start = source.index("assert_archive_symbols()")

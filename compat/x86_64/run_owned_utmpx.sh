@@ -16,6 +16,47 @@ readonly header_cxx="$ROOT/compat/x86_64/owned_utmpx_header_abi_probe.cpp"
 readonly interpreter=/lib/ld-crabc-x86_64.so.1
 declare -a link_identity_records=()
 
+# Receipt collection opts in to command retention. Ordinary focused runs keep
+# their disposable evidence lifecycle unchanged; a supplied value may not
+# silently widen that boundary.
+retain_commands="${CRABC_X86_64_RETAIN_UTMPX_COMMANDS:-}"
+case "$retain_commands" in
+    ''|1) ;;
+    *) printf 'owned utmpx: CRABC_X86_64_RETAIN_UTMPX_COMMANDS must be unset or 1\n' >&2; exit 2 ;;
+esac
+
+record_command() {
+    local role="$1" status program record
+    shift
+    if [ "$retain_commands" != 1 ]; then
+        "$@"
+        return
+    fi
+    case "$role" in *[!a-z0-9-]*|'') fail "invalid retained command role: $role" ;; esac
+    record="$work/commands/$role.json"
+    [ ! -e "$record" ] && [ ! -L "$record" ] || fail "duplicate retained command role: $role"
+    program="$(type -P -- "$1" || true)"
+    [ -n "$program" ] || fail "retained command has no external program: $1"
+    if "$@"; then status=0; else status=$?; fi
+    python3 -B - "$record" "$role" "$PWD" "$status" "$program" "$@" <<'PYCMD'
+import json
+from pathlib import Path
+import sys
+
+record, role, cwd, status, program, *argv = sys.argv[1:]
+Path(record).parent.mkdir(mode=0o755, exist_ok=True)
+Path(record).write_text(json.dumps({
+    'schema': 'crabc.x86_64-owned-utmpx-command/v1',
+    'role': role,
+    'cwd': cwd,
+    'status': int(status),
+    'program': program,
+    'argv': argv,
+}, indent=2, sort_keys=True) + '\n', encoding='utf-8')
+PYCMD
+    return "$status"
+}
+
 usage() {
     printf 'usage: %s [--static-sysroot STATIC_SYSROOT] [DYNAMIC_SYSROOT]\n' "$0" >&2
     exit 2
@@ -138,7 +179,16 @@ if [ "$dynamic_was_supplied" -eq 1 ]; then
     validate_product_payload "$provided_dynamic" dynamic
 fi
 
-readonly work="$(mktemp -d "$TMPDIR/owned-utmpx.XXXXXX")"
+if [ "$retain_commands" = 1 ]; then
+    # A closed receipt needs stable /workspace spellings for every input that
+    # a sealed link names.  This private leaf is only used by the opted-in
+    # collector; ordinary runner evidence remains uniquely disposable.
+    readonly work="$TMPDIR/owned-utmpx-receipt"
+    [ ! -e "$work" ] && [ ! -L "$work" ] || fail "retained evidence leaf already exists"
+    mkdir -m 755 "$work"
+else
+    readonly work="$(mktemp -d "$TMPDIR/owned-utmpx.XXXXXX")"
+fi
 chmod a+rx "$work"
 printf 'owned utmpx evidence: %s\n' "$work"
 
@@ -150,7 +200,7 @@ compile_header_witnesses() {
     local cxx_object="$work/$tree-header-cxx.o"
     if [ -n "$include_root" ]; then include_args=(-I "$include_root"); fi
 
-    "$oracle_cc" -std=c11 -D_GNU_SOURCE -fno-builtin "${include_args[@]}" \
+    record_command "header-$tree-c" "$oracle_cc" -std=c11 -D_GNU_SOURCE -fno-builtin "${include_args[@]}" \
         -H -c "$header_c" -o "$c_object" >/dev/null 2>"$trace"
     if [ "$tree" = project ]; then
         grep -Fq "$ROOT/include/utmpx.h" "$trace" || {
@@ -158,9 +208,9 @@ compile_header_witnesses() {
             return 1
         }
     fi
-    "$oracle_cc" -x c++ -std=c++17 -D_GNU_SOURCE -fno-builtin -nostdinc++ \
+    record_command "header-$tree-cxx" "$oracle_cc" -x c++ -std=c++17 -D_GNU_SOURCE -fno-builtin -nostdinc++ \
         "${include_args[@]}" -c "$header_cxx" -o "$cxx_object"
-    python3 -B - "$c_object" "$cxx_object" <<'PY'
+    record_command "header-$tree-undefined-judge" python3 -B - "$c_object" "$cxx_object" <<'PY'
 from pathlib import Path
 import subprocess
 import sys
@@ -183,10 +233,18 @@ compile_header_witnesses project "$ROOT/include"
 sha256sum "$header_c" "$header_cxx" "$work"/*-header-*.o >"$work/header-input.sha256"
 
 run_capture() {
-    local output="$1" status
-    shift
+    local role="$1" output="$2" status
+    shift 2
 
-    if timeout 20 env -i PATH="$PATH" "$@" >"$output" 2>"${output%.stdout}.stderr"; then
+    if [ "$retain_commands" = 1 ]; then
+        # record_command preserves the exact timeout/env/chroot invocation and
+        # its observed status; stdout/stderr remain the original raw streams.
+        if record_command "$role" timeout 20 env -i PATH="$PATH" "$@" >"$output" 2>"${output%.stdout}.stderr"; then
+            status=0
+        else
+            status=$?
+        fi
+    elif timeout 20 env -i PATH="$PATH" "$@" >"$output" 2>"${output%.stdout}.stderr"; then
         status=0
     else
         status=$?
@@ -215,8 +273,11 @@ prepare_root() {
 
 assert_archive_symbols() {
     local archive="$1" symbols="$2"
-    nm -g --defined-only "$archive" >"$symbols"
-    python3 -B - "$symbols" <<'PY'
+    record_command archive-symbols nm -g --defined-only "$archive" >"$symbols"
+    if [ "$retain_commands" = 1 ]; then
+        record_command archive-symbol-bytes readelf --symbols --wide "$archive" >"$work/archive-symbol-bytes.txt"
+    fi
+    record_command archive-symbol-judge python3 -B - "$symbols" <<'PY'
 from collections import Counter
 from pathlib import Path
 import sys
@@ -259,8 +320,8 @@ PY
 
 assert_shared_symbols() {
     local library="$1" symbols="$2"
-    readelf --dyn-syms --wide "$library" >"$symbols"
-    python3 -B - "$symbols" <<'PY'
+    record_command shared-symbols readelf --dyn-syms --wide "$library" >"$symbols"
+    record_command shared-symbol-judge python3 -B - "$symbols" <<'PY'
 from collections import Counter
 from pathlib import Path
 import sys
@@ -304,9 +365,12 @@ PY
 }
 
 assert_executable_symbols() {
-    local executable="$1" symbols="$2"
-    nm -g --defined-only "$executable" >"$symbols"
-    python3 -B - "$symbols" <<'PY'
+    local label="$1" executable="$2" symbols="$3"
+    record_command "executable-symbols-$label" nm -g --defined-only "$executable" >"$symbols"
+    if [ "$retain_commands" = 1 ]; then
+        record_command "executable-symbol-bytes-$label" readelf --symbols --wide "$executable" >"$work/$label-symbol-bytes.txt"
+    fi
+    record_command "executable-symbol-judge-$label" python3 -B - "$symbols" <<'PY'
 from collections import Counter
 from pathlib import Path
 import sys
@@ -334,7 +398,7 @@ validate_sealed_link() {
     local product="$1" workload="$2" executable="$3" receipt="$4" linkage="$5"
     local identity="$work/$linkage.link-identity.json"
 
-    python3 -B - "$ROOT" "$product" "$workload" "$executable" "$receipt" \
+    record_command "sealed-link-$linkage" python3 -B - "$ROOT" "$product" "$workload" "$executable" "$receipt" \
         "$linkage" >"$identity" <<'PY'
 import json
 from pathlib import Path
@@ -358,7 +422,7 @@ PY
 }
 
 retain_link_identities() {
-    python3 -B - "$work/link-identities.json" "$@" -- "${link_identity_records[@]}" <<'PY'
+    record_command link-identities python3 -B - "$work/link-identities.json" "$@" -- "${link_identity_records[@]}" <<'PY'
 import json
 from pathlib import Path
 import sys
@@ -413,9 +477,9 @@ fi
 readonly installed="$(realpath "$provided_dynamic")"
 validate_product_payload "$installed" dynamic
 
-"$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
+record_command dynamic-driver-compile "$installed/bin/crabc-cc-dynamic" --dynamic-pie -std=c11 -fno-builtin \
     -c "$probe" -o "$work/workload.o"
-python3 -B - "$installed" "$work" "$probe" <<'PY'
+record_command dependency-audit python3 -B - "$installed" "$work" "$probe" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -475,11 +539,11 @@ record = {
 )
 PY
 sha256sum "$probe" "$work/workload.o" >"$work/input.sha256"
-"$oracle_cc" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
+record_command oracle-link "$oracle_cc" -static -fno-pie -no-pie -pthread "$work/workload.o" -o "$work/oracle"
 prepare_root "$work/oracle-root"
 for scenario in ordinary; do
     cp "$work/oracle" "$work/oracle-root/consumer"
-    run_capture "$work/oracle-$scenario.stdout" \
+    run_capture "runtime-oracle-$scenario" "$work/oracle-$scenario.stdout" \
         chroot "$work/oracle-root" /consumer "$scenario"
 done
 
@@ -502,16 +566,16 @@ if [ -n "$static_product" ]; then
         receipt="$candidate.receipt.json"
         (
             cd "$work"
-            "$static_product/bin/crabc-cc" "-$mode" \
+            record_command "static-link-$mode" "$static_product/bin/crabc-cc" "-$mode" \
                 --link-receipt "$(basename "$receipt")" "$work/workload.o" -o "$candidate"
         )
         validate_sealed_link "$static_product" "$work/workload.o" "$candidate" "$receipt" "$mode"
-        assert_executable_symbols "$candidate" "$work/$mode-symbols.txt"
+        assert_executable_symbols "static-$mode" "$candidate" "$work/$mode-symbols.txt"
         root="$work/static-$mode-root"
         prepare_root "$root"
         cp "$candidate" "$root/consumer"
         for scenario in ordinary; do
-            run_capture "$work/static-$mode-$scenario.stdout" \
+            run_capture "runtime-static-$mode-$scenario" "$work/static-$mode-$scenario.stdout" \
                 chroot "$root" /consumer "$scenario"
             compare_oracle "static-$mode" "$scenario"
         done
@@ -521,19 +585,20 @@ fi
 assert_shared_symbols "$installed/usr/lib/libc.so" "$work/dynamic-symbols.txt"
 for mode in pie non-pie; do
     candidate="$work/dynamic-$mode"
-    "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$candidate"
+    record_command "dynamic-link-$mode" "$installed/bin/crabc-cc-dynamic" "--dynamic-$mode" "$work/workload.o" -o "$candidate"
     receipt="$candidate.crabc-link.json"
     validate_sealed_link "$installed" "$work/workload.o" "$candidate" "$receipt" "$mode"
+    assert_executable_symbols "dynamic-$mode" "$candidate" "$work/dynamic-$mode-symbols.txt"
     root="$work/dynamic-$mode-root"
     mkdir -p "$root"
     cp -a "$installed/." "$root/"
     prepare_root "$root"
     cp "$candidate" "$root/consumer"
     for scenario in ordinary; do
-        run_capture "$work/dynamic-$mode-kernel-$scenario.stdout" \
+        run_capture "runtime-dynamic-$mode-kernel-$scenario" "$work/dynamic-$mode-kernel-$scenario.stdout" \
             chroot "$root" /consumer "$scenario"
         compare_oracle "dynamic-$mode-kernel" "$scenario"
-        run_capture "$work/dynamic-$mode-direct-$scenario.stdout" \
+        run_capture "runtime-dynamic-$mode-direct-$scenario" "$work/dynamic-$mode-direct-$scenario.stdout" \
             chroot "$root" "$interpreter" /consumer "$scenario"
         compare_oracle "dynamic-$mode-direct" "$scenario"
     done
