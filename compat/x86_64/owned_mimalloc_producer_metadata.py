@@ -847,16 +847,48 @@ def _symbol_metadata(row: Mapping[str, Any], expected: Mapping[str, str], descri
     }
 
 
-def _section_alignment(member: Mapping[str, Any], row: Mapping[str, Any], description: str) -> int:
+def _defining_section(
+    member: Mapping[str, Any], row: Mapping[str, Any], description: str,
+) -> dict[str, Any]:
+    """Return one real section in this ELF placement's section domain.
+
+    A complete-ELF symbol row can spell special indexes such as ``UND``,
+    ``ABS``, or ``COM``.  Those spellings, section zero, and a stale numeric
+    index are not a defining section for one of this finite producer's C
+    definitions.  Keep this join local to the two authenticated placement
+    domains instead of treating a matching symbol row as sufficient evidence
+    of a body or object placement.
+    """
+    section_index = text(row.get("section_index"), f"{description} section index")
+    require(re.fullmatch(r"[1-9][0-9]*", section_index) is not None,
+            f"{description} defining section is not a positive numeric index")
     sections = member.get("sections")
     require(type(sections) is list, f"{description} sections are not a list")
-    try:
-        index = int(text(row.get("section_index"), f"{description} section index"))
-    except ValueError as error:
-        raise ProducerMetadataError(f"{description} section index is not numeric") from error
-    matches = [section for section in sections if type(section) is dict and section.get("index") == index]
-    require(len(matches) == 1, f"{description} section is absent or duplicated")
-    return positive(matches[0].get("alignment"), f"{description} section alignment")
+    index = int(section_index)
+    matches = [
+        mapping(section, f"{description} section")
+        for section in sections
+        if type(section) is dict
+        and type(section.get("index")) is int
+        and section["index"] == index
+    ]
+    require(len(matches) == 1, f"{description} defining section is absent or duplicated")
+    return matches[0]
+
+
+def _function_defining_section(
+    member: Mapping[str, Any], row: Mapping[str, Any], description: str,
+) -> dict[str, Any]:
+    """Require a selected C function to resolve to executable machine code."""
+    section = _defining_section(member, row, description)
+    flags = text(section.get("flags"), f"{description} defining section flags")
+    require("X" in flags, f"{description} defining section is not executable")
+    return section
+
+
+def _section_alignment(member: Mapping[str, Any], row: Mapping[str, Any], description: str) -> int:
+    section = _defining_section(member, row, description)
+    return positive(section.get("alignment"), f"{description} section alignment")
 
 
 def _symbol_value_alignment(
@@ -912,18 +944,24 @@ def _validate_metadata_rows(
 
     strong_records: list[dict[str, Any]] = []
     for name in strong_names:
-        static = _symbol_metadata(_named_row(c_rows, name, "static C provider"), metadata["strong_functions"]["static"],
+        static_row = _named_row(c_rows, name, "static C provider")
+        shared_source_row = _named_row(shared_rows, name, "shared local provider")
+        static = _symbol_metadata(static_row, metadata["strong_functions"]["static"],
                                   f"static strong function {name}")
-        shared_row = _symbol_metadata(_named_row(shared_rows, name, "shared local provider"),
-                                      metadata["strong_functions"]["shared"], f"shared strong function {name}")
+        shared_row = _symbol_metadata(shared_source_row, metadata["strong_functions"]["shared"],
+                                      f"shared strong function {name}")
+        _function_defining_section(c_member, static_row, f"static strong function {name}")
+        _function_defining_section(shared, shared_source_row, f"shared strong function {name}")
         require(static["size_bytes"] > 0 and shared_row["size_bytes"] > 0,
                 f"strong function {name} has an empty definition")
         strong_records.append({"name": name, "static": static, "shared": shared_row})
 
-    weak_static = _symbol_metadata(_named_row(c_rows, weak["name"], "static weak null fallback"), weak["static"],
-                                   "static weak null fallback")
-    weak_shared = _symbol_metadata(_named_row(shared_rows, weak["name"], "shared weak null fallback"), weak["shared"],
-                                   "shared weak null fallback")
+    weak_static_row = _named_row(c_rows, weak["name"], "static weak null fallback")
+    weak_shared_source_row = _named_row(shared_rows, weak["name"], "shared weak null fallback")
+    weak_static = _symbol_metadata(weak_static_row, weak["static"], "static weak null fallback")
+    weak_shared = _symbol_metadata(weak_shared_source_row, weak["shared"], "shared weak null fallback")
+    _function_defining_section(c_member, weak_static_row, "static weak null fallback")
+    _function_defining_section(shared, weak_shared_source_row, "shared weak null fallback")
     require(weak_static["size_bytes"] > 0 and weak_shared["size_bytes"] > 0,
             "weak null fallback has an empty definition")
 

@@ -144,6 +144,17 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
             c_rows.append(static)
             shared_rows.append(shared)
 
+        # The selected functions share ordinary executable text sections in
+        # this complete-ELF-shaped fixture.  Data and TLS intentionally use
+        # their own placement records above.
+        static_sections.extend([
+            {"index": 10, "alignment": 16, "name": ".text.fixture", "flags": "AX"},
+            {"index": 41, "alignment": 16, "name": ".text.weak", "flags": "AX"},
+        ])
+        shared_sections.append(
+            {"index": 9, "alignment": 16, "name": ".text.fixture", "flags": "AX"}
+        )
+
         imports = contract["rust_root_imports"]["names"]
         rust_rows = [
             symbol(name, kind="NOTYPE", section="UND", size=0)
@@ -473,6 +484,52 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
         dynsym.append(symbol("mi_malloc_aligned"))
         with self.assertRaisesRegex(producer.ProducerMetadataError, "shared dynsym exposes"):
             producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
+
+    def test_rejects_selected_function_in_reserved_section(self) -> None:
+        """A selected C function must have a real defining section, not SHN_UNDEF."""
+        facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+        rows = facts["facts"]["candidate-static"][1]["symbol_tables"][0]["rows"]
+        row = next(row for row in rows if row["name"] == "_mi_os_alloc")
+        row["section_index"] = "0"
+        with self.assertRaisesRegex(producer.ProducerMetadataError, "defining section"):
+            producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
+
+    def test_rejects_function_section_domain_and_executable_placement_drift(self) -> None:
+        """All selected functions need one executable section in their own ELF domain."""
+        cases = (
+            ("static-strong-reserved", "candidate-static", "_mi_os_alloc", "0", None,
+             "positive numeric"),
+            ("shared-strong-missing", "candidate-shared", "_mi_os_alloc", "777", None,
+             "absent or duplicated"),
+            ("static-weak-special", "candidate-static", producer.EXPECTED_WEAK_NULL_FALLBACK, "COM", None,
+             "positive numeric"),
+            ("shared-weak-missing", "candidate-shared", producer.EXPECTED_WEAK_NULL_FALLBACK, "777", None,
+             "absent or duplicated"),
+            ("static-strong-ambiguous", "candidate-static", "_mi_os_alloc", None,
+             {"index": 10, "alignment": 16, "name": ".text.duplicate", "flags": "AX"},
+             "absent or duplicated"),
+            ("shared-strong-nonexecutable", "candidate-shared", "_mi_os_alloc", "42",
+             {"index": 42, "alignment": 16, "name": ".rodata.function", "flags": "A"},
+             "not executable"),
+        )
+        for label, placement, name, section, extra_section, message in cases:
+            with self.subTest(label=label):
+                facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
+                member = (
+                    facts["facts"]["candidate-static"][1]
+                    if placement == "candidate-static"
+                    else facts["facts"]["candidate-shared"]
+                )
+                rows = next(table["rows"] for table in member["symbol_tables"] if table["name"] == ".symtab")
+                row = next(row for row in rows if row["name"] == name)
+                if section is not None:
+                    row["section_index"] = section
+                if extra_section is not None:
+                    member["sections"].append(extra_section)
+                with self.assertRaisesRegex(producer.ProducerMetadataError, message):
+                    producer.account_producer_metadata(
+                        facts, static_provenance, shared_provenance, shared_manifest
+                    )
 
     def test_rejects_unaligned_symbol_values_and_unbound_shared_artifact_identity(self) -> None:
         """ELF section alignment cannot stand in for each selected symbol's value."""
