@@ -208,6 +208,12 @@ def validate_contract(value: object) -> None:
     require(all(item is False for item in limits.values()), "allocator limits became promoting")
 
 
+def wrapper_roles(contract: Mapping[str, Any]) -> dict[str, str]:
+    scope = contract["scope"]
+    return {**{name: "WEAK" for name in scope["weak_entries"]},
+            **{name: "GLOBAL" for name in scope["global_entries"]}}
+
+
 WRAPPER_C_ABI = {
     "malloc": ("WEAK", "pub unsafe extern \"C\" fn malloc(size: SizeT) -> *mut c_void", "mi_malloc_aligned"),
     "calloc": ("GLOBAL", "pub unsafe extern \"C\" fn calloc(count: SizeT, size: SizeT) -> *mut c_void", "mi_zalloc"),
@@ -261,13 +267,91 @@ def _c_abi_bindings(wrapper: str, observation: str) -> dict[str, dict[str, str]]
     return result
 
 
+def _lifecycle_c_abi(lifecycle: str) -> dict[str, object]:
+    """Bind the private C call declarations to the two retained array callbacks."""
+    imports = re.search(r'(?s)unsafe\s+extern\s+"C"\s*\{(?P<body>.*?)\}', lifecycle)
+    require(imports is not None, "allocator lifecycle import block is absent")
+    names = re.findall(r'\bfn\s+([_A-Za-z][_A-Za-z0-9]*)\s*\(\s*\)\s*;', imports.group("body"))
+    require(names == ["_mi_auto_process_init", "_mi_auto_process_done"],
+            "allocator lifecycle import declaration differs")
+    callbacks = (
+        ("initialize", "_mi_auto_process_init", "__crabc_x86_owned_mimalloc_process_initializer", ".init_array"),
+        ("finalize", "_mi_auto_process_done", "__crabc_x86_owned_mimalloc_process_finalizer", ".fini_array"),
+    )
+    observations: list[dict[str, str]] = []
+    for callback, target, symbol, section in callbacks:
+        body = re.search(
+            rf'(?s)unsafe\s+extern\s+"C"\s+fn\s+{callback}\s*\(\s*\)\s*\{{(?P<body>.*?)^\}}',
+            lifecycle,
+            re.MULTILINE,
+        )
+        require(body is not None and re.search(rf'unsafe\s*\{{\s*{target}\s*\(\s*\)\s*\}}', body.group("body")) is not None,
+                f"allocator lifecycle callback differs for {callback}")
+        entry = re.search(
+            rf'(?s)#\[used\]\s*#\[linkage\s*=\s*"internal"\]\s*'
+            rf'#\[export_name\s*=\s*"{symbol}"\]\s*#\[link_section\s*=\s*"{re.escape(section)}"\]\s*'
+            rf'static\s+[_A-Za-z][_A-Za-z0-9]*\s*:\s*unsafe\s+extern\s+"C"\s+fn\s*\(\s*\)\s*=\s*{callback}\s*;',
+            lifecycle,
+        )
+        require(entry is not None, f"allocator lifecycle array entry differs for {symbol}")
+        observations.append({"callback": callback, "target": target, "symbol": symbol, "section": section})
+    return {"imports": names, "callbacks": observations}
+
+
+def _wrapper_product_bindings(facts: Mapping[str, Any], account: Mapping[str, Any],
+                              roles: Mapping[str, str]) -> dict[str, object]:
+    """Bind the ten public Rust wrappers to their actual static and shared definitions."""
+    archive = account.get("archive_map")
+    require(isinstance(archive, dict) and type(archive.get("static_rust_root_member")) is str,
+            "fixed-C producer account omits static Rust wrapper root")
+    root_member = archive["static_rust_root_member"]
+    placements = facts.get("facts")
+    require(isinstance(placements, dict) and type(placements.get("candidate-static")) is list,
+            "ELF facts omit static wrapper placements")
+    members = [member for member in placements["candidate-static"]
+               if isinstance(member, dict) and member.get("member") == root_member
+               and member.get("member_occurrence") == 0]
+    require(len(members) == 1, "ELF facts static Rust wrapper root differs")
+    try:
+        static_tables = producer._symbol_tables(members[0].get("symbol_tables"), "static public allocator wrappers", {".symtab"})
+        shared_tables = producer._symbol_tables(
+            isinstance(placements.get("candidate-shared"), dict) and placements["candidate-shared"].get("symbol_tables"),
+            "shared public allocator wrappers", {".dynsym", ".symtab"},
+        )
+    except producer.ProducerMetadataError as error:
+        raise AllocatorBoundaryError(str(error)) from error
+
+    def selected_rows(rows: Sequence[Mapping[str, Any]], name: str, binding: str, description: str) -> dict[str, object]:
+        matches = [row for row in rows if row.get("name") == name]
+        require(len(matches) == 1, f"{description} wrapper row differs for {name}")
+        row = matches[0]
+        require(row.get("raw_name") == name and row.get("type") == "FUNC" and row.get("binding") == binding
+                and row.get("visibility") == "DEFAULT" and row.get("version") is None
+                and row.get("version_default") is False and type(row.get("section_index")) is str
+                and row["section_index"].isdigit() and int(row["section_index"]) > 0
+                and type(row.get("size_bytes")) is int and row["size_bytes"] > 0,
+                f"{description} wrapper binding differs for {name}")
+        return {key: row[key] for key in ("name", "raw_name", "type", "binding", "visibility", "section_index", "size_bytes", "version", "version_default")}
+
+    require(set(roles) == set(WRAPPER_C_ABI) | {"malloc_usable_size"}, "public allocator wrapper role roster drifted")
+    return {
+        "static_member": root_member,
+        "static": {name: selected_rows(static_tables[".symtab"], name, binding, "static")
+                   for name, binding in roles.items()},
+        "shared": {table: {name: selected_rows(rows, name, binding, f"shared {table}")
+                            for name, binding in roles.items()}
+                   for table, rows in shared_tables.items()},
+    }
+
+
 def source_resolution(root: Path, product_revision: str) -> dict[str, object]:
     """Check C call sites and prove their blobs still equal the product epoch."""
     require(REVISION.fullmatch(product_revision) is not None, "product source revision is invalid")
     texts = {relative: source_file(root, relative).read_text(encoding="utf-8") for relative in RUNTIME_SOURCES}
     c_abi_bindings = _c_abi_bindings(texts["libc/src/allocator_mimalloc.rs"], texts["libc/src/allocator_observability_mimalloc.rs"])
     lifecycle = texts["libc/src/c_abi/x86_64/allocator_mimalloc_lifecycle.rs"]
-    for name in ("_mi_auto_process_init", "_mi_auto_process_done", ".init_array", ".fini_array", "errno::get_errno", "errno::set_errno"):
+    lifecycle_c_abi = _lifecycle_c_abi(lifecycle)
+    for name in ("errno::get_errno", "errno::set_errno"):
         require(name in lifecycle, f"allocator lifecycle source omits {name}")
     static_root = texts["libc/src/c_abi/x86_64/static_c_abi.rs"]
     for fragment in ('#[cfg(crabc_owned_mimalloc_lifecycle)]', 'allocator_mimalloc_lifecycle.rs',
@@ -289,7 +373,8 @@ def source_resolution(root: Path, product_revision: str) -> dict[str, object]:
         require(completed.returncode == 0 and current == completed.stdout,
                 f"product source differs for {relative}")
         blobs[relative] = hashlib.sha256(current).hexdigest()
-    return {"product_revision": product_revision, "runtime_source_sha256": blobs, "c_abi_bindings": c_abi_bindings}
+    return {"product_revision": product_revision, "runtime_source_sha256": blobs,
+            "c_abi_bindings": c_abi_bindings, "lifecycle_c_abi": lifecycle_c_abi}
 
 def _product_source(preparation: Mapping[str, Any]) -> dict[str, object]:
     exact(preparation, {"schema", "status", "work", "source", "source_seals", "pins", "products", "archives", "steps"},
@@ -366,6 +451,8 @@ def validate_supplied_products(*, root: Path, static_preparation: Path, static_p
                                dynamic_product: Path, elf_facts_report: Path) -> dict[str, object]:
     """Authenticate exact supplied product bytes without invoking a builder."""
     root = Path(root).absolute()
+    contract = load_contract(root)
+    roles = wrapper_roles(contract)
     static_product = physical_directory(static_product, "static product")
     dynamic_product = physical_directory(dynamic_product, "dynamic product")
     static_preparation = physical_file(static_preparation, "static preparation")
@@ -397,6 +484,7 @@ def validate_supplied_products(*, root: Path, static_preparation: Path, static_p
     joins = account.get("rust_root_c_import_joins")
     require(isinstance(joins, list) and [item.get("name") for item in joins if isinstance(item, dict)] == expected,
             "fixed-C producer import joins drifted")
+    wrappers = _wrapper_product_bindings(report, account, roles)
     return {
         "product_source": product_source,
         "source_resolution": source,
@@ -408,6 +496,7 @@ def validate_supplied_products(*, root: Path, static_preparation: Path, static_p
                     "libc": dynamic_libc, "provenance": identity(shared_provenance, logical_path="/inputs/dynamic-product/share/crabc/libc-shared.provenance.json")},
         "elf_facts": identity(elf_facts_report, logical_path="/inputs/elf-facts-report.json"),
         "producer_account": account,
+        "wrapper_product_bindings": wrappers,
     }
 
 def _capture(output: Path, label: str, argv: list[str], environment: Mapping[str, str]) -> dict[str, object]:

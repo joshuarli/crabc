@@ -79,6 +79,38 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "static preparation fields"):
             BOUNDARY._epoch_source({"source": source}, facts, state)
 
+    def test_lifecycle_binding_rejects_a_private_import_signature_drift(self) -> None:
+        lifecycle = (ROOT / "libc/src/c_abi/x86_64/allocator_mimalloc_lifecycle.rs").read_text(encoding="utf-8")
+        self.assertEqual(
+            BOUNDARY._lifecycle_c_abi(lifecycle)["imports"],
+            ["_mi_auto_process_init", "_mi_auto_process_done"],
+        )
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "lifecycle import declaration"):
+            BOUNDARY._lifecycle_c_abi(lifecycle.replace("fn _mi_auto_process_done();", "fn _mi_auto_process_done(value: usize);"))
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "callback differs for initialize"):
+            BOUNDARY._lifecycle_c_abi(lifecycle.replace("fn initialize()", "fn initialize(value: c_int)"))
+
+    def test_wrapper_product_bindings_reject_a_global_to_weak_row_drift(self) -> None:
+        expected = {name: binding for name, (binding, _, _) in BOUNDARY.WRAPPER_C_ABI.items()}
+        expected["malloc_usable_size"] = "GLOBAL"
+        def row(name: str, binding: str) -> dict[str, object]:
+            return {
+                "name": name, "raw_name": name, "type": "FUNC", "binding": binding,
+                "visibility": "DEFAULT", "section_index": "9", "version": None,
+                "version_default": False, "size_bytes": 1,
+            }
+        static = {"member": "rust.o", "member_occurrence": 0, "symbol_tables": [{"name": ".symtab", "rows": [row(name, binding) for name, binding in expected.items()]}]}
+        shared = {"symbol_tables": [
+            {"name": ".dynsym", "rows": [row(name, binding) for name, binding in expected.items()]},
+            {"name": ".symtab", "rows": [row(name, binding) for name, binding in expected.items()]},
+        ]}
+        facts = {"facts": {"candidate-static": [static], "candidate-shared": shared}}
+        account = {"archive_map": {"static_rust_root_member": "rust.o"}}
+        self.assertEqual(BOUNDARY._wrapper_product_bindings(facts, account, expected)["static_member"], "rust.o")
+        shared["symbol_tables"][0]["rows"][1]["binding"] = "WEAK"
+        with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, r"shared \.dynsym wrapper binding differs for calloc"):
+            BOUNDARY._wrapper_product_bindings(facts, account, expected)
+
     def test_source_binding_rejects_an_abi_parameter_type_drift(self) -> None:
         wrapper = (ROOT / "libc/src/allocator_mimalloc.rs").read_text(encoding="utf-8")
         observation = (ROOT / "libc/src/allocator_observability_mimalloc.rs").read_text(encoding="utf-8")

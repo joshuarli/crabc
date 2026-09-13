@@ -20,6 +20,16 @@ to the selected x86 root.
 `malloc_usable_size` are exact global definitions. The reader checks each
 Rust `extern "C"` declaration head, its no-mangle/weak state, and its selected
 backend or wrapper call; a name match alone cannot admit a different C ABI.
+It checks those same ten definition rows in the selected static Rust archive
+member and in both `.dynsym` and `.symtab` of the selected shared libc. Every
+row must be a defined, unversioned `FUNC DEFAULT` definition with its exact
+weak/global binding.
+
+The lifecycle source check keeps `_mi_auto_process_init` and
+`_mi_auto_process_done` private. It binds their zero-argument `extern "C"`
+declarations, the corresponding zero-argument callbacks, and the typed
+`unsafe extern "C" fn()` `.init_array`/`.fini_array` entries. It does not make
+either upstream name a public C ABI symbol.
 
 The collector runs only two existing installed-product workloads:
 
