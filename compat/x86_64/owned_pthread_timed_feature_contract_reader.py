@@ -91,7 +91,23 @@ EXECUTION_ENVIRONMENT = {
     "TZ": "UTC",
     "_": "/usr/bin/python3",
 }
+RUNNER_ENVIRONMENT = {
+    key: value for key, value in EXECUTION_ENVIRONMENT.items()
+    if key not in {"OLDPWD", "PWD", "SHLVL", "_"}
+}
 EXECUTION_SCHEMA = "crabc.x86_64-owned-pthread-timed-feature-execution/v1"
+
+# The finite runner stages executable contracts in four chroots.  Do not take
+# their mode bits from a receipt: it deliberately materializes this small
+# executable/data split after copying the selected dynamic product so a
+# setgid checkout or copied producer tree cannot choose runtime permissions.
+EXECUTABLE_MODE = 0o755
+REGULAR_DATA_MODE = 0o644
+DYNAMIC_STAGE_EXECUTABLES = frozenset({
+    "bin/crabc-cc-dynamic",
+    "lib/ld-crabc-x86_64.so.1",
+    "usr/lib/libc.so",
+})
 
 # This is the entire source-shaped public alias roster.  The report has no
 # extension hook: a later alias needs a separately reviewed component change.
@@ -276,6 +292,10 @@ ELF_TYPES = {
     "musl-dynamic-non-pie-contract": "EXEC",
     "dynamic-pie-contract": "DYN",
     "dynamic-non-pie-contract": "EXEC",
+}
+ELF_OUTPUT_MODES = {
+    **{name: EXECUTABLE_MODE for name in ELF_TYPES if name != "contract.o"},
+    "contract.o": REGULAR_DATA_MODE,
 }
 SYMBOL_STREAMS = (
     "musl-dynamic-symbols.txt",
@@ -942,6 +962,19 @@ def _validate_link_input_modes(inputs: Mapping[str, Mapping[str, object]]) -> No
                     f"{label} selected product link input mode differs: {relative}")
 
 
+def _validate_product_executable_modes(inputs: Mapping[str, Mapping[str, object]]) -> None:
+    """Require the three product executables outside the shared link roster.
+
+    The shared product owner supplies modes for link inputs.  The finite
+    pthread runner also invokes the static and dynamic drivers and stages the
+    owned loader, so their executable modes are a component-owned boundary.
+    """
+
+    for name in ("static_driver", "dynamic_driver", "dynamic_loader"):
+        require(inputs[name]["mode"] == EXECUTABLE_MODE,
+                f"selected {name} executable mode differs")
+
+
 def _validate_current_product_links(
     work: Path, inputs: Mapping[str, Mapping[str, object]],
 ) -> None:
@@ -1355,6 +1388,16 @@ def evaluate_elf_headers(work: Path) -> dict[str, str]:
     return result
 
 
+def validate_elf_output_modes(work: Path) -> None:
+    """Keep the probe object data-only and each final contract executable."""
+
+    for binary, expected_mode in ELF_OUTPUT_MODES.items():
+        path = work / binary
+        require_regular(path, f"ELF output {binary}")
+        require(stat.S_IMODE(path.stat().st_mode) == expected_mode,
+                f"{binary}: output mode differs from the component contract")
+
+
 def _expected_command_argv(name: str, work: str, inputs: Mapping[str, str]) -> list[str]:
     contract = f"{work}/contract.o"
     def link_map(binary: str) -> str:
@@ -1453,7 +1496,7 @@ def _direct_work_files() -> set[str]:
 
 def _tree_record(root: Path) -> dict[str, object]:
     require(root.is_dir() and not root.is_symlink(), f"unsafe runtime root: {root}")
-    directories: list[str] = []
+    directories: dict[str, dict[str, int]] = {}
     files: dict[str, dict[str, object]] = {}
     symlinks: dict[str, str] = {}
     for current, dirnames, filenames in os.walk(root, followlinks=False):
@@ -1465,7 +1508,7 @@ def _tree_record(root: Path) -> dict[str, object]:
                 symlinks[relative] = os.readlink(path)
             else:
                 require(path.is_dir(), f"non-directory runtime entry: {path}")
-                directories.append(relative)
+                directories[relative] = {"mode": stat.S_IMODE(path.stat().st_mode)}
         for name in sorted(filenames):
             path = current_path / name
             relative = path.relative_to(root).as_posix()
@@ -1473,8 +1516,17 @@ def _tree_record(root: Path) -> dict[str, object]:
                 symlinks[relative] = os.readlink(path)
             else:
                 require_regular(path, "runtime root file")
-                files[relative] = {"sha256": sha256(path), "size": path.stat().st_size}
-    return {"directories": sorted(directories), "files": files, "symlinks": symlinks}
+                files[relative] = {
+                    "sha256": sha256(path),
+                    "size": path.stat().st_size,
+                    "mode": stat.S_IMODE(path.stat().st_mode),
+                }
+    return {
+        "root": {"mode": stat.S_IMODE(root.stat().st_mode)},
+        "directories": {name: directories[name] for name in sorted(directories)},
+        "files": files,
+        "symlinks": symlinks,
+    }
 
 
 def _write_tree_record(root: Path, output: Path) -> None:
@@ -1485,7 +1537,7 @@ def _write_tree_record(root: Path, output: Path) -> None:
 
 def _validate_root_tree_record(work: Path, root_name: str, record_path: Path) -> dict[str, object]:
     expected = load_json_object(record_path, f"{root_name} tree record")
-    require(set(expected) == {"directories", "files", "symlinks"}, f"{root_name} tree fields changed")
+    require(set(expected) == {"root", "directories", "files", "symlinks"}, f"{root_name} tree fields changed")
     observed = _tree_record(work / root_name)
     require(expected == observed, f"{root_name} materialized runtime root changed")
     return expected
@@ -1524,34 +1576,46 @@ def _validate_runtime_roots(
         require(tree_path_name == f"retained/runtime-roots/{root_name}.json", "runtime-root record path changed")
         tree_path = validate_retained_artifact(work, artifacts[tree_path_name], f"{root_name} tree")
         tree = _validate_root_tree_record(work, root_name, tree_path)
+        root_record = tree["root"]
+        directories = tree["directories"]
         files = tree["files"]
         symlinks = tree["symlinks"]
-        require(isinstance(files, dict) and isinstance(symlinks, dict), "invalid retained root tree")
+        require(root_record == {"mode": EXECUTABLE_MODE}
+                and isinstance(directories, dict) and isinstance(files, dict) and isinstance(symlinks, dict),
+                "invalid retained root tree")
         if root_name.startswith("dynamic-"):
             expected_files = {
-                **{name: {"sha256": digest, "size": (work / root_name / name).stat().st_size}
+                **{name: {"sha256": digest, "size": (work / root_name / name).stat().st_size,
+                           "mode": EXECUTABLE_MODE if name in DYNAMIC_STAGE_EXECUTABLES else REGULAR_DATA_MODE}
                    for name, digest in dynamic_files.items()},
                 "share/crabc/manifest.json": {
                     "sha256": artifacts[products["dynamic"]["manifest"]]["sha256"],
                     "size": artifacts[products["dynamic"]["manifest"]]["size"],
+                    "mode": REGULAR_DATA_MODE,
                 },
-                "contract": {"sha256": contract["sha256"], "size": contract["size"]},
+                "contract": {"sha256": contract["sha256"], "size": contract["size"], "mode": EXECUTABLE_MODE},
             }
             require(files == expected_files, f"{root_name} does not exactly materialize selected dynamic product files")
             require(symlinks == dynamic_symlinks, f"{root_name} dynamic product symlinks changed")
-            require(tree["directories"] == sorted({
-                *parent_directories([*expected_files, *symlinks]), "scratch",
-            }), f"{root_name} dynamic root directories changed")
+            expected_directories = {
+                name: {"mode": EXECUTABLE_MODE}
+                for name in parent_directories([*expected_files, *symlinks]) | {"scratch"}
+            }
+            require(directories == expected_directories, f"{root_name} dynamic root directories changed")
         else:
             expected_files = {
                 "lib/ld-musl-x86_64.so.1": {"sha256": artifacts[oracle["shared"]]["sha256"],
-                                               "size": artifacts[oracle["shared"]]["size"]},
+                                               "size": artifacts[oracle["shared"]]["size"], "mode": EXECUTABLE_MODE},
                 "usr/lib/libc.so": {"sha256": artifacts[oracle["shared"]]["sha256"],
-                                      "size": artifacts[oracle["shared"]]["size"]},
-                "contract": {"sha256": contract["sha256"], "size": contract["size"]},
+                                      "size": artifacts[oracle["shared"]]["size"], "mode": EXECUTABLE_MODE},
+                "contract": {"sha256": contract["sha256"], "size": contract["size"], "mode": EXECUTABLE_MODE},
             }
             require(files == expected_files and symlinks == {}, f"{root_name} musl runtime root changed")
-            require(tree["directories"] == ["lib", "usr", "usr/lib"], f"{root_name} musl root directories changed")
+            require(directories == {
+                "lib": {"mode": EXECUTABLE_MODE},
+                "usr": {"mode": EXECUTABLE_MODE},
+                "usr/lib": {"mode": EXECUTABLE_MODE},
+            }, f"{root_name} musl root directories changed")
 
 
 def _resolved_linker_path(value: object, label: str) -> str:
@@ -2440,6 +2504,7 @@ def validate_report(report_path: Path) -> dict[str, object]:
     require(report["product_input_modes"] == product_evidence.link_input_mode_projection(),
             "retained selected product mode projection changed")
     _validate_link_input_modes(inputs)
+    _validate_product_executable_modes(inputs)
     collector = report["collector"]
     require(isinstance(collector, dict), "collector is invalid")
     _validate_collector(work, collector, artifacts, inputs)
@@ -2492,6 +2557,7 @@ def validate_report(report_path: Path) -> dict[str, object]:
     require(isinstance(collection, dict), "collection context is invalid")
     _validate_commands(work, commands, artifacts, inputs, collection)
     require(report["elf_headers"] == evaluate_elf_headers(work), "retained ELF header observations changed")
+    validate_elf_output_modes(work)
     require(report["alias_observations"] == evaluate_alias_contract(work),
             "retained pthread alias observations changed")
     require(report["final_extraction"] == evaluate_final_extraction(work),
@@ -2537,6 +2603,7 @@ def collect_report(
             "collector product anchor path differs from captured input")
     product = _validate_product_anchor(product_report, inputs)
     _validate_link_input_modes(inputs)
+    _validate_product_executable_modes(inputs)
     _validate_current_product_links(work, inputs)
     selected_source = _selected_source_identity(root, product["anchor"])
     trusted_image = trusted_image_manifest()
@@ -2561,6 +2628,8 @@ def collect_report(
     require(historical_source_commit != current["revision"], "historical source must differ from current collection source")
     for root_name in ROOT_TREES:
         _write_tree_record(work / root_name, work / f"retained/runtime-roots/{root_name}.json")
+
+    validate_elf_output_modes(work)
 
     artifacts = _artifact_map(work)
     source_records = _source_contract_records(work)
@@ -2665,39 +2734,104 @@ def collect_report(
     return output
 
 
+def collect_native(
+    root: Path,
+    receipt_dir: Path,
+    product_report: Path,
+    static_preparation: Path,
+    historical_inputs: Path,
+    historical_source_commit: str,
+    static_product: Path,
+    dynamic_product: Path,
+) -> Path:
+    """Enter the native runner through one exact environment and null stdin.
+
+    This is the only receipt-producing entry point. The shell runner remains a
+    useful direct diagnostic command, but an ambient shell cannot establish a
+    retained receipt because its compiler/linker process boundary is not
+    reconstructed by the collector.
+    """
+
+    root = root.resolve(strict=True)
+    require(root == ROOT, "pthread native collector root differs from its source root")
+    runner = root / "compat/x86_64/run_owned_pthread_timed_feature_contract.sh"
+    require_regular(runner, "pthread native runner")
+    command = [
+        "/bin/bash", str(runner),
+        "--receipt-dir", str(receipt_dir),
+        "--product-report", str(product_report),
+        "--static-preparation", str(static_preparation),
+        "--historical-inputs", str(historical_inputs),
+        "--historical-source-commit", historical_source_commit,
+        str(static_product), str(dynamic_product),
+    ]
+    try:
+        completed = subprocess.run(
+            command, cwd=root, env=RUNNER_ENVIRONMENT, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+    except OSError as error:
+        raise ReceiptError("pthread native runner could not start") from error
+    if completed.returncode != 0:
+        detail = completed.stderr.decode("utf-8", "replace").strip()
+        raise ReceiptError(f"pthread native runner failed ({completed.returncode}): {detail}")
+    sys.stdout.buffer.write(completed.stdout)
+    sys.stderr.buffer.write(completed.stderr)
+    report = receipt_dir / "report.json"
+    require_regular(report, "pthread native collector report")
+    return report
+
+
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument("--capture-source", action="store_true")
     action.add_argument("--check-work", action="store_true")
     action.add_argument("--collect-report", action="store_true")
+    action.add_argument("--collect-native", action="store_true")
     action.add_argument("--validate-report", type=Path)
     parser.add_argument("--root", type=Path)
     parser.add_argument("--work", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--product-report", type=Path)
+    parser.add_argument("--static-preparation", type=Path)
     parser.add_argument("--historical-inputs", type=Path)
     parser.add_argument("--historical-source-commit")
+    parser.add_argument("--receipt-dir", type=Path)
+    parser.add_argument("--static-product", type=Path)
+    parser.add_argument("--dynamic-product", type=Path)
     parsed = parser.parse_args(argv)
     if parsed.capture_source:
         require(parsed.root is not None and parsed.output is not None, "--capture-source requires --root and --output")
-        require(parsed.work is None and parsed.product_report is None and parsed.historical_inputs is None
-                and parsed.historical_source_commit is None, "invalid --capture-source arguments")
+        require(parsed.work is None and parsed.product_report is None and parsed.static_preparation is None
+                and parsed.historical_inputs is None and parsed.historical_source_commit is None
+                and parsed.receipt_dir is None and parsed.static_product is None and parsed.dynamic_product is None,
+                "invalid --capture-source arguments")
     elif parsed.check_work:
         require(parsed.work is not None, "--check-work requires --work")
         require(all(value is None for value in (
-            parsed.root, parsed.output, parsed.product_report, parsed.historical_inputs,
-            parsed.historical_source_commit,
+            parsed.root, parsed.output, parsed.product_report, parsed.static_preparation, parsed.historical_inputs,
+            parsed.historical_source_commit, parsed.receipt_dir, parsed.static_product, parsed.dynamic_product,
         )), "invalid --check-work arguments")
     elif parsed.collect_report:
         require(all(value is not None for value in (
             parsed.root, parsed.work, parsed.product_report, parsed.historical_inputs, parsed.historical_source_commit,
         )), "--collect-report requires --root, --work, --product-report, --historical-inputs, and --historical-source-commit")
-        require(parsed.output is None, "--collect-report does not take --output")
+        require(all(value is None for value in (
+            parsed.output, parsed.static_preparation, parsed.receipt_dir, parsed.static_product, parsed.dynamic_product,
+        )),
+                "--collect-report takes no native-runner arguments")
+    elif parsed.collect_native:
+        require(all(value is not None for value in (
+            parsed.root, parsed.receipt_dir, parsed.product_report, parsed.static_preparation,
+            parsed.historical_inputs, parsed.historical_source_commit, parsed.static_product, parsed.dynamic_product,
+        )), "--collect-native requires root, receipt, products, preparation, and historical inputs")
+        require(all(value is None for value in (parsed.work, parsed.output)),
+                "--collect-native does not take --work or --output")
     else:
         require(all(value is None for value in (
-            parsed.root, parsed.work, parsed.output, parsed.product_report, parsed.historical_inputs,
-            parsed.historical_source_commit,
+            parsed.root, parsed.work, parsed.output, parsed.product_report, parsed.static_preparation, parsed.historical_inputs,
+            parsed.historical_source_commit, parsed.receipt_dir, parsed.static_product, parsed.dynamic_product,
         )), "--validate-report takes only REPORT")
     return parsed
 
@@ -2713,6 +2847,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.collect_report:
             report = collect_report(
                 args.work, args.root, args.product_report, args.historical_inputs, args.historical_source_commit
+            )
+            print(report)
+        elif args.collect_native:
+            report = collect_native(
+                args.root, args.receipt_dir, args.product_report, args.static_preparation,
+                args.historical_inputs, args.historical_source_commit, args.static_product, args.dynamic_product,
             )
             print(report)
         else:

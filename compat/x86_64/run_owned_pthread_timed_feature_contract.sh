@@ -2,32 +2,10 @@
 # Focused native proof for the four musl-shaped x86 owned pthread timed aliases.
 set -euo pipefail
 
-# Re-enter through Bash with a finite environment before resolving even a
-# single tool. Exported functions and toolchain routing variables influence
-# the C compiler and linker as readily as PATH does, so a denylist cannot make
-# this receipt replayable. An environment variable cannot satisfy the marker:
-# Bash marks imported variables exported, while the clean launcher sets its
-# marker without export before it sources this script with the original argv.
-if [ "${CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV:-}" != 1 ] \
-    || [[ "$(declare -p CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV 2>/dev/null || true)" != 'declare --'* ]]; then
-    exec -c /bin/bash -c '
-        CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV=1
-        export PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-        export HOME=/nonexistent
-        export LC_ALL=C
-        export LANG=C
-        export TZ=UTC
-        export PYTHONDONTWRITEBYTECODE=1
-        export PYTHONHASHSEED=0
-        export GIT_CONFIG_GLOBAL=/dev/null
-        export GIT_CONFIG_NOSYSTEM=1
-        export GIT_OPTIONAL_LOCKS=0
-        export GIT_CONFIG_COUNT=1
-        export GIT_CONFIG_KEY_0=safe.directory
-        export GIT_CONFIG_VALUE_0=/workspace
-        source "$0"
-    ' "$0" "$@"
-fi
+# Receipt staging has its own fixed filesystem permission boundary.  In
+# particular, do not inherit setgid bits from the checkout's .work tree.
+umask 022
+
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -40,9 +18,23 @@ readonly INTERPRETER=/lib/ld-crabc-x86_64.so.1
 readonly EXECUTION_PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 readonly EXECUTION_TMPDIR="$ROOT/.work/x86_64/tmp"
 
-# The finite runner has no ambient configuration or standard-input contract.
-# The re-entry above fixed every inherited variable.  Individual commands also
-# read EOF from /dev/null.
+# The receipt collector starts this runner through an exact Python subprocess
+# environment before Bash begins. These values keep a direct, no-receipt run
+# convenient for diagnostics, but cannot close an ambient caller on their own.
+# Every launched command reads EOF from /dev/null.
+export PATH="$EXECUTION_PATH"
+export HOME=/nonexistent
+export LC_ALL=C
+export LANG=C
+export TZ=UTC
+export PYTHONDONTWRITEBYTECODE=1
+export PYTHONHASHSEED=0
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_OPTIONAL_LOCKS=0
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=safe.directory
+export GIT_CONFIG_VALUE_0=/workspace
 export TMPDIR="$EXECUTION_TMPDIR"
 
 # The sealed static driver admits only a relative receipt/map/trace trio.  Run
@@ -222,7 +214,7 @@ if [ -n "$RECEIPT_DIR" ]; then
 else
     readonly WORK="$(mktemp -d "$TMPDIR/owned-pthread-timed-feature-contract.XXXXXX")"
 fi
-chmod a+rx "$WORK"
+chmod 0755 "$WORK"
 case "$WORK" in
     "$ROOT"/.work/*) readonly WORK_RELATIVE="${WORK#"$ROOT"/}" ;;
     *) fail "work directory escaped checkout .work: $WORK" ;;
@@ -352,6 +344,65 @@ same_transcript() {
     cmp "$WORK/$expected.status" "$WORK/$actual.status" || fail "$actual status differs from $expected"
 }
 
+normalize_runtime_root() {
+    local root="$1" flavor="$2"
+    python3 -B - "$root" "$flavor" <<'PY'
+import os
+from pathlib import Path
+import stat
+import sys
+
+root = Path(sys.argv[1]).resolve(strict=True)
+flavor = sys.argv[2]
+if flavor not in {"musl", "dynamic"}:
+    raise SystemExit("unknown pthread runtime-root flavor")
+executables = {
+    "contract",
+    "lib/ld-musl-x86_64.so.1",
+    "usr/lib/libc.so",
+} if flavor == "musl" else {
+    "contract",
+    "bin/crabc-cc-dynamic",
+    "lib/ld-crabc-x86_64.so.1",
+    "usr/lib/libc.so",
+}
+for path in [root, *sorted(root.rglob("*"))]:
+    if path.is_symlink():
+        continue
+    relative = "." if path == root else path.relative_to(root).as_posix()
+    if path.is_dir():
+        os.chmod(path, 0o755)
+    elif path.is_file():
+        os.chmod(path, 0o755 if relative in executables else 0o644)
+    else:
+        raise SystemExit(f"unsafe runtime-root entry: {relative}")
+PY
+}
+
+assert_contract_output_modes() {
+    python3 -B - "$WORK" <<'PY'
+from pathlib import Path
+import stat
+import sys
+
+work = Path(sys.argv[1]).resolve(strict=True)
+expected = {
+    "contract.o": 0o644,
+    "oracle-contract": 0o755,
+    "static-contract": 0o755,
+    "static-pie-contract": 0o755,
+    "musl-dynamic-pie-contract": 0o755,
+    "musl-dynamic-non-pie-contract": 0o755,
+    "dynamic-pie-contract": 0o755,
+    "dynamic-non-pie-contract": 0o755,
+}
+for name, mode in expected.items():
+    path = work / name
+    if not path.is_file() or path.is_symlink() or stat.S_IMODE(path.stat().st_mode) != mode:
+        raise SystemExit(f"pthread contract output mode differs: {name}")
+PY
+}
+
 assert_elf_type() {
     local label="$1" binary="$2" expected="$3"
     readelf --file-header --wide "$binary" >"$WORK/$label.file-header.txt"
@@ -426,6 +477,7 @@ for mode in pie non-pie; do
     cp "$MUSL_LIB" "$musl_root/lib/ld-musl-x86_64.so.1"
     cp "$MUSL_LIB" "$musl_root/usr/lib/libc.so"
     cp "$WORK/musl-dynamic-$mode-contract" "$musl_root/contract"
+    normalize_runtime_root "$musl_root" musl
     run "musl-dynamic-$mode-kernel" chroot "$musl_root" /contract
     run "musl-dynamic-$mode-direct" chroot "$musl_root" /lib/ld-musl-x86_64.so.1 /contract
     same_transcript "musl-dynamic-$mode-kernel" "musl-dynamic-$mode-direct"
@@ -444,11 +496,14 @@ for mode in pie non-pie; do
     mkdir "$root" "$root/scratch"
     cp -a "$DYNAMIC_PRODUCT/." "$root"
     cp "$WORK/dynamic-$mode-contract" "$root/contract"
+    normalize_runtime_root "$root" dynamic
     run "dynamic-$mode-kernel" chroot "$root" /contract
     same_transcript "musl-dynamic-$mode-kernel" "dynamic-$mode-kernel"
     run "dynamic-$mode-direct" chroot "$root" "$INTERPRETER" /contract
     same_transcript "musl-dynamic-$mode-direct" "dynamic-$mode-direct"
 done
+
+assert_contract_output_modes
 
 readelf --dyn-syms --wide "$MUSL_LIB" >"$WORK/musl-dynamic-symbols.txt"
 readelf --dyn-syms --wide "$DYNAMIC_PRODUCT/usr/lib/libc.so" >"$WORK/candidate-dynamic-symbols.txt"

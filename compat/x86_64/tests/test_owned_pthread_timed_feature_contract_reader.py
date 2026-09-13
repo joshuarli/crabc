@@ -135,6 +135,41 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
             },
         )
 
+    def test_native_collection_requires_its_complete_runner_boundary(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        parsed = reader._parse_args((
+            "--collect-native", "--root", "/workspace", "--receipt-dir", "/workspace/.work/receipt",
+            "--product-report", "/workspace/.work/products/report.json",
+            "--static-preparation", "/workspace/.work/products/preparation.json",
+            "--historical-inputs", "/workspace/.work/products/historical.json",
+            "--historical-source-commit", "0" * 40,
+            "--static-product", "/workspace/.work/products/static",
+            "--dynamic-product", "/workspace/.work/products/dynamic",
+        ))
+        self.assertTrue(parsed.collect_native)
+        with self.assertRaises(reader.ReceiptError):
+            reader._parse_args((
+                "--collect-native", "--root", "/workspace", "--receipt-dir", "/workspace/.work/receipt",
+                "--product-report", "/workspace/.work/products/report.json",
+                "--historical-inputs", "/workspace/.work/products/historical.json",
+                "--historical-source-commit", "0" * 40,
+                "--static-product", "/workspace/.work/products/static",
+                "--dynamic-product", "/workspace/.work/products/dynamic",
+            ))
+
+    def test_non_native_actions_reject_native_collection_options(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        with self.assertRaises(reader.ReceiptError):
+            reader._parse_args((
+                "--capture-source", "--root", "/workspace", "--output", "/workspace/source.json",
+                "--receipt-dir", "/workspace/.work/receipt",
+            ))
+        with self.assertRaises(reader.ReceiptError):
+            reader._parse_args((
+                "--validate-report", "/workspace/report.json",
+                "--dynamic-product", "/workspace/.work/products/dynamic",
+            ))
+
 
 if __name__ == "__main__":
     unittest.main()

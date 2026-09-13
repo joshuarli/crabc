@@ -33,14 +33,15 @@ binds the complete finite contract probe implementation in each dynamic output:
 the eleven function bodies, local data and constant geometry, and their
 admitted PC-relative and PLT/GOT relocation forms.
 
-The shell runner starts through `exec -c` and a fixed Bash invocation before
-it resolves a tool. Its non-exported shell marker cannot be supplied by a
-caller's environment, whose variables arrive exported. Its sealed record
-includes the fixed variables, including the sole Git `safe.directory`
-configuration for `/workspace`, and the four Bash-created values (`PWD`,
-`OLDPWD`, `SHLVL`, and `_` for the pinned Python interpreter). Toolchain
-routing variables and exported shell functions from a caller therefore cannot
-affect the collection.
+`owned_pthread_timed_feature_contract_reader.py --collect-native` is the sole
+receipt-producing entry point. Before Bash starts, it invokes the runner from
+a Python `subprocess.run` call with one literal allowlisted environment and
+`/dev/null` standard input. The sealed environment record includes the sole
+Git `safe.directory` configuration for `/workspace` and the four values Bash
+creates (`PWD`, `OLDPWD`, `SHLVL`, and `_` for the pinned Python interpreter).
+Toolchain-routing variables and exported shell functions from a caller cannot
+reach the runner. A direct shell invocation remains a diagnostic command; it
+does not establish a retained receipt.
 
 The static driver permits only relative receipt names. The runner changes into
 the receipt work directory only for that driver invocation, so each receipt
@@ -70,7 +71,12 @@ dynamic output receipts. Its source-owned link-input mode projection fixes all
 six static inputs to `0644`, and fixes six dynamic CRT/archive inputs to `0644` with
 `usr/lib/libc.so` at `0755`. Replay compares the retained role modes to that
 Git-bound projection; it never treats a copied product tree's own record as
-mode authority.
+mode authority. The component additionally fixes the two drivers and owned
+loader at `0755`, keeps `contract.o` at `0644`, and requires each final
+contract executable at `0755`. Before each chroot run, the runner materializes
+the root and every directory at `0755`; dynamic payload files are `0644` apart
+from its driver, loader, and `libc.so`, which are `0755`. The retained tree
+record replays those root, directory, file-byte, and file-mode facts.
 
 The installed-header probe checks only these ordinary outcomes:
 
