@@ -123,6 +123,19 @@ def _occurrence(index: int, name: str, *, artifact: str, table: str, role: str,
     }
 
 
+def _ordinary_import(index: int, name: str) -> dict[str, object]:
+    """Model one full-facts archive import for a known public spelling."""
+    occurrence = _occurrence(index, name, artifact='candidate-static', table='.symtab', role='import',
+                             binding='GLOBAL', visibility='DEFAULT')
+    occurrence['table_section_index'] = None
+    occurrence['definition_section'] = None
+    occurrence['row'].update({
+        'type': 'NOTYPE', 'section_index': 'UND', 'value': '0000000000000000',
+        'size_bytes': 0, 'size': '0',
+    })
+    return occurrence
+
+
 class SyscallAliasOwnerPolicyTests(unittest.TestCase):
     def test_thirteen_global_hidden_bodies_have_only_the_finite_private_provider_route(self) -> None:
         contract = selection.load_contract(selection.CONTRACT_PATH)
@@ -688,6 +701,60 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
         public = next(row for row in accounting['identities'] if row['identity']['name'] == 'clock_gettime')
         self.assertEqual(public['unresolved'], [selection.ORDINARY_IMPORT_REASON])
         self.assertTrue(any(row['reason'] == selection.ORDINARY_IMPORT_REASON for row in accounting['blockers']))
+
+    def test_attachment_preserves_actual_known_ordinary_import_rows(self) -> None:
+        """Known spellings can remain ordinary archive imports outside this owner join."""
+        accounting = self._accounting()
+        imported = (
+            (24808, 'sysinfo'), (24960, 'munmap'), (24962, 'mprotect'),
+            (24965, 'madvise'), (24972, 'clock_gettime'), (25029, 'mmap'),
+        )
+        accounting['occurrences'].extend(
+            _ordinary_import(index, name) for index, name in imported
+        )
+        for _index, name in imported:
+            identity = {'name': name, 'version': None, 'version_default': False}
+            accounting['identities'].append({
+                'identity': identity, 'selection': {'disposition': 'public-provider'},
+                'unresolved': [selection.ORDINARY_IMPORT_REASON],
+            })
+            accounting['blockers'].append({
+                'code': 'identity-unresolved', 'identity': copy.deepcopy(identity),
+                'reason': selection.ORDINARY_IMPORT_REASON,
+            })
+        companion = self._companion()
+        before = copy.deepcopy(accounting['occurrences'])
+        original_count = len(accounting['occurrences'])
+        with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader({})):
+            joins = selection.attach_native_syscall_alias(accounting, companion)
+        self.assertEqual(joins[0]['complete_elf_occurrence_count'], original_count)
+        self.assertEqual(len(accounting['occurrences']), original_count)
+        self.assertEqual(accounting['occurrences'], before)
+        observed = [row for row in accounting['occurrences'] if row['index'] in {index for index, _name in imported}]
+        self.assertEqual([(row['index'], row['row']['name']) for row in observed], list(imported))
+        self.assertTrue(all(row['role'] == 'import' and row['row']['section_index'] == 'UND' for row in observed))
+        for _index, name in imported:
+            record = next(row for row in accounting['identities'] if row['identity']['name'] == name)
+            self.assertEqual(record['unresolved'], [selection.ORDINARY_IMPORT_REASON])
+            self.assertTrue(any(
+                row['identity']['name'] == name and row['reason'] == selection.ORDINARY_IMPORT_REASON
+                for row in accounting['blockers']
+            ))
+
+    def test_attachment_rejects_an_extra_known_malformed_definition(self) -> None:
+        """The import exemption must not hide a second malformed owned definition."""
+        accounting = self._accounting()
+        malformed = copy.deepcopy(next(
+            row for row in accounting['occurrences']
+            if row['artifact_key'] == 'candidate-static' and row['table'] == '.symtab'
+            and row['row']['name'] == 'clock_gettime'
+        ))
+        malformed['index'] = len(accounting['occurrences'])
+        malformed['row']['type'] = 'NOTYPE'
+        accounting['occurrences'].append(malformed)
+        with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader({})), \
+             self.assertRaisesRegex(selection.SelectionError, 'candidate occurrence roster'):
+            selection.attach_native_syscall_alias(accounting, self._companion())
 
     def test_public_cli_and_report_roundtrip_thread_the_receipt_path(self) -> None:
         arguments = ['build-report']
