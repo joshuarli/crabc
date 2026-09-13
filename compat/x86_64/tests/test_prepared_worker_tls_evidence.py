@@ -204,6 +204,7 @@ class PreparedWorkerTlsEvidenceTests(unittest.TestCase):
         import json
         from unittest.mock import Mock,patch
         base=ROOT/'.work/x86_64/prepared-worker-tls-development'
+        base.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=base) as directory:
             work=Path(directory)
             inputs={'static_preparation':{'primary':{'path':'.work/static'}},'dynamic_product':{'path':'.work/dynamic'}}
