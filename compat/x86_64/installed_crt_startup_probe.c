@@ -79,11 +79,24 @@ struct wire_state {
 static int wires(struct dl_phdr_info *info,size_t size,void *opaque) {
     (void)size;
     struct wire_state *s=opaque;
-    /* The private resolver writes the handoff and descriptor slots only in
-     * the main image. The conventional snapshot remains the pre-existing
-     * graph-wide observation: it is a libc relocation whose zero value proves
-     * that owned startup did not select that conventional path. */
-    int main_image=!(info->dlpi_name && info->dlpi_name[0]);
+    /* Every final application is linked from this translation unit. Exactly
+     * its executable PT_LOAD contains the local `wires` function, whether it
+     * began through the kernel or a direct loader. This physical anchor does
+     * not depend on a callback display name or loader-specific auxv rewriting.
+     * The private resolver writes handoff and descriptor slots only there.
+     * The conventional snapshot remains graph-wide: its zero libc relocation
+     * proves that owned startup did not select the conventional path. */
+    if (!info->dlpi_phdr) _Exit(99);
+    uintptr_t observer=(uintptr_t)(void *)&wires; unsigned observer_segments=0;
+    for (unsigned i=0;i<info->dlpi_phnum;i++) {
+        const Elf64_Phdr *program=&info->dlpi_phdr[i];
+        if (program->p_type!=PT_LOAD || !(program->p_flags&PF_X)) continue;
+        uintptr_t base=(uintptr_t)info->dlpi_addr,offset=(uintptr_t)program->p_vaddr,size=(uintptr_t)program->p_memsz;
+        if (offset>UINTPTR_MAX-base) _Exit(99); uintptr_t start=base+offset;
+        if (size>UINTPTR_MAX-start) _Exit(99);
+        if (observer>=start && observer-start<size && ++observer_segments!=1) _Exit(99);
+    }
+    int main_image=observer_segments==1;
     if (main_image && ++s->main_images!=1) _Exit(99);
     const Elf64_Dyn *dyn=0;
     for (unsigned i=0;i<info->dlpi_phnum;i++) if (info->dlpi_phdr[i].p_type==PT_DYNAMIC)

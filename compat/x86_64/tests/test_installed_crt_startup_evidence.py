@@ -68,7 +68,7 @@ uintptr_t __stack_chk_guard;
 int main(void) {
     static const char strings[]="\0__crabc_x86_64_owned_crt_handoff";
     Elf64_Sym symbols[2]={0}; Elf64_Rela relocation={0}; Elf64_Dyn dynamic[5]={0};
-    Elf64_Phdr program={0}; struct dl_phdr_info info={0}; uintptr_t slot=0;
+    Elf64_Phdr program[2]={0}; struct dl_phdr_info info={0}; uintptr_t slot=0;
     symbols[1].st_name=1;
     symbols[1].st_info=ELF64_ST_INFO(STB_WEAK,STT_FUNC);
     symbols[1].st_other=STV_DEFAULT; symbols[1].st_shndx=SHN_UNDEF;
@@ -78,8 +78,10 @@ int main(void) {
     dynamic[1]=(Elf64_Dyn){.d_tag=DT_STRTAB,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)strings};
     dynamic[2]=(Elf64_Dyn){.d_tag=DT_RELA,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)&relocation};
     dynamic[3]=(Elf64_Dyn){.d_tag=DT_RELASZ,.d_un.d_val=sizeof relocation};
-    program.p_type=PT_DYNAMIC; program.p_vaddr=(Elf64_Addr)(uintptr_t)dynamic;
-    info.dlpi_phdr=&program; info.dlpi_phnum=1; info.dlpi_name="";
+    program[0]=(Elf64_Phdr){.p_type=PT_LOAD,.p_flags=PF_X,
+                            .p_vaddr=(Elf64_Addr)(uintptr_t)(void *)&wires,.p_memsz=1};
+    program[1]=(Elf64_Phdr){.p_type=PT_DYNAMIC,.p_vaddr=(Elf64_Addr)(uintptr_t)dynamic};
+    info.dlpi_phdr=program; info.dlpi_phnum=2; info.dlpi_name="";
     pid_t child=fork(); if (child<0) return 2;
     if (!child) { struct wire_state state={0}; wires(&info,0,&state); _Exit(0); }
     int status=0;
@@ -107,16 +109,20 @@ static void import(Elf64_Sym *symbol,size_t offset,int type) {
     *symbol=(Elf64_Sym){.st_name=offset,.st_info=ELF64_ST_INFO(STB_WEAK,type),
                          .st_other=STV_DEFAULT,.st_shndx=SHN_UNDEF};
 }
-static struct dl_phdr_info image(const char *name,Elf64_Phdr *program,Elf64_Dyn *dynamic) {
-    *program=(Elf64_Phdr){.p_type=PT_DYNAMIC,.p_vaddr=(Elf64_Addr)(uintptr_t)dynamic};
-    return (struct dl_phdr_info){.dlpi_phdr=program,.dlpi_phnum=1,.dlpi_name=name};
+static struct dl_phdr_info image(const char *name,Elf64_Phdr *program,Elf64_Dyn *dynamic,int owns_probe) {
+    if (owns_probe) {
+        program[0]=(Elf64_Phdr){.p_type=PT_LOAD,.p_flags=PF_X,
+                                 .p_vaddr=(Elf64_Addr)(uintptr_t)(void *)&wires,.p_memsz=1};
+        program[1]=(Elf64_Phdr){.p_type=PT_DYNAMIC,.p_vaddr=(Elf64_Addr)(uintptr_t)dynamic};
+    } else program[0]=(Elf64_Phdr){.p_type=PT_DYNAMIC,.p_vaddr=(Elf64_Addr)(uintptr_t)dynamic};
+    return (struct dl_phdr_info){.dlpi_phdr=program,.dlpi_phnum=(ElfW(Half))(owns_probe ? 2 : 1),.dlpi_name=name};
 }
 int main(void) {
     enum { H=1, D=1+sizeof "__crabc_x86_64_owned_crt_handoff",
            C=1+sizeof "__crabc_x86_64_owned_crt_handoff"+sizeof "__crabc_x86_64_loader_tls_runtime_v1" };
     Elf64_Sym main_symbols[3]={0},shared_symbols[4]={0};
     Elf64_Rela main_relocations[2]={0},shared_relocations[3]={0};
-    Elf64_Dyn main_dynamic[5]={0},shared_dynamic[5]={0}; Elf64_Phdr main_program,shared_program;
+    Elf64_Dyn main_dynamic[5]={0},shared_dynamic[5]={0}; Elf64_Phdr main_program[2],shared_program[1];
     uintptr_t handoff=0x100,descriptor=0x200,snapshot=0,rogue_handoff=0x300,rogue_descriptor=0x400;
     import(&main_symbols[1],H,STT_OBJECT); import(&main_symbols[2],D,STT_NOTYPE);
     import(&shared_symbols[1],C,STT_OBJECT); import(&shared_symbols[2],H,STT_OBJECT); import(&shared_symbols[3],D,STT_NOTYPE);
@@ -133,12 +139,57 @@ int main(void) {
     shared_dynamic[1]=(Elf64_Dyn){.d_tag=DT_STRTAB,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)strings};
     shared_dynamic[2]=(Elf64_Dyn){.d_tag=DT_RELA,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)shared_relocations};
     shared_dynamic[3]=(Elf64_Dyn){.d_tag=DT_RELASZ,.d_un.d_val=sizeof shared_relocations};
-    struct dl_phdr_info shared=image("/usr/lib/libc.so",&shared_program,shared_dynamic);
-    struct dl_phdr_info main=image("",&main_program,main_dynamic); struct wire_state state={0};
+    struct dl_phdr_info shared=image("/usr/lib/libc.so",shared_program,shared_dynamic,0);
+    struct dl_phdr_info main=image("",main_program,main_dynamic,1); struct wire_state state={0};
     wires(&shared,0,&state); wires(&main,0,&state);
     return state.main_images!=1 || state.handoffs!=1 || state.handoff!=handoff
         || state.descriptors!=1 || state.descriptor!=descriptor
         || state.conventional!=1 || state.snapshot!=snapshot;
+}
+''',encoding='utf-8')
+            subprocess.run(['cc','-std=c11','-I',str(reader.ROOT),str(source),'-o',str(binary)],
+                           cwd=reader.ROOT,check=True,capture_output=True,text=True)
+            subprocess.run([str(binary)],cwd=reader.ROOT,check=True,capture_output=True,text=True)
+
+    def test_probe_identifies_the_named_direct_main_by_its_own_code_load(self):
+        """The source object anchors the direct main without auxv or name fallback."""
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory);source=work/'direct-main.c';binary=work/'direct-main'
+            source.write_text(r'''
+#define CRABC_STARTUP_PROBE_WIRE_HARNESS 1
+#define EMPTY_ARRAYS 1
+#define main installed_crt_startup_probe_main
+#include "compat/x86_64/installed_crt_startup_probe.c"
+#undef main
+uintptr_t __stack_chk_guard;
+static void import(Elf64_Sym *symbol,size_t offset,int type) {
+    *symbol=(Elf64_Sym){.st_name=offset,.st_info=ELF64_ST_INFO(STB_WEAK,type),
+                         .st_other=STV_DEFAULT,.st_shndx=SHN_UNDEF};
+}
+int main(void) {
+    static const char strings[]="\0__crabc_x86_64_owned_crt_handoff\0__crabc_x86_64_loader_tls_runtime_v1";
+    enum { H=1, D=1+sizeof "__crabc_x86_64_owned_crt_handoff" };
+    Elf64_Sym symbols[3]={0}; Elf64_Rela relocations[2]={0}; Elf64_Dyn dynamic[5]={0};
+    Elf64_Phdr expected_program[2]={0},spoof_program[2]={0}; uintptr_t handoff=0x100,descriptor=0x200;
+    import(&symbols[1],H,STT_OBJECT); import(&symbols[2],D,STT_NOTYPE);
+    relocations[0]=(Elf64_Rela){.r_offset=(Elf64_Addr)(uintptr_t)&handoff,.r_info=ELF64_R_INFO(1,R_X86_64_GLOB_DAT)};
+    relocations[1]=(Elf64_Rela){.r_offset=(Elf64_Addr)(uintptr_t)&descriptor,.r_info=ELF64_R_INFO(2,R_X86_64_GLOB_DAT)};
+    dynamic[0]=(Elf64_Dyn){.d_tag=DT_SYMTAB,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)symbols};
+    dynamic[1]=(Elf64_Dyn){.d_tag=DT_STRTAB,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)strings};
+    dynamic[2]=(Elf64_Dyn){.d_tag=DT_RELA,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)relocations};
+    dynamic[3]=(Elf64_Dyn){.d_tag=DT_RELASZ,.d_un.d_val=sizeof relocations};
+    expected_program[0]=(Elf64_Phdr){.p_type=PT_LOAD,.p_flags=PF_X,
+                                     .p_vaddr=(Elf64_Addr)(uintptr_t)(void *)&wires,.p_memsz=1};
+    expected_program[1]=(Elf64_Phdr){.p_type=PT_DYNAMIC,.p_vaddr=(Elf64_Addr)(uintptr_t)dynamic};
+    spoof_program[0]=expected_program[0]; spoof_program[0].p_vaddr++;
+    spoof_program[1]=expected_program[1];
+    struct dl_phdr_info direct={.dlpi_phdr=expected_program,.dlpi_phnum=2,.dlpi_name="/owned-pie-normal"};
+    struct dl_phdr_info spoof={.dlpi_phdr=spoof_program,.dlpi_phnum=2,.dlpi_name=""};
+    struct wire_state direct_state={0},spoof_state={0}; wires(&direct,0,&direct_state); wires(&spoof,0,&spoof_state);
+    return direct_state.main_images!=1 || direct_state.handoffs!=1 || direct_state.handoff!=handoff
+        || direct_state.descriptors!=1 || direct_state.descriptor!=descriptor
+        || spoof_state.main_images || spoof_state.handoffs || spoof_state.descriptors;
 }
 ''',encoding='utf-8')
             subprocess.run(['cc','-std=c11','-I',str(reader.ROOT),str(source),'-o',str(binary)],
