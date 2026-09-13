@@ -106,6 +106,9 @@ class InstalledCrtStartupTests(unittest.TestCase):
         for case in reader.cases():
             row=next(x for x in links if x['label']==case['name']+'-link')
             self.assertEqual(row['argv'].count(str(work/(case['variant']+'.o'))),1)
+            if case['mode'] in ('default-pie','oracle-pie','oracle-non-pie'):
+                self.assertIn('-l:libc.so',row['argv'])
+                self.assertNotIn(str(work/'qualification-oracle/runtime'),row['argv'])
             if case['mode'].startswith('conventional'):
                 self.assertIn(str(work/'inputs/oracle-crt'/('Scrt1.o' if case['mode']=='conventional-pie' else 'crt1.o')),row['argv'])
                 self.assertIn(str(root/'.work/dynamic/usr/lib/libc.so'),row['argv'])

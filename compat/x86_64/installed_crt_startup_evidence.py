@@ -163,7 +163,8 @@ def plan(root,work,inputs,tools):
                   '--hash-style=sysv','-z','now','-z','relro','-z','noexecstack','--no-undefined',
                   *([] if is_static else ['--allow-shlib-undefined','--dynamic-linker',
                      '/lib/ld-crabc-x86_64.so.1' if mode.startswith('conventional') else '/lib/ld-musl-x86_64.so.1']),
-                  m(crt),p('inputs/oracle-crt/crti.o'),obj,m(runtime),p('inputs/oracle-crt/crtn.o'),'-Map='+p(name+'.map'),'-o',p(name)]
+                  m(crt),p('inputs/oracle-crt/crti.o'),obj,
+                  *([m(runtime)] if is_static or mode.startswith('conventional') else ['-L',p('oracle-link'),'-l:libc.so']),p('inputs/oracle-crt/crtn.o'),'-Map='+p(name+'.map'),'-o',p(name)]
             add(name+'-link',argv)
     paths={**product_paths(root,inputs),**{case['name']:work/case['name'] for case in cases()},
            **{variant+'-object':work/(variant+'.o') for variant in ('normal','empty')}}
@@ -265,6 +266,23 @@ def artifact_relocations(root,work,inputs):
     require(len(shared)==1,'canonical libc startup relocation count differs');require_handoff_relocation(shared[0],CONVENTIONAL)
     return result
 
+def needed_libraries(path):
+    elf=Elf(path);result=[]
+    for section in elf.sections:
+        if section[1]!=6:continue
+        require(section[9]==16 and section[5]%16==0,'malformed dynamic section')
+        strings=elf.sections[section[6]]
+        require(strings[1]==3 and strings[4]+strings[5]<=len(elf.data),'invalid dynamic string table')
+        for index in range(section[5]//16):
+            tag,value=elf.unpack('<qQ',section[4]+index*16)
+            if tag==0:break
+            if tag!=1:continue
+            require(value<strings[5],'invalid NEEDED string offset')
+            begin=strings[4]+value;end=elf.data.find(b'\0',begin,strings[4]+strings[5])
+            require(end>=begin,'unterminated NEEDED string')
+            result.append(elf.data[begin:end].decode('ascii'))
+    return result
+
 def executable_observations(root,work,inputs,tools,facts):
     result={};linker={k:tools['linker']['original'][k] for k in ('path','sha256')}
     for case in cases():
@@ -274,7 +292,9 @@ def executable_observations(root,work,inputs,tools,facts):
         interp=[elf.data[p[2]:p[2]+p[5]] for p in elf.programs if p[0]==3]
         expected=[] if 'static' in mode else [(b'/lib/ld-crabc-x86_64.so.1\0' if mode_owner(mode)=='candidate' else b'/lib/ld-musl-x86_64.so.1\0')]
         require(interp==expected,'startup interpreter differs')
-        account={'identity':ident(root,path),'relocations':relocations(path),'arrays':{}}
+        needed=needed_libraries(path)
+        require(needed==([] if 'static' in mode else ['libc.so']),'startup DT_NEEDED differs')
+        account={'identity':ident(root,path),'needed':needed,'relocations':relocations(path),'arrays':{}}
         if mode in MODES[:4] or mode=='default-pie':
             for kind in ('preinit','init','fini'):
                 start=int(exact(facts,name,'__'+kind+'_array_start')['row']['value'],16)
@@ -327,6 +347,7 @@ def roots(root,work,inputs):
     return result
 
 def observations(root,work,inputs,tools):
+    require((work/'oracle-link/libc.so').read_bytes()==(work/'qualification-oracle/runtime').read_bytes(),'oracle named link input differs')
     facts=projection(root,work,inputs);products_account=account_products(facts)
     streams={cell['label']:ordinary.raw_path(work,cell['label'],'stdout').read_bytes() for cell in runtime_cells()}
     validate_streams(streams)
@@ -367,6 +388,7 @@ def collect(root,output,preparation,static,dynamic,historical):
         tools=ordinary.capture_tool_roster(root,output,static,dynamic)
         for role,path in EXTRA_TOOLS.items():tools[role]=ordinary.retain_tool_snapshot(output,role,ordinary.fixed_image_tool_identity(Path(path),role))
         shutil.copy2(root/'compat/x86_64/installed_crt_startup_probe.c',output/'installed_crt_startup_probe.c')
+        (output/'oracle-link').mkdir();shutil.copyfile(output/'qualification-oracle/runtime',output/'oracle-link/libc.so')
         runner=ordinary.Collector(root,output,preparation,static,dynamic)
         for spec in plan(root,output,before,tools):
             if spec['label']==runtime_cells()[0]['label']:prepare_roots(root,output,before);roots(root,output,before)
