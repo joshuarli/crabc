@@ -1,0 +1,250 @@
+"""Focused contracts for the nine private loader-runtime protocol imports."""
+from __future__ import annotations
+
+import copy
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[3]
+MODULE_PATH = ROOT / "compat/x86_64/loader_runtime_registry_evidence.py"
+SPEC = importlib.util.spec_from_file_location("loader_runtime_registry_evidence_test", MODULE_PATH)
+assert SPEC and SPEC.loader
+EVIDENCE = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = EVIDENCE
+SPEC.loader.exec_module(EVIDENCE)
+
+
+class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
+    def contract(self):
+        return copy.deepcopy(EVIDENCE.load_contract(ROOT))
+
+    def facts(self):
+        rows = []
+        for index, name in enumerate(EVIDENCE.RESOLVERS, start=1):
+            row = {"name": name, "raw_name": name, "row_index": index,
+                   "type": "NOTYPE", "binding": "GLOBAL", "visibility": "DEFAULT",
+                   "section_index": "UND", "version": None, "version_default": False,
+                   "size_bytes": 0, "value": "0000000000000000"}
+            rows.append(row)
+        return {
+            "artifacts": {"candidate-shared": {}, "candidate-loader": {}},
+            "facts": {
+                "candidate-shared": {"symbol_tables": [
+                    {"name": ".dynsym", "rows": copy.deepcopy(rows)},
+                    {"name": ".symtab", "rows": copy.deepcopy(rows)},
+                ]},
+                "candidate-loader": {"symbol_tables": [{"name": ".dynsym", "rows": []}]},
+            },
+        }
+
+    def test_contract_and_live_source_are_an_exact_closed_resolver(self):
+        contract = self.contract()
+        self.assertEqual({row["name"]: row["resolver"] for row in contract["operation"]}, EVIDENCE.RESOLVERS)
+        resolution = EVIDENCE.source_resolution(ROOT)
+        self.assertEqual(resolution["resolvers"], dict(sorted(EVIDENCE.RESOLVERS.items())))
+        self.assertEqual(resolution["feature"], EVIDENCE.FEATURE)
+
+    def test_non_pie_workload_label_requires_the_owned_driver_exec_receipt(self):
+        self.assertEqual(EVIDENCE.DLOPEN_DRIVER_MODES, {"pie": "pie", "non-pie": "exec"})
+        self.assertEqual(EVIDENCE.single_driver_mode({"exec"}), "exec")
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "mode roster"):
+            EVIDENCE.single_driver_mode({"pie", "exec"})
+
+    def test_workload_environment_retains_the_existing_chroot_and_rust_paths(self):
+        self.assertIn("/usr/sbin", EVIDENCE.WORKLOAD_ENVIRONMENT["PATH"].split(":"))
+        self.assertIn("/opt/cargo/bin", EVIDENCE.WORKLOAD_ENVIRONMENT["PATH"].split(":"))
+        self.assertEqual(EVIDENCE.WORKLOAD_ENVIRONMENT["RUSTUP_HOME"], "/opt/rustup")
+
+    def test_bounded_dlfcn_capture_explicitly_excludes_the_separate_proc_mount_search_leaf(self):
+        self.assertEqual(EVIDENCE.DLFCN_SKIP_SEARCH_ENV, "CRABC_GENERAL_DYNAMIC_DLOPEN_SKIP_SEARCH")
+        runner = (ROOT / "compat/x86_64/run_general_dynamic_dlopen.sh").read_text(encoding="utf-8")
+        self.assertIn(EVIDENCE.DLFCN_SKIP_SEARCH_ENV, runner)
+
+    def test_growth_projection_requires_the_41_module_line_and_exact_oracle_stream(self):
+        stream = EVIDENCE.EXPECTED_GROWTH + b"runtime fini 40\n"
+        EVIDENCE.validate_growth_output(stream, stream)
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "41-module"):
+            EVIDENCE.validate_growth_output(b"different\n", b"different\n")
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "differential"):
+            EVIDENCE.validate_growth_output(stream, EVIDENCE.EXPECTED_GROWTH)
+
+    def test_contract_rejects_ambiguous_unknown_and_promoting_operation(self):
+        contract = self.contract()
+        contract["operation"].append({"name": "__crabc_x86_64_runtime_unknown", "resolver": "unknown",
+                                      "consumer": "general_dlfcn", "scenario": "runtime-tls-41-modules"})
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "operation roster"):
+            EVIDENCE.validate_contract(contract)
+        contract = self.contract()
+        contract["operation"][0]["scenario"] = "inferred-from-runner"
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "scenario"):
+            EVIDENCE.validate_contract(contract)
+        contract = self.contract()
+        contract["limits"]["public_provider"] = True
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "nonpromotion"):
+            EVIDENCE.validate_contract(contract)
+
+    def test_import_placement_requires_one_undefined_row_in_each_named_shared_table(self):
+        placement = EVIDENCE.import_placement(self.facts())
+        self.assertEqual(set(placement), set(EVIDENCE.RESOLVERS))
+        self.assertTrue(all(set(row) == set(EVIDENCE.SYMBOL_TABLES) for row in placement.values()))
+        self.assertTrue(all(row[".dynsym"]["section_index"] == "UND" for row in placement.values()))
+        malformed = self.facts()
+        malformed["facts"]["candidate-shared"]["symbol_tables"][0]["rows"][0]["visibility"] = "HIDDEN"
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "metadata"):
+            EVIDENCE.import_placement(malformed)
+        malformed = self.facts()
+        dynsym, symtab = malformed["facts"]["candidate-shared"]["symbol_tables"]
+        dynsym["rows"].extend(copy.deepcopy(symtab["rows"]))
+        symtab["rows"].clear()
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "each named symbol table"):
+            EVIDENCE.import_placement(malformed)
+        malformed = self.facts()
+        malformed["facts"]["candidate-loader"]["symbol_tables"][0]["rows"].append(
+            copy.deepcopy(malformed["facts"]["candidate-shared"]["symbol_tables"][0]["rows"][0])
+        )
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "candidate loader"):
+            EVIDENCE.import_placement(malformed)
+
+    def test_dlfcn_stream_projection_reopens_all_runner_oracle_pairs(self):
+        scratch = ROOT / ".work/x86_64/loader-runtime-registry-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            output = Path(temporary)
+            work = output / "work"
+            work.mkdir()
+            streams = {
+                "consumer.stdout": EVIDENCE.EXPECTED_DLOPEN,
+                "tbss-candidate.stdout": EVIDENCE.EXPECTED_TBSS,
+                "tbss-oracle.stdout": EVIDENCE.EXPECTED_TBSS,
+                "growth.stdout": EVIDENCE.EXPECTED_GROWTH,
+                "oracle.stdout": EVIDENCE.EXPECTED_GROWTH,
+                "scope.stdout": b"scope=first\n",
+                "oracle-scope.stdout": b"scope=first\n",
+                "failure-ie.stdout": b"failure=ie\n",
+                "oracle-failure-ie.stdout": b"failure=ie\n",
+                "failure-unresolved.stdout": b"failure=unresolved\n",
+                "oracle-failure-unresolved.stdout": b"failure=unresolved\n",
+                "failure-array-half.stdout": b"failure=array-half\n",
+                "failure-tls-filesz.stdout": b"failure=tls-filesz\n",
+                "failure-relocation-kind.stdout": b"failure=relocation-kind\n",
+            }
+            for name, contents in streams.items():
+                (work / name).write_bytes(contents)
+            observed = EVIDENCE._dlfcn_streams(work, output)
+            self.assertEqual(set(observed), set(streams))
+            for name, altered, message in (
+                ("tbss-oracle.stdout", b"wrong\n", "TBSS differential"),
+                ("oracle-scope.stdout", b"wrong\n", "scope differential"),
+                ("oracle-failure-ie.stdout", b"wrong\n", "failure ie differential"),
+            ):
+                (work / name).write_bytes(altered)
+                with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, message):
+                    EVIDENCE._dlfcn_streams(work, output)
+                (work / name).write_bytes(streams[name])
+            (work / "oracle-failure-unresolved.stdout").unlink()
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "oracle-failure-unresolved"):
+                EVIDENCE._dlfcn_streams(work, output)
+
+    def test_timer_source_test_roster_and_oracle_capture_are_reopened(self):
+        scratch = ROOT / ".work/x86_64/loader-runtime-registry-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            output = Path(temporary)
+            work = output / "work"
+            work.mkdir()
+            executable = work / "tls-reset-tests"
+            executable.write_bytes(b"source-test")
+            executable.chmod(0o755)
+            for stem in ("tls-reset-build.stdout", "tls-reset-tests.stdout", "tls-import-tests.stdout"):
+                (work / stem).write_bytes(b"ok\n")
+                (work / f"{stem}.stderr").write_bytes(b"")
+                (work / f"{stem}.status").write_bytes(b"0\n")
+            source_tests = EVIDENCE.timer_source_test_observations(work, output)
+            self.assertEqual(set(source_tests), {"executable", "build", "timer_reset", "import_shape"})
+            (work / "tls-import-tests.stdout.stderr").unlink()
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "import_shape stderr"):
+                EVIDENCE.timer_source_test_observations(work, output)
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "kernel execution differs"):
+                EVIDENCE.validate_timer_oracle_capture((b"same\n", b"", b"0\n"), (b"same\n", b"different\n", b"0\n"), "kernel")
+
+    def test_source_and_relocation_contract_reject_python_bool_lookalikes(self):
+        source = {"revision": "a" * 40, "content_sha256": "b" * 64, "clean": True}
+        with mock.patch.object(EVIDENCE.inventory, "collector_source_seal", return_value=copy.deepcopy(source)):
+            EVIDENCE.validate_current_source(source)
+            source["clean"] = 1
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "collector source"):
+                EVIDENCE.validate_current_source(source)
+        contract = self.contract()
+        contract["relocation"]["addend"] = False
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "relocation contract"):
+            EVIDENCE.validate_contract(contract)
+
+    def test_collect_rejects_a_fresh_output_inside_a_supplied_product_before_reading_inputs(self):
+        scratch = ROOT / ".work/x86_64/loader-runtime-registry-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            dynamic = root / "dynamic-product"
+            static = root / "static-product"
+            cohort = root / "static-preparation"
+            for directory in (dynamic, static, cohort):
+                directory.mkdir()
+            preparation = cohort / "preparation.json"
+            preparation.write_text("{}\n", encoding="utf-8")
+            output = dynamic / "must-not-exist"
+            with mock.patch.object(EVIDENCE, "validate_supplied_products", side_effect=AssertionError("input reader ran")):
+                with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "overlaps supplied dynamic product"):
+                    EVIDENCE.collect(base_inventory=root / "inventory.json", elf_report=root / "facts.json",
+                                     static_preparation=preparation, static_product=static, dynamic_product=dynamic,
+                                     output=output)
+            self.assertFalse(output.exists())
+
+    def test_raw_command_replay_requires_its_authoritative_streams_and_terminal_zero(self):
+        scratch = ROOT / ".work/x86_64/loader-runtime-registry-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            output = Path(temporary)
+            raw = output / "raw"
+            raw.mkdir()
+            for suffix, contents in (("stdout", b"ok\n"), ("stderr", b""), ("status", b"0\n")):
+                (raw / f"dlfcn-pie.{suffix}").write_bytes(contents)
+            command = ["bash", "/fixture/run_general_dynamic_dlopen.sh", "/fixture/product"]
+            environment = {"PATH": "/fixture/bin"}
+            record = {"argv": command, "environment": environment,
+                      **{suffix: EVIDENCE.identity(raw / f"dlfcn-pie.{suffix}", logical_path=f"raw/dlfcn-pie.{suffix}")
+                         for suffix in ("stdout", "stderr", "status")}}
+            EVIDENCE._validate_command(output, record, "dlfcn-pie", command, environment)
+            changed = copy.deepcopy(record)
+            changed["environment"] = {"PATH": "/usr/bin:/bin"}
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "environment drifted"):
+                EVIDENCE._validate_command(output, changed, "dlfcn-pie", command, environment)
+            changed = copy.deepcopy(record)
+            changed["stdout"]["path"] = "raw/unrelated.stdout"
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "path drifted"):
+                EVIDENCE._validate_command(output, changed, "dlfcn-pie", command, environment)
+            (raw / "dlfcn-pie.status").write_bytes(b"1\n")
+            changed["stdout"] = EVIDENCE.identity(raw / "dlfcn-pie.stdout", logical_path="raw/dlfcn-pie.stdout")
+            changed["status"] = EVIDENCE.identity(raw / "dlfcn-pie.status", logical_path="raw/dlfcn-pie.status")
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "did not succeed"):
+                EVIDENCE._validate_command(output, changed, "dlfcn-pie", command, environment)
+
+    def test_fork_reader_extension_is_a_replay_command_not_a_second_runner(self):
+        source = (ROOT / "compat/x86_64/owned_dynamic_fork_evidence.py").read_text(encoding="utf-8")
+        self.assertIn("def validate_observations(product: Path, work: Path)", source)
+        self.assertIn("fork observation receipt does not reconstruct", source)
+        self.assertIn('"validate-observations"', source)
+
+    def test_cli_rejects_abbreviation_and_requires_both_runtime_product_inputs(self):
+        with self.assertRaises(SystemExit):
+            EVIDENCE.main(["collect", "--dynamic-prod", "x"])
+        with self.assertRaises(SystemExit):
+            EVIDENCE.main(["validate-report"])
+
+
+if __name__ == "__main__":
+    unittest.main()
