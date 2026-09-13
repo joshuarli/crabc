@@ -7,6 +7,7 @@ import copy
 import io
 import importlib.util
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -284,6 +285,34 @@ class HeaderDeclarationInventoryTests(unittest.TestCase):
         )
         self.assertEqual(events[1]["form"], "function-like")
         self.assertEqual(active, [])
+
+    def test_mounted_workspace_admits_only_its_own_physical_work_root(self) -> None:
+        """A `/workspace` mount has no visible main-checkout `.work/worktrees`."""
+        with temporary_directory() as temporary:
+            base = Path(temporary)
+            mounted = base / "workspace"
+            admitted = mounted / ".work"
+            evidence = admitted / "x86_64" / "receipt"
+            evidence.mkdir(parents=True)
+            report = evidence / "report.json"
+            self.assertEqual(
+                INVENTORY.canonical_checkout_work_root(root=mounted, ancestors=(mounted,)),
+                admitted,
+            )
+            self.assertEqual(
+                INVENTORY.evidence_directory_below_work_root(report, admitted),
+                evidence,
+            )
+            outside = base / "outside" / "report.json"
+            outside.parent.mkdir(parents=True)
+            with self.assertRaisesRegex(INVENTORY.HeaderDeclarationInventoryError, "escapes admitted"):
+                INVENTORY.evidence_directory_below_work_root(outside, admitted)
+
+            symlinked = base / "symlinked-workspace"
+            symlinked.mkdir()
+            os.symlink(admitted, symlinked / ".work")
+            with self.assertRaisesRegex(INVENTORY.HeaderDeclarationInventoryError, "cannot locate"):
+                INVENTORY.canonical_checkout_work_root(root=symlinked, ancestors=(symlinked,))
 
     def _host_replay_fixture(self) -> tuple[Path, dict[str, object]]:
         output = Path(tempfile.mkdtemp(prefix="host-replay-", dir=TEST_WORK_ROOT))

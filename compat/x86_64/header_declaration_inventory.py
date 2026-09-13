@@ -300,23 +300,48 @@ def physical_output_directory(path: Path) -> Path:
     return require_physical_directory(path, "output directory")
 
 
-def canonical_checkout_work_root() -> Path:
-    """Locate the shared checkout `.work` root from either a root or linked worktree."""
-    for ancestor in (ROOT, *ROOT.parents):
+def canonical_checkout_work_root(
+    *,
+    root: Path | None = None,
+    ancestors: Sequence[Path] | None = None,
+) -> Path:
+    """Locate the admitted work root for a full checkout or its mounted worktree.
+
+    A normal linked worktree can retain and replay evidence anywhere below the
+    main checkout's shared `.work`.  The pinned collector container mounts one
+    linked worktree at `/workspace`, so that main checkout is intentionally not
+    visible there.  In that constrained form, admit only the mounted root's
+    own physical `.work`; never search arbitrary ancestor `.work` directories.
+    The optional arguments make the physical admission boundary testable.
+    """
+    effective_root = ROOT if root is None else root
+    candidate_ancestors = (
+        (effective_root, *effective_root.parents)
+        if ancestors is None
+        else tuple(ancestors)
+    )
+    for ancestor in candidate_ancestors:
         candidate = ancestor / ".work" / "worktrees"
         if candidate.is_dir() and not candidate.is_symlink():
             return require_physical_directory(ancestor / ".work", "canonical checkout work root")
-    raise HeaderDeclarationInventoryError("cannot locate canonical checkout .work root")
+    mounted_work = effective_root / ".work"
+    if mounted_work.is_dir() and not mounted_work.is_symlink():
+        return require_physical_directory(mounted_work, "mounted worktree work root")
+    raise HeaderDeclarationInventoryError("cannot locate canonical checkout or mounted worktree .work root")
 
 
-def existing_evidence_directory(report_path: Path) -> Path:
+def evidence_directory_below_work_root(report_path: Path, work_root: Path) -> Path:
     report_path = report_path if report_path.is_absolute() else ROOT / report_path
     require(report_path.name == "report.json", "report path must name report.json")
     evidence = report_path.parent
     require_physical_directory(evidence, "evidence directory")
-    work_root = canonical_checkout_work_root()
-    require(path_is_within(evidence, work_root), "evidence directory escapes canonical checkout work root")
+    work_root = require_physical_directory(work_root, "admitted evidence work root")
+    require(path_is_within(evidence, work_root), "evidence directory escapes admitted checkout work root")
     return evidence
+
+
+def existing_evidence_directory(report_path: Path) -> Path:
+    return evidence_directory_below_work_root(report_path, canonical_checkout_work_root())
 
 
 def profile_records(profiles: Sequence[callable_inventory.Profile]) -> list[dict[str, Any]]:
