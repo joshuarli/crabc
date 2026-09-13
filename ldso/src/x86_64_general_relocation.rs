@@ -380,6 +380,23 @@ unsafe fn word_value(
         }
     }
     if index != 0 && is_private_runtime_symbol(unsafe { symbol_name(object, index) }?) {
+        // The loader-to-main RuntimeV1 descriptor is an address capability,
+        // not an ordinary private-name lookup. Its resolver below verifies
+        // the physical main endpoint; reject a changed relocation form here,
+        // before the shared initial-graph evaluator can treat JUMP_SLOT or a
+        // nonzero addend as an ordinary word relocation.
+        #[cfg(crabc_general_loader_libc_tls_runtime_v1)]
+        if unsafe { symbol_name(object, index) }?
+            == b"__crabc_x86_64_loader_tls_runtime_v1"
+        {
+            let requested = unsafe { definition(objects, owner, index) }?;
+            if kind != R_X86_64_GLOB_DAT || addend != 0
+                || owner != 0 || requested.kind != 0 || requested.binding != 2
+                || requested.visibility != 0 || requested.section != 0
+            {
+                return None;
+            }
+        }
         if !scope.initial {
             #[cfg(crabc_general_initial_tls_materialization_v1)]
             if unsafe { symbol_name(object, index) }? == b"__tls_get_addr" {

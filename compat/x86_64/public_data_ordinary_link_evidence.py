@@ -823,7 +823,8 @@ class Collector:
             return process.wait()
 
     def run(self, label: str, command: list[str], *, stdout: bytes | None = None,
-            cwd: Path | None = None, timeout_seconds: float = COMMAND_TIMEOUT_SECONDS) -> dict[str, Any]:
+            stderr: bytes | None = None, expected_status: int = 0, cwd: Path | None = None,
+            timeout_seconds: float = COMMAND_TIMEOUT_SECONDS) -> dict[str, Any]:
         raw = self.output / "raw"
         raw.mkdir(exist_ok=True)
         command_path = raw_path(self.output, label, "command.json")
@@ -835,6 +836,7 @@ class Collector:
         require(working_directory in {self.root, self.output}, "ordinary-link command cwd differs")
         require(type(timeout_seconds) in {int, float} and timeout_seconds > 0,
                 "ordinary-link command timeout differs")
+        require(type(expected_status) is int, "ordinary-link expected status differs")
         outcome = "failed"
         status = 127
         with stdout_path.open("xb") as out, stderr_path.open("xb") as err:
@@ -843,7 +845,7 @@ class Collector:
                                            stdout=out, stderr=err, start_new_session=True)
                 try:
                     status = process.wait(timeout=timeout_seconds)
-                    outcome = "ok" if status == 0 else "failed"
+                    outcome = "ok" if status == expected_status else "failed"
                 except subprocess.TimeoutExpired:
                     status = self._terminate_owned_group(process)
                     outcome = "timed-out"
@@ -860,10 +862,17 @@ class Collector:
         }
         self.commands.append(row)
         require(outcome != "timed-out", f"ordinary-link command timed out: {label}")
-        require(status == 0, f"ordinary-link command failed: {label}")
+        require(outcome == "ok", f"ordinary-link command failed: {label}")
+        require(status == expected_status, f"ordinary-link command failed: {label}")
         if stdout is not None:
-            require(stdout_path.read_bytes() == stdout and stderr_path.read_bytes() == b"",
-                    f"ordinary-link execution output differs: {label}")
+            require(stdout_path.read_bytes() == stdout, f"ordinary-link stdout differs: {label}")
+            # Existing stdout controls also sealed an empty diagnostic stream.
+            # Descriptor-admission rejections opt into an exact nonempty stream
+            # below; leaving stderr unspecified must retain that old boundary.
+            if stderr is None:
+                require(stderr_path.read_bytes() == b"", f"ordinary-link execution output differs: {label}")
+        if stderr is not None:
+            require(stderr_path.read_bytes() == stderr, f"ordinary-link stderr differs: {label}")
         return row
 
     def link_receipt(self, mode: str) -> Path:

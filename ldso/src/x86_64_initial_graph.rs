@@ -3275,8 +3275,10 @@ unsafe fn resolve_symbol(requestor: &Object, objects: &[Object; MAX_OBJECTS], in
             && requestor.base == objects[0].base
             && requestor.phdr == objects[0].phdr;
         let binding = *symbol.add(4) >> 4;
+        let symbol_type = *symbol.add(4) & 0x0f;
+        let visibility = *symbol.add(5) & 0x03;
         let section = read_u16(symbol.add(6));
-        if !is_main || binding != 2 || section != 0 {
+        if !is_main || binding != 2 || symbol_type != 0 || visibility != 0 || section != 0 {
             return None;
         }
         return Some(
