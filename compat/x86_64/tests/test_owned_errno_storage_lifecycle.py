@@ -142,6 +142,19 @@ def archive_block(payload: str) -> str:
     return f"\nFile: /fixture/static.a(provider.o)\n{payload}"
 
 
+def archive_member_block(member: str, payload: str) -> str:
+    return f"\nFile: /fixture/static.a({member})\n{payload}"
+
+
+EMPTY_STATIC_HEADER = complete_header("REL (Relocatable file)", 2)
+EMPTY_STATIC_SECTIONS = complete_sections(
+    """\
+  [ 0]                   NULL            0000000000000000 000000 000000 00      0   0  0
+  [ 1] .text             PROGBITS        0000000000000000 000040 000000 00  AX  0   0  1""",
+    2,
+)
+
+
 class ErrnoStorageLifecycleTests(unittest.TestCase):
     def test_h_errno_source_and_installed_c_boundary_require_an_x86_int_object(self) -> None:
         source = H_ERRNO.read_text(encoding="utf-8")
@@ -277,6 +290,20 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
                 SHARED_LAYOUT_SYMBOLS.replace("0000000000001020", "0000000000001080"),
                 "out-of-range shared h_errno",
             )
+
+    def test_static_h_errno_layout_skips_symbol_free_archive_members(self) -> None:
+        layout = reader.validate_static_h_errno_layout(
+            archive_member_block("empty.o", EMPTY_STATIC_HEADER)
+            + archive_member_block("provider.o", STATIC_LAYOUT_HEADER),
+            archive_member_block("empty.o", EMPTY_STATIC_SECTIONS)
+            + archive_member_block("provider.o", STATIC_LAYOUT_SECTIONS),
+            archive_member_block("empty.o", "")
+            + archive_member_block("provider.o", STATIC_LAYOUT_SYMBOLS),
+            "empty.o\nprovider.o\n",
+            "/fixture/static.a",
+            "static archive with a symbol-free member",
+        )
+        self.assertEqual(layout["archive_member"], {"name": "provider.o", "index": 1, "occurrence": 0})
 
     def test_shared_alias_requires_its_exact_local_link_policy(self) -> None:
         self.assertEqual(PRIVATE_ALIAS_LIST.read_text(encoding="utf-8"), "___errno_location\n")

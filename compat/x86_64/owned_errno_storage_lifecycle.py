@@ -533,12 +533,14 @@ def _inventory_facts(description: str, operation: Any) -> Any:
 
 
 def _fact_symbol_matches(
-    facts: Mapping[str, Any], table_name: str, name: str, description: str,
+    facts: Mapping[str, Any], table_name: str, name: str, description: str, *, allow_absent_table: bool = False,
 ) -> list[Mapping[str, Any]]:
     tables = facts.get("symbol_tables")
     if not isinstance(tables, list):
         fail(f"{description} lacks complete ELF symbol tables")
     tables_named = [table for table in tables if isinstance(table, Mapping) and table.get("name") == table_name]
+    if allow_absent_table and not tables_named:
+        return []
     if len(tables_named) != 1:
         fail(f"{description} has {len(tables_named)} {table_name} tables")
     rows = tables_named[0].get("rows")
@@ -650,7 +652,10 @@ def validate_static_h_errno_layout(
     )
     matches: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
     for member in facts:
-        rows = _fact_symbol_matches(member, ".symtab", "h_errno", description)
+        # A complete archive may contain legitimate symbol-free members. They
+        # cannot define h_errno, but their absence of a .symtab must not erase
+        # the exact selected member that does.
+        rows = _fact_symbol_matches(member, ".symtab", "h_errno", description, allow_absent_table=True)
         if len(rows) > 1:
             fail(f"{description} has duplicate static archive h_errno definitions in one member")
         if rows:
