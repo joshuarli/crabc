@@ -169,6 +169,60 @@ TMPDIR="$PWD/.work/x86_64/tmp" \
   .work/x86_64/pthread-alias-contract/dynamic-product
 ```
 
+### Replayable owning receipt
+
+The plain invocation above remains the immediate behavior and ELF judge.  A
+selection consumer needs a stricter retained record, so the same runner also
+accepts a fresh `--receipt-dir` together with the authenticated current product
+anchor and the earlier pre-receipt input ledger:
+
+```sh
+TMPDIR="$PWD/.work/x86_64/tmp" \
+  ./compat/x86_64/run_owned_pthread_alias_contract.sh \
+  --receipt-dir "$PWD/.work/x86_64/pthread-alias-receipt/clean-receipt" \
+  --product-report "$PWD/.work/x86_64/pthread-alias-receipt/products-b41/loader-debug-report.json" \
+  --historical-inputs "$PWD/.work/x86_64/pthread-alias-receipt/products-b41/historical-input-identities.json" \
+  --historical-source-commit d8d6dc9a8fcfabb088ebd4de7e7504d526ff7d46 \
+  "$PWD/.work/x86_64/pthread-alias-receipt/products-b41/static-product" \
+  "$PWD/.work/x86_64/pthread-alias-receipt/products-b41/dynamic-product"
+
+python3 -B compat/x86_64/owned_pthread_alias_contract_reader.py \
+  --validate-report "$PWD/.work/x86_64/pthread-alias-receipt/clean-receipt/report.json"
+```
+
+`owned_pthread_alias_contract_reader.py` writes and replays the closed
+`crabc.x86_64-owned-pthread-alias-contract/v1` component record.  It copies
+the collector, probe, compact source-contract roster from the selected product
+commit, musl inputs, selected product manifests and payloads, and the supplied
+loader-debug product anchor.  The collector’s clean checkout identity and the
+selected product source commit/digest are separate fields: the receipt code
+may be newer than the b41 products it inspects.  The static and dynamic
+manifests independently seal the drivers, `libc.a`, `libc.so`, and dynamic
+loader.  The prior `d8d6dc9a` input ledger is retained only as historical
+provenance and is explicitly forbidden from serving as a selected product.
+
+The record contains every command argv/status/stdout/stderr, one compiled
+probe object, each linked ELF and `readelf` header, musl linker maps, the
+sealed static-driver JSON/map/trace sidecars, the dynamic-driver link receipts,
+all raw symbol/relocation streams, and the four materialized chroot-root
+trees.  Replay rehashes those retained files, reconstructs the static and
+dynamic product/driver bindings, checks exact command/object/map paths,
+recomputes the same-definition aliases and `mq_notify` public-detach source
+policy, and verifies the runtime transcripts and executable modes.  It runs no
+compiler, linker, or ELF tool.
+
+Before it creates any evidence, the runner resolves `TMPDIR`, an optional
+receipt directory, and both supplied product roots physically and rejects any
+overlap. Alias and provider rows must also name a positive ELF section index;
+`UND`, `ABS`, `COM`, and section zero cannot establish a function body or a
+same-definition alias.
+
+The receipt covers only the 17 aliases in the table above, their listed source
+providers, the `mq_notify` public `pthread_detach` relocation, and the one
+strong-override/internal-`pthread_join` behavior.  It does not turn historical
+products into current evidence, establish unlisted pthread symbols, complete a
+pthread family, qualify a product, or promote native public support.
+
 This is an ELF and internal-binding proof for the listed bodies. It does not
 complete the pthread family, qualify the runtime, promote x86-64 support, or
 change the public-support boundary.
