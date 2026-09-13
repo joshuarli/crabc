@@ -299,13 +299,13 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
             program = ""
             if expected["interpreter"] is not None:
                 program = f"      [Requesting program interpreter: {expected['interpreter']}]\n"
-            (work / "raw" / (name + ".header.stdout")).write_text(header, encoding="utf-8")
-            (work / "raw" / (name + ".program.stdout")).write_text(program, encoding="utf-8")
+            evidence.raw_path(work, name + "-header", "stdout").write_text(header, encoding="utf-8")
+            evidence.raw_path(work, name + "-program", "stdout").write_text(program, encoding="utf-8")
         observed = evidence.executable_observations(self.root, work)
         evidence.write_new_json(work / "executables.json", observed)
         replayed = evidence.read_json(work / "executables.json", "executables", dict)
         evidence.validate_executable_observations(self.root, work, replayed)
-        (work / "raw/oracle-static.header.stdout").write_text(
+        evidence.raw_path(work, "oracle-static-header", "stdout").write_text(
             "Class: ELF64\nData: 2's complement, little endian\n"
             "Machine: Advanced Micro Devices X86-64\nType: DYN (test)\n", encoding="utf-8"
         )

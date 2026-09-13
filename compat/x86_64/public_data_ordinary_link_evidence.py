@@ -354,6 +354,14 @@ def write_new_json(path: Path, value: object) -> None:
         stream.write("\n")
 
 
+def raw_path(work: Path, label: str, suffix: str) -> Path:
+    """Name one collector raw artifact from the command label exactly once."""
+    require(re.fullmatch(r"[a-z0-9-]+", label) is not None and suffix in {
+        "command.json", "stdout", "stderr", "status",
+    }, "ordinary-link raw artifact name differs")
+    return work / "raw" / (label + "." + suffix)
+
+
 TOOL_ROLES = (
     "static_driver", "dynamic_driver", "compiler", "linker", "oracle_wrapper", "env", "readelf", "chroot",
 )
@@ -571,8 +579,8 @@ def executable_observations(root: Path, work: Path) -> dict[str, Any]:
     for name, expected in EXECUTABLE_ELF_MODES.items():
         executable = work_file_identity(root, work / name, name + " executable")
         try:
-            header = (work / "raw" / (name + ".header.stdout")).read_text(encoding="utf-8")
-            program = (work / "raw" / (name + ".program.stdout")).read_text(encoding="utf-8")
+            header = raw_path(work, name + "-header", "stdout").read_text(encoding="utf-8")
+            program = raw_path(work, name + "-program", "stdout").read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as error:
             raise PublicDataEvidenceError(f"cannot read retained {name} ELF view: {error}") from error
         require(re.search(r"^\s*Class:\s+ELF64\s*$", header, re.MULTILINE) is not None
@@ -732,11 +740,10 @@ class Collector:
             cwd: Path | None = None, timeout_seconds: float = COMMAND_TIMEOUT_SECONDS) -> dict[str, Any]:
         raw = self.output / "raw"
         raw.mkdir(exist_ok=True)
-        base = raw / label
-        command_path = base.with_suffix(".command.json")
-        stdout_path = base.with_suffix(".stdout")
-        stderr_path = base.with_suffix(".stderr")
-        status_path = base.with_suffix(".status")
+        command_path = raw_path(self.output, label, "command.json")
+        stdout_path = raw_path(self.output, label, "stdout")
+        stderr_path = raw_path(self.output, label, "stderr")
+        status_path = raw_path(self.output, label, "status")
         write_new_json(command_path, command)
         working_directory = self.root if cwd is None else Path(cwd)
         require(working_directory in {self.root, self.output}, "ordinary-link command cwd differs")
@@ -878,7 +885,7 @@ class Collector:
 
 
 def rows_for(work: Path, label: str) -> list[dict[str, Any]]:
-    path = work / "raw" / (label + ".stdout")
+    path = raw_path(work, label, "stdout")
     tables = inventory.parse_elf_symbol_tables(path.read_text(encoding="utf-8"))
     matching = [table for table in tables if table["name"] == ".symtab"]
     require(len(matching) == 1, f"{label} lacks exactly one .symtab")
