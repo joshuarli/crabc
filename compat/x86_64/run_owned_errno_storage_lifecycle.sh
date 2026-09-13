@@ -222,9 +222,9 @@ observe plugin-symbols "$work/plugin-symbols.txt" readelf -Ws "$work/plugin.o"
 action oracle-static-link "$ORACLE_CC" -static -no-pie -pthread "$work/core-static.o" \
     -Wl,-Map,"$work/oracle-static.map" -o "$work/oracle-static"
 action candidate-static-link "$static_product/bin/crabc-cc" -static "$work/core-static.o" \
-    -Wl,-Map,"$work/candidate-static.map" -o "$work/candidate-static"
+    -o "$work/candidate-static"
 action candidate-static-pie-link "$static_product/bin/crabc-cc" -static-pie "$work/core-static.o" \
-    -Wl,-Map,"$work/candidate-static-pie.map" -o "$work/candidate-static-pie"
+    -o "$work/candidate-static-pie"
 
 prepare_static_root "$work/oracle-static-root" "$work/oracle-static"
 prepare_static_root "$work/candidate-static-root" "$work/candidate-static"
@@ -242,7 +242,7 @@ action oracle-plugin-link "$ORACLE_CC" -shared -fPIC "$work/plugin.o" \
     -Wl,-soname,liberrno-storage-lifecycle-probe.so,-Map,"$work/oracle-plugin.map" \
     -o "$work/oracle-plugin.so"
 action candidate-plugin-link "$dynamic_product/bin/crabc-cc-dynamic" --dynamic-shared-object \
-    "$work/plugin.o" -Wl,-Map,"$work/candidate-plugin.map" -o "$work/candidate-plugin.so"
+    "$work/plugin.o" -o "$work/candidate-plugin.so"
 
 for mode in pie non-pie; do
     case "$mode" in
@@ -253,7 +253,7 @@ for mode in pie non-pie; do
         -Wl,--dynamic-linker,"$MUSL_LOADER",-rpath,/usr/lib,-Map,"$work/oracle-dynamic-$mode.map" \
         -o "$work/oracle-dynamic-$mode"
     action "candidate-dynamic-$mode-link" "$dynamic_product/bin/crabc-cc-dynamic" "--dynamic-$mode" \
-        "$work/core-dynamic.o" -Wl,-Map,"$work/candidate-dynamic-$mode.map" \
+        "$work/core-dynamic.o" \
         -o "$work/candidate-dynamic-$mode"
 done
 
