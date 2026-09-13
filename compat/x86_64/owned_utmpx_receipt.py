@@ -125,6 +125,14 @@ RUNTIME_ROWS = (
     ("non-pie-kernel", "dynamic-non-pie-kernel-ordinary"),
     ("non-pie-direct", "dynamic-non-pie-direct-ordinary"),
 )
+# ``RUNTIME_ROWS`` names the output leaves the normal runner writes.  Copy the
+# finite set from those rows rather than reconstructing names from link modes,
+# which would lose the ordinary-scenario suffix.
+RUNNER_STREAM_FILES = tuple(
+    stream + "." + suffix
+    for label, stream in RUNTIME_ROWS if label != "oracle"
+    for suffix in ("stdout", "stderr", "status")
+)
 
 
 class ReceiptError(RuntimeError):
@@ -1213,8 +1221,7 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
             "dynamic-pie", "dynamic-pie.crabc-link.json", "dynamic-pie-symbol-bytes.txt",
             "dynamic-non-pie", "dynamic-non-pie.crabc-link.json", "dynamic-non-pie-symbol-bytes.txt",
         ]
-        for prefix in ("static-static", "static-static-pie", "dynamic-pie-kernel", "dynamic-pie-direct", "dynamic-non-pie-kernel", "dynamic-non-pie-direct"):
-            needed.extend([prefix + ".stdout", prefix + ".stderr", prefix + ".status"])
+        needed.extend(RUNNER_STREAM_FILES)
         for name in needed:
             _copy_native_file(workspace, native, native / name)
         for record in sorted((native / "commands").glob("*.json")):
