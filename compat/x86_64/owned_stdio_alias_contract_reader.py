@@ -58,12 +58,46 @@ from loader_debug_abi_evidence import Elf
 SCHEMA = 'crabc.x86_64-owned-stdio-alias-receipt/v1'
 STATUS = {'component': 'verified', 'family_completion': False, 'runtime_qualification': False,
           'selection_closure': False, 'public_support': False}
-ALIASES = {'fdopen':'__fdopen', 'fgetc_unlocked':'getc_unlocked', 'fputc_unlocked':'putc_unlocked',
-           'fread_unlocked':'fread', 'fwrite_unlocked':'fwrite', 'fseeko':'__fseeko', 'ftello':'__ftello',
-           'fgetwc_unlocked':'__fgetwc_unlocked', 'getwc_unlocked':'__fgetwc_unlocked',
-           'fputwc_unlocked':'__fputwc_unlocked', 'putwc_unlocked':'__fputwc_unlocked',
-           'fgetws_unlocked':'fgetws', 'fputws_unlocked':'fputws',
-           'getwchar_unlocked':'getwchar', 'putwchar_unlocked':'putwchar'}
+# Each group is a source-owned .set declaration surface.  Keep it separate
+# from targets: an extension alias may deliberately share a target defined by
+# another FILE source, but its own source still owns the alias declaration.
+ALIAS_GROUPS = (
+    ('owned_static_stdio', 'libc/src/c_abi/x86_64/owned_static_stdio.rs', (
+        ('fdopen', '__fdopen'), ('fgetc_unlocked', 'getc_unlocked'),
+        ('fputc_unlocked', 'putc_unlocked'), ('fread_unlocked', 'fread'),
+        ('fwrite_unlocked', 'fwrite'), ('fseeko', '__fseeko'),
+        ('ftello', '__ftello'), ('__getdelim', 'getdelim'),
+    )),
+    ('owned_wide_stdio', 'libc/src/c_abi/x86_64/owned_wide_stdio.rs', (
+        ('fgetwc_unlocked', '__fgetwc_unlocked'), ('getwc_unlocked', '__fgetwc_unlocked'),
+        ('fputwc_unlocked', '__fputwc_unlocked'), ('putwc_unlocked', '__fputwc_unlocked'),
+        ('fgetws_unlocked', 'fgetws'), ('fputws_unlocked', 'fputws'),
+        ('getwchar_unlocked', 'getwchar'), ('putwchar_unlocked', 'putwchar'),
+    )),
+    ('owned_stdio_extensions', 'libc/src/c_abi/x86_64/owned_stdio_extensions.rs', (
+        ('fpurge', '__fpurge'), ('fflush_unlocked', 'fflush'), ('fileno_unlocked', 'fileno'),
+        ('fgets_unlocked', 'fgets'), ('fputs_unlocked', 'fputs'),
+        ('clearerr_unlocked', 'clearerr'), ('feof_unlocked', 'feof'),
+        ('ferror_unlocked', 'ferror'), ('_IO_feof_unlocked', 'feof'),
+        ('_IO_ferror_unlocked', 'ferror'), ('_IO_getc', 'getc'), ('_IO_putc', 'putc'),
+        ('_IO_getc_unlocked', 'getc_unlocked'), ('_IO_putc_unlocked', 'putc_unlocked'),
+    )),
+    ('stdio_format_scan', 'libc/src/c_abi/x86_64/stdio_format_scan.rs', (
+        ('__isoc99_sscanf', 'sscanf'), ('__isoc99_vsscanf', 'vsscanf'),
+        ('__isoc99_scanf', 'scanf'), ('__isoc99_vscanf', 'vscanf'),
+        ('__isoc99_fscanf', 'fscanf'), ('__isoc99_vfscanf', 'vfscanf'),
+    )),
+    ('owned_wide_format', 'libc/src/c_abi/x86_64/owned_wide_format.rs', (
+        ('__isoc99_fwscanf', 'fwscanf'), ('__isoc99_vfwscanf', 'vfwscanf'),
+        ('__isoc99_wscanf', 'wscanf'), ('__isoc99_vwscanf', 'vwscanf'),
+        ('__isoc99_swscanf', 'swscanf'), ('__isoc99_vswscanf', 'vswscanf'),
+    )),
+)
+ALIASES = {alias: target for _owner, _source, pairs in ALIAS_GROUPS for alias, target in pairs}
+if len(ALIASES) != sum(len(pairs) for _owner, _source, pairs in ALIAS_GROUPS):
+    raise RuntimeError('FILE alias source groups duplicate a spelling')
+OWNER_GROUPS = {owner: {'source': source, 'aliases': [alias for alias, _target in pairs]}
+                for owner, source, pairs in ALIAS_GROUPS}
 HIDDEN = ('__fdopen','__fseeko','__ftello')
 PROTECTED = ('__uflow','__overflow')
 EXTRA_TOOLS = {'ar':'/usr/bin/ar','oracle_cc':'/usr/bin/gcc','oracle_as':'/usr/bin/as','oracle_ld':'/usr/bin/ld'}
@@ -72,6 +106,8 @@ PROBES = {'contract':'owned_stdio_alias_contract_probe.c', 'override':'owned_std
 RUNTIME_SOURCES = ('libc/src/c_abi/x86_64/owned_static_stdio.rs',
                    'libc/src/c_abi/x86_64/owned_wide_stdio.rs',
                    'libc/src/c_abi/x86_64/owned_stdio_extensions.rs',
+                   'libc/src/c_abi/x86_64/stdio_format_scan.rs',
+                   'libc/src/c_abi/x86_64/owned_wide_format.rs',
                    'libc/src/c_abi/x86_64/owned_stdio_backends.rs',
                    'libc/src/c_abi/x86_64/static_c_abi.rs', 'libc/Cargo.toml',
                    'include/stdio.h','include/wchar.h')
@@ -155,18 +191,24 @@ def fresh_output(root, output, inputs):
 
 def contract(root):
     value=tomllib.loads((root/'compat/x86_64/owned-stdio-alias-receipt.toml').read_text())
-    require(same(value,{'schema':SCHEMA,'aliases':ALIASES,'hidden':list(HIDDEN),'protected':list(PROTECTED),
+    require(same(value,{'schema':SCHEMA,'aliases':ALIASES,'owner_groups':OWNER_GROUPS,
+                        'hidden':list(HIDDEN),'protected':list(PROTECTED),
                         'family_completion':False,'public_support':False}),'stdio alias source contract differs')
     return value
 
 def source_account(root, revision, work, capture=False):
     require(type(revision) is str and re.fullmatch('[0-9a-f]{40}',revision),'invalid selected revision')
     records={}
-    joined='\n'.join((root/p).read_text() for p in RUNTIME_SOURCES)
-    for alias,target in ALIASES.items():
-        require(f'.set {alias}, {target}' in joined,'named source alias differs: '+alias)
-    for name in HIDDEN:require('.hidden '+name in joined,'source hidden boundary differs')
-    for name in PROTECTED:require('.protected '+name in joined,'source protected boundary differs')
+    group_sources={source:(root/source).read_text() for _owner,source,_pairs in ALIAS_GROUPS}
+    for owner,source,pairs in ALIAS_GROUPS:
+        text=group_sources[source]
+        for alias,target in pairs:
+            require(f'.weak {alias}' in text and f'.set {alias}, {target}' in text,
+                    'named FILE source alias differs: '+owner+'/'+alias)
+    static_source=group_sources['libc/src/c_abi/x86_64/owned_static_stdio.rs']
+    extensions_source=group_sources['libc/src/c_abi/x86_64/owned_stdio_extensions.rs']
+    for name in HIDDEN:require('.hidden '+name in static_source,'source hidden boundary differs')
+    for name in PROTECTED:require('.protected '+name in extensions_source,'source protected boundary differs')
     for path in RUNTIME_SOURCES:
         selected=subprocess.check_output(['git','show',f'{revision}:{path}'],cwd=root)
         # Runtime and header source may be historical. This component requires

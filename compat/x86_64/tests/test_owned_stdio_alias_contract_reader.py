@@ -36,6 +36,36 @@ class OwnedStdioAliasContractReaderTests(unittest.TestCase):
 
 
 class SuppliedStdioReceiptTests(unittest.TestCase):
+    EXTENDED_ALIASES = {
+        '__getdelim': 'getdelim',
+        '_IO_feof_unlocked': 'feof',
+        '_IO_ferror_unlocked': 'ferror',
+        '_IO_getc': 'getc',
+        '_IO_getc_unlocked': 'getc_unlocked',
+        '_IO_putc': 'putc',
+        '_IO_putc_unlocked': 'putc_unlocked',
+        '__isoc99_fscanf': 'fscanf',
+        '__isoc99_fwscanf': 'fwscanf',
+        '__isoc99_scanf': 'scanf',
+        '__isoc99_sscanf': 'sscanf',
+        '__isoc99_swscanf': 'swscanf',
+        '__isoc99_vfscanf': 'vfscanf',
+        '__isoc99_vfwscanf': 'vfwscanf',
+        '__isoc99_vscanf': 'vscanf',
+        '__isoc99_vsscanf': 'vsscanf',
+        '__isoc99_vswscanf': 'vswscanf',
+        '__isoc99_vwscanf': 'vwscanf',
+        '__isoc99_wscanf': 'wscanf',
+        'clearerr_unlocked': 'clearerr',
+        'feof_unlocked': 'feof',
+        'ferror_unlocked': 'ferror',
+        'fflush_unlocked': 'fflush',
+        'fgets_unlocked': 'fgets',
+        'fileno_unlocked': 'fileno',
+        'fpurge': '__fpurge',
+        'fputs_unlocked': 'fputs',
+    }
+
     @classmethod
     def setUpClass(cls):
         # Fresh checkouts have no ignored development state. Each test still
@@ -115,8 +145,25 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
         import owned_stdio_alias_contract_reader as reader
         result=reader.account_aliases(self.fixture())
         self.assertEqual(set(result),{'candidate-static','reference-static','candidate-shared','reference-shared'})
-        self.assertEqual(len(result['candidate-static']['aliases']),15)
+        self.assertEqual(len(result['candidate-static']['aliases']),42)
         self.assertEqual(result['candidate-shared']['aliases']['fdopen']['target_occurrence']['row']['visibility'],'HIDDEN')
+
+    def test_full_file_and_scan_alias_roster_is_partitioned_by_source_owner(self):
+        import owned_stdio_alias_contract_reader as reader
+        self.assertTrue(self.EXTENDED_ALIASES.items() <= reader.ALIASES.items())
+        self.assertEqual(len(reader.ALIASES),42)
+        self.assertEqual(len(set(reader.ALIASES)|set(reader.ALIASES.values())),78)
+        self.assertEqual(reader.contract(reader.ROOT)['owner_groups'],reader.OWNER_GROUPS)
+        groups={name:{alias:target for alias,target in aliases}
+                for name, _source, aliases in reader.ALIAS_GROUPS}
+        self.assertEqual(set(groups),{
+            'owned_static_stdio', 'owned_wide_stdio', 'owned_stdio_extensions',
+            'stdio_format_scan', 'owned_wide_format',
+        })
+        self.assertEqual(groups['owned_static_stdio']['__getdelim'],'getdelim')
+        self.assertEqual(groups['owned_stdio_extensions']['fpurge'],'__fpurge')
+        self.assertEqual(groups['stdio_format_scan']['__isoc99_vsscanf'],'vsscanf')
+        self.assertEqual(groups['owned_wide_format']['__isoc99_vswscanf'],'vswscanf')
 
     def test_duplicate_member_spelling_does_not_merge_alias_domains(self):
         import copy

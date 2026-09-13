@@ -14,6 +14,7 @@
 #include <errno.h>
 #include <locale.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,27 @@
 
 extern wint_t __fgetwc_unlocked(FILE *);
 extern wint_t __fputwc_unlocked(wint_t, FILE *);
+extern ssize_t __getdelim(char **, size_t *, int, FILE *);
+extern int __fpurge(FILE *);
+extern int fpurge(FILE *);
+extern int _IO_feof_unlocked(FILE *);
+extern int _IO_ferror_unlocked(FILE *);
+extern int _IO_getc(FILE *);
+extern int _IO_getc_unlocked(FILE *);
+extern int _IO_putc(int, FILE *);
+extern int _IO_putc_unlocked(int, FILE *);
+extern int __isoc99_fscanf(FILE *, const char *, ...);
+extern int __isoc99_vfscanf(FILE *, const char *, va_list);
+extern int __isoc99_scanf(const char *, ...);
+extern int __isoc99_vscanf(const char *, va_list);
+extern int __isoc99_sscanf(const char *, const char *, ...);
+extern int __isoc99_vsscanf(const char *, const char *, va_list);
+extern int __isoc99_fwscanf(FILE *, const wchar_t *, ...);
+extern int __isoc99_vfwscanf(FILE *, const wchar_t *, va_list);
+extern int __isoc99_wscanf(const wchar_t *, ...);
+extern int __isoc99_vwscanf(const wchar_t *, va_list);
+extern int __isoc99_swscanf(const wchar_t *, const wchar_t *, ...);
+extern int __isoc99_vswscanf(const wchar_t *, const wchar_t *, va_list);
 
 #define CHECK(expression) do { \
     if (!(expression)) { \
@@ -150,6 +172,109 @@ static int check_alias_addresses(void)
     CHECK(SAME_ADDRESS(fputws_unlocked, fputws));
     CHECK(SAME_ADDRESS(getwchar_unlocked, getwchar));
     CHECK(SAME_ADDRESS(putwchar_unlocked, putwchar));
+    CHECK(SAME_ADDRESS(__getdelim, getdelim));
+    CHECK(SAME_ADDRESS(fpurge, __fpurge));
+    CHECK(SAME_ADDRESS(fflush_unlocked, fflush));
+    CHECK(SAME_ADDRESS(fileno_unlocked, fileno));
+    CHECK(SAME_ADDRESS(fgets_unlocked, fgets));
+    CHECK(SAME_ADDRESS(fputs_unlocked, fputs));
+    CHECK(SAME_ADDRESS(clearerr_unlocked, clearerr));
+    CHECK(SAME_ADDRESS(feof_unlocked, feof));
+    CHECK(SAME_ADDRESS(ferror_unlocked, ferror));
+    CHECK(SAME_ADDRESS(_IO_feof_unlocked, feof));
+    CHECK(SAME_ADDRESS(_IO_ferror_unlocked, ferror));
+    CHECK(SAME_ADDRESS(_IO_getc, getc));
+    CHECK(SAME_ADDRESS(_IO_putc, putc));
+    CHECK(SAME_ADDRESS(_IO_getc_unlocked, getc_unlocked));
+    CHECK(SAME_ADDRESS(_IO_putc_unlocked, putc_unlocked));
+    CHECK(SAME_ADDRESS(__isoc99_sscanf, sscanf));
+    CHECK(SAME_ADDRESS(__isoc99_vsscanf, vsscanf));
+    CHECK(SAME_ADDRESS(__isoc99_scanf, scanf));
+    CHECK(SAME_ADDRESS(__isoc99_vscanf, vscanf));
+    CHECK(SAME_ADDRESS(__isoc99_fscanf, fscanf));
+    CHECK(SAME_ADDRESS(__isoc99_vfscanf, vfscanf));
+    CHECK(SAME_ADDRESS(__isoc99_fwscanf, fwscanf));
+    CHECK(SAME_ADDRESS(__isoc99_vfwscanf, vfwscanf));
+    CHECK(SAME_ADDRESS(__isoc99_wscanf, wscanf));
+    CHECK(SAME_ADDRESS(__isoc99_vwscanf, vwscanf));
+    CHECK(SAME_ADDRESS(__isoc99_swscanf, swscanf));
+    CHECK(SAME_ADDRESS(__isoc99_vswscanf, vswscanf));
+    return 0;
+}
+
+static int invoke_isoc99_vsscanf(const char *source, ...)
+{
+    va_list arguments;
+    int result;
+
+    va_start(arguments, source);
+    result = __isoc99_vsscanf(source, "%d", arguments);
+    va_end(arguments);
+    return result;
+}
+
+static int invoke_isoc99_vswscanf(const wchar_t *source, ...)
+{
+    va_list arguments;
+    int result;
+
+    va_start(arguments, source);
+    result = __isoc99_vswscanf(source, L"%d", arguments);
+    va_end(arguments);
+    return result;
+}
+
+static int check_extended_file_aliases(void)
+{
+    char input[] = "xy";
+    char delimiter_input[] = "line\n";
+    char written[16] = {0};
+    char line[8];
+    char *allocated = NULL;
+    size_t capacity = 0;
+    FILE *stream;
+
+    stream = fmemopen(input, sizeof input - 1, "r");
+    CHECK(stream != NULL);
+    CHECK(_IO_getc(stream) == 'x');
+    CHECK(_IO_getc_unlocked(stream) == 'y');
+    CHECK(_IO_getc(stream) == EOF);
+    CHECK(feof_unlocked(stream) != 0 && _IO_feof_unlocked(stream) != 0);
+    CHECK(ferror_unlocked(stream) == 0 && _IO_ferror_unlocked(stream) == 0);
+    clearerr_unlocked(stream);
+    CHECK(feof_unlocked(stream) == 0 && fclose(stream) == 0);
+
+    stream = fmemopen(written, sizeof written, "w+");
+    CHECK(stream != NULL);
+    CHECK(_IO_putc('a', stream) == 'a');
+    CHECK(_IO_putc_unlocked('b', stream) == 'b');
+    CHECK(fputs_unlocked("c", stream) != EOF && fflush_unlocked(stream) == 0);
+    CHECK(fileno_unlocked(stream) == fileno(stream));
+    CHECK(fseek(stream, 0, SEEK_SET) == 0);
+    CHECK(fgets_unlocked(line, sizeof line, stream) == line);
+    CHECK(line[0] == 'a' && line[1] == 'b' && line[2] == 'c' && line[3] == '\0');
+    CHECK(fpurge(stream) == 0 && fclose(stream) == 0);
+
+    stream = fmemopen(delimiter_input, sizeof delimiter_input - 1, "r");
+    CHECK(stream != NULL);
+    CHECK(__getdelim(&allocated, &capacity, '\n', stream) == 5);
+    CHECK(capacity >= 6 && allocated[0] == 'l' && allocated[4] == '\n' && allocated[5] == '\0');
+    free(allocated);
+    CHECK(fclose(stream) == 0);
+    return 0;
+}
+
+static int check_isoc99_scan_aliases(void)
+{
+    int byte_value = 0;
+    int wide_value = 0;
+
+    CHECK(__isoc99_sscanf("17", "%d", &byte_value) == 1 && byte_value == 17);
+    byte_value = 0;
+    CHECK(invoke_isoc99_vsscanf("18", &byte_value) == 1 && byte_value == 18);
+    CHECK(__isoc99_swscanf(L"19", L"%d", &wide_value) == 1 && wide_value == 19);
+    wide_value = 0;
+    CHECK(invoke_isoc99_vswscanf(L"20", &wide_value) == 1 && wide_value == 20);
     return 0;
 }
 
@@ -235,6 +360,8 @@ int main(void)
     CHECK(setlocale(LC_CTYPE, "C.UTF-8") != NULL);
     CHECK(check_alias_addresses() == 0);
     CHECK(check_default_position_aliases() == 0);
+    CHECK(check_extended_file_aliases() == 0);
+    CHECK(check_isoc99_scan_aliases() == 0);
     CHECK(check_read_locking() == 0);
     CHECK(check_write_locking() == 0);
     puts("owned-stdio-alias-contract-ok");
