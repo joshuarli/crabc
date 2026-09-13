@@ -40,6 +40,15 @@ def temporary_directory() -> tempfile.TemporaryDirectory[str]:
 
 
 class HeaderDeclarationInventoryTests(unittest.TestCase):
+    def test_host_replay_fixture_creates_its_own_work_root(self) -> None:
+        """Each retained-input regression must run without an earlier scratch-creating test."""
+        with temporary_directory() as temporary:
+            isolated = Path(temporary) / "isolated-host-replay-root"
+            with patch.object(sys.modules[__name__], "TEST_WORK_ROOT", isolated):
+                output, selection = self._host_replay_fixture()
+            self.assertTrue(output.is_dir())
+            self.assertEqual(selection["candidate_headers"], ["demo.h"])
+
     def test_ast_occurrences_preserve_redeclarations_and_unknown_linkage(self) -> None:
         """A collapsed fact cannot erase the declarations selection must inspect."""
         with temporary_directory() as temporary:
@@ -315,6 +324,7 @@ class HeaderDeclarationInventoryTests(unittest.TestCase):
                 INVENTORY.canonical_checkout_work_root(root=symlinked, ancestors=(symlinked,))
 
     def _host_replay_fixture(self) -> tuple[Path, dict[str, object]]:
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
         output = Path(tempfile.mkdtemp(prefix="host-replay-", dir=TEST_WORK_ROOT))
         staging = output / "staging"
         project = staging / "project"
