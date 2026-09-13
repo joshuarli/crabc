@@ -1,0 +1,43 @@
+{
+  "schema": "crabc.x86_64-native-thread-signal-abi/v1",
+  "frozen_crabc": {
+    "commit": "3e100d45c5a0798c2d3862d5e2eef584c610ccf9",
+    "source": "libc/src/c_abi.rs::tgkill",
+    "signature": "int tgkill(int, int, int)"
+  },
+  "linux_x86_64": {
+    "syscall": "tgkill",
+    "number": 234,
+    "errno_boundary": "kernel errno through c_status"
+  },
+  "musl_oracle": {
+    "release": "1.2.6",
+    "revision": "9fa28ece75d8a2191de7c5bb53bed224c5947417",
+    "public_tgkill_export": false,
+    "adapter": "compat/x86_64/native_thread_signal_oracle_adapter.c"
+  },
+  "candidate_symbol": {
+    "name": "tgkill",
+    "raw_name": "tgkill",
+    "version": null,
+    "version_default": false,
+    "type": "FUNC",
+    "binding": "GLOBAL",
+    "visibility": "DEFAULT"
+  },
+  "header_visibility": {
+    "gnu_cpp17": {
+      "source": "compat/x86_64/native_thread_signal_header_gnu.cc",
+      "defines": ["_GNU_SOURCE"],
+      "reference": "unmangled tgkill"
+    },
+    "strict_cpp17": {
+      "source": "compat/x86_64/native_thread_signal_header_strict.cc",
+      "undefines": ["_GNU_SOURCE", "_BSD_SOURCE", "_DEFAULT_SOURCE", "_ALL_SOURCE"],
+      "required_diagnostic": "undeclared identifier 'tgkill'"
+    }
+  },
+  "family_completion": false,
+  "promotion_ready": false,
+  "public_support": false
+}

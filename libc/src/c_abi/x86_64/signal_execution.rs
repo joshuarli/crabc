@@ -27,8 +27,9 @@
 //! `si_pid`/`si_uid` at 16/20, and `si_value` at 24. Keep that exact
 //! initialization record local: it is not a Rust signal-info API.
 //!
-//! This artifact deliberately excludes `tgkill`, sigaltstack, signalfd,
-//! legacy System-V signal helpers, cancellation points, generic process
+//! This artifact deliberately excludes the separately owned direct `tgkill`
+//! extension in `thread_signal.rs`, sigaltstack, signalfd, legacy System-V
+//! signal helpers, cancellation points, generic process
 //! lifecycle, an allocator, loader/CRT/sysroot integration, and public x86
 //! support. The fixture's raw clone/wait/exit plumbing is containment-only and
 //! must never become a C export.

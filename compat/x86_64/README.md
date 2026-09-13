@@ -125,6 +125,12 @@ structural native owners, project extensions, and unresolved visibility and
 static-object boundaries. Its complete executable manifest and provider proof
 remain required independently of the inventory and ratchet.
 
+[native-thread-signal-abi.md](native-thread-signal-abi.md) records the native
+GNU/BSD `tgkill(int,int,int)` crabc extension, its frozen C source
+origin, separate musl syscall adapter, and installed-product static/dynamic
+proof. It is private component evidence and does not select musl `tgkill`
+equivalence, complete `process.thread-kill`, or promote native x86.
+
 [locale-alias-contract.md](locale-alias-contract.md) records the pinned-musl
 weak public/strong internal locale and time alias mechanism, including the
 installed-product interposition proof. It remains a private component result

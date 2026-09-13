@@ -451,6 +451,8 @@ mod signal_set_isempty;
 mod signal_set_binary;
 #[path = "signal_execution.rs"]
 mod signal_execution;
+#[path = "thread_signal.rs"]
+mod thread_signal;
 #[cfg_attr(feature = "x86-owned-static-runtime", path = "owned_signal_pause.rs")]
 #[cfg_attr(not(feature = "x86-owned-static-runtime"), path = "signal_pause.rs")]
 mod signal_pause;
