@@ -44,3 +44,9 @@ and transcripts below `.work/x86_64`. `owned_errno_storage_lifecycle.py`
 collects and replays the closed receipt. It proves alias section/value identity
 inside each independently linked artifact; musl and candidate addresses are
 not compared across separate link layouts.
+
+Native collection records the container checkout spelling (`/workspace`) as a
+provenance observation. A host replay admits only lexical descendants of that
+recorded root, maps them to the supplied physical checkout, and then verifies
+their identities and current source snapshot. Oracle paths outside the checkout
+are not remapped, and the report must remain in its mapped evidence directory.

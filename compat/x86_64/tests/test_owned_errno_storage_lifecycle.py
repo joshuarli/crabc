@@ -119,6 +119,32 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
         with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "version script"):
             reader.validate_shared_alias_link_policy(missing_link, "missing shared policy")
 
+    def test_replay_rebases_only_authenticated_container_checkout_paths(self) -> None:
+        recorded = {
+            "source": {"root": "/workspace"},
+            "work": "/workspace/.work/x86_64/errno-storage-lifecycle/receipt",
+            "artifact": {"path": "/workspace/.work/x86_64/errno-storage-lifecycle/receipt/raw.txt"},
+            "external": {"path": "/opt/musl-1.2.6/lib/libc.so"},
+            "source_policy": {"path": "libc/src/c_abi/x86_64/owned_errno_private_aliases.list"},
+        }
+        rebased = reader.rebase_report_checkout_paths(recorded, ROOT)
+        self.assertEqual(rebased["source"]["root"], str(ROOT))
+        self.assertEqual(
+            rebased["work"],
+            str(ROOT / ".work/x86_64/errno-storage-lifecycle/receipt"),
+        )
+        self.assertEqual(
+            rebased["artifact"]["path"],
+            str(ROOT / ".work/x86_64/errno-storage-lifecycle/receipt/raw.txt"),
+        )
+        self.assertEqual(rebased["external"]["path"], "/opt/musl-1.2.6/lib/libc.so")
+        self.assertEqual(rebased["source_policy"]["path"], recorded["source_policy"]["path"])
+
+        with self.assertRaisesRegex(reader.ErrnoStorageEvidenceError, "unsafe"):
+            reader.rebase_report_checkout_paths(
+                {"source": {"root": "/workspace"}, "work": "/workspace/../outside"}, ROOT
+            )
+
     def test_independent_link_layouts_do_not_compare_raw_addresses(self) -> None:
         # Alias identity is a relation inside an ELF file.  Pinned-musl and
         # candidate links may legitimately assign unrelated section/value pairs.

@@ -18,7 +18,7 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Mapping
 
 
@@ -240,6 +240,83 @@ def validate_source_snapshot(value: object, root: Path, description: str) -> dic
     if record["status"] != "":
         fail(f"{description} is not clean")
     return record
+
+
+def _recorded_checkout_root(value: object) -> PurePosixPath:
+    """Return the producer's lexical checkout mount without touching that host.
+
+    Native receipts are collected with the checkout mounted at ``/workspace``.
+    A later host replay must not require that mount to exist, but it may only
+    translate paths that were recorded beneath the sealed checkout root.  The
+    original root remains an observation in the retained JSON; this helper
+    validates its spelling before any path is rebased.
+    """
+
+    if not isinstance(value, str) or not value:
+        fail("recorded source root is malformed")
+    path = PurePosixPath(value)
+    if (
+        not path.is_absolute()
+        or str(path) != value
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        fail("recorded source root is unsafe")
+    return path
+
+
+def _rebase_checkout_path(value: str, recorded_root: PurePosixPath, root: Path, description: str) -> str:
+    """Translate one lexical descendant of the recorded checkout mount.
+
+    Relative source-policy names and absolute oracle paths deliberately stay
+    unchanged.  An absolute path with a dot component is rejected instead of
+    being normalized, so a receipt cannot use the mount translation to escape
+    its recorded checkout.
+    """
+
+    path = PurePosixPath(value)
+    if not path.is_absolute():
+        return value
+    if str(path) != value or any(part in {"", ".", ".."} for part in path.parts):
+        fail(f"{description} has an unsafe absolute path")
+    if not path.is_relative_to(recorded_root):
+        return value
+    relative = path.relative_to(recorded_root)
+    return str(root.joinpath(*relative.parts))
+
+
+def rebase_report_checkout_paths(value: object, root: Path) -> dict[str, Any]:
+    """Rebase retained checkout paths to a physical host checkout for replay.
+
+    Only JSON fields which carry filesystem paths are considered.  Every
+    absolute descendant of ``source.root`` is mapped to ``root``; outside
+    oracle/tool paths and relative source-policy paths remain observations.
+    The caller still validates all resulting physical identities and source
+    bytes, so this is path admission rather than a provenance fallback.
+    """
+
+    if not isinstance(value, dict):
+        fail("errno storage report is malformed")
+    source = value.get("source")
+    if not isinstance(source, dict):
+        fail("errno storage report source is malformed")
+    recorded_root = _recorded_checkout_root(source.get("root"))
+    root = physical_directory(root, "source root")
+
+    def visit(item: object, field: str | None = None) -> object:
+        if isinstance(item, dict):
+            return {key: visit(child, key) for key, child in item.items()}
+        if isinstance(item, list):
+            return [visit(child) for child in item]
+        if field in {"path", "root", "work"} and isinstance(item, str):
+            if field in {"root", "work"} and not PurePosixPath(item).is_absolute():
+                fail(f"report {field} path is not absolute")
+            return _rebase_checkout_path(item, recorded_root, root, f"report {field}")
+        return item
+
+    rebased = visit(value)
+    if not isinstance(rebased, dict):  # Kept explicit as this is a public reader boundary.
+        fail("rebased errno storage report is malformed")
+    return rebased
 
 
 def write_json(path: Path, value: object) -> None:
@@ -657,7 +734,8 @@ def collect(root: Path, work: Path, static_product: Path, dynamic_product: Path)
 
 def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     root = physical_directory(root, "source root")
-    report = read_json_object(report_path, "errno storage report")
+    report_path = physical_regular(report_path, "errno storage report")
+    report = rebase_report_checkout_paths(read_json_object(report_path, "errno storage report"), root)
     expected = {
         "schema",
         "target",
@@ -676,6 +754,8 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     if report["schema"] != SCHEMA or report["target"] != TARGET or not isinstance(report["work"], str):
         fail("errno storage report identity drifted")
     work = physical_directory(Path(report["work"]), "report evidence root")
+    if report_path.parent != work:
+        fail("report evidence root differs from the report directory")
     validate_source_snapshot(report["source"], root, "report source snapshot")
     validate_products(report["products"])
     if report["shared_alias_link_policy"] != validate_shared_alias_product_provenance(report["products"]):
