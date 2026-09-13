@@ -74,6 +74,7 @@ RESET_NAME = "__crabc_x86_64_reset_current_tls_v1"
 DLOPEN_MODES = ("pie", "non-pie")
 DLOPEN_DRIVER_MODES = {"pie": "pie", "non-pie": "exec"}
 TIMER_MODES = ("pie", "non-pie")
+SYMBOL_TABLES = (".dynsym", ".symtab")
 EXPECTED_GROWTH = b"runtime TLS: old/new workers, 41 modules, retained addresses, recursive/concurrent constructors\n"
 EXPECTED_DLOPEN = b"nested-dlopen=42\n"
 EXPECTED_TBSS = b"initial-tbss=8192,worker=isolated\n"
@@ -166,6 +167,11 @@ def validate_source_records(root: Path, records: object) -> None:
     require(same(record, expected), "component source bytes changed")
 
 
+def validate_current_source(record: object) -> None:
+    """Reject JSON lookalikes such as integer ``1`` for a source clean flag."""
+    require(same(record, inventory.collector_source_seal()), "runtime registry collector source drifted")
+
+
 def load_contract(root: Path = ROOT) -> dict[str, Any]:
     try:
         record = tomllib.loads(source_file(root, CONTRACT_PATH.relative_to(ROOT).as_posix()).read_text(encoding="utf-8"))
@@ -197,8 +203,8 @@ def validate_contract(contract: object) -> None:
         require(expected_consumers.get(name) == (row["consumer"], row["scenario"]), "runtime registry operation scenario drifted")
     require(seen == RESOLVERS, "runtime registry resolver roster drifted")
     relocation = exact(record["relocation"], {"feature", "kinds", "symbol", "addend"}, "runtime registry relocation")
-    require(relocation == {"feature": FEATURE, "kinds": ["R_X86_64_GLOB_DAT", "R_X86_64_JUMP_SLOT"],
-                           "symbol": "GLOBAL DEFAULT UND NOTYPE", "addend": 0},
+    require(same(relocation, {"feature": FEATURE, "kinds": ["R_X86_64_GLOB_DAT", "R_X86_64_JUMP_SLOT"],
+                              "symbol": "GLOBAL DEFAULT UND NOTYPE", "addend": 0}),
             "runtime registry relocation contract drifted")
     limits = exact(record["limits"], {"public_provider", "runtime_v1_worker_protocol", "crt_structural_leaves",
                                        "family_completion", "promotion_ready"}, "runtime registry limits")
@@ -240,19 +246,22 @@ def source_resolution(root: Path = ROOT) -> dict[str, object]:
     return {"resolvers": dict(sorted(RESOLVERS.items())), "feature": FEATURE}
 
 
-def _symbol_rows(facts: Mapping[str, Any], artifact: str) -> list[Mapping[str, Any]]:
+def _symbol_rows(facts: Mapping[str, Any], artifact: str) -> dict[str, list[Mapping[str, Any]]]:
+    """Keep the named ELF tables distinct through import-placement replay."""
     try:
         tables = facts["facts"][artifact]["symbol_tables"]
     except (KeyError, TypeError) as error:
         raise RuntimeRegistryEvidenceError(f"complete ELF facts omit {artifact} tables") from error
     require(type(tables) is list, f"complete ELF facts {artifact} tables drifted")
-    selected: list[Mapping[str, Any]] = []
+    selected: dict[str, list[Mapping[str, Any]]] = {}
     for table in tables:
-        if not isinstance(table, dict) or table.get("name") not in {".dynsym", ".symtab"}:
+        if not isinstance(table, dict) or table.get("name") not in SYMBOL_TABLES:
             continue
         rows = table.get("rows")
         require(type(rows) is list, f"complete ELF facts {artifact} row table drifted")
-        selected.extend(row for row in rows if isinstance(row, dict) and row.get("name") in RESOLVERS)
+        table_name = table["name"]
+        require(table_name not in selected, f"complete ELF facts {artifact} duplicates {table_name}")
+        selected[table_name] = [row for row in rows if isinstance(row, dict) and row.get("name") in RESOLVERS]
     return selected
 
 
@@ -262,20 +271,26 @@ def import_placement(facts: Mapping[str, Any]) -> dict[str, dict[str, object]]:
     require(type(artifacts) is dict and set(("candidate-shared", "candidate-loader")) <= set(artifacts),
             "complete ELF facts omit candidate shared/loader placements")
     shared_rows = _symbol_rows(facts, "candidate-shared")
+    require(set(shared_rows) == set(SYMBOL_TABLES), "complete ELF facts shared symbol-table roster drifted")
     loader_rows = _symbol_rows(facts, "candidate-loader")
     result: dict[str, dict[str, object]] = {}
     for name in RESOLVERS:
-        selected = [row for row in shared_rows if row.get("name") == name]
-        require(len(selected) == 2, f"shared libc protocol import {name} is not present once in dynsym and symtab")
-        for row in selected:
+        selected = {table: [row for row in shared_rows[table] if row.get("name") == name]
+                    for table in SYMBOL_TABLES}
+        require(all(len(rows) == 1 for rows in selected.values()),
+                f"shared libc protocol import {name} is not present once in each named symbol table")
+        projection: dict[str, dict[str, object]] = {}
+        for table, rows in selected.items():
+            row = rows[0]
             require(row.get("type") == "NOTYPE" and row.get("binding") == "GLOBAL" and row.get("visibility") == "DEFAULT"
                     and row.get("section_index") == "UND" and row.get("version") is None
                     and row.get("version_default") is False and row.get("size_bytes") == 0 and row.get("value") == "0000000000000000",
                     f"shared libc protocol import {name} metadata drifted")
-        require(not any(row.get("name") == name for row in loader_rows),
+            projection[table] = {key: row[key] for key in
+                                 ("type", "binding", "visibility", "section_index", "size_bytes", "value", "version", "version_default")}
+        require(not any(row.get("name") == name for rows in loader_rows.values() for row in rows),
                 f"candidate loader unexpectedly exports or imports protocol name {name}")
-        dynsym = next(row for row in selected if row.get("raw_name") == name and row.get("row_index") is not None)
-        result[name] = {key: dynsym[key] for key in ("type", "binding", "visibility", "section_index", "size_bytes", "value", "version", "version_default")}
+        result[name] = projection
     return result
 
 
@@ -412,6 +427,32 @@ def validate_growth_output(candidate: bytes, oracle: bytes) -> None:
     require(candidate == oracle, "general dlfcn 41-module differential drifted")
 
 
+def _dlfcn_streams(work: Path, output: Path) -> dict[str, dict[str, object]]:
+    """Reopen the runner's named behavior streams, including every oracle pair."""
+    names = (
+        "consumer.stdout", "tbss-candidate.stdout", "tbss-oracle.stdout", "growth.stdout", "oracle.stdout",
+        "scope.stdout", "oracle-scope.stdout", "oracle-failure-ie.stdout", "oracle-failure-unresolved.stdout",
+        *(f"failure-{case}.stdout" for case in ("ie", "unresolved", "array-half", "tls-filesz", "relocation-kind")),
+    )
+    records: dict[str, dict[str, object]] = {}
+    bytes_by_name: dict[str, bytes] = {}
+    for name in names:
+        path = physical_regular(work / name, f"general dlfcn raw {name}")
+        bytes_by_name[name] = path.read_bytes()
+        records[name] = identity(path, logical_path=(work / name).relative_to(output).as_posix())
+    require(bytes_by_name["consumer.stdout"] == EXPECTED_DLOPEN, "general dlfcn nested runtime output drifted")
+    require(bytes_by_name["tbss-candidate.stdout"] == EXPECTED_TBSS, "general dlfcn TBSS output drifted")
+    require(bytes_by_name["tbss-candidate.stdout"] == bytes_by_name["tbss-oracle.stdout"],
+            "general dlfcn TBSS differential drifted")
+    validate_growth_output(bytes_by_name["growth.stdout"], bytes_by_name["oracle.stdout"])
+    for case in ("ie", "unresolved"):
+        require(bytes_by_name[f"failure-{case}.stdout"] == bytes_by_name[f"oracle-failure-{case}.stdout"],
+                f"general dlfcn failure {case} differential drifted")
+    require(bytes_by_name["scope.stdout"] == bytes_by_name["oracle-scope.stdout"],
+            "general dlfcn scope differential drifted")
+    return records
+
+
 def single_driver_mode(modes: set[object]) -> str:
     """Return one receipt mode from the driver's own closed spelling."""
     require(len(modes) == 1 and modes <= set(DLOPEN_DRIVER_MODES.values()),
@@ -427,16 +468,13 @@ def dlfcn_observations(product: Path, output: Path, work: Path) -> dict[str, obj
     output = physical_directory(output, "component evidence output")
     work = physical_directory(work, "general dlfcn work")
     require(work.is_relative_to(output), "general dlfcn work escapes retained component output")
-    output_by_mode: dict[str, object] = {}
     expected = ("libnested_leaf.so", "libnested_mid.so", "consumer", "tbss-consumer", "growth",
                 "libfailure.so", "libfailure-ie.so", "failure", "libscope-first.so", "libscope-second.so", "scope")
     for name in expected:
         physical_regular(work / name, f"general dlfcn {name}")
     for generation in range(41):
         physical_regular(work / f"libgrowth{generation}.so", "general dlfcn growth DSO")
-    require((work / "consumer.stdout").read_bytes() == EXPECTED_DLOPEN, "general dlfcn nested runtime output drifted")
-    require((work / "tbss-candidate.stdout").read_bytes() == EXPECTED_TBSS, "general dlfcn TBSS output drifted")
-    validate_growth_output((work / "growth.stdout").read_bytes(), (work / "oracle.stdout").read_bytes())
+    streams = _dlfcn_streams(work, output)
     dso_links: dict[str, object] = {}
     for stem in (*expected, *(f"libgrowth{generation}.so" for generation in range(41))):
         # The driver chooses `shared` for DSOs; executables are recorded below.
@@ -454,11 +492,6 @@ def dlfcn_observations(product: Path, output: Path, work: Path) -> dict[str, obj
     # and keeps only a bounded artifact path surface).
     entries = {key: _link_record(product, work, output, stem, mode) for key, stem in
                {"consumer": "consumer", "tbss": "tbss-consumer", "growth": "growth", "failure": "failure", "scope": "scope"}.items()}
-    streams = {}
-    for name in ("consumer.stdout", "tbss-candidate.stdout", "tbss-oracle.stdout", "growth.stdout", "oracle.stdout",
-                 "scope.stdout", "oracle-scope.stdout", *(f"failure-{case}.stdout" for case in ("ie", "unresolved", "array-half", "tls-filesz", "relocation-kind"))):
-        path = physical_regular(work / name, f"general dlfcn raw {name}")
-        streams[name] = identity(path, logical_path=(work / name).relative_to(output).as_posix())
     return {"driver_mode": mode, "work": str(work.relative_to(output)), "dso_links": dso_links, "links": entries, "streams": streams,
             "growth_modules": 41, "operations": list(DLFCN_NAMES), "scenario": "runtime-tls-41-modules"}
 
@@ -499,17 +532,33 @@ def make_retained_readable(path: Path) -> None:
             fail(f"retained evidence has unsupported file type: {current}")
 
 
+def fresh_output(output: Path, *, static_preparation: Path, static_product: Path, dynamic_product: Path) -> Path:
+    """Admit a new component root before any read or capture can write beneath an input cohort."""
+    output = Path(output)
+    require(output.name not in {"", ".", ".."}, "component output must name a fresh child directory")
+    parent = physical_directory(output.parent, "component output parent")
+    output = parent / output.name
+    work_root = physical_directory(ROOT / ".work/x86_64", "component work root")
+    require(output.parent.is_relative_to(work_root), "component output parent escapes checkout .work")
+    require(not output.exists() and not output.is_symlink(), "component output must be fresh")
+    cohorts = {
+        "static preparation cohort": physical_directory(Path(static_preparation).parent, "static preparation cohort"),
+        "static product": physical_directory(static_product, "static product"),
+        "dynamic product": physical_directory(dynamic_product, "dynamic product"),
+    }
+    for description, cohort in cohorts.items():
+        require(not output.is_relative_to(cohort), f"component output overlaps supplied {description}")
+    return output
+
+
 def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path, static_product: Path,
             dynamic_product: Path, output: Path) -> dict[str, object]:
     """Run only the existing finite supplied-product workloads and seal their bytes."""
+    output = fresh_output(output, static_preparation=Path(static_preparation), static_product=Path(static_product),
+                          dynamic_product=Path(dynamic_product))
     inputs = validate_supplied_products(root=ROOT, base_inventory=base_inventory, elf_report=elf_report,
                                        static_preparation=static_preparation, static_product=static_product,
                                        dynamic_product=dynamic_product)
-    output = Path(output).absolute()
-    work_root = ROOT / ".work/x86_64"
-    require(output.parent.is_relative_to(work_root) and not output.exists() and not output.is_symlink(),
-            "component output must be a fresh checkout .work child")
-    physical_directory(output.parent, "component output parent")
     output.mkdir(mode=0o700)
     source = inventory.collector_source_seal()
     environment = {**WORKLOAD_ENVIRONMENT, "TMPDIR": str(output), "CRABC_GENERAL_DYNAMIC_ENTRY_MODE": "--dynamic-pie",
@@ -549,10 +598,40 @@ def collect(*, base_inventory: Path, elf_report: Path, static_preparation: Path,
     return report
 
 
+def _retained_capture(work: Path, output: Path, stem: str, description: str) -> tuple[dict[str, dict[str, object]], tuple[bytes, bytes, bytes]]:
+    """Reopen one runner ``run_capture`` triplet and require successful completion."""
+    records: dict[str, dict[str, object]] = {}
+    contents: list[bytes] = []
+    for suffix, path in (("stdout", work / stem), ("stderr", work / f"{stem}.stderr"), ("status", work / f"{stem}.status")):
+        current = physical_regular(path, f"{description} {suffix}")
+        contents.append(current.read_bytes())
+        records[suffix] = identity(current, logical_path=current.relative_to(output).as_posix())
+    require(contents[2] == b"0\n", f"{description} did not succeed")
+    return records, (contents[0], contents[1], contents[2])
+
+
+def validate_timer_oracle_capture(candidate: tuple[bytes, bytes, bytes], oracle: tuple[bytes, bytes, bytes], description: str) -> None:
+    """Preserve the timer runner's exact stdout/stderr/status oracle comparison."""
+    require(candidate == oracle, f"{description} execution differs from oracle")
+
+
+def timer_source_test_observations(work: Path, output: Path) -> dict[str, object]:
+    """Seal the selected Rust source-test executable and all three runner captures."""
+    executable = physical_regular(work / "tls-reset-tests", "timer reset source-test executable")
+    require(stat.S_IMODE(executable.stat().st_mode) & 0o111, "timer reset source-test executable is not executable")
+    captures: dict[str, object] = {"executable": identity(executable, logical_path=executable.relative_to(output).as_posix())}
+    for name, stem in (("build", "tls-reset-build.stdout"), ("timer_reset", "tls-reset-tests.stdout"),
+                       ("import_shape", "tls-import-tests.stdout")):
+        records, _contents = _retained_capture(work, output, stem, f"timer reset source test {name}")
+        captures[name] = records
+    return captures
+
+
 def timer_observations(product: Path, output: Path, work: Path) -> dict[str, object]:
     """Join timer reset raw executions and existing owned-link receipts."""
     product, output, work = physical_directory(product, "dynamic product"), physical_directory(output, "component output"), physical_directory(work, "timer work")
     require(work.is_relative_to(output), "timer work escapes retained component output")
+    source_tests = timer_source_test_observations(work, output)
     app = timer_evidence.validate_timer_application_compile(product, ROOT / "compat/x86_64/owned_posix_timers_probe.c",
                                                             work / "probe.o", work / "probe.compile-audit.json")
     tls = timer_evidence.validate_timer_tls_dso(product, ROOT / "compat/x86_64/owned_posix_timers_tls.c", work / "tls.o",
@@ -561,6 +640,7 @@ def timer_observations(product: Path, output: Path, work: Path) -> dict[str, obj
     links = read_json(work / "link-identities.json", "timer link identities")
     require(links.get("schema") == "crabc.x86_64-owned-posix-timers-link-identities/v1" and isinstance(links.get("links"), dict),
             "timer link identity receipt drifted")
+    oracle, oracle_contents = _retained_capture(work, output, "oracle-dynamic.stdout", "timer dynamic oracle")
     observed: dict[str, object] = {}
     for mode in TIMER_MODES:
         require(mode in links["links"], f"timer link receipt omits dynamic {mode}")
@@ -569,20 +649,12 @@ def timer_observations(product: Path, output: Path, work: Path) -> dict[str, obj
         require(links["links"][mode] == link, f"timer {mode} link identity no longer reconstructs")
         cells = {}
         for entry, stem in (("kernel", f"dynamic-{mode}-ordinary.stdout"), ("direct", f"direct-{mode}-ordinary.stdout")):
-            stdout = physical_regular(work / stem, f"timer {mode}/{entry} stdout")
-            stderr = physical_regular(work / f"{stem}.stderr", f"timer {mode}/{entry} stderr")
-            status = physical_regular(work / f"{stem}.status", f"timer {mode}/{entry} status")
-            oracle = physical_regular(work / "oracle-dynamic.stdout", "timer oracle stdout")
-            require(stdout.read_bytes() == oracle.read_bytes() and status.read_text(encoding="ascii") == "0\n",
-                    f"timer {mode}/{entry} execution differs from oracle or failed")
-            cells[entry] = {"stdout": identity(stdout, logical_path=(work / stem).relative_to(output).as_posix()),
-                            "stderr": identity(stderr, logical_path=(work / f"{stem}.stderr").relative_to(output).as_posix()),
-                            "status": identity(status, logical_path=(work / f"{stem}.status").relative_to(output).as_posix())}
+            capture, contents = _retained_capture(work, output, stem, f"timer {mode}/{entry} execution")
+            validate_timer_oracle_capture(contents, oracle_contents, f"timer {mode}/{entry}")
+            cells[entry] = capture
         observed[mode] = {"link": link, "entries": cells}
-    for stem in ("tls-reset-tests.stdout", "tls-import-tests.stdout"):
-        status = physical_regular(work / f"{stem}.status", f"timer reset {stem} status")
-        require(status.read_text(encoding="ascii") == "0\n", f"timer reset source test {stem} failed")
-    return {"work": str(work.relative_to(output)), "application": app, "tls_dso": tls,
+    return {"work": str(work.relative_to(output)), "source_tests": source_tests, "application": app, "tls_dso": tls,
+            "oracle_dynamic": oracle,
             "modes": observed, "operations": [RESET_NAME], "scenario": "dynamic-pie-and-non-pie-kernel-and-direct"}
 
 
@@ -607,7 +679,7 @@ def validate_report(report_path: Path, *, base_inventory: Path, elf_report: Path
     require(report["schema"] == SCHEMA and report["target"] == TARGET
             and same(report["status"], {"family_completion": False, "promotion_ready": False}),
             "runtime registry report identity or status drifted")
-    require(report["source"] == inventory.collector_source_seal(), "runtime registry collector source drifted")
+    validate_current_source(report["source"])
     validate_source_records(ROOT, report["source_files"])
     inputs = validate_supplied_products(root=ROOT, base_inventory=base_inventory, elf_report=elf_report,
                                        static_preparation=static_preparation, static_product=static_product,

@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 MODULE_PATH = ROOT / "compat/x86_64/loader_runtime_registry_evidence.py"
@@ -87,17 +88,20 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "nonpromotion"):
             EVIDENCE.validate_contract(contract)
 
-    def test_import_placement_requires_exactly_two_undefined_shared_rows_per_name(self):
+    def test_import_placement_requires_one_undefined_row_in_each_named_shared_table(self):
         placement = EVIDENCE.import_placement(self.facts())
         self.assertEqual(set(placement), set(EVIDENCE.RESOLVERS))
-        self.assertTrue(all(row["section_index"] == "UND" for row in placement.values()))
+        self.assertTrue(all(set(row) == set(EVIDENCE.SYMBOL_TABLES) for row in placement.values()))
+        self.assertTrue(all(row[".dynsym"]["section_index"] == "UND" for row in placement.values()))
         malformed = self.facts()
         malformed["facts"]["candidate-shared"]["symbol_tables"][0]["rows"][0]["visibility"] = "HIDDEN"
         with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "metadata"):
             EVIDENCE.import_placement(malformed)
         malformed = self.facts()
-        malformed["facts"]["candidate-shared"]["symbol_tables"][1]["rows"].pop()
-        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "once in dynsym and symtab"):
+        dynsym, symtab = malformed["facts"]["candidate-shared"]["symbol_tables"]
+        dynsym["rows"].extend(copy.deepcopy(symtab["rows"]))
+        symtab["rows"].clear()
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "each named symbol table"):
             EVIDENCE.import_placement(malformed)
         malformed = self.facts()
         malformed["facts"]["candidate-loader"]["symbol_tables"][0]["rows"].append(
@@ -105,6 +109,100 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "candidate loader"):
             EVIDENCE.import_placement(malformed)
+
+    def test_dlfcn_stream_projection_reopens_all_runner_oracle_pairs(self):
+        scratch = ROOT / ".work/x86_64/loader-runtime-registry-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            output = Path(temporary)
+            work = output / "work"
+            work.mkdir()
+            streams = {
+                "consumer.stdout": EVIDENCE.EXPECTED_DLOPEN,
+                "tbss-candidate.stdout": EVIDENCE.EXPECTED_TBSS,
+                "tbss-oracle.stdout": EVIDENCE.EXPECTED_TBSS,
+                "growth.stdout": EVIDENCE.EXPECTED_GROWTH,
+                "oracle.stdout": EVIDENCE.EXPECTED_GROWTH,
+                "scope.stdout": b"scope=first\n",
+                "oracle-scope.stdout": b"scope=first\n",
+                "failure-ie.stdout": b"failure=ie\n",
+                "oracle-failure-ie.stdout": b"failure=ie\n",
+                "failure-unresolved.stdout": b"failure=unresolved\n",
+                "oracle-failure-unresolved.stdout": b"failure=unresolved\n",
+                "failure-array-half.stdout": b"failure=array-half\n",
+                "failure-tls-filesz.stdout": b"failure=tls-filesz\n",
+                "failure-relocation-kind.stdout": b"failure=relocation-kind\n",
+            }
+            for name, contents in streams.items():
+                (work / name).write_bytes(contents)
+            observed = EVIDENCE._dlfcn_streams(work, output)
+            self.assertEqual(set(observed), set(streams))
+            for name, altered, message in (
+                ("tbss-oracle.stdout", b"wrong\n", "TBSS differential"),
+                ("oracle-scope.stdout", b"wrong\n", "scope differential"),
+                ("oracle-failure-ie.stdout", b"wrong\n", "failure ie differential"),
+            ):
+                (work / name).write_bytes(altered)
+                with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, message):
+                    EVIDENCE._dlfcn_streams(work, output)
+                (work / name).write_bytes(streams[name])
+            (work / "oracle-failure-unresolved.stdout").unlink()
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "oracle-failure-unresolved"):
+                EVIDENCE._dlfcn_streams(work, output)
+
+    def test_timer_source_test_roster_and_oracle_capture_are_reopened(self):
+        scratch = ROOT / ".work/x86_64/loader-runtime-registry-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            output = Path(temporary)
+            work = output / "work"
+            work.mkdir()
+            executable = work / "tls-reset-tests"
+            executable.write_bytes(b"source-test")
+            executable.chmod(0o755)
+            for stem in ("tls-reset-build.stdout", "tls-reset-tests.stdout", "tls-import-tests.stdout"):
+                (work / stem).write_bytes(b"ok\n")
+                (work / f"{stem}.stderr").write_bytes(b"")
+                (work / f"{stem}.status").write_bytes(b"0\n")
+            source_tests = EVIDENCE.timer_source_test_observations(work, output)
+            self.assertEqual(set(source_tests), {"executable", "build", "timer_reset", "import_shape"})
+            (work / "tls-import-tests.stdout.stderr").unlink()
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "import_shape stderr"):
+                EVIDENCE.timer_source_test_observations(work, output)
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "kernel execution differs"):
+                EVIDENCE.validate_timer_oracle_capture((b"same\n", b"", b"0\n"), (b"same\n", b"different\n", b"0\n"), "kernel")
+
+    def test_source_and_relocation_contract_reject_python_bool_lookalikes(self):
+        source = {"revision": "a" * 40, "content_sha256": "b" * 64, "clean": True}
+        with mock.patch.object(EVIDENCE.inventory, "collector_source_seal", return_value=copy.deepcopy(source)):
+            EVIDENCE.validate_current_source(source)
+            source["clean"] = 1
+            with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "collector source"):
+                EVIDENCE.validate_current_source(source)
+        contract = self.contract()
+        contract["relocation"]["addend"] = False
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "relocation contract"):
+            EVIDENCE.validate_contract(contract)
+
+    def test_collect_rejects_a_fresh_output_inside_a_supplied_product_before_reading_inputs(self):
+        scratch = ROOT / ".work/x86_64/loader-runtime-registry-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=scratch) as temporary:
+            root = Path(temporary)
+            dynamic = root / "dynamic-product"
+            static = root / "static-product"
+            cohort = root / "static-preparation"
+            for directory in (dynamic, static, cohort):
+                directory.mkdir()
+            preparation = cohort / "preparation.json"
+            preparation.write_text("{}\n", encoding="utf-8")
+            output = dynamic / "must-not-exist"
+            with mock.patch.object(EVIDENCE, "validate_supplied_products", side_effect=AssertionError("input reader ran")):
+                with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "overlaps supplied dynamic product"):
+                    EVIDENCE.collect(base_inventory=root / "inventory.json", elf_report=root / "facts.json",
+                                     static_preparation=preparation, static_product=static, dynamic_product=dynamic,
+                                     output=output)
+            self.assertFalse(output.exists())
 
     def test_raw_command_replay_requires_its_authoritative_streams_and_terminal_zero(self):
         scratch = ROOT / ".work/x86_64/loader-runtime-registry-tests"

@@ -12,9 +12,10 @@ to `ldso/src/x86_64_runtime_registry.rs:runtime_function`.  The selected
 `x86_64-owned-dynamic-runtime` relocation gate in
 `ldso/src/x86_64_general_relocation.rs` admits only a zero-addend
 `R_X86_64_GLOB_DAT` or `R_X86_64_JUMP_SLOT` relocation against an undefined,
-global, default-visible `NOTYPE` symbol.  The loader's build provenance and
-the complete ELF facts bind that source decision to the supplied shared
-product and interpreter.
+global, default-visible word value (`NOTYPE` or `FUNC`).  The selected product
+has the observed `NOTYPE` imports, once in each of `.dynsym` and `.symtab`.
+The loader's build provenance and the complete ELF facts bind that source
+decision to the supplied shared product and interpreter.
 
 `loader_runtime_registry_evidence.py collect` takes an already prepared
 static product, materialized dynamic product, static-preparation receipt,
@@ -23,7 +24,10 @@ It captures the existing general-dlfcn workload in both PIE modes, the sealed
 100-cell fork workload, and the supplied-product timer reset workload.  The
 reader records outer command streams, each linked DSO/executable and its owned
 driver receipt, then reopens and rehashes the retained artifacts during
-`validate-report`.  A copied PASS line cannot replace those joins.
+`validate-report`.  It also rechecks the runner's named TBSS, growth,
+scope, and applicable failure oracle pairs, plus the timer oracle's stdout,
+stderr and status triples and its selected Rust source-test executable/build
+captures.  A copied PASS line cannot replace those joins.
 
 The three workload records cover the contract's explicit operation/scenario
 roster: six dlfcn operations through the existing 41-module behavior in both
