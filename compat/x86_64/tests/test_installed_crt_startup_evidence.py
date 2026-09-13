@@ -95,6 +95,9 @@ class InstalledCrtStartupTests(unittest.TestCase):
         tools['chroot']['invocation']={}
         with patch.object(reader.ordinary,'validate_chroot_invocation',return_value='/usr/sbin/chroot'):
             plan=reader.plan(root,work,inputs,tools)
+        for compilation in [x for x in plan if x['label'].endswith('-compile')]:
+            self.assertNotIn('-fPIC',compilation['argv'])
+            self.assertEqual(compilation['argv'][1],'--dynamic-shared-object')
         links=[x for x in plan if x['label'].endswith('-link')]
         for case in reader.cases():
             row=next(x for x in links if x['label']==case['name']+'-link')
