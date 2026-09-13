@@ -74,6 +74,7 @@ COLLECTOR_SOURCES = (
     "compat/x86_64/run_owned_syscall_alias_contract.sh",
     "compat/x86_64/owned_syscall_alias_contract_reader.py",
     "compat/x86_64/owned_syscall_alias_authority.py",
+    "compat/x86_64/owned_static_link_authority.py",
     "compat/x86_64/crabc_cc_static.py",
     "compat/x86_64/owned_posix_product_evidence.py",
     "compat/x86_64/owned-syscall-alias-image-inputs.json",
