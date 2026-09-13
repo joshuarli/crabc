@@ -171,20 +171,72 @@ python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py validate-report 
   --report "$PWD/.work/x86_64/syscall-alias-receipt/current/report.json"
 ```
 
-Collection retains the current runner's fixed 47 parameterized command
-argv/45-second-timeout/status/stdout/stderr envelopes and its two remaining raw
-source/ELF checks. The historical 45-command source-recompiling and historical
-47-command corrected epochs remain separate provenance. It also retains the
-normal and override objects, raw symbol/relocation/dynamic-list streams, full
-static and dynamic product trees, supplied preparation/facts/inventory inputs,
-collector and selected runtime source, and the exact host-replay tool bytes.
-Host `validate-report` only checks retained bytes; it does not invoke an
-ambient compiler, linker, or ELF reader. Its
-projection records the fourteen aliases, twelve alias-target global-hidden
+The current receipt schema is `crabc.x86_64-owned-syscall-alias-contract/v2`.
+Version 1 reports cannot establish this boundary and must be recollected.
+Collection retains the fixed 47 command envelopes, including complete argv,
+45-second timeout argv, stdin bytes, working directory, scrubbed environment,
+status, stdout and stderr. The two native source/ELF checks remain additional
+predicates; they do not change the 47-command roster. The reader replays their
+full checks, including application override exports, same-definition section
+identity, public-call relocation absence, and the exact dynamic-list relocation
+types and interposition scope.
+
+`owned_syscall_alias_authority.py` binds observations to bytes outside the JSON
+claims. Every symbol row (including archive member, table, index, section and
+size) and every RELA row is compared with the retained ELF/archive bytes using
+`loader_debug_abi_evidence.Elf`. The retained installed-driver final-link
+receipts bind the selected LLD, full command, product inputs, probe objects,
+output bytes and link trace. The exact chroot roots contain the selected product
+or musl runtime plus the corresponding linked probes and regular input. Host
+replay does not execute a compiler, linker, ELF reader, Git, or any other command.
+
+The collector and selected product are distinct source epochs. Deduplicated
+loose Git commit/tree/blob objects under `source/git-objects/` authenticate both
+complete source trees, including modes, and independently derive the source
+content digest used by `owned_posix_static_products.source_identity`. Retained
+source leaves must match those trees in bytes, logical placement and mode.
+Collection checks its clean source before and after execution; selected runtime
+leaves must also match the supplied product revision. This allows a repaired
+collector to inspect an older supplied product without calling that product
+current selected evidence.
+
+`owned-syscall-alias-image-inputs.json` is the finite image input authority. It
+records invocation paths, resolved paths, modes, sizes and SHA-256 values for
+the runner tools, product compiler/assembler/linker inputs, and pinned musl
+wrapper/archive/shared/specs. Regenerate it reproducibly from the exact image:
+
+```sh
+docker run --rm --network none -v "$PWD:/workspace" -w /workspace \
+  sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d \
+  python3 -B compat/x86_64/owned_syscall_alias_authority.py \
+  > .work/x86_64/syscall-image-inputs.json
+cmp compat/x86_64/owned-syscall-alias-image-inputs.json \
+  .work/x86_64/syscall-image-inputs.json
+```
+
+Collection compares this manifest with live inputs before and after use and
+retains those inputs. Host replay compares the retained manifest with the
+validator's source-owned manifest and verifies every retained tool against it;
+mutually consistent report hashes are insufficient. The runner inherits only
+`execution_environment` and does not inherit loader, Python, compiler, include,
+or library overrides. The image reference remains an execution prerequisite;
+this local receipt is retained execution evidence, not a signed remote
+attestation or an independent proof of historical process scheduling.
+
+`test_owned_syscall_alias_contract_reader.py` checks each argument of all 47
+commands. Set `CRABC_SYSCALL_ALIAS_TEST_RECEIPT` to a freshly collected v2
+`report.json` to run the isolated real-artifact round trip and adversarial
+receipt mutations, including source/tool resealing, substituted ELF streams,
+forged chroot routes, environments, stdin, link receipts and runtime inputs.
+The test copies each receipt under checkout `.work`; it never changes the
+original control. These tests explicitly report a skip when no native receipt
+has been supplied.
+
+The projection records fourteen aliases, twelve alias-target global-hidden
 bodies plus private `__libc_sigaction` (thirteen global-hidden bodies total),
-and two source-local statfs bodies. This remains a
-component input for later selector discharge, never provider selection, family
-qualification, or support.
+and two source-local statfs bodies. It is derived only after all retained
+observations pass. This remains component evidence, never provider selection,
+family qualification, runtime qualification, promotion or public support.
 
 A later selector may retain this report's path and SHA-256 with an exact
 `selection_projection` match after running `validate-report`. Its only
