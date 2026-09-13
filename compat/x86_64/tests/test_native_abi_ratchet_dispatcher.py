@@ -104,7 +104,7 @@ class NativeAbiRatchetDispatcherTests(unittest.TestCase):
         self.assertEqual(arguments[arguments.index("--static-preparation") + 1], str(self.static_preparation))
         self.assertEqual(arguments[arguments.index("--output") + 1], str(output))
 
-    def test_validate_report_is_host_only_and_has_no_baseline_selector(self) -> None:
+    def test_validate_report_is_host_only_and_has_no_policy_selector(self) -> None:
         result = self.invoke(
             "validate-report", str(self.ratchet_report.relative_to(self.checkout)), *self.input_arguments(),
         )
@@ -114,6 +114,14 @@ class NativeAbiRatchetDispatcherTests(unittest.TestCase):
         self.assertNotIn("--baseline", arguments)
 
         result = self.invoke("check", *self.input_arguments(), "--output", ".work/x86_64/check/other", "--baseline", "weaker.json")
+        self.assertEqual(result.returncode, 2)
+
+        result = self.invoke(
+            "check",
+            *self.input_arguments(),
+            "--output", ".work/x86_64/check/other",
+            "--additions-policy", "weaker.json",
+        )
         self.assertEqual(result.returncode, 2)
 
     def test_output_and_report_must_be_physical_checkout_work_paths(self) -> None:
