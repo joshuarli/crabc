@@ -107,7 +107,7 @@ run_dynamic_mode() {
     local product="$1" mode="$2" candidate="$work/dynamic-$mode" entry root
 
     (cd "$work" && "$product/bin/crabc-cc-dynamic" "--dynamic-$mode" \
-        --link-receipt "dynamic-$mode.crabc-link.json" "$work/workload.o" -o "$candidate")
+        "$work/workload.o" -o "$candidate")
     for entry in kernel direct; do
         root="$work/dynamic-$mode-$entry-root"
         mkdir -p "$root/lib" "$root/usr/lib" "$root/work"
