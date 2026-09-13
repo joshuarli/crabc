@@ -261,15 +261,22 @@ land together; a raw musl comparison still records it as an extra identity.
 The bundled C allocator's upstream API is not an installed crabc API.
 `libc/src/allocator_mimalloc.rs` owns the public allocation wrappers and states
 that backend `mi_*` names are private. The exact 424-name
-`libc/src/c_abi/x86_64/owned_mimalloc_hidden.list` selects non-public shared
-visibility for 172 upstream-header and 252 non-header definitions. The shared
-builder localizes those definitions with an exact version script; it preserves
-the static provider graph, public allocation aliases, interposition, and
-allocator lifecycle. The [visibility component](owned-mimalloc-export-visibility.md)
-requires their absence from dynsym, their LOCAL shared symtab definitions,
-and preserved static providers and surviving public metadata. This placement
-contract supplies the allocator portion of the complete selection manifest;
-it does not select visibility for any other runtime owner.
+`libc/src/c_abi/x86_64/owned_mimalloc_hidden.list` is owned by the fixed-C
+producer account in
+[`owned_mimalloc_producer_metadata.py`](owned_mimalloc_producer_metadata.py).
+That account binds the selected static and dynamic products, their provenance
+files, the dynamic manifest, and every static/shared type, binding, visibility,
+and applicable size/alignment field before the selection reader observes a
+candidate row. Data and TLS symbol alignment is the C source minimum in both
+placements; the producer's static-section over-alignment remains a separate
+measurement. The shared builder still localizes the names with its exact
+version script. The [visibility component](owned-mimalloc-export-visibility.md)
+requires their absence from dynsym, their LOCAL shared symtab definitions, and
+preserved static providers and public allocation metadata. This fixed-C
+attachment supplies metadata only for that exact list. It neither selects an
+unrelated private owner nor proves the seven retained ordinary Rust-root
+imports, allocator semantics, lifecycle, family completion, promotion, or
+public support.
 
 The private feature witnesses have actual evidence consumers. Crypt helper
 names, private musl alias targets, process/runtime seams, compiler helpers,
@@ -284,10 +291,17 @@ The finite `owned-compiler-helper-archive` group reads
 [`builtins/x86_64-helper-contract.toml`](../../builtins/x86_64-helper-contract.toml):
 its exact 23 Rust `extern "C"` definitions are unversioned `FUNC GLOBAL
 DEFAULT` in the distinct `static-builtins` and `dynamic-builtins` archive
-placements. The source contract and aggregate C consumer receipt prove only
-those archive providers. Same-named `candidate-shared` definitions remain an
-explicit unresolved visibility/provider decision, and the separate ordinary
-`__popcountdi2` join requires fresh product evidence.
+placements. When the helper reader has replayed the same selected products,
+the selection attachment also consumes its exact source-bound `shared_libc`
+projection: each of those names is `FUNC LOCAL DEFAULT` in the selected
+`candidate-shared` `.symtab`, with no defining `.dynsym` row. That private
+copy is bound to the source's one `--exclude-libs=libcrabc-builtins.a` policy;
+it is neither inferred from an archive definition nor treated as a public
+export. The component reader keeps its own `shared_placement_selected` flag
+false because it only supplies evidence; this selection join records the
+separate owner decision. The ordinary `__popcountdi2` import still requires
+its exact fresh consumer receipt, and semantic/family/public-support flags
+remain false.
 
 ## Data objects and remaining proof
 

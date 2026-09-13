@@ -63,16 +63,16 @@ static_metadata_rule = "selected-native-oracle-function"
 id = "allocator-shared-local"
 selector = "exact-file-members"
 disposition = "private-provider"
-owner = "bundled-C-allocator-placement"
+owner = "fixed-C-mimalloc-producer"
 family = "libc.c-abi-compat"
 artifacts = ["candidate-static", "candidate-shared"]
-sources = ["libc/src/c_abi/x86_64/owned_mimalloc_hidden.list", "compat/x86_64/owned-mimalloc-export-visibility.md"]
+sources = ["libc/src/c_abi/x86_64/owned_mimalloc_hidden.list", "compat/x86_64/owned_mimalloc_producer_metadata.py", "compat/x86_64/owned_mimalloc_producer_metadata.toml", "compat/x86_64/owned-mimalloc-producer-metadata.md", "compat/x86_64/owned-mimalloc-export-visibility.md"]
 members = []
 members_file = "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
 expected_type = ""
 delegated_members = []
-placement_metadata = {"candidate-shared" = {"binding" = "LOCAL"}}
-reason = "Exact owner list selects LOCAL shared symtab and absence from dynsym while preserving static providers; no allocator metadata analysis or inherited policy for other owners."
+placement_metadata = {}
+reason = "Exact fixed-C mimalloc producer metadata supplies both static and shared placement fields for this 424-name localization list; its source minimum data alignment is distinct from the retained compiler section alignment observation. No other private owner inherits this account."
 static_metadata_rule = "explicit"
 
 [[owner_groups]]

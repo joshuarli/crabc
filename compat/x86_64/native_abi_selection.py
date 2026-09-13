@@ -39,6 +39,7 @@ import loader_debug_abi_evidence as loader_debug_evidence
 import public_data_ordinary_link_evidence as ordinary_link_evidence
 import native_callable_declarations as callable_declarations
 import compiler_helper_evidence as compiler_helpers
+import owned_mimalloc_producer_metadata as producer_metadata
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -66,6 +67,30 @@ PUBLIC_DATA_LINKAGE_LIMITS = [
     'Shared-only _dl_debug_addr remains owned by the loader debugger component.',
     'Linkage evidence is not runtime qualification, family completion, or public support.',
 ]
+FIXED_C_PRODUCER_GROUP = 'allocator-shared-local'
+FIXED_C_PRODUCER_OWNER = 'fixed-C-mimalloc-producer'
+FIXED_C_PRODUCER_ARTIFACTS = ('candidate-static', 'candidate-shared')
+FIXED_C_PRODUCER_SOURCE_FILES = (
+    'libc/src/c_abi/x86_64/owned_mimalloc_hidden.list',
+    'compat/x86_64/owned_mimalloc_producer_metadata.py',
+    'compat/x86_64/owned_mimalloc_producer_metadata.toml',
+    'compat/x86_64/owned-mimalloc-producer-metadata.md',
+    'compat/x86_64/owned-mimalloc-export-visibility.md',
+    'compat/x86_64/tests/test_owned_mimalloc_producer_metadata.py',
+    'compat/x86_64/tests/test_native_abi_producer_metadata.py',
+)
+FIXED_C_PRODUCER_PRODUCT_FILES = {
+    'static_provenance': ('static_product', 'share/crabc/libc-static.provenance.json', inventory.STATIC_PRODUCT_PATH),
+    'shared_provenance': ('dynamic_product', 'share/crabc/libc-shared.provenance.json', inventory.DYNAMIC_PRODUCT_PATH),
+    'shared_manifest': ('dynamic_product', 'share/crabc/manifest.json', inventory.DYNAMIC_PRODUCT_PATH),
+    'dynamic_state': ('dynamic_product', inventory.DYNAMIC_STATE_RELATIVE, inventory.DYNAMIC_PRODUCT_PATH),
+    'static_manifest': ('static_product', 'share/crabc/manifest.json', inventory.STATIC_PRODUCT_PATH),
+    'candidate_static_libc': ('static_product', 'usr/lib/libc.a', inventory.STATIC_PRODUCT_PATH),
+    'candidate_shared_libc': ('dynamic_product', 'usr/lib/libc.so', inventory.DYNAMIC_PRODUCT_PATH),
+}
+COMPILER_HELPER_GROUP = 'owned-compiler-helper-archive'
+COMPILER_HELPER_SHARED_ARTIFACT = 'candidate-shared'
+COMPILER_HELPER_SHARED_METADATA_RULE = 'validated-compiler-helper-shared-local'
 
 
 class SelectionError(ValueError):
@@ -508,6 +533,7 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
         'compat/x86_64/tests/test_native_data_declarations.py', 'compat/x86_64/native-data-declarations.md',
         'compat/x86_64/native_callable_declarations.py', 'compat/x86_64/native_callable_declarations.toml',
         'compat/x86_64/tests/test_native_callable_declarations.py', 'compat/x86_64/native-callable-declarations.md',
+        *FIXED_C_PRODUCER_SOURCE_FILES,
         'libc/Cargo.toml', 'compat/x86_64/native-abi-selection.md',
         'compat/x86_64/compiler_helper_evidence.py',
         'compat/x86_64/tests/test_compiler_helper_evidence.py',
@@ -763,10 +789,21 @@ def account_placements(expanded: Sequence[Mapping[str, Any]], facts: Mapping[str
             if artifact_key in {'candidate-shared', 'candidate-loader'} and public:
                 candidates = [r for r in candidates if r['table'] == '.dynsym' and r['row']['binding'] in {'GLOBAL', 'WEAK', 'UNIQUE'}
                               and r['row']['visibility'] in {'DEFAULT', 'PROTECTED'}]
-            elif record['selection'].get('group') == 'allocator-shared-local' and artifact_key == 'candidate-shared':
+            elif record['selection'].get('group') == FIXED_C_PRODUCER_GROUP and artifact_key == 'candidate-shared':
                 candidates = [r for r in candidates if r['table'] == '.symtab']
                 if any(r['table'] == '.dynsym' and r['row']['section_index'] != 'UND' for r in relevant if r['artifact_key'] == artifact_key):
                     record['unresolved'].append('private allocator owner unexpectedly appears in shared dynsym')
+            elif (record['selection'].get('group') == COMPILER_HELPER_GROUP
+                  and artifact_key == COMPILER_HELPER_SHARED_ARTIFACT
+                  and expected.get('metadata_rule') == COMPILER_HELPER_SHARED_METADATA_RULE):
+                # The owning helper reader has already proved that the exact
+                # private libc copy is local in .symtab and absent from
+                # .dynsym.  Archive GLOBAL definitions are a separate
+                # selected placement and cannot stand in for this copy.
+                candidates = [r for r in candidates if r['table'] == '.symtab']
+                if any(r['table'] == '.dynsym' and r['row']['section_index'] != 'UND'
+                       for r in relevant if r['artifact_key'] == artifact_key):
+                    record['unresolved'].append('private compiler-helper owner unexpectedly appears in shared dynsym')
             else:
                 candidates = [r for r in candidates if r['role'] == 'definition']
             definitions = []
@@ -900,6 +937,354 @@ def replay_measurement(paths: Mapping[str, Path]) -> tuple[dict[str, Any], dict[
                'returncode': completed.returncode, 'stdout': completed.stdout.decode(), 'stderr': completed.stderr.decode(),
                'collector_source': facts['collector_execution_source'], 'candidate_build': facts['base_inventory']['candidate_build']}
     return facts, binding
+
+
+def fixed_c_producer_metadata_selection(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -> dict[str, Any]:
+    """Load the one exact fixed-C metadata projection before ELF placement joins.
+
+    The allocator's shared-localization list is a finite source-owned set.  It
+    is not a spelling prefix or a default rule for another private provider.
+    The owning account supplies source minimum alignment for both symbol
+    placements; its separate static-section observation remains in that
+    account rather than becoming a generic selection alignment rule.
+    """
+    groups = [row for row in contract['owner_groups'] if row['id'] == FIXED_C_PRODUCER_GROUP]
+    require(len(groups) == 1, 'fixed-C producer owner group is absent or duplicated')
+    group = groups[0]
+    require(group['selector'] == 'exact-file-members'
+            and group['disposition'] == 'private-provider'
+            and group['owner'] == FIXED_C_PRODUCER_OWNER
+            and group['family'] == 'libc.c-abi-compat'
+            and tuple(group['artifacts']) == FIXED_C_PRODUCER_ARTIFACTS
+            and group['sources'] == list(FIXED_C_PRODUCER_SOURCE_FILES[:5])
+            and group['members'] == []
+            and group['members_file'] == 'libc/src/c_abi/x86_64/owned_mimalloc_hidden.list'
+            and group['delegated_members'] == []
+            and group['expected_type'] == ''
+            and group['placement_metadata'] == {}
+            and group['static_metadata_rule'] == 'explicit',
+            'fixed-C producer owner scope differs')
+    source_bindings = {}
+    for name in FIXED_C_PRODUCER_SOURCE_FILES:
+        binding = inputs['bindings'].get(name)
+        require(binding is not None and same(binding, file_identity(ROOT / name)),
+                f'fixed-C producer source input differs: {name}')
+        source_bindings[name] = copy.deepcopy(binding)
+    members = group_members(group, inputs)
+    try:
+        owner_contract = producer_metadata.load_contract()
+        owner_members = producer_metadata.contract_members(owner_contract)
+        metadata = producer_metadata.selected_metadata()
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'fixed-C producer metadata contract rejected: {error}') from error
+    require(members == owner_members and len(members) == 424, 'fixed-C producer member roster differs')
+    require(set(metadata) == set(members) and len(metadata) == len(members),
+            'fixed-C producer metadata roster differs')
+    data_layouts = {row['name']: row for row in owner_contract['metadata']['data_objects']}
+    data_layouts[owner_contract['metadata']['tls_object']['name']] = owner_contract['metadata']['tls_object']
+    for name in members:
+        roles = exact(metadata[name], {'static', 'shared'}, f'fixed-C producer metadata {name}')
+        fields = {'type', 'binding', 'visibility'}
+        if name in data_layouts:
+            fields |= {'size_bytes', 'alignment_bytes'}
+        for role in ('static', 'shared'):
+            row = exact(roles[role], fields, f'fixed-C producer {role} metadata {name}')
+            require(row['type'] in {'FUNC', 'OBJECT', 'TLS'}
+                    and row['binding'] in {'GLOBAL', 'WEAK', 'LOCAL'}
+                    and row['visibility'] == 'DEFAULT',
+                    f'fixed-C producer {role} metadata is unsupported: {name}')
+            if name in data_layouts:
+                require(type(row['size_bytes']) is int and row['size_bytes'] > 0
+                        and type(row['alignment_bytes']) is int and row['alignment_bytes'] > 0
+                        and row['alignment_bytes'] & (row['alignment_bytes'] - 1) == 0,
+                        f'fixed-C producer {role} layout is invalid: {name}')
+        if name in data_layouts:
+            required_alignment = data_layouts[name]['source']['source_required_alignment']
+            require(roles['static']['alignment_bytes'] == required_alignment
+                    and roles['shared']['alignment_bytes'] == required_alignment,
+                    f'fixed-C producer source alignment differs: {name}')
+    return {
+        'group': copy.deepcopy(group),
+        'members': list(members),
+        'metadata': copy.deepcopy(metadata),
+        'source_inputs': source_bindings,
+    }
+
+
+def _producer_product_identity(path: Path, logical_path: str, description: str) -> dict[str, Any]:
+    try:
+        return inventory.file_record(path, logical_path=logical_path)
+    except inventory.InventoryError as error:
+        raise SelectionError(f'fixed-C producer {description} is not a physical regular file') from error
+
+
+def _require_logical_identity(observed: Mapping[str, Any], retained: object, logical_path: str, description: str) -> None:
+    retained = exact(retained, {'path', 'sha256', 'size', 'mode'}, description)
+    require(retained['path'] == logical_path, f'{description} logical path differs')
+    require(same(dict(observed), retained), f'{description} physical identity differs')
+
+
+def _require_identity_payload(observed: Mapping[str, Any], retained: object, logical_path: str, description: str) -> None:
+    """Compare a host-path record with a retained canonical-path record."""
+    retained = exact(retained, {'path', 'sha256', 'size', 'mode'}, description)
+    require(retained['path'] == logical_path, f'{description} logical path differs')
+    require(same({key: observed[key] for key in ('sha256', 'size', 'mode')},
+                 {key: retained[key] for key in ('sha256', 'size', 'mode')}),
+            f'{description} physical identity differs')
+
+
+def fixed_c_producer_metadata_adapter(facts: Mapping[str, Any], measurement: Mapping[str, Any],
+                                      paths: Mapping[str, Path], contract: Mapping[str, Any],
+                                      inputs: Mapping[str, Any]) -> dict[str, Any]:
+    """Bind the fixed C account to the product cohort already replayed by ELF facts.
+
+    This deliberately does not invoke either product reader again.  The public
+    ELF replay has already authenticated the base inventory and both products.
+    Here the retained base report, exact manifest payload entries, and
+    before/after physical identities keep the focused C account from accepting
+    a different file after that replay.
+    """
+    selection = fixed_c_producer_metadata_selection(contract, inputs)
+    expected_measurement = {
+        'inputs', 'reports', 'reader', 'python', 'argv', 'cwd', 'environment',
+        'returncode', 'stdout', 'stderr', 'collector_source', 'candidate_build',
+    }
+    measurement = exact(measurement, expected_measurement, 'public ELF replay binding')
+    reports = exact(measurement['reports'], {'elf_report', 'base_inventory', 'static_preparation'},
+                    'public ELF replay report identities')
+    facts_binding = exact(facts.get('base_inventory'), {'report', 'collector_execution_source', 'candidate_build'},
+                          'ELF facts base inventory binding')
+    facts_report = exact(facts_binding['report'], {'original', 'retained'}, 'ELF facts base inventory snapshot')
+    actual_base = file_identity(paths['base_inventory'])
+    actual_elf = file_identity(paths['elf_report'])
+    actual_preparation = _producer_product_identity(
+        paths['static_preparation'], str(inventory.STATIC_PREPARATION_PATH), 'static preparation')
+    before = {'elf_facts': actual_elf, 'base_inventory': actual_base, 'static_preparation': actual_preparation}
+    for name, (path_key, relative, logical_root) in FIXED_C_PRODUCER_PRODUCT_FILES.items():
+        before[name] = _producer_product_identity(
+            paths[path_key] / relative, str(logical_root / relative), name.replace('_', ' '))
+    require(same(actual_elf, reports['elf_report']) and same(actual_base, reports['base_inventory'])
+            and same(file_identity(paths['static_preparation']), reports['static_preparation']),
+            'public ELF replay input changed before fixed-C producer account')
+    _require_identity_payload(actual_base, facts_report['original'], str(elf_facts.BASE_REPORT),
+                              'ELF facts base inventory snapshot')
+    _require_identity_payload(actual_base, facts_report['retained'], 'inputs/base-inventory-report.json',
+                              'retained ELF facts base inventory snapshot')
+    require(same(facts_binding['candidate_build'], measurement['candidate_build']),
+            'ELF facts candidate build differs from public replay')
+    require(same(facts_binding['collector_execution_source'], measurement['collector_source']),
+            'ELF facts collector source differs from public replay')
+
+    base = read_json(paths['base_inventory'])
+    base_inputs = exact(base.get('inputs'), {'pinned_musl', 'static_product', 'dynamic_product'},
+                        'replayed base inventory inputs')
+    static_product = exact(base_inputs['static_product'], {'kind', 'root', 'manifest', 'payload_files', 'selection'},
+                           'replayed static product')
+    dynamic_product = exact(base_inputs['dynamic_product'],
+                            {'kind', 'root', 'manifest', 'payload_files', 'selection', 'materialization_state'},
+                            'replayed dynamic product')
+    require(static_product['kind'] == 'static' and static_product['root'] == str(inventory.STATIC_PRODUCT_PATH),
+            'replayed static product role differs')
+    require(dynamic_product['kind'] == 'dynamic' and dynamic_product['root'] == str(inventory.DYNAMIC_PRODUCT_PATH),
+            'replayed dynamic product role differs')
+    _require_logical_identity(before['static_manifest'], static_product['manifest'],
+                              str(inventory.STATIC_PRODUCT_PATH / 'share/crabc/manifest.json'),
+                              'replayed static manifest')
+    _require_logical_identity(before['shared_manifest'], dynamic_product['manifest'],
+                              str(inventory.DYNAMIC_PRODUCT_PATH / 'share/crabc/manifest.json'),
+                              'replayed dynamic manifest')
+    for product, name in ((static_product, 'static_provenance'), (dynamic_product, 'shared_provenance'),
+                          (dynamic_product, 'dynamic_state')):
+        payloads = product['payload_files']
+        require(type(payloads) is dict and type(payloads.get(FIXED_C_PRODUCER_PRODUCT_FILES[name][1])) is str
+                and payloads[FIXED_C_PRODUCER_PRODUCT_FILES[name][1]] == before[name]['sha256'],
+                f'replayed product payload differs: {name}')
+    static_selection = exact(static_product['selection'], {'libc_archive', 'archive_aliases'},
+                             'replayed static product selection')
+    dynamic_selection = exact(dynamic_product['selection'], {'libc_shared', 'loader', 'loader_alias'},
+                              'replayed dynamic product selection')
+    _require_logical_identity(before['candidate_static_libc'], static_selection['libc_archive'],
+                              str(inventory.STATIC_PRODUCT_PATH / 'usr/lib/libc.a'), 'replayed static libc archive')
+    _require_logical_identity(before['candidate_shared_libc'], dynamic_selection['libc_shared'],
+                              str(inventory.DYNAMIC_PRODUCT_PATH / 'usr/lib/libc.so'), 'replayed dynamic libc')
+    facts_artifacts = exact(facts.get('artifacts'), {item.key for item in elf_facts.ARTIFACTS},
+                            'ELF facts artifact roster')
+    _require_logical_identity(before['candidate_static_libc'],
+                              exact(facts_artifacts['candidate-static'], {'kind', 'elf_type', 'identity', 'binding'},
+                                    'ELF facts static artifact')['identity'],
+                              str(inventory.STATIC_PRODUCT_PATH / 'usr/lib/libc.a'), 'ELF facts static libc')
+    _require_logical_identity(before['candidate_shared_libc'],
+                              exact(facts_artifacts['candidate-shared'], {'kind', 'elf_type', 'identity', 'binding'},
+                                    'ELF facts shared artifact')['identity'],
+                              str(inventory.DYNAMIC_PRODUCT_PATH / 'usr/lib/libc.so'), 'ELF facts shared libc')
+
+    provenance = exact(base.get('product_provenance'),
+                       {'candidate_build', 'static_preparation', 'dynamic_materialization'},
+                       'replayed product provenance')
+    require(same(provenance['candidate_build'], facts_binding['candidate_build']),
+            'replayed product build differs from ELF facts')
+    static_provenance = exact(provenance['static_preparation'],
+                              {'logical_path', 'source', 'product_selector', 'manifest_sha256', 'receipt'},
+                              'replayed static preparation provenance')
+    require(static_provenance['logical_path'] == str(inventory.STATIC_PREPARATION_PATH)
+            and static_provenance['product_selector'] == 'primary'
+            and static_provenance['manifest_sha256'] == static_product['manifest']['sha256'],
+            'replayed static preparation selection differs')
+    static_receipt = exact(static_provenance['receipt'], {'logical_path', 'identity', 'snapshot'},
+                           'replayed static preparation receipt')
+    _require_logical_identity(before['static_preparation'], static_receipt['identity'],
+                              str(inventory.STATIC_PREPARATION_PATH), 'replayed static preparation receipt')
+    dynamic_provenance = exact(provenance['dynamic_materialization'],
+                               {'logical_path', 'identity', 'manifest_sha256', 'state', 'state_file'},
+                               'replayed dynamic materialization provenance')
+    require(dynamic_provenance['logical_path'] == str(inventory.DYNAMIC_PRODUCT_PATH / inventory.DYNAMIC_STATE_RELATIVE)
+            and dynamic_provenance['manifest_sha256'] == dynamic_product['manifest']['sha256'],
+            'replayed dynamic materialization selection differs')
+    dynamic_state = exact(dynamic_provenance['state_file'], {'logical_path', 'identity', 'snapshot'},
+                          'replayed dynamic state receipt')
+    _require_logical_identity(before['dynamic_state'], dynamic_state['identity'],
+                              str(inventory.DYNAMIC_PRODUCT_PATH / inventory.DYNAMIC_STATE_RELATIVE),
+                              'replayed dynamic state receipt')
+    require(same(dynamic_product['materialization_state'], {
+        key: dynamic_provenance[key] for key in ('logical_path', 'identity', 'manifest_sha256', 'state')
+    }), 'replayed dynamic materialization state differs')
+
+    try:
+        account = producer_metadata.account_producer_metadata(
+            facts,
+            read_json(paths['static_product'] / 'share/crabc/libc-static.provenance.json'),
+            read_json(paths['dynamic_product'] / 'share/crabc/libc-shared.provenance.json'),
+            read_json(paths['dynamic_product'] / 'share/crabc/manifest.json'),
+        )
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'fixed-C producer account rejected: {error}') from error
+    require(type(account) is dict and account.get('schema') == producer_metadata.SCHEMA
+            and account.get('status') == 'component-pass-not-qualification',
+            'fixed-C producer account status differs')
+    flags = exact(account.get('status_flags'), {'family_completion', 'promotion_ready', 'public_support'},
+                  'fixed-C producer account flags')
+    require(all(flags[field] is False for field in flags), 'fixed-C producer account changes qualification flags')
+    scope = exact(account.get('scope'), {'member_count', 'metadata_buckets', 'rust_root_c_imports', 'shared_dynsym_private_names'},
+                  'fixed-C producer account scope')
+    require(same(scope, {
+                'member_count': len(selection['members']),
+                'metadata_buckets': {
+                    'strong-functions': 419, 'weak-null-fallback': 1, 'data-objects': 3, 'initial-exec-tls': 1,
+                },
+                'rust_root_c_imports': 7,
+                'shared_dynsym_private_names': 'absent',
+            }),
+            'fixed-C producer account scope differs')
+
+    after = {'elf_facts': file_identity(paths['elf_report']), 'base_inventory': file_identity(paths['base_inventory']),
+             'static_preparation': _producer_product_identity(paths['static_preparation'], str(inventory.STATIC_PREPARATION_PATH),
+                                                               'static preparation')}
+    for name, (path_key, relative, logical_root) in FIXED_C_PRODUCER_PRODUCT_FILES.items():
+        after[name] = _producer_product_identity(paths[path_key] / relative, str(logical_root / relative),
+                                                 name.replace('_', ' '))
+    require(same(before, after), 'fixed-C producer product input changed during account')
+    return {
+        'status': 'component-pass-not-qualification',
+        'selection': {
+            'owner_group': FIXED_C_PRODUCER_GROUP,
+            'owner': FIXED_C_PRODUCER_OWNER,
+            'artifacts': list(FIXED_C_PRODUCER_ARTIFACTS),
+            'member_count': len(selection['members']),
+            'metadata_placement_count': len(selection['members']) * len(FIXED_C_PRODUCER_ARTIFACTS),
+            'data_layout_placement_count': 8,
+        },
+        'source_inputs': selection['source_inputs'],
+        'inputs': {
+            'before': before,
+            'after': after,
+            'public_elf_replay': {
+                'base_inventory': copy.deepcopy(facts_binding['report']),
+                'candidate_build': copy.deepcopy(facts_binding['candidate_build']),
+                'collector_source': copy.deepcopy(facts_binding['collector_execution_source']),
+            },
+        },
+        'selected_metadata': selection['metadata'],
+        'account': account,
+    }
+
+
+def attach_fixed_c_producer_metadata(expanded: Sequence[Mapping[str, Any]], companion: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Apply only the fixed-C account's exact metadata before ELF observation."""
+    companion = exact(companion, {'status', 'selection', 'source_inputs', 'inputs', 'selected_metadata', 'account'},
+                      'fixed-C producer companion')
+    selection = exact(companion['selection'], {
+        'owner_group', 'owner', 'artifacts', 'member_count', 'metadata_placement_count', 'data_layout_placement_count',
+    }, 'fixed-C producer companion selection')
+    require(companion['status'] == 'component-pass-not-qualification'
+            and selection['owner_group'] == FIXED_C_PRODUCER_GROUP
+            and selection['owner'] == FIXED_C_PRODUCER_OWNER
+            and selection['artifacts'] == list(FIXED_C_PRODUCER_ARTIFACTS),
+            'fixed-C producer companion selection differs')
+    metadata = companion['selected_metadata']
+    require(type(metadata) is dict and len(metadata) == selection['member_count'] == 424,
+            'fixed-C producer companion metadata roster differs')
+    records = {}
+    for record in expanded:
+        key = identity_key(record['identity'])
+        require(key not in records, 'expanded identity is duplicated before fixed-C metadata attachment')
+        records[key] = record
+    selected_records = [record for record in records.values()
+                        if record['selection'].get('group') == FIXED_C_PRODUCER_GROUP]
+    selected_names = set()
+    for record in selected_records:
+        key = identity_key(record['identity'])
+        require(key[1:] == (None, False), 'fixed-C producer identity is unexpectedly versioned')
+        selected_names.add(key[0])
+        selection_record = record['selection']
+        require(selection_record.get('disposition') == 'private-provider'
+                and selection_record.get('owner') == FIXED_C_PRODUCER_OWNER,
+                'fixed-C producer identity has another owner')
+    require(selected_names == set(metadata), 'fixed-C producer selection scope differs from exact metadata roster')
+    joins = []
+    for name in sorted(selected_names):
+        record = records[identity_key(identity(name))]
+        placements = {item['artifact_key']: item for item in record['expected_placements']}
+        require(set(placements) == set(FIXED_C_PRODUCER_ARTIFACTS)
+                and len(placements) == len(record['expected_placements']),
+                f'fixed-C producer placement scope differs: {name}')
+        roles = exact(metadata[name], {'static', 'shared'}, f'fixed-C companion metadata {name}')
+        for artifact_key, role in zip(FIXED_C_PRODUCER_ARTIFACTS, ('static', 'shared')):
+            placements[artifact_key]['metadata'] = copy.deepcopy(roles[role])
+            placements[artifact_key]['metadata_rule'] = 'explicit'
+            joins.append({
+                'identity': copy.deepcopy(record['identity']),
+                'artifact_key': artifact_key,
+                'metadata': copy.deepcopy(roles[role]),
+                'owner_group': FIXED_C_PRODUCER_GROUP,
+                'owner': FIXED_C_PRODUCER_OWNER,
+            })
+    require(len(joins) == selection['metadata_placement_count'], 'fixed-C producer placement count differs')
+    return joins
+
+
+def bind_fixed_c_producer_metadata_joins(accounting: Mapping[str, Any], pending: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Retain the physical joins after the generic placement reader observes them."""
+    placement_joins = accounting['placement_joins']
+    index = {}
+    for row in placement_joins:
+        key = (identity_key(row['identity']), row['artifact_key'])
+        require(key not in index, 'duplicate placement join while binding fixed-C producer metadata')
+        index[key] = row
+    result = []
+    for pending_row in pending:
+        key = (identity_key(pending_row['identity']), pending_row['artifact_key'])
+        joined = index.get(key)
+        require(joined is not None and same(joined['expected_metadata'], pending_row['metadata']),
+                'fixed-C producer metadata placement join is absent or differs')
+        require(joined['placement_observed'] is True and not joined['metadata_differences'],
+                'fixed-C producer metadata placement is not exact')
+        result.append({
+            **copy.deepcopy(pending_row),
+            'occurrence_indices': list(joined['occurrence_indices']),
+            'definition_count': joined['definition_count'],
+            'placement_observed': joined['placement_observed'],
+        })
+    return result
 
 
 def account_object_declarations(report: Mapping[str, Any], selected_objects: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -1237,6 +1622,224 @@ def compiler_helper_adapter(report_path: Path | None, *, ordinary_report_path: P
     return {'report': before, 'reader': file_identity(Path(compiler_helpers.__file__)), 'account': account}
 
 
+def _compiler_helper_shared_contract(contract: Mapping[str, Any], inputs: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Authenticate the finite helper source selection before using its DSO view.
+
+    The producer reader owns the archive and private-libc observations.  This
+    adapter only consumes that already validated projection for the exact
+    source-selected group; it cannot use an archive spelling or an arbitrary
+    LOCAL symbol as a new helper provider.
+    """
+    helper_contract = compiler_helpers.load_contract(ROOT)
+    names = list(compiler_helpers.helper_names(helper_contract))
+    groups = [row for row in contract['owner_groups'] if row['id'] == COMPILER_HELPER_GROUP]
+    require(len(groups) == 1, 'compiler-helper owner group is absent or duplicated')
+    group = groups[0]
+    archive_metadata = {key: compiler_helpers.HELPER_METADATA[key]
+                        for key in ('type', 'binding', 'visibility')}
+    require(group['selector'] == 'explicit'
+            and group['disposition'] == 'private-provider'
+            and group['owner'] == 'builtins'
+            and group['family'] == 'crt.static-pie'
+            and group['artifacts'] == list(compiler_helpers.ARCHIVE_PLACEMENTS)
+            and group['sources'] == [helper_contract['source'], helper_contract['builder'], compiler_helpers.CONTRACT.as_posix()]
+            and group['members'] == names
+            and group['members_file'] == ''
+            and group['expected_type'] == 'FUNC'
+            and group['delegated_members'] == []
+            and group['placement_metadata'] == {
+                placement: {'binding': 'GLOBAL', 'visibility': 'DEFAULT'}
+                for placement in compiler_helpers.ARCHIVE_PLACEMENTS
+            }
+            and group['static_metadata_rule'] == 'explicit',
+            'compiler-helper owner scope differs')
+    source_inputs = {}
+    for path in compiler_helpers.SOURCE_FILES:
+        name = path.as_posix()
+        binding = inputs['bindings'].get(name)
+        require(binding is not None and same(binding, file_identity(ROOT / name)),
+                f'compiler-helper source input differs: {name}')
+        source_inputs[name] = copy.deepcopy(binding)
+    shared = exact(helper_contract['shared_libc'], set(compiler_helpers.SHARED_LIBC_METADATA),
+                   'compiler-helper source shared-libc contract')
+    require(same(shared, compiler_helpers.SHARED_LIBC_METADATA),
+            'compiler-helper source shared-libc contract differs')
+    shared_metadata = {key: shared[key] for key in ('type', 'binding', 'visibility')}
+    require(shared_metadata == {'type': 'FUNC', 'binding': 'LOCAL', 'visibility': 'DEFAULT'},
+            'compiler-helper source shared-libc metadata differs')
+    return helper_contract, source_inputs, shared_metadata
+
+
+def _validated_compiler_helper_shared_projection(companion: Mapping[str, Any], helper_contract: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the reader-authenticated local libc rows without selecting them yet."""
+    companion = exact(companion, {'report', 'reader', 'account'}, 'compiler-helper companion')
+    exact(companion['report'], {'path', 'sha256', 'size', 'mode'}, 'compiler-helper aggregate report identity')
+    exact(companion['reader'], {'path', 'sha256', 'size', 'mode'}, 'compiler-helper reader identity')
+    account = exact(companion['account'], {
+        'source', 'archive_placements', 'installed_archive_identities', 'aggregate_c_abi',
+        'shared_libc_projection', 'shared_placement_selected', 'family_completion',
+        'public_support', 'ordinary_popcount_import',
+    }, 'compiler-helper account')
+    require(same(account['source'], compiler_helpers.source_binding(ROOT, helper_contract)),
+            'compiler-helper account source differs from the selecting checkout')
+    require(type(account['aggregate_c_abi']) is dict and account['aggregate_c_abi'].get('status') == 'joined',
+            'compiler-helper aggregate is not joined to both archive roles')
+    require(account['shared_placement_selected'] is False
+            and account['family_completion'] is False and account['public_support'] is False,
+            'compiler-helper account exceeds its producer scope')
+    names = list(compiler_helpers.helper_names(helper_contract))
+    archive_metadata = dict(compiler_helpers.HELPER_METADATA)
+    archive_placements = exact(account['archive_placements'], set(compiler_helpers.ARCHIVE_PLACEMENTS),
+                               'compiler-helper archive placement roster')
+    for placement in compiler_helpers.ARCHIVE_PLACEMENTS:
+        placement_rows = archive_placements[placement]
+        require(type(placement_rows) is dict and set(placement_rows) == set(names),
+                f'compiler-helper {placement} projection roster differs')
+        for name in names:
+            row = exact(placement_rows[name], {'member', 'section', 'metadata'},
+                        f'compiler-helper {placement} projection {name}')
+            require(row['member'] == helper_contract['archive']['member']
+                    and row['section'] == '.text.' + name and same(row['metadata'], archive_metadata),
+                    f'compiler-helper {placement} projection differs: {name}')
+    identities = exact(account['installed_archive_identities'], set(compiler_helpers.ARCHIVE_PLACEMENTS),
+                       'compiler-helper installed archive roster')
+    for placement in compiler_helpers.ARCHIVE_PLACEMENTS:
+        row = exact(identities[placement], {'path', 'sha256', 'size'},
+                    f'compiler-helper installed archive identity {placement}')
+        require(type(row['path']) is str and row['path']
+                and type(row['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', row['sha256']) is not None
+                and type(row['size']) is int and row['size'] > 0,
+                f'compiler-helper installed archive identity differs: {placement}')
+    projection = account['shared_libc_projection']
+    require(type(projection) is dict and set(projection) == set(names),
+            'compiler-helper private libc projection roster differs')
+    metadata = {key: helper_contract['shared_libc'][key] for key in ('type', 'binding', 'visibility')}
+    result = {}
+    for name in names:
+        row = exact(projection[name], {'table', 'row_index', 'section_index', 'section', 'metadata'},
+                    f'compiler-helper private libc projection {name}')
+        require(row['table'] == '.symtab' and type(row['row_index']) is int and row['row_index'] >= 0
+                and type(row['section_index']) is int and row['section_index'] > 0
+                and type(row['section']) is str and row['section']
+                and same(row['metadata'], metadata),
+                f'compiler-helper private libc projection differs: {name}')
+        result[name] = copy.deepcopy(row)
+    return result
+
+
+def attach_compiler_helper_shared_placement(expanded: Sequence[Mapping[str, Any]], companion: Mapping[str, Any] | None,
+                                            contract: Mapping[str, Any], inputs: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Select the exact private shared-libc helper copies from their own reader.
+
+    Archive provider selection stays in the TOML group.  The third placement is
+    attached only after the helper reader has authenticated the selected
+    product's private ``.symtab`` projection and exact archive policy.
+    """
+    if companion is None:
+        return []
+    helper_contract, _source_inputs, shared_metadata = _compiler_helper_shared_contract(contract, inputs)
+    projection = _validated_compiler_helper_shared_projection(companion, helper_contract)
+    records = {}
+    for record in expanded:
+        key = identity_key(record['identity'])
+        require(key not in records, 'expanded identity is duplicated before compiler-helper shared attachment')
+        records[key] = record
+    names = set(projection)
+    selected = []
+    for name in names:
+        record = records.get(identity_key(identity(name)))
+        require(record is not None and identity_key(record['identity']) == (name, None, False),
+                f'compiler-helper identity differs: {name}')
+        selection_record = record['selection']
+        require(selection_record.get('group') == COMPILER_HELPER_GROUP
+                and selection_record.get('disposition') == 'private-provider'
+                and selection_record.get('owner') == 'builtins',
+                f'compiler-helper selected owner differs: {name}')
+        selected.append(record)
+    require({identity_key(record['identity'])[0] for record in selected} == names,
+            'compiler-helper selected owner roster differs')
+    archive_metadata = {key: compiler_helpers.HELPER_METADATA[key]
+                        for key in ('type', 'binding', 'visibility')}
+    pending = []
+    for record in sorted(selected, key=lambda row: identity_key(row['identity'])):
+        name = record['identity']['name']
+        placements = {row['artifact_key']: row for row in record['expected_placements']}
+        require(len(placements) == len(record['expected_placements'])
+                and set(placements) == set(compiler_helpers.ARCHIVE_PLACEMENTS),
+                f'compiler-helper existing placement scope differs: {name}')
+        for placement in compiler_helpers.ARCHIVE_PLACEMENTS:
+            row = placements[placement]
+            require(row.get('metadata_rule') == 'explicit' and same(row.get('metadata'), archive_metadata),
+                    f'compiler-helper archive placement differs: {name}')
+        record['expected_placements'].append({
+            'artifact_key': COMPILER_HELPER_SHARED_ARTIFACT,
+            'metadata': copy.deepcopy(shared_metadata),
+            'metadata_rule': COMPILER_HELPER_SHARED_METADATA_RULE,
+        })
+        pending.append({
+            'identity': copy.deepcopy(record['identity']),
+            'artifact_key': COMPILER_HELPER_SHARED_ARTIFACT,
+            'metadata': copy.deepcopy(shared_metadata),
+            'projection': copy.deepcopy(projection[name]),
+            'owner_group': COMPILER_HELPER_GROUP,
+            'owner': 'builtins',
+        })
+    require(len(pending) == len(names) == 23, 'compiler-helper private shared placement count differs')
+    return pending
+
+
+def bind_compiler_helper_shared_placement_joins(accounting: Mapping[str, Any], pending: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Bind the selected rows back to the producer reader's raw ``.symtab`` view."""
+    if not pending:
+        return []
+    placement_index = {}
+    for row in accounting['placement_joins']:
+        key = (identity_key(row['identity']), row['artifact_key'])
+        require(key not in placement_index, 'duplicate placement join while binding compiler-helper shared rows')
+        placement_index[key] = row
+    occurrences = {row['index']: row for row in accounting['occurrences']}
+    require(len(occurrences) == len(accounting['occurrences']), 'duplicate occurrence while binding compiler-helper shared rows')
+    result = []
+    for pending_row in pending:
+        pending_row = exact(pending_row, {'identity', 'artifact_key', 'metadata', 'projection', 'owner_group', 'owner'},
+                            'compiler-helper pending shared placement')
+        identity_value = pending_row['identity']
+        require(identity_key(identity_value)[1:] == (None, False)
+                and pending_row['artifact_key'] == COMPILER_HELPER_SHARED_ARTIFACT
+                and pending_row['owner_group'] == COMPILER_HELPER_GROUP and pending_row['owner'] == 'builtins',
+                'compiler-helper pending shared identity differs')
+        projection = exact(pending_row['projection'], {'table', 'row_index', 'section_index', 'section', 'metadata'},
+                           'compiler-helper pending shared projection')
+        joined = placement_index.get((identity_key(identity_value), COMPILER_HELPER_SHARED_ARTIFACT))
+        require(joined is not None and same(joined['expected_metadata'], pending_row['metadata'])
+                and joined['placement_observed'] is True and not joined['metadata_differences']
+                and joined['definition_count'] == 1 and len(joined['occurrence_indices']) == 1,
+                'compiler-helper private shared placement is absent, ambiguous or mismatched')
+        occurrence = occurrences.get(joined['occurrence_indices'][0])
+        require(occurrence is not None and occurrence['artifact_key'] == COMPILER_HELPER_SHARED_ARTIFACT
+                and occurrence['table'] == projection['table'] == '.symtab'
+                and occurrence['member_index'] is None and occurrence['member_occurrence'] is None
+                and occurrence['role'] == 'local-definition'
+                and same(row_identity(occurrence['row']), identity_value)
+                and occurrence['row']['row_index'] == projection['row_index']
+                and occurrence['row']['section_index'] == str(projection['section_index'])
+                and type(occurrence['definition_section']) is dict
+                and occurrence['definition_section'].get('name') == projection['section'],
+                'compiler-helper private shared projection does not bind the selected ELF row')
+        leaked = [row for row in accounting['occurrences']
+                  if row['artifact_key'] == COMPILER_HELPER_SHARED_ARTIFACT
+                  and same(row_identity(row['row']), identity_value)
+                  and row['table'] == '.dynsym' and row['row']['section_index'] != 'UND']
+        require(not leaked, 'compiler-helper private shared definition leaked into dynsym')
+        result.append({
+            **copy.deepcopy(pending_row),
+            'occurrence_indices': list(joined['occurrence_indices']),
+            'definition_count': joined['definition_count'],
+            'placement_observed': joined['placement_observed'],
+        })
+    return result
+
+
 def attach_compiler_helper_import(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
     """Discharge only the exact ordinary static import covered by both maps.
 
@@ -1285,6 +1888,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
     facts, measurement = replay_measurement(paths)
+    fixed_c_producer_metadata_companion = fixed_c_producer_metadata_adapter(
+        facts, measurement, paths, contract, inputs,
+    )
     declaration = declaration_adapter(
         declaration_report,
         selected_objects=contract['object_contracts'],
@@ -1301,7 +1907,19 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         compiler_helper_aggregate_report, ordinary_report_path=ordinary_link_report, paths=paths,
     )
     expanded = expand_obligations(contract, inputs)
+    fixed_c_producer_metadata_pending = attach_fixed_c_producer_metadata(
+        expanded, fixed_c_producer_metadata_companion,
+    )
+    compiler_helper_shared_placement_pending = attach_compiler_helper_shared_placement(
+        expanded, compiler_helper_companion, contract, inputs,
+    )
     accounting = account_placements(expanded, facts)
+    fixed_c_producer_metadata_joins = bind_fixed_c_producer_metadata_joins(
+        accounting, fixed_c_producer_metadata_pending,
+    )
+    compiler_helper_shared_placement_joins = bind_compiler_helper_shared_placement_joins(
+        accounting, compiler_helper_shared_placement_pending,
+    )
     public_data_linkage_joins = attach_public_data_linkage(accounting, public_data_linkage_companion)
     compiler_helper_import_joins = attach_compiler_helper_import(accounting, compiler_helper_companion)
     candidate = measurement['candidate_build']
@@ -1315,9 +1933,12 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     blockers = sorted(blockers, key=lambda item: json.dumps(item, sort_keys=True))
     return {'schema': SCHEMA, 'target': TARGET, 'selection_source': source_before, 'source_inputs': inputs,
             'contract': contract, 'measurement': measurement, 'declaration_companion': declaration,
+            'fixed_c_producer_metadata_companion': fixed_c_producer_metadata_companion,
+            'fixed_c_producer_metadata_joins': fixed_c_producer_metadata_joins,
             'public_data_linkage_companion': public_data_linkage_companion,
             'public_data_linkage_joins': public_data_linkage_joins,
             'compiler_helper_companion': compiler_helper_companion,
+            'compiler_helper_shared_placement_joins': compiler_helper_shared_placement_joins,
             'compiler_helper_import_joins': compiler_helper_import_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
