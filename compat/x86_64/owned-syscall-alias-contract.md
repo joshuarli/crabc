@@ -194,8 +194,19 @@ no interpreter, no `DT_NEEDED`, and no text relocations; a static PIE may have
 `PT_DYNAMIC`. Each traced archive member must exist in the retained selected
 archive. The map joins `_start`, `main` and every public alias to its actual
 CRT/object/archive source, ELF address, size and binding. Mapped function bytes
-must match their input bytes outside explicit x86 relocation fields and the
-bounded GOT/TLS instruction relaxations emitted by the pinned linkers. Thus
+must match their fully relocated selected input bytes. The finite reader admits
+only the observed `PC32`, `PLT32`, `GOTPCREL`, `GOTTPOFF`, and
+`REX_GOTPCRELX` forms; every displacement is checked. Direct references resolve
+selected definitions/section placements; merged constants resolve their exact
+selected bytes in the read-only constant pool. GOT references must address a
+slot containing the selected target, using its `RELATIVE` addend for static PIE.
+Distinct GOT slots for symbol aliases are equivalent only when both resolve to
+that exact target. TLS input sizes, order and alignment must reproduce
+`PT_TLS`; that geometry determines the relaxed thread-pointer offset.
+The reader derives the complete TLS load-to-immediate and local GOT load-to-LEA
+instructions, including opcode, register and displacement, following the
+[LLD x86-64 relocation rules](https://github.com/llvm/llvm-project/blob/llvmorg-22.1.0/lld/ELF/Arch/X86_64.cpp).
+It never copies an unchecked output relocation field into expected bytes. Thus
 substituting an oracle or dynamic output and resealing its receipt hash cannot
 stand in for an owned static link.
 
@@ -248,7 +259,10 @@ forged chroot routes, environments, stdin, link receipts, runtime inputs,
 coordinated probe/copy mode changes, and a self-consistent invented Git commit.
 The static endpoint regressions cover all four provider substitutions, output
 hash resealing, changed probe inputs, invented archive members, forged linker
-identity, and modified function code with a resealed output hash.
+identity, and modified function code with a resealed output hash. Relocation
+regressions cover every admitted form across all four static endpoints, both
+instruction relaxations, the selected GOT target and TLS geometry. They retain
+the review's exact call/TLS displacement mutations as separate regressions.
 The test copies each receipt under checkout `.work`; it never changes the
 original control. These tests explicitly report a skip when no native receipt
 has been supplied.
