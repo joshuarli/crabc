@@ -140,8 +140,10 @@ runtime provenance. The current receipt requires no installed descriptor
 import and contains neither the selected shared-libc consumer import nor the
 loader definition, so the selector preserves every descriptor requirement and
 protocol join as open. A weak undefined row in the dynamic CRT attachment
-object remains an unproved occurrence; it is not recast as a shared-libc
-consumer import. The owner records its supplied preparation,
+object remains one exact unproved occurrence: its `.symtab` row is unversioned
+`WEAK DEFAULT NOTYPE UND`, has value and size zero, and belongs only to
+`dynamic-crabc-dynamic-attach.o`. It is not recast as a shared-libc consumer
+import. The owner records its supplied preparation,
 public reports, product roots, manifests, and dynamic state as exact
 checkout-relative path/hash/size identities; the selector joins each to the
 same supplied path and content, then retains its mode-bearing product cohort

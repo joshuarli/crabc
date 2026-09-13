@@ -441,6 +441,22 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             },
             'unresolved': descriptor_requirements,
         })
+        descriptor_index = len(occurrences)
+        descriptor_row = {
+            'name': descriptor_name, 'version': None, 'version_default': False, 'row_index': 9,
+            **self._runtime_row(), 'binding': 'WEAK',
+        }
+        occurrences.append({
+            'index': descriptor_index, 'artifact_key': 'dynamic-crabc-dynamic-attach.o',
+            'member_name': None, 'member_index': None, 'member_occurrence': None,
+            'table': '.symtab', 'table_section_index': 16, 'definition_section': None,
+            'role': 'import', 'row': descriptor_row,
+            'accounting': {
+                'disposition': 'private-resolution-operation',
+                'owner': 'loader-libc-tls-descriptor-v1',
+                'scope': 'dynamic-crabc-dynamic-attach.o',
+            },
+        })
         protocol_joins.extend([
             {
                 'identity': descriptor_identity, 'artifact_key': 'candidate-loader',
@@ -826,6 +842,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             ))
             stack.enter_context(mock.patch.object(reader, 'ROOT', self._FROZEN_0E_ROOT))
             stack.enter_context(mock.patch.object(reader.inventory, 'ROOT', self._FROZEN_0E_ROOT))
+            stack.enter_context(mock.patch.object(reader.complete_elf, 'ROOT', self._FROZEN_0E_ROOT))
             stack.enter_context(mock.patch.object(
                 reader, 'CONTRACT', self._FROZEN_0E_ROOT / 'compat/x86_64/prepared-worker-tls.toml',
             ))
@@ -838,7 +855,9 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.assertEqual(len(joins), 1)
         self.assertEqual(len(joins[0]['operations']), 3)
         self.assertEqual(len(joins[0]['legacy_replacements']), 7)
-        self.assertEqual(joins[0]['descriptor']['unproved_occurrence_indices'], [30634])
+        descriptor_indices = [row['index'] for row in accounting['occurrences']
+                              if row['row']['name'] == descriptor_name]
+        self.assertEqual(joins[0]['descriptor']['unproved_occurrence_indices'], descriptor_indices)
         self.assertEqual(joins[0]['descriptor']['provider_occurrence_indices'], [])
         self.assertEqual(joins[0]['descriptor']['consumer_occurrence_indices'], [])
         self.assertEqual(joins[0]['descriptor']['requirements_discharged'], [])
@@ -925,7 +944,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         self.assertEqual(len(joins[0]['operations']), 3)
         self.assertEqual(len(joins[0]['legacy_replacements']), 7)
         descriptor = joins[0]['descriptor']
-        self.assertEqual(descriptor['unproved_occurrence_indices'], [])
+        self.assertEqual(descriptor['unproved_occurrence_indices'], [6])
         self.assertEqual(descriptor['provider_occurrence_indices'], [])
         self.assertEqual(descriptor['consumer_occurrence_indices'], [])
         self.assertEqual(descriptor['requirements_discharged'], [])
@@ -945,6 +964,46 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             for occurrence in accounting['occurrences']
             if occurrence['row']['name'] in selection.prepared_worker_evidence.OPERATIONS
         ))
+
+    def test_prepared_worker_descriptor_requires_the_one_dynamic_crt_weak_occurrence(self):
+        """Descriptor provenance cannot accept absence or another private artifact."""
+        elf_account = {
+            'operations': {name: {'.dynsym': {}, '.symtab': {}}
+                           for name in selection.prepared_worker_evidence.OPERATIONS},
+            'descriptor_named_elf_observations': [], 'descriptor_installed_import_required': False,
+            'legacy_named_shared_loader_rows': [],
+        }
+        source_account = self._prepared_source_account()
+        relocations = {name: {} for name in selection.prepared_worker_evidence.OPERATIONS}
+        report = self.prepared_worker_report(elf_account, source_account, relocations)
+        accounting = self.prepared_worker_accounting(elf_account)
+        report['inputs_before']['elf'] = copy.deepcopy(elf_account)
+        report['inputs_after']['elf'] = copy.deepcopy(elf_account)
+        with (
+            mock.patch.object(selection.prepared_worker_evidence, 'validate_report', return_value=report),
+            mock.patch.object(selection.prepared_worker_evidence, 'account_elf', return_value=elf_account),
+            mock.patch.object(selection.prepared_worker_evidence, 'account_source', return_value=source_account),
+            mock.patch.object(selection.prepared_worker_evidence, 'Elf'),
+            mock.patch.object(selection.prepared_worker_evidence, 'worker_relocations', return_value=relocations),
+        ):
+            companion = selection.prepared_worker_tls_adapter(
+                self.prepared_worker_report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        for mutation in ('missing', 'substituted-artifact', 'nonzero-value'):
+            with self.subTest(mutation=mutation):
+                malformed = copy.deepcopy(accounting)
+                occurrence = next(row for row in malformed['occurrences']
+                                  if row['row']['name'] == '__crabc_x86_64_loader_tls_runtime_v1')
+                if mutation == 'missing':
+                    malformed['occurrences'].remove(occurrence)
+                elif mutation == 'substituted-artifact':
+                    occurrence['artifact_key'] = 'unrelated-private-object.o'
+                else:
+                    occurrence['row']['value'] = '0000000000000001'
+                with self.assertRaisesRegex(selection.SelectionError,
+                                            'uninstalled descriptor occurrence differs'):
+                    selection.attach_prepared_worker_tls(malformed, companion)
 
     def test_errno_join_binds_three_public_rows_and_one_private_same_definition_alias(self):
         report = self.errno_storage_report()
