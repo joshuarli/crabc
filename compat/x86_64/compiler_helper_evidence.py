@@ -571,7 +571,9 @@ def capture_oracle_compiler(output: Path, *, work: Path, compiler: Path) -> dict
     require(compiler == Path(ORACLE_CC), "compiler-helper pinned musl compiler path differs")
     retained = work / "inputs" / "pinned-musl-compiler"
     require(not retained.exists() and not retained.is_symlink(), "compiler-helper retained oracle compiler already exists")
-    retained.parent.mkdir(mode=0o700)
+    # The collector runs in the pinned container; host replay needs traversal
+    # permission for this immutable retained tool file after the container exits.
+    retained.parent.mkdir(mode=0o755)
     shutil.copyfile(compiler, retained)
     retained.chmod(compiler.stat().st_mode & 0o777)
     record = {"schema": "crabc.x86_64-compiler-helper-oracle-compiler/v1",
