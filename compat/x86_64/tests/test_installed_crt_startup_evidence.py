@@ -1,5 +1,7 @@
 """Exact installed CRT ownership and finite startup receipt regressions."""
 import copy
+import json
+from unittest import mock
 from pathlib import Path
 import sys
 import tempfile
@@ -8,6 +10,31 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import installed_crt_startup_evidence as reader
 
 class InstalledCrtStartupTests(unittest.TestCase):
+    def test_crt_caller_relocations_are_required_per_object(self):
+        # Exact raw rows from pinned b525 product bytes, retained by the e434
+        # startup receipt. Calling artifact_relocations keeps this regression
+        # at the owning public observation boundary, not a new helper alone.
+        rows=json.loads(Path(__file__).with_name('installed_crt_startup_relocations.json').read_text())
+        paths={role:Path(role) for role in rows}
+        def observe(value):
+            with mock.patch.object(reader,'product_paths',return_value=paths), \
+                 mock.patch.object(reader,'relocations',side_effect=lambda path:copy.deepcopy(value[str(path)])):
+                return reader.artifact_relocations(reader.ROOT,Path('.'),{})
+        observe(rows)
+        for role,values in rows.items():
+            if not role.endswith('.o'):
+                continue
+            for index,row in enumerate(values):
+                changes=[('removed',None),('duplicate','duplicate'),('kind',7),('addend',0),
+                         ('binding','LOCAL'),('symbol_type','TLS'),('symbol_section',False)]
+                for field,value in changes:
+                    with self.subTest(role=role,name=row['name'],mutation=field):
+                        changed=copy.deepcopy(rows)
+                        if field=='removed':del changed[role][index]
+                        elif field=='duplicate':changed[role].append(copy.deepcopy(row))
+                        else:changed[role][index][field]=value
+                        with self.assertRaises(reader.StartupEvidenceError):observe(changed)
+
     def test_oracle_crt_capture_survives_actual_readability_cleanup(self):
         parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as directory:

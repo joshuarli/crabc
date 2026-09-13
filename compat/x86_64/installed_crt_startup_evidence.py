@@ -279,6 +279,37 @@ def relocations(path):
                            'visibility':symbol['visibility'],'symbol_section':symbol['section'],'symbol_value':symbol['value']})
     return result
 
+# Pinned owned CRT callers use PLT32 (4) for direct non-PIC calls and
+# GOTPCREL (9) for PIC calls/data references, each with the x86 PC bias -4.
+# The attach object's record callback is a defined hidden function; treating
+# it as another undefined import would erase its actual ownership boundary.
+CRT_CALLER_RELOCATIONS={
+    'static-crt1.o':{BOOTSTRAP:(4,'0','GLOBAL','HIDDEN',False)},
+    'static-rcrt1.o':{BOOTSTRAP:(9,'0','GLOBAL','HIDDEN',False)},
+    'static-Scrt1.o':{HANDOFF:(9,'OBJECT','WEAK','DEFAULT',False)},
+    'dynamic-crt1.o':{HANDOFF:(9,'OBJECT','WEAK','DEFAULT',False),ATTACH:(4,'0','GLOBAL','DEFAULT',False)},
+    'dynamic-Scrt1.o':{HANDOFF:(9,'OBJECT','WEAK','DEFAULT',False),ATTACH:(9,'0','GLOBAL','DEFAULT',False)},
+    'dynamic-crabc-dynamic-attach.o':{RECORD:(9,'FUNC','GLOBAL','HIDDEN',True)},
+}
+
+def require_crt_caller_relocations(result):
+    selected={BOOTSTRAP,HANDOFF,ATTACH,RECORD}
+    for role,relations in CRT_CALLER_RELOCATIONS.items():
+        rows=result.get(role)
+        require(type(rows) is list,'CRT caller relocation object absent: '+role)
+        observed=[row for row in rows if row['name'] in selected]
+        require(len(observed)==len(relations) and {row['name'] for row in observed}==set(relations),
+                'CRT caller relocation roster differs: '+role)
+        for row in observed:
+            kind,symbol_type,binding,visibility,defined=relations[row['name']]
+            expected={'kind':kind,'addend':-4,'symbol_type':symbol_type,'binding':binding,
+                      'visibility':visibility,'symbol_value':0}
+            require(same({key:row.get(key) for key in expected},expected),
+                    'CRT caller relocation metadata differs: '+role+'/'+row['name'])
+            section=row.get('symbol_section')
+            require(type(section) is int and (0<section<0xff00 if defined else section==0),
+                    'CRT caller relocation definition differs: '+role+'/'+row['name'])
+
 def artifact_relocations(root,work,inputs):
     result={}
     paths=product_paths(root,inputs)
@@ -287,6 +318,7 @@ def artifact_relocations(root,work,inputs):
         result[key]=relocations(path)
     shared=[x for x in result['candidate-shared'] if x['name']==CONVENTIONAL]
     require(len(shared)==1,'canonical libc startup relocation count differs');require_handoff_relocation(shared[0],CONVENTIONAL)
+    require_crt_caller_relocations(result)
     return result
 
 def needed_libraries(path):

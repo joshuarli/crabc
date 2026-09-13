@@ -1,0 +1,134 @@
+{
+  "candidate-loader": [],
+  "candidate-shared": [
+    {
+      "addend": 0,
+      "binding": "WEAK",
+      "kind": 6,
+      "name": "__crabc_x86_64_loader_conventional_startup_v1",
+      "offset": 1248032,
+      "row_index": 807,
+      "symbol_section": 0,
+      "symbol_type": "OBJECT",
+      "symbol_value": 0,
+      "table_section_index": 4,
+      "visibility": "DEFAULT"
+    }
+  ],
+  "dynamic-Scrt1.o": [
+    {
+      "addend": -4,
+      "binding": "WEAK",
+      "kind": 9,
+      "name": "__crabc_x86_64_owned_crt_handoff",
+      "offset": 51,
+      "row_index": 6,
+      "symbol_section": 0,
+      "symbol_type": "OBJECT",
+      "symbol_value": 0,
+      "table_section_index": 3,
+      "visibility": "DEFAULT"
+    },
+    {
+      "addend": -4,
+      "binding": "GLOBAL",
+      "kind": 9,
+      "name": "__crabc_x86_loader_tls_runtime_v1_attach",
+      "offset": 185,
+      "row_index": 3,
+      "symbol_section": 0,
+      "symbol_type": "0",
+      "symbol_value": 0,
+      "table_section_index": 14,
+      "visibility": "DEFAULT"
+    }
+  ],
+  "dynamic-crabc-dynamic-attach.o": [
+    {
+      "addend": -4,
+      "binding": "GLOBAL",
+      "kind": 9,
+      "name": "__crabc_x86_loader_tls_runtime_v1_record",
+      "offset": 3,
+      "row_index": 0,
+      "symbol_section": 3,
+      "symbol_type": "FUNC",
+      "symbol_value": 0,
+      "table_section_index": 9,
+      "visibility": "HIDDEN"
+    }
+  ],
+  "dynamic-crt1.o": [
+    {
+      "addend": -4,
+      "binding": "WEAK",
+      "kind": 9,
+      "name": "__crabc_x86_64_owned_crt_handoff",
+      "offset": 51,
+      "row_index": 6,
+      "symbol_section": 0,
+      "symbol_type": "OBJECT",
+      "symbol_value": 0,
+      "table_section_index": 3,
+      "visibility": "DEFAULT"
+    },
+    {
+      "addend": -4,
+      "binding": "GLOBAL",
+      "kind": 4,
+      "name": "__crabc_x86_loader_tls_runtime_v1_attach",
+      "offset": 183,
+      "row_index": 3,
+      "symbol_section": 0,
+      "symbol_type": "0",
+      "symbol_value": 0,
+      "table_section_index": 14,
+      "visibility": "DEFAULT"
+    }
+  ],
+  "static-Scrt1.o": [
+    {
+      "addend": -4,
+      "binding": "WEAK",
+      "kind": 9,
+      "name": "__crabc_x86_64_owned_crt_handoff",
+      "offset": 51,
+      "row_index": 6,
+      "symbol_section": 0,
+      "symbol_type": "OBJECT",
+      "symbol_value": 0,
+      "table_section_index": 3,
+      "visibility": "DEFAULT"
+    }
+  ],
+  "static-crt1.o": [
+    {
+      "addend": -4,
+      "binding": "GLOBAL",
+      "kind": 4,
+      "name": "__crabc_x86_static_tls_bootstrap",
+      "offset": 98,
+      "row_index": 1,
+      "symbol_section": 0,
+      "symbol_type": "0",
+      "symbol_value": 0,
+      "table_section_index": 15,
+      "visibility": "HIDDEN"
+    }
+  ],
+  "static-rcrt1.o": [
+    {
+      "addend": -4,
+      "binding": "GLOBAL",
+      "kind": 9,
+      "name": "__crabc_x86_static_tls_bootstrap",
+      "offset": 99,
+      "row_index": 1,
+      "symbol_section": 0,
+      "symbol_type": "0",
+      "symbol_value": 0,
+      "table_section_index": 15,
+      "visibility": "HIDDEN"
+    }
+  ]
+}

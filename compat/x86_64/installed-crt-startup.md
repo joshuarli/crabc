@@ -52,6 +52,12 @@ The reader retains complete tables, local/hidden/undefined records and archive
 member occurrences. It joins the actual bootstrap and GOT-containing member
 extraction, each CRT import, the shared canonical receiver's relocation,
 main handoff relocation, and final empty/nonempty linker-array ranges.
+`artifact_relocations` also requires the exact caller relations in six owned
+CRT objects: static bootstrap, weak handoff transport, dynamic attachment,
+and the attach object's defined hidden record callback. Each relation retains
+its PLT32 or GOTPCREL kind, PC-relative addend, binding, visibility, and
+defined-versus-undefined symbol status. Missing, duplicate, or changed relations
+fail reconstruction; merely listing a symbol does not prove its caller uses it.
 The six address-returning assembly bridges are distinct from their linker
 boundary names. Function code size is not selected metadata.
 
