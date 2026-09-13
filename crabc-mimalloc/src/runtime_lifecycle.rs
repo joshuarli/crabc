@@ -4280,6 +4280,31 @@ pub struct NativeRuntimeLifecycleAudit {
     pub native_scheduler_transition_count: usize,
 }
 
+/// Scalar-only first-arena policy accounting for one quiescent native runtime
+/// process.
+///
+/// Unlike [`NativeRuntimeLifecycleAudit`], this keeps the valid pre-first-page
+/// state observable: an absent source startup reservation with no selected
+/// sidecar reports zero arena geometry and zero registered page-map entries
+/// instead of returning `None`.  That distinction is needed to compare the
+/// source `disallow_os_alloc` ENOMEM path with a Rust ticket-zero refusal
+/// without granting a mapping, arena, PageMap, or client capability.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NativeRuntimeFirstArenaPolicyAudit {
+    pub process_active: usize,
+    pub startup_regular_reservation_outcome: usize,
+    pub vm_policy_disallow_arena_alloc: usize,
+    pub vm_policy_disallow_os_alloc: usize,
+    pub process_backing_first_arena_begin_count: usize,
+    pub process_backing_vm_reservation_count: usize,
+    pub process_arena_size: usize,
+    pub process_arena_initially_committed: usize,
+    pub page_map_registered_entry_count: usize,
+    pub arena_registry_count: usize,
+}
+
 /// A non-owning fingerprint of one exact live arena-backed regular client.
 ///
 /// This default-off audit exists only for native differential regressions that
@@ -5173,6 +5198,82 @@ pub fn native_runtime_lifecycle_test_audit() -> Option<NativeRuntimeLifecycleAud
             NATIVE_PARKED_COMPATIBILITY_OPERATION_COUNT.load(Ordering::Acquire),
         native_scheduler_transition_count: NATIVE_SCHEDULER_TRANSITION_COUNT
             .load(Ordering::Acquire),
+    })
+}
+
+/// Returns the policy and zero-or-one first-arena state without requiring a
+/// selected live arena.
+///
+/// This default-off audit reads only the process coordinator's immutable ready
+/// witnesses.  In particular, `Absent` reports the source-valid state before
+/// any first-arena mapping, while `Eligible` and a ready sidecar retain their
+/// existing geometry observations.  It does not search, reserve, claim, or
+/// release an arena and exposes no address or reusable capability.
+#[cfg(feature = "native-runtime-test-audit")]
+#[doc(hidden)]
+pub fn native_runtime_first_arena_policy_test_audit() -> Option<NativeRuntimeFirstArenaPolicyAudit> {
+    let process_active = RUNTIME_PROCESS.is_active();
+    if !process_active {
+        return None;
+    }
+    // SAFETY: PROCESS_ACTIVE follows the one process-lifetime owner and main
+    // Heap publication. This diagnostic copies immutable ready witnesses only.
+    let owner = unsafe { RUNTIME_PROCESS.active_owner() }?;
+    let ready = owner.ready().ok()?;
+    let process_page_map = ready.page_map().ok()?;
+    let page_map = process_page_map.page_map().ok()?;
+    let process_backing = ready.process_backing().ok()?;
+    let process = process_backing.process();
+    let policy = process.policy();
+    let startup_regular_reservation_outcome = match ready.startup_reservation_outcomes().ok()?.regular {
+        None => 0,
+        Some(Ok(())) => 1,
+        Some(Err(_)) => 2,
+    };
+    // The historical sidecar is the selected source only after it is ready.
+    // Otherwise a source-start regular parent remains in ProcessArenaBacking,
+    // and an absent parent deliberately retains zero geometry/counts.
+    let (process_arena_size, process_arena_initially_committed, arena_registry_count) =
+        match ProcessSharedArenaStorage::global().ready_lease() {
+            Ok(lease) => {
+                let arena = lease.arena().ok()?;
+                (
+                    arena.size()?,
+                    usize::from(arena.arena().memid.initially_committed()),
+                    lease.test_registry_count().ok()?,
+                )
+            }
+            Err(_) => match process_backing.startup_regular_arena_selection() {
+                crate::process_init::ProcessStartupRegularArenaSelection::Eligible(lease) => {
+                    let arena = lease.arena()?;
+                    (
+                        arena.size()?,
+                        usize::from(arena.arena().memid.initially_committed()),
+                        process.subprocess().arena_backing().registry().count(),
+                    )
+                }
+                crate::process_init::ProcessStartupRegularArenaSelection::Absent => (
+                    0,
+                    0,
+                    process.subprocess().arena_backing().registry().count(),
+                ),
+                crate::process_init::ProcessStartupRegularArenaSelection::ExistingOutsideFirstRegularCapability
+                | crate::process_init::ProcessStartupRegularArenaSelection::Retained => return None,
+            },
+        };
+    let (process_backing_first_arena_begin_count, process_backing_vm_reservation_count) =
+        native_process_backing_first_arena_audit();
+    Some(NativeRuntimeFirstArenaPolicyAudit {
+        process_active: usize::from(process_active),
+        startup_regular_reservation_outcome,
+        vm_policy_disallow_arena_alloc: usize::from(policy.disallow_arena_alloc()),
+        vm_policy_disallow_os_alloc: usize::from(policy.disallow_os_alloc()),
+        process_backing_first_arena_begin_count,
+        process_backing_vm_reservation_count,
+        process_arena_size,
+        process_arena_initially_committed,
+        page_map_registered_entry_count: page_map.test_registered_entry_count().ok()?,
+        arena_registry_count,
     })
 }
 

@@ -114,10 +114,11 @@ pub use test_context::{
 pub mod __crabc_runtime {
     #[cfg(feature = "native-runtime-test-audit")]
     pub use crate::runtime_lifecycle::{
-        NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,
+        NativeRuntimeFirstArenaPolicyAudit, NativeRuntimeForkAdmissionAudit, NativeRuntimeLifecycleAudit,
         NativeRuntimeLiveClientPageAudit, NativeRuntimeLiveClientPageMapSpanAudit,
         NativeRuntimeOwnerExitCollectionRendezvous,
-        native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
+        native_runtime_first_arena_policy_test_audit, native_runtime_fork_admission_test_audit,
+        native_runtime_lifecycle_test_audit,
         native_runtime_live_client_uses_startup_regular_arena_test_audit,
         native_runtime_live_client_page_map_span_test_audit,
         native_runtime_live_client_page_test_audit,

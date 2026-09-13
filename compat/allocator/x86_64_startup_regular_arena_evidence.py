@@ -5,9 +5,11 @@ This focused private lane builds one direct-include mimalloc v3.5.0 C oracle
 and one ordinary-dependency Rust runtime test. It covers the finite
 ``init.c`` startup-regular outcomes used by ticket zero: a published 64-MiB
 reservation, the source's ignored too-small reservation failure, an absent
-option, and the `disallow_arena_alloc` direct-OS fallback. It is not a public
-allocator API, huge-page, physical-NUMA, metadata-destruction, or campaign
-qualification claim.
+option, both `disallow_os_alloc` outcomes around an existing parent, and the
+`disallow_arena_alloc` direct-OS fallback including its disallow-OS refusal.
+It is not a public allocator API,
+huge-page, physical-NUMA, metadata-destruction, or campaign qualification
+claim.
 """
 
 from __future__ import annotations
@@ -79,6 +81,8 @@ C_SOURCE_FILES = (
     "src/prim/unix/prim.c",
 )
 C_TRACE_FIELDS = (
+    "allocation_succeeded",
+    "allocation_errno",
     "registry_after_init",
     "client_is_arena_backed",
     "client_startup_identity",
@@ -88,6 +92,7 @@ C_TRACE_FIELDS = (
     "registry_after_free",
 )
 RUST_TRACE_FIELDS = (
+    "ticket_zero_result",
     "startup_outcome",
     "registry_after_init",
     "client_is_arena_backed",
@@ -99,16 +104,27 @@ RUST_TRACE_FIELDS = (
     "registry_after_free",
     "page_map_entries_after_free",
 )
-SCENARIOS = ("reuse", "failed", "absent", "ineligible")
+SCENARIOS = (
+    "reuse",
+    "reuse-disallow-os",
+    "failed",
+    "absent",
+    "absent-disallow-os",
+    "ineligible",
+    "ineligible-disallow-os",
+)
 STARTUP_BYTES = 64 * 1024 * 1024
 LAZY_BYTES = 128 * 1024 * 1024
+LINUX_ENOMEM = 12
 REPORT_SCOPE = {
-    "boundary": "four child-isolated ticket-zero source-start regular-arena transitions only",
+    "boundary": "seven child-isolated ticket-zero source-start regular-arena transitions only",
     "public_runtime_support": False,
     "claims": [
         "published startup regular arena is searched before a lazy first-arena mapping",
         "too-small ignored startup failure and absent option use the ordinary fresh-arena fallback",
+        "disallow_os_alloc rejects a missing-parent fresh fallback with source ENOMEM while still allowing an eligible startup-parent search",
         "disallow_arena_alloc keeps its published startup parent and uses the existing direct-OS fallback",
+        "combined disallow-arena and disallow-OS options preserve the published parent while refusing that direct-OS fallback with source ENOMEM",
     ],
     "exclusions": [
         "allocator metadata backing or publication ownership",
@@ -138,8 +154,17 @@ CANDIDATE_INPUT_ROOTS = (
     "compat/allocator/tests/test_x86_64_startup_regular_arena_evidence.py",
 )
 
-C_EXPECTED: Mapping[str, Mapping[str, int]] = {
+COMMON_EXPECTED: Mapping[str, Mapping[str, int]] = {
     "reuse": {
+        "registry_after_init": 1,
+        "client_is_arena_backed": 1,
+        "client_startup_identity": 1,
+        "registry_after_allocation": 1,
+        "arena_size_after_allocation": STARTUP_BYTES,
+        "arena_initially_committed": 1,
+        "registry_after_free": 1,
+    },
+    "reuse-disallow-os": {
         "registry_after_init": 1,
         "client_is_arena_backed": 1,
         "client_startup_identity": 1,
@@ -166,6 +191,15 @@ C_EXPECTED: Mapping[str, Mapping[str, int]] = {
         "arena_initially_committed": 1,
         "registry_after_free": 1,
     },
+    "absent-disallow-os": {
+        "registry_after_init": 0,
+        "client_is_arena_backed": 0,
+        "client_startup_identity": 2,
+        "registry_after_allocation": 0,
+        "arena_size_after_allocation": 0,
+        "arena_initially_committed": 0,
+        "registry_after_free": 0,
+    },
     "ineligible": {
         "registry_after_init": 1,
         "client_is_arena_backed": 0,
@@ -175,17 +209,52 @@ C_EXPECTED: Mapping[str, Mapping[str, int]] = {
         "arena_initially_committed": 1,
         "registry_after_free": 1,
     },
+    "ineligible-disallow-os": {
+        "registry_after_init": 1,
+        "client_is_arena_backed": 0,
+        "client_startup_identity": 2,
+        "registry_after_allocation": 1,
+        "arena_size_after_allocation": STARTUP_BYTES,
+        "arena_initially_committed": 1,
+        "registry_after_free": 1,
+    },
+}
+C_EXPECTED: Mapping[str, Mapping[str, int]] = {
+    scenario: {
+        "allocation_succeeded": 0 if scenario in {
+            "absent-disallow-os", "ineligible-disallow-os",
+        } else 1,
+        "allocation_errno": LINUX_ENOMEM if scenario in {
+            "absent-disallow-os", "ineligible-disallow-os",
+        } else 0,
+        **COMMON_EXPECTED[scenario],
+    }
+    for scenario in SCENARIOS
 }
 RUST_EXPECTED: Mapping[str, Mapping[str, int]] = {
     scenario: {
-        "startup_outcome": {"reuse": 1, "failed": 2, "absent": 0, "ineligible": 1}[scenario],
-        **C_EXPECTED[scenario],
-        "sidecar_vm_reservations": 0 if scenario in {"reuse", "ineligible"} else 1,
+        "ticket_zero_result": 0 if scenario in {
+            "absent-disallow-os", "ineligible-disallow-os",
+        } else 1,
+        "startup_outcome": {
+            "reuse": 1,
+            "reuse-disallow-os": 1,
+            "failed": 2,
+            "absent": 0,
+            "absent-disallow-os": 0,
+            "ineligible": 1,
+            "ineligible-disallow-os": 1,
+        }[scenario],
+        **COMMON_EXPECTED[scenario],
+        "sidecar_vm_reservations": 0 if scenario in {
+            "reuse", "reuse-disallow-os", "absent-disallow-os", "ineligible",
+            "ineligible-disallow-os",
+        } else 1,
         "page_map_entries_after_free": 0,
     }
     for scenario in SCENARIOS
 }
-COMMON_FIELDS = C_TRACE_FIELDS
+COMMON_FIELDS = tuple(COMMON_EXPECTED["reuse"])
 TEST_RESULT = re.compile(
     r"test result: (?P<status>ok|FAILED)\. "
     r"(?P<passed>\d+) passed; (?P<failed>\d+) failed; "

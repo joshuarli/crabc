@@ -324,16 +324,30 @@ search, suitability, source reservation, and direct-OS fallback decisions;
 it does not recover an arena from a raw client pointer or create a private
 sidecar simply to consume the startup reservation.
 
-The bounded native `allocator-startup-regular-arena` differential has four
+When that source-start selection is absent,
+`MainStaticRuntimeFirstArenaPageAllocator` applies the same
+`src/arena.c:538-550` ordering before its historical lazy sidecar reserve:
+it first gives an eligible parent the complete source search, then
+`disallow_os_alloc` reopens the pre-first-page state without consuming a
+random image, sidecar mapping, or PageMap entry. The existing source-start
+route keeps the independent `src/arena.c:798-871` direct-OS fallback, whose
+`src/arena.c:579-591` guard returns ENOMEM when arena allocation is disabled
+as well.
+
+The bounded native `allocator-startup-regular-arena` differential has seven
 fresh source images. A successful 64-MiB startup reservation is reused by the
-first 79-byte ticket-zero client without a second lazy OS mapping. An ignored
-1-KiB source reservation failure and an absent option each take the existing
-128-MiB lazy first-arena fallback. With `disallow_arena_alloc=1`, the same
-successful 64-MiB parent remains registered while the client takes the
-ordinary direct-OS fallback. It compares 28 fixed C/Rust scalar values and
-checks the initial registry, client parent relation, allocation result, and
-post-free retained parent. The route intentionally stops at one initial
-regular parent: huge or multi-arena startup images, metadata
+first 79-byte ticket-zero client without a second lazy OS mapping, including
+when `disallow_os_alloc=1`. An ignored 1-KiB source reservation failure and
+an absent option each take the existing 128-MiB lazy first-arena fallback. An
+absent parent plus `disallow_os_alloc=1` returns C ENOMEM and Rust's typed,
+retryable allocation failure without a sidecar. With
+`disallow_arena_alloc=1`, the same successful 64-MiB parent remains
+registered while the client takes the ordinary direct-OS fallback; combining
+that option with `disallow_os_alloc=1` retains the parent and rejects the
+direct OS attempt with ENOMEM. It compares 49 shared C/Rust scalar values and
+independently checks C allocation/errno plus Rust typed result and sidecar
+count. The route intentionally stops at one initial regular parent: huge or
+multi-arena startup images, metadata
 backing/publication, arena destruction, dynamic/later-TLD allocation, general
 multi-arena routing, physical NUMA placement, hardware huge-page success,
 public `mi_*` behavior, and runtime promotion remain outside this bridge.

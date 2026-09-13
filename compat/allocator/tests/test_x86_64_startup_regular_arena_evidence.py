@@ -200,16 +200,32 @@ class ReportTests(unittest.TestCase):
             "scope": copy.deepcopy(EVIDENCE.REPORT_SCOPE),
         }
 
-    def test_complete_receipt_binds_the_four_source_transitions(self) -> None:
+    def test_complete_receipt_binds_the_seven_source_transitions(self) -> None:
         report = self.complete_report()
         EVIDENCE.validate_report(report)
-        self.assertEqual(report["comparison"]["matched_value_count"], 28)
+        self.assertEqual(report["comparison"]["matched_value_count"], 49)
         self.assertEqual(
             report["comparison"]["values"]["reuse.client_startup_identity"],
             1,
         )
         self.assertEqual(
             report["comparison"]["values"]["ineligible.client_is_arena_backed"],
+            0,
+        )
+        self.assertEqual(
+            report["c_oracle"]["traces"]["absent-disallow-os"]["allocation_errno"],
+            EVIDENCE.LINUX_ENOMEM,
+        )
+        self.assertEqual(
+            report["rust"]["trace"]["absent-disallow-os"]["ticket_zero_result"],
+            0,
+        )
+        self.assertEqual(
+            report["c_oracle"]["traces"]["ineligible-disallow-os"]["allocation_errno"],
+            EVIDENCE.LINUX_ENOMEM,
+        )
+        self.assertEqual(
+            report["rust"]["trace"]["ineligible-disallow-os"]["ticket_zero_result"],
             0,
         )
 
