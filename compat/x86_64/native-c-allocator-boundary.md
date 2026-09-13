@@ -50,7 +50,9 @@ The collector runs only two existing installed-product workloads:
   `malloc`/`realloc`/`free` interposition. These candidate links deliberately
   request `-rdynamic`; their sealed linker commands must contain exactly the
   resulting `--export-dynamic` flag. Ordinary candidate links retain the
-  no-export command contract.
+  no-export command contract. Replay derives those false/true expectations
+  from the startup and interposition workload roles, rather than accepting a
+  report-provided flag as policy.
 
 Both runner work directories, their terminal streams, selected executable
 roots, and owned link receipts are sealed before and after replay. The product

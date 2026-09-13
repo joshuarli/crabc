@@ -582,7 +582,8 @@ def _link(work: Path, output: Path, product: Path, workload: Path, executable: s
 
 
 def _replay_link(work: Path, output: Path, product: Path, workload: Path, executable: str,
-                 receipt: str, linkage: str, record: object) -> dict[str, object]:
+                 receipt: str, linkage: str, record: object, *, export_dynamic: bool) -> dict[str, object]:
+    require(type(export_dynamic) is bool, "expected owned export-dynamic contract is not boolean")
     item = exact(record, {"validated", "executable", "receipt", "linker", "export_dynamic"}, "owned link record")
     executable_path, receipt_path = work / executable, work / receipt
     require(same(item["executable"], identity(executable_path, logical_path=executable_path.relative_to(output).as_posix())),
@@ -590,11 +591,12 @@ def _replay_link(work: Path, output: Path, product: Path, workload: Path, execut
     require(same(item["receipt"], identity(receipt_path, logical_path=receipt_path.relative_to(output).as_posix())),
             "owned link receipt identity drifted")
     linker = exact(item["linker"], {"path", "sha256"}, "sealed owned linker")
-    require(type(item["export_dynamic"]) is bool, "sealed owned export-dynamic contract is not boolean")
+    require(type(item["export_dynamic"]) is bool and item["export_dynamic"] is export_dynamic,
+            "sealed owned export-dynamic contract differs from workload role")
     try:
         result = product_evidence.validate_retained_link(
             ROOT, "/workspace", product, workload, executable_path, receipt_path, linkage, linker,
-            export_dynamic=item["export_dynamic"],
+            export_dynamic=export_dynamic,
         )
     except product_evidence.ProductEvidenceError as error:
         raise AllocatorBoundaryError(str(error)) from error
@@ -642,9 +644,11 @@ def _replay_startup_observations(work: Path, output: Path, static_product: Path,
     workload = _startup_workload(work)
     links = exact(record["links"], {*STATIC_MODES, *(f"dynamic-{mode}" for mode in DYNAMIC_MODES)}, "startup link roster")
     for mode in STATIC_MODES:
-        _replay_link(work, output, static_product, workload, f"static-{mode}", f"static-{mode}.crabc-link.json", mode, links[mode])
+        _replay_link(work, output, static_product, workload, f"static-{mode}", f"static-{mode}.crabc-link.json", mode,
+                     links[mode], export_dynamic=False)
     for mode in DYNAMIC_MODES:
-        _replay_link(work, output, dynamic_product, workload, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode, links[f"dynamic-{mode}"])
+        _replay_link(work, output, dynamic_product, workload, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode,
+                     links[f"dynamic-{mode}"], export_dynamic=False)
     return record
 
 
@@ -693,7 +697,7 @@ def _replay_interposition_observations(work: Path, output: Path, dynamic_product
     workload = work / "workload.o"
     for mode in DYNAMIC_MODES:
         _replay_link(work, output, dynamic_product, workload, f"candidate-{mode}",
-                     f"candidate-{mode}.crabc-link.json", mode, links[mode])
+                     f"candidate-{mode}.crabc-link.json", mode, links[mode], export_dynamic=True)
     return record
 
 

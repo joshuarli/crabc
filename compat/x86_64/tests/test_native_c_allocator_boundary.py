@@ -170,10 +170,20 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
                 "receipt": BOUNDARY.identity(work / "candidate-pie.crabc-link.json", logical_path="work/candidate-pie.crabc-link.json"),
             }
             with mock.patch.object(BOUNDARY.product_evidence, "validate_retained_link", return_value=validation) as validate:
-                BOUNDARY._replay_link(work, output, Path("/fixture/product"), work / "workload.o", "candidate-pie", "candidate-pie.crabc-link.json", "pie", link)
+                BOUNDARY._replay_link(
+                    work, output, Path("/fixture/product"), work / "workload.o", "candidate-pie",
+                    "candidate-pie.crabc-link.json", "pie", link, export_dynamic=False,
+                )
             self.assertEqual(validate.call_args.args[:3], (ROOT, "/workspace", Path("/fixture/product")))
             self.assertEqual(validate.call_args.args[-1], link["linker"])
             self.assertEqual(validate.call_args.kwargs, {"export_dynamic": False})
+            changed = deepcopy(link)
+            changed["export_dynamic"] = True
+            with self.assertRaisesRegex(BOUNDARY.AllocatorBoundaryError, "export-dynamic contract differs"):
+                BOUNDARY._replay_link(
+                    work, output, Path("/fixture/product"), work / "workload.o", "candidate-pie",
+                    "candidate-pie.crabc-link.json", "pie", changed, export_dynamic=False,
+                )
 
     def test_fresh_output_rejects_a_symlinked_existing_ancestor_before_creation(self) -> None:
         scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
