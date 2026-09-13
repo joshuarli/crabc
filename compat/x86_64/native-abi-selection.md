@@ -202,6 +202,22 @@ and are rechecked after their scoped joins. Their source/product/ELF cohort is
 therefore shared with the selection transaction without rereading the header
 receipt or turning a component account into a generic runtime claim.
 
+`--crt-startup-report REPORT` is independently optional. Its owner replays the
+installed CRT receipt before the selector reads its finite twelve-identity
+projection. The selector requires the owner’s current collector and selected
+runtime source identities, its static/dynamic product roots, the public ELF
+facts, and all nine owned installed CRT/runtime artifacts to match the same
+selection transaction. It then joins every retained named row to exactly one
+complete-ELF occurrence and rejects an added, omitted, duplicated, or
+substituted occurrence. `_GLOBAL_OFFSET_TABLE_` remains the one exact
+link-time boundary: the attachment requires its archive undefined row and the
+shared local `.got.plt` definition with their distinct metadata; it never
+turns that spelling into a provider rule. The 32-byte owned handoff and the
+88-byte conventional snapshot remain separate from the prepared-worker
+72-byte descriptor. This attachment leaves first-bootstrap failures, descriptor
+lifetime, general CRT lifecycle, runtime qualification, family completion,
+promotion, and public support open.
+
 ## Selection inputs and definition domains
 
 Keep the frozen AArch64 capability, header, and ABI inputs unchanged. Correlate

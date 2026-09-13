@@ -1427,6 +1427,14 @@ provider_metadata = {"type" = "OBJECT", "size_bytes" = 72, "alignment_bytes" = 8
 signature_status = "source-mapped-unverified"
 operations = []
 
+[[structural_groups]]
+id = "crt-startup-link-boundaries"
+members = ["_GLOBAL_OFFSET_TABLE_", "__crabc_x86_64_loader_conventional_startup_v1", "__crabc_x86_64_owned_crt_handoff", "__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_loader_tls_runtime_v1_record", "__crabc_x86_static_tls_bootstrap", "__preinit_array_start", "__preinit_array_end", "__init_array_start", "__init_array_end", "__fini_array_start", "__fini_array_end"]
+sources = ["compat/x86_64/installed-crt-startup.toml", "compat/x86_64/installed-crt-startup.md", "crt/src/x86_64_startup.rs", "crt/src/x86_64_dynamic_startup.rs", "crt/src/x86_64_array_boundaries.rs", "libc/src/c_abi/x86_64/static_tls.rs", "libc/src/c_abi/x86_64/conventional_startup_v1.rs", "libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs", "ldso/src/x86_64_conventional_startup_v1.rs"]
+disposition = "structural-replacement"
+reason = "Finite installed CRT entry, linker-array, static-bootstrap, owned-handoff, dynamic attachment, and conventional-startup boundaries. _GLOBAL_OFFSET_TABLE_ remains an exact link-time identity, never a prefix-based provider rule."
+requirements = ["current source-bound installed CRT startup receipt"]
+
 [requirements]
 declaration_companion = true
 semantic_receipts = true

@@ -138,6 +138,12 @@ STDIO_ALIAS_LIMITS = [
     'Only the fifteen named FILE weak aliases, their thirteen named bodies, and two protected-body controls are joined.',
     'The receipt does not close general stdio behavior, declaration/profile agreement, runtime qualification, family completion, promotion or public support.',
 ]
+CRT_STARTUP_RECEIPT_REQUIREMENT = 'current source-bound installed CRT startup receipt'
+CRT_STARTUP_LIMITS = [
+    'Only the twelve owner-declared CRT startup identities and their retained exact occurrences are joined.',
+    'The 32-byte owned handoff and 88-byte conventional snapshot stay distinct from the prepared-worker 72-byte descriptor.',
+    'This receipt does not qualify first-bootstrap failures, descriptor lifetime, general CRT lifecycle, runtime qualification, family completion, promotion or public support.',
+]
 
 
 def _stdio_alias_reader():
@@ -163,6 +169,31 @@ def _stdio_alias_source_files() -> tuple[str, ...]:
         *reader.RUNTIME_SOURCES,
         'compat/x86_64/tests/test_owned_stdio_alias_contract_reader.py',
         'compat/x86_64/tests/test_native_abi_stdio_alias_attachment.py',
+    )
+
+
+def _crt_startup_reader():
+    """Load the CRT receipt reader after this selector has initialized.
+
+    The CRT reader reuses the FILE receipt substrate, whose public reader
+    imports this selector for its selected-product boundary.  Keep this
+    import lazy for the same reason as the FILE attachment: direct CRT-reader
+    use must never observe a partially initialized selector module.
+    """
+    try:
+        return importlib.import_module('installed_crt_startup_evidence')
+    except (ImportError, OSError, ValueError) as error:
+        raise SelectionError(f'cannot load CRT startup reader: {error}') from error
+
+
+def _crt_startup_source_files() -> tuple[str, ...]:
+    """Return the owner-derived provenance roster for the CRT attachment."""
+    reader = _crt_startup_reader()
+    return (
+        *reader.COLLECTOR_SOURCES,
+        'compat/x86_64/installed-crt-startup.md',
+        'compat/x86_64/tests/test_installed_crt_startup_evidence.py',
+        'compat/x86_64/tests/test_native_abi_crt_startup_attachment.py',
     )
 RUNTIME_REGISTRY_REQUIREMENTS = (
     'current signature and exact relocation-admission evidence',
@@ -676,6 +707,7 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
         *errno_storage_evidence.SOURCE_FILES,
         *C_ALLOCATOR_BOUNDARY_SOURCE_FILES,
         *_stdio_alias_source_files(),
+        *_crt_startup_source_files(),
     })
     files.update(pthread_alias_evidence.SOURCE_CONTRACT_PATHS)
     for field in ('owner_groups', 'structural_groups', 'object_contracts', 'private_protocols'):
@@ -2128,7 +2160,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                                     prepared_worker: Mapping[str, Any] | None = None,
                                     errno_storage: Mapping[str, Any] | None = None,
                                     c_allocator_boundary: Mapping[str, Any] | None = None,
-                                    stdio_alias_contract: Mapping[str, Any] | None = None) -> None:
+                                    stdio_alias_contract: Mapping[str, Any] | None = None,
+                                    crt_startup: Mapping[str, Any] | None = None) -> None:
     """Keep runtime attachments within the same source/product transaction.
 
     Both owning readers validate their receipts before the selector's placement
@@ -2138,7 +2171,7 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
     """
     if (registry is None and pthread is None and prepared_worker is None
             and errno_storage is None and c_allocator_boundary is None
-            and stdio_alias_contract is None):
+            and stdio_alias_contract is None and crt_startup is None):
         return
     require(same(source, selection_source()), 'selection source changed during runtime receipt attachment')
     reports = _measurement_report_bindings(measurement, 'runtime receipt')
@@ -2166,6 +2199,14 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                 f'public ELF facts omit {artifact_key} during runtime receipt attachment')
         _require_same_identity_payload(artifact['identity'], current[current_name],
                                        f'public ELF {artifact_key} during runtime receipt attachment')
+    if crt_startup is not None:
+        startup_products = _crt_startup_product_identities(paths)
+        for artifact_key, identity_value in startup_products.items():
+            artifact = facts_artifacts.get(artifact_key)
+            require(type(artifact) is dict and 'identity' in artifact,
+                    f'public ELF facts omit CRT startup {artifact_key} during attachment')
+            _require_same_identity_payload(artifact['identity'], identity_value,
+                                           f'public ELF CRT startup {artifact_key} during attachment')
     companion_rosters = (
         ('runtime registry', registry, set(_current_product_identities(paths)), True),
         ('pthread alias', pthread, set(_current_product_identities(paths)), True),
@@ -2184,6 +2225,7 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
             'dynamic_manifest', 'dynamic_state', 'dynamic_driver', 'dynamic_libc',
             'dynamic_loader', 'dynamic_shared_provenance',
         }, True),
+        ('CRT startup', crt_startup, set(_crt_startup_product_identities(paths)), True),
     )
     for label, companion, expected_roster, needs_measurement_reports in companion_rosters:
         if companion is None:
@@ -2191,8 +2233,10 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
         records = companion.get('products')
         require(type(records) is dict and set(records) == expected_roster,
                 f'{label} product roster differs during attachment')
+        selected_products = (_crt_startup_product_identities(paths)
+                             if label == 'CRT startup' else current)
         for name in expected_roster:
-            _require_same_identity_payload(records[name], current[name],
+            _require_same_identity_payload(records[name], selected_products[name],
                                            f'{label} {name} changed during attachment')
         if needs_measurement_reports:
             require(same(companion.get('measurement_reports'), reports),
@@ -3336,6 +3380,286 @@ def native_stdio_alias_adapter(report_path: Path | None, *, facts: Mapping[str, 
     }
 
 
+def _crt_startup_identity_names(reader: Any) -> tuple[str, ...]:
+    """Derive, rather than repeat, the closed startup spelling roster."""
+    names = tuple(reader.NAMES)
+    contract = reader.contract(ROOT)
+    require(len(names) == 12 and len(names) == len(set(names))
+            and same(list(names), contract['identities'])
+            and contract['record_sizes'] == {
+                'owned_handoff': 32,
+                'conventional_snapshot': 88,
+            }
+            and contract['descriptor_import_required'] is False,
+            'CRT startup owner contract differs')
+    return names
+
+
+def _crt_startup_product_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+    """Return only the installed bytes which the CRT receipt actually owns."""
+    static = paths['static_product'] / 'usr/lib'
+    dynamic = paths['dynamic_product']
+    records = {
+        'candidate-static': static / 'libc.a',
+        'candidate-shared': dynamic / 'usr/lib/libc.so',
+        'candidate-loader': dynamic / 'lib/ld-crabc-x86_64.so.1',
+        'static-crt1.o': static / 'crt1.o',
+        'static-Scrt1.o': static / 'Scrt1.o',
+        'static-rcrt1.o': static / 'rcrt1.o',
+        'dynamic-crt1.o': dynamic / 'usr/lib/crt1.o',
+        'dynamic-Scrt1.o': dynamic / 'usr/lib/Scrt1.o',
+        'dynamic-crabc-dynamic-attach.o': dynamic / 'usr/lib/crabc-dynamic-attach.o',
+    }
+    return {name: file_identity(path) for name, path in records.items()}
+
+
+def _crt_startup_complete_facts_match(value: object, facts: Mapping[str, Any],
+                                      products: Mapping[str, Any]) -> None:
+    """Bind all component-owned raw ELF views to the public replay once."""
+    require(type(value) is dict and set(products) <= set(value)
+            and type(facts.get('facts')) is dict and set(products) <= set(facts['facts']),
+            'CRT startup complete ELF facts roster differs')
+    for artifact_key in sorted(products):
+        require(same(_normalized_stdio_complete_facts(value[artifact_key], artifact_key),
+                     _normalized_stdio_complete_facts(facts['facts'][artifact_key], artifact_key)),
+                f'CRT startup complete ELF facts differ: {artifact_key}')
+
+
+def _crt_startup_observed_rows(value: object, names: Sequence[str],
+                               products: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Normalize the owner reader's finite named-row projection for joining."""
+    require(type(value) is dict and set(value) == set(products),
+            'CRT startup named product roster differs')
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for artifact_key in sorted(products):
+        rows = value[artifact_key]
+        require(type(rows) is list, f'CRT startup named rows differ: {artifact_key}')
+        for observed in rows:
+            row = exact(observed, {
+                'member', 'member_index', 'member_occurrence', 'row', 'section', 'table_section_index',
+            }, f'CRT startup named row {artifact_key}')
+            symbol = row['row']
+            require(type(symbol) is dict and symbol.get('name') in names,
+                    f'CRT startup observation names an unowned identity: {symbol.get("name")}')
+            require(type(row['table_section_index']) is int
+                    and (row['member_index'] is None or type(row['member_index']) is int)
+                    and (row['member_occurrence'] is None or type(row['member_occurrence']) is int)
+                    and (row['member'] is None or type(row['member']) is str),
+                    'CRT startup named-row location differs')
+            key = (artifact_key, row['member_index'], row['member_occurrence'],
+                   row['table_section_index'], symbol.get('row_index'))
+            require(key not in seen, 'duplicate CRT startup named-row observation')
+            seen.add(key)
+            result.append({'artifact_key': artifact_key, **copy.deepcopy(row)})
+    require({row['row']['name'] for row in result} == set(names),
+            'CRT startup observation omits an owner-declared identity')
+    return result
+
+
+def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                               measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                               source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Replay the CRT owner before joining its twelve exact selected rows.
+
+    The receipt is a component-level native execution proof.  This adapter
+    requires its replay to bind the current selected source and product cohort,
+    then passes only its finite ELF occurrence projection to accounting.  A
+    historical receipt with byte-identical runtime files but an earlier source
+    revision therefore cannot waive a fresh product collection.
+    """
+    if report_path is None:
+        return None
+    reader = _crt_startup_reader()
+    require(Path(reader.ROOT) == ROOT and Path(reader.__file__).resolve().parent == MODULE_DIR,
+            'CRT startup reader belongs to a different checkout')
+    names = _crt_startup_identity_names(reader)
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    try:
+        report = reader.validate_report(ROOT, report_path)
+    except (KeyError, TypeError, ValueError, OSError, reader.StartupEvidenceError) as error:
+        raise SelectionError(f'CRT startup component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'CRT startup report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
+    _measurement_source_matches(source, measurement, 'CRT startup')
+    measurement_reports = _measurement_report_bindings(measurement, 'CRT startup')
+    report = exact(report, {
+        'schema', 'status', 'image', 'contract', 'collector_source', 'collector_files', 'selected_files',
+        'inputs_before', 'inputs_after', 'oracle', 'oracle_static', 'oracle_crt', 'tools', 'commands',
+        'observations', 'files',
+    }, 'CRT startup reader report')
+    require(report['schema'] == reader.SCHEMA and same(report['status'], reader.STATUS)
+            and same(report['contract'], reader.contract(ROOT)),
+            'CRT startup reader contract or status differs')
+    source_pair = {'revision': source['revision'], 'content_sha256': source['content_sha256']}
+    require(same(report['collector_source'], source_pair),
+            'CRT startup collector source differs from selection')
+    _stdio_source_snapshot(report['collector_files'], reader.COLLECTOR_SOURCES, 'CRT startup collector')
+    _stdio_source_snapshot(report['selected_files'], reader.RUNTIME_SOURCES, 'CRT startup selected runtime')
+    inputs = exact(report['inputs_before'], {
+        'selected_source', 'producer_commands', 'preparation', 'historical_facts', 'static_preparation',
+        'dynamic_product', 'static_tree', 'dynamic_tree', 'state', 'startup_artifacts',
+    }, 'CRT startup input account')
+    require(same(report['inputs_after'], inputs) and same(inputs['selected_source'], source_pair),
+            'CRT startup source/product input account changed')
+    products = _crt_startup_product_identities(paths)
+    startup_artifacts = inputs['startup_artifacts']
+    require(type(startup_artifacts) is dict and set(startup_artifacts) == set(products),
+            'CRT startup installed artifact roster differs')
+    for name in sorted(products):
+        _require_stdio_receipt_identity(startup_artifacts[name], products[name],
+                                        f'CRT startup {name}')
+    _require_stdio_receipt_path(inputs['preparation'], paths['static_preparation'],
+                                'CRT startup static preparation')
+    _require_stdio_receipt_identity(inputs['preparation'], measurement_reports['static_preparation'],
+                                    'CRT startup static preparation')
+    _require_stdio_receipt_path(inputs['historical_facts'], paths['elf_report'],
+                                'CRT startup complete ELF facts')
+    _require_stdio_receipt_identity(inputs['historical_facts'], measurement_reports['elf_report'],
+                                    'CRT startup complete ELF facts')
+    static_product = exact(inputs['static_preparation'], {'primary'}, 'CRT startup static product')
+    static_primary = exact(static_product['primary'], {'path', 'manifest'}, 'CRT startup static product primary')
+    _require_stdio_product_root(static_primary['path'], paths['static_product'], 'CRT startup static product')
+    _require_stdio_receipt_identity(static_primary['manifest'], file_identity(
+        paths['static_product'] / 'share/crabc/manifest.json'), 'CRT startup static manifest')
+    dynamic_product = exact(inputs['dynamic_product'], {'path', 'manifest'}, 'CRT startup dynamic product')
+    _require_stdio_product_root(dynamic_product['path'], paths['dynamic_product'], 'CRT startup dynamic product')
+    _require_stdio_receipt_identity(dynamic_product['manifest'], file_identity(
+        paths['dynamic_product'] / 'share/crabc/manifest.json'), 'CRT startup dynamic manifest')
+    _require_stdio_receipt_identity(inputs['state'], file_identity(
+        paths['dynamic_product'] / inventory.DYNAMIC_STATE_RELATIVE), 'CRT startup dynamic state')
+    _runtime_facts_match_selected_products(
+        facts, products, label='CRT startup',
+        artifacts=tuple((name, name) for name in products),
+    )
+    observations = exact(report['observations'], {
+        'complete_elf_facts', 'product_placements', 'product_relocations', 'executables', 'roots',
+        'runtime_labels', 'limits',
+    }, 'CRT startup observations')
+    _crt_startup_complete_facts_match(observations['complete_elf_facts'], facts, products)
+    placements = observations['product_placements']
+    require(type(placements) is dict and 'all_named_rows' in placements,
+            'CRT startup named placement observations differ')
+    observed_rows = _crt_startup_observed_rows(placements['all_named_rows'], names, products)
+    require(type(observations['product_relocations']) is dict
+            and set(observations['product_relocations']) == set(products),
+            'CRT startup relocation observation roster differs')
+    source_inputs = {name: file_identity(ROOT / name) for name in _crt_startup_source_files()}
+    return {
+        'status': 'crt-startup-observed-with-boundaries',
+        'reader': file_identity(Path(reader.__file__)),
+        'contract': file_identity(ROOT / 'compat/x86_64/installed-crt-startup.toml'),
+        'report': before,
+        'source': copy.deepcopy(source),
+        'source_inputs': source_inputs,
+        'products': {name: copy.deepcopy(products[name]) for name in sorted(products)},
+        'measurement_reports': measurement_reports,
+        'account': {
+            'identity_names': list(names),
+            'occurrences': observed_rows,
+            'runtime_labels': list(observations['runtime_labels']),
+        },
+        'limits': list(CRT_STARTUP_LIMITS),
+    }
+
+
+def _crt_startup_accounting_occurrence(occurrences: Mapping[int, Mapping[str, Any]],
+                                       observed: Mapping[str, Any]) -> dict[str, Any]:
+    """Join one owner-retained physical row to one public full-facts row."""
+    matches = [candidate for candidate in occurrences.values()
+               if candidate.get('artifact_key') == observed['artifact_key']
+               and candidate.get('member_index') == observed['member_index']
+               and candidate.get('member_occurrence') == observed['member_occurrence']
+               and candidate.get('member_name') == observed['member']
+               and candidate.get('table_section_index') == observed['table_section_index']
+               and same(candidate.get('row'), observed['row'])
+               and same(candidate.get('definition_section'), observed['section'])]
+    require(len(matches) == 1, 'CRT startup observation does not bind one selected occurrence')
+    return dict(matches[0])
+
+
+def _validate_crt_startup_got(rows: Sequence[Mapping[str, Any]]) -> None:
+    """Keep the GOT spelling as its link-time identity, never an import rule."""
+    require(len(rows) == 2
+            and {(row['artifact_key'], row['role']) for row in rows} == {
+                ('candidate-static', 'import'), ('candidate-shared', 'local-definition'),
+            }, 'CRT startup GOT ownership boundary differs')
+    static = next(row for row in rows if row['artifact_key'] == 'candidate-static')
+    shared = next(row for row in rows if row['artifact_key'] == 'candidate-shared')
+    require({key: static['row'].get(key) for key in ('type', 'binding', 'visibility', 'section_index', 'size_bytes')} == {
+                'type': 'NOTYPE', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'section_index': 'UND', 'size_bytes': 0,
+            }
+            and {key: shared['row'].get(key) for key in ('type', 'binding', 'visibility', 'size_bytes')} == {
+                'type': 'NOTYPE', 'binding': 'LOCAL', 'visibility': 'HIDDEN', 'size_bytes': 0,
+            }
+            and shared['row'].get('section_index') != 'UND'
+            and type(shared.get('definition_section')) is dict
+            and shared['definition_section'].get('name') == '.got.plt',
+            'CRT startup GOT source metadata differs')
+
+
+def attach_native_crt_startup(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Discharge only the current receipt's finite CRT/link-time boundaries."""
+    if companion is None:
+        return []
+    companion = exact(companion, {
+        'status', 'reader', 'contract', 'report', 'source', 'source_inputs', 'products',
+        'measurement_reports', 'account', 'limits',
+    }, 'CRT startup companion')
+    require(companion['status'] == 'crt-startup-observed-with-boundaries'
+            and companion['limits'] == CRT_STARTUP_LIMITS,
+            'CRT startup companion boundary differs')
+    reader = _crt_startup_reader()
+    names = _crt_startup_identity_names(reader)
+    account = exact(companion['account'], {'identity_names', 'occurrences', 'runtime_labels'},
+                    'CRT startup companion account')
+    require(account['identity_names'] == list(names) and type(account['occurrences']) is list,
+            'CRT startup companion identity roster differs')
+    records, _placements, occurrences = _accounting_indexes(accounting, description='CRT startup attachment')
+    observed_by_name = {name: [] for name in names}
+    selected_indices: set[int] = set()
+    for observed in account['occurrences']:
+        require(type(observed) is dict and observed.get('row', {}).get('name') in observed_by_name,
+                'CRT startup companion occurrence differs')
+        occurrence = _crt_startup_accounting_occurrence(occurrences, observed)
+        name = occurrence['row']['name']
+        observed_by_name[name].append(occurrence)
+        require(occurrence['index'] not in selected_indices,
+                'CRT startup companion occurrence is duplicated')
+        selected_indices.add(occurrence['index'])
+    require(all(observed_by_name[name] for name in names),
+            'CRT startup companion has an unjoined owner identity')
+    product_keys = set(companion['products'])
+    actual = {row['index'] for row in occurrences.values()
+              if row.get('artifact_key') in product_keys and row.get('row', {}).get('name') in observed_by_name}
+    require(actual == selected_indices,
+            'CRT startup candidate occurrences differ from the finite owner receipt')
+    _validate_crt_startup_got(observed_by_name['_GLOBAL_OFFSET_TABLE_'])
+    joins: list[dict[str, Any]] = []
+    for name in names:
+        record = records.get((name, None, False))
+        require(record is not None
+                and record.get('selection', {}).get('disposition') == 'structural-replacement'
+                and record['selection'].get('owner') == 'crt-startup-link-boundaries',
+                f'CRT startup selection differs: {name}')
+        rows = observed_by_name[name]
+        reasons = [CRT_STARTUP_RECEIPT_REQUIREMENT]
+        if any(row['role'] == 'import' for row in rows):
+            reasons.append(ORDINARY_IMPORT_REASON)
+        for artifact_key in sorted({row['artifact_key'] for row in rows if row['role'] == 'definition'}):
+            reasons.append(f'candidate definition placement is not selected: {artifact_key}')
+        _remove_identity_requirements(accounting, record, reasons, description=f'CRT startup {name}')
+        joins.append({
+            'identity': copy.deepcopy(record['identity']),
+            'occurrence_indices': sorted(row['index'] for row in rows),
+            'owner_observation_count': len(rows),
+            'current_source_product_cohort': True,
+        })
+    require(len(joins) == len(names), 'CRT startup finite accounting differs')
+    return joins
+
+
 def _accounting_indexes(accounting: Mapping[str, Any], *, description: str) -> tuple[dict[tuple[str, str | None, bool], dict[str, Any]],
                                                                                       dict[tuple[tuple[str, str | None, bool], str], dict[str, Any]],
                                                                                       dict[int, dict[str, Any]]]:
@@ -4368,7 +4692,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   prepared_worker_tls_report: Path | None = None,
                   errno_storage_lifecycle_report: Path | None = None,
                   native_c_allocator_boundary_report: Path | None = None,
-                  stdio_alias_contract_report: Path | None = None) -> dict[str, Any]:
+                  stdio_alias_contract_report: Path | None = None,
+                  crt_startup_report: Path | None = None) -> dict[str, Any]:
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -4398,6 +4723,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     stdio_alias_contract_companion = native_stdio_alias_adapter(
         stdio_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+    )
+    crt_startup_companion = native_crt_startup_adapter(
+        crt_startup_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -4443,12 +4771,14 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     stdio_alias_contract_joins = attach_native_stdio_alias(
         accounting, stdio_alias_contract_companion,
     )
+    crt_startup_joins = attach_native_crt_startup(accounting, crt_startup_companion)
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
         prepared_worker=prepared_worker_tls_companion, errno_storage=errno_storage_lifecycle_companion,
         c_allocator_boundary=native_c_allocator_boundary_companion,
         stdio_alias_contract=stdio_alias_contract_companion,
+        crt_startup=crt_startup_companion,
     )
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
@@ -4480,6 +4810,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'native_c_allocator_boundary_joins': native_c_allocator_boundary_joins,
             'stdio_alias_contract_companion': stdio_alias_contract_companion,
             'stdio_alias_contract_joins': stdio_alias_contract_joins,
+            'crt_startup_companion': crt_startup_companion,
+            'crt_startup_joins': crt_startup_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -4496,6 +4828,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  errno_storage_lifecycle_report: Path | None = None,
                  native_c_allocator_boundary_report: Path | None = None,
                  stdio_alias_contract_report: Path | None = None,
+                 crt_startup_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -4510,7 +4843,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            prepared_worker_tls_report=prepared_worker_tls_report,
                            errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                            native_c_allocator_boundary_report=native_c_allocator_boundary_report,
-                           stdio_alias_contract_report=stdio_alias_contract_report)
+                           stdio_alias_contract_report=stdio_alias_contract_report,
+                           crt_startup_report=crt_startup_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -4526,6 +4860,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     errno_storage_lifecycle_report: Path | None = None,
                     native_c_allocator_boundary_report: Path | None = None,
                     stdio_alias_contract_report: Path | None = None,
+                    crt_startup_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -4542,7 +4877,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              prepared_worker_tls_report=prepared_worker_tls_report,
                              errno_storage_lifecycle_report=errno_storage_lifecycle_report,
                              native_c_allocator_boundary_report=native_c_allocator_boundary_report,
-                             stdio_alias_contract_report=stdio_alias_contract_report)
+                             stdio_alias_contract_report=stdio_alias_contract_report,
+                             crt_startup_report=crt_startup_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -4566,6 +4902,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--errno-storage-lifecycle-report', type=Path)
     parser.add_argument('--native-c-allocator-boundary-report', type=Path)
     parser.add_argument('--stdio-alias-contract-report', type=Path)
+    parser.add_argument('--crt-startup-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -4580,7 +4917,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'ordinary_declaration_abi_report', 'loader_runtime_registry_report',
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
-                                                'stdio_alias_contract_report')}
+                                                'stdio_alias_contract_report', 'crt_startup_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)
