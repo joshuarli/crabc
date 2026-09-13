@@ -534,6 +534,29 @@ def _stream(work: Path, output: Path, stem: str) -> dict[str, dict[str, object]]
     return result
 
 
+def _portable_link_validation(value: object) -> dict[str, str]:
+    """Keep one link result comparable across its sealed container and host paths.
+
+    The supplied-product account separately seals the physical product tree.
+    A product reader's absolute location is therefore not a durable part of
+    this component's link observation; its format and manifest digest are.
+    """
+
+    item = exact(value, {"linkage", "product", "product_format", "product_manifest_sha256",
+                         "workload_sha256", "executable_sha256", "receipt_sha256"}, "owned link validation")
+    require(type(item["linkage"]) is str and item["linkage"] in {*STATIC_MODES, *DYNAMIC_MODES},
+            "owned link validation linkage differs")
+    require(type(item["product"]) is str and Path(item["product"]).is_absolute(),
+            "owned link validation product path differs")
+    require(type(item["product_format"]) is str and item["product_format"] in {
+        product_evidence.STATIC_PRODUCT_FORMAT, product_evidence.DYNAMIC_PRODUCT_FORMAT,
+    }, "owned link validation product format differs")
+    for name in ("product_manifest_sha256", "workload_sha256", "executable_sha256", "receipt_sha256"):
+        require(type(item[name]) is str and SHA256.fullmatch(item[name]) is not None,
+                f"owned link validation {name} differs")
+    return {name: item[name] for name in item if name != "product"}
+
+
 def _link(work: Path, output: Path, product: Path, workload: Path, executable: str, receipt: str,
           linkage: str, *, export_dynamic: bool = False) -> dict[str, object]:
     require(type(export_dynamic) is bool, "owned link export-dynamic contract is not boolean")
@@ -552,7 +575,8 @@ def _link(work: Path, output: Path, product: Path, workload: Path, executable: s
     except AllocatorBoundaryError:
         raise
     require(inventory.sha256(actual_linker) == linker["sha256"], "owned link receipt linker bytes drifted")
-    return {"validated": result, "executable": identity(work / executable, logical_path=(work / executable).relative_to(output).as_posix()),
+    return {"validated": _portable_link_validation(result),
+            "executable": identity(work / executable, logical_path=(work / executable).relative_to(output).as_posix()),
             "receipt": identity(work / receipt, logical_path=(work / receipt).relative_to(output).as_posix()),
             "linker": dict(linker), "export_dynamic": export_dynamic}
 
@@ -574,7 +598,7 @@ def _replay_link(work: Path, output: Path, product: Path, workload: Path, execut
         )
     except product_evidence.ProductEvidenceError as error:
         raise AllocatorBoundaryError(str(error)) from error
-    require(same(item["validated"], result), "retained owned link result drifted")
+    require(same(item["validated"], _portable_link_validation(result)), "retained owned link result drifted")
     return item
 
 

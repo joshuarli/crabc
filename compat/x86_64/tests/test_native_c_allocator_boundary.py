@@ -56,8 +56,14 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             receipt = work / "candidate-pie.crabc-link.json"
             for path in (workload, executable, receipt):
                 path.write_bytes(b"fixture")
+            validation = {
+                "linkage": "pie", "product": "/workspace/.work/x86_64/product",
+                "product_format": "crabc-x86-64-owned-dynamic-sysroot-v1",
+                "product_manifest_sha256": "b" * 64, "workload_sha256": "c" * 64,
+                "executable_sha256": "d" * 64, "receipt_sha256": "e" * 64,
+            }
             with (
-                mock.patch.object(BOUNDARY.product_evidence, "validate_link", return_value={"linkage": "pie"}) as validate,
+                mock.patch.object(BOUNDARY.product_evidence, "validate_link", return_value=validation) as validate,
                 mock.patch.object(BOUNDARY, "json_object", return_value={"resolved_linker": {"path": "/fixture/ld.lld", "sha256": "a" * 64}}),
                 mock.patch.object(BOUNDARY, "physical_file", return_value=Path("/fixture/ld.lld")),
                 mock.patch.object(BOUNDARY.inventory, "sha256", return_value="a" * 64),
@@ -69,6 +75,7 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             self.assertEqual(validate.call_args.args[:4], (Path("/fixture/product"), workload, executable, receipt))
             self.assertEqual(validate.call_args.kwargs, {"export_dynamic": True})
             self.assertIs(record["export_dynamic"], True)
+            self.assertEqual(record["validated"], {key: value for key, value in validation.items() if key != "product"})
 
     def test_product_epoch_rejects_mixed_static_dynamic_and_facts_sources(self) -> None:
         source = {"revision": "a" * 40, "content_sha256": "b" * 64}
@@ -149,14 +156,20 @@ class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
             work.mkdir()
             for name in ("workload.o", "candidate-pie", "candidate-pie.crabc-link.json"):
                 (work / name).write_bytes(b"fixture")
+            validation = {
+                "linkage": "pie", "product": "/workspace/.work/x86_64/product",
+                "product_format": "crabc-x86-64-owned-dynamic-sysroot-v1",
+                "product_manifest_sha256": "b" * 64, "workload_sha256": "c" * 64,
+                "executable_sha256": "d" * 64, "receipt_sha256": "e" * 64,
+            }
             link = {
-                "validated": {"linkage": "pie"},
+                "validated": {key: value for key, value in validation.items() if key != "product"},
                 "linker": {"path": "/opt/ld.lld", "sha256": "a" * 64},
                 "export_dynamic": False,
                 "executable": BOUNDARY.identity(work / "candidate-pie", logical_path="work/candidate-pie"),
                 "receipt": BOUNDARY.identity(work / "candidate-pie.crabc-link.json", logical_path="work/candidate-pie.crabc-link.json"),
             }
-            with mock.patch.object(BOUNDARY.product_evidence, "validate_retained_link", return_value={"linkage": "pie"}) as validate:
+            with mock.patch.object(BOUNDARY.product_evidence, "validate_retained_link", return_value=validation) as validate:
                 BOUNDARY._replay_link(work, output, Path("/fixture/product"), work / "workload.o", "candidate-pie", "candidate-pie.crabc-link.json", "pie", link)
             self.assertEqual(validate.call_args.args[:3], (ROOT, "/workspace", Path("/fixture/product")))
             self.assertEqual(validate.call_args.args[-1], link["linker"])

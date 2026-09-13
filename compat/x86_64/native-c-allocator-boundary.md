@@ -59,6 +59,10 @@ requires the wrapper/lifecycle source blobs to equal that product revision,
 the static preparation source to equal the ELF-facts collector source, and the
 dynamic materialization source hash to equal the same content hash. It also
 compares the supplied static tree with the preparation receipt's primary tree.
+The component records each link's format and product-manifest digest, while
+the supplied-product account records the physical product location. This lets
+the retained host reader compare one container collection with its host path
+without weakening either product-byte check.
 This permits an immutable prior product epoch while rejecting a mixed static,
 dynamic, or facts epoch; it does not call a historical collector result a
 current-source proof.
