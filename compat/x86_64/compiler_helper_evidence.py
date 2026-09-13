@@ -340,6 +340,48 @@ def _installed_archive_identities(facts_report: Mapping[str, Any]) -> dict[str, 
     return result
 
 
+def shared_libc_archive_policy_from_product(
+    provenance: Mapping[str, Any], manifest: Mapping[str, Any],
+    facts_report: Mapping[str, Any], *, root: Path = ROOT,
+) -> dict[str, Any]:
+    """Authenticate the one archive exclusion alongside another libc owner.
+
+    The caller has replayed the owning dynamic product and complete ELF facts.
+    Join its source policy, exact link input, installed archive bytes, archive
+    definitions and private libc copy without replaying those larger receipts.
+    This grants no exclusion policy to an allocator archive or another owner.
+    """
+    contract = load_contract(root)
+    identity = file_identity(root, CONTRACT)
+    expected = {
+        "source": {"path": identity["path"], "sha256": identity["sha256"],
+                   "mode": (Path(root) / CONTRACT).stat().st_mode & 0o777},
+        "archive": contract["archive"]["name"], "member": contract["archive"]["member"],
+        **contract["shared_libc"],
+    }
+    require(isinstance(provenance, Mapping)
+            and same(provenance.get("shared_compiler_helper_archive"), expected),
+            "compiler-helper shared archive source policy differs")
+    command = provenance.get("libc_shared_link_command")
+    require(type(command) is list and all(type(item) is str for item in command),
+            "compiler-helper shared link command differs")
+    require([item for item in command if "--exclude-libs" in item] == [expected["linker_option"]],
+            "compiler-helper shared archive exclusion differs")
+    require([item for item in command if not item.startswith("-") and item.endswith(".a")]
+            == ["$BUILD/" + expected["archive"]],
+            "compiler-helper shared archive link input differs")
+    archives = _installed_archive_identities(facts_report)
+    installed = archives["dynamic-builtins"]
+    files = manifest.get("files") if isinstance(manifest, Mapping) else None
+    require(isinstance(files, Mapping)
+            and files.get("usr/lib/" + expected["archive"]) == installed["sha256"],
+            "compiler-helper shared archive manifest identity differs")
+    placements = archive_placements_from_elf_facts(facts_report, contract)
+    private = shared_libc_placement_from_elf_facts(facts_report, contract)
+    return {"policy": expected, "installed_archive": installed,
+            "archive_placements": placements, "private_libc_copy": private}
+
+
 def _aggregate_archive_join(root: Path, aggregate_report: Path, *, supplied_source: Mapping[str, Any],
                             installed_archives: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     """Attach C ABI proof only when both installed archives have its exact bytes."""

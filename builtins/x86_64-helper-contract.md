@@ -66,6 +66,12 @@ receipt names its map and trace relative to its own directory. The helper
 reader uses the ordinary reader's identity resolver for the outer receipt,
 including its recorded hash and size, before reading the adjacent map and trace.
 
+`shared_libc_archive_policy_from_product` lets the fixed-C producer reader
+admit this exact helper archive rule when their inputs share a product. It
+joins the source policy and single archive link argument to the authenticated
+installed archive and its private libc copy. It grants no exclusion to another
+archive and makes no family or public-provider selection.
+
 Run the focused shared-placement proof inside the same pinned native Docker
 environment used by the dynamic components. It is directly callable there; it
 does not add a dispatcher command:

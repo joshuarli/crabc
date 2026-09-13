@@ -19,6 +19,7 @@ assert SPEC is not None and SPEC.loader is not None
 producer = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = producer
 SPEC.loader.exec_module(producer)
+import compiler_helper_evidence as helpers
 
 
 def symbol(
@@ -264,6 +265,90 @@ class FixedCMimallocProducerMetadataTests(unittest.TestCase):
     def account(self) -> dict[str, object]:
         facts, static_provenance, shared_provenance, shared_manifest = self.fixture()
         return producer.account_producer_metadata(facts, static_provenance, shared_provenance, shared_manifest)
+
+    def helper_composition_fixture(self):
+        """Keep the C producer and its distinct helper archive in one product."""
+        facts, static, shared, manifest = self.fixture()
+        contract = helpers.load_contract(ROOT)
+        rows, sections = [], []
+        shared_elf = facts["facts"]["candidate-shared"]
+        for index, name in enumerate(helpers.helper_names(contract), start=1):
+            rows.append({"name": name, **helpers.HELPER_METADATA, "section_index": str(index)})
+            sections.append({"index": index, "name": ".text." + name, "flags": "AX"})
+            shared_elf["symbol_tables"][1]["rows"].append({
+                "name": name, **helpers.HELPER_METADATA, "binding": "LOCAL",
+                "row_index": 500 + index, "section_index": "301",
+            })
+        shared_elf["sections"].append({"index": 301, "name": ".text", "flags": "AX"})
+        for placement in ("static-builtins", "dynamic-builtins"):
+            facts["facts"][placement] = [{
+                "member": "crabc-builtins.o", "member_index": 0, "member_occurrence": 0,
+                "sections": copy.deepcopy(sections),
+                "symbol_tables": [{"name": ".symtab", "rows": copy.deepcopy(rows)}],
+            }]
+            facts["artifacts"][placement] = {"identity": {
+                "path": f"/fixture/{placement}/usr/lib/libcrabc-builtins.a",
+                "sha256": "9" * 64, "size": 8192,
+            }}
+        identity = helpers.file_identity(ROOT, helpers.CONTRACT)
+        shared["shared_compiler_helper_archive"] = {
+            "source": {"path": identity["path"], "sha256": identity["sha256"],
+                       "mode": (ROOT / helpers.CONTRACT).stat().st_mode & 0o777},
+            "archive": contract["archive"]["name"], "member": contract["archive"]["member"],
+            **contract["shared_libc"],
+        }
+        shared["libc_shared_link_command"].extend([
+            "--exclude-libs=libcrabc-builtins.a", "$BUILD/libcrabc-builtins.a",
+        ])
+        manifest["files"]["usr/lib/libcrabc-builtins.a"] = "9" * 64
+        return facts, static, shared, manifest
+
+    def test_exact_authenticated_helper_archive_policy_composes_with_c_localization(self):
+        result = producer.account_producer_metadata(*self.helper_composition_fixture())
+        self.assertEqual(result["scope"]["member_count"], 424)
+        self.assertEqual(result["scope"]["rust_root_c_imports"], 7)
+        self.assertFalse(result["status_flags"]["family_completion"])
+
+    def test_helper_composition_rejects_broad_or_duplicate_exclusion(self):
+        for exclusion in (
+            "--exclude-libs=ALL", "--exclude-libs=libmimalloc.a",
+            "--exclude-libs=libcrabc-builtins.a,libmimalloc.a",
+            "--exclude-libs=libcrabc-builtins.a:libmimalloc.a",
+            "-Wl,--exclude-libs=libcrabc-builtins.a",
+        ):
+            with self.subTest(exclusion=exclusion):
+                facts, static, shared, manifest = self.helper_composition_fixture()
+                shared["libc_shared_link_command"][-2] = exclusion
+                with self.assertRaises(producer.ProducerMetadataError):
+                    producer.account_producer_metadata(facts, static, shared, manifest)
+        facts, static, shared, manifest = self.helper_composition_fixture()
+        shared["libc_shared_link_command"].append("--exclude-libs=libcrabc-builtins.a")
+        with self.assertRaises(producer.ProducerMetadataError):
+            producer.account_producer_metadata(facts, static, shared, manifest)
+
+    def test_helper_composition_rejects_unbound_policy_archive_or_private_copy(self):
+        for field in ("source", "archive", "link-input", "manifest", "dynsym", "missing-policy",
+                      "missing-exclusion", "boolean-policy"):
+            with self.subTest(field=field):
+                facts, static, shared, manifest = self.helper_composition_fixture()
+                if field == "source":
+                    shared["shared_compiler_helper_archive"]["source"]["sha256"] = "0" * 64
+                elif field == "archive":
+                    facts["artifacts"]["dynamic-builtins"]["identity"]["sha256"] = "0" * 64
+                elif field == "link-input":
+                    shared["libc_shared_link_command"].append("$BUILD/other/libcrabc-builtins.a")
+                elif field == "manifest":
+                    manifest["files"]["usr/lib/libcrabc-builtins.a"] = "0" * 64
+                elif field == "dynsym":
+                    facts["facts"]["candidate-shared"]["symbol_tables"][0]["rows"].append({"name": "__popcountdi2"})
+                elif field == "missing-exclusion":
+                    shared["libc_shared_link_command"].remove("--exclude-libs=libcrabc-builtins.a")
+                elif field == "boolean-policy":
+                    shared["shared_compiler_helper_archive"]["dynsym"] = 0
+                else:
+                    del shared["shared_compiler_helper_archive"]
+                with self.assertRaises(producer.ProducerMetadataError):
+                    producer.account_producer_metadata(facts, static, shared, manifest)
 
     def test_accounts_exact_four_metadata_buckets_and_seven_rust_root_joins(self) -> None:
         account = self.account()

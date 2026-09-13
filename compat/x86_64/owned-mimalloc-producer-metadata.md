@@ -31,6 +31,14 @@ provenance records. It does not replay those receipts or build a product.
 That boundary lets selection reuse verified evidence without adding another
 builder or generic receipt system.
 
+The shared build also contains the owned compiler-helper archive. Its exact
+`--exclude-libs=libcrabc-builtins.a` rule is admitted by the helper owner's
+`shared_libc_archive_policy_from_product`: the source policy, single archive
+link input, installed archive hash, both archive placements, and private libc
+copy must agree with the already authenticated product and ELF facts. Broad,
+duplicate, allocator, and mixed archive exclusions remain rejected. The C
+producer keeps its separate exact 424-name version script.
+
 `selected_metadata()` exposes the validated finite policy as an exact
 424-name mapping to static/shared type, binding, and visibility expectations.
 Its four data/TLS rows also carry source-selected `size_bytes` and

@@ -27,6 +27,8 @@ MODULE_DIRECTORY = Path(__file__).resolve().parent
 if str(MODULE_DIRECTORY) not in sys.path:
     sys.path.insert(0, str(MODULE_DIRECTORY))
 
+import compiler_helper_evidence as compiler_helpers
+
 CONTRACT_PATH = MODULE_DIRECTORY / "owned_mimalloc_producer_metadata.toml"
 HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
 SCHEMA = "crabc.x86_64-owned-mimalloc-producer-metadata/v1"
@@ -655,6 +657,7 @@ def _validate_static_provenance(
 
 def _validate_shared_provenance(
     provenance: object, contract: Mapping[str, Any], c_member: str, c_sha256: str,
+    elf_facts: Mapping[str, Any], shared_manifest: Mapping[str, Any],
 ) -> tuple[str, dict[str, str]]:
     record = mapping(provenance, "shared allocator provenance")
     require_keys(
@@ -697,7 +700,13 @@ def _validate_shared_provenance(
     require(type(command) is list and all(type(item) is str for item in command), "shared allocator link command is malformed")
     require(command.count(contract["shared_localization"]["version_script_argument"]) == 1,
             "shared allocator link did not use the exact version script")
-    require(not any("--exclude-libs" in item for item in command), "shared allocator link used a broad visibility policy")
+    if any("--exclude-libs" in item for item in command) or "shared_compiler_helper_archive" in record:
+        # Only the separate helper owner can admit its exact archive exclusion.
+        # The C object remains governed by the 424-name version script above.
+        try:
+            compiler_helpers.shared_libc_archive_policy_from_product(record, shared_manifest, elf_facts, root=ROOT)
+        except (compiler_helpers.CompilerHelperEvidenceError, OSError, ValueError) as error:
+            raise ProducerMetadataError(f"shared allocator link helper archive policy rejected: {error}") from error
     require(command.count(f"$BUILD/objects/{c_member}") == 1,
             "shared allocator link does not select the C provider object exactly once")
     require(command.count(f"$BUILD/objects/{rust_member}") == 1,
@@ -1098,7 +1107,7 @@ def account_producer_metadata(
         shared_product_manifest, _shared_artifact_identity(report)
     )
     shared_rust_member, shared_members = _validate_shared_provenance(
-        shared_provenance, contract, c_member_name, static_members[c_member_name]
+        shared_provenance, contract, c_member_name, static_members[c_member_name], report, shared_product_manifest
     )
     c_member, rust_member = _static_members(report, static_members, c_member_name, rust_member_name)
     shared = mapping(report["facts"]["candidate-shared"], "shared ELF facts")
@@ -1192,7 +1201,8 @@ def _strict_json(path: Path, description: str) -> dict[str, Any]:
 def _collector_identity() -> dict[str, object]:
     sources = {
         path.relative_to(ROOT).as_posix(): physical_identity(path, "producer collector source")
-        for path in (Path(__file__).resolve(), CONTRACT_PATH, HIDDEN_LIST)
+        for path in (Path(__file__).resolve(), CONTRACT_PATH, HIDDEN_LIST,
+                     *(ROOT / relative for relative in compiler_helpers.SOURCE_FILES))
     }
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=ROOT, check=False, capture_output=True, text=True)
     tree = subprocess.run(["git", "rev-parse", "HEAD^{tree}"], cwd=ROOT, check=False, capture_output=True, text=True)
