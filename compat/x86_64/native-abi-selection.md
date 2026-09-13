@@ -221,7 +221,7 @@ feature-receipt obligations: four narrow scan aliases belong to
 invented selector obligation or discharge. The three hidden bodies and two
 protected controls retain their existing boundaries.
 
-`--syscall-alias-contract-report REPORT` is independently optional. Its v2
+`--syscall-alias-contract-report REPORT` is independently optional. Its v3
 owner reader is the only process-free host replay of the retained native
 receipt. The selector seals the report before and after that replay and binds
 its current collector and selected product source, static preparation, complete
@@ -233,9 +233,13 @@ used by the sealed final links: static `crt1.o`, `rcrt1.o`, `crti.o`, `crtn.o`,
 `libc.a`, and `libcrabc-builtins.a`; and dynamic `crt1.o`, `Scrt1.o`, `crti.o`,
 `crtn.o`, `libc.so`, `libcrabc-builtins.a`, and
 `crabc-dynamic-attach.o`. Each retained file must be physical, have the digest
-recorded by its retained product manifest, and have the same bytes and mode as
-the selected current product before it enters the selector's post-attachment
-recheck. The dynamic state follows the same retained-tree/manifest binding.
+recorded by its retained product manifest, and match the finite source-owned
+installed-role mode policy: the six static roles are `0644`; dynamic `libc.so`
+is `0755` and its other six roles are `0644`. The receipt replay and selector
+both compare raw retained/current files with that collector-source policy;
+current-versus-retained mode equality remains a transaction mutation check,
+not the authority that chooses a mode. The dynamic state follows the same
+retained-tree/manifest binding.
 The reader retains its pinned image, musl oracle tools, exact 47 command
 envelopes, and native semantic/override/interposition controls; the selector
 does not replace those retained executions with ambient host tools.

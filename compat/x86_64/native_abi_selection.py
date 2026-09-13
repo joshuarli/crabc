@@ -4126,7 +4126,7 @@ def attach_native_utmpx(accounting: Mapping[str, Any], companion: Mapping[str, A
 
 
 def _syscall_receipt_input(value: object, description: str) -> dict[str, Any]:
-    """Read one v2 receipt input without accepting its container path as ours."""
+    """Read one syscall receipt input without accepting its container path as ours."""
     record = exact(value, {'original', 'retained'}, description)
     original = _identity_payload(record['original'], description + ' original')
     retained = _identity_payload(record['retained'], description + ' retained')
@@ -4194,7 +4194,8 @@ def _syscall_alias_product_identities(paths: Mapping[str, Path]) -> dict[str, di
 
 
 def _syscall_retained_link_inputs(report_path: Path, roots: Mapping[str, Any],
-                                  inputs: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+                                  inputs: Mapping[str, Any],
+                                  link_input_modes: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     """Bind the exact static and dynamic driver inputs to retained manifests.
 
     The owning v2 reader validates complete retained product trees, including
@@ -4247,11 +4248,17 @@ def _syscall_retained_link_inputs(report_path: Path, roots: Mapping[str, Any],
         manifest = read_json(manifest_path)
         files = contract['manifest_files'](manifest) if type(manifest) is dict else None
         require(type(files) is dict, f'syscall alias retained {product} manifest file roster differs')
+        modes = exact(link_input_modes.get(product),
+                      {relative for _name, relative in contract['records']},
+                      f'syscall alias retained {product} source mode roster')
         for product_key, relative in (*contract['records'], *contract['extra_records']):
             display_name = 'dynamic state' if product_key == 'dynamic_state' else product_key
             _path, identity_value = retained_file(relative, f'syscall alias retained {display_name}')
             require(files.get(relative) == identity_value['sha256'],
                     f'syscall alias retained {display_name} is not sealed by its manifest')
+            if product_key != 'dynamic_state':
+                require(identity_value['mode'] == modes[relative],
+                        f'syscall alias retained {display_name} source-bound mode differs')
             retained[product_key] = identity_value
     require(set(retained) == {
         *(name for name, _relative in SYSCALL_ALIAS_STATIC_LINK_INPUTS),
@@ -4266,7 +4273,7 @@ def _syscall_retained_link_inputs(report_path: Path, roots: Mapping[str, Any],
 def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
                                  measurement: Mapping[str, Any], paths: Mapping[str, Path],
                                  source: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Replay and bind the finite v2 syscall alias receipt to one selected cohort.
+    """Replay and bind the finite v3 syscall alias receipt to one selected cohort.
 
     This attachment has no provider-selection authority.  The owning reader
     proves the alias and runtime boundary; the selector only binds that proof
@@ -4277,8 +4284,8 @@ def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str
     reader = _syscall_alias_reader()
     require(Path(reader.ROOT) == ROOT and Path(reader.__file__).resolve().parent == MODULE_DIR,
             'syscall alias reader belongs to a different checkout')
-    require(reader.SCHEMA == 'crabc.x86_64-owned-syscall-alias-contract/v2',
-            'syscall alias reader is not the current v2 boundary')
+    require(reader.SCHEMA == 'crabc.x86_64-owned-syscall-alias-contract/v3',
+            'syscall alias reader is not the current v3 boundary')
     report_path = physical_work_path(report_path, directory=False)
     before = file_identity(report_path)
     try:
@@ -4292,7 +4299,7 @@ def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str
     measurement_reports = _measurement_report_bindings(measurement, 'syscall alias')
     report = exact(report, {
         'schema', 'status', 'image', 'musl_source_commit', 'collector_source', 'selected_product_source',
-        'image_inputs', 'inputs', 'products', 'source', 'tools', 'runner', 'historical_epochs',
+        'image_inputs', 'inputs', 'products', 'link_input_modes', 'source', 'tools', 'runner', 'historical_epochs',
         'selection_projection',
     }, 'syscall alias reader report')
     projection = _syscall_alias_projection(reader)
@@ -4308,6 +4315,12 @@ def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str
     source_records = exact(report['source'], {'collector', 'selected_runtime'}, 'syscall alias source records')
     _syscall_source_snapshot(source_records['collector'], reader.COLLECTOR_SOURCES, 'syscall alias collector')
     _syscall_source_snapshot(source_records['selected_runtime'], reader.RUNTIME_SOURCES, 'syscall alias selected runtime')
+    source_link_input_modes = getattr(reader, 'LINK_INPUT_MODES', None)
+    require(type(source_link_input_modes) is dict
+            and same(report['link_input_modes'], source_link_input_modes),
+            'syscall alias source-bound link-input mode policy differs')
+    link_input_modes = exact(report['link_input_modes'], {'static', 'dynamic'},
+                             'syscall alias source-bound link-input modes')
     inputs = report['inputs']
     expected_inputs = {
         'static_preparation', 'elf_facts', 'base_inventory', 'selected_dynamic_list',
@@ -4329,13 +4342,20 @@ def native_syscall_alias_adapter(report_path: Path | None, *, facts: Mapping[str
                  'dynamic_libc', 'dynamic_driver', 'dynamic_loader', 'dynamic_manifest',
                  'dynamic_producer_tools', 'dynamic_shared_provenance'):
         _require_syscall_receipt_input(inputs[name], products[name], f'syscall alias {name}')
+    for product, records in (('static', SYSCALL_ALIAS_STATIC_LINK_INPUTS),
+                             ('dynamic', SYSCALL_ALIAS_DYNAMIC_LINK_INPUTS)):
+        modes = exact(link_input_modes[product], {relative for _name, relative in records},
+                      f'syscall alias {product} source mode roster')
+        for name, relative in records:
+            require(products[name]['mode'] == modes[relative],
+                    f'syscall alias {name} source-bound mode differs')
     roots = report['products']
     require(type(roots) is dict and set(roots) == {'static', 'dynamic'}
             and all(type(roots[name]) is dict and set(roots[name]) == {'original', 'retained'}
                     and type(roots[name]['original']) is str and Path(roots[name]['original']).is_absolute()
                     and roots[name]['retained'] == 'products/' + name for name in roots),
             'syscall alias retained product roots differ')
-    retained_link_inputs = _syscall_retained_link_inputs(report_path, roots, inputs)
+    retained_link_inputs = _syscall_retained_link_inputs(report_path, roots, inputs, link_input_modes)
     for name, retained_identity in retained_link_inputs.items():
         display_name = 'dynamic state' if name == 'dynamic_state' else name
         _require_same_identity_payload(retained_identity, products[name], f'syscall alias {display_name}')
