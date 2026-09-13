@@ -169,6 +169,29 @@ SYSCALL_ALIAS_DYNAMIC_LINK_INPUTS = (
     ('dynamic_attach', 'usr/lib/crabc-dynamic-attach.o'),
 )
 
+UTMPX_ALIAS_RECEIPT_REQUIREMENT = 'source-selected alias requires exact feature archive selection and component receipt'
+UTMPX_LIMITS = [
+    'Only the eight source-selected utmpx aliases are joined to their existing feature-alias receipt requirements.',
+    'The retained sixteen-provider envelope, static function proof, dynamic imports, source/product cohort and runtime controls do not select private providers, qualify utmpx semantics, complete a family, promote support or erase unrelated imports.',
+]
+UTMPX_STATIC_LINK_INPUTS = (
+    ('static_crt1', 'usr/lib/crt1.o'),
+    ('static_rcrt1', 'usr/lib/rcrt1.o'),
+    ('static_crti', 'usr/lib/crti.o'),
+    ('static_crtn', 'usr/lib/crtn.o'),
+    ('static_libc', 'usr/lib/libc.a'),
+    ('static_builtins', 'usr/lib/libcrabc-builtins.a'),
+)
+UTMPX_DYNAMIC_LINK_INPUTS = (
+    ('dynamic_crt1', 'usr/lib/crt1.o'),
+    ('dynamic_Scrt1', 'usr/lib/Scrt1.o'),
+    ('dynamic_crti', 'usr/lib/crti.o'),
+    ('dynamic_crtn', 'usr/lib/crtn.o'),
+    ('dynamic_libc', 'usr/lib/libc.so'),
+    ('dynamic_builtins', 'usr/lib/libcrabc-builtins.a'),
+    ('dynamic_attach', 'usr/lib/crabc-dynamic-attach.o'),
+)
+
 
 def _stdio_alias_reader():
     """Load the FILE reader after this selection module has initialized.
@@ -218,6 +241,23 @@ def _crt_startup_source_files() -> tuple[str, ...]:
         'compat/x86_64/installed-crt-startup.md',
         'compat/x86_64/tests/test_installed_crt_startup_evidence.py',
         'compat/x86_64/tests/test_native_abi_crt_startup_attachment.py',
+    )
+
+
+def _utmpx_reader():
+    """Load the finite utmpx reader only after selector initialization."""
+    try:
+        return importlib.import_module('owned_utmpx_receipt')
+    except (ImportError, OSError, ValueError) as error:
+        raise SelectionError(f'cannot load utmpx receipt reader: {error}') from error
+
+
+def _utmpx_source_files() -> tuple[str, ...]:
+    reader = _utmpx_reader()
+    return (
+        *reader.SOURCES,
+        'compat/x86_64/tests/test_native_abi_utmpx_attachment.py',
+        'compat/x86_64/native-abi-selection.md',
     )
 
 
@@ -2228,7 +2268,8 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
                                     c_allocator_boundary: Mapping[str, Any] | None = None,
                                     stdio_alias_contract: Mapping[str, Any] | None = None,
                                     crt_startup: Mapping[str, Any] | None = None,
-                                    syscall_alias: Mapping[str, Any] | None = None) -> None:
+                                    syscall_alias: Mapping[str, Any] | None = None,
+                                    utmpx: Mapping[str, Any] | None = None) -> None:
     """Keep runtime attachments within the same source/product transaction.
 
     Both owning readers validate their receipts before the selector's placement
@@ -2238,7 +2279,7 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
     """
     if (registry is None and pthread is None and prepared_worker is None
             and errno_storage is None and c_allocator_boundary is None
-            and stdio_alias_contract is None and crt_startup is None and syscall_alias is None):
+            and stdio_alias_contract is None and crt_startup is None and syscall_alias is None and utmpx is None):
         return
     require(same(source, selection_source()), 'selection source changed during runtime receipt attachment')
     reports = _measurement_report_bindings(measurement, 'runtime receipt')
@@ -2351,6 +2392,23 @@ def _recheck_runtime_receipt_cohort(*, paths: Mapping[str, Path], facts: Mapping
         require(report_path.is_file() and report_path.resolve() == report_path
                 and same(report, file_identity(report_path)),
                 'syscall alias report changed during attachment')
+    if utmpx is not None:
+        expected_products = _utmpx_product_identities(paths)
+        records = utmpx.get('products')
+        require(type(records) is dict and set(records) == set(expected_products),
+                'utmpx product roster differs during attachment')
+        for name in expected_products:
+            _require_same_identity_payload(records[name], expected_products[name],
+                                           f'utmpx {name} changed during attachment')
+        require(same(utmpx.get('measurement_reports'), reports),
+                'utmpx public replay binding changed during attachment')
+        report = utmpx.get('report')
+        require(type(report) is dict and type(report.get('path')) is str,
+                'utmpx report identity differs during attachment')
+        report_path = Path(report['path'])
+        require(report_path.is_file() and report_path.resolve() == report_path
+                and same(report, file_identity(report_path)),
+                'utmpx report changed during attachment')
 
 
 def loader_runtime_registry_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
@@ -3765,6 +3823,306 @@ def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, 
         },
         'limits': list(CRT_STARTUP_LIMITS),
     }
+
+
+def _utmpx_product_identities(paths: Mapping[str, Path]) -> dict[str, dict[str, Any]]:
+    """Return the finite current inputs sealed by the utmpx receipt.
+
+    This is the runner's actual static/dynamic link surface, not a product-tree
+    prefix.  The owning reader validates its retained complete trees; this
+    selector roster makes each concrete current byte and mode available both to
+    direct attachment and to the transaction-final recheck.
+    """
+    records = {
+        **_runtime_attachment_identities(paths),
+        'static_preparation': file_identity(paths['static_preparation']),
+        'dynamic_producer_tools': file_identity(paths['dynamic_product'] / 'share/crabc/producer-tools.json'),
+    }
+    for name, relative in UTMPX_STATIC_LINK_INPUTS:
+        records.setdefault(name, file_identity(paths['static_product'] / relative))
+    for name, relative in UTMPX_DYNAMIC_LINK_INPUTS:
+        records.setdefault(name, file_identity(paths['dynamic_product'] / relative))
+    return records
+
+
+def _utmpx_retained_inputs(report_path: Path, report: Mapping[str, Any],
+                           products: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Bind every selected link input to the reader-validated retained product.
+
+    ``owned_utmpx_receipt.validate_report`` owns the complete retained-tree,
+    provenance, command and runtime replay.  This join follows its finite
+    manifests to prevent a current CRT, builtins, attach object, state, or
+    driver byte from being accepted only because a copied tree was valid once.
+    """
+    roots = exact(report['products'], {'static', 'dynamic'}, 'utmpx retained product roots')
+    workspace = physical_work_path(report_path.parent / 'workspace', directory=True)
+    expected = {
+        'static': {
+            'root': '.work/utmpx-receipt/inputs/static',
+            'manifest_files': lambda manifest: manifest.get('installed', {}).get('files')
+                if type(manifest.get('installed')) is dict else None,
+            'records': (
+                ('static_manifest', 'share/crabc/manifest.json'),
+                ('static_driver', 'bin/crabc-cc'),
+                *UTMPX_STATIC_LINK_INPUTS,
+            ),
+        },
+        'dynamic': {
+            'root': '.work/utmpx-receipt/inputs/dynamic',
+            'manifest_files': lambda manifest: manifest.get('files'),
+            'records': (
+                ('dynamic_manifest', 'share/crabc/manifest.json'),
+                ('dynamic_state', 'share/crabc/dynamic-product-state.json'),
+                ('dynamic_driver', 'bin/crabc-cc-dynamic'),
+                ('dynamic_loader', 'lib/ld-crabc-x86_64.so.1'),
+                ('dynamic_shared_provenance', 'share/crabc/libc-shared.provenance.json'),
+                ('dynamic_producer_tools', 'share/crabc/producer-tools.json'),
+                *UTMPX_DYNAMIC_LINK_INPUTS,
+            ),
+        },
+    }
+    retained: dict[str, dict[str, Any]] = {}
+    snapshots: list[tuple[Path, dict[str, Any]]] = []
+    for family, contract in expected.items():
+        root = exact(roots[family], {'workspace_path', 'retained_tree'}, f'utmpx {family} product')
+        require(root['workspace_path'] == contract['root'] and type(root['retained_tree']) is dict,
+                f'utmpx {family} retained product root differs')
+        retained_root = physical_work_path(workspace / contract['root'], directory=True)
+        manifest_path = retained_root / 'share/crabc/manifest.json'
+        require(manifest_path.is_file() and not manifest_path.is_symlink() and manifest_path.resolve() == manifest_path,
+                f'utmpx retained {family} manifest is not physical')
+        manifest_identity = file_identity(manifest_path)
+        files = contract['manifest_files'](read_json(manifest_path))
+        require(type(files) is dict, f'utmpx retained {family} manifest file roster differs')
+        for name, relative in contract['records']:
+            path = retained_root / relative
+            require(path.is_file() and not path.is_symlink() and path.resolve() == path,
+                    f'utmpx retained {name} is not physical')
+            value = file_identity(path)
+            entry = root['retained_tree'].get(relative)
+            require(type(entry) is dict and entry.get('kind') == 'file'
+                    and entry.get('sha256') == value['sha256'] and entry.get('size') == value['size']
+                    and entry.get('mode') == value['mode'],
+                    f'utmpx retained {name} differs from reader-sealed tree')
+            if name != 'static_manifest' and name != 'dynamic_manifest':
+                require(files.get(relative) == value['sha256'],
+                        f'utmpx {name} is not sealed by retained {family} manifest')
+            retained[name] = value
+            snapshots.append((path, value))
+        require(same(manifest_identity, retained['static_manifest' if family == 'static' else 'dynamic_manifest']),
+                f'utmpx retained {family} manifest identity differs')
+    expected_names = set(products) - {'static_preparation'}
+    require(set(retained) == expected_names, 'utmpx retained product input roster differs')
+    require(all(same(value, file_identity(path)) for path, value in snapshots),
+            'utmpx retained product bytes changed during selector binding')
+    return retained
+
+
+def _utmpx_projection(reader: Any, value: object) -> dict[str, Any]:
+    projection = exact(value, {
+        'selected_aliases', 'component_complete', 'family_complete', 'runtime_qualified', 'public_support',
+        'linkages', 'runtime_streams',
+    }, 'utmpx receipt projection')
+    aliases = [[alias, target] for alias, target in reader.ALIASES]
+    require(projection['selected_aliases'] == aliases and projection['component_complete'] is True
+            and projection['family_complete'] is False and projection['runtime_qualified'] is False
+            and projection['public_support'] is False
+            and projection['linkages'] == ['non-pie', 'pie', 'static', 'static-pie']
+            and projection['runtime_streams'] == [
+                'non-pie-direct', 'non-pie-kernel', 'oracle', 'pie-direct', 'pie-kernel', 'static', 'static-pie',
+            ], 'utmpx receipt projection differs')
+    require(len(aliases) == 8 and len({name for pair in aliases for name in pair}) == 16,
+            'utmpx finite alias/provider cardinality differs')
+    return copy.deepcopy(projection)
+
+
+def _utmpx_symbol_summary(reader: Any, value: object) -> dict[str, Any]:
+    symbols = exact(value, {'headers', 'archive', 'shared', 'executables', 'dynamic_imports'}, 'utmpx symbol summary')
+    names = {*reader.STRONG, *reader.WEAK}
+    require(len(names) == 16 and set(reader.STRONG).isdisjoint(reader.WEAK),
+            'utmpx reader provider roster differs')
+    expected_archive = {name: ('T' if name in reader.STRONG else 'W') for name in names}
+    expected_shared = {name: ('GLOBAL' if name in reader.STRONG else 'WEAK') for name in names}
+    require(symbols['archive'] == expected_archive and symbols['shared'] == expected_shared,
+            'utmpx provider binding summary differs')
+    require(type(symbols['executables']) is dict and set(symbols['executables']) == {'static', 'static-pie'}
+            and all(symbols['executables'][mode] == expected_archive for mode in symbols['executables']),
+            'utmpx static function proof differs')
+    expected_imports = {name: 'GLOBAL DEFAULT UND' for name in names}
+    require(type(symbols['dynamic_imports']) is dict and set(symbols['dynamic_imports']) == {'pie', 'non-pie'}
+            and all(symbols['dynamic_imports'][mode] == expected_imports for mode in symbols['dynamic_imports']),
+            'utmpx dynamic import proof differs')
+    return copy.deepcopy(symbols)
+
+
+def native_utmpx_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
+                         measurement: Mapping[str, Any], paths: Mapping[str, Path],
+                         source: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Bind the owner-replayed finite utmpx receipt to this selected cohort."""
+    if report_path is None:
+        return None
+    reader = _utmpx_reader()
+    require(Path(reader.ROOT) == ROOT and Path(reader.__file__).resolve().parent == MODULE_DIR,
+            'utmpx reader belongs to a different checkout')
+    require(reader.SCHEMA == 'crabc.x86_64-owned-utmpx-receipt/v1',
+            'utmpx reader is not the current receipt boundary')
+    report_path = physical_work_path(report_path, directory=False)
+    before = file_identity(report_path)
+    try:
+        report = reader.validate_report(report_path)
+    except (KeyError, TypeError, ValueError, OSError, reader.ReceiptError) as error:
+        raise SelectionError(f'utmpx component rejected: {error}') from error
+    require(same(before, file_identity(report_path)), 'utmpx report changed during replay')
+    source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'utmpx selection source')
+    require(source['clean'] is True, 'utmpx selection source is not clean')
+    _measurement_source_matches(source, measurement, 'utmpx')
+    measurement_reports = _measurement_report_bindings(measurement, 'utmpx')
+    report = exact(report, {
+        'schema', 'image', 'source_tree', 'sources', 'products', 'product_cohort', 'tools', 'commands',
+        'symbols', 'runtime', 'links', 'projection',
+    }, 'utmpx reader report')
+    require(report['schema'] == reader.SCHEMA and type(report['image']) is dict
+            and report['image'].get('id') == reader.PINNED_IMAGE,
+            'utmpx reader schema or pinned image differs')
+    source_tree = exact(report['source_tree'], {'revision', 'entries'}, 'utmpx receipt source Git tree')
+    require(source_tree['revision'] == source['revision'] and type(source_tree['entries']) is dict
+            and set(source_tree['entries']) == set(reader.SOURCES),
+            'utmpx receipt source Git tree differs from selection')
+    sources = report['sources']
+    require(type(sources) is dict and set(sources) == set(reader.SOURCES), 'utmpx receipt source roster differs')
+    for name in reader.SOURCES:
+        _require_same_identity_payload(sources[name], file_identity(ROOT / name), f'utmpx source {name}')
+    cohort = exact(report['product_cohort'], {
+        'source', 'static_preparation', 'static_source_before', 'static_source_after', 'static_manifest',
+        'dynamic_manifest', 'dynamic_state',
+    }, 'utmpx receipt product cohort')
+    require(same(cohort['source'], {'revision': source['revision'], 'content_sha256': source['content_sha256']}),
+            'utmpx receipt selected product source differs')
+    products = _utmpx_product_identities(paths)
+    _require_same_identity_payload(cohort['static_preparation'], products['static_preparation'],
+                                   'utmpx static preparation')
+    for name in ('static_manifest', 'dynamic_manifest', 'dynamic_state'):
+        _require_same_identity_payload(cohort[name], products[name], f'utmpx {name.replace("_", " ")}')
+    retained = _utmpx_retained_inputs(report_path, report, products)
+    for name, value in retained.items():
+        _require_same_identity_payload(value, products[name], f'utmpx {name}')
+    facts_artifacts = facts.get('artifacts')
+    require(type(facts_artifacts) is dict, 'utmpx public ELF artifact roster differs')
+    for artifact, name in (('candidate-static', 'static_libc'), ('candidate-shared', 'dynamic_libc'),
+                           ('candidate-loader', 'dynamic_loader')):
+        value = facts_artifacts.get(artifact)
+        require(type(value) is dict and 'identity' in value, f'utmpx public ELF artifact differs: {artifact}')
+        _require_same_identity_payload(value['identity'], products[name], f'utmpx public ELF {artifact}')
+    projection = _utmpx_projection(reader, report['projection'])
+    symbols = _utmpx_symbol_summary(reader, report['symbols'])
+    require(type(report['links']) is dict and set(report['links']) == {'static', 'static-pie', 'pie', 'non-pie'}
+            and type(report['runtime']) is dict
+            and set(report['runtime']) == set(projection['runtime_streams']),
+            'utmpx reader link/runtime roster differs')
+    source_inputs = {name: file_identity(ROOT / name) for name in _utmpx_source_files()}
+    return {
+        'status': 'utmpx-observed-with-boundaries', 'reader': file_identity(Path(reader.__file__)),
+        'report': before, 'source': copy.deepcopy(source), 'source_inputs': source_inputs,
+        'products': {name: copy.deepcopy(products[name]) for name in sorted(products)},
+        'measurement_reports': measurement_reports, 'projection': projection, 'symbols': symbols,
+        'limits': list(UTMPX_LIMITS),
+    }
+
+
+def _utmpx_named_rows(occurrences: Mapping[int, Mapping[str, Any]], name: str) -> list[dict[str, Any]]:
+    """Restrict logical joins to a finite named scope without dropping raw rows."""
+    return [dict(value) for value in occurrences.values()
+            if type(value.get('row')) is dict and value['row'].get('name') == name]
+
+
+def _utmpx_one_row(rows: Sequence[Mapping[str, Any]], *, artifact: str, table: str,
+                   binding: str, description: str) -> dict[str, Any]:
+    matches = [row for row in rows if row.get('artifact_key') == artifact and row.get('table') == table
+               and row.get('role') == 'definition' and row.get('row', {}).get('type') == 'FUNC'
+               and row['row'].get('binding') == binding and row['row'].get('visibility') == 'DEFAULT']
+    require(len(matches) == 1, f'{description} exact candidate occurrence differs')
+    return dict(matches[0])
+
+
+def attach_native_utmpx(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Discharge only the eight already-selected utmpx feature-alias reasons."""
+    if companion is None:
+        return []
+    reader = _utmpx_reader()
+    companion = exact(companion, {
+        'status', 'reader', 'report', 'source', 'source_inputs', 'products', 'measurement_reports',
+        'projection', 'symbols', 'limits',
+    }, 'utmpx companion')
+    require(companion['status'] == 'utmpx-observed-with-boundaries' and companion['limits'] == UTMPX_LIMITS
+            and same(companion['projection'], _utmpx_projection(reader, companion['projection']))
+            and same(companion['symbols'], _utmpx_symbol_summary(reader, companion['symbols']))
+            and same(companion['source_inputs'], {name: file_identity(ROOT / name) for name in _utmpx_source_files()}),
+            'utmpx companion boundary differs')
+    records, _placements, occurrences = _accounting_indexes(accounting, description='utmpx attachment')
+    occurrence_count = len(occurrences)
+    aliases = tuple((str(alias), str(target)) for alias, target in reader.ALIASES)
+    providers = {*reader.STRONG, *reader.WEAK}
+    expected_indices: set[int] = set()
+    joins: list[dict[str, Any]] = []
+    for name in sorted(providers):
+        binding = 'GLOBAL' if name in reader.STRONG else 'WEAK'
+        rows = _utmpx_named_rows(occurrences, name)
+        static = _utmpx_one_row(rows, artifact='candidate-static', table='.symtab', binding=binding,
+                                 description=f'utmpx provider {name} static')
+        shared_dyn = _utmpx_one_row(rows, artifact='candidate-shared', table='.dynsym', binding=binding,
+                                     description=f'utmpx provider {name} shared dynsym')
+        shared = _utmpx_one_row(rows, artifact='candidate-shared', table='.symtab', binding=binding,
+                                 description=f'utmpx provider {name} shared symtab')
+        expected_indices.update((static['index'], shared_dyn['index'], shared['index']))
+    actual_indices = {row['index'] for row in occurrences.values()
+                      if row.get('artifact_key') in {'candidate-static', 'candidate-shared'}
+                      and type(row.get('row')) is dict and row['row'].get('name') in providers}
+    require(actual_indices == expected_indices, 'utmpx candidate provider occurrence roster differs')
+    observations = accounting.get('function_alias_observations')
+    require(type(observations) is list, 'utmpx source-selected alias observations differ')
+    for alias, target in aliases:
+        record = records.get((alias, None, False))
+        require(record is not None and record.get('selection', {}).get('disposition') == 'public-provider',
+                f'utmpx selected public alias differs: {alias}')
+        feature = record.get('function_alias_requirements')
+        require(type(feature) is list and len(feature) == 1
+                and feature[0] == {'name': alias, 'target': target, 'binding': 'weak-same-address',
+                                   'owner': 'x86-owned-static-runtime'},
+                f'utmpx selected feature alias differs: {alias}')
+        alias_static = _utmpx_one_row(_utmpx_named_rows(occurrences, alias), artifact='candidate-static',
+                                       table='.symtab', binding='WEAK', description=f'utmpx alias {alias} static')
+        alias_shared = _utmpx_one_row(_utmpx_named_rows(occurrences, alias), artifact='candidate-shared',
+                                       table='.symtab', binding='WEAK', description=f'utmpx alias {alias} shared')
+        target_binding = 'GLOBAL' if target in reader.STRONG else 'WEAK'
+        target_static = _utmpx_one_row(_utmpx_named_rows(occurrences, target), artifact='candidate-static',
+                                        table='.symtab', binding=target_binding,
+                                        description=f'utmpx target {target} static')
+        target_shared = _utmpx_one_row(_utmpx_named_rows(occurrences, target), artifact='candidate-shared',
+                                        table='.symtab', binding=target_binding,
+                                        description=f'utmpx target {target} shared')
+        require(same_definition_domain(alias_static, target_static)
+                and same_definition_domain(alias_shared, target_shared),
+                f'utmpx alias definition domain differs: {alias}')
+        expected_observation = next((row for row in observations
+                                     if row.get('identity') == record['identity'] and row.get('artifact_key') == 'candidate-static'
+                                     and row.get('target') == identity(target) and row.get('feature_contract') == feature[0]), None)
+        require(type(expected_observation) is dict
+                and expected_observation.get('same_domain_pairs') == [[alias_static['index'], target_static['index']]],
+                f'utmpx selected feature archive observation differs: {alias}')
+        _remove_identity_requirements(accounting, record, (UTMPX_ALIAS_RECEIPT_REQUIREMENT,),
+                                      description=f'utmpx alias {alias}')
+        joins.append({
+            'alias': alias, 'target': target,
+            'static_alias_occurrence_index': alias_static['index'],
+            'shared_alias_occurrence_index': alias_shared['index'],
+            'static_target_occurrence_index': target_static['index'],
+            'shared_target_occurrence_index': target_shared['index'],
+            'requirements_discharged': [UTMPX_ALIAS_RECEIPT_REQUIREMENT],
+        })
+    require(len(joins) == 8 and len(occurrences) == occurrence_count,
+            'utmpx finite attachment cardinality differs')
+    return [{'aliases': joins, 'requirements_discharged': [UTMPX_ALIAS_RECEIPT_REQUIREMENT],
+             'complete_elf_occurrence_count': occurrence_count}]
 
 
 def _syscall_receipt_input(value: object, description: str) -> dict[str, Any]:
@@ -5477,7 +5835,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
                   native_c_allocator_boundary_report: Path | None = None,
                   stdio_alias_contract_report: Path | None = None,
                   crt_startup_report: Path | None = None,
-                  syscall_alias_contract_report: Path | None = None) -> dict[str, Any]:
+                  syscall_alias_contract_report: Path | None = None,
+                  utmpx_receipt_report: Path | None = None) -> dict[str, Any]:
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -5513,6 +5872,9 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     )
     syscall_alias_contract_companion = native_syscall_alias_adapter(
         syscall_alias_contract_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
+    )
+    utmpx_receipt_companion = native_utmpx_adapter(
+        utmpx_receipt_report, facts=facts, measurement=measurement, paths=paths, source=source_before,
     )
     declaration = declaration_adapter(
         declaration_report,
@@ -5561,6 +5923,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
     crt_startup_joins = attach_native_crt_startup(accounting, crt_startup_companion)
     crt_descriptor_handoff_joins = attach_native_crt_descriptor_handoff(accounting, crt_startup_companion)
     syscall_alias_contract_joins = attach_native_syscall_alias(accounting, syscall_alias_contract_companion)
+    utmpx_receipt_joins = attach_native_utmpx(accounting, utmpx_receipt_companion)
     _recheck_runtime_receipt_cohort(
         paths=paths, facts=facts, measurement=measurement, source=source_before,
         registry=loader_runtime_registry_companion, pthread=pthread_alias_contract_companion,
@@ -5568,6 +5931,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         c_allocator_boundary=native_c_allocator_boundary_companion,
         stdio_alias_contract=stdio_alias_contract_companion,
         crt_startup=crt_startup_companion, syscall_alias=syscall_alias_contract_companion,
+        utmpx=utmpx_receipt_companion,
     )
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
@@ -5604,6 +5968,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'crt_descriptor_handoff_joins': crt_descriptor_handoff_joins,
             'syscall_alias_contract_companion': syscall_alias_contract_companion,
             'syscall_alias_contract_joins': syscall_alias_contract_joins,
+            'utmpx_receipt_companion': utmpx_receipt_companion,
+            'utmpx_receipt_joins': utmpx_receipt_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -5622,6 +5988,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                  stdio_alias_contract_report: Path | None = None,
                  crt_startup_report: Path | None = None,
                  syscall_alias_contract_report: Path | None = None,
+                 utmpx_receipt_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
@@ -5638,7 +6005,8 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
                            native_c_allocator_boundary_report=native_c_allocator_boundary_report,
                            stdio_alias_contract_report=stdio_alias_contract_report,
                            crt_startup_report=crt_startup_report,
-                           syscall_alias_contract_report=syscall_alias_contract_report)
+                           syscall_alias_contract_report=syscall_alias_contract_report,
+                           utmpx_receipt_report=utmpx_receipt_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -5656,6 +6024,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                     stdio_alias_contract_report: Path | None = None,
                     crt_startup_report: Path | None = None,
                     syscall_alias_contract_report: Path | None = None,
+                    utmpx_receipt_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -5674,7 +6043,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
                              native_c_allocator_boundary_report=native_c_allocator_boundary_report,
                              stdio_alias_contract_report=stdio_alias_contract_report,
                              crt_startup_report=crt_startup_report,
-                             syscall_alias_contract_report=syscall_alias_contract_report)
+                             syscall_alias_contract_report=syscall_alias_contract_report,
+                             utmpx_receipt_report=utmpx_receipt_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -5700,6 +6070,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--stdio-alias-contract-report', type=Path)
     parser.add_argument('--crt-startup-report', type=Path)
     parser.add_argument('--syscall-alias-contract-report', type=Path)
+    parser.add_argument('--utmpx-receipt-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -5715,7 +6086,7 @@ def main(argv: Sequence[str]) -> int:
                                                 'pthread_alias_contract_report', 'prepared_worker_tls_report',
                                                 'errno_storage_lifecycle_report', 'native_c_allocator_boundary_report',
                                                 'stdio_alias_contract_report', 'crt_startup_report',
-                                                'syscall_alias_contract_report')}
+                                                'syscall_alias_contract_report', 'utmpx_receipt_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)

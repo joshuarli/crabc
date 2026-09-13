@@ -256,6 +256,32 @@ receipt. All unowned and unnamed physical rows remain in the complete ELF
 accounting. No syscall family, qualification, promotion, or public-support
 claim follows.
 
+`--utmpx-receipt-report REPORT` is independently optional. Its owning
+process-free reader reconstructs the retained eight selected aliases and
+sixteen provider spellings, static executable function proof, dynamic import
+proof, header evidence, retained commands and runtime controls. The selector
+seals the report around replay, requires its collector and selected product
+source to match the current selected cohort, and binds the static preparation,
+complete ELF facts/base inventory, manifests, dynamic state, drivers, libc
+products, loader, shared provenance, producer-tools, and every actual final
+link input to current bytes and modes. The finite static input roster is
+`crt1.o`, `rcrt1.o`, `crti.o`, `crtn.o`, `libc.a`, and
+`libcrabc-builtins.a`; the dynamic roster is `crt1.o`, `Scrt1.o`, `crti.o`,
+`crtn.o`, `libc.so`, `libcrabc-builtins.a`, and
+`crabc-dynamic-attach.o`. Retained product manifests and trees must seal each
+input, and the transaction rechecks the same roster after attachment.
+
+`attach_native_utmpx` maps only the reader's eight aliases — `endutent`,
+`setutent`, `getutent`, `getutid`, `getutline`, `pututline`, `updwtmp`, and
+`utmpxname` — to their existing `x86-owned-static-runtime` source-selected
+feature-alias requirement. It requires candidate static and shared alias/
+target definition domains and preserves the complete named and unnamed ELF
+occurrence roster. The remaining provider spelling `utmpname` is retained as
+a reader observation; this adapter creates no private-provider scope or new
+receipt requirement for it. It does not change public imports, establish utmp
+semantics, complete a family, qualify runtime support, or promote public
+support.
+
 These runtime attachments run before the one public declaration-envelope replay
 and are rechecked after their scoped joins. Their source/product/ELF cohort is
 therefore shared with the selection transaction without rereading the header
