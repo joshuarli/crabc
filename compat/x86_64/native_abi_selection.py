@@ -3484,6 +3484,22 @@ def _crt_startup_identity_names(reader: Any) -> tuple[str, ...]:
                 'owned_modes': ['owned-pie', 'owned-non-pie'],
                 'geometry': {'size_bytes': 72, 'alignment_bytes': 8, 'magic': '43524142435f5451',
                              'version': 1, 'process_mode': 2, 'owner': 1, 'ready_state': 2, 'generation': 1},
+                'admission': {
+                    'main_case': 'owned-pie-normal',
+                    'entry_modes': ['kernel', 'direct'],
+                    'mutations': {
+                        'wrong-symbol-type': {'field': 'symbol-info', 'value': 33},
+                        'wrong-binding': {'field': 'symbol-info', 'value': 16},
+                        'wrong-relocation-kind': {'field': 'relocation-kind', 'value': 7},
+                        'wrong-addend': {'field': 'addend', 'value': 1},
+                    },
+                    'dso': {
+                        'source': 'compat/x86_64/installed_crt_startup_descriptor_dso.c',
+                        'shared_object': 'descriptor-rogue-dso.so',
+                        'endpoint': 'descriptor-dso-endpoint',
+                    },
+                    'rejection': {'status': 127, 'stdout': '', 'stderr': 'reloc\n'},
+                },
             },
             'CRT startup owner contract differs')
     return names
@@ -3660,7 +3676,7 @@ def native_crt_startup_adapter(report_path: Path | None, *, facts: Mapping[str, 
     )
     observations = exact(report['observations'], {
         'complete_elf_facts', 'product_placements', 'product_relocations', 'executables', 'roots',
-        'runtime_labels', 'limits', 'descriptor_handoff',
+        'runtime_labels', 'limits', 'descriptor_handoff', 'descriptor_admission',
     }, 'CRT startup observations')
     _crt_startup_complete_facts_match(observations['complete_elf_facts'], facts, products)
     placements = observations['product_placements']

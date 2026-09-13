@@ -242,13 +242,20 @@ link-time boundary: the attachment requires its archive undefined row and the
 shared local `.got.plt` definition with their distinct metadata; it never
 turns that spelling into a provider rule. The 32-byte owned handoff and the
 88-byte conventional snapshot remain separate from the prepared-worker
-72-byte descriptor. Schema-v2 owner evidence adds a separate finite main-image
+72-byte descriptor. The owner evidence retains a separate finite main-image
 descriptor-handoff account: the dynamic attachment object's weak GOTPCREL
 input, four exact owned final-main weak `GLOB_DAT` slots, every non-owned/static
 no-slot control, and the owned probe's geometry and TP/DTV observations. It
 does not supply release-READY ordering, malformed rejection, worker lifetime,
 mapping-generation, fork, general CRT lifecycle, runtime qualification, family
 completion, promotion, or public support.
+
+The v3 receipt additionally requires the canonical owner's finite descriptor
+admission controls for kernel and direct entry. The selector checks that exact
+contract in `_crt_startup_identity_names` and accepts the publicly replayed
+`descriptor_admission` observation in `native_crt_startup_adapter`. These
+controls do not add a selector discharge: malformed-record rejection and the
+other outstanding descriptor protocol requirements remain explicit obligations.
 
 ## Selection inputs and definition domains
 

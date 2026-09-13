@@ -60,6 +60,25 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
             'conventional_snapshot': 88,
         })
 
+    def test_owner_rejects_weakened_descriptor_admission_contract(self) -> None:
+        reader = selection._crt_startup_reader()
+        contract = reader.contract(ROOT)
+        for change in ('omit-admission', 'omit-direct', 'allow-success', 'omit-dso'):
+            with self.subTest(change=change):
+                altered = copy.deepcopy(contract)
+                handoff = altered['descriptor_handoff']
+                if change == 'omit-admission':
+                    del handoff['admission']
+                elif change == 'omit-direct':
+                    handoff['admission']['entry_modes'] = ['kernel']
+                elif change == 'allow-success':
+                    handoff['admission']['rejection']['status'] = 0
+                else:
+                    del handoff['admission']['dso']
+                with mock.patch.object(reader, 'contract', return_value=altered):
+                    with self.assertRaisesRegex(selection.SelectionError, 'owner contract differs'):
+                        selection._crt_startup_identity_names(reader)
+
     def test_owner_projection_rejects_an_unowned_ssp_row_and_an_omitted_boundary(self) -> None:
         reader = selection._crt_startup_reader()
         names = selection._crt_startup_identity_names(reader)
