@@ -12,12 +12,14 @@ import tempfile
 from unittest import mock
 import hashlib
 import zlib
+from dataclasses import replace
 from pathlib import Path
 
 
 SOURCE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SOURCE_DIR))
 import owned_syscall_alias_authority as authority
+import owned_static_link_authority as static_authority
 
 from owned_syscall_alias_contract_reader import (
     ALIASES,
@@ -197,6 +199,35 @@ class OwnedSyscallAliasRetainedAuthorityTests(unittest.TestCase):
     def test_host_replay_never_spawns_a_process(self) -> None:
         with mock.patch("subprocess.Popen", side_effect=AssertionError("host replay spawned a process")):
             validate_report(self.path)
+
+    def test_shared_static_contract_has_exact_owners_and_separate_source_final_metadata(self) -> None:
+        with mock.patch.object(static_authority, "require_static_functions",
+                               wraps=static_authority.require_static_functions) as proof:
+            validate_report(self.path)
+        arguments = next(call.args for call in proof.call_args_list if call.args[1].name == "static-contract")
+        map_path, executable, admitted, contracts = arguments
+        public = next(row for row in contracts if row.name == "clock_gettime")
+        provider = static_authority.StaticFunctionContract(
+            "__clock_gettime", public.input_owner, "GLOBAL", "HIDDEN", "LOCAL", "HIDDEN",
+        )
+        # This real selected provider has different source/final bindings. It
+        # exercises the explicit contract needed by the other static components.
+        static_authority.require_static_functions(map_path, executable, admitted, [*contracts, provider])
+        rejected = (
+            [],
+            [*contracts, contracts[0]],
+            [*contracts, replace(provider, name="missing_static_function")],
+            [*contracts, replace(provider, input_owner="/not-an-admitted-object")],
+            [*contracts, replace(provider, input_owner=contracts[0].input_owner)],
+            [*contracts, replace(provider, source_binding="WEAK")],
+            [*contracts, replace(provider, source_visibility="DEFAULT")],
+            [*contracts, replace(provider, final_binding="GLOBAL")],
+            [*contracts, replace(provider, final_visibility="DEFAULT")],
+        )
+        for index, rows in enumerate(rejected):
+            with self.subTest(case=index):
+                with self.assertRaises(static_authority.StaticLinkAuthorityError):
+                    static_authority.require_static_functions(map_path, executable, admitted, rows)
 
     def test_python_stdin_is_bound_to_the_collector_source(self) -> None:
         (self.runner / "probe-object-seal.stdin").write_text("print('forged')\n")
