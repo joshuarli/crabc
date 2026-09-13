@@ -22,14 +22,18 @@ SPEC.loader.exec_module(BOUNDARY)
 
 
 class NativeCAllocatorBoundaryHarnessTests(unittest.TestCase):
-    def test_interposition_runner_retains_owned_dynamic_link_receipts(self) -> None:
+    def test_interposition_runner_derives_owned_dynamic_link_receipts(self) -> None:
         runner = (ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh").read_text(
             encoding="utf-8"
         )
 
         for mode in ("pie", "non-pie"):
-            self.assertIn(f'"$work/candidate-$mode.crabc-link.json"', runner)
-        self.assertIn('"$installed/bin/crabc-cc-dynamic" "$candidate_mode" --link-receipt', runner)
+            self.assertIn(f'-o "$work/candidate-$mode"', runner)
+        self.assertIn(
+            '"$installed/bin/crabc-cc-dynamic" "$candidate_mode" -rdynamic "$work/workload.o"',
+            runner,
+        )
+        self.assertNotIn("--link-receipt", runner)
 
     def test_startup_observation_binds_the_runner_owned_same_object(self) -> None:
         scratch = ROOT / ".work/x86_64/native-c-allocator-boundary-tests"
