@@ -56,6 +56,9 @@ header/section/symbol streams and archive rosters independently observe the four
 libc artifacts. Archive occurrence, table and positive executable section are
 part of every alias domain; equal values alone do not prove aliases. Local,
 hidden, undefined and unsupported raw facts remain in the complete projection.
+Each public shared `.dynsym` row must itself define an executable section and
+match its `.symtab` body in section, value, type and size. The CLI requires exact
+option spellings.
 
 The selected FILE/header source must match its historical source revision, and
 collector source, actual tools, probe objects, commands, driver receipts,

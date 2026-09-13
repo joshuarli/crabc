@@ -95,7 +95,7 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
                     binding='GLOBAL' if key.endswith('static') else 'LOCAL'
                     visibility='DEFAULT' if key=='reference-shared' else 'HIDDEN'
                 rows.append({'row_index':len(rows)+1,'name':name,'type':'FUNC','binding':binding,'visibility':visibility,
-                             'section_index':str(indexes[targets[name]]),'value':'0','version':None,'version_default':False})
+                             'section_index':str(indexes[targets[name]]),'value':'0','size_bytes':16,'version':None,'version_default':False})
             member={'sections':sections,'symbol_tables':[{'name':'.symtab','section_index':90,'rows':rows}]}
             if key.endswith('static'):
                 result[key]=[{'member':'same.o','member_index':0,'member_occurrence':0,**member}]
@@ -193,6 +193,29 @@ class SuppliedStdioReceiptTests(unittest.TestCase):
             self.assertEqual((work/'oracle-root/lib').stat().st_mode&0o777,0o755)
             self.assertEqual((work/'oracle-root/lib/ld-musl-x86_64.so.1').stat().st_mode&0o777,0o755)
             self.assertEqual((work/'qualification-oracle/runtime').read_bytes(),b'runtime')
+
+
+    def test_public_dynsym_must_define_the_exact_symtab_body(self):
+        import owned_stdio_alias_contract_reader as reader
+        for key in ('candidate-shared','reference-shared'):
+            for changed in ({'section_index':'UND'}, {'value':'1'}, {'section_index':'2'},
+                            {'size_bytes':15}, {'size_bytes':16.0}):
+                with self.subTest(artifact=key,changed=changed):
+                    facts=self.fixture()
+                    row=next(row for table in facts[key]['symbol_tables'] if table['name']=='.dynsym'
+                             for row in table['rows'] if row['name']=='fgetc_unlocked')
+                    row.update(changed)
+                    with self.assertRaises(reader.StdioAliasEvidenceError):
+                        reader.account_aliases(facts)
+
+    def test_cli_rejects_abbreviated_option_before_public_replay(self):
+        from unittest.mock import patch
+        import owned_stdio_alias_contract_reader as reader
+        with patch.object(reader,'validate_report') as replay:
+            with self.assertRaises(SystemExit) as error:
+                reader.main(['validate-report','--rep','unused.json'])
+            self.assertEqual(error.exception.code,2)
+            replay.assert_not_called()
 
 if __name__ == '__main__':
     unittest.main()

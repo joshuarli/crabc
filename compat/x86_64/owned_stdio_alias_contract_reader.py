@@ -351,8 +351,20 @@ def account_aliases(facts):
                 if name in HIDDEN:continue
                 matches=[x for x in dyn if x['row']['name']==name]
                 require(len(matches)==1,'public FILE dynsym roster differs: '+name)
-                require_function_shape(matches[0]['row'],'WEAK' if name in ALIASES else 'GLOBAL',
+                dynamic_definition=matches[0]
+                require_function_shape(dynamic_definition['row'],'WEAK' if name in ALIASES else 'GLOBAL',
                                        'PROTECTED' if name in PROTECTED else 'DEFAULT')
+                require(same_physical_definition(dynamic_definition,dynamic_definition),
+                        'public FILE dynsym is not a defined executable function: '+name)
+                # .dynsym and .symtab are separate tables in this one DSO.
+                # Their public definition must identify the same actual body;
+                # matching names/binding alone admits UND or another address.
+                definition=one(name)
+                placement=('section_index','value','type','size_bytes')
+                require(type(dynamic_definition['row'].get('size_bytes')) is int
+                        and same({field:dynamic_definition['row'].get(field) for field in placement},
+                                 {field:definition['row'].get(field) for field in placement}),
+                        'public FILE dynsym differs from its symtab definition: '+name)
         results[key]={'aliases':pairs,'protected':protected}
     return results
 
@@ -509,7 +521,7 @@ def validate_report(root,report_path):
 def main(argv=None):
     args=list(sys.argv[1:] if argv is None else argv)
     require(all(args.count(x)==1 for x in set(args) if x.startswith('--')),'duplicate FILE option')
-    parser=argparse.ArgumentParser(description=__doc__)
+    parser=argparse.ArgumentParser(description=__doc__,allow_abbrev=False)
     parser.add_argument('mode',choices=('collect','validate-report'))
     for name in ('output','report','static-preparation','static-product','dynamic-product','historical-facts'):
         parser.add_argument('--'+name,type=Path)
