@@ -1045,6 +1045,17 @@ def _product(workspace: Path, value: Any, family: str) -> Path:
     return path
 
 
+def project_link_product(linkage: str, product: Path, rebuilt: Mapping[str, Any]) -> dict[str, Any]:
+    """Express a byte-reconstructed copied product at its fixed native mount."""
+    family = "static" if linkage.startswith("static") else "dynamic"
+    require(linkage in {"static", "static-pie", "pie", "non-pie"}, "rebuilt link linkage differs")
+    require(type(rebuilt) is dict and rebuilt.get("linkage") == linkage and rebuilt.get("product") == str(product),
+            "rebuilt link physical product path differs")
+    projected = dict(rebuilt)
+    projected["product"] = SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/" + family
+    return projected
+
+
 def rebuild_links(workspace: Path, products: Mapping[str, Path], tools: Mapping[str, Any]) -> dict[str, Any]:
     """Use the existing bounded retained-link parser on each copied receipt."""
     evidence = retained_link_reader
@@ -1061,10 +1072,11 @@ def rebuild_links(workspace: Path, products: Mapping[str, Path], tools: Mapping[
         executable = raw / ("static-" + linkage if linkage.startswith("static") else "dynamic-" + linkage)
         receipt = Path(str(executable) + (".receipt.json" if linkage.startswith("static") else ".crabc-link.json"))
         try:
-            rebuilt[linkage] = evidence.validate_retained_link(
+            local = evidence.validate_retained_link(
                 workspace, SOURCE_MOUNT, product, workload, executable, receipt, linkage,
                 {"path": native, "sha256": linker["retained"]["sha256"]},
             )
+            rebuilt[linkage] = project_link_product(linkage, product, local)
         except Exception as error:
             raise ReceiptError(f"{linkage} sealed link cannot be reconstructed") from error
     return rebuilt
