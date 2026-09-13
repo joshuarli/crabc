@@ -20,7 +20,11 @@ only correlate input bytes: fresh raw facts observe them independently.
 
 The normal installed-header probe object is compiled once with PIC and
 initial-exec TLS and linked unchanged through eleven explicit runtime/CRT
-modes. Four owned modes also use the same separate empty-array object.
+modes. Four owned modes also use the same separate object with empty
+application arrays. Static libc still contributes its exact source-owned init
+and fini entries from `allocator_mimalloc_lifecycle.rs`; the reader joins their
+archive slots, final ranges and link-map contributions without evaluating
+allocator bodies. Dynamic main empty-array cases have genuinely empty ranges.
 Static ET_EXEC/static PIE use their installed driver; owned dynamic PIE and
 non-PIE use the installed dynamic driver and its actual receipts. Ordinary
 conventional entry explicitly links retained pinned-musl crt1/Scrt1 with the

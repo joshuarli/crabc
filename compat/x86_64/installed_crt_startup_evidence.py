@@ -74,6 +74,22 @@ def require_array_bounds(start,end,section):
     if section is None:require(start==end,'nonempty linker array has no section')
     else:require(start==int(section['address'],16) and end-start==int(section['size'],16) and section['alignment']>=8,'linker array does not match defining section')
 
+def array_entry_names(mode,variant,kind):
+    names=[] if variant=='empty' else [{'preinit':'p','init':'i','fini':'f'}[kind]]
+    # Source-owned libc array transport remains present in static images even
+    # when the application contributes no arrays. No allocator-body claim is
+    # inferred from this exact slot/source-object placement.
+    if mode in ('static','static-pie') and kind!='preinit':
+        names.append('__crabc_x86_owned_mimalloc_process_'+('initializer' if kind=='init' else 'finalizer'))
+    return names
+
+def require_array_entries(mode,variant,kind,start,end,entries):
+    names=array_entry_names(mode,variant,kind)
+    require(set(entries)==set(names) and end-start==8*len(names)
+            and all(type(value) is int for value in entries.values())
+            and sorted(entries.values())==list(range(start,end,8)),
+            'startup array contribution differs')
+
 def cases():
     return [{'mode':mode,'variant':variant,'name':mode+'-'+variant} for mode in MODES
             for variant in (('normal','empty') if mode in MODES[:4] else ('normal',))]
@@ -97,6 +113,7 @@ RUNTIME_SOURCES=('crt/src/x86_64_startup.rs','crt/src/x86_64_dynamic_startup.rs'
     'libc/src/c_abi/x86_64/static_tls.rs','libc/src/c_abi/x86_64/static_startup.rs',
     'libc/src/c_abi/x86_64/conventional_startup_v1.rs','libc/src/c_abi/x86_64/dynamic_main_thread_runtime_v1_lifecycle.rs',
     'libc/src/c_abi/x86_64/owned_dynamic_attachment.rs','libc/src/c_abi/x86_64/loader_tls_runtime_v1.rs',
+    'libc/src/c_abi/x86_64/allocator_mimalloc_lifecycle.rs',
     'ldso/src/x86_64_initial_graph.rs','ldso/src/x86_64_general_relocation.rs','ldso/src/x86_64_general_initial_graph.rs',
     'ldso/src/x86_64_general_initial_lifecycle.rs','ldso/src/x86_64_conventional_startup_v1.rs')
 COLLECTOR_SOURCES=tuple(dict.fromkeys((*substrate.COLLECTOR_SOURCES,*RUNTIME_SOURCES,
@@ -308,8 +325,31 @@ def executable_observations(root,work,inputs,tools,facts):
                 sections=[s for s in facts[name]['sections'] if s['name']=='.'+kind+'_array']
                 require(len(sections)<=1,'duplicate final array section')
                 require_array_bounds(start,end,sections[0] if sections else None)
-                require(end-start==(0 if variant=='empty' else 8),'startup array cardinality differs')
-                account['arrays'][kind]={'start':start,'end':end,'section':sections[0] if sections else None}
+                entries={};contributions={}
+                for slot in array_entry_names(mode,variant,kind):
+                    final=exact(facts,name,slot)
+                    source_key=variant+'-object' if slot in ('p','i','f') else 'candidate-static'
+                    original=exact(facts,source_key,slot)
+                    for item in (original,final):
+                        required={'type':'OBJECT','binding':'LOCAL','visibility':'DEFAULT','size_bytes':8,
+                                  'version':None,'version_default':False}
+                        require(same({k:item['row'].get(k) for k in required},required)
+                                and item['section'] is not None and item['section']['name']=='.'+kind+'_array',
+                                'startup array slot definition differs')
+                    entries[slot]=int(final['row']['value'],16)
+                    contributions[slot]={'source_artifact':source_key,'source':original,'final':final}
+                    if mode in ('static','static-pie'):
+                        source_path=ordinary.mounted(root,work/(variant+'.o')) if source_key.endswith('-object') else \
+                            ordinary.mounted(root,product_paths(root,inputs)['candidate-static'])+'('+original['member']+')'
+                        expression=r'^\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s+'+re.escape(source_path+':(.'+kind+'_array)')+r'$'
+                        matches=re.findall(expression,(work/(name+'.link.map')).read_text(),re.MULTILINE)
+                        require(len(matches)==1 and int(matches[0][0],16)==entries[slot]
+                                and int(matches[0][2],16)==8 and int(matches[0][3])==8,
+                                'static startup array input contribution differs')
+                        contributions[slot]['link_map_row']=list(matches[0])
+                require_array_entries(mode,variant,kind,start,end,entries)
+                account['arrays'][kind]={'start':start,'end':end,'section':sections[0] if sections else None,
+                                        'contributions':contributions}
         handoffs=[x for x in account['relocations'] if x['name']==HANDOFF]
         require(len(handoffs)==(1 if mode.startswith('owned') or mode=='default-pie' else 0),'main handoff relocation differs')
         for row in handoffs:require_handoff_relocation(row,HANDOFF)

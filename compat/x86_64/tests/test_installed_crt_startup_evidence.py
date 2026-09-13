@@ -33,6 +33,17 @@ class InstalledCrtStartupTests(unittest.TestCase):
         for start,end in ((0x3001,0x3010),(0x3000,0x3008),(0x3010,0x3000),(False,0x3000)):
             with self.assertRaises(reader.StartupEvidenceError):reader.require_array_bounds(start,end,section)
 
+    def test_empty_application_arrays_preserve_only_exact_static_runtime_entries(self):
+        names={'__crabc_x86_owned_mimalloc_process_initializer':0x3000}
+        reader.require_array_entries('static','empty','init',0x3000,0x3008,names)
+        reader.require_array_entries('owned-pie','empty','init',0,0,{})
+        reader.require_array_entries('static','normal','init',0x3000,0x3010,
+            {'i':0x3000,'__crabc_x86_owned_mimalloc_process_initializer':0x3008})
+        for changed in ({},{'i':0x3000},{**names,'extra':0x3008},
+                        {'__crabc_x86_owned_mimalloc_process_initializer':0x3001}):
+            with self.assertRaises(reader.StartupEvidenceError):
+                reader.require_array_entries('static','empty','init',0x3000,0x3008,changed)
+
     def test_runtime_roster_and_owned_conventional_pointer_decisions_are_not_interchangeable(self):
         rows=reader.runtime_cells()
         self.assertEqual(len({x['label'] for x in rows}),len(rows))
