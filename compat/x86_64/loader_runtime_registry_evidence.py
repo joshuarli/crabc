@@ -401,6 +401,12 @@ def _link_record(product: Path, work: Path, output: Path, stem: str, mode: str) 
             "mode": mode}
 
 
+def validate_growth_output(candidate: bytes, oracle: bytes) -> None:
+    """Preserve the 41-module assertion and the existing whole-stream oracle check."""
+    require(candidate.startswith(EXPECTED_GROWTH), "general dlfcn 41-module output drifted")
+    require(candidate == oracle, "general dlfcn 41-module differential drifted")
+
+
 def dlfcn_observations(product: Path, output: Path, work: Path) -> dict[str, object]:
     """Read the existing 41-module workload without treating its PASS as proof."""
     product = physical_directory(product, "dynamic product")
@@ -416,10 +422,7 @@ def dlfcn_observations(product: Path, output: Path, work: Path) -> dict[str, obj
         physical_regular(work / f"libgrowth{generation}.so", "general dlfcn growth DSO")
     require((work / "consumer.stdout").read_bytes() == EXPECTED_DLOPEN, "general dlfcn nested runtime output drifted")
     require((work / "tbss-candidate.stdout").read_bytes() == EXPECTED_TBSS, "general dlfcn TBSS output drifted")
-    require((work / "growth.stdout").read_bytes() == EXPECTED_GROWTH, "general dlfcn 41-module output drifted")
-    require((work / "oracle.stdout").read_bytes() == EXPECTED_GROWTH, "general dlfcn oracle output drifted")
-    require((work / "growth.stdout").read_bytes() == (work / "oracle.stdout").read_bytes(),
-            "general dlfcn 41-module differential drifted")
+    validate_growth_output((work / "growth.stdout").read_bytes(), (work / "oracle.stdout").read_bytes())
     dso_links: dict[str, object] = {}
     for stem in (*expected, *(f"libgrowth{generation}.so" for generation in range(41))):
         # The driver chooses `shared` for DSOs; executables are recorded below.

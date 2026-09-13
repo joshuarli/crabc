@@ -59,6 +59,14 @@ class LoaderRuntimeRegistryEvidenceTests(unittest.TestCase):
         runner = (ROOT / "compat/x86_64/run_general_dynamic_dlopen.sh").read_text(encoding="utf-8")
         self.assertIn(EVIDENCE.DLFCN_SKIP_SEARCH_ENV, runner)
 
+    def test_growth_projection_requires_the_41_module_line_and_exact_oracle_stream(self):
+        stream = EVIDENCE.EXPECTED_GROWTH + b"runtime fini 40\n"
+        EVIDENCE.validate_growth_output(stream, stream)
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "41-module"):
+            EVIDENCE.validate_growth_output(b"different\n", b"different\n")
+        with self.assertRaisesRegex(EVIDENCE.RuntimeRegistryEvidenceError, "differential"):
+            EVIDENCE.validate_growth_output(stream, EVIDENCE.EXPECTED_GROWTH)
+
     def test_contract_rejects_ambiguous_unknown_and_promoting_operation(self):
         contract = self.contract()
         contract["operation"].append({"name": "__crabc_x86_64_runtime_unknown", "resolver": "unknown",
