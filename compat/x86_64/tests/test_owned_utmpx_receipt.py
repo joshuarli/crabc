@@ -251,6 +251,15 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(receipt.ReceiptError, "raw symbols do not describe"):
             receipt.validate_symbol_byte_stream(stream, candidate, "/candidate", frozenset({".dynsym", ".symtab"}))
 
+    def test_native_runner_failure_keeps_raw_diagnostics_without_a_receipt(self) -> None:
+        output = self.root / "failed-native-collection"
+        receipt.retain_native_runner_failure(output, b"native stdout\n", b"native stderr\n", 7)
+        self.assertEqual((output / "native-runner.stdout").read_bytes(), b"native stdout\n")
+        self.assertEqual((output / "native-runner.stderr").read_bytes(), b"native stderr\n")
+        self.assertEqual((output / "native-runner.status").read_text(encoding="ascii"), "7\n")
+        self.assertEqual(json.loads((output / "native-runner-failure.json").read_text())[
+            "schema"], "crabc.x86_64-owned-utmpx-native-runner-failure/v1")
+
     def test_validate_requires_a_report_file(self) -> None:
         with self.assertRaises(receipt.ReceiptError):
             receipt.validate_report(self.root / "missing-utmpx-receipt.json")

@@ -115,7 +115,9 @@ dynamic PIE/non-PIE matrix. The ordinary
 `run_owned_utmpx.sh` lifecycle remains unchanged. Collection sets its private
 `CRABC_X86_64_RETAIN_UTMPX_COMMANDS=1` switch, which rejects every other value
 before evidence creation and uses a fixed private receipt leaf only for this
-mode.
+mode. If that native runner fails, collection preserves only its raw stdout,
+stderr, and status as a `native-runner-failure` diagnostic below the fresh
+output; it does not create a receipt report or imply replayable evidence.
 
 The receipt copies the exact selected source and runner inputs; the static
 preparation plus its before/after whole-source seals; both complete product

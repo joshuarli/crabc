@@ -1083,6 +1083,27 @@ def _copy_native_file(workspace: Path, native: Path, source: Path) -> None:
     copy_regular(source, workspace / ".work/utmpx-receipt/owned-utmpx-receipt" / source.relative_to(native))
 
 
+def retain_native_runner_failure(output: Path, stdout: bytes, stderr: bytes, status: int) -> None:
+    """Keep raw native diagnostics for a failed fresh collection, never a receipt."""
+    require(type(status) is int and status != 0, "native failure status differs")
+    output.mkdir(parents=True)
+    stdout_path = output / "native-runner.stdout"
+    stderr_path = output / "native-runner.stderr"
+    status_path = output / "native-runner.status"
+    record_path = output / "native-runner-failure.json"
+    require(not any(path.exists() or path.is_symlink() for path in (stdout_path, stderr_path, status_path, record_path)),
+            "native failure diagnostics already exist")
+    stdout_path.write_bytes(stdout)
+    stderr_path.write_bytes(stderr)
+    status_path.write_text(str(status) + "\n", encoding="ascii")
+    record_path.write_text(json.dumps({
+        "schema": "crabc.x86_64-owned-utmpx-native-runner-failure/v1",
+        "status": status,
+        "stdout": "native-runner.stdout",
+        "stderr": "native-runner.stderr",
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def clean_source_revision() -> str:
     """Refuse a stale or mixed source tree before native evidence is observed."""
     try:
@@ -1138,7 +1159,9 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
                    str(stage / "inputs/static"), str(stage / "inputs/dynamic")]
         environment = {**os.environ, "TMPDIR": str(stage), "CRABC_X86_64_RETAIN_UTMPX_COMMANDS": "1"}
         completed = subprocess.run(command, cwd=ROOT, env=environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        require(completed.returncode == 0, "native owned-utmpx runner failed")
+        if completed.returncode != 0:
+            retain_native_runner_failure(output, completed.stdout, completed.stderr, completed.returncode)
+            raise ReceiptError("native owned-utmpx runner failed; retained raw diagnostics")
         match = re.search(rb"owned utmpx evidence: (.+)\n", completed.stdout)
         require(match is not None, "native runner did not publish its evidence directory")
         native = Path(match.group(1).decode("utf-8")).absolute()
@@ -1235,7 +1258,8 @@ def collect(static_preparation: Path, static_product: Path, dynamic_product: Pat
         return report
     except Exception:
         shutil.rmtree(stage, ignore_errors=True)
-        shutil.rmtree(output, ignore_errors=True)
+        if not (output / "native-runner-failure.json").is_file():
+            shutil.rmtree(output, ignore_errors=True)
         raise
 
 
