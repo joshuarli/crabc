@@ -72,16 +72,22 @@ IMAGE_FIXED_PATHS = (
 IMAGE_MANIFEST_SOURCE = "compat/x86_64/owned_pthread_timed_feature_image_inputs.json"
 PREPARATION_RETAINED_ROOT = "retained/products/static-preparation"
 EXECUTION_ENVIRONMENT = {
+    "CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV": "1",
     "GIT_CONFIG_GLOBAL": "/dev/null",
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_OPTIONAL_LOCKS": "0",
     "HOME": "/nonexistent",
     "LANG": "C",
     "LC_ALL": "C",
+    "OLDPWD": "/workspace",
     "PATH": IMAGE_PATH,
     "PYTHONDONTWRITEBYTECODE": "1",
     "PYTHONHASHSEED": "0",
+    "PWD": "/workspace",
+    "SHLVL": "1",
+    "TMPDIR": "/workspace/.work/x86_64/tmp",
     "TZ": "UTC",
+    "_": "/usr/bin/python3",
 }
 EXECUTION_SCHEMA = "crabc.x86_64-owned-pthread-timed-feature-execution/v1"
 

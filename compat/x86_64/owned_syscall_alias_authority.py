@@ -275,281 +275,46 @@ if __name__ == '__main__':
 
 
 def require_static_function_map(map_path, executable, admitted, probe_path, crt_path, archive_path, aliases, override):
-    """Join ordinary static extraction to the final syscall/probe definitions.
-
-    LLD's map must name an actually traced input member, and each finite
-    function keeps its source section, size and fully relocated bytes. The
-    finite x86-64 relocations below derive their values from selected input
-    definitions and ELF placement; no output instruction field is a mask.
-    """
-    images = {name: elf_bytes(value) if isinstance(value, bytes) else Elf(value)
-              for name, value in admitted.items()}
-    final = Elf(executable)
-    wanted = set(aliases) | {'main', '_start'}
-    mapped = {}
-    contributions = {}
-    map_symbols = {}
-    owner = None
-    contribution = None
-    lines = physical(map_path).read_text().splitlines()
-    require(lines and lines[0].split() == ['VMA', 'LMA', 'Size', 'Align', 'Out', 'In', 'Symbol'],
-            'static link map header differs')
-    for line in lines[1:]:
-        match = re.fullmatch(r'\s*([0-9a-f]+)\s+([0-9a-f]+)\s+([0-9a-f]+)\s+(\d+)\s+(.*)', line)
-        require(match is not None, 'malformed static link map row')
-        address, load, size, _alignment, name = match.groups()
-        address, load, size = int(address, 16), int(load, 16), int(size, 16)
-        if ':(' in name and name.endswith(')'):
-            owner, section = name.rsplit(':(', 1)
-            section = section[:-1]
-            require(owner == '<internal>' or owner in images, 'static map names an untraced input')
-            contribution = (address, size, section)
-            key = (owner, section)
-            require(key not in contributions, 'duplicate static input section contribution')
-            contributions[key] = contribution
-        elif name.startswith('.'):
-            owner, contribution = None, None
-        else:
-            if owner in images and contribution is not None:
-                map_symbols.setdefault(name, []).append((owner, contribution, address, size))
-            if name in wanted:
-                require(name not in mapped and owner in images and contribution is not None,
-                        'static map duplicates or lacks a function input')
-                require(address == load, 'static function load address differs')
-                mapped[name] = (owner, contribution, address, size)
-    require(set(mapped) == wanted, 'static link map omits a syscall or probe function')
-    def selected_symbols(elf, names):
-        # Look up the finite names first; Elf.symbol_row then checks their full
-        # records and versions. This avoids rescanning every large archive
-        # symbol table once per alias during each receipt replay.
-        found = {}
-        for index, table in enumerate(elf.sections):
-            if table[1] != 2:
+    """Supply the syscall component's unchanged owner/binding policy explicitly."""
+    from owned_static_link_authority import (
+        StaticFunctionContract, StaticLinkAuthorityError, require_static_functions,
+    )
+    archive_owners = {}
+    if not override:
+        # Select exact defining members from admitted selected-libc bytes, not
+        # from a map claim. The shared reader accepts only these exact owners.
+        wanted = set(aliases)
+        for owner, value in admitted.items():
+            if not owner.startswith(archive_path + '('):
                 continue
-            require(table[9] == 24 and table[5] % 24 == 0, 'invalid static symbol table')
-            strings = elf.sections[table[6]]
-            require(strings[1] == 3 and strings[4] + strings[5] <= len(elf.data), 'invalid static symbol strings')
-            for number in range(table[5] // 24):
-                offset = elf.unpack('<I', table[4] + number * 24)[0]
-                require(offset < strings[5], 'invalid static symbol name offset')
-                start = strings[4] + offset
-                end = elf.data.find(b'\0', start, strings[4] + strings[5])
-                require(end >= 0, 'unterminated static symbol name')
-                name = elf.data[start:end].decode()
-                if name not in names:
+            source = elf_bytes(value) if isinstance(value, bytes) else Elf(value)
+            for index, table in enumerate(source.sections):
+                if table[1] != 2:
                     continue
-                row = elf.symbol_row(index, number)
-                if row['section']:
-                    require(name not in found, 'duplicate mapped static function')
-                    found[name] = row
-        return found
-
-    source_symbols = {owner: selected_symbols(images[owner], wanted) for owner in {row[0] for row in mapped.values()}}
-    function_relocations = {}
-    targets = set(wanted)
-    for name, (owner, _contribution, _address, _size) in mapped.items():
-        source = images[owner]
-        require(name in source_symbols[owner], 'mapped static function lacks a selected definition')
-        before = source_symbols[owner][name]
-        rows = []
-        for relocations in source.sections:
-            if relocations[1] != 4 or relocations[7] != before['section']:
-                continue
-            require(relocations[9] == 24 and relocations[5] % 24 == 0, 'malformed static input relocations')
-            for offset in range(0, relocations[5], 24):
-                position, info, addend = source.unpack('<QQq', relocations[4] + offset)
-                if before['value'] <= position < before['value'] + before['size']:
-                    symbol = source.symbol_row(relocations[6], info >> 32)
-                    rows.append((position - before['value'], info & 0xffffffff, addend, symbol))
-                    if symbol['name']:
-                        targets.add(symbol['name'])
-        function_relocations[name] = rows
-    final_symbols = selected_symbols(final, targets)
-    source_targets = {}
-
-    def input_symbol(owner, name):
-        if owner not in source_targets:
-            source_targets[owner] = selected_symbols(images[owner], targets)
-        require(name in source_targets[owner], 'static relocation target lacks its selected definition')
-        return source_targets[owner][name]
-
-    def placed_section(owner, index):
-        source = images[owner]
-        require(0 < index < len(source.sections), 'static relocation target has no input section')
-        section = source.sections[index]
-        key = (owner, section_name(source, section))
-        require(key in contributions, 'static relocation target has no selected section placement')
-        base, extent, _name = contributions[key]
-        require(extent == section[5] and section[8] > 0 and base % section[8] == 0,
-                'static input section placement size/alignment differs')
-        return base
-
-    def target_address(owner, symbol):
-        # Defined local/hidden symbols resolve in their selected object. An
-        # undefined or interposable C name must join the final symbol and its
-        # traced map owner to a real selected definition.
-        resolved_map = None
-        if symbol['binding'] != 'LOCAL' and symbol['visibility'] == 'DEFAULT':
-            rows = map_symbols.get(symbol['name'], [])
-            require(len(rows) == 1, 'static relocation target has no unique selected definition')
-            resolved_map = rows[0]
-            owner, _part, _address, extent = resolved_map
-            symbol = input_symbol(owner, symbol['name'])
-            require(symbol['size'] == extent, 'static relocation target map size differs')
-        source = images[owner]
-        require(0 < symbol['section'] < len(source.sections), 'unresolved static relocation target')
-        section = source.sections[symbol['section']]
-        if section[2] & 0x10:  # SHF_MERGE: constant pieces need not keep input order.
-            require(section[1] == 1 and not section[2] & 0x21 and section[9] > 0
-                    and symbol['binding'] == 'LOCAL' and symbol['type'] == 'OBJECT'
-                    and symbol['size'] == section[9] and symbol['value'] % section[9] == 0
-                    and symbol['value'] + symbol['size'] <= section[5],
-                    'unclassified merged static relocation target')
-            key = ('<internal>', section_name(source, section))
-            require(key in contributions, 'merged static target lacks its constant pool')
-            base, extent, _name = contributions[key]
-            outputs = [s for s in final.sections if section_name(final, s) == '.rodata']
-            require(len(outputs) == 1, 'merged static target lacks read-only output')
-            output = outputs[0]
-            require(output[1] == 1 and output[2] & 3 == 2 and base % section[9] == 0
-                    and extent % section[9] == 0 and output[3] <= base
-                    and base + extent <= output[3] + output[5], 'merged static constant pool placement differs')
-            offset = output[4] + base - output[3]
-            start = section[4] + symbol['value']
-            constant = source.data[start:start + symbol['size']]
-            matches = [base + i for i in range(0, extent, section[9])
-                       if final.data[offset + i:offset + i + symbol['size']] == constant]
-            require(len(matches) == 1, 'merged static target lacks its unique selected constant')
-            return matches[0]
-        address = placed_section(owner, symbol['section']) + symbol['value']
-        require(symbol['value'] + symbol['size'] <= section[5], 'static target exceeds selected section')
-        if resolved_map is not None:
-            require(resolved_map[2] == address and resolved_map[1][2] == section_name(source, section),
-                    'static relocation target map definition placement differs')
-        if symbol['name']:
-            require(symbol['name'] in final_symbols, 'static target lacks final ELF symbol')
-            after = final_symbols[symbol['name']]
-            require(after['type'] == symbol['type'] and after['size'] == symbol['size'],
-                    'static relocation target type/size differs')
-            if symbol['type'] == '6':  # STT_TLS values are relative to PT_TLS.
-                require(after['value'] == address - tls[3], 'static TLS symbol placement differs')
-            else:
-                require(after['value'] == address, 'static relocation target symbol placement differs')
-        return address
-
-    # The selected TLS contributions determine the segment geometry, including
-    # zero-fill and alignment. This prevents a resealed PT_TLS from changing the
-    # thread-pointer displacement without changing the selected input layout.
-    tls_rows = [program for program in final.programs if program[0] == 7]
-    require(len(tls_rows) == 1, 'static syscall output lacks a unique TLS segment')
-    tls = tls_rows[0]
-    tls_sections = [section for section in final.sections if section[2] & 0x400]
-    require(tls_sections and tls[7] > 0 and tls[7] & (tls[7] - 1) == 0
-            and tls[3] % tls[7] == 0, 'unclassified static TLS alignment')
-    tls_inputs = []
-    for owner, source in images.items():
-        for index, section in enumerate(source.sections):
-            key = (owner, section_name(source, section))
-            if section[2] & 0x400 and key in contributions:
-                base, extent, _name = contributions[key]
-                require(placed_section(owner, index) == base, 'static TLS placement differs')
-                tls_inputs.append((base, extent, section))
-    require(tls_inputs and max(s[8] for _b, _e, s in tls_inputs) == tls[7], 'static TLS input alignment differs')
-    cursor = tls[3]
-    file_end = cursor
-    for base, extent, section in sorted(tls_inputs):
-        cursor = (cursor + section[8] - 1) // section[8] * section[8]
-        require(base == cursor, 'static TLS selected input order/padding differs')
-        cursor += extent
-        if section[1] != 8:
-            file_end = cursor
-    require(cursor - tls[3] == tls[6] and file_end - tls[3] == tls[5]
-            and min(s[3] for s in tls_sections) == tls[3]
-            and max(s[3] + s[5] for s in tls_sections) == cursor, 'static TLS segment geometry differs')
-    tls_size = (tls[6] + tls[7] - 1) // tls[7] * tls[7]
-
-    def got_addresses(target):
-        sections = [section for section in final.sections if section_name(final, section) == '.got']
-        require(len(sections) == 1, 'static output lacks a unique GOT')
-        section = sections[0]
-        require(section[5] % 8 == 0 and section[3] % 8 == 0, 'invalid static GOT geometry')
-        relative = {}
-        for relocations in final.sections:
-            if relocations[1] != 4 or not relocations[2] & 2:
-                continue
-            require(relocations[9] == 24 and relocations[5] % 24 == 0, 'invalid static dynamic relocations')
-            for offset in range(0, relocations[5], 24):
-                address, info, addend = final.unpack('<QQq', relocations[4] + offset)
-                if section[3] <= address < section[3] + section[5]:
-                    require(info == 8 and address not in relative and address % 8 == 0,
-                            'static GOT slot lacks a unique RELATIVE relocation')
-                    relative[address] = addend
-        matches = []
-        for offset in range(0, section[5], 8):
-            address = section[3] + offset
-            value = final.unpack('<Q', section[4] + offset)[0]
-            if final.elf_type == 3:
-                require(value == 0, 'static PIE GOT has an unexpected in-place addend')
-                value = relative.get(address)
-            else:
-                require(not relative, 'static executable GOT unexpectedly needs relocation')
-            if value == target:
-                matches.append(address)
-        # Distinct source symbol aliases can produce multiple GOT entries for
-        # one resolved address. Each admitted slot must independently contain
-        # that exact target (or its static-PIE RELATIVE addend).
-        require(matches, 'static target lacks a correctly initialized GOT slot')
-        return matches
-    for name, (owner, contribution, address, size) in mapped.items():
-        expected_owner = probe_path if name == 'main' or override and name in aliases else crt_path if name == '_start' else None
-        require(owner == expected_owner if expected_owner else owner.startswith(archive_path + '('),
-                'static function came from the wrong selected object/archive')
-        source = images[owner]
-        require(name in source_symbols[owner] and name in final_symbols, 'mapped static function lacks ELF definition')
-        before = source_symbols[owner][name]
-        after = final_symbols[name]
-        expected_binding = 'WEAK' if name in aliases and not override else 'GLOBAL'
-        require(before['type'] == after['type'] == 'FUNC' and before['binding'] == after['binding'] == expected_binding
-                and before['visibility'] == after['visibility'] == 'DEFAULT'
-                and 0 < before['section'] < len(source.sections) and 0 < after['section'] < len(final.sections),
-                'static function definition/binding differs')
-        base, extent, section = contribution
-        source_section = source.sections[before['section']]
-        require(section == section_name(source, source_section)
-                and address == base + before['value'] and size == before['size'] == after['size']
-                and size > 0 and address == after['value'] and before['value'] + size <= extent,
-                'static map/source/final function location differs')
-        source_offset = source_section[4] + before['value']
-        output_section = final.sections[after['section']]
-        output_offset = output_section[4] + after['value'] - output_section[3]
-        original = bytearray(source.data[source_offset:source_offset + size])
-        linked = bytearray(final.data[output_offset:output_offset + size])
-        require(len(original) == len(linked) == size, 'truncated mapped static function')
-        for position, kind, addend, symbol in function_relocations[name]:
-            require(kind in (2, 4, 9, 22, 42), f'unclassified mapped static relocation {kind} in {name}')
-            require(position + 4 <= size, 'static relocation crosses a function boundary')
-            target = target_address(owner, symbol)
-            value = target + addend - (address + position)
-            if kind == 9:
-                values = [slot + addend - (address + position) for slot in got_addresses(target)]
-                matches = [v for v in values if -(1 << 31) <= v < 1 << 31
-                           and v.to_bytes(4, 'little', signed=True) == linked[position:position + 4]]
-                require(len(matches) == 1, 'static GOT displacement does not address the selected target')
-                value = matches[0]
-            elif kind in (22, 42):
-                require(position >= 3 and addend == -4, 'unclassified static relaxation addend/instruction')
-                rex, opcode, modrm = original[position - 3:position]
-                require(rex in (0x48, 0x4c) and opcode == 0x8b and modrm & 0xc7 == 5,
-                        'unclassified static relaxed load')
-                if kind == 22:
-                    require(symbol['type'] == '6', 'GOTTPOFF target is not selected TLS')
-                    value = target - tls[3] - tls_size
-                    original[position - 3:position] = bytes([0x48 | ((rex >> 2) & 1), 0xc7,
-                                                           0xc0 | ((modrm >> 3) & 7)])
-                else:
-                    require(symbol['binding'] == 'LOCAL' and symbol['type'] == 'FUNC',
-                            'unclassified static GOTPCRELX target')
-                    original[position - 2] = 0x8d
-            require(-(1 << 31) <= value < 1 << 31, 'static relocation overflows signed displacement')
-            original[position:position + 4] = value.to_bytes(4, 'little', signed=True)
-        require(original == linked, f'linked static function bytes differ from selected input: {name}')
+                require(table[9] == 24 and table[5] % 24 == 0, 'invalid syscall input symbol table')
+                strings = source.sections[table[6]]
+                require(strings[1] == 3 and strings[4] + strings[5] <= len(source.data),
+                        'invalid syscall input symbol strings')
+                for number in range(table[5] // 24):
+                    offset = source.unpack('<I', table[4] + number * 24)[0]
+                    require(offset < strings[5], 'invalid syscall input symbol name offset')
+                    start = strings[4] + offset
+                    end = source.data.find(b'\0', start, strings[4] + strings[5])
+                    require(end >= 0, 'unterminated syscall input symbol name')
+                    name = source.data[start:end].decode()
+                    if name in wanted and source.symbol_row(index, number)['section']:
+                        require(name not in archive_owners, 'duplicate selected syscall archive definition')
+                        archive_owners[name] = owner
+        require(set(archive_owners) == wanted, 'selected archive omits a syscall definition')
+    contracts = [
+        StaticFunctionContract('main', probe_path, 'GLOBAL', 'DEFAULT', 'GLOBAL', 'DEFAULT'),
+        StaticFunctionContract('_start', crt_path, 'GLOBAL', 'DEFAULT', 'GLOBAL', 'DEFAULT'),
+    ]
+    for name in aliases:
+        owner = probe_path if override else archive_owners[name]
+        binding = 'GLOBAL' if override else 'WEAK'
+        contracts.append(StaticFunctionContract(name, owner, binding, 'DEFAULT', binding, 'DEFAULT'))
+    try:
+        require_static_functions(map_path, executable, admitted, contracts)
+    except StaticLinkAuthorityError as error:
+        raise AuthorityError(str(error)) from error

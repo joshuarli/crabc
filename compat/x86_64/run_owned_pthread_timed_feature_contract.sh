@@ -1,6 +1,29 @@
 #!/usr/bin/env bash
 # Focused native proof for the four musl-shaped x86 owned pthread timed aliases.
 set -euo pipefail
+
+# Re-enter through Bash with a finite environment before resolving even a
+# single tool.  Exported functions and toolchain routing variables influence
+# the C compiler and linker as readily as PATH does, so a denylist cannot make
+# this receipt replayable.  The clean shell sources this script with the
+# original positional arguments; the sentinel is itself part of the sealed
+# execution record below.
+if [ "${CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV:-}" != 1 ]; then
+    exec -c /bin/bash -c '
+        export CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV=1
+        export PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        export HOME=/nonexistent
+        export LC_ALL=C
+        export LANG=C
+        export TZ=UTC
+        export PYTHONDONTWRITEBYTECODE=1
+        export PYTHONHASHSEED=0
+        export GIT_CONFIG_GLOBAL=/dev/null
+        export GIT_CONFIG_NOSYSTEM=1
+        export GIT_OPTIONAL_LOCKS=0
+        source "$0"
+    ' "$0" "$@"
+fi
 ulimit -c 0
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -14,20 +37,8 @@ readonly EXECUTION_PATH=/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/
 readonly EXECUTION_TMPDIR="$ROOT/.work/x86_64/tmp"
 
 # The finite runner has no ambient configuration or standard-input contract.
-# Every compiler, linker, oracle, Git query, and launched probe receives this
-# exact environment; individual commands also read EOF from /dev/null.
-unset BASH_ENV CDPATH ENV LD_AUDIT LD_LIBRARY_PATH LD_PRELOAD \
-    PYTHONHOME PYTHONINSPECT PYTHONPATH PYTHONSTARTUP TMP TEMP
-export PATH="$EXECUTION_PATH"
-export HOME=/nonexistent
-export LC_ALL=C
-export LANG=C
-export TZ=UTC
-export PYTHONDONTWRITEBYTECODE=1
-export PYTHONHASHSEED=0
-export GIT_CONFIG_GLOBAL=/dev/null
-export GIT_CONFIG_NOSYSTEM=1
-export GIT_OPTIONAL_LOCKS=0
+# The re-entry above fixed every inherited variable.  Individual commands also
+# read EOF from /dev/null.
 export TMPDIR="$EXECUTION_TMPDIR"
 
 # The sealed static driver admits its own relative receipt/map/trace trio.
@@ -221,18 +232,25 @@ from pathlib import Path
 import sys
 
 expected = {
+    "CRABC_PTHREAD_TIMED_FEATURE_CLOSED_ENV": "1",
     "GIT_CONFIG_GLOBAL": "/dev/null",
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_OPTIONAL_LOCKS": "0",
     "HOME": "/nonexistent",
     "LANG": "C",
     "LC_ALL": "C",
+    "OLDPWD": "/workspace",
     "PATH": "/opt/cargo/bin:/opt/musl-1.2.6/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     "PYTHONDONTWRITEBYTECODE": "1",
     "PYTHONHASHSEED": "0",
     "TZ": "UTC",
+    "PWD": "/workspace",
+    "SHLVL": "1",
+    "TMPDIR": "/workspace/.work/x86_64/tmp",
+    "_": "/usr/bin/python3",
 }
-assert {name: os.environ.get(name) for name in expected} == expected
+if dict(os.environ) != expected:
+    raise SystemExit(f"closed runner environment differs: {dict(sorted(os.environ.items()))!r}")
 Path(sys.argv[1]).write_text(json.dumps({
     "environment": expected,
     "schema": "crabc.x86_64-owned-pthread-timed-feature-execution/v1",

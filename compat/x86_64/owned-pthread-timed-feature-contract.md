@@ -16,7 +16,7 @@ input identity; this component neither expands nor relabels it.
 
 The reader seals the current collector source identity, the supplied selected
 product report, the exact supplied static and dynamic product bytes, pinned
-musl archive/shared inputs, exact command arguments, fixed runner environment
+musl archive/shared inputs, exact command arguments, a closed runner environment
 and /dev/null standard input, linker maps and receipts, actual ELF symbol
 tables, and the five executable modes: static,
 static PIE, musl dynamic PIE/non-PIE, and crabc dynamic PIE/non-PIE. A finite
@@ -32,6 +32,12 @@ the private provider. `owned_pthread_timed_dynamic_authority.py` additionally
 binds the complete finite contract probe implementation in each dynamic output:
 the eleven function bodies, local data and constant geometry, and their
 admitted PC-relative and PLT/GOT relocation forms.
+
+The shell runner starts through `exec -c` and a fixed Bash invocation before
+it resolves a tool. Its sealed record includes those fixed variables and the
+four Bash-created values (`PWD`, `OLDPWD`, `SHLVL`, and `_` for the pinned
+Python interpreter). Toolchain routing variables and exported shell functions
+from a caller therefore cannot affect the collection.
 
 `owned_pthread_timed_feature_contract_reader.py` also checks the source feature
 route: the `x86-owned-static-runtime` parity entry, `libc/Cargo.toml`, the
