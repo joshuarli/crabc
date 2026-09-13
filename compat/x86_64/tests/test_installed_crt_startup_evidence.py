@@ -87,6 +87,15 @@ class InstalledCrtStartupTests(unittest.TestCase):
         facts=self.fixture();facts['dynamic-crt1.o']['symbol_tables'][0]['rows']=[x for x in facts['dynamic-crt1.o']['symbol_tables'][0]['rows'] if x['name']!=reader.HANDOFF]
         with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
 
+    def test_private_startup_names_cannot_gain_public_loader_or_shared_definitions(self):
+        facts=self.fixture()
+        rogue=copy.deepcopy(facts['dynamic-crabc-dynamic-attach.o']['symbol_tables'][0]['rows'][0])
+        facts['candidate-loader']['symbol_tables'].append({'name':'.dynsym','section_index':3,'rows':[rogue]})
+        with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
+        facts=self.fixture()
+        facts['candidate-shared']['symbol_tables'][1]['rows'].append(rogue)
+        with self.assertRaises(reader.StartupEvidenceError):reader.account_products(facts)
+
     def test_final_link_plan_keeps_same_object_and_exact_conventional_crt_owner(self):
         from unittest.mock import patch
         root=Path('/workspace');work=root/'.work/receipt'

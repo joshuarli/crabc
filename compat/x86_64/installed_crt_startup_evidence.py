@@ -238,6 +238,12 @@ def account_products(facts):
     result['candidate-shared']={}
     for table in ('.dynsym','.symtab'):
         item=exact(facts,'candidate-shared',CONVENTIONAL,table);require_import(item['row'],'OBJECT','WEAK','DEFAULT');result['candidate-shared'][table]=item
+    # These records are supplied by source-selected startup resolution, not
+    # exported loader functions. The one canonical libc import is checked
+    # above; admitting another dynamic spelling would change this boundary.
+    for key,allowed in (('candidate-shared',{CONVENTIONAL}),('candidate-loader',set())):
+        require(all(x['row']['name'] not in NAMES or x['row']['name'] in allowed
+                    for x in rows(facts,key,'.dynsym')),'unexpected public startup identity: '+key)
     # Retain local, weak and absent named providers without fabricating imports
     # for source-resolved private loader records or optimized attachments.
     result['all_named_rows']={key:[x for table in ('.symtab','.dynsym') for x in rows(facts,key,table) if x['row']['name'] in NAMES] for key in product_paths(ROOT,{'static_preparation':{'primary':{'path':'.work/s'}},'dynamic_product':{'path':'.work/d'}})}
@@ -350,7 +356,7 @@ def observations(root,work,inputs,tools):
     require((work/'oracle-link/libc.so').read_bytes()==(work/'qualification-oracle/runtime').read_bytes(),'oracle named link input differs')
     facts=projection(root,work,inputs);products_account=account_products(facts)
     for variant in ('normal','empty'):
-        failure=exact(facts,variant+'-object','__stack_chk_fail')
+        failure=exact(facts,variant+'-object','__stack_chk_guard')
         require_import(failure['row'],'NOTYPE','GLOBAL','DEFAULT')
     streams={cell['label']:ordinary.raw_path(work,cell['label'],'stdout').read_bytes() for cell in runtime_cells()}
     validate_streams(streams)

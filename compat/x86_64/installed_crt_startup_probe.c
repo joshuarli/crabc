@@ -13,6 +13,9 @@
 static __thread int initial __attribute__((tls_model("initial-exec"))) = 17;
 static __thread int zero __attribute__((tls_model("initial-exec")));
 static int phase, preinitialized;
+/* Addressable compiler protocol data selects musl's real guard initializer.
+ * The pinned freestanding GCC specs disable generated stack protectors. */
+extern uintptr_t __stack_chk_guard;
 static void emit(char c) { if (write(1,&c,1)!=1) _Exit(90); }
 static void state(void) {
     const unsigned char *random=(const unsigned char *)getauxval(AT_RANDOM);
@@ -21,7 +24,7 @@ static void state(void) {
     for (unsigned i=0;i<sizeof expected;i++) expected|=(uintptr_t)random[i]<<(8*i);
     expected&=~(uintptr_t)0xff00;
     __asm__ volatile("mov %%fs:40,%0":"=r"(guard));
-    if (!guard || guard!=expected || initial!=17 || zero!=0 || errno!=0) _Exit(92);
+    if (!guard || guard!=expected || __stack_chk_guard!=expected || initial!=17 || zero!=0 || errno!=0) _Exit(92);
 }
 #ifndef EMPTY_ARRAYS
 static void preinit(void) { state(); if (phase) _Exit(93); preinitialized=1; emit('P'); }
@@ -107,9 +110,7 @@ static void observe(const char *mode) {
     } else { if (s.handoffs || s.conventional) _Exit(107); emit('R'); }
 }
 int main(int argc,char **argv) {
-    volatile char protected_slot[8]; protected_slot[0]=1;
     state();
-    if (protected_slot[0]!=1) _Exit(111);
     if (argc!=2 || phase!=
 #ifdef EMPTY_ARRAYS
         1
