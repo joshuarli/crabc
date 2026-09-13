@@ -10,12 +10,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shutil
+import signal
+import stat
 import subprocess
 import sys
+import time
 from typing import Any, Mapping
 
 sys.dont_write_bytecode = True
@@ -29,8 +33,10 @@ import native_abi_selection as selection
 import owned_dynamic_qualification as qualification
 import owned_posix_product_evidence as products
 import owned_posix_static_products as static_products
+import owned_static_consumer_matrix as consumer_matrix
+import owned_wordexp_evidence as wordexp
 
-SCHEMA = "crabc.x86_64-public-data-ordinary-link/v1"
+SCHEMA = "crabc.x86_64-public-data-ordinary-link/v2"
 IMAGE_ENV = "CRABC_X86_PUBLIC_DATA_IMAGE_ID"
 IMAGE_PATTERN = re.compile(r"crabc-core-evidence@sha256:[0-9a-f]{64}")
 SOURCE_MOUNT = "/workspace"
@@ -43,6 +49,15 @@ DYNAMIC_MODES = ("dynamic-pie", "dynamic-non-pie")
 ORACLE_MODES = ("oracle-static", "oracle-dynamic-pie", "oracle-dynamic-non-pie")
 CANDIDATE_MODES = (*STATIC_MODES, *DYNAMIC_MODES)
 ALL_EXECUTABLES = (*ORACLE_MODES, *CANDIDATE_MODES)
+EXECUTABLE_ELF_MODES = {
+    "oracle-static": {"type": "EXEC", "interpreter": None},
+    "static": {"type": "EXEC", "interpreter": None},
+    "static-pie": {"type": "DYN", "interpreter": None},
+    "oracle-dynamic-pie": {"type": "DYN", "interpreter": "/lib/ld-musl-x86_64.so.1"},
+    "oracle-dynamic-non-pie": {"type": "EXEC", "interpreter": "/lib/ld-musl-x86_64.so.1"},
+    "dynamic-pie": {"type": "DYN", "interpreter": "/lib/ld-crabc-x86_64.so.1"},
+    "dynamic-non-pie": {"type": "EXEC", "interpreter": "/lib/ld-crabc-x86_64.so.1"},
+}
 EXECUTION_LABELS = (
     "oracle-static-run",
     "static-run",
@@ -62,6 +77,8 @@ ABI_ONLY_NAMES = frozenset((
     "__timezone", "__tzname", "_environ",
 ))
 EXPECTED_STDOUT = b"public-data-ordinary-link-ok\n"
+COMMAND_TIMEOUT_SECONDS = 60
+TERMINATION_GRACE_SECONDS = 3
 
 
 class PublicDataEvidenceError(ValueError):
@@ -89,7 +106,13 @@ def same_json(left: object, right: object) -> bool:
     )
 
 
-def read_json(path: Path, description: str) -> dict[str, Any]:
+def read_json(path: Path, description: str, expected_type: type[object] = dict) -> Any:
+    """Read one strictly finite JSON value with the caller's required root type.
+
+    Raw command artifacts are JSON arrays while receipts are objects.  Keeping
+    the root-type check at the call site prevents an object-only convenience
+    reader from making a valid retained command unreplayable.
+    """
     require(path.is_file() and not path.is_symlink(), f"{description} is not a physical regular file")
     def pairs(items: list[tuple[str, object]]) -> dict[str, object]:
         result: dict[str, object] = {}
@@ -97,14 +120,19 @@ def read_json(path: Path, description: str) -> dict[str, Any]:
             require(key not in result, f"{description} has a duplicate JSON key")
             result[key] = value
         return result
+    def finite_float(token: str) -> float:
+        value = float(token)
+        require(math.isfinite(value), f"{description} has a non-finite JSON number")
+        return value
     try:
         value = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=pairs,
+                           parse_float=finite_float,
                            parse_constant=lambda token: (_ for _ in ()).throw(
                                PublicDataEvidenceError(f"{description} has non-JSON number {token}")
                            ))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise PublicDataEvidenceError(f"cannot read {description}: {error}") from error
-    require(type(value) is dict, f"{description} is not an object")
+    require(type(value) is expected_type, f"{description} is not a {expected_type.__name__}")
     return value
 
 
@@ -180,7 +208,45 @@ def selected_objects(contract: Mapping[str, Any] | None = None) -> tuple[list[di
             "fixed probe ABI-only declaration set differs from typed policy")
     require(all(item["source_mutable"] is True for item in objects if item["name"] in {"stdin", "stdout", "stderr"}),
             "pointer-slot mutability must remain distinct from installed pointer constness")
+    validate_probe_policy(objects, aliases)
     return objects, aliases
+
+
+def validate_probe_policy(objects: list[Mapping[str, Any]], aliases: list[Mapping[str, str]]) -> None:
+    """Require the fixed C address/alignment and alias checks to mirror policy.
+
+    The probe stays a small reviewable C fixture.  Its per-object literals are
+    nevertheless contract inputs: a changed typed alignment or source-declared
+    alias must not leave an older literal check pretending to cover it.
+    """
+    try:
+        source = PROBE.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise PublicDataEvidenceError(f"cannot read fixed ordinary-link probe: {error}") from error
+    address_block = re.search(r"static const volatile uintptr_t addresses\[object_count\] = \{(.*?)\n\};", source, re.DOTALL)
+    alignment_block = re.search(r"static const unsigned alignments\[object_count\] = \{(.*?)\n\};", source, re.DOTALL)
+    require(address_block is not None and alignment_block is not None,
+            "fixed ordinary-link probe address/alignment tables differ")
+    names = re.findall(r"\(uintptr_t\)&([A-Za-z_][A-Za-z0-9_]*),", address_block.group(1))
+    raw_alignments = [item.strip() for item in alignment_block.group(1).replace("\n", " ").split(",") if item.strip()]
+    require(len(names) == len(raw_alignments), "fixed ordinary-link probe alignment count differs")
+    try:
+        alignments = [int(item, 10) for item in raw_alignments]
+    except ValueError as error:
+        raise PublicDataEvidenceError("fixed ordinary-link probe alignment literal differs") from error
+    expected_names = [str(item["name"]) for item in objects]
+    require(names == expected_names, "fixed ordinary-link probe object roster differs")
+    require(alignments == [item["alignment_bytes"] for item in objects],
+            "fixed ordinary-link probe alignment literals differ from typed policy")
+    observed_aliases = [
+        {"name": left.removeprefix("object_"), "target": right.removeprefix("object_")}
+        for left, right in re.findall(
+            r"if \(addresses\[(object_[A-Za-z_][A-Za-z0-9_]*)\] != addresses\[(object_[A-Za-z_][A-Za-z0-9_]*)\]\) return [0-9]+;",
+            source,
+        )
+    ]
+    require(observed_aliases == [dict(item) for item in aliases],
+            "fixed ordinary-link probe alias literals differ from typed policy")
 
 
 def selection_identity(root: Path) -> dict[str, Any]:
@@ -259,9 +325,26 @@ def admit_inputs(root: Path, static_preparation: Path, static_product: Path,
 def fresh_output(root: Path, output: Path) -> Path:
     root = Path(root).absolute()
     output = physical_work_path(root, output, "output", exists=False)
-    require(not output.exists(), "ordinary-link output must be fresh")
+    require(not output.exists() and not output.is_symlink(), "ordinary-link output must be fresh and non-symlinked")
     require(output.parent.is_dir() and not output.parent.is_symlink(), "ordinary-link output parent is unsafe")
     return output
+
+
+def admit_output_disjoint(root: Path, output: Path, static_preparation: Path,
+                          static_product: Path, dynamic_product: Path) -> None:
+    """Keep a fresh receipt outside every read-only supplied input cohort."""
+    root = Path(root).absolute()
+    output = physical_work_path(root, output, "output", exists=False)
+    preparation = physical_work_path(root, static_preparation, "static preparation receipt")
+    static_product = physical_work_path(root, static_product, "static product")
+    dynamic_product = physical_work_path(root, dynamic_product, "dynamic product")
+    for protected, description in (
+        (preparation.parent, "static preparation cohort"),
+        (static_product, "static product"),
+        (dynamic_product, "dynamic product"),
+    ):
+        require(not output.is_relative_to(protected),
+                f"ordinary-link output enters supplied {description}")
 
 
 def write_new_json(path: Path, value: object) -> None:
@@ -269,6 +352,343 @@ def write_new_json(path: Path, value: object) -> None:
     with path.open("x", encoding="utf-8", newline="\n") as stream:
         json.dump(value, stream, sort_keys=True, indent=2)
         stream.write("\n")
+
+
+TOOL_ROLES = (
+    "static_driver", "dynamic_driver", "compiler", "linker", "oracle_wrapper", "env", "readelf", "chroot",
+)
+ORACLE_STATIC_INPUTS = {
+    "libc_a": Path("/opt/musl-1.2.6/lib/libc.a"),
+    "Scrt1": Path("/opt/musl-1.2.6/lib/Scrt1.o"),
+    "crti": Path("/opt/musl-1.2.6/lib/crti.o"),
+    "crtn": Path("/opt/musl-1.2.6/lib/crtn.o"),
+}
+
+
+def fixed_image_tool_identity(path: Path, description: str) -> dict[str, Any]:
+    """Seal a known non-symlink image tool at its contractual spelling."""
+    try:
+        source = inventory.physical_executable(path, description)
+        record = inventory.file_record(source, logical_path=str(path))
+    except inventory.InventoryError as error:
+        raise PublicDataEvidenceError(f"cannot identify {description}: {error}") from error
+    return {key: record[key] for key in ("path", "sha256", "mode")}
+
+
+def retain_tool_snapshot(work: Path, role: str, source: Mapping[str, Any]) -> dict[str, Any]:
+    """Retain one existing path/hash/mode tool identity with its physical size."""
+    require(type(source) is dict and set(source) == {"path", "sha256", "mode"},
+            f"ordinary-link {role} source tool identity differs")
+    path = source.get("path")
+    require(type(path) is str and Path(path).is_absolute(), f"ordinary-link {role} source tool path differs")
+    try:
+        snapshot = inventory._snapshot_regular(work, Path(path), f"inputs/tools/{role}", path)
+    except inventory.InventoryError as error:
+        raise PublicDataEvidenceError(f"cannot retain ordinary-link {role} tool: {error}") from error
+    original = snapshot["original"]
+    require(all(original[key] == source[key] for key in source),
+            f"ordinary-link {role} source tool changed during capture")
+    retained_path = work / "inputs/tools" / role
+    retained_path.chmod(retained_path.stat().st_mode | 0o444)
+    snapshot["retained"] = inventory.file_record(retained_path, logical_path=f"inputs/tools/{role}")
+    require(snapshot["retained"]["sha256"] == original["sha256"]
+            and snapshot["retained"]["size"] == original["size"],
+            f"ordinary-link {role} retained tool differs")
+    return snapshot
+
+
+def capture_tool_roster(root: Path, output: Path, static_product: Path, dynamic_product: Path) -> dict[str, Any]:
+    """Copy the exact native command tools before the first observed command.
+
+    Installed drivers are not enough to identify the source compiler and LLD
+    selected through their installed helper.  The existing wordexp reader
+    resolves that constrained pair; this component retains every resolved
+    executable byte for host-side replay without running it again.
+    """
+    try:
+        installed = wordexp._installed_tool_roster(dynamic_product, static_product)
+        sources = {
+            "static_driver": installed["static-driver"],
+            "dynamic_driver": installed["dynamic-driver"],
+            "compiler": installed["compiler"],
+            "linker": installed["linker"],
+            "oracle_wrapper": fixed_image_tool_identity(Path("/usr/local/bin/crabc-x86_64-musl-gcc"), "pinned musl compiler wrapper"),
+            "env": fixed_image_tool_identity(Path("/usr/bin/env"), "environment reset tool"),
+            "readelf": fixed_image_tool_identity(inventory.TOOL_PATHS["readelf"], "ELF reader"),
+            "chroot": installed["chroot"],
+        }
+        require(set(sources) == set(TOOL_ROLES), "ordinary-link native tool roster differs")
+        result = {}
+        for role in TOOL_ROLES:
+            source = sources[role]
+            result[role] = retain_tool_snapshot(output, role, source)
+        return result
+    except (wordexp.EvidenceError, inventory.InventoryError, OSError, ValueError) as error:
+        raise PublicDataEvidenceError(f"cannot seal ordinary-link native tools: {error}") from error
+
+
+def capture_oracle_static_inputs(work: Path, paths: Mapping[str, Path] = ORACLE_STATIC_INPUTS) -> dict[str, Any]:
+    """Retain the precise musl archive and CRT inputs selected by static link."""
+    require(set(paths) == set(ORACLE_STATIC_INPUTS), "ordinary-link oracle static input roster differs")
+    result = {}
+    try:
+        for name in ORACLE_STATIC_INPUTS:
+            source = inventory.physical_regular(Path(paths[name]), "oracle static " + name)
+            snapshot = inventory._snapshot_regular(work, source, f"inputs/oracle-static/{name}", str(source))
+            retained_path = work / "inputs/oracle-static" / name
+            retained_path.chmod(retained_path.stat().st_mode | 0o444)
+            snapshot["retained"] = inventory.file_record(retained_path, logical_path=f"inputs/oracle-static/{name}")
+            require(snapshot["retained"]["sha256"] == snapshot["original"]["sha256"]
+                    and snapshot["retained"]["size"] == snapshot["original"]["size"],
+                    f"ordinary-link retained oracle static {name} differs")
+            result[name] = snapshot
+        return result
+    except inventory.InventoryError as error:
+        raise PublicDataEvidenceError(f"cannot seal oracle static inputs: {error}") from error
+
+
+def validate_oracle_static_inputs(work: Path, record: object) -> dict[str, Any]:
+    require(type(record) is dict and set(record) == set(ORACLE_STATIC_INPUTS),
+            "ordinary-link oracle static input roster differs")
+    try:
+        for name in ORACLE_STATIC_INPUTS:
+            inventory._validate_snapshot(
+                work, record[name], "ordinary-link oracle static " + name,
+                expected_original_path=str(ORACLE_STATIC_INPUTS[name]),
+                expected_retained_path=f"inputs/oracle-static/{name}",
+            )
+    except inventory.InventoryError as error:
+        raise PublicDataEvidenceError(f"ordinary-link oracle static replay failed: {error}") from error
+    return record
+
+
+def require_live_oracle_static_inputs(record: Mapping[str, Any]) -> None:
+    """Collection-only before/after check; retained replay never reads `/opt`."""
+    for name in ORACLE_STATIC_INPUTS:
+        original = record[name]["original"]
+        try:
+            current = inventory.file_record(Path(original["path"]), logical_path=original["path"])
+        except inventory.InventoryError as error:
+            raise PublicDataEvidenceError(f"oracle static {name} disappeared during collection") from error
+        require(current == original, f"oracle static {name} changed during collection")
+
+
+def validate_tool_roster(root: Path, work: Path, inputs: Mapping[str, Any], tools: object) -> dict[str, Any]:
+    require(type(tools) is dict and set(tools) == set(TOOL_ROLES), "ordinary-link native tool roster differs")
+    static_product = root / inputs["static_preparation"]["primary"]["path"]
+    dynamic_product = root / inputs["dynamic_product"]["path"]
+    expected_original = {
+        "static_driver": mounted(root, static_product / "bin/crabc-cc"),
+        "dynamic_driver": mounted(root, dynamic_product / "bin/crabc-cc-dynamic"),
+        "oracle_wrapper": "/usr/local/bin/crabc-x86_64-musl-gcc",
+        "env": "/usr/bin/env",
+        "readelf": str(inventory.TOOL_PATHS["readelf"]),
+    }
+    result = {}
+    try:
+        for role in TOOL_ROLES:
+            record = tools[role]
+            inventory._validate_snapshot(
+                work,
+                record,
+                "ordinary-link " + role + " tool",
+                expected_original_path=expected_original.get(role),
+                expected_retained_path=f"inputs/tools/{role}",
+            )
+            result[role] = record
+    except inventory.InventoryError as error:
+        raise PublicDataEvidenceError(f"ordinary-link native tool replay failed: {error}") from error
+    oracle = result["oracle_wrapper"]["original"]
+    require(oracle["path"] == "/usr/local/bin/crabc-x86_64-musl-gcc",
+            "ordinary-link oracle compiler path differs")
+    return result
+
+
+def require_live_tool_roster(tools: Mapping[str, Any]) -> None:
+    """Collection-only before/after seal; host replay uses retained copies."""
+    for role in TOOL_ROLES:
+        record = tools[role]
+        require(type(record) is dict and type(record.get("original")) is dict,
+                f"ordinary-link {role} tool record differs")
+        original = record["original"]
+        try:
+            current = inventory.file_record(Path(original["path"]), logical_path=original["path"])
+        except inventory.InventoryError as error:
+            raise PublicDataEvidenceError(f"ordinary-link {role} tool disappeared during collection") from error
+        require(current == original, f"ordinary-link {role} tool changed during collection")
+
+
+def execution_tree(root: Path, directory: Path, description: str) -> dict[str, dict[str, Any]]:
+    """Describe one contained execution root without following aliases."""
+    directory = physical_work_path(root, directory, description)
+    require(directory.is_dir() and not directory.is_symlink(), f"{description} is not a physical directory")
+    entries: dict[str, dict[str, Any]] = {}
+    try:
+        paths = sorted(directory.rglob("*"), key=lambda item: item.as_posix())
+    except OSError as error:
+        raise PublicDataEvidenceError(f"cannot enumerate {description}: {error}") from error
+    for path in paths:
+        relative = path.relative_to(directory).as_posix()
+        metadata = path.lstat()
+        mode = stat.S_IMODE(metadata.st_mode)
+        if stat.S_ISDIR(metadata.st_mode):
+            entry = {"kind": "directory", "mode": mode}
+        elif stat.S_ISREG(metadata.st_mode):
+            entry = {"kind": "file", "mode": mode, "size": metadata.st_size, "sha256": digest(path)}
+        elif stat.S_ISLNK(metadata.st_mode):
+            entry = {"kind": "symlink", "mode": mode, "target": os.readlink(path)}
+        else:
+            raise PublicDataEvidenceError(f"{description} has unsupported node: {relative}")
+        entries[relative] = entry
+    return entries
+
+
+def readable_tree(entries: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Predict the retention finalizer's additive permission change."""
+    result = {}
+    for relative, entry in entries.items():
+        current = dict(entry)
+        if current["kind"] == "directory":
+            current["mode"] |= 0o555
+        elif current["kind"] == "file":
+            current["mode"] |= 0o444
+        result[relative] = current
+    return result
+
+
+def execution_copy(root: Path, source: Path, copied: Path, description: str) -> dict[str, Any]:
+    source_identity = work_file_identity(root, source, description + " source")
+    copy_identity = work_file_identity(root, copied, description + " execution copy")
+    require(source_identity["sha256"] == copy_identity["sha256"] and source_identity["size"] == copy_identity["size"],
+            description + " bytes differ")
+    return {"source": source_identity, "copy": copy_identity}
+
+
+def executable_observations(root: Path, work: Path) -> dict[str, Any]:
+    """Reopen all seven retained executables and parse their recorded ELF views."""
+    work = physical_work_path(root, work, "ordinary-link work")
+    result = {}
+    for name, expected in EXECUTABLE_ELF_MODES.items():
+        executable = work_file_identity(root, work / name, name + " executable")
+        try:
+            header = (work / "raw" / (name + ".header.stdout")).read_text(encoding="utf-8")
+            program = (work / "raw" / (name + ".program.stdout")).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as error:
+            raise PublicDataEvidenceError(f"cannot read retained {name} ELF view: {error}") from error
+        require(re.search(r"^\s*Class:\s+ELF64\s*$", header, re.MULTILINE) is not None
+                and re.search(r"^\s*Data:\s+2's complement, little endian\s*$", header, re.MULTILINE) is not None
+                and re.search(r"^\s*Machine:\s+Advanced Micro Devices X86-64\s*$", header, re.MULTILINE) is not None,
+                name + " ELF target differs")
+        require(re.search(r"^\s*Type:\s+" + expected["type"] + r"(?:\s|\()", header, re.MULTILINE) is not None,
+                name + " ELF type differs")
+        interpreter = expected["interpreter"]
+        if interpreter is None:
+            require("Requesting program interpreter:" not in program and re.search(r"^\s*INTERP\b", program, re.MULTILINE) is None,
+                    name + " ELF unexpectedly has an interpreter")
+        else:
+            require(program.count("Requesting program interpreter: " + interpreter) == 1,
+                    name + " ELF interpreter differs")
+        result[name] = {"executable": executable, "elf": dict(expected)}
+    return result
+
+
+def validate_executable_observations(root: Path, work: Path, record: object) -> dict[str, Any]:
+    require(type(record) is dict and set(record) == set(EXECUTABLE_ELF_MODES),
+            "ordinary-link executable roster differs")
+    actual = executable_observations(root, work)
+    require(same_json(record, actual), "ordinary-link executable ELF observations differ")
+    return actual
+
+
+def capture_execution_roots(root: Path, work: Path, dynamic_product: Path) -> dict[str, Any]:
+    """Seal each chroot payload, interpreter, and copied consumer exactly once."""
+    work = physical_work_path(root, work, "ordinary-link work")
+    dynamic_product = physical_work_path(root, dynamic_product, "dynamic product")
+    candidate_root = work / "candidate-root"
+    oracle_root = work / "oracle-root"
+    candidate_source = execution_tree(root, dynamic_product, "candidate dynamic product")
+    static_products.make_retained_evidence_readable(candidate_root)
+    static_products.make_retained_evidence_readable(oracle_root)
+    candidate_tree = execution_tree(root, candidate_root, "candidate execution root")
+    oracle_tree = execution_tree(root, oracle_root, "oracle execution root")
+    candidate_consumers = {
+        mode: execution_copy(root, work / ("dynamic-" + mode), candidate_root / ("consumer-" + mode),
+                             "candidate " + mode + " consumer")
+        for mode in ("pie", "non-pie")
+    }
+    oracle_consumers = {
+        mode: execution_copy(root, work / ("oracle-dynamic-" + mode), oracle_root / ("consumer-" + mode),
+                             "oracle " + mode + " consumer")
+        for mode in ("pie", "non-pie")
+    }
+    return {
+        "candidate": {
+            "root": "candidate-root", "source_tree": candidate_source, "tree": candidate_tree,
+            "consumers": candidate_consumers,
+        },
+        "oracle": {
+            "root": "oracle-root", "runtime": work_file_identity(
+                root, work / "qualification-oracle/runtime", "retained oracle runtime"
+            ), "tree": oracle_tree, "consumers": oracle_consumers,
+        },
+    }
+
+
+def validate_execution_roots(root: Path, work: Path, dynamic_product: Path, record: object) -> dict[str, Any]:
+    """Reopen every copied execution payload; no root is trusted by its path."""
+    require(type(record) is dict and set(record) == {"candidate", "oracle"},
+            "ordinary-link execution root roster differs")
+    work = physical_work_path(root, work, "ordinary-link work")
+    dynamic_product = physical_work_path(root, dynamic_product, "dynamic product")
+    candidate = record["candidate"]
+    oracle = record["oracle"]
+    require(type(candidate) is dict and set(candidate) == {"root", "source_tree", "tree", "consumers"},
+            "candidate execution root fields differ")
+    require(candidate["root"] == "candidate-root", "candidate execution root path differs")
+    current_source = execution_tree(root, dynamic_product, "candidate dynamic product")
+    current_tree = execution_tree(root, work / candidate["root"], "candidate execution root")
+    require(same_json(candidate["source_tree"], current_source) and same_json(candidate["tree"], current_tree),
+            "candidate execution root bytes or roster differ")
+    consumers = candidate["consumers"]
+    require(type(consumers) is dict and set(consumers) == {"pie", "non-pie"},
+            "candidate execution consumer roster differs")
+    allowed = set(current_source) | {"consumer-pie", "consumer-non-pie"}
+    require(set(current_tree) == allowed, "candidate execution root contains undeclared payload")
+    for relative, entry in readable_tree(current_source).items():
+        require(current_tree[relative] == entry, "candidate execution root product copy differs")
+    for mode in ("pie", "non-pie"):
+        current = execution_copy(root, work / ("dynamic-" + mode), work / candidate["root"] / ("consumer-" + mode),
+                                 "candidate " + mode + " consumer")
+        require(same_json(consumers[mode], current), "candidate execution consumer differs")
+        require(current_tree["consumer-" + mode]["kind"] == "file"
+                and current_tree["consumer-" + mode]["sha256"] == current["copy"]["sha256"],
+                "candidate execution consumer tree differs")
+    require(type(oracle) is dict and set(oracle) == {"root", "runtime", "tree", "consumers"},
+            "oracle execution root fields differ")
+    require(oracle["root"] == "oracle-root", "oracle execution root path differs")
+    runtime = resolve_work_identity(root, oracle["runtime"], "retained oracle runtime")
+    require(runtime == work / "qualification-oracle/runtime", "oracle runtime path differs")
+    oracle_tree = execution_tree(root, work / oracle["root"], "oracle execution root")
+    require(same_json(oracle["tree"], oracle_tree), "oracle execution root bytes or roster differ")
+    expected_oracle_entries = {"lib", "lib/ld-musl-x86_64.so.1", "lib/libc.so", "consumer-pie", "consumer-non-pie"}
+    require(set(oracle_tree) == expected_oracle_entries, "oracle execution root contains undeclared payload")
+    interpreter = oracle_tree["lib/ld-musl-x86_64.so.1"]
+    require(interpreter["kind"] == "file" and interpreter["sha256"] == digest(runtime),
+            "oracle execution interpreter differs from retained runtime")
+    require(oracle_tree["lib/libc.so"] == {"kind": "symlink", "mode": oracle_tree["lib/libc.so"]["mode"],
+                                             "target": "ld-musl-x86_64.so.1"},
+            "oracle execution libc alias differs")
+    oracle_consumers = oracle["consumers"]
+    require(type(oracle_consumers) is dict and set(oracle_consumers) == {"pie", "non-pie"},
+            "oracle execution consumer roster differs")
+    for mode in ("pie", "non-pie"):
+        current = execution_copy(root, work / ("oracle-dynamic-" + mode), work / oracle["root"] / ("consumer-" + mode),
+                                 "oracle " + mode + " consumer")
+        require(same_json(oracle_consumers[mode], current), "oracle execution consumer differs")
+        require(oracle_tree["consumer-" + mode]["kind"] == "file"
+                and oracle_tree["consumer-" + mode]["sha256"] == current["copy"]["sha256"],
+                "oracle execution consumer tree differs")
+    return record
 
 
 class Collector:
@@ -281,8 +701,35 @@ class Collector:
         self.dynamic_product = dynamic_product
         self.commands: list[dict[str, Any]] = []
 
+    @staticmethod
+    def _terminate_owned_group(process: subprocess.Popen[bytes]) -> int:
+        """Terminate the new-session command and every ordinary descendant.
+
+        This is the same process-group boundary used by the owned static
+        consumer matrix.  Retaining a timeout after only killing the leader
+        would let a child escape into later evidence commands.
+        """
+        group = process.pid
+        try:
+            os.killpg(group, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + TERMINATION_GRACE_SECONDS
+        while consumer_matrix.group_has_live_members(group) and time.monotonic() < deadline:
+            time.sleep(consumer_matrix.POLL_SECONDS)
+        if consumer_matrix.group_has_live_members(group):
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        try:
+            return process.wait(timeout=TERMINATION_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            return process.wait()
+
     def run(self, label: str, command: list[str], *, stdout: bytes | None = None,
-            cwd: Path | None = None) -> dict[str, Any]:
+            cwd: Path | None = None, timeout_seconds: float = COMMAND_TIMEOUT_SECONDS) -> dict[str, Any]:
         raw = self.output / "raw"
         raw.mkdir(exist_ok=True)
         base = raw / label
@@ -293,27 +740,37 @@ class Collector:
         write_new_json(command_path, command)
         working_directory = self.root if cwd is None else Path(cwd)
         require(working_directory in {self.root, self.output}, "ordinary-link command cwd differs")
+        require(type(timeout_seconds) in {int, float} and timeout_seconds > 0,
+                "ordinary-link command timeout differs")
+        outcome = "failed"
+        status = 127
         with stdout_path.open("xb") as out, stderr_path.open("xb") as err:
             try:
-                result = subprocess.run(command, cwd=working_directory, stdout=out, stderr=err,
-                                        timeout=60, check=False)
-                status = result.returncode
+                process = subprocess.Popen(command, cwd=working_directory, stdin=subprocess.DEVNULL,
+                                           stdout=out, stderr=err, start_new_session=True)
+                try:
+                    status = process.wait(timeout=timeout_seconds)
+                    outcome = "ok" if status == 0 else "failed"
+                except subprocess.TimeoutExpired:
+                    status = self._terminate_owned_group(process)
+                    outcome = "timed-out"
             except OSError as error:
                 err.write((str(error) + "\n").encode())
-                status = 127
-        status_path.write_text(f"{status}\n", encoding="ascii")
-        require(status == 0, f"ordinary-link command failed: {label}")
-        if stdout is not None:
-            require(stdout_path.read_bytes() == stdout and stderr_path.read_bytes() == b"",
-                    f"ordinary-link execution output differs: {label}")
+        status_payload = f"{status}\n" if outcome != "timed-out" else f"timed-out:{status}\n"
+        status_path.write_text(status_payload, encoding="ascii")
         row = {
-            "label": label, "argv": command, "cwd": mounted(self.root, working_directory),
+            "label": label, "argv": command, "cwd": mounted(self.root, working_directory), "outcome": outcome,
             "command": work_file_identity(self.root, command_path, label + " command"),
             "stdout": work_file_identity(self.root, stdout_path, label + " stdout"),
             "stderr": work_file_identity(self.root, stderr_path, label + " stderr"),
             "status": work_file_identity(self.root, status_path, label + " status"),
         }
         self.commands.append(row)
+        require(outcome != "timed-out", f"ordinary-link command timed out: {label}")
+        require(status == 0, f"ordinary-link command failed: {label}")
+        if stdout is not None:
+            require(stdout_path.read_bytes() == stdout and stderr_path.read_bytes() == b"",
+                    f"ordinary-link execution output differs: {label}")
         return row
 
     def link_receipt(self, mode: str) -> Path:
@@ -329,21 +786,22 @@ class Collector:
         policy = selection_identity(self.root)
         oracle = qualification.capture_oracle(self.output)
         qualification.validate_oracle(self.output, oracle)
+        oracle_static_inputs = capture_oracle_static_inputs(self.output)
+        tools = capture_tool_roster(self.root, self.output, self.static_product, self.dynamic_product)
         probe = self.output / "public_data_ordinary_link_probe.c"
         shutil.copy2(PROBE, probe)
         probe_source = work_file_identity(self.root, probe, "retained ordinary-link probe")
-        dynamic_driver = self.dynamic_product / "bin/crabc-cc-dynamic"
-        static_driver = self.static_product / "bin/crabc-cc"
         object_path = self.output / "probe.o"
-        self.run("compile", [str(dynamic_driver), "--dynamic-pie", "-std=c11", "-fno-builtin",
+        self.run("compile", [tools["dynamic_driver"]["original"]["path"], "--dynamic-pie", "-std=c11", "-fno-builtin",
                              "-fno-stack-protector", "-c", str(probe), "-o", str(object_path)])
-        self.run("object-symbols", ["readelf", "-sW", str(object_path)])
-        oracle_cc = "/usr/local/bin/crabc-x86_64-musl-gcc"
+        readelf = tools["readelf"]["original"]["path"]
+        self.run("object-symbols", [readelf, "-sW", str(object_path)])
+        oracle_cc = tools["oracle_wrapper"]["original"]["path"]
         self.run("oracle-static-link", [oracle_cc, "-static", "-no-pie", str(object_path),
                                         "-o", str(self.output / "oracle-static")])
         for mode in STATIC_MODES:
             receipt = self.link_receipt(mode)
-            self.run(mode + "-link", [str(static_driver), "-" + mode, "--link-receipt",
+            self.run(mode + "-link", [tools["static_driver"]["original"]["path"], "-" + mode, "--link-receipt",
                                       receipt.name, str(object_path), "-o", str(self.output / mode)],
                      cwd=self.output)
         for mode in ("pie", "non-pie"):
@@ -352,15 +810,15 @@ class Collector:
                 oracle_cc, *flags, str(object_path), "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1",
                 "-o", str(self.output / ("oracle-dynamic-" + mode))
             ])
-            self.run("dynamic-" + mode + "-link", [str(dynamic_driver), "--dynamic-" + mode,
+            self.run("dynamic-" + mode + "-link", [tools["dynamic_driver"]["original"]["path"], "--dynamic-" + mode,
                                                    str(object_path), "-o",
                                                    str(self.output / ("dynamic-" + mode))])
         for name in ALL_EXECUTABLES:
             binary = self.output / name
-            for option, suffix in (("-hW", "header"), ("-sW", "symbols"), ("-rW", "relocations")):
-                self.run(name + "-" + suffix, ["readelf", option, str(binary)])
+            for option, suffix in (("-hW", "header"), ("-lW", "program"), ("-sW", "symbols"), ("-rW", "relocations")):
+                self.run(name + "-" + suffix, [readelf, option, str(binary)])
         for name in ("oracle-static", "static", "static-pie"):
-            self.run(name + "-run", ["env", "-i", str(self.output / name)], stdout=EXPECTED_STDOUT)
+            self.run(name + "-run", [tools["env"]["original"]["path"], "-i", str(self.output / name)], stdout=EXPECTED_STDOUT)
         oracle_root = self.output / "oracle-root"
         (oracle_root / "lib").mkdir(parents=True)
         shutil.copy2(self.output / "qualification-oracle/runtime", oracle_root / "lib/ld-musl-x86_64.so.1")
@@ -372,26 +830,25 @@ class Collector:
             ("candidate", candidate_root, "/lib/ld-crabc-x86_64.so.1"),
         ):
             for mode in ("pie", "non-pie"):
-                binary = self.output / (owner + "-dynamic-" + mode)
+                binary = self.output / (("oracle-dynamic-" if owner == "oracle" else "dynamic-") + mode)
                 consumer = execution_root / ("consumer-" + mode)
                 shutil.copy2(binary, consumer)
                 for entry in ("kernel", "direct"):
-                    command = ["env", "-i", "chroot", str(execution_root)]
+                    command = [tools["env"]["original"]["path"], "-i",
+                               tools["chroot"]["original"]["path"], str(execution_root)]
                     if entry == "direct":
                         command.append(interpreter)
                     command.append("/consumer-" + mode)
-                    self.run(owner + "-dynamic-" + mode + "-" + entry, command, stdout=EXPECTED_STDOUT)
+                    label = ("oracle-dynamic-" if owner == "oracle" else "dynamic-") + mode + "-" + entry
+                    self.run(label, command, stdout=EXPECTED_STDOUT)
+        execution_roots = capture_execution_roots(self.root, self.output, self.dynamic_product)
         after = admit_inputs(self.root, self.static_preparation, self.static_product, self.dynamic_product)
         require(same_json(before, after), "supplied source or products changed during ordinary-link collection")
+        require_live_tool_roster(tools)
+        require_live_oracle_static_inputs(oracle_static_inputs)
         observations = observe(self.root, self.output, policy)
-        links = candidate_links(self.root, self.output, before)
-        tools = {
-            "static_driver": work_file_identity(self.root, static_driver, "static driver"),
-            "dynamic_driver": work_file_identity(self.root, dynamic_driver, "dynamic driver"),
-            "oracle_wrapper": work_file_identity(
-                self.root, self.output / "qualification-oracle/compiler_wrapper", "retained oracle wrapper"
-            ),
-        }
+        executables = executable_observations(self.root, self.output)
+        links = candidate_links(self.root, self.output, before, tools)
         return {
             "schema": SCHEMA,
             "status": "ordinary-link-evidence-unqualified",
@@ -405,8 +862,11 @@ class Collector:
                 "object": work_file_identity(self.root, object_path, "ordinary-link object"),
             },
             "oracle": oracle,
+            "oracle_static_inputs": oracle_static_inputs,
             "tools": tools,
+            "execution_roots": execution_roots,
             "commands": self.commands,
+            "executables": executables,
             "observations": observations,
             "links": links,
             "limits": [
@@ -480,7 +940,7 @@ def observe(root: Path, work: Path, policy: Mapping[str, Any]) -> dict[str, Any]
     }
 
 
-def candidate_links(root: Path, work: Path, inputs: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+def candidate_links(root: Path, work: Path, inputs: Mapping[str, Any], tools: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     static_product = root / inputs["static_preparation"]["primary"]["path"]
     dynamic_product = root / inputs["dynamic_product"]["path"]
     result: dict[str, dict[str, Any]] = {}
@@ -492,14 +952,21 @@ def candidate_links(root: Path, work: Path, inputs: Mapping[str, Any]) -> dict[s
             receipt = work / (mode + ".crabc-link.json")
         record = read_json(receipt, mode + " link receipt")
         linker = record.get("resolved_linker")
-        require(type(linker) is dict and set(linker) == {"path", "sha256"},
-                f"{mode} link receipt lacks linker identity")
+        sealed = tools.get("linker")
+        require(type(sealed) is dict and type(sealed.get("original")) is dict,
+                "ordinary-link independent linker roster differs")
+        expected_linker = {
+            "path": sealed["original"].get("path"),
+            "sha256": sealed["original"].get("sha256"),
+        }
+        require(type(linker) is dict and linker == expected_linker,
+                f"{mode} link receipt selected an unsealed linker")
         result[mode] = {
             "linkage": linkage,
             "product": "static" if mode in STATIC_MODES else "dynamic",
             "receipt": work_file_identity(root, receipt, mode + " link receipt"),
             "executable": work_file_identity(root, work / mode, mode + " executable"),
-            "linker": linker,
+            "linker": expected_linker,
             "product_manifest": (inputs["static_preparation"]["primary"]["manifest"]
                                  if mode in STATIC_MODES else inputs["dynamic_product"]["manifest"]),
         }
@@ -511,16 +978,29 @@ def expected_command_labels() -> tuple[str, ...]:
     for mode in ("pie", "non-pie"):
         labels.extend(("oracle-dynamic-" + mode + "-link", "dynamic-" + mode + "-link"))
     for name in ALL_EXECUTABLES:
-        labels.extend((name + "-header", name + "-symbols", name + "-relocations"))
+        labels.extend((name + "-header", name + "-program", name + "-symbols", name + "-relocations"))
     labels.extend(EXECUTION_LABELS)
     return tuple(labels)
 
 
-def expected_commands(root: Path, work: Path, inputs: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+def expected_commands(root: Path, work: Path, inputs: Mapping[str, Any],
+                      tools: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
     static_product = root / inputs["static_preparation"]["primary"]["path"]
     dynamic_product = root / inputs["dynamic_product"]["path"]
-    static_driver = mounted(root, static_product / "bin/crabc-cc")
-    dynamic_driver = mounted(root, dynamic_product / "bin/crabc-cc-dynamic")
+    def tool_path(name: str) -> str:
+        record = tools.get(name)
+        require(type(record) is dict and type(record.get("original")) is dict,
+                f"ordinary-link {name} tool record differs")
+        path = record["original"].get("path")
+        require(type(path) is str and Path(path).is_absolute() and ".." not in Path(path).parts,
+                f"ordinary-link {name} tool path differs")
+        return path
+    static_driver = tool_path("static_driver")
+    dynamic_driver = tool_path("dynamic_driver")
+    oracle_wrapper = tool_path("oracle_wrapper")
+    env = tool_path("env")
+    readelf = tool_path("readelf")
+    chroot = tool_path("chroot")
     object_path = mounted(root, work / "probe.o")
     output = lambda name: mounted(root, work / name)
     result: dict[str, dict[str, Any]] = {
@@ -528,9 +1008,9 @@ def expected_commands(root: Path, work: Path, inputs: Mapping[str, Any]) -> dict
             dynamic_driver, "--dynamic-pie", "-std=c11", "-fno-builtin", "-fno-stack-protector",
             "-c", output("public_data_ordinary_link_probe.c"), "-o", output("probe.o"),
         ]},
-        "object-symbols": {"cwd": SOURCE_MOUNT, "argv": ["readelf", "-sW", output("probe.o")]},
+        "object-symbols": {"cwd": SOURCE_MOUNT, "argv": [readelf, "-sW", output("probe.o")]},
         "oracle-static-link": {"cwd": SOURCE_MOUNT, "argv": [
-            "/usr/local/bin/crabc-x86_64-musl-gcc", "-static", "-no-pie", object_path,
+            oracle_wrapper, "-static", "-no-pie", object_path,
             "-o", output("oracle-static"),
         ]},
         "static-link": {"cwd": output(""), "argv": [
@@ -545,50 +1025,53 @@ def expected_commands(root: Path, work: Path, inputs: Mapping[str, Any]) -> dict
     for mode in ("pie", "non-pie"):
         flags = ["-fPIE", "-pie"] if mode == "pie" else ["-no-pie"]
         result["oracle-dynamic-" + mode + "-link"] = {"cwd": SOURCE_MOUNT, "argv": [
-            "/usr/local/bin/crabc-x86_64-musl-gcc", *flags, object_path,
+            oracle_wrapper, *flags, object_path,
             "-Wl,--dynamic-linker,/lib/ld-musl-x86_64.so.1", "-o", output("oracle-dynamic-" + mode),
         ]}
         result["dynamic-" + mode + "-link"] = {"cwd": SOURCE_MOUNT, "argv": [
             dynamic_driver, "--dynamic-" + mode, object_path, "-o", output("dynamic-" + mode),
         ]}
     for name in ALL_EXECUTABLES:
-        for option, suffix in (("-hW", "header"), ("-sW", "symbols"), ("-rW", "relocations")):
-            result[name + "-" + suffix] = {"cwd": SOURCE_MOUNT, "argv": ["readelf", option, output(name)]}
+        for option, suffix in (("-hW", "header"), ("-lW", "program"), ("-sW", "symbols"), ("-rW", "relocations")):
+            result[name + "-" + suffix] = {"cwd": SOURCE_MOUNT, "argv": [readelf, option, output(name)]}
     for name in ("oracle-static", "static", "static-pie"):
-        result[name + "-run"] = {"cwd": SOURCE_MOUNT, "argv": ["env", "-i", output(name)]}
+        result[name + "-run"] = {"cwd": SOURCE_MOUNT, "argv": [env, "-i", output(name)]}
     for owner, root_name, interpreter in (
         ("oracle", "oracle-root", "/lib/ld-musl-x86_64.so.1"),
         ("candidate", "candidate-root", "/lib/ld-crabc-x86_64.so.1"),
     ):
         for mode in ("pie", "non-pie"):
             for entry in ("kernel", "direct"):
-                argv = ["env", "-i", "chroot", output(root_name)]
+                argv = [env, "-i", chroot, output(root_name)]
                 if entry == "direct":
                     argv.append(interpreter)
                 argv.append("/consumer-" + mode)
-                result[owner + "-dynamic-" + mode + "-" + entry] = {"cwd": SOURCE_MOUNT, "argv": argv}
+                label = (("oracle-dynamic-" if owner == "oracle" else "dynamic-") + mode + "-" + entry)
+                result[label] = {"cwd": SOURCE_MOUNT, "argv": argv}
     require(tuple(result) == expected_command_labels(), "ordinary-link expected command roster differs")
     return result
 
 
-def validate_command_records(root: Path, work: Path, inputs: Mapping[str, Any], commands: object) -> None:
+def validate_command_records(root: Path, work: Path, inputs: Mapping[str, Any], tools: Mapping[str, Any],
+                             commands: object) -> None:
     require(type(commands) is list and [item.get("label") if type(item) is dict else None for item in commands]
             == list(expected_command_labels()), "ordinary-link command roster differs")
-    expected = expected_commands(root, work, inputs)
+    expected = expected_commands(root, work, inputs, tools)
     for record in commands:
-        require(set(record) == {"label", "argv", "cwd", "command", "stdout", "stderr", "status"},
+        require(set(record) == {"label", "argv", "cwd", "outcome", "command", "stdout", "stderr", "status"},
                 "ordinary-link command record fields differ")
         require(type(record["argv"]) is list and all(type(item) is str for item in record["argv"]),
                 "ordinary-link command argv differs")
         require(same_json({"cwd": record["cwd"], "argv": record["argv"]}, expected[record["label"]]),
                 "ordinary-link command differs")
         command_path = resolve_work_identity(root, record["command"], record["label"] + " command")
-        require(read_json(command_path, record["label"] + " command") == record["argv"],
+        require(read_json(command_path, record["label"] + " command", list) == record["argv"],
                 "ordinary-link retained command differs")
         for field in ("stdout", "stderr", "status"):
             path = resolve_work_identity(root, record[field], record["label"] + " " + field)
             if field == "status":
-                require(path.read_bytes() == b"0\n", "ordinary-link command status differs")
+                require(record["outcome"] == "ok" and path.read_bytes() == b"0\n",
+                        "ordinary-link command status differs")
         if record["label"] in EXECUTION_LABELS:
             stdout = resolve_work_identity(root, record["stdout"], record["label"] + " stdout")
             stderr = resolve_work_identity(root, record["stderr"], record["label"] + " stderr")
@@ -601,11 +1084,19 @@ def validate_oracle_identity(work: Path, oracle: object) -> None:
     qualification.validate_oracle(work, oracle)
 
 
-def validate_links(root: Path, work: Path, inputs: Mapping[str, Any], links: object) -> dict[str, Any]:
+def validate_links(root: Path, work: Path, inputs: Mapping[str, Any], tools: Mapping[str, Any],
+                   links: object) -> dict[str, Any]:
     require(type(links) is dict and set(links) == set(CANDIDATE_MODES),
             "ordinary-link candidate link roster differs")
     static_product = root / inputs["static_preparation"]["primary"]["path"]
     dynamic_product = root / inputs["dynamic_product"]["path"]
+    linker_record = tools.get("linker") if type(tools) is dict else None
+    require(type(linker_record) is dict and type(linker_record.get("original")) is dict,
+            "ordinary-link independent linker roster differs")
+    sealed_linker = {
+        "path": linker_record["original"].get("path"),
+        "sha256": linker_record["original"].get("sha256"),
+    }
     result = {}
     for mode in CANDIDATE_MODES:
         record = links[mode]
@@ -624,9 +1115,10 @@ def validate_links(root: Path, work: Path, inputs: Mapping[str, Any], links: obj
                 f"{mode} retained link artifact path differs")
         expected_manifest = inputs["static_preparation"]["primary"]["manifest"] if static_mode else inputs["dynamic_product"]["manifest"]
         require(same_json(record["product_manifest"], expected_manifest), f"{mode} retained product manifest differs")
+        require(record["linker"] == sealed_linker, f"{mode} retained linker differs from independent roster")
         result[mode] = products.validate_retained_link(
             root, SOURCE_MOUNT, static_product if static_mode else dynamic_product,
-            work / "probe.o", executable, receipt, linkage, record["linker"]
+            work / "probe.o", executable, receipt, linkage, sealed_linker
         )
     return result
 
@@ -646,7 +1138,8 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
     report = read_json(report_path, "ordinary-link report")
     expected_keys = {
         "schema", "status", "target", "image", "source_before", "source_after", "selection", "probe",
-        "oracle", "tools", "commands", "observations", "links", "limits",
+        "oracle", "oracle_static_inputs", "tools", "execution_roots", "commands", "executables", "observations",
+        "links", "limits",
     }
     require(set(report) == expected_keys, "ordinary-link report fields differ")
     require(report["schema"] == SCHEMA and report["status"] == "ordinary-link-evidence-unqualified"
@@ -680,18 +1173,15 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
             "ordinary-link probe path differs")
     require(digest(probe_source) == digest(PROBE), "retained ordinary-link probe source differs")
     validate_oracle_identity(work, report["oracle"])
-    require(type(report["tools"]) is dict and set(report["tools"]) == {"static_driver", "dynamic_driver", "oracle_wrapper"},
-            "ordinary-link tools differ")
-    for name, expected in (
-        ("static_driver", static_product / "bin/crabc-cc"),
-        ("dynamic_driver", dynamic_product / "bin/crabc-cc-dynamic"),
-        ("oracle_wrapper", work / "qualification-oracle/compiler_wrapper"),
-    ):
-        path = resolve_work_identity(root, report["tools"][name], name)
-        require(path == expected, f"ordinary-link {name} path differs")
-    validate_command_records(root, work, actual_inputs, report["commands"])
+    validate_oracle_static_inputs(work, report["oracle_static_inputs"])
+    tools = validate_tool_roster(root, work, actual_inputs, report["tools"])
+    require(tools["oracle_wrapper"]["original"]["sha256"] == report["oracle"]["compiler_wrapper_sha256"],
+            "ordinary-link oracle compiler differs from retained oracle")
+    validate_command_records(root, work, actual_inputs, tools, report["commands"])
+    validate_executable_observations(root, work, report["executables"])
+    validate_execution_roots(root, work, dynamic_product, report["execution_roots"])
     validate_observations(root, work, policy, report["observations"])
-    links = validate_links(root, work, actual_inputs, report["links"])
+    links = validate_links(root, work, actual_inputs, tools, report["links"])
     require(report["limits"] == [
         "No lifecycle, strong-override, interposition, COPY-relocation, or header-feature-profile proof.",
         "Shared-only _dl_debug_addr remains owned by the loader debugger component.",
@@ -703,6 +1193,7 @@ def validate_report(root: Path, report_path: Path) -> dict[str, Any]:
 def collect(root: Path, static_preparation: Path, static_product: Path,
             dynamic_product: Path, output: Path) -> Path:
     output = fresh_output(root, output)
+    admit_output_disjoint(root, output, static_preparation, static_product, dynamic_product)
     collector = Collector(root, output, static_preparation, static_product, dynamic_product)
     try:
         record = collector.collect()
@@ -714,17 +1205,30 @@ def collect(root: Path, static_preparation: Path, static_product: Path,
     return output / "report.json"
 
 
-def main() -> int:
+def parse_cli(arguments: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.allow_abbrev = False
     commands = parser.add_subparsers(dest="command", required=True)
     collect_parser = commands.add_parser("collect")
-    collect_parser.add_argument("--static-preparation", type=Path, required=True)
-    collect_parser.add_argument("--static-product", type=Path, required=True)
-    collect_parser.add_argument("--dynamic-product", type=Path, required=True)
-    collect_parser.add_argument("--output", type=Path, required=True)
+    collect_parser.allow_abbrev = False
+    for name in ("static-preparation", "static-product", "dynamic-product", "output"):
+        collect_parser.add_argument("--" + name, type=Path, action="append", required=True)
     validate_parser = commands.add_parser("validate-report")
+    validate_parser.allow_abbrev = False
     validate_parser.add_argument("report", type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
+    if args.command == "collect":
+        for name in ("static_preparation", "static_product", "dynamic_product", "output"):
+            values = getattr(args, name)
+            if len(values) != 1:
+                parser.error("--" + name.replace("_", "-") + " must appear exactly once")
+            setattr(args, name, values[0])
+    return args
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    args = parse_cli()
     try:
         if args.command == "collect":
             print(collect(ROOT, args.static_preparation, args.static_product, args.dynamic_product, args.output))

@@ -32,6 +32,14 @@ directory. Inputs must also be physical children of that same checkout. The
 collector requires CRABC_X86_PUBLIC_DATA_IMAGE_ID=crabc-core-evidence@sha256:...
 supplied by the dispatcher.
 
+The output cannot be inside the static preparation receipt's parent cohort,
+the prepared static product, or the materialized dynamic product. Those trees
+are inputs for the whole receipt, including archive extraction and
+reproduction files that the static reader consumes. The dispatcher uses the
+normal `/workspace/.work` mapping and the default core Cargo volume; this
+component records checkout-relative paths and deliberately provides no virtual
+work-root mapping for alternate environment values.
+
 Collection first calls owned_posix_static_products.validate_receipt and
 owned_dynamic_qualification.product_identity. The provided static product
 must be exactly the preparation receipt's primary tree. The static clean
@@ -60,8 +68,19 @@ It keeps raw command JSON, stdout, stderr, status, consumer object, executable
 ELF headers/symbols/relocations, all four candidate link receipts, and a
 captured pinned-musl oracle. The static modes execute directly. The four
 dynamic candidate/oracle consumers execute by kernel and direct-interpreter
-entry in their contained roots. Collection requires no namespace or network
-authority beyond the existing chroot execution boundary.
+entry in their contained roots. Every native command starts in an owned process
+group; a timeout retains `timed-out:<status>` and terminates that group before
+the collector returns. The component seals the installed static/dynamic
+drivers, their resolved source compiler and linker, the oracle wrapper,
+`/usr/bin/env`, `/usr/bin/readelf`, and the resolved `chroot` executable. It
+uses absolute sealed `chroot` argv rather than depending on `PATH` under
+`env -i`.
+
+The static musl link also retains the exact wrapper-selected musl `libc.a`,
+`Scrt1.o`, `crti.o`, and `crtn.o` inputs. Its pinned wrapper/specification may
+select GCC support objects such as `crtbeginS`, `crtendS`, and `libgcc`; they
+remain narrow pinned-oracle toolchain support, not candidate-owned runtime
+inputs or a purity claim.
 
 ## Retained validation
 
@@ -81,6 +100,16 @@ the wrapper, the pin manifest, and specifications without reading a live /opt.
 Replay must still execute from the source checkout that produced the products
 because the shared readers bind source-controlled wrapper, dynamic contracts,
 and clean source identities.
+
+It also reopens all seven retained oracle/candidate executable files and
+checks their recorded ELF64 little-endian x86-64 type and interpreter mode.
+The two execution roots have exact non-following tree seals. Candidate root
+entries must match the supplied dynamic product plus the two copied consumers;
+the oracle root must contain only its retained runtime, libc alias, and copied
+consumers. Replay therefore rejects an altered interpreter or consumer even if
+the command transcript remains unchanged. Tool and oracle-static snapshots are
+made readable before the report is written, so the final retention permission
+step cannot invalidate their recorded modes.
 
 This component does not prove object initialization or lifecycle state,
 strong-definition override behavior, DSO interposition, COPY relocations, or

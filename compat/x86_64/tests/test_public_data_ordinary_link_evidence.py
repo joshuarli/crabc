@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import copy
+from contextlib import redirect_stderr
 import hashlib
 import importlib.util
+import io
+import json
+import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import tomllib
 import unittest
 from unittest import mock
@@ -88,6 +93,12 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "aliases"):
             evidence.selected_objects(contract)
 
+    def test_probe_alignment_and_alias_literals_are_bound_to_typed_policy(self) -> None:
+        contract = copy.deepcopy(evidence.selection.load_contract())
+        next(item for item in contract["object_contracts"] if item["name"] == "__timezone")["alignment_bytes"] = 16
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "probe alignment"):
+            evidence.selected_objects(contract)
+
     def test_admission_rejects_wrong_prepared_primary_and_source_mismatch(self) -> None:
         wrong = self.root / ".work/input/static/products/other"
         (wrong / "share/crabc").mkdir(parents=True)
@@ -104,6 +115,264 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
                          self.static.relative_to(self.root).as_posix())
         self.assertEqual(admitted["dynamic_product"]["path"], self.dynamic.relative_to(self.root).as_posix())
 
+    def test_strict_json_accepts_raw_command_arrays_and_rejects_nonfinite_numbers(self) -> None:
+        command = self.root / ".work/raw-command.json"
+        command.write_text('["/usr/bin/readelf", "-hW", "probe.o"]\n', encoding="utf-8")
+        self.assertEqual(
+            evidence.read_json(command, "raw command", list),
+            ["/usr/bin/readelf", "-hW", "probe.o"],
+        )
+        malformed = self.root / ".work/nonfinite.json"
+        malformed.write_text('[1e9999]\n', encoding="utf-8")
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "non-finite"):
+            evidence.read_json(malformed, "nonfinite command", list)
+
+    def test_fresh_output_rejects_a_dangling_symlink(self) -> None:
+        output = self.root / ".work/dangling-output"
+        output.symlink_to("does-not-exist")
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "symlink"):
+            evidence.fresh_output(self.root, output)
+
+    def test_output_cannot_enter_a_supplied_preparation_or_product_tree(self) -> None:
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "preparation cohort"):
+            evidence.admit_output_disjoint(
+                self.root, self.root / ".work/input/static/new-output",
+                self.preparation, self.static, self.dynamic,
+            )
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "dynamic product"):
+            evidence.admit_output_disjoint(
+                self.root, self.root / ".work/input/dynamic/new-output",
+                self.preparation, self.static, self.dynamic,
+            )
+
+    def test_cli_requires_each_collect_option_once_without_abbreviation(self) -> None:
+        arguments = [
+            "collect", "--static-preparation", ".work/preparation.json",
+            "--static-product", ".work/static", "--dynamic-product", ".work/dynamic",
+            "--output", ".work/output",
+        ]
+        parsed = evidence.parse_cli(arguments)
+        self.assertEqual(parsed.static_preparation, Path(".work/preparation.json"))
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                evidence.parse_cli([*arguments, "--output", ".work/second-output"])
+            with self.assertRaises(SystemExit):
+                evidence.parse_cli([
+                    "collect", "--static-prep", ".work/preparation.json",
+                    "--static-product", ".work/static", "--dynamic-product", ".work/dynamic",
+                    "--output", ".work/output",
+                ])
+
+    def test_command_roster_round_trips_and_keeps_candidate_file_names_separate_from_owner(self) -> None:
+        inputs = self.admit()
+        work = self.root / ".work/command-roster"
+        work.mkdir()
+        tools = {
+            name: {"original": {"path": "/sealed/" + name}}
+            for name in ("static_driver", "dynamic_driver", "oracle_wrapper", "compiler", "linker",
+                         "env", "readelf", "chroot")
+        }
+        expected = evidence.expected_commands(self.root, work, inputs, tools)
+        self.assertEqual(tuple(expected), evidence.expected_command_labels())
+        self.assertEqual(
+            expected["dynamic-pie-kernel"]["argv"],
+            ["/sealed/env", "-i", "/sealed/chroot", evidence.mounted(self.root, work / "candidate-root"),
+             "/consumer-pie"],
+        )
+        self.assertNotIn("candidate-dynamic-pie-kernel", expected)
+        records = []
+        raw = work / "raw"
+        raw.mkdir()
+        for label, item in expected.items():
+            command = raw / (label + ".command.json")
+            stdout = raw / (label + ".stdout")
+            stderr = raw / (label + ".stderr")
+            status = raw / (label + ".status")
+            command.write_text(json.dumps(item["argv"]) + "\n", encoding="utf-8")
+            stdout.write_bytes(evidence.EXPECTED_STDOUT if label in evidence.EXECUTION_LABELS else b"")
+            stderr.write_bytes(b"")
+            status.write_bytes(b"0\n")
+            records.append({
+                "label": label, "argv": item["argv"], "cwd": item["cwd"], "outcome": "ok",
+                "command": evidence.work_file_identity(self.root, command, "command"),
+                "stdout": evidence.work_file_identity(self.root, stdout, "stdout"),
+                "stderr": evidence.work_file_identity(self.root, stderr, "stderr"),
+                "status": evidence.work_file_identity(self.root, status, "status"),
+            })
+        evidence.validate_command_records(self.root, work, inputs, tools, records)
+
+    def test_timeout_retains_terminal_outcome_and_kills_owned_descendants(self) -> None:
+        output = self.root / ".work/timeout"
+        output.mkdir()
+        child_pid = self.root / ".work/timeout-child.pid"
+        child = (
+            "import os, time\n"
+            f"open({str(child_pid)!r}, 'w', encoding='ascii').write(str(os.getpid()))\n"
+            "time.sleep(30)\n"
+        )
+        parent = (
+            "import subprocess, sys, time\n"
+            f"subprocess.Popen([sys.executable, '-c', {child!r}])\n"
+            "time.sleep(30)\n"
+        )
+        collector = evidence.Collector(self.root, output, self.preparation, self.static, self.dynamic)
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "timed out"):
+            collector.run("timeout", [sys.executable, "-c", parent], timeout_seconds=0.1)
+        self.assertEqual((output / "raw/timeout.status").read_text(encoding="ascii").split(":", 1)[0], "timed-out")
+        self.assertEqual(collector.commands[-1]["outcome"], "timed-out")
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(int(child_pid.read_text(encoding="ascii")), 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("timeout left an owned descendant alive")
+
+    def test_execution_root_replay_binds_interpreters_and_consumers(self) -> None:
+        work = self.root / ".work/execution"
+        dynamic = self.root / ".work/execution-product"
+        (dynamic / "lib").mkdir(parents=True)
+        (dynamic / "lib/ld-crabc-x86_64.so.1").write_bytes(b"candidate interpreter")
+        (dynamic / "lib/ld-crabc-x86_64.so.1").chmod(0o600)
+        (dynamic / "usr/lib").mkdir(parents=True)
+        (dynamic / "usr/lib/libc.so").write_bytes(b"candidate libc")
+        (work / "qualification-oracle").mkdir(parents=True)
+        (work / "qualification-oracle/runtime").write_bytes(b"oracle interpreter")
+        for owner in ("dynamic", "oracle-dynamic"):
+            for mode in ("pie", "non-pie"):
+                (work / (owner + "-" + mode)).parent.mkdir(parents=True, exist_ok=True)
+                (work / (owner + "-" + mode)).write_bytes((owner + mode).encode())
+        import shutil
+        shutil.copytree(dynamic, work / "candidate-root", symlinks=True)
+        oracle_root = work / "oracle-root"
+        (oracle_root / "lib").mkdir(parents=True)
+        shutil.copy2(work / "qualification-oracle/runtime", oracle_root / "lib/ld-musl-x86_64.so.1")
+        (oracle_root / "lib/libc.so").symlink_to("ld-musl-x86_64.so.1")
+        for mode in ("pie", "non-pie"):
+            shutil.copy2(work / ("dynamic-" + mode), work / "candidate-root" / ("consumer-" + mode))
+            shutil.copy2(work / ("oracle-dynamic-" + mode), oracle_root / ("consumer-" + mode))
+        roots = evidence.capture_execution_roots(self.root, work, dynamic)
+        evidence.static_products.make_retained_evidence_readable(work)
+        evidence.validate_execution_roots(self.root, work, dynamic, roots)
+        (work / "candidate-root/lib/ld-crabc-x86_64.so.1").write_bytes(b"changed interpreter")
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "execution root"):
+            evidence.validate_execution_roots(self.root, work, dynamic, roots)
+        (work / "candidate-root/lib/ld-crabc-x86_64.so.1").write_bytes(b"candidate interpreter")
+        (work / "candidate-root/consumer-pie").write_bytes(b"changed consumer")
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "consumer|execution root"):
+            evidence.validate_execution_roots(self.root, work, dynamic, roots)
+
+    def test_oracle_static_inputs_are_retained_without_live_opt_replay(self) -> None:
+        work = self.root / ".work/oracle-static"
+        work.mkdir()
+        sources = {}
+        for name in evidence.ORACLE_STATIC_INPUTS:
+            path = self.root / ".work/oracle-inputs" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes((name + " bytes").encode())
+            sources[name] = path
+        recorded = evidence.capture_oracle_static_inputs(work, sources)
+        for name in evidence.ORACLE_STATIC_INPUTS:
+            recorded[name]["original"]["path"] = str(evidence.ORACLE_STATIC_INPUTS[name])
+        evidence.validate_oracle_static_inputs(work, recorded)
+        rebound = copy.deepcopy(recorded)
+        rebound["libc_a"]["original"]["path"] = "/arbitrary/oracle/libc.a"
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "original path"):
+            evidence.validate_oracle_static_inputs(work, rebound)
+        (work / "inputs/oracle-static/libc_a").write_bytes(b"changed")
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "oracle static"):
+            evidence.validate_oracle_static_inputs(work, recorded)
+
+    def test_all_oracle_and_candidate_executables_reopen_raw_elf_mode_views(self) -> None:
+        work = self.root / ".work/executables"
+        (work / "raw").mkdir(parents=True)
+        for name, expected in evidence.EXECUTABLE_ELF_MODES.items():
+            (work / name).write_bytes((name + " binary").encode())
+            header = (
+                "  Class:                             ELF64\n"
+                "  Data:                              2's complement, little endian\n"
+                "  Machine:                           Advanced Micro Devices X86-64\n"
+                f"  Type:                              {expected['type']} (test)\n"
+            )
+            program = ""
+            if expected["interpreter"] is not None:
+                program = f"      [Requesting program interpreter: {expected['interpreter']}]\n"
+            (work / "raw" / (name + ".header.stdout")).write_text(header, encoding="utf-8")
+            (work / "raw" / (name + ".program.stdout")).write_text(program, encoding="utf-8")
+        observed = evidence.executable_observations(self.root, work)
+        evidence.write_new_json(work / "executables.json", observed)
+        replayed = evidence.read_json(work / "executables.json", "executables", dict)
+        evidence.validate_executable_observations(self.root, work, replayed)
+        (work / "raw/oracle-static.header.stdout").write_text(
+            "Class: ELF64\nData: 2's complement, little endian\n"
+            "Machine: Advanced Micro Devices X86-64\nType: DYN (test)\n", encoding="utf-8"
+        )
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "ELF"):
+            evidence.validate_executable_observations(self.root, work, observed)
+
+    def test_retained_tool_roster_seals_actual_compiler_linker_and_reader_bytes(self) -> None:
+        inputs = self.admit()
+        (self.static / "bin").mkdir()
+        (self.dynamic / "bin").mkdir()
+        (self.static / "bin/crabc-cc").write_bytes(b"static driver")
+        (self.dynamic / "bin/crabc-cc-dynamic").write_bytes(b"dynamic driver")
+        work = self.root / ".work/tools"
+        tools = {}
+        for role in evidence.TOOL_ROLES:
+            retained = work / "inputs/tools" / role
+            retained.parent.mkdir(parents=True, exist_ok=True)
+            retained.write_bytes((role + " bytes").encode())
+            retained.chmod(0o600)
+            retained_identity = evidence.inventory.file_record(retained, logical_path=f"inputs/tools/{role}")
+            if role == "static_driver":
+                original_path = evidence.mounted(self.root, self.static / "bin/crabc-cc")
+            elif role == "dynamic_driver":
+                original_path = evidence.mounted(self.root, self.dynamic / "bin/crabc-cc-dynamic")
+            elif role == "oracle_wrapper":
+                original_path = "/usr/local/bin/crabc-x86_64-musl-gcc"
+            elif role == "env":
+                original_path = "/usr/bin/env"
+            elif role == "readelf":
+                original_path = str(evidence.inventory.TOOL_PATHS["readelf"])
+            else:
+                original_path = "/sealed/" + role
+            original = dict(retained_identity)
+            original["path"] = original_path
+            original["mode"] = 0o755
+            tools[role] = {"original": original, "retained": retained_identity}
+        evidence.write_new_json(work / "tools.json", tools)
+        replayed = evidence.read_json(work / "tools.json", "tool roster", dict)
+        evidence.validate_tool_roster(self.root, work, inputs, replayed)
+        (work / "inputs/tools/linker").write_bytes(b"different linker")
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "tool replay"):
+            evidence.validate_tool_roster(self.root, work, inputs, tools)
+
+    def test_tool_snapshot_accepts_the_existing_path_hash_mode_identity_shape(self) -> None:
+        work = self.root / ".work/tool-shape"
+        source = self.root / ".work/tool-source"
+        source.write_bytes(b"tool bytes")
+        source.chmod(0o755)
+        source_identity = evidence.wordexp._tool_identity(source, "fixture tool")
+        snapshot = evidence.retain_tool_snapshot(work, "fixture", source_identity)
+        self.assertEqual(
+            {key: snapshot["original"][key] for key in source_identity},
+            source_identity,
+        )
+        self.assertIn("size", snapshot["original"])
+
+    def test_retained_snapshot_replays_after_readability_finalization(self) -> None:
+        work = self.root / ".work/finalized-snapshot"
+        source = self.root / ".work/finalized-tool"
+        source.write_bytes(b"tool bytes")
+        source.chmod(0o755)
+        snapshot = evidence.retain_tool_snapshot(work, "fixture", evidence.wordexp._tool_identity(source, "fixture"))
+        evidence.static_products.make_retained_evidence_readable(work)
+        evidence.inventory._validate_snapshot(
+            work, snapshot, "finalized fixture", expected_retained_path="inputs/tools/fixture"
+        )
+
     def test_candidate_link_rejects_a_wrong_driver_receipt_path(self) -> None:
         inputs = self.admit()
         work = self.root / ".work/receipt"
@@ -113,6 +382,7 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
                      "dynamic-pie.crabc-link.json", "dynamic-non-pie.crabc-link.json"):
             (work / name).write_bytes(b"retained\n")
         links = {}
+        tools = {"linker": {"original": {"path": "/opt/ld.lld", "sha256": "d" * 64}}}
         for mode, linkage, kind in (
             ("static", "static", "static"), ("static-pie", "static-pie", "static"),
             ("dynamic-pie", "pie", "dynamic"), ("dynamic-non-pie", "non-pie", "dynamic"),
@@ -127,11 +397,17 @@ class PublicDataOrdinaryLinkEvidenceTests(unittest.TestCase):
                                      if kind == "static" else inputs["dynamic_product"]["manifest"]),
             }
         with mock.patch.object(evidence.products, "validate_retained_link", return_value={"receipt_sha256": "x"}) as reader:
-            evidence.validate_links(self.root, work, inputs, links)
+            evidence.validate_links(self.root, work, inputs, tools, links)
             self.assertEqual(reader.call_count, 4)
         links["static"]["receipt"]["path"] = links["static-pie"]["receipt"]["path"]
         with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "artifact path"):
-            evidence.validate_links(self.root, work, inputs, links)
+            evidence.validate_links(self.root, work, inputs, tools, links)
+        links["static"]["receipt"]["path"] = evidence.work_file_identity(
+            self.root, work / "static.crabc-link.json", "receipt"
+        )["path"]
+        links["static"]["linker"] = {"path": "/receipt-controlled-ld.lld", "sha256": "d" * 64}
+        with self.assertRaisesRegex(evidence.PublicDataEvidenceError, "independent roster"):
+            evidence.validate_links(self.root, work, inputs, tools, links)
 
     def test_observation_rejects_static_alignment_and_declared_alias_drift(self) -> None:
         objects, aliases = evidence.selected_objects()
