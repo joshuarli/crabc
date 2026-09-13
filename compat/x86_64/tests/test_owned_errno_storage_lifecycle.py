@@ -8,6 +8,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[3]
+TEST_WORK_ROOT = ROOT / ".work" / "x86_64" / "errno-storage-lifecycle" / "tests"
 ERRNO = ROOT / "libc" / "src" / "c_abi" / "x86_64" / "errno.rs"
 PROBE = ROOT / "compat" / "x86_64" / "owned_errno_storage_lifecycle_probe.c"
 DSO = ROOT / "compat" / "x86_64" / "owned_errno_storage_lifecycle_dso.c"
@@ -48,12 +49,23 @@ SHARED_GOOD = (
 
 
 class ErrnoStorageLifecycleTests(unittest.TestCase):
-    def test_allocator_errno_spelling_is_musl_weak_hidden_same_address_alias(self) -> None:
+    def test_allocator_errno_alias_uses_static_hidden_and_shared_link_localization(self) -> None:
         source = ERRNO.read_text(encoding="utf-8")
 
-        self.assertIn('".hidden ___errno_location"', source)
-        self.assertIn('".weak ___errno_location"', source)
-        self.assertIn('".set ___errno_location, __errno_location"', source)
+        self.assertIn(
+            '#[cfg(all(feature = "x86-allocator-runtime", not(feature = "x86-owned-dynamic-runtime")))]\n'
+            'core::arch::global_asm!(\n'
+            '    ".hidden ___errno_location",',
+            source,
+        )
+        self.assertIn(
+            '#[cfg(all(feature = "x86-allocator-runtime", feature = "x86-owned-dynamic-runtime"))]\n'
+            'core::arch::global_asm!(\n'
+            '    ".weak ___errno_location",',
+            source,
+        )
+        self.assertEqual(source.count('".weak ___errno_location"'), 2)
+        self.assertEqual(source.count('".set ___errno_location, __errno_location"'), 2)
         self.assertNotIn('fn ___errno_location() -> *mut c_int', source)
 
     def test_static_alias_requires_same_section_and_value(self) -> None:
@@ -121,7 +133,8 @@ class ErrnoStorageLifecycleTests(unittest.TestCase):
             """     1: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND __errno_location
      2: 0000000000000000     0 NOTYPE  GLOBAL DEFAULT  UND __h_errno_location"""
         )
-        with tempfile.TemporaryDirectory() as temporary:
+        TEST_WORK_ROOT.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=TEST_WORK_ROOT) as temporary:
             work = Path(temporary)
             files = {
                 "core-static-symbols.txt": static,

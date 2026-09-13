@@ -17,7 +17,7 @@ The component checks four narrow facts.
 - `__errno_location` locates independent zero-initialized main and live
   selected-worker slots. With `x86-allocator-runtime`,
   `___errno_location` is musl's archive-only weak hidden same-address alias;
-  shared linking localizes that name out of `.dynsym`.
+  shared linking localizes it as `LOCAL DEFAULT` out of `.dynsym`.
 - `h_errno` remains the link-visible four-byte main fallback object and
   `__h_errno_location` selects independent live-worker storage. The selected
   implementation intentionally does not claim musl's complete TCB layout or
