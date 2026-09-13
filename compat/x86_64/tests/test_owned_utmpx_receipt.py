@@ -136,6 +136,98 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
         self.assertEqual(receipt.digest(ROOT / "compat/x86_64/owned_static_link_authority.py"),
                          receipt.STATIC_LINK_AUTHORITY_SHA256)
 
+    def product_mode_fixture(self, family: str) -> Path:
+        """Build one minimal physical product for the shared retained reader."""
+        product = self.root / (family + "-product")
+        if family == "static":
+            files = (
+                "bin/crabc-cc", "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/rcrt1.o",
+                "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/libc.a", "usr/lib/libcrabc-builtins.a",
+            )
+            driver, manifest = "bin/crabc-cc", {
+                "schema": 1, "format": "crabc-x86-64-owned-static-sysroot-v1",
+                "target": "x86_64-unknown-linux-musl",
+                "installed": {
+                    "headers": "usr/include",
+                    "crt_objects": [
+                        "usr/lib/crt1.o", "usr/lib/Scrt1.o", "usr/lib/rcrt1.o",
+                        "usr/lib/crti.o", "usr/lib/crtn.o",
+                    ],
+                    "static_libc": "usr/lib/libc.a",
+                    "bounded_compiler_helpers": "usr/lib/libcrabc-builtins.a",
+                    "sealed_static_driver": "bin/crabc-cc",
+                },
+                "sealed_static_driver": {
+                    "format": "crabc-x86-64-sealed-static-driver-v1", "path": "bin/crabc-cc",
+                    "status": "planned-owned-static-product-seed-not-family-completion-not-public-support",
+                    "modes": [
+                        {"id": "static-et-exec", "elf_type": "ET_EXEC", "crt_object": "crt1.o"},
+                        {"id": "static-pie", "elf_type": "ET_DYN", "crt_object": "rcrt1.o"},
+                    ],
+                },
+            }
+        elif family == "dynamic":
+            files = (
+                "bin/crabc-cc-dynamic", "share/crabc/crabc_cc_static.py",
+                "share/crabc/owned_dynamic_receipt.py", "share/crabc/dynamic-product-state.json",
+                "lib/ld-crabc-x86_64.so.1", "usr/lib/crt1.o", "usr/lib/Scrt1.o",
+                "usr/lib/crti.o", "usr/lib/crtn.o", "usr/lib/crabc-dynamic-attach.o",
+                "usr/lib/libc.so", "usr/lib/libcrabc-builtins.a",
+            )
+            driver, manifest = "bin/crabc-cc-dynamic", {
+                "schema": 1, "format": "crabc-x86-64-owned-dynamic-sysroot-v1",
+                "target": "x86_64-unknown-linux-musl",
+                "symlinks": {"lib/ld-musl-x86_64.so.1": "ld-crabc-x86_64.so.1"},
+            }
+        else:
+            raise ValueError(family)
+        for relative in files:
+            self.write(product / relative, relative.encode("ascii"))
+        (product / "usr/include").mkdir(parents=True)
+        (product / driver).chmod(0o755)
+        if family == "dynamic":
+            (product / "lib/ld-crabc-x86_64.so.1").chmod(0o755)
+            (product / "usr/lib/libc.so").chmod(0o755)
+            (product / "lib/ld-musl-x86_64.so.1").symlink_to("ld-crabc-x86_64.so.1")
+        payload = {
+            relative: receipt.digest(product / relative)
+            for relative in files
+        }
+        if family == "static":
+            manifest["installed"]["files"] = payload
+        else:
+            manifest["files"] = payload
+        self.write(product / "share/crabc/manifest.json", manifest)
+        return product
+
+    def test_shared_product_reader_rejects_noncanonical_exact_link_input_modes(self) -> None:
+        """Product digests alone cannot authorize changed CRT or attach modes."""
+        static = self.product_mode_fixture("static")
+        dynamic = self.product_mode_fixture("dynamic")
+        reader = receipt.retained_link_reader
+        self.assertEqual(reader.link_input_mode_projection(), {
+            "static": {
+                "usr/lib/crt1.o": 0o644, "usr/lib/rcrt1.o": 0o644,
+                "usr/lib/crti.o": 0o644, "usr/lib/crtn.o": 0o644,
+                "usr/lib/libc.a": 0o644, "usr/lib/libcrabc-builtins.a": 0o644,
+            },
+            "dynamic": {
+                "usr/lib/crt1.o": 0o644, "usr/lib/Scrt1.o": 0o644,
+                "usr/lib/crti.o": 0o644, "usr/lib/crtn.o": 0o644,
+                "usr/lib/libc.so": 0o755, "usr/lib/libcrabc-builtins.a": 0o644,
+                "usr/lib/crabc-dynamic-attach.o": 0o644,
+            },
+        })
+        for label, product, artifact, validate in (
+            ("static-crti", static, static / "usr/lib/crti.o", reader._validate_static_product),
+            ("dynamic-attach", dynamic, dynamic / "usr/lib/crabc-dynamic-attach.o", reader._validate_dynamic_product),
+        ):
+            with self.subTest(label=label):
+                validate(product)
+                artifact.chmod(0o600)
+                with self.assertRaises(reader.ProductEvidenceError):
+                    validate(product)
+
     def test_retained_runtime_files_follow_the_runner_scenario_rows(self) -> None:
         self.assertEqual(receipt.RUNNER_STREAM_FILES, (
             "static-static-ordinary.stdout", "static-static-ordinary.stderr", "static-static-ordinary.status",
