@@ -65,6 +65,13 @@ path = "tests/native_runtime_first_arena_policy.rs"
 required-features = ["native-runtime-test-audit"]
 
 [[test]]
+name = "native_runtime_startup_regular_arena"
+path = "tests/native_runtime_startup_regular_arena.rs"
+# This process-isolated integration witness keeps the source startup regular
+# reservation distinct from the later lazy `mi_arena_reserve` fallback.
+required-features = ["native-runtime-test-audit"]
+
+[[test]]
 name = "native_initial_persistent_live_transfer"
 path = "tests/native_initial_persistent_live_transfer.rs"
 # This direct-only ownership-transition witness distinguishes a source-dormant

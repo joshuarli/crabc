@@ -32,10 +32,29 @@ use crate::random::TheapRandomImage;
 pub(crate) struct StartupArenaReservationOutcomes {
     pub(crate) huge: Option<Result<(), Errno>>,
     pub(crate) regular: Option<Result<(), Errno>>,
+    // The public outcome stays scalar: source startup intentionally ignores a
+    // regular-reservation failure and continues to READY.  The successful
+    // parent ID is retained privately so the one ticket-zero consumer can
+    // prove that it is using this source-start arena rather than reconstructing
+    // an arena from an ambient policy or raw address.
+    regular_arena: Option<ArenaId>,
 }
 
 impl StartupArenaReservationOutcomes {
-    pub(crate) const fn empty() -> Self { Self { huge: None, regular: None } }
+    pub(crate) const fn empty() -> Self {
+        Self { huge: None, regular: None, regular_arena: None }
+    }
+
+    /// Returns only the parent arena installed by a successful explicit
+    /// regular startup reservation.  A failed or skipped option never grants
+    /// a candidate identity.
+    #[inline]
+    pub(crate) const fn regular_arena(self) -> Option<ArenaId> {
+        match self.regular {
+            Some(Ok(())) => self.regular_arena,
+            Some(Err(_)) | None => None,
+        }
+    }
 }
 
 /// Distinct source reservation result and Rust retained-cleanup diagnosis.
@@ -218,8 +237,16 @@ impl ProcessArenaBacking {
         let regular_kib = process.policy().reserve_os_memory_kib();
         if regular_kib > 0 {
             let size = (regular_kib as usize).wrapping_mul(crate::config::KIB);
-            results.regular = Some(unsafe { self.reserve_os_memory_for_process(process, config,
-                size, crate::os::MapAccess::Committed, true, random.as_deref_mut()) }.map(|_| ()));
+            match unsafe {
+                self.reserve_os_memory_for_process(process, config, size,
+                    crate::os::MapAccess::Committed, true, random.as_deref_mut())
+            } {
+                Ok(arena) => {
+                    results.regular = Some(Ok(()));
+                    results.regular_arena = Some(arena);
+                }
+                Err(error) => results.regular = Some(Err(error)),
+            }
         }
         results
     }

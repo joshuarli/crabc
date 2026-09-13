@@ -67,8 +67,9 @@ pub(crate) use selection::{ArenaReservationPlan, ArenaSearch};
 
 #[path = "arena_owned.rs"]
 mod owned;
-pub(crate) use owned::{ArenaPageCommitError, ProcessArenaBacking, ProcessArenaInstallFailure,
-    HugeArenaReserveError, HugeArenaCleanupError, StartupArenaReservationOutcomes};
+pub(crate) use owned::{ArenaPageCommitError, FirstRegularStartupArenaSelection,
+    ProcessArenaBacking, ProcessArenaInstallFailure, HugeArenaReserveError,
+    HugeArenaCleanupError, StartupArenaReservationOutcomes};
 
 #[cfg(test)]
 pub(crate) use owned::m2_external_callback_trace;

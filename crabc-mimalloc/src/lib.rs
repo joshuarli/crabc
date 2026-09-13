@@ -118,6 +118,7 @@ pub mod __crabc_runtime {
         NativeRuntimeLiveClientPageAudit, NativeRuntimeLiveClientPageMapSpanAudit,
         NativeRuntimeOwnerExitCollectionRendezvous,
         native_runtime_fork_admission_test_audit, native_runtime_lifecycle_test_audit,
+        native_runtime_live_client_uses_startup_regular_arena_test_audit,
         native_runtime_live_client_page_map_span_test_audit,
         native_runtime_live_client_page_test_audit,
         native_runtime_test_arm_owner_exit_collection_rendezvous,

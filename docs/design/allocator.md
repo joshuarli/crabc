@@ -192,8 +192,9 @@ and binds the same map/root/main identity before publication.
 `reserve_default_os_arena` separately ports the first lazy
 `mi_arena_reserve` decision: source max-page headroom, the frozen 1-GiB
 Linux/AArch64 default, its overcommit-only eager mapping mode, and its 128-MiB
-retry after an unpublished first attempt returns COLD. It has no process-start
-caller. `MainStaticFirstArenaPageAllocator` is the one private ticket-zero
+retry after an unpublished first attempt returns COLD. It is the ticket-zero
+fallback when source startup published no eligible explicit regular parent.
+`MainStaticFirstArenaPageAllocator` is the one private ticket-zero
 fresh-page route: it derives the empty-Theap small/medium/large/singleton span,
 validates the zero-page static image before mapping, retains the PageMap
 lifecycle through activation, and calls the policy only for that first valid
@@ -207,7 +208,7 @@ its caller. For either reserved map, the final sidecar slot gives the in-place
 arena a stable callback to commit metadata and later selected/page-metadata
 ranges through that exact owner; frozen Linux decommit reports no recommit
 requirement. Later arena scaling, option mutation, large-page/exclusive/NUMA
-policy, existing-arena search, aligned routing, and general fresh-page routing
+policy, general existing-arena search, aligned routing, and general fresh-page routing
 remain absent.
 `ProcessPageArenaLease` validates that immutable tuple
 before either `main_static_page.rs` or `main_heap_page.rs` may borrow its
@@ -224,7 +225,7 @@ slices, or perform a mapping operation. Its one automatic connection
 is the bounded ticket-zero first ordinary miss. Its normal `realloc` delegates
 preserve source replacement failure and copy behavior; `realloc(NULL, size)`
 alone may activate that ticket-zero policy. It still lacks C
-`mi_page_map_empty` pre-root, existing-arena search, later automatic arena
+`mi_page_map_empty` pre-root, general existing-arena search, later automatic arena
 reservation, general concurrent page consumers, owner-exit traversal, and
 process shutdown. A rejected
 unpublished external mapping returns to its caller; a failed regular-map release
@@ -308,6 +309,34 @@ recorders are explicit simulation, not hardware huge-page qualification.
 The safety bookkeeping difference and performance scope are recorded in
 `compat/allocator/known-differences.md`. Hardware huge-page success, diagnostic
 callbacks, broader lifecycle qualification, and M2 closure remain open.
+
+For one source-start regular parent, `StartupArenaReservationOutcomes` retains
+the successful `mi_reserve_os_memory` arena ID while preserving C's scalar
+failure behavior: `src/init.c:566-579` ignores a rejected regular reservation
+and still publishes READY. At ticket zero,
+`ProcessMainBackingBinding::startup_regular_arena_selection` admits only that
+one committed, non-pinned OS parent when it is the sole registry member bound
+to the same process, subprocess, configuration, and published allocation.
+`RuntimeFirstRegularPageBacking` then calls the existing
+`ProcessArenaBacking::try_allocate_slices` path with the stored initial TLD
+NUMA value. It therefore retains `src/arena.c:470-569,781-821` two-pass
+search, suitability, source reservation, and direct-OS fallback decisions;
+it does not recover an arena from a raw client pointer or create a private
+sidecar simply to consume the startup reservation.
+
+The bounded native `allocator-startup-regular-arena` differential has four
+fresh source images. A successful 64-MiB startup reservation is reused by the
+first 79-byte ticket-zero client without a second lazy OS mapping. An ignored
+1-KiB source reservation failure and an absent option each take the existing
+128-MiB lazy first-arena fallback. With `disallow_arena_alloc=1`, the same
+successful 64-MiB parent remains registered while the client takes the
+ordinary direct-OS fallback. It compares 28 fixed C/Rust scalar values and
+checks the initial registry, client parent relation, allocation result, and
+post-free retained parent. The route intentionally stops at one initial
+regular parent: huge or multi-arena startup images, metadata
+backing/publication, arena destruction, dynamic/later-TLD allocation, general
+multi-arena routing, physical NUMA placement, hardware huge-page success,
+public `mi_*` behavior, and runtime promotion remain outside this bridge.
 
 The source's OS-only fallback needs one narrow safety correction. When
 `disallow_arena_alloc=1` combines with `page_commit_on_demand=1`, pinned
