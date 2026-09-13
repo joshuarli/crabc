@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+import json
 from pathlib import Path
 
 
@@ -13,13 +14,18 @@ sys.path.insert(0, str(SOURCE_DIR))
 
 from owned_syscall_alias_contract_reader import (
     ALIASES,
+    CURRENT_COMMAND_STEMS,
     GLOBAL_HIDDEN,
     LOCAL_BODIES,
     PUBLIC_ALIAS_SOURCE_CALLERS,
+    ReceiptError,
     SymbolRow,
+    component_projection,
     main,
     require_same_probe_object,
+    same,
     same_definition,
+    validate_report,
 )
 
 
@@ -84,6 +90,21 @@ class OwnedSyscallAliasContractReaderTests(unittest.TestCase):
 
     def test_collect_rejects_an_unbound_elf_input_boundary(self) -> None:
         self.assertEqual(main(["collect"]), 2)
+
+    def test_component_projection_survives_json_round_trip(self) -> None:
+        projection = component_projection()
+        self.assertTrue(same(json.loads(json.dumps(projection)), projection))
+
+    def test_current_runner_envelope_roster_is_fixed_at_forty_seven(self) -> None:
+        self.assertEqual(len(CURRENT_COMMAND_STEMS), 47)
+        self.assertEqual(len(set(CURRENT_COMMAND_STEMS)), 47)
+        self.assertIn("probe-object-link-proof", CURRENT_COMMAND_STEMS)
+        self.assertIn("dynamic-non-pie-override-direct", CURRENT_COMMAND_STEMS)
+
+    def test_review_forged_receipt_is_rejected_after_json_normalization(self) -> None:
+        report = SOURCE_DIR.parents[1] / ".work/x86_64/receipt-review/forged-receipt-5ci97ja5/report.json"
+        with self.assertRaises(ReceiptError):
+            validate_report(report)
 
 
 if __name__ == "__main__":

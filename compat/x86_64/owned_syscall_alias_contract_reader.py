@@ -19,15 +19,22 @@ import subprocess
 import sys
 from typing import Any, NamedTuple
 
+MODULE_DIR = Path(__file__).resolve().parent
+if str(MODULE_DIR) not in sys.path:
+    sys.path.insert(0, str(MODULE_DIR))
+import owned_posix_product_evidence as product_evidence
+import owned_posix_static_products as static_products
+import owned_pthread_alias_contract_reader as pthread_reader
+
 SCHEMA = "crabc.x86_64-owned-syscall-alias-contract/v1"
 STATUS = {"component_complete": True, "family_completion": False,
           "runtime_qualification": False, "promotion_ready": False, "public_support": False}
 IMAGE = "crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d"
 MUSL_SOURCE_COMMIT = "9fa28ece75d8a2191de7c5bb53bed224c5947417"
-# The current runner retains 45 parametrized ``run`` envelopes.  Its two
-# additional corrected-epoch source checks are retained as raw observations;
-# the historical 47-command count must not be fabricated as 47 argv files.
-EXPECTED_COMMANDS = 45
+# The current runner expands to 47 parametrized ``run`` envelopes. The two
+# historical counts remain provenance, never a substitute for this exact
+# current roster.
+EXPECTED_COMMANDS = 47
 HISTORICAL_CORRECTED_COMMANDS = 47
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -66,6 +73,37 @@ COLLECTOR_SOURCES = (
     "compat/x86_64/owned_shared_dynamic_list_probe.c",
     "compat/x86_64/owned-syscall-alias-contract.md",
 )
+
+def _current_command_stems() -> tuple[str, ...]:
+    fixed = (
+        "shared-dynamic-list-source", "shared-dynamic-list-product-provenance",
+        "shared-dynamic-list-linker-path", "shared-dynamic-list-provider-compile",
+        "shared-dynamic-list-caller-compile", "shared-dynamic-list-no-policy-red-link",
+        "shared-dynamic-list-selected-link", "contract-compile", "override-compile",
+        "probe-object-seal", "oracle-contract-link", "oracle-contract",
+        "oracle-override-link", "oracle-override",
+    )
+    static = tuple(f"{mode}-{probe}{suffix}" for mode in ("static", "static-pie")
+                   for probe in ("contract", "override") for suffix in ("-link", ""))
+    # Links occur once per probe; execution occurs once per probe and entry.
+    dynamic = tuple(
+        item for lane in ("oracle-dynamic", "dynamic") for mode in ("pie", "non-pie")
+        for item in (f"{lane}-{mode}-contract-link", f"{lane}-{mode}-override-link",
+                     f"{lane}-{mode}-contract-kernel", f"{lane}-{mode}-contract-direct",
+                     f"{lane}-{mode}-override-kernel", f"{lane}-{mode}-override-direct")
+    )
+    return (*fixed, *static, *dynamic, "probe-object-link-proof")
+
+CURRENT_COMMAND_STEMS = _current_command_stems()
+if len(CURRENT_COMMAND_STEMS) != EXPECTED_COMMANDS or len(set(CURRENT_COMMAND_STEMS)) != EXPECTED_COMMANDS:
+    raise RuntimeError("syscall alias command roster is not the fixed 47-envelope contract")
+
+def component_projection() -> dict[str, object]:
+    """Return only JSON values; replay compares this serialized contract exactly."""
+    return {"aliases": [[alias, body] for alias, body in ALIASES],
+            "alias_global_hidden": list(ALIAS_GLOBAL_HIDDEN), "global_hidden": list(GLOBAL_HIDDEN),
+            "source_local": list(LOCAL_BODIES), "raw_private_body": "__libc_sigaction",
+            "component_complete": True, "family_completion": False, "public_support": False}
 
 class ReceiptError(ValueError):
     pass
@@ -138,8 +176,7 @@ def source_records(root: Path, output: Path, paths: Sequence[str], category: str
         if selected_revision is not None:
             selected = subprocess.check_output(["git", "show", f"{selected_revision}:{name}"], cwd=root)
             require(source.read_bytes() == selected, f"selected runtime source changed: {name}")
-        target = output / "source" / category / name; target.parent.mkdir(parents=True, exist_ok=True); shutil.copy2(source, target)
-        result[name] = identity(target, output)
+        result[name] = copy_file(output, source, f"source/{category}/{name}")
     return result
 
 def admit_inputs(preparation: Path, static_product: Path, dynamic_product: Path, facts_path: Path, inventory_path: Path, image: str) -> dict[str, object]:
@@ -158,31 +195,159 @@ def admit_inputs(preparation: Path, static_product: Path, dynamic_product: Path,
         require(record.get("sha256") == digest(artifact) and record.get("size") == artifact.stat().st_size, f"full ELF facts do not bind {key}")
     return source
 
-def validate_runner_work(output: Path, runner: Path) -> dict[str, object]:
+def _copy_tree(output: Path, source: Path, name: str) -> dict[str, object]:
+    target = output / "products" / name
+    shutil.copytree(source, target, symlinks=True, copy_function=shutil.copy2)
+    return {"original": str(source), "retained": target.relative_to(output).as_posix()}
+
+def _validate_retained_cohort(output: Path, inputs: Mapping[str, object], products: Mapping[str, object]) -> None:
+    """Reconstruct the selected product/provenance cohort from retained bytes."""
+    require(set(products) == {"static", "dynamic"}, "retained product roster differs")
+    static_root = physical(output / products["static"]["retained"], "retained static product", True)
+    dynamic_root = physical(output / products["dynamic"]["retained"], "retained dynamic product", True)
+    try:
+        static_manifest, _static_files = product_evidence._validate_static_product(static_root)
+        dynamic_manifest, dynamic_files = product_evidence._validate_dynamic_product(dynamic_root)
+    except product_evidence.ProductEvidenceError as error:
+        raise ReceiptError(f"retained product contract differs: {error}") from error
+    prep = read_json(output / inputs["static_preparation"]["retained"]["path"], "retained static preparation")
+    facts = read_json(output / inputs["elf_facts"]["retained"]["path"], "retained full ELF facts")
+    inventory = read_json(output / inputs["base_inventory"]["retained"]["path"], "retained base inventory")
+    require(isinstance(prep, dict) and isinstance(facts, dict) and isinstance(inventory, dict), "retained cohort input differs")
+    require(prep.get("schema") == "crabc.x86_64-owned-posix-static-preparation/v1" and prep.get("status") == "prepared-unqualified", "retained preparation differs")
+    source = prep.get("source"); require(isinstance(source, dict), "retained preparation source differs")
+    require(same(prep.get("products", {}).get("primary", {}).get("tree"), static_products.tree_identity(static_root)), "retained static tree differs from preparation")
+    state = read_json(dynamic_root / "share/crabc/dynamic-product-state.json", "retained dynamic state")
+    try:
+        pthread_reader._validate_dynamic_materialization_state(state, source.get("content_sha256"), dynamic_files, "retained syscall dynamic state")
+    except pthread_reader.ReceiptError as error:
+        raise ReceiptError(str(error)) from error
+    require(facts.get("schema") == "crabc.x86_64-native-abi-elf-facts/v1" and inventory.get("schema") == "crabc.x86_64-native-abi-inventory/v1", "retained facts/inventory schema differs")
+    require(facts.get("image") == IMAGE and inventory.get("image") == IMAGE, "retained cohort image differs")
+    require(facts.get("base_inventory", {}).get("report", {}).get("original", {}).get("sha256") == digest(output / inputs["base_inventory"]["retained"]["path"]), "retained facts inventory binding differs")
+    for key, root, relative in (("candidate-static", static_root, "usr/lib/libc.a"), ("candidate-shared", dynamic_root, "usr/lib/libc.so")):
+        fact = facts.get("artifacts", {}).get(key, {}).get("identity", {})
+        artifact = root / relative
+        require(fact.get("sha256") == digest(artifact) and fact.get("size") == artifact.stat().st_size, f"retained facts {key} binding differs")
+    candidate = facts.get("base_inventory", {}).get("candidate_build", {})
+    require(candidate.get("revision") == source.get("revision") and candidate.get("source_content_sha256") == source.get("content_sha256"), "retained facts/preparation source cohort differs")
+    shared = read_json(dynamic_root / "share/crabc/libc-shared.provenance.json", "retained shared provenance")
+    selected_list = shared.get("shared_dynamic_list", {}).get("source", {}) if isinstance(shared, dict) else {}
+    require(selected_list.get("path") == "libc/src/c_abi/x86_64/owned_dynamic.list", "retained shared dynamic-list path differs")
+    require(selected_list.get("sha256") == digest(output / inputs["selected_dynamic_list"]["retained"]["path"]), "retained shared dynamic-list differs")
+    require(static_manifest == static_root / "share/crabc/manifest.json" and dynamic_manifest == dynamic_root / "share/crabc/manifest.json", "retained manifest paths differ")
+
+def _validate_command_argv(stem: str, argv: Sequence[str], runner: Path, inputs: Mapping[str, object]) -> None:
+    """Check each finite runner command's owner and byte-bearing object route."""
+    require(stem in CURRENT_COMMAND_STEMS and all(isinstance(value, str) for value in argv), f"unexpected command argv: {stem}")
+    static_driver = inputs["static_driver"]["original"]["path"]
+    dynamic_driver = inputs["dynamic_driver"]["original"]["path"]
+    if stem in {"contract-compile", "override-compile", "shared-dynamic-list-provider-compile", "shared-dynamic-list-caller-compile"} or stem.startswith("dynamic-") and stem.endswith("-link"):
+        require(argv[0] == dynamic_driver, f"{stem} does not use the selected dynamic driver")
+    if stem.startswith(("static-", "static-pie-")) and stem.endswith("-link"):
+        require(argv[0] == static_driver, f"{stem} does not use the selected static driver")
+    if stem.startswith("oracle") and stem.endswith("-link"):
+        require(argv[0] == "/usr/local/bin/crabc-x86_64-musl-gcc", f"{stem} does not use pinned musl compiler")
+    if stem.endswith(("-kernel", "-direct")):
+        require(argv[0] == "chroot", f"{stem} does not use contained entry")
+    if stem.endswith("-link") and any(token.endswith(("contract.o", "override.o")) for token in argv):
+        expected = runner / ("contract.o" if any(token.endswith("contract.o") for token in argv) else "override.o")
+        require(str(expected) in argv, f"{stem} does not consume the retained probe object")
+
+def _require_symbol_observations(runner: Path) -> None:
+    """Replay the runner's finite same-definition and visibility predicates."""
+    def rows(path: Path, wanted: set[str]) -> dict[str, list[SymbolRow]]:
+        result: dict[str, list[SymbolRow]] = {}
+        member = ""; table = ""
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("File: "):
+                member = line[6:]; table = ""; continue
+            if line.startswith("Symbol table '"):
+                table = line.split("'", 2)[1]; continue
+            fields = line.split()
+            if table in wanted and len(fields) >= 8 and fields[0].endswith(":") and fields[6] != "UND":
+                row = SymbolRow(member, fields[1], fields[3], fields[4], fields[5], fields[6], fields[7].split("@", 1)[0])
+                result.setdefault(row.name, []).append(row)
+        return result
+    def one(table: Mapping[str, list[SymbolRow]], name: str, label: str) -> SymbolRow:
+        values = table.get(name, []); require(len(values) == 1, f"{label}: expected one defined {name}"); return values[0]
+    def shape(row: SymbolRow) -> tuple[str, str, str]: return row.symbol_type, row.binding, row.visibility
+    def dynamic(path: Path) -> dict[str, list[SymbolRow]]:
+        table = rows(path, {".dynsym"})
+        for public, _body in ALIASES: require(shape(one(table, public, path.name)) == ("FUNC", "WEAK", "DEFAULT"), f"{path.name}: public alias shape differs")
+        for body in GLOBAL_HIDDEN + LOCAL_BODIES: require(not table.get(body), f"{path.name}: private body leaked dynamically")
+        return table
+    def shared(path: Path) -> dict[str, list[SymbolRow]]:
+        table = rows(path, {".symtab"})
+        for public, body in ALIASES:
+            alias, target = one(table, public, path.name), one(table, body, path.name)
+            require(shape(alias) == ("FUNC", "WEAK", "DEFAULT") and target.symbol_type == "FUNC" and target.binding == "LOCAL" and target.visibility in {"DEFAULT", "HIDDEN"} and same_definition(alias, target), f"{path.name}: shared alias/body differs: {public}")
+        raw = one(table, "__libc_sigaction", path.name)
+        require(raw.symbol_type == "FUNC" and raw.binding == "LOCAL" and raw.visibility in {"DEFAULT", "HIDDEN"}, f"{path.name}: raw signal body differs")
+        return table
+    def archive(path: Path) -> dict[str, list[SymbolRow]]:
+        table = rows(path, {".symtab"})
+        for public, body in ALIASES:
+            alias, target = one(table, public, path.name), one(table, body, path.name)
+            expected = ("FUNC", "LOCAL", "DEFAULT") if body in LOCAL_BODIES else ("FUNC", "GLOBAL", "HIDDEN")
+            require(shape(alias) == ("FUNC", "WEAK", "DEFAULT") and shape(target) == expected and same_definition(alias, target), f"{path.name}: archive alias/body differs: {public}")
+        require(shape(one(table, "__libc_sigaction", path.name)) == ("FUNC", "GLOBAL", "HIDDEN"), f"{path.name}: raw signal archive body differs")
+        return table
+    musl_dynamic = dynamic(runner / "musl-dynamic-symbols.txt")
+    candidate_dynamic = dynamic(runner / "candidate-dynamic-symbols.txt")
+    musl_shared = shared(runner / "musl-shared-symbols.txt")
+    candidate_shared = shared(runner / "candidate-shared-symbols.txt")
+    musl_static = archive(runner / "musl-static-symbols.txt")
+    candidate_static = archive(runner / "candidate-static-symbols.txt")
+    for public, _body in ALIASES:
+        require(shape(one(musl_dynamic, public, "musl dynamic")) == shape(one(candidate_dynamic, public, "candidate dynamic")) and shape(one(musl_shared, public, "musl shared")) == shape(one(candidate_shared, public, "candidate shared")) and shape(one(musl_static, public, "musl static")) == shape(one(candidate_static, public, "candidate static")), f"musl/candidate alias metadata differs: {public}")
+    relocations = (runner / "candidate-shared-relocations.txt").read_text(encoding="utf-8")
+    for _caller, public in PUBLIC_ALIAS_SOURCE_CALLERS:
+        require(re.search(r"\\b" + re.escape(public) + r"(?:@[^\\s]+)?\\b", relocations) is None, f"candidate shared retains public relocation {public}")
+
+def validate_runner_work(output: Path, runner: Path, inputs: Mapping[str, object], source: Mapping[str, object]) -> dict[str, object]:
     runner = physical(runner, "runner evidence", directory=True)
     files = sorted(runner.glob("*.argv.json")); require(len(files) == EXPECTED_COMMANDS, "runner command-envelope roster differs")
     commands: dict[str, list[str]] = {}
     for path in files:
-        value = read_json(path, "runner command"); require(isinstance(value, list) and all(isinstance(arg, str) for arg in value), f"command argv differs: {path.name}")
-        stem = path.name.removesuffix(".argv.json"); commands[stem] = value
+        value = read_json(path, "runner command"); require(isinstance(value, dict) and set(value) == {"argv", "timeout_seconds"} and value.get("timeout_seconds") == 45 and isinstance(value.get("argv"), list), f"command envelope differs: {path.name}")
+        stem = path.name.removesuffix(".argv.json"); commands[stem] = value["argv"]
         for suffix in ("stdout", "stderr", "status"): require((runner / f"{stem}.{suffix}").is_file(), f"missing command transcript: {stem}.{suffix}")
         require((runner / f"{stem}.status").read_bytes() == b"0\n", f"command failed: {stem}")
+        _validate_command_argv(stem, commands[stem], runner, inputs)
+    require(set(commands) == set(CURRENT_COMMAND_STEMS), "runner command stems differ")
+    for stem in commands:
+        if stem.endswith("-link") or stem.endswith("-compile") or stem in {"probe-object-seal", "probe-object-link-proof", "shared-dynamic-list-source", "shared-dynamic-list-product-provenance", "shared-dynamic-list-linker-path", "shared-dynamic-list-no-policy-red-link", "shared-dynamic-list-selected-link"}:
+            continue
+        expected = b"owned-syscall-alias-contract-ok\n" if "contract" in stem else b"owned-syscall-alias-override-ok\n"
+        require((runner / f"{stem}.stdout").read_bytes() == expected and (runner / f"{stem}.stderr").read_bytes() == b"", f"runtime transcript differs: {stem}")
     for probe in ("contract", "override"):
         require_same_probe_object(probe, str(runner / f"{probe}.o"), {name: argv for name, argv in commands.items() if name.endswith(f"-{probe}-link")})
     seal = read_json(runner / "probe-object-seal.json", "probe object seal"); require(isinstance(seal, dict) and set(seal) == {"contract", "override"}, "probe seal roster differs")
+    collector = source["collector"]
+    for probe, source_name in (("contract", "compat/x86_64/owned_syscall_alias_contract_probe.c"), ("override", "compat/x86_64/owned_syscall_alias_override_probe.c")):
+        row = seal[probe]; obj = runner / f"{probe}.o"; require(isinstance(row, dict) and row.get("object_sha256") == digest(obj) and row.get("source_sha256") == collector[source_name]["retained"]["sha256"], f"{probe} object/source seal differs")
+    require((runner / "probe-object-link-proof.stdout").read_bytes() == b"" and (runner / "probe-object-link-proof.stderr").read_bytes() == b"", "probe object proof diagnostics differ")
     callers = read_json(runner / "source-public-callers.json", "source caller roster")
     require(callers == [{"caller": caller, "public_alias": alias} for caller, alias in PUBLIC_ALIAS_SOURCE_CALLERS], "source caller roster differs")
     for name in ("musl-static-symbols.txt", "candidate-static-symbols.txt", "musl-shared-symbols.txt", "candidate-shared-symbols.txt", "candidate-shared-relocations.txt"):
         require((runner / name).is_file(), f"missing retained ELF stream: {name}")
+    _require_symbol_observations(runner)
+    list_source = read_json(runner / "shared-dynamic-list-source.json", "dynamic-list source observation")
+    list_product = read_json(runner / "shared-dynamic-list-product-provenance.json", "dynamic-list product observation")
+    require(isinstance(list_source, dict) and isinstance(list_product, dict) and list_product.get("dynamic_list") == {"source": {"path": "libc/src/c_abi/x86_64/owned_dynamic.list", "sha256": list_source.get("sha256"), "mode": 0o644}, "data_symbols": list_source.get("data_symbols"), "allocation_entrypoints": list_source.get("allocation_entrypoints")}, "dynamic-list provenance observation differs")
+    no_policy = (runner / "shared-dynamic-list-no-policy.relocations.txt").read_text(encoding="utf-8")
+    selected = (runner / "shared-dynamic-list-selected.relocations.txt").read_text(encoding="utf-8")
+    require("ordinary_local_call" in no_policy and "ordinary_local_call" not in selected and "optind" in selected and "malloc" in selected, "dynamic-list relocation predicate differs")
     return {"path": runner.relative_to(output).as_posix(), "command_count": len(commands), "commands": sorted(commands), "probe_object_seal": identity(runner / "probe-object-seal.json", output)}
 
 def collect_report(*, root: Path, output: Path, static_preparation: Path, static_product: Path, dynamic_product: Path, elf_facts: Path, base_inventory: Path, image: str) -> dict[str, object]:
-    root = physical(root, "checkout", directory=True); require(image == IMAGE, "collector must use the pinned core evidence image")
+    root = physical(root, "checkout", directory=True); require(image == IMAGE and os.environ.get("CRABC_X86_SYSCALL_ALIAS_IMAGE_ID") == image, "collector is not bound to the pinned core evidence image")
     output = Path(os.path.abspath(output)); require(output.parent.is_relative_to(root / ".work") and not output.exists(), "output must be a fresh checkout .work child"); output.mkdir(parents=True, mode=0o700)
     static_preparation, elf_facts, base_inventory = (physical(value, label) for value, label in ((static_preparation, "static preparation"), (elf_facts, "full ELF facts"), (base_inventory, "base inventory")))
     static_product, dynamic_product = (physical(value, label, True) for value, label in ((static_product, "static product"), (dynamic_product, "dynamic product")))
     for value in (static_preparation, static_product, dynamic_product, elf_facts, base_inventory): require(value.is_relative_to(root / ".work"), "receipt input is outside checkout .work")
-    collector_source = source_seal(root); selected_source = admit_inputs(static_preparation, static_product, dynamic_product, elf_facts, base_inventory, image)
+    source_before = static_products.source_identity(root); selected_source = admit_inputs(static_preparation, static_product, dynamic_product, elf_facts, base_inventory, image)
     product_inputs = {
         "static_libc": static_product / "usr/lib/libc.a",
         "static_driver": static_product / "bin/crabc-cc",
@@ -192,7 +357,9 @@ def collect_report(*, root: Path, output: Path, static_preparation: Path, static
         "dynamic_loader": dynamic_product / "lib/ld-crabc-x86_64.so.1",
         "dynamic_manifest": dynamic_product / "share/crabc/manifest.json",
     }
-    inputs = {"static_preparation": copy_file(output, static_preparation, "inputs/static-preparation.json"), "elf_facts": copy_file(output, elf_facts, "inputs/full-elf-facts.json"), "base_inventory": copy_file(output, base_inventory, "inputs/base-inventory.json"), **{name: copy_file(output, path, f"inputs/products/{name}") for name, path in product_inputs.items()}}
+    inputs = {"static_preparation": copy_file(output, static_preparation, "inputs/static-preparation.json"), "elf_facts": copy_file(output, elf_facts, "inputs/full-elf-facts.json"), "base_inventory": copy_file(output, base_inventory, "inputs/base-inventory.json"), "selected_dynamic_list": copy_file(output, root / "libc/src/c_abi/x86_64/owned_dynamic.list", "inputs/selected-dynamic-list"), **{name: copy_file(output, path, f"inputs/products/{name}") for name, path in product_inputs.items()}}
+    products = {"static": _copy_tree(output, static_product, "static"), "dynamic": _copy_tree(output, dynamic_product, "dynamic")}
+    _validate_retained_cohort(output, inputs, products)
     runner_tmp = output / "runner-tmp"; runner_tmp.mkdir(mode=0o700)
     command = [str(root / "compat/x86_64/run_owned_syscall_alias_contract.sh"), str(static_product), str(dynamic_product)]
     result = subprocess.run(command, cwd=root, env={**os.environ, "TMPDIR": str(runner_tmp)}, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
@@ -202,10 +369,11 @@ def collect_report(*, root: Path, output: Path, static_preparation: Path, static
     runner = physical(Path(match.group("path")), "runner evidence", True); require(runner.is_relative_to(runner_tmp), "runner evidence escaped receipt root")
     source = {"collector": source_records(root, output, COLLECTOR_SOURCES, "collector"), "selected_runtime": source_records(root, output, RUNTIME_SOURCES, "selected-runtime", str(selected_source["revision"]))}
     tools = {}
-    for name in ("python3", "readelf", "timeout"):
+    for name in ("bash", "chroot", "cmp", "grep", "python3", "readelf", "realpath", "timeout"):
         source_tool = Path(shutil.which(name) or "").resolve(); require(source_tool.is_file(), f"missing collector tool: {name}")
         tools[name] = copy_file(output, source_tool, f"tools/{name}")
-    report = {"schema": SCHEMA, "status": STATUS, "image": image, "musl_source_commit": MUSL_SOURCE_COMMIT, "collector_source": collector_source, "selected_product_source": selected_source, "inputs": inputs, "source": source, "tools": tools, "runner": validate_runner_work(output, runner), "historical_epochs": {"source_recompiling_harness": {"revision": "1494e97c", "command_count": 45}, "corrected_harness": {"revision": "3bf0a0cb", "command_count": HISTORICAL_CORRECTED_COMMANDS}}, "selection_projection": {"aliases": list(ALIASES), "alias_global_hidden": list(ALIAS_GLOBAL_HIDDEN), "global_hidden": list(GLOBAL_HIDDEN), "source_local": list(LOCAL_BODIES), "raw_private_body": "__libc_sigaction", "component_complete": True, "family_completion": False, "public_support": False}}
+    source_after = static_products.source_identity(root); require(same(source_before, source_after), "collector source changed during native execution")
+    report = {"schema": SCHEMA, "status": STATUS, "image": image, "musl_source_commit": MUSL_SOURCE_COMMIT, "collector_source": source_before, "selected_product_source": selected_source, "inputs": inputs, "products": products, "source": source, "tools": tools, "runner": validate_runner_work(output, runner, inputs, source), "historical_epochs": {"source_recompiling_harness": {"revision": "1494e97c", "command_count": 45}, "corrected_harness": {"revision": "3bf0a0cb", "command_count": HISTORICAL_CORRECTED_COMMANDS}}, "selection_projection": component_projection()}
     (output / "report.json").write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     return report
 
@@ -213,20 +381,27 @@ def validate_report(report_path: Path) -> dict[str, object]:
     """Replay retained bytes only; never invoke compiler, linker, or ELF tools."""
     report_path = physical(report_path, "receipt report"); output = physical(report_path.parent, "receipt root", True); report = read_json(report_path, "receipt report")
     require(isinstance(report, dict) and report.get("schema") == SCHEMA and same(report.get("status"), STATUS) and report.get("image") == IMAGE and report.get("musl_source_commit") == MUSL_SOURCE_COMMIT, "schema/status/image differs")
-    projection = {"aliases": list(ALIASES), "alias_global_hidden": list(ALIAS_GLOBAL_HIDDEN), "global_hidden": list(GLOBAL_HIDDEN), "source_local": list(LOCAL_BODIES), "raw_private_body": "__libc_sigaction", "component_complete": True, "family_completion": False, "public_support": False}
-    require(same(report.get("selection_projection"), projection), "selection projection differs")
+    require(same(report.get("selection_projection"), component_projection()), "selection projection differs")
+    collector_seal = report.get("collector_source", {})
+    require(isinstance(collector_seal, dict) and set(collector_seal) == {"revision", "content_sha256"}
+            and re.fullmatch("[0-9a-f]{40}", str(collector_seal.get("revision")))
+            and re.fullmatch("[0-9a-f]{64}", str(collector_seal.get("content_sha256"))), "collector source seal differs")
     for category, roster in (("collector", COLLECTOR_SOURCES), ("selected_runtime", RUNTIME_SOURCES)):
         records = report.get("source", {}).get(category, {}); require(isinstance(records, dict) and set(records) == set(roster), f"{category} source roster differs")
-        for name, record in records.items(): require(identity(output / record["path"], output) == record, f"retained {category} source changed: {name}")
-    tools = report.get("tools", {}); require(set(tools) == {"python3", "readelf", "timeout"}, "tool roster differs")
+        revision = report["collector_source"]["revision"] if category == "collector" else report["selected_product_source"]["revision"]
+        for name, binding in records.items():
+            retained = binding.get("retained", {}); require(identity(output / retained["path"], output) == retained and binding.get("original", {}).get("sha256") == retained.get("sha256"), f"retained {category} source changed: {name}")
+            require(subprocess.check_output(["git", "show", f"{revision}:{name}"], cwd=ROOT) == (output / retained["path"]).read_bytes(), f"retained {category} source does not match revision: {name}")
+    tools = report.get("tools", {}); require(set(tools) == {"bash", "chroot", "cmp", "grep", "python3", "readelf", "realpath", "timeout"}, "tool roster differs")
     for name, binding in tools.items():
         retained = binding.get("retained", {}); require(identity(output / retained["path"], output) == retained and binding.get("original", {}).get("sha256") == retained.get("sha256"), f"retained tool changed: {name}")
-    inputs = report.get("inputs", {}); require(set(inputs) == {"static_preparation", "elf_facts", "base_inventory", "static_libc", "static_driver", "static_manifest", "dynamic_libc", "dynamic_driver", "dynamic_loader", "dynamic_manifest"}, "input roster differs")
+    inputs = report.get("inputs", {}); require(set(inputs) == {"static_preparation", "elf_facts", "base_inventory", "selected_dynamic_list", "static_libc", "static_driver", "static_manifest", "dynamic_libc", "dynamic_driver", "dynamic_loader", "dynamic_manifest"}, "input roster differs")
     for binding in inputs.values():
         retained = binding.get("retained", {}); require(identity(output / retained["path"], output) == retained and binding.get("original", {}).get("sha256") == retained.get("sha256"), "retained input changed")
+    _validate_retained_cohort(output, inputs, report.get("products", {}))
     require(same(report.get("historical_epochs"), {"source_recompiling_harness": {"revision": "1494e97c", "command_count": 45}, "corrected_harness": {"revision": "3bf0a0cb", "command_count": HISTORICAL_CORRECTED_COMMANDS}}), "historical epochs differ")
     runner = report.get("runner", {}); require(runner.get("command_count") == EXPECTED_COMMANDS and runner.get("commands") == sorted(runner.get("commands", [])), "runner roster differs")
-    validate_runner_work(output, output / runner["path"])
+    validate_runner_work(output, output / runner["path"], inputs, report["source"])
     command = read_json(output / "collector-command.json", "collector command"); require(command.get("status") == 0 and isinstance(command.get("argv"), list), "collector command differs")
     return report
 

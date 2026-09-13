@@ -157,6 +157,7 @@ facts must bind the exact `libc.a` and `libc.so` bytes, and its base-inventory
 binding must name the supplied inventory byte-for-byte.
 
 ```sh
+CRABC_X86_SYSCALL_ALIAS_IMAGE_ID=crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d \
 python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py collect \
   --output "$PWD/.work/x86_64/syscall-alias-receipt/current" \
   --static-preparation "$PWD/.work/x86_64/public-data-products/static-a9c51887/preparation.json" \
@@ -170,14 +171,15 @@ python3 -B compat/x86_64/owned_syscall_alias_contract_reader.py validate-report 
   --report "$PWD/.work/x86_64/syscall-alias-receipt/current/report.json"
 ```
 
-Collection retains the current runner's 45 parameterized command
-argv/status/stdout/stderr envelopes and its remaining raw source/ELF
-observations; the historical corrected 47-command count stays in a separate
-epoch field rather than being misrepresented as a different current command
-roster. It also retains normal and override objects, raw symbol/relocation streams, supplied
-preparation/facts/inventory inputs, collector and selected runtime source, and
-the exact host-replay tool bytes. Host `validate-report` only checks retained
-bytes; it does not invoke an ambient compiler, linker, or ELF reader. Its
+Collection retains the current runner's fixed 47 parameterized command
+argv/45-second-timeout/status/stdout/stderr envelopes and its two remaining raw
+source/ELF checks. The historical 45-command source-recompiling and historical
+47-command corrected epochs remain separate provenance. It also retains the
+normal and override objects, raw symbol/relocation/dynamic-list streams, full
+static and dynamic product trees, supplied preparation/facts/inventory inputs,
+collector and selected runtime source, and the exact host-replay tool bytes.
+Host `validate-report` only checks retained bytes; it does not invoke an
+ambient compiler, linker, or ELF reader. Its
 projection records the fourteen aliases, twelve alias-target global-hidden
 bodies plus private `__libc_sigaction` (thirteen global-hidden bodies total),
 and two source-local statfs bodies. This remains a

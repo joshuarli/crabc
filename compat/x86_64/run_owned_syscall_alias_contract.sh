@@ -75,7 +75,10 @@ run() {
 import json
 from pathlib import Path
 import sys
-Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:], separators=(',', ':')) + '\n', encoding='utf-8')
+Path(sys.argv[1]).write_text(json.dumps({
+    'argv': sys.argv[2:],
+    'timeout_seconds': 45,
+}, separators=(',', ':')) + '\n', encoding='utf-8')
 PY
     local status
     set +e
@@ -363,7 +366,7 @@ for probe in ('contract', 'override'):
         if actual != row[f'{kind}_sha256']:
             raise SystemExit(f'{probe}: {kind} changed during provider links')
     commands = {
-        path.name.removesuffix('.argv.json'): json.loads(path.read_text())
+        path.name.removesuffix('.argv.json'): json.loads(path.read_text())['argv']
         for path in work.glob(f'*-{probe}-link.argv.json')
     }
     require_same_probe_object(probe, row['object_path'], commands)
