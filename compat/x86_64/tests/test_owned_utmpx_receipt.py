@@ -137,6 +137,18 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             "dynamic-non-pie-direct-ordinary.stdout", "dynamic-non-pie-direct-ordinary.stderr", "dynamic-non-pie-direct-ordinary.status",
         ))
 
+    def test_source_mounted_command_program_maps_only_to_a_copied_product(self) -> None:
+        driver = self.workspace / ".work/utmpx-receipt/inputs/dynamic/bin/crabc-cc-dynamic"
+        self.write(driver, b"driver bytes")
+        self.assertEqual(
+            receipt.collected_program_source(
+                "/workspace/.work/utmpx-receipt/inputs/dynamic/bin/crabc-cc-dynamic", self.workspace
+            ),
+            driver,
+        )
+        with self.assertRaisesRegex(receipt.ReceiptError, "escapes copied owned products"):
+            receipt.collected_program_source("/workspace/compat/x86_64/run_owned_utmpx.sh", self.workspace)
+
     def test_contract_has_exact_eight_selected_aliases(self) -> None:
         self.assertEqual(receipt.ALIASES, (
             ("endutent", "endutxent"), ("setutent", "setutxent"), ("getutent", "getutxent"),
