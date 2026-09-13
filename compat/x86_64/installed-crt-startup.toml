@@ -1,0 +1,17 @@
+schema = "crabc.x86_64-installed-crt-startup/v1"
+identities = ["_GLOBAL_OFFSET_TABLE_", "__crabc_x86_64_loader_conventional_startup_v1", "__crabc_x86_64_owned_crt_handoff", "__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_loader_tls_runtime_v1_record", "__crabc_x86_static_tls_bootstrap", "__preinit_array_start", "__preinit_array_end", "__init_array_start", "__init_array_end", "__fini_array_start", "__fini_array_end"]
+modes = ["static", "static-pie", "owned-pie", "owned-non-pie", "conventional-pie", "conventional-non-pie", "default-pie", "oracle-static", "oracle-static-pie", "oracle-pie", "oracle-non-pie"]
+variants = ["normal", "empty"]
+descriptor_import_required = false
+family_completion = false
+public_support = false
+
+[record_sizes]
+owned_handoff = 32
+conventional_snapshot = 88
+
+[roles]
+linker_boundaries = ["_GLOBAL_OFFSET_TABLE_", "__preinit_array_start", "__preinit_array_end", "__init_array_start", "__init_array_end", "__fini_array_start", "__fini_array_end"]
+private_static_bootstrap = "__crabc_x86_static_tls_bootstrap"
+main_attachment = ["__crabc_x86_loader_tls_runtime_v1_attach", "__crabc_x86_loader_tls_runtime_v1_record"]
+private_loader_handoffs = ["__crabc_x86_64_owned_crt_handoff", "__crabc_x86_64_loader_conventional_startup_v1"]
