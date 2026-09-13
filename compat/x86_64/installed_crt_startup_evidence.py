@@ -144,7 +144,7 @@ def plan(root,work,inputs,tools):
     def add(label,argv,cwd='/workspace'):specs.append({'label':label.replace('.','-').lower(),'argv':argv,'cwd':cwd})
     library=root/inputs['dynamic_product']['path']/'usr/lib';static=root/inputs['static_preparation']['primary']['path']/'usr/lib'
     for variant in ('normal','empty'):
-        add(variant+'-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11','-fno-stack-protector',
+        add(variant+'-compile',[tool('dynamic_driver'),'--dynamic-shared-object','-std=c11',
             *(['-DEMPTY_ARRAYS'] if variant=='empty' else []),'-c',p('installed_crt_startup_probe.c'),'-o',p(variant+'.o')])
     for case in cases():
         mode,variant,name=(case[k] for k in ('mode','variant','name'));obj=p(variant+'.o')
@@ -349,6 +349,9 @@ def roots(root,work,inputs):
 def observations(root,work,inputs,tools):
     require((work/'oracle-link/libc.so').read_bytes()==(work/'qualification-oracle/runtime').read_bytes(),'oracle named link input differs')
     facts=projection(root,work,inputs);products_account=account_products(facts)
+    for variant in ('normal','empty'):
+        failure=exact(facts,variant+'-object','__stack_chk_fail')
+        require_import(failure['row'],'NOTYPE','GLOBAL','DEFAULT')
     streams={cell['label']:ordinary.raw_path(work,cell['label'],'stdout').read_bytes() for cell in runtime_cells()}
     validate_streams(streams)
     return {'complete_elf_facts':facts,'product_placements':products_account,'product_relocations':artifact_relocations(root,work,inputs),

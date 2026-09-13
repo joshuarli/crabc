@@ -29,7 +29,10 @@ Scrt1 is separately exercised with pinned musl and its weak-null handoff.
 The musl references consume retained explicit CRT/libc inputs with the same
 pinned linker, with no ambient target runtime search.
 
-The lifecycle probe verifies initialized TLS and TBSS, errno, environment,
+The normal driver stack-protection mode remains enabled; the reader requires
+the actual `__stack_chk_fail` object import so musl static archive extraction
+selects its real guard initializer. The lifecycle probe verifies initialized
+TLS and TBSS, errno, environment,
 and the masked AT_RANDOM guard before application initialization. It retains
 preinit, legacy init, init-array, main, atexit, reverse fini-array and legacy
 fini observations. Musl omits main preinit; the owned-only P prefix stays an

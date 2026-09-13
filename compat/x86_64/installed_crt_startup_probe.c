@@ -107,7 +107,9 @@ static void observe(const char *mode) {
     } else { if (s.handoffs || s.conventional) _Exit(107); emit('R'); }
 }
 int main(int argc,char **argv) {
+    volatile char protected_slot[8]; protected_slot[0]=1;
     state();
+    if (protected_slot[0]!=1) _Exit(111);
     if (argc!=2 || phase!=
 #ifdef EMPTY_ARRAYS
         1
