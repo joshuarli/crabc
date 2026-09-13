@@ -294,7 +294,11 @@ without replaying the header declaration envelope.
   `loader-runtime-operations` imports. The attachment binds its exact shared
   libc occurrences and selected loader provenance, then discharges only the
   protocol’s source-dispatch admission and finite runtime-behavior reasons.
-  These remain private loader operations, never installed libc providers.
+  Its v2 receipt retains the tools and preprocessing inputs needed by the
+  owning host reader. The selector binds the retained ELF report's exact
+  `/workspace` path, bytes, size, and mode to the supplied checkout file and
+  independently checks the public replay input identity. These remain private
+  loader operations, never installed libc providers.
 - `owned_pthread_alias_contract_reader.py` is the sole reader for its fixed 17
   public weak aliases, 15 internal providers, and the static `mq_notify`
   public `pthread_detach` relocation. Its retained copied-artifact records

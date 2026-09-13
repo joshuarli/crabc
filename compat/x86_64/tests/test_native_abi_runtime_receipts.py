@@ -109,7 +109,8 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             'inputs': {
                 'contract': {'id': 'x86-loader-runtime-registry-private-resolution', 'status': 'implemented-unqualified'},
                 'source': copy.deepcopy(self.source),
-                'source_resolution': {}, 'source_files': {}, 'elf_report': selection.file_identity(self.elf),
+                'source_resolution': {}, 'source_files': {},
+                'elf_report': selection.runtime_registry_evidence.checkout_identity(ROOT, self.elf),
                 'imports': imports,
                 'loader': {
                     'loader': self.current['dynamic_loader'],
@@ -122,6 +123,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                     'dynamic_loader': self.current['dynamic_loader'],
                 },
             },
+            'replay_inputs': {'tools': {}, 'files': {}},
             'dlfcn': {}, 'fork': {}, 'timer_reset': {},
         }
 
@@ -585,7 +587,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         return {'identities': identities, 'occurrences': occurrences, 'placement_joins': joins,
                 'private_protocol_joins': [], 'blockers': blockers}
 
-    def test_registry_adapter_replays_the_owner_and_binds_current_facts_and_products(self):
+    def test_registry_adapter_replays_v2_native_mount_inputs_and_binds_current_facts_and_products(self):
         report = self.registry_report()
         with mock.patch.object(selection.runtime_registry_evidence, 'validate_report', return_value=report) as replay:
             result = selection.loader_runtime_registry_adapter(
@@ -599,6 +601,26 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         )
         self.assertEqual(result['status'], 'private-runtime-registry-observed-with-boundaries')
         self.assertEqual(set(result['inputs']['imports']), set(selection.runtime_registry_evidence.RESOLVERS))
+
+    def test_registry_adapter_rejects_native_mount_report_path_bytes_and_mode_changes(self):
+        """A native path is a precise checkout mapping, not an ignored label."""
+        for field, replacement in (
+            ('path', '/workspace/.work/substituted-elf.json'),
+            ('sha256', '0' * 64),
+            ('size', self.elf.stat().st_size + 1),
+            ('mode', stat.S_IMODE(self.elf.stat().st_mode) ^ stat.S_IXUSR),
+        ):
+            with self.subTest(field=field):
+                report = self.registry_report()
+                report['inputs']['elf_report'][field] = replacement
+                with (
+                    mock.patch.object(selection.runtime_registry_evidence, 'validate_report', return_value=report),
+                    self.assertRaisesRegex(selection.SelectionError, 'runtime registry ELF report differs'),
+                ):
+                    selection.loader_runtime_registry_adapter(
+                        self.registry_report_path, facts=self.facts, measurement=self.measurement,
+                        paths=self.paths, source=self.source,
+                    )
 
     def test_prepared_worker_and_errno_adapters_reject_incomplete_owner_records(self):
         """A reader result cannot become a selector companion by its path alone."""

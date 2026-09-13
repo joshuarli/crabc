@@ -2236,7 +2236,8 @@ def loader_runtime_registry_adapter(report_path: Path | None, *, facts: Mapping[
     source = exact(dict(source), {'revision', 'content_sha256', 'clean'}, 'selection source')
     _measurement_source_matches(source, measurement, 'runtime registry')
     measurement_reports = _measurement_report_bindings(measurement, 'runtime registry')
-    report = exact(report, {'schema', 'target', 'status', 'source', 'source_files', 'inputs', 'dlfcn', 'fork', 'timer_reset'},
+    report = exact(report, {'schema', 'target', 'status', 'source', 'source_files', 'inputs', 'replay_inputs',
+                            'dlfcn', 'fork', 'timer_reset'},
                    'runtime registry reader report')
     require(report['schema'] == runtime_registry_evidence.SCHEMA and report['target'] == runtime_registry_evidence.TARGET,
             'runtime registry reader report identity differs')
@@ -2245,7 +2246,11 @@ def loader_runtime_registry_adapter(report_path: Path | None, *, facts: Mapping[
         'contract', 'source', 'source_resolution', 'source_files', 'elf_report', 'imports', 'loader', 'products',
     }, 'runtime registry supplied-product account')
     require(same(inputs['source'], source), 'runtime registry supplied-product source differs from selection')
-    require(same(inputs['elf_report'], measurement_reports['elf_report']),
+    # The owning v2 reader preserves the executed /workspace spelling. Bind
+    # that exact mount projection while independently sealing the host replay
+    # input; never rewrite the retained report or discard its path or mode.
+    require(same(measurement_reports['elf_report'], file_identity(paths['elf_report']))
+            and same(inputs['elf_report'], runtime_registry_evidence.checkout_identity(ROOT, paths['elf_report'])),
             'runtime registry ELF report differs from public replay input')
     current = _current_product_identities(paths)
     products = exact(inputs['products'], {'static', 'dynamic_libc', 'dynamic_loader'},
