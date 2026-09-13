@@ -1,0 +1,22 @@
+schema = 'crabc.x86_64-owned-stdio-alias-receipt/v1'
+family_completion = false
+public_support = false
+hidden = ['__fdopen', '__fseeko', '__ftello']
+protected = ['__uflow', '__overflow']
+
+[aliases]
+fdopen = '__fdopen'
+fgetc_unlocked = 'getc_unlocked'
+fputc_unlocked = 'putc_unlocked'
+fread_unlocked = 'fread'
+fwrite_unlocked = 'fwrite'
+fseeko = '__fseeko'
+ftello = '__ftello'
+fgetwc_unlocked = '__fgetwc_unlocked'
+getwc_unlocked = '__fgetwc_unlocked'
+fputwc_unlocked = '__fputwc_unlocked'
+putwc_unlocked = '__fputwc_unlocked'
+fgetws_unlocked = 'fgetws'
+fputws_unlocked = 'fputws'
+getwchar_unlocked = 'getwchar'
+putwchar_unlocked = 'putwchar'

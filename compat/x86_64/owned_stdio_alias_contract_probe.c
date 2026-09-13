@@ -153,6 +153,26 @@ static int check_alias_addresses(void)
     return 0;
 }
 
+/* The separate override executable owns these public definitions itself.
+ * This ordinary consumer therefore also calls each default alias explicitly. */
+static int check_default_position_aliases(void)
+{
+    char storage[32] = {0};
+    FILE *file = fmemopen(storage, sizeof storage, "w+");
+    FILE *adopted;
+    int descriptors[2];
+
+    CHECK(file != NULL);
+    CHECK(fputs("alias", file) >= 0 && fflush(file) == 0);
+    CHECK(ftello(file) == 5 && fseeko(file, 1, SEEK_SET) == 0);
+    CHECK(ftello(file) == 1 && fgetc(file) == 'l');
+    CHECK(pipe(descriptors) == 0);
+    adopted = fdopen(descriptors[0], "r");
+    CHECK(adopted != NULL && fclose(adopted) == 0
+          && close(descriptors[1]) == 0 && fclose(file) == 0);
+    return 0;
+}
+
 static int check_read_locking(void)
 {
     struct lock_round round;
@@ -214,6 +234,7 @@ int main(void)
 {
     CHECK(setlocale(LC_CTYPE, "C.UTF-8") != NULL);
     CHECK(check_alias_addresses() == 0);
+    CHECK(check_default_position_aliases() == 0);
     CHECK(check_read_locking() == 0);
     CHECK(check_write_locking() == 0);
     puts("owned-stdio-alias-contract-ok");
