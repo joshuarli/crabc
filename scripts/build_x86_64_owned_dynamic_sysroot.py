@@ -502,6 +502,10 @@ def build_staged_payload(output: Path, stage: Path) -> None:
         stage / "libc-errno-private.exports", objects, selected, builtins, library
     )
     run(libc_shared_link_command)
+    # The sealed dynamic product gives its one shared-library link role an
+    # executable installed mode.  Objects and archives use copy_artifact's
+    # non-executable normalization below; keep this distinction explicit.
+    (library / "libc.so").chmod(0o755)
     undefined = run([nm, "--undefined-only", str(library / "libc.so")]).decode().splitlines()
     allowed = {"__crabc_x86_64_initial_tls_allocate", "__crabc_x86_64_initial_tls_release",
                "__crabc_x86_64_resolve_initial_tls", "__crabc_x86_64_reset_current_tls_v1",

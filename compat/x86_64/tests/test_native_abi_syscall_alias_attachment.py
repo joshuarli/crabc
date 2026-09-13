@@ -54,6 +54,7 @@ DYNAMIC_LINK_INPUTS = {
     'dynamic_builtins': 'usr/lib/libcrabc-builtins.a',
     'dynamic_attach': 'usr/lib/crabc-dynamic-attach.o',
 }
+LINK_INPUT_MODES = syscall_reader.LINK_INPUT_MODES
 RECEIPT_PRODUCT_INPUTS = (
     'selected_dynamic_list', 'static_libc', 'static_driver', 'static_manifest',
     'dynamic_libc', 'dynamic_driver', 'dynamic_loader', 'dynamic_manifest',
@@ -62,11 +63,11 @@ RECEIPT_PRODUCT_INPUTS = (
 
 
 class FakeSyscallReader:
-    """A process-free v2 reader fixture; native replay is owned by the reader."""
+    """A process-free v3 reader fixture; native replay is owned by the reader."""
 
     ROOT = ROOT
     __file__ = str(ROOT / 'compat/x86_64/owned_syscall_alias_contract_reader.py')
-    SCHEMA = 'crabc.x86_64-owned-syscall-alias-contract/v2'
+    SCHEMA = 'crabc.x86_64-owned-syscall-alias-contract/v3'
     STATUS = {
         'component_complete': True, 'family_completion': False,
         'runtime_qualification': False, 'promotion_ready': False, 'public_support': False,
@@ -79,6 +80,7 @@ class FakeSyscallReader:
     LOCAL_BODIES = LOCAL_BODIES
     COLLECTOR_SOURCES = syscall_reader.COLLECTOR_SOURCES
     RUNTIME_SOURCES = syscall_reader.RUNTIME_SOURCES
+    LINK_INPUT_MODES = copy.deepcopy(LINK_INPUT_MODES)
     ReceiptError = ValueError
 
     def __init__(self, report: dict[str, object]):
@@ -185,6 +187,10 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             if not path.exists():
                 path.write_bytes((key + '\n').encode())
+        for product, modes in ((self.static, LINK_INPUT_MODES['static']),
+                               (self.dynamic, LINK_INPUT_MODES['dynamic'])):
+            for relative, mode in modes.items():
+                (product / relative).chmod(mode)
         static_manifest = self.static / 'share/crabc/manifest.json'
         static_manifest.parent.mkdir(parents=True, exist_ok=True)
         static_manifest.write_text(json.dumps({
@@ -249,13 +255,14 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
     def _receipt_pair(value: dict[str, object]) -> dict[str, object]:
         return {'original': copy.deepcopy(value), 'retained': copy.deepcopy(value)}
 
-    def _receipt(self) -> dict[str, object]:
+    def _receipt(self, products: dict[str, dict[str, object]] | None = None) -> dict[str, object]:
+        products = self.products if products is None else products
         source_pair = {'revision': self.source['revision'], 'content_sha256': self.source['content_sha256']}
         inputs = {
             'static_preparation': self._receipt_pair(selection.file_identity(self.preparation)),
             'elf_facts': self._receipt_pair(selection.file_identity(self.elf)),
             'base_inventory': self._receipt_pair(selection.file_identity(self.base)),
-            **{name: self._receipt_pair(self.products[name]) for name in RECEIPT_PRODUCT_INPUTS},
+            **{name: self._receipt_pair(products[name]) for name in RECEIPT_PRODUCT_INPUTS},
             'dynamic_linker': self._receipt_pair(selection.file_identity(self.dynamic_linker)),
             'oracle_compiler': self._receipt_pair(selection.file_identity(self.oracle_compiler)),
             'oracle_shared': self._receipt_pair(selection.file_identity(self.oracle_shared)),
@@ -293,6 +300,7 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
                 'static': {'original': str(self.static), 'retained': 'products/static'},
                 'dynamic': {'original': str(self.dynamic), 'retained': 'products/dynamic'},
             },
+            'link_input_modes': copy.deepcopy(reader.LINK_INPUT_MODES),
             'source': {
                 kind: {
                     name: self._receipt_pair(selection.file_identity(ROOT / name))
@@ -548,6 +556,36 @@ class NativeSyscallAliasAttachmentTests(unittest.TestCase):
                         paths=self.paths, source=self.source,
                     )
                 current.chmod(original_mode)
+
+    def test_adapter_rejects_coordinated_link_input_mode_substitutions(self) -> None:
+        """A retained/current mode match cannot replace the source-owned policy."""
+        for product, retained_name, records in (
+            (self.static, 'static', STATIC_LINK_INPUTS),
+            (self.dynamic, 'dynamic', DYNAMIC_LINK_INPUTS),
+        ):
+            for name, relative in records.items():
+                with self.subTest(name=name):
+                    current = product / relative
+                    retained = self.work / 'products' / retained_name / relative
+                    original_mode = current.stat().st_mode & 0o7777
+                    current.chmod(0o600)
+                    try:
+                        current_products = selection._syscall_alias_product_identities(self.paths)
+                        receipt = self._receipt(current_products)
+                        retained.chmod(0o600)
+                        facts = copy.deepcopy(self.facts)
+                        facts['artifacts']['candidate-static']['identity'] = current_products['static_libc']
+                        facts['artifacts']['candidate-shared']['identity'] = current_products['dynamic_libc']
+                        facts['artifacts']['candidate-loader']['identity'] = current_products['dynamic_loader']
+                        with mock.patch.object(selection, '_syscall_alias_reader', return_value=FakeSyscallReader(receipt)), \
+                             self.assertRaisesRegex(selection.SelectionError, 'source-bound mode'):
+                            selection.native_syscall_alias_adapter(
+                                self.report_path, facts=facts, measurement=self.measurement,
+                                paths=self.paths, source=self.source,
+                            )
+                    finally:
+                        current.chmod(original_mode)
+                        retained.chmod(original_mode)
 
     def test_adapter_rejects_retained_link_inputs_unsealed_by_the_product_manifests(self) -> None:
         for product, retained_root, records in (
