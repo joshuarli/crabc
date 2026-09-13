@@ -370,6 +370,7 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             self.put(str(product.relative_to(self.root) / relative), relative.encode())
         os.chmod(product / "bin/crabc-cc-dynamic", 0o755)
         os.chmod(product / "lib/ld-crabc-x86_64.so.1", 0o755)
+        os.chmod(product / "usr/lib/libc.so", 0o755)
         alias = product / "lib/ld-musl-x86_64.so.1"
         alias.symlink_to("ld-crabc-x86_64.so.1")
         manifest = {
@@ -602,6 +603,23 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
                 self.assertEqual(identity["linkage"], linkage)
                 self.assertEqual(identity["workload_sha256"], digest(self.workload))
                 self.assertEqual(identity["executable_sha256"], digest(self.executable))
+
+    def test_every_link_input_mode_is_derived_from_the_product_owner(self) -> None:
+        for product, modes, linkage in (
+            (self.static, evidence.STATIC_LINK_INPUT_MODES, "static"),
+            (self.dynamic, evidence.DYNAMIC_LINK_INPUT_MODES, "pie"),
+        ):
+            for relative, expected_mode in modes.items():
+                with self.subTest(product=product.name, relative=relative):
+                    path = product / relative
+                    original_mode = path.stat().st_mode & 0o7777
+                    self.assertEqual(original_mode, expected_mode)
+                    path.chmod(0o600)
+                    try:
+                        with self.assertRaisesRegex(evidence.ProductEvidenceError, "source-bound mode"):
+                            self.validate(linkage)
+                    finally:
+                        path.chmod(original_mode)
 
     def test_tampered_workload_object_fails(self) -> None:
         receipt = self.dynamic_receipt()
