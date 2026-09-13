@@ -319,6 +319,12 @@ class OwnedSyscallAliasRetainedAuthorityTests(unittest.TestCase):
                     finally:
                         retained.chmod(original_mode)
 
+    def test_receipt_link_input_mode_projection_cannot_choose_the_policy(self) -> None:
+        self.report["link_input_modes"]["dynamic"]["usr/lib/libc.so"] = 0o644
+        self.path.write_text(json.dumps(self.report))
+        with self.assertRaises(ReceiptError):
+            validate_report(self.path)
+
 
     def test_self_consistent_git_commit_cannot_replace_collector_authority(self) -> None:
         objects = self.output / "source/git-objects"

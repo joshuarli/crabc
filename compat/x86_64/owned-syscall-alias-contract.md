@@ -263,7 +263,7 @@ this local receipt is retained execution evidence, not a signed remote
 attestation or an independent proof of historical process scheduling.
 
 `test_owned_syscall_alias_contract_reader.py` checks each argument of all 47
-commands. Set `CRABC_SYSCALL_ALIAS_TEST_RECEIPT` to a freshly collected v2
+commands. Set `CRABC_SYSCALL_ALIAS_TEST_RECEIPT` to a freshly collected v3
 `report.json` to run the isolated real-artifact round trip and adversarial
 receipt mutations, including source/tool resealing, substituted ELF streams,
 forged chroot routes, environments, stdin, link receipts, runtime inputs,
