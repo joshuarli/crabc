@@ -597,14 +597,58 @@ def validate_symbol_byte_stream(stream: Path, artifact: Path, logical_path: str,
             require(not line.strip() or line.lstrip().startswith("Num:"), "retained raw symbol text differs")
     require(actual == expected, "raw symbols do not describe the retained ELF bytes")
 
-def _nm_symbols(path: Path, label: str) -> dict[str, tuple[str, str]]:
-    result: dict[str, tuple[str, str]] = {}
+def _nm_symbols(path: Path, label: str) -> dict[str, tuple[str, str, str | None]]:
+    """Read the selected nm provider rows, retaining an ar member header."""
+    result: dict[str, tuple[str, str, str | None]] = {}
+    member: str | None = None
     for line in path.read_text(encoding="utf-8").splitlines():
+        if line.endswith(":") and len(line.split()) == 1:
+            member = line[:-1]
+            continue
         fields = line.split()
         if len(fields) == 3 and fields[2] in {*STRONG, *WEAK}:
             require(fields[2] not in result, f"{label} duplicates provider: {fields[2]}")
-            result[fields[2]] = (fields[0], fields[1])
+            result[fields[2]] = (fields[0], fields[1], member)
     return result
+
+
+def elf_provider_rows(artifact: Path, logical_path: str, tables: frozenset[str], archive: bool,
+                      label: str) -> dict[str, tuple[int, str, str | None]]:
+    """Derive the selected provider value, binding, and member from ELF bytes."""
+    rows = expected_symbol_rows(artifact, logical_path, tables)
+    providers: dict[str, tuple[int, str, str | None]] = {}
+    for name in (*STRONG, *WEAK):
+        matches = [row for row in rows if row[-1] == name]
+        require(len(matches) == 1, label + " ELF provider roster differs: " + name)
+        row = matches[0]
+        binding = "T" if name in STRONG else "W"
+        require(row[5] == "FUNC" and row[6] == ("GLOBAL" if binding == "T" else "WEAK")
+                and row[7] == "DEFAULT" and row[8] != "UND", label + " ELF provider differs: " + name)
+        member = row[0]
+        if archive:
+            prefix = logical_path + "("
+            require(member.startswith(prefix) and member.endswith(")"), label + " ELF provider member differs: " + name)
+            member = member[len(prefix):-1]
+        else:
+            require(member == "", label + " ELF provider member differs: " + name)
+            member = None
+        providers[name] = (row[3], binding, member)
+    return providers
+
+
+def require_nm_provider_rows(path: Path, expected: Mapping[str, tuple[int, str, str | None]], label: str) -> None:
+    """Bind nm's selected provider facts to independently parsed ELF rows."""
+    observed = _nm_symbols(regular(path, label + " nm symbols"), label + " nm symbols")
+    require(set(observed) == set(expected), label + " nm provider roster differs")
+    for name, (value, binding, member) in expected.items():
+        address, observed_binding, observed_member = observed[name]
+        try:
+            observed_value = int(address, 16)
+        except ValueError as error:
+            raise ReceiptError(label + " nm provider address differs: " + name) from error
+        require(observed_value == value, label + " nm provider address differs: " + name)
+        require(observed_binding == binding, label + " nm provider binding differs: " + name)
+        require(observed_member == member, label + " nm provider member differs: " + name)
 
 
 def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None = None,
@@ -630,6 +674,10 @@ def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None =
     require("__utmpxname" not in (raw / "archive-symbols.txt").read_text(encoding="utf-8"), "archive leaks internal utmpx name")
     for alias, target in ALIASES:
         require(archive[alias][0] == archive[target][0], f"archive alias address differs: {alias}")
+    if products is not None:
+        require_nm_provider_rows(raw / "archive-symbols.txt", elf_provider_rows(
+            static_archive, SOURCE_MOUNT + "/.work/utmpx-receipt/inputs/static/usr/lib/libc.a",
+            frozenset({".symtab"}), True, "archive"), "archive")
 
     shared: dict[str, tuple[str, str]] = {}
     for line in regular(raw / "dynamic-symbols.txt", "shared symbols").read_text(encoding="utf-8").splitlines():
@@ -649,7 +697,7 @@ def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None =
     executables: dict[str, Any] = {}
     for label, name in STATIC_EXECUTABLE_SYMBOLS:
         symbols = _nm_symbols(regular(raw / name, label + " executable symbols"), label + " executable symbols")
-        require(set(symbols) == {*STRONG, *WEAK} and all(binding in {"T", "W"} for _, binding in symbols.values()),
+        require(set(symbols) == {*STRONG, *WEAK} and all(binding in {"T", "W"} for _, binding, _ in symbols.values()),
                 label + " executable provider roster differs")
         for alias, target in ALIASES:
             require(symbols[alias][0] == symbols[target][0], label + " executable alias address differs: " + alias)
@@ -661,6 +709,10 @@ def validate_symbol_bytes(workspace: Path, products: Mapping[str, Path] | None =
         if links is not None:
             require(type(links.get(label)) is dict and links[label].get("executable_sha256") == digest(executable),
                     label + " symbol stream is not bound to its retained linked ELF")
+        if products is not None:
+            require_nm_provider_rows(raw / name, elf_provider_rows(
+                executable, SOURCE_MOUNT + "/.work/utmpx-receipt/owned-utmpx-receipt/" + executable.name,
+                frozenset({".symtab"}), False, label + " executable"), label + " executable")
         executables[label] = {symbol: symbols[symbol][1] for symbol in sorted(symbols)}
     imports: dict[str, Any] = {}
     if products is not None:
