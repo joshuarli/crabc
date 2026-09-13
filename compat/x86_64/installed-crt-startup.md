@@ -69,12 +69,24 @@ fail reconstruction; merely listing a symbol does not prove its caller uses it.
 The six address-returning assembly bridges are distinct from their linker
 boundary names. Function code size is not selected metadata.
 
+The separate `installed_crt_descriptor_admission.py` companion records one
+development-only installed-loader negative boundary. It rebuilds the current
+interpreter, copies one supplied owned dynamic product, mutates the one
+authenticated final-main descriptor slot in four byte-for-byte ways (symbol
+type, binding, relocation kind, and addend), and links a source-shaped weak
+descriptor request from a DSO. Kernel and direct entry both retain the exact
+commands, raw status/stdout/stderr, source and supplied-product identities,
+mutation bytes, and private execution-tree identity. The unchanged supplied
+main is the positive control. Each malformed endpoint must fail in the loader
+before the companion application's `application-main` witness; this report is
+development evidence for the current interpreter source, never a qualification
+transfer from its supplied product or a selector input.
+
 The component does not requalify prepared-worker/72-byte descriptor lifetime,
-release-READY publication ordering, malformed loader admission, first-bootstrap
-failure transitions, or the full process-exit family. Source fixtures for
-ordering and rejection remain source evidence; they do not qualify installed
-products. Those limits remain explicit in the report. Existing source
-contracts in `static_tls.rs`, `x86_64_general_relocation.rs`,
+release-READY publication ordering, first-bootstrap failure transitions, or
+the full process-exit family. The companion does not establish release order,
+pointer lifetime, generation transitions, or fork ownership. Those limits
+remain explicit in both reports. Existing source contracts in `static_tls.rs`, `x86_64_general_relocation.rs`,
 `conventional_startup_v1.rs` and their owner tests remain authoritative; a
 successful ordinary consumer is not a replacement for their negative proofs.
 No current-source receipt is transferred to a later product or collector.

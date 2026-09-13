@@ -320,6 +320,51 @@ fn owned_crt_note_and_private_handoff_must_agree_before_relocation() {
     assert!(unsafe { validate_main_crt_mode(&objects) }.is_none());
 }
 
+// The installed owned main has one weak, default-visible, undefined NOTYPE
+// GLOB_DAT request with a zero addend.  The descriptor address is private
+// loader state, so accepting a superficially similar data relocation would
+// make that address ambient symbol-resolution policy.  Keep these synthetic
+// table records at the relocation transaction boundary; the installed-CRT
+// receipt separately proves the corresponding supplied-product mutations.
+#[cfg(all(
+    feature = "x86_64-owned-dynamic-runtime",
+    crabc_general_loader_libc_tls_runtime_v1
+))]
+#[test]
+fn general_runtime_v1_descriptor_request_is_one_exact_main_data_wire() {
+    const DESCRIPTOR: &[u8] = b"__crabc_x86_64_loader_tls_runtime_v1";
+
+    let relocate = |symbol_type, binding, visibility, kind, addend, mapped| {
+        let mut requestor = MappedImage::new();
+        requestor.set_destination(0xfeed);
+        requestor.symbol(1, DESCRIPTOR, symbol_type, binding, visibility, 0);
+        requestor.rela(kind, 1, addend);
+        let mut objects = [EMPTY_OBJECT; MAX_OBJECTS];
+        objects[0] = requestor.object(mapped);
+        objects[0].symcount = 2;
+        let graph = graph(1);
+        let result = unsafe { relocate_initial_graph(&graph, &objects) };
+        (requestor, result)
+    };
+
+    let (accepted, result) = relocate(0, 2, 0, R_X86_64_GLOB_DAT, 0, false);
+    assert!(result.is_some());
+    assert_eq!(accepted.destination(), x86_64_general_initial_tls_state::loader_tls_runtime_v1_record_address());
+
+    for (label, symbol_type, binding, visibility, kind, addend, mapped) in [
+        ("symbol type", 1, 2, 0, R_X86_64_GLOB_DAT, 0, false),
+        ("binding", 0, 1, 0, R_X86_64_GLOB_DAT, 0, false),
+        ("visibility", 0, 2, 2, R_X86_64_GLOB_DAT, 0, false),
+        ("relocation kind", 0, 2, 0, R_X86_64_JUMP_SLOT, 0, false),
+        ("addend", 0, 2, 0, R_X86_64_GLOB_DAT, 1, false),
+        ("DSO endpoint", 0, 2, 0, R_X86_64_GLOB_DAT, 0, true),
+    ] {
+        let (rejected, result) = relocate(symbol_type, binding, visibility, kind, addend, mapped);
+        assert!(result.is_none(), "descriptor {label} was admitted");
+        assert_eq!(rejected.destination(), 0xfeed, "descriptor {label} wrote before rejection");
+    }
+}
+
 #[cfg(feature = "x86_64-owned-dynamic-runtime")]
 #[test]
 fn conventional_startup_import_requires_canonical_libc_and_keeps_owned_mode_null() {
