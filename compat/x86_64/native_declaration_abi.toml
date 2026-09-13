@@ -17,12 +17,14 @@ cxx17-strict = "cxx"
 [policy]
 actual_header_declarations_only = true
 archive_provider_selection = false
+finite_x86_64_pointer_relocation_witness = true
 c_and_cxx_object_emission = true
 header_replay_owned_elsewhere = true
 header_runtime_semantics = false
 mangled_name_is_not_linkage_proof = true
 record_layout_projection_only = true
 runtime_family_completion = false
+tool_inputs_authenticated = true
 
 [[record_layout]]
 header = "arpa/nameser.h"

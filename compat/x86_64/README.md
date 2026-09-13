@@ -149,11 +149,13 @@ type/linker-spelling agreement without selecting providers, inferring linkage,
 or treating macros as callable declarations.
 
 [native-declaration-abi.md](native-declaration-abi.md) adds the finite native
-C/C++ ordinary-object spelling and relocation witness for those already
-authenticated direct callable declarations, together with the bounded
-`_ns_flagdata` and `in6_addr` record-layout projection. It retains one public
-header replay and leaves `FILE`, array extent, `h_errno` storage semantics,
-provider selection, family completion, and promotion open.
+C/C++ ordinary-object spelling and exact x86-64 address-initializer relocation
+witness for those already authenticated direct callable declarations, together
+with the bounded `_ns_flagdata` and `in6_addr` record-layout projection. It
+replays one public header envelope, binds clang to that retained compiler
+snapshot, and retains the missing compiler-resource and `readelf` bytes. It
+leaves `FILE`, array extent, `h_errno` storage semantics, provider selection,
+family completion, and promotion open.
 
 [public-data-ordinary-link.md](public-data-ordinary-link.md) describes the
 ordinary-link matrix for the 32 data objects shared by the static and dynamic

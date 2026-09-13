@@ -29,8 +29,10 @@ Clang's raw `mangledName` observation as linkage proof.  The source gives each
 probe holder an explicit private assembler spelling and uses data sections, so
 its own `.rela.data.<holder>` table identifies the one emitted reference.  The
 pinned native compiler emits the object; retained `readelf -sW` and
-`readelf -rW` output then establishes the actual undefined `GLOBAL DEFAULT
-UND` target and relocation for that exact source holder.
+`readelf -rW` output then establishes one local default-visible eight-byte
+`OBJECT` holder, its actual undefined `GLOBAL DEFAULT UND` target, and the
+exact `R_X86_64_64` zero-addend relocation at that holder offset. The
+relocation's ELF symbol index and spelling must join the same undefined row.
 
 An emitted target equal to the C declaration spelling is retained as an
 ordinary reference.  A different C++ target is retained as an
@@ -64,12 +66,17 @@ array extent from an element layout.
 Collection runs only in the pinned native Docker image, with the resolved image
 identity in `CRABC_X86_DECLARATION_ABI_IMAGE_ID`.  The existing header receipt
 must be physically retained below this checkout's `.work/x86_64` root: that is
-the header reader's public physical-input boundary.  A copied historical
+the header reader's public physical-input boundary. A copied historical
 receipt is still replayed from its raw inputs; it is not accepted merely from
-its JSON hash.  The collector records the admitted header-input identity, its clean
-collector source seal, current imported-source snapshots, pinned tool bytes,
-the compiler resource-header tree, exact commands, raw stdout/stderr/status,
-objects, and source files.  All output is a fresh direct child of
+its JSON hash. The collector records the admitted header-input identity, its
+clean collector source seal, current imported-source snapshots, exact commands,
+raw stdout/stderr/status, objects, and source files. It binds clang's path,
+size, and digest to the replayed public-header compiler snapshot. The current
+public-header receipt owns no compiler-resource dependency files, so this
+component retains the complete compiler resource tree used by its `-isystem`
+argument and the otherwise missing `readelf` executable. If a future header
+receipt owns a resource header, that file's retained size and digest are joined
+to this resource-tree copy. All output is a fresh direct child of
 `.work/x86_64/native-declaration-abi`.
 
 For example, after retaining a source-matching header receipt locally:
@@ -87,9 +94,11 @@ docker run --rm --network none --user "$(id -u):$(id -g)" \
 The host-side public reader executes no compiler or inspection tool.  It takes
 the retained report and an explicit physical mapping for the same header
 envelope, replays that envelope once, reconstructs the callable plan and
-checked layout projection, rehashes all retained source/object/tool artifacts,
-reparses the raw symbol/relocation tables, and rejects any altered command,
-source, object, header input, plan, or derived observation:
+checked layout projection, rehashes retained source/object files plus this
+component's retained resource-tree and `readelf` bytes, reparses the raw
+symbol/relocation tables, and rejects any altered command, source, object,
+header input, plan, or derived observation. It does not reopen historical
+clang, resource-root, or readelf paths on the host:
 
 ```sh
 python3 -B compat/x86_64/native_declaration_abi.py --validate-report \

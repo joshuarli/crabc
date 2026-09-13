@@ -67,8 +67,9 @@ SYMBOL_ROW = re.compile(
 SYMBOL_TABLE = re.compile(r"^Symbol table '(?P<name>[^']+)' contains (?P<count>[0-9]+) entr(?:y|ies):$")
 SYMBOL_COLUMNS = "Num: Value Size Type Bind Vis Ndx Name".split()
 RELOCATION_ROW = re.compile(
-    r"^\s*[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(?P<type>R_X86_64_[A-Za-z0-9_]+)\s+"
-    r"[0-9A-Fa-f]+\s+(?P<symbol>\S+)(?:\s+[+-]\s+[0-9]+)?\s*$"
+    r"^\s*(?P<offset>[0-9A-Fa-f]{16})\s+(?P<info>[0-9A-Fa-f]{16})\s+"
+    r"(?P<type>R_X86_64_[A-Za-z0-9_]+)\s+[0-9A-Fa-f]{16}\s+"
+    r"(?P<symbol>\S+)\s+(?P<sign>[+-])\s+(?P<addend>[0-9]+)\s*$"
 )
 RELOCATION_TABLE = re.compile(
     r"^Relocation section '(?P<name>[^']+)' at offset 0x[0-9A-Fa-f]+ contains (?P<count>[0-9]+) entr(?:y|ies):$"
@@ -98,12 +99,14 @@ LIMITS = {
 POLICY = {
     "actual_header_declarations_only": True,
     "archive_provider_selection": False,
+    "finite_x86_64_pointer_relocation_witness": True,
     "c_and_cxx_object_emission": True,
     "header_replay_owned_elsewhere": True,
     "header_runtime_semantics": False,
     "mangled_name_is_not_linkage_proof": True,
     "record_layout_projection_only": True,
     "runtime_family_completion": False,
+    "tool_inputs_authenticated": True,
 }
 
 
@@ -551,16 +554,16 @@ def parse_symbol_table(text: str) -> list[dict[str, Any]]:
     return result
 
 
-def parse_relocations(text: str) -> list[dict[str, str]]:
-    """Parse retained x86 relocation identities used by address references."""
+def parse_relocations(text: str) -> list[dict[str, Any]]:
+    """Parse the finite x86-64 address-initializer relocation witness."""
     require(type(text) is str, "relocation output is not text")
     require(text.endswith("\n"), "relocation output is not newline terminated")
     if text == NO_RELOCATIONS + "\n":
         return []
-    tables: list[tuple[str, int, list[dict[str, str]]]] = []
+    tables: list[tuple[str, int, list[dict[str, Any]]]] = []
     current_name: str | None = None
     current_count: int | None = None
-    current_rows: list[dict[str, str]] | None = None
+    current_rows: list[dict[str, Any]] | None = None
     saw_columns = False
 
     def finish() -> None:
@@ -596,16 +599,23 @@ def parse_relocations(text: str) -> list[dict[str, str]]:
         require(saw_columns and current_rows is not None, f"relocation table {current_name} lacks its column header")
         match = RELOCATION_ROW.fullmatch(line)
         require(match is not None, f"relocation table {current_name} has malformed row: {line}")
+        info = int(match.group("info"), 16)
+        addend = int(match.group("addend"), 10)
+        if match.group("sign") == "-":
+            addend = -addend
         current_rows.append(
             {
+                "addend": addend,
+                "offset": int(match.group("offset"), 16),
                 "section": current_name,
                 "symbol": match.group("symbol"),
+                "symbol_index": info >> 32,
                 "type": match.group("type"),
             }
         )
     finish()
     require(bool(tables), "relocation output has no relocation table")
-    result: list[dict[str, str]] = []
+    result: list[dict[str, Any]] = []
     for _name, _count, rows in tables:
         result.extend(rows)
     return result
@@ -640,11 +650,38 @@ def evaluate_object_linkage(
                 f"linkage reference definitions are invalid: {name}")
         matching = [dict(row) for row in symbols if isinstance(row, Mapping) and row.get("name") == name]
         if expected == "ordinary-undefined-reference":
+            holder_rows = [
+                row
+                for row in symbols
+                if isinstance(row, Mapping) and row.get("name") == holder
+            ]
+            require(len(holder_rows) == 1, f"ordinary object holder roster differs for {name}")
+            holder_row = holder_rows[0]
+            require(
+                holder_row.get("binding") == "LOCAL"
+                and holder_row.get("visibility") == "DEFAULT"
+                and holder_row.get("type") == "OBJECT"
+                and type(holder_row.get("section")) is str
+                and re.fullmatch(r"[1-9][0-9]*", holder_row["section"]) is not None
+                and holder_row.get("size") == 8,
+                f"ordinary object holder metadata differs for {name}",
+            )
+            holder_value = holder_row.get("value")
+            require(
+                type(holder_value) is str and re.fullmatch(r"[0-9a-f]{16}", holder_value) is not None,
+                f"ordinary object holder value differs for {name}",
+            )
             table = f".rela.data.{holder}"
             referenced = [row for row in relocations if isinstance(row, Mapping) and row.get("section") == table]
             require(len(referenced) == 1, f"ordinary object has no unambiguous retained relocation for {name}")
             relocation = referenced[0]
             observed_name = _symbol(relocation.get("symbol"), f"ordinary relocation symbol: {name}")
+            require(relocation.get("type") == "R_X86_64_64", f"ordinary pointer relocation type differs for {name}")
+            require(relocation.get("addend") == 0, f"ordinary pointer relocation addend differs for {name}")
+            require(
+                relocation.get("offset") == int(holder_value, 16),
+                f"ordinary pointer relocation offset differs for {name}",
+            )
             observed_rows = [
                 row
                 for row in symbols
@@ -654,6 +691,10 @@ def evaluate_object_linkage(
             row = observed_rows[0]
             require(row.get("binding") == "GLOBAL" and row.get("visibility") == "DEFAULT",
                     f"ordinary undefined reference metadata differs for {name}")
+            require(
+                relocation.get("symbol_index") == row.get("index"),
+                f"ordinary pointer relocation symbol index differs for {name}",
+            )
             relocation_type = _string(relocation.get("type"), f"ordinary relocation type: {name}")
             if observed_name == name:
                 result.append({
@@ -1003,7 +1044,84 @@ def _callable_partition() -> tuple[list[str], dict[str, Any], list[dict[str, str
     return sorted(providers), deferred, abi_only, source
 
 
-def derive_callable_plan(header_report: Path) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
+def _header_snapshot_bytes(value: object, description: str) -> dict[str, Any]:
+    """Project one already replayed header-envelope file snapshot exactly."""
+    raw = _exact_keys(value, {"after", "before", "retained"}, description)
+    records: dict[str, dict[str, Any]] = {}
+    for label in ("before", "after", "retained"):
+        record = _exact_keys(raw[label], {"path", "sha256", "size"}, f"{description}.{label}")
+        path = _string(record["path"], f"{description}.{label}.path")
+        digest = _string(record["sha256"], f"{description}.{label}.sha256")
+        require(re.fullmatch(r"[0-9a-f]{64}", digest) is not None, f"{description}.{label}.sha256 is invalid")
+        records[label] = {"path": path, "sha256": digest, "size": _nonnegative_integer(record["size"], f"{description}.{label}.size")}
+    require(
+        records["before"]["path"] == records["after"]["path"]
+        and records["before"]["sha256"] == records["after"]["sha256"]
+        and records["before"]["size"] == records["after"]["size"]
+        and records["before"]["sha256"] == records["retained"]["sha256"]
+        and records["before"]["size"] == records["retained"]["size"],
+        f"{description} bytes differ",
+    )
+    return records["before"]
+
+
+def _header_tool_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
+    """Project the one replayed public-header compiler envelope for this reader.
+
+    The header reader authenticates its retained clang binary and any resource
+    headers it observed.  This finite projection lets the ordinary-object
+    reader bind to those exact bytes without replaying the public header report
+    a second time.
+    """
+    report = envelope.get("report")
+    require(isinstance(report, Mapping), "header declaration replay report is invalid")
+    inputs = report.get("inputs")
+    require(isinstance(inputs, Mapping), "header declaration replay inputs are invalid")
+    compiler = inputs.get("compiler")
+    require(isinstance(compiler, Mapping), "header declaration replay compiler input is invalid")
+    require(
+        set(compiler) == {"executable", "executable_original_path", "requested", "resource_include_original_path", "resource_query", "version"},
+        "header declaration replay compiler input fields differ",
+    )
+    clang = _header_snapshot_bytes(compiler["executable"], "header declaration replay clang executable")
+    clang_path = _string(compiler["executable_original_path"], "header declaration replay clang path")
+    require(clang["path"] == clang_path and Path(clang_path).is_absolute(), "header declaration replay clang path differs")
+    resource_include = _string(compiler["resource_include_original_path"], "header declaration replay resource include")
+    resource_root = Path(resource_include)
+    require(resource_root.is_absolute() and resource_root.as_posix() == resource_include, "header declaration replay resource include is invalid")
+    dependencies = inputs.get("dependency_snapshots")
+    require(isinstance(dependencies, list), "header declaration replay dependency snapshots are invalid")
+    resource_headers: list[dict[str, Any]] = []
+    for ordinal, item in enumerate(dependencies):
+        require(isinstance(item, Mapping), f"header declaration replay dependency {ordinal} is invalid")
+        if item.get("classification") != "compiler-resource":
+            continue
+        require(
+            set(item) == {"classification", "key", "logical_path", "original_path_observation", "snapshot"},
+            f"header declaration replay compiler resource dependency {ordinal} fields differ",
+        )
+        original = _string(item["original_path_observation"], f"header declaration replay compiler resource dependency {ordinal} path")
+        original_path = Path(original)
+        require(original_path.is_absolute() and original_path.is_relative_to(resource_root),
+                f"header declaration replay compiler resource dependency {ordinal} escapes resource include")
+        relative = original_path.relative_to(resource_root).as_posix()
+        require(relative == _safe_relative(item["logical_path"], f"header declaration replay compiler resource dependency {ordinal} logical path"),
+                f"header declaration replay compiler resource dependency {ordinal} logical path differs")
+        snapshot = _header_snapshot_bytes(item["snapshot"], f"header declaration replay compiler resource dependency {ordinal} snapshot")
+        require(snapshot["path"] == original, f"header declaration replay compiler resource dependency {ordinal} snapshot path differs")
+        resource_headers.append({"path": relative, "sha256": snapshot["sha256"], "size": snapshot["size"]})
+    require(resource_headers == sorted(resource_headers, key=lambda item: item["path"]),
+            "header declaration replay compiler resource dependencies are not sorted")
+    require(len({item["path"] for item in resource_headers}) == len(resource_headers),
+            "header declaration replay compiler resource dependencies repeat")
+    return {
+        "clang": {"path": clang_path, "sha256": clang["sha256"], "size": clang["size"]},
+        "resource_headers": resource_headers,
+        "resource_include": resource_include,
+    }
+
+
+def derive_callable_plan(header_report: Path) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     """Replay one header envelope and derive the ordinary-object plan.
 
     The public header reader is called exactly once here.  This avoids a second
@@ -1023,6 +1141,7 @@ def derive_callable_plan(header_report: Path) -> tuple[dict[str, Any], list[dict
             "header declaration report is historical source drift, not a fresh object input")
     require(isinstance(current.get("differences"), list) and not current["differences"],
             "header declaration replay source differences are not empty")
+    tool_envelope = _header_tool_envelope(envelope)
     providers, deferred, abi_only, partition_source = _callable_partition()
     matrix_projection, matrix_provenance = _matrix_projection()
     try:
@@ -1048,7 +1167,7 @@ def derive_callable_plan(header_report: Path) -> tuple[dict[str, Any], list[dict
         "deferred_count": len(deferred),
         "abi_only_count": len(abi_only),
     }
-    return account, plans, plan_source
+    return account, plans, plan_source, tool_envelope
 
 
 def _require_native_collection_context() -> str:
@@ -1137,8 +1256,67 @@ def _tool_identity(path: Path, description: str) -> dict[str, Any]:
     }
 
 
-def _resource_tree(path: Path) -> dict[str, Any]:
+def _retain_tool_identity(output: Path, path: Path, destination: Path, description: str) -> dict[str, Any]:
+    """Retain the inspection tool bytes absent from the public header envelope."""
+    identity = _tool_identity(path, description)
+    require(not destination.exists() and not destination.is_symlink(), f"{description} retained path already exists")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    _physical_path(destination.parent, f"{description} retained parent", directory=True)
+    try:
+        shutil.copy2(path, destination, follow_symlinks=False)
+    except OSError as error:
+        raise NativeDeclarationAbiError(f"cannot retain {description}: {error}") from error
+    retained = _artifact_identity(output, destination, f"retained {description}")
+    require(
+        identity["mode"] == retained["mode"]
+        and identity["sha256"] == retained["sha256"]
+        and identity["size"] == retained["size"],
+        f"retained {description} differs",
+    )
+    return {**identity, "retained": retained}
+
+
+def _require_header_clang_identity(identity: Mapping[str, Any], header_tools: Mapping[str, Any]) -> None:
+    header_clang = header_tools.get("clang")
+    require(isinstance(header_clang, Mapping), "header compiler envelope clang identity is invalid")
+    require(
+        identity.get("path") == header_clang.get("path")
+        and identity.get("sha256") == header_clang.get("sha256")
+        and identity.get("size") == header_clang.get("size"),
+        "ordinary declaration clang differs from the replayed public-header compiler envelope",
+    )
+
+
+def _resource_tree(
+    output: Path,
+    path: Path,
+    *,
+    retained_root: Path,
+    header_tools: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Retain the actual compiler resource tree used by ordinary compilation.
+
+    The header envelope supplies any resource-header observations it owns.  A
+    current envelope may observe none, so this companion retains every file in
+    the exact `-isystem` root rather than treating a declared digest as bytes.
+    """
     root = _physical_path(path, "compiler resource include root", directory=True)
+    expected_root = header_tools.get("resource_include")
+    require(str(root) == expected_root, "compiler resource root differs from the replayed public-header envelope")
+    raw_header_records = header_tools.get("resource_headers")
+    require(isinstance(raw_header_records, list), "header compiler resource roster is invalid")
+    header_records: dict[str, Mapping[str, Any]] = {}
+    for ordinal, item in enumerate(raw_header_records):
+        require(isinstance(item, Mapping), f"header compiler resource record {ordinal} is invalid")
+        relative = _safe_relative(item.get("path"), f"header compiler resource record {ordinal}.path")
+        digest = _string(item.get("sha256"), f"header compiler resource record {ordinal}.sha256")
+        require(re.fullmatch(r"[0-9a-f]{64}", digest) is not None, f"header compiler resource record {ordinal}.sha256 is invalid")
+        size = _nonnegative_integer(item.get("size"), f"header compiler resource record {ordinal}.size")
+        require(relative not in header_records, f"header compiler resource record repeats: {relative}")
+        header_records[relative] = {"sha256": digest, "size": size}
+    require(not retained_root.exists() and not retained_root.is_symlink(), "compiler resource retained root already exists")
+    retained_root.mkdir(parents=True)
+    _physical_path(retained_root, "retained compiler resource root", directory=True)
     records: list[dict[str, Any]] = []
     try:
         paths = sorted(root.rglob("*"), key=lambda item: item.as_posix())
@@ -1151,15 +1329,39 @@ def _resource_tree(path: Path) -> dict[str, Any]:
         if stat.S_ISDIR(details.st_mode):
             records.append({"kind": "directory", "mode": stat.S_IMODE(details.st_mode), "path": relative})
         elif stat.S_ISREG(details.st_mode):
-            records.append({
+            destination = retained_root / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            _physical_path(destination.parent, "retained compiler resource parent", directory=True)
+            try:
+                shutil.copy2(item, destination, follow_symlinks=False)
+            except OSError as error:
+                raise NativeDeclarationAbiError(f"cannot retain compiler resource file {relative}: {error}") from error
+            retained = _artifact_identity(output, destination, f"retained compiler resource file {relative}")
+            require(
+                retained["mode"] == stat.S_IMODE(details.st_mode)
+                and retained["sha256"] == sha256_file(item)
+                and retained["size"] == details.st_size,
+                f"retained compiler resource file differs: {relative}",
+            )
+            record = {
                 "kind": "file",
                 "mode": stat.S_IMODE(details.st_mode),
                 "path": relative,
-                "sha256": sha256_file(item),
-                "size": details.st_size,
-            })
+                "retained": retained,
+                "sha256": retained["sha256"],
+                "size": retained["size"],
+            }
+            expected = header_records.get(relative)
+            if expected is not None:
+                require(
+                    record["sha256"] == expected["sha256"] and record["size"] == expected["size"],
+                    f"compiler resource file differs from the replayed public-header envelope: {relative}",
+                )
+            records.append(record)
         else:
             raise NativeDeclarationAbiError(f"compiler resource include root has unsupported node: {relative}")
+    observed_files = {record["path"] for record in records if record["kind"] == "file"}
+    require(set(header_records).issubset(observed_files), "header compiler resource file is absent from ordinary compiler resource root")
     require(bool(records), "compiler resource include root is empty")
     return {"path": str(root), "records": records}
 
@@ -1181,12 +1383,7 @@ def _capture_command(
     stderr_path = directory / f"{label}.stderr"
     status_path = directory / f"{label}.status.json"
     _write_new_json(command_path, list(argv))
-    returncode, stdout, stderr = _run_bound_command(
-        argv,
-        cwd=cwd,
-        environment=environment,
-        timeout_seconds=timeout_seconds,
-    )
+    returncode, stdout, stderr = _run_bound_command(argv, cwd=cwd, environment=environment, timeout_seconds=timeout_seconds)
     _write_new_bytes(stdout_path, stdout)
     _write_new_bytes(stderr_path, stderr)
     _write_new_json(status_path, {"returncode": returncode})
@@ -1211,13 +1408,10 @@ def _validate_command_record(
     expected_environment: Mapping[str, str],
     label: str,
 ) -> dict[str, Any]:
-    raw = _exact_keys(
-        value,
-        {"argv", "command", "cwd", "environment", "returncode", "status", "stderr", "stdout"},
-        f"retained {label} command",
-    )
-    require(raw["argv"] == list(expected_argv), f"retained {label} argv differs")
-    require(raw["cwd"] == expected_cwd, f"retained {label} cwd differs")
+    raw = _exact_keys(value, {"argv", "command", "cwd", "environment", "returncode", "status", "stderr", "stdout"},
+                      f"retained {label} command")
+    require(raw["argv"] == list(expected_argv), f"retained {label} command argv differs")
+    require(raw["cwd"] == expected_cwd, f"retained {label} command cwd differs")
     require(raw["environment"] == dict(sorted(expected_environment.items())), f"retained {label} environment differs")
     require(type(raw["returncode"]) is int, f"retained {label} return code is invalid")
     command = _validate_artifact_descriptor(output, raw["command"], f"retained {label} command")
@@ -1228,19 +1422,14 @@ def _validate_command_record(
     require(stdout["path"].endswith(f"/{label}.stdout"), f"retained {label} stdout path differs")
     require(stderr["path"].endswith(f"/{label}.stderr"), f"retained {label} stderr path differs")
     require(status["path"].endswith(f"/{label}.status.json"), f"retained {label} status path differs")
-    retained_argv = _read_json_value(output / command["path"], f"retained {label} argv", list)
-    require(retained_argv == list(expected_argv), f"retained {label} argv artifact differs")
-    retained_status = _read_json_value(output / status["path"], f"retained {label} status", dict)
-    require(retained_status == {"returncode": raw["returncode"]}, f"retained {label} status artifact differs")
+    status_value = read_json_object(output / status["path"], f"retained {label} status")
+    require(status_value == {"returncode": raw["returncode"]}, f"retained {label} status value differs")
+    command_value = _read_json_value(output / command["path"], f"retained {label} command", list)
+    require(command_value == list(expected_argv), f"retained {label} command bytes differ")
     return {
-        "argv": list(expected_argv),
-        "command": command,
-        "cwd": expected_cwd,
-        "environment": dict(sorted(expected_environment.items())),
-        "returncode": raw["returncode"],
-        "status": status,
-        "stderr": stderr,
-        "stdout": stdout,
+        "argv": list(expected_argv), "command": command, "cwd": expected_cwd,
+        "environment": dict(sorted(expected_environment.items())), "returncode": raw["returncode"],
+        "status": status, "stderr": stderr, "stdout": stdout,
     }
 
 
@@ -1260,8 +1449,13 @@ def _require_command_artifact_paths(record: Mapping[str, Any], directory: Path, 
                 f"retained {label} {field} raw path differs")
 
 
-def _collection_tools(output: Path, timeout_seconds: float) -> tuple[dict[str, Any], Path]:
-    """Capture fixed compiler/readelf identities and controlled version output."""
+def _collection_tools(
+    output: Path,
+    timeout_seconds: float,
+    *,
+    header_tools: Mapping[str, Any],
+) -> tuple[dict[str, Any], Path]:
+    """Capture tools after joining the public-header compiler envelope."""
     try:
         compiler_observation, resource_include = declaration_inventory.command_identity("clang")
     except (ValueError, OSError) as error:
@@ -1269,6 +1463,8 @@ def _collection_tools(output: Path, timeout_seconds: float) -> tuple[dict[str, A
     compiler_path = _physical_path(Path(_string(compiler_observation.get("executable_path"), "clang executable path")),
                                    "clang executable", directory=False)
     resource_include = _physical_path(resource_include, "clang resource include", directory=True)
+    clang_identity = _tool_identity(compiler_path, "clang executable")
+    _require_header_clang_identity(clang_identity, header_tools)
     readelf_text = shutil.which("readelf")
     require(readelf_text is not None, "readelf is not on PATH")
     readelf_path = _physical_path(Path(readelf_text).resolve(), "readelf executable", directory=False)
@@ -1277,34 +1473,26 @@ def _collection_tools(output: Path, timeout_seconds: float) -> tuple[dict[str, A
     _physical_path(tool_dir, "declaration ABI tool evidence directory", directory=True)
     environment = _clean_environment(tool_dir)
     compiler_version = _capture_command(
-        output,
-        tool_dir,
-        "clang-version",
-        [str(compiler_path), "--version"],
-        cwd=ROOT,
-        environment=environment,
-        timeout_seconds=timeout_seconds,
+        output, tool_dir, "clang-version", [str(compiler_path), "--version"], cwd=ROOT,
+        environment=environment, timeout_seconds=timeout_seconds,
     )
     readelf_version = _capture_command(
-        output,
-        tool_dir,
-        "readelf-version",
-        [str(readelf_path), "--version"],
-        cwd=ROOT,
-        environment=environment,
-        timeout_seconds=timeout_seconds,
+        output, tool_dir, "readelf-version", [str(readelf_path), "--version"], cwd=ROOT,
+        environment=environment, timeout_seconds=timeout_seconds,
     )
     require(compiler_version["returncode"] == 0 and readelf_version["returncode"] == 0,
             "pinned inspection tool version query failed")
     tools = {
         "clang": {
-            "identity": _tool_identity(compiler_path, "clang executable"),
+            "identity": clang_identity,
             "requested": "clang",
-            "resource_include": _resource_tree(resource_include),
+            "resource_include": _resource_tree(
+                output, resource_include, retained_root=tool_dir / "clang-resource", header_tools=header_tools,
+            ),
             "version": compiler_version,
         },
         "readelf": {
-            "identity": _tool_identity(readelf_path, "readelf executable"),
+            "identity": _retain_tool_identity(output, readelf_path, tool_dir / "readelf", "readelf executable"),
             "requested": "readelf",
             "version": readelf_version,
         },
@@ -1403,14 +1591,15 @@ def _collect_one_object_job(
     clang = tools.get("clang")
     readelf = tools.get("readelf")
     require(isinstance(clang, Mapping) and isinstance(readelf, Mapping), "retained tool roster differs")
-    clang_identity = _exact_keys(clang.get("identity"), {"mode", "path", "sha256", "size"}, "clang identity")
-    readelf_identity = _exact_keys(readelf.get("identity"), {"mode", "path", "sha256", "size"}, "readelf identity")
+    clang_identity = clang.get("identity")
+    readelf_identity = readelf.get("identity")
+    require(isinstance(clang_identity, Mapping) and isinstance(readelf_identity, Mapping), "retained tool identities differ")
     compile = _capture_command(
         output,
         directory,
         "compile",
         _compile_argv(
-            Path(_string(clang_identity["path"], "clang path")),
+            Path(_string(clang_identity.get("path"), "clang path")),
             profile,
             header_root,
             resource_include,
@@ -1428,7 +1617,7 @@ def _collect_one_object_job(
         output,
         directory,
         "symbols",
-        [_string(readelf_identity["path"], "readelf path"), "-sW", str(object_path)],
+        [_string(readelf_identity.get("path"), "readelf path"), "-sW", str(object_path)],
         cwd=ROOT,
         environment=environment,
         timeout_seconds=timeout_seconds,
@@ -1437,7 +1626,7 @@ def _collect_one_object_job(
         output,
         directory,
         "relocations",
-        [_string(readelf_identity["path"], "readelf path"), "-rW", str(object_path)],
+        [_string(readelf_identity.get("path"), "readelf path"), "-rW", str(object_path)],
         cwd=ROOT,
         environment=environment,
         timeout_seconds=timeout_seconds,
@@ -1591,8 +1780,16 @@ def _validate_execution(output: Path, value: object) -> tuple[Path, dict[str, An
     }
 
 
-def _validate_tool_identity(value: object, description: str) -> dict[str, Any]:
-    raw = _exact_keys(value, {"mode", "path", "sha256", "size"}, description)
+def _validate_tool_identity(
+    value: object,
+    description: str,
+    *,
+    retained: bool,
+) -> dict[str, Any]:
+    expected = {"mode", "path", "sha256", "size"}
+    if retained:
+        expected.add("retained")
+    raw = _exact_keys(value, expected, description)
     path = _string(raw["path"], f"{description}.path")
     require(Path(path).is_absolute() and Path(path).as_posix() == path, f"{description}.path is not absolute")
     digest = _string(raw["sha256"], f"{description}.sha256")
@@ -1600,40 +1797,86 @@ def _validate_tool_identity(value: object, description: str) -> dict[str, Any]:
     mode = _nonnegative_integer(raw["mode"], f"{description}.mode")
     require(bool(mode & 0o111), f"{description}.mode is not executable")
     size = _positive_integer(raw["size"], f"{description}.size")
-    return {"mode": mode, "path": path, "sha256": digest, "size": size}
+    normalized = {"mode": mode, "path": path, "sha256": digest, "size": size}
+    if retained:
+        normalized["retained"] = raw["retained"]
+    return normalized
 
 
-def _validate_resource_tree(value: object) -> dict[str, Any]:
+def _validate_resource_tree(
+    output: Path,
+    value: object,
+    *,
+    header_tools: Mapping[str, Any],
+) -> dict[str, Any]:
     raw = _exact_keys(value, {"path", "records"}, "retained compiler resource tree")
     path = _string(raw["path"], "retained compiler resource tree path")
     require(Path(path).is_absolute() and Path(path).as_posix() == path, "retained compiler resource tree path is invalid")
+    require(path == header_tools.get("resource_include"),
+            "retained compiler resource tree differs from the replayed public-header envelope")
+    raw_header_records = header_tools.get("resource_headers")
+    require(isinstance(raw_header_records, list), "header compiler resource roster is invalid")
+    header_records: dict[str, Mapping[str, Any]] = {}
+    for ordinal, item in enumerate(raw_header_records):
+        require(isinstance(item, Mapping), f"header compiler resource record {ordinal} is invalid")
+        relative = _safe_relative(item.get("path"), f"header compiler resource record {ordinal}.path")
+        digest = _string(item.get("sha256"), f"header compiler resource record {ordinal}.sha256")
+        require(re.fullmatch(r"[0-9a-f]{64}", digest) is not None, f"header compiler resource record {ordinal}.sha256 is invalid")
+        size = _nonnegative_integer(item.get("size"), f"header compiler resource record {ordinal}.size")
+        require(relative not in header_records, f"header compiler resource record repeats: {relative}")
+        header_records[relative] = {"sha256": digest, "size": size}
     records = raw["records"]
     require(isinstance(records, list) and bool(records), "retained compiler resource tree records are invalid")
     seen: set[str] = set()
     normalized: list[dict[str, Any]] = []
+    observed_files: set[str] = set()
     for index, item in enumerate(records):
         require(isinstance(item, Mapping), f"retained compiler resource tree record {index} is invalid")
         kind = item.get("kind")
         if kind == "directory":
             record = _exact_keys(item, {"kind", "mode", "path"}, f"retained compiler resource tree directory {index}")
         elif kind == "file":
-            record = _exact_keys(item, {"kind", "mode", "path", "sha256", "size"}, f"retained compiler resource tree file {index}")
+            record = _exact_keys(item, {"kind", "mode", "path", "retained", "sha256", "size"},
+                                 f"retained compiler resource tree file {index}")
             digest = _string(record["sha256"], f"retained compiler resource tree file {index}.sha256")
-            require(re.fullmatch(r"[0-9a-f]{64}", digest) is not None, f"retained compiler resource tree file {index}.sha256 is invalid")
-            _nonnegative_integer(record["size"], f"retained compiler resource tree file {index}.size")
+            require(re.fullmatch(r"[0-9a-f]{64}", digest) is not None,
+                    f"retained compiler resource tree file {index}.sha256 is invalid")
+            size = _nonnegative_integer(record["size"], f"retained compiler resource tree file {index}.size")
         else:
             raise NativeDeclarationAbiError(f"retained compiler resource tree record {index}.kind is invalid")
         relative = _safe_relative(record["path"], f"retained compiler resource tree record {index}.path")
         require(relative not in seen, f"retained compiler resource tree path repeats: {relative}")
         seen.add(relative)
-        _nonnegative_integer(record["mode"], f"retained compiler resource tree record {index}.mode")
+        mode = _nonnegative_integer(record["mode"], f"retained compiler resource tree record {index}.mode")
+        if kind == "file":
+            expected_path = (Path("inputs") / "tools" / "clang-resource" / relative).as_posix()
+            retained = _validate_artifact_descriptor(
+                output, record["retained"], f"retained compiler resource tree file {relative}",
+            )
+            require(retained["path"] == expected_path, f"retained compiler resource tree file {relative} path differs")
+            require(retained["mode"] == mode and retained["sha256"] == digest and retained["size"] == size,
+                    f"retained compiler resource tree file {relative} bytes differ")
+            expected = header_records.get(relative)
+            if expected is not None:
+                require(digest == expected["sha256"] and size == expected["size"],
+                        f"retained compiler resource file differs from the replayed public-header envelope: {relative}")
+            observed_files.add(relative)
         normalized.append(copy.deepcopy(dict(record)))
     require([record["path"] for record in normalized] == sorted(record["path"] for record in normalized),
             "retained compiler resource tree records are not sorted")
+    require(set(header_records).issubset(observed_files),
+            "header compiler resource file is absent from retained ordinary compiler resource tree")
     return {"path": path, "records": normalized}
 
 
-def _validate_tools(output: Path, value: object, collector_output: Path, timeout_seconds: float) -> dict[str, Any]:
+def _validate_tools(
+    output: Path,
+    value: object,
+    collector_output: Path,
+    timeout_seconds: float,
+    *,
+    header_tools: Mapping[str, Any],
+) -> dict[str, Any]:
     raw = _exact_keys(value, {"clang", "readelf"}, "declaration ABI tool roster")
     normalized: dict[str, Any] = {}
     expected_environment = {
@@ -1650,7 +1893,18 @@ def _validate_tools(output: Path, value: object, collector_output: Path, timeout
             expected.add("resource_include")
         record = _exact_keys(item, expected, f"retained {name} tool")
         require(record["requested"] == name, f"retained {name} tool requested spelling differs")
-        identity = _validate_tool_identity(record["identity"], f"retained {name} tool identity")
+        identity = _validate_tool_identity(record["identity"], f"retained {name} tool identity", retained=name == "readelf")
+        if name == "clang":
+            _require_header_clang_identity(identity, header_tools)
+        else:
+            retained = _validate_artifact_descriptor(output, identity["retained"], "retained readelf executable")
+            require(retained["path"] == "inputs/tools/readelf", "retained readelf executable path differs")
+            require(
+                retained["mode"] == identity["mode"]
+                and retained["sha256"] == identity["sha256"]
+                and retained["size"] == identity["size"],
+                "retained readelf executable bytes differ",
+            )
         version = _validate_command_record(
             output,
             record["version"],
@@ -1663,9 +1917,15 @@ def _validate_tools(output: Path, value: object, collector_output: Path, timeout
         require(version["returncode"] == 0, f"retained {name} version command failed")
         stdout = output / version["stdout"]["path"]
         require(bool(stdout.read_bytes()), f"retained {name} version output is empty")
-        normalized[name] = {"identity": identity, "requested": name, "version": version}
+        normalized[name] = {
+            "identity": {key: identity[key] for key in ("mode", "path", "sha256", "size")},
+            "requested": name,
+            "version": version,
+        }
         if name == "clang":
-            normalized[name]["resource_include"] = _validate_resource_tree(record["resource_include"])
+            normalized[name]["resource_include"] = _validate_resource_tree(
+                output, record["resource_include"], header_tools=header_tools,
+            )
     return normalized
 
 
@@ -1777,9 +2037,9 @@ def collect_report(
         output = _physical_path(output, "declaration ABI evidence directory", directory=True)
         source_snapshots = _snapshot_source_files(output)
         header_identity = _external_identity(header_report, "header declaration report")
-        _account, plans, callable_plan_source = derive_callable_plan(header_report)
+        _account, plans, callable_plan_source, header_tools = derive_callable_plan(header_report)
         layout = _record_layout_projection()
-        tools, resource_include = _collection_tools(output, timeout_seconds)
+        tools, resource_include = _collection_tools(output, timeout_seconds, header_tools=header_tools)
         jobs = _collect_jobs(
             output,
             plans,
@@ -1941,10 +2201,12 @@ def validate_report(
     collector_output, execution = _validate_execution(output, report["execution"])
     inputs = _exact_keys(report["inputs"], {"source_snapshots", "tools"}, "native declaration ABI inputs")
     source_snapshots = _validate_source_snapshots(output, inputs["source_snapshots"])
-    tools = _validate_tools(output, inputs["tools"], collector_output, execution["timeout_seconds"])
     supplied_header_report = _physical_path(header_report, "supplied header declaration report", directory=False)
     header_identity = _validate_collector_header_identity(report["header_declaration_report"], supplied_header_report)
-    _account, plans, callable_plan_source = derive_callable_plan(supplied_header_report)
+    _account, plans, callable_plan_source, header_tools = derive_callable_plan(supplied_header_report)
+    tools = _validate_tools(
+        output, inputs["tools"], collector_output, execution["timeout_seconds"], header_tools=header_tools,
+    )
     require(strict_equal(report["callable_plan"], plans), "retained callable object plan differs")
     require(strict_equal(report["callable_plan_source"], callable_plan_source), "retained callable plan source differs")
     layout = _record_layout_projection()
