@@ -76,6 +76,20 @@ is in the static product covered by the ordinary-link receipt. It does not set
 the aggregate semantic-receipt gate, `runtime_semantics_proven`, family
 completion, qualification, or public support.
 
+Supply `--compiler-helper-aggregate-report REPORT` to attach the
+[`compiler-helper archive proof`](../../builtins/x86_64-helper-contract.md).
+Its owning reader joins the clean aggregate source and exact archive bytes to
+both installed builtins roles. The selecting and measuring checkout must be
+the same. With the ordinary-data receipt pair above, the component also checks
+the static and static-PIE extraction maps for `__popcountdi2`. Selection
+discharges its import obligation only when the complete candidate import set
+is that exact static archive member occurrence and symbol-table row. Another
+candidate import keeps the obligation open. An aggregate without ordinary
+maps proves the installed archive ABI component while leaving the import
+obligation unchanged. Shared helper visibility, runtime semantics and family
+completion remain separate; the report retains both the component and its
+scoped import join.
+
 The current reader accounts for physical placements and source-selected
 metadata. After the single public declaration replay, it applies
 [`native_data_declarations.py`](native-data-declarations.md) to the 19 installed

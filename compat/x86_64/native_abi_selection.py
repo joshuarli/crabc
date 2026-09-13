@@ -38,6 +38,7 @@ import header_declaration_inventory as declaration_inventory
 import loader_debug_abi_evidence as loader_debug_evidence
 import public_data_ordinary_link_evidence as ordinary_link_evidence
 import native_callable_declarations as callable_declarations
+import compiler_helper_evidence as compiler_helpers
 
 SCHEMA = 'crabc.x86_64-native-abi-selection-report/v1'
 CONTRACT_SCHEMA = 'crabc.x86_64-native-abi-selection/v1'
@@ -508,7 +509,12 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
         'compat/x86_64/native_callable_declarations.py', 'compat/x86_64/native_callable_declarations.toml',
         'compat/x86_64/tests/test_native_callable_declarations.py', 'compat/x86_64/native-callable-declarations.md',
         'libc/Cargo.toml', 'compat/x86_64/native-abi-selection.md',
+        'compat/x86_64/compiler_helper_evidence.py',
+        'compat/x86_64/tests/test_compiler_helper_evidence.py',
+        'compat/x86_64/tests/test_native_abi_compiler_helpers.py',
+        'builtins/x86_64-helper-contract.md',
     }
+    files.update(path.as_posix() for path in compiler_helpers.SOURCE_FILES)
     for field in ('owner_groups', 'structural_groups', 'object_contracts', 'private_protocols'):
         for row in contract[field]:
             files.update(row['sources'])
@@ -1200,8 +1206,81 @@ def attach_public_data_linkage(accounting: Mapping[str, Any], companion: Mapping
     return joins
 
 
+def compiler_helper_adapter(report_path: Path | None, *, ordinary_report_path: Path | None,
+                            paths: Mapping[str, Path]) -> dict[str, Any] | None:
+    """Attach the owning helper reader's aggregate-to-installed archive proof.
+
+    The component validates its own supplied products and optional ordinary
+    link maps. Its result keeps shared helper visibility and runtime/family
+    completion separate from the two installed archive roles.
+    """
+    if report_path is None:
+        return None
+    require(paths['measurement_checkout'] == ROOT and Path(compiler_helpers.ROOT) == ROOT,
+            'compiler-helper evidence requires the selecting checkout product cohort')
+    report_path = physical_work_path(report_path, directory=False)
+    require(report_path.is_relative_to(ROOT / '.work'), 'compiler-helper aggregate must belong to the selecting checkout')
+    before = file_identity(report_path)
+    try:
+        account = compiler_helpers.validate_supplied_product_evidence(
+            root=ROOT, **{key: paths[key] for key in
+                         ('base_inventory', 'elf_report', 'static_preparation', 'static_product', 'dynamic_product')},
+            ordinary_link_report=ordinary_report_path, aggregate_report=report_path,
+        )
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'compiler-helper component rejected: {error}') from error
+    require(file_identity(report_path) == before, 'compiler-helper aggregate report changed during replay')
+    require(type(account) is dict and type(account.get('aggregate_c_abi')) is dict
+            and account['aggregate_c_abi'].get('status') == 'joined', 'compiler-helper aggregate is not joined to both archives')
+    require(all(account.get(key) is False for key in ('shared_placement_selected', 'family_completion', 'public_support')),
+            'compiler-helper component exceeds archive evidence scope')
+    return {'report': before, 'reader': file_identity(Path(compiler_helpers.__file__)), 'account': account}
+
+
+def attach_compiler_helper_import(accounting: Mapping[str, Any], companion: Mapping[str, Any] | None) -> list[dict[str, Any]]:
+    """Discharge only the exact ordinary static import covered by both maps.
+
+    Other candidate imports of the same spelling retain the generic unresolved
+    reason. Member occurrence and symbol-table row distinguish the actual
+    consumer from a same-name import in another archive member.
+    """
+    if companion is None or companion['account']['ordinary_popcount_import'] is None:
+        return []
+    claim = companion['account']['ordinary_popcount_import']
+    require(claim['identity'] == '__popcountdi2' and claim['consumer_artifact'] == 'candidate-static'
+            and claim['provider_placement'] == 'static-builtins' and claim['provider_member'] == 'crabc-builtins.o'
+            and claim['provider_section'] == '.text.__popcountdi2', 'compiler-helper ordinary import boundary differs')
+    candidate_artifacts = {artifact.key for artifact in elf_facts.ARTIFACTS if artifact.owner != 'reference'}
+    joins = []
+    for record in accounting['identities']:
+        if not same(record['identity'], identity('__popcountdi2')) or ORDINARY_IMPORT_REASON not in record['unresolved']:
+            continue
+        require(record['selection'].get('owner') == 'builtins', 'compiler-helper import owner differs')
+        imports = [row for row in accounting['occurrences'] if row['role'] == 'import'
+                   and row['row']['name'] == '__popcountdi2' and row['artifact_key'] in candidate_artifacts]
+        covered = len(imports) == 1 and all(
+            row['artifact_key'] == 'candidate-static' and row['table'] == '.symtab'
+            and row['member_name'] == claim['consumer_member']
+            and row['member_index'] == claim['consumer_member_index']
+            and row['member_occurrence'] == claim['consumer_member_occurrence']
+            and row['row']['row_index'] == claim['consumer_symtab_row']
+            and row['accounting'] == {'disposition': 'private-provider', 'owner': 'builtins', 'scope': 'candidate-static'}
+            for row in imports
+        )
+        joins.append({'identity': copy.deepcopy(record['identity']), 'owner': 'builtins',
+                      'occurrence_indices': [row['index'] for row in imports],
+                      'ordinary_link_covered': covered, 'discharged_reason': ORDINARY_IMPORT_REASON if covered else None})
+        if covered:
+            record['unresolved'].remove(ORDINARY_IMPORT_REASON)
+            accounting['blockers'][:] = [row for row in accounting['blockers']
+                                        if not (row['code'] == 'identity-unresolved'
+                                                and same(row['identity'], record['identity']) and row['reason'] == ORDINARY_IMPORT_REASON)]
+    return joins
+
+
 def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration_report: Path | None,
-                  ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None) -> dict[str, Any]:
+                  ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
+                  compiler_helper_aggregate_report: Path | None = None) -> dict[str, Any]:
     source_before = selection_source()
     contract = load_contract(contract_path)
     inputs = load_source_inputs(contract, contract_path)
@@ -1218,9 +1297,13 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         ordinary_link_report, loader_debug_report, contract=contract,
         selected_objects=contract['object_contracts'], source=source_before, paths=paths,
     )
+    compiler_helper_companion = compiler_helper_adapter(
+        compiler_helper_aggregate_report, ordinary_report_path=ordinary_link_report, paths=paths,
+    )
     expanded = expand_obligations(contract, inputs)
     accounting = account_placements(expanded, facts)
     public_data_linkage_joins = attach_public_data_linkage(accounting, public_data_linkage_companion)
+    compiler_helper_import_joins = attach_compiler_helper_import(accounting, compiler_helper_companion)
     candidate = measurement['candidate_build']
     source_matches = source_before['clean'] is True and source_before['revision'] == candidate['revision'] and source_before['content_sha256'] == candidate['source_content_sha256']
     blockers = accounting.pop('blockers')
@@ -1234,6 +1317,8 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
             'contract': contract, 'measurement': measurement, 'declaration_companion': declaration,
             'public_data_linkage_companion': public_data_linkage_companion,
             'public_data_linkage_joins': public_data_linkage_joins,
+            'compiler_helper_companion': compiler_helper_companion,
+            'compiler_helper_import_joins': compiler_helper_import_joins,
             **accounting, 'closure': {'complete': not blockers, 'blockers': blockers}, 'status': dict(STATUS),
             'limits': ['selection audit is not qualification', 'complete raw ELF observations stay with the publicly replayed supplement',
                        'no allocator metadata or unwinder investigation', 'no imported AArch64 execution proof',
@@ -1242,13 +1327,15 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
 
 def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declaration_report: Path | None = None,
                  ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
+                 compiler_helper_aggregate_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
     output = physical_work_path(output, directory=True, own=True, fresh=True)
     paths = validate_measurement_paths(**measurement_inputs)
     contract_path = Path(os.path.abspath(contract_path))
     require(contract_path.is_relative_to(ROOT) and contract_path.resolve() == contract_path and contract_path.is_file(), 'contract must be a physical read-only checkout source')
     report = _build_report(contract_path=contract_path, paths=paths, declaration_report=declaration_report,
-                           ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report)
+                           ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report,
+                           compiler_helper_aggregate_report=compiler_helper_aggregate_report)
     output.mkdir()
     (output / 'report.json').write_bytes(inventory._stable_json(report))
     return report
@@ -1256,6 +1343,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
 
 def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, declaration_report: Path | None = None,
                     ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
+                    compiler_helper_aggregate_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
     report_path = physical_work_path(report_path, directory=False, own=True)
     require(report_path.name == 'report.json', 'selection report has the wrong name')
@@ -1264,7 +1352,8 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
     contract_path = Path(os.path.abspath(contract_path))
     require(contract_path.is_relative_to(ROOT) and contract_path.resolve() == contract_path and contract_path.is_file(), 'contract must be a physical read-only checkout source')
     expected = _build_report(contract_path=contract_path, paths=paths, declaration_report=declaration_report,
-                             ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report)
+                             ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report,
+                             compiler_helper_aggregate_report=compiler_helper_aggregate_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
     return report
 
@@ -1280,6 +1369,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--declaration-report', type=Path)
     parser.add_argument('--public-data-ordinary-link-report', type=Path)
     parser.add_argument('--loader-debug-abi-report', type=Path)
+    parser.add_argument('--compiler-helper-aggregate-report', type=Path)
     options = [arg.split('=', 1)[0] for arg in argv if arg.startswith('--')]
     if len(options) != len(set(options)):
         parser.error('duplicate options are not accepted')
@@ -1288,7 +1378,7 @@ def main(argv: Sequence[str]) -> int:
         parser.error('--public-data-ordinary-link-report and --loader-debug-abi-report must be supplied together')
     kwargs = {key: getattr(args, key) for key in ('measurement_checkout', 'base_inventory', 'static_product', 'dynamic_product',
                                                 'static_preparation', 'declaration_report', 'public_data_ordinary_link_report',
-                                                'loader_debug_abi_report')}
+                                                'loader_debug_abi_report', 'compiler_helper_aggregate_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)
