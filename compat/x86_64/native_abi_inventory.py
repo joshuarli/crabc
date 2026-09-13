@@ -573,7 +573,12 @@ def _archive_fact_blocks(raw: str, members: Sequence[str], expected_archive: str
 
 
 def parse_elf_header(raw: str, *, expected_type: str, description: str = "ELF facts") -> dict[str, Any]:
-    """Retain all header rows, including readelf's two distinct Version fields."""
+    """Retain all header rows, including readelf's two distinct Version fields.
+
+    PIE selects the complete pinned readelf DYN executable description; it is
+    a display contract, not another ELF type. Returned identity and raw fields
+    retain actual DYN. DYN continues to require the shared-object description.
+    """
 
     fields: list[dict[str, str]] = []
     names: Counter[str] = Counter()
@@ -596,8 +601,10 @@ def parse_elf_header(raw: str, *, expected_type: str, description: str = "ELF fa
     require(tuple(field["name"] for field in fields) == _PINNED_ELF_HEADER_FIELDS,
             f"{description} has incomplete or changed pinned readelf ELF header fields")
     identity = _readelf_header(raw, description)
-    require(expected_type in {"REL", "DYN"}, "unsupported ELF fact type contract")
-    expected = {"REL": "REL (Relocatable file)", "DYN": "DYN (Shared object file)"}[expected_type]
+    descriptions = {"REL": "REL (Relocatable file)", "DYN": "DYN (Shared object file)",
+                    "EXEC": "EXEC (Executable file)", "PIE": "DYN (Position-Independent Executable file)"}
+    require(expected_type in descriptions, "unsupported ELF fact type contract")
+    expected = descriptions[expected_type]
     require(identity["Type"] == expected, f"{description} is not {expected_type} ELF")
     return {"identity": identity, "fields": fields}
 

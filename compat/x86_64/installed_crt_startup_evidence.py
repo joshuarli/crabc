@@ -205,7 +205,7 @@ def projection(root,work,inputs):
         rows=[raw(work,key+'-'+part) for part in ('header','sections','symbols')]
         if key=='candidate-static':facts[key]=inventory.parse_archive_elf_facts(*rows,raw(work,key+'-members').splitlines(),expected_archive=ordinary.mounted(root,path))
         else:
-            expected='REL' if key.endswith('.o') or key.endswith('-object') else 'DYN' if key in ('candidate-shared','candidate-loader') or '-pie-' in key and '-non-pie-' not in key else 'EXEC'
+            expected='REL' if key.endswith('.o') or key.endswith('-object') else 'DYN' if key in ('candidate-shared','candidate-loader') else 'PIE' if '-pie-' in key and '-non-pie-' not in key else 'EXEC'
             facts[key]=inventory.parse_elf_facts(*rows,expected_type=expected)
     return facts
 
