@@ -320,18 +320,50 @@ def _link(work: Path, output: Path, product: Path, workload: Path, executable: s
         result = product_evidence.validate_link(product, workload, work / executable, work / receipt, linkage)
     except product_evidence.ProductEvidenceError as error:
         raise AllocatorBoundaryError(str(error)) from error
+    receipt_record = json_object(work / receipt, "owned link receipt")
+    linker = exact(receipt_record.get("resolved_linker"), {"path", "sha256"}, "owned link receipt linker")
+    require(type(linker["path"]) is str and Path(linker["path"]).is_absolute() and type(linker["sha256"]) is str
+            and SHA256.fullmatch(linker["sha256"]) is not None, "owned link receipt linker identity drifted")
+    try:
+        actual_linker = physical_file(Path(linker["path"]), "owned link receipt linker")
+    except AllocatorBoundaryError:
+        raise
+    require(inventory.sha256(actual_linker) == linker["sha256"], "owned link receipt linker bytes drifted")
     return {"validated": result, "executable": identity(work / executable, logical_path=(work / executable).relative_to(output).as_posix()),
-            "receipt": identity(work / receipt, logical_path=(work / receipt).relative_to(output).as_posix())}
+            "receipt": identity(work / receipt, logical_path=(work / receipt).relative_to(output).as_posix()),
+            "linker": dict(linker)}
 
 
-def _startup_observations(work: Path, output: Path, static_product: Path, dynamic_product: Path) -> dict[str, object]:
+def _replay_link(work: Path, output: Path, product: Path, workload: Path, executable: str,
+                 receipt: str, linkage: str, record: object) -> dict[str, object]:
+    item = exact(record, {"validated", "executable", "receipt", "linker"}, "owned link record")
+    executable_path, receipt_path = work / executable, work / receipt
+    require(same(item["executable"], identity(executable_path, logical_path=executable_path.relative_to(output).as_posix())),
+            "owned link executable identity drifted")
+    require(same(item["receipt"], identity(receipt_path, logical_path=receipt_path.relative_to(output).as_posix())),
+            "owned link receipt identity drifted")
+    linker = exact(item["linker"], {"path", "sha256"}, "sealed owned linker")
+    try:
+        result = product_evidence.validate_retained_link(
+            ROOT, "/workspace", product, workload, executable_path, receipt_path, linkage, linker
+        )
+    except product_evidence.ProductEvidenceError as error:
+        raise AllocatorBoundaryError(str(error)) from error
+    require(same(item["validated"], result), "retained owned link result drifted")
+    return item
+
+
+def _startup_observations(work: Path, output: Path, static_product: Path, dynamic_product: Path,
+                          *, validate_links: bool = True) -> dict[str, object]:
     captures = {stem: _stream(work, output, stem) for stem in ("oracle-dynamic", "oracle-static", *[f"static-{mode}" for mode in STATIC_MODES], *[f"dynamic-{mode}-{entry}" for mode in DYNAMIC_MODES for entry in ENTRIES])}
     for stem in captures:
         require((work / f"{stem}.stdout").read_bytes() == b"" and (work / f"{stem}.stderr").read_bytes() == b"",
                 f"startup runner {stem} emitted a diagnostic")
-    probe = ROOT / "compat/x86_64/owned_mimalloc_startup_errno_probe.c"
-    links = {mode: _link(work, output, static_product, probe, f"static-{mode}", f"static-{mode}.crabc-link.json", mode) for mode in STATIC_MODES}
-    links.update({"dynamic-" + mode: _link(work, output, dynamic_product, probe, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode) for mode in DYNAMIC_MODES})
+    links: dict[str, object] = {}
+    if validate_links:
+        probe = ROOT / "compat/x86_64/owned_mimalloc_startup_errno_probe.c"
+        links = {mode: _link(work, output, static_product, probe, f"static-{mode}", f"static-{mode}.crabc-link.json", mode) for mode in STATIC_MODES}
+        links.update({"dynamic-" + mode: _link(work, output, dynamic_product, probe, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode) for mode in DYNAMIC_MODES})
     symbols = physical_file(work / "dynamic-symbols.txt", "startup lifecycle symbols").read_text(encoding="utf-8")
     for name in ("__crabc_x86_owned_mimalloc_process_initializer", "__crabc_x86_owned_mimalloc_process_finalizer"):
         require(len(re.findall(rf"^\S+\s+d\s+{re.escape(name)}$", symbols, re.MULTILINE)) == 1,
@@ -341,7 +373,23 @@ def _startup_observations(work: Path, output: Path, static_product: Path, dynami
     return {"captures": captures, "links": links, "symbols": identity(work / "dynamic-symbols.txt", logical_path=(work / "dynamic-symbols.txt").relative_to(output).as_posix())}
 
 
-def _interposition_observations(work: Path, output: Path, dynamic_product: Path) -> dict[str, object]:
+def _replay_startup_observations(work: Path, output: Path, static_product: Path, dynamic_product: Path,
+                                 observed: object) -> dict[str, object]:
+    current = _startup_observations(work, output, static_product, dynamic_product, validate_links=False)
+    record = exact(observed, {"captures", "links", "symbols"}, "startup observation")
+    require(same(record["captures"], current["captures"]) and same(record["symbols"], current["symbols"]),
+            "startup raw observations drifted")
+    probe = ROOT / "compat/x86_64/owned_mimalloc_startup_errno_probe.c"
+    links = exact(record["links"], {*STATIC_MODES, *(f"dynamic-{mode}" for mode in DYNAMIC_MODES)}, "startup link roster")
+    for mode in STATIC_MODES:
+        _replay_link(work, output, static_product, probe, f"static-{mode}", f"static-{mode}.crabc-link.json", mode, links[mode])
+    for mode in DYNAMIC_MODES:
+        _replay_link(work, output, dynamic_product, probe, f"dynamic-{mode}", f"dynamic-{mode}.crabc-link.json", mode, links[f"dynamic-{mode}"])
+    return record
+
+
+def _interposition_observations(work: Path, output: Path, dynamic_product: Path,
+                                *, validate_links: bool = True) -> dict[str, object]:
     pairs: dict[str, object] = {}
     for mode in DYNAMIC_MODES:
         for entry in ENTRIES:
@@ -352,8 +400,10 @@ def _interposition_observations(work: Path, output: Path, dynamic_product: Path)
                     require((work / f"{oracle}.{suffix}").read_bytes() == (work / f"{candidate}.{suffix}").read_bytes(),
                             f"{mode}/{entry}/{scenario} differs from musl")
                 pairs[f"{mode}-{entry}-{scenario}"] = {"oracle": oracle_stream, "candidate": candidate_stream}
-    workload = work / "workload.o"
-    links = {mode: _link(work, output, dynamic_product, workload, f"candidate-{mode}", f"candidate-{mode}.crabc-link.json", mode) for mode in DYNAMIC_MODES}
+    links: dict[str, object] = {}
+    if validate_links:
+        workload = work / "workload.o"
+        links = {mode: _link(work, output, dynamic_product, workload, f"candidate-{mode}", f"candidate-{mode}.crabc-link.json", mode) for mode in DYNAMIC_MODES}
     for required in ("provider.relocations", "provider.symbols", "provider.disassembly", "workload.header", "workload.relocations"):
         physical_file(work / required, f"interposition {required}")
     reloc = (work / "provider.relocations").read_text(encoding="utf-8")
@@ -369,6 +419,20 @@ def _interposition_observations(work: Path, output: Path, dynamic_product: Path)
     return {"pairs": pairs, "links": links,
             "artifacts": {name: identity(work / name, logical_path=(work / name).relative_to(output).as_posix())
                           for name in ("provider.relocations", "provider.symbols", "provider.disassembly", "workload.header", "workload.relocations")}}
+
+
+def _replay_interposition_observations(work: Path, output: Path, dynamic_product: Path,
+                                       observed: object) -> dict[str, object]:
+    current = _interposition_observations(work, output, dynamic_product, validate_links=False)
+    record = exact(observed, {"pairs", "links", "artifacts"}, "interposition observation")
+    require(same(record["pairs"], current["pairs"]) and same(record["artifacts"], current["artifacts"]),
+            "interposition raw observations drifted")
+    links = exact(record["links"], set(DYNAMIC_MODES), "interposition link roster")
+    workload = work / "workload.o"
+    for mode in DYNAMIC_MODES:
+        _replay_link(work, output, dynamic_product, workload, f"candidate-{mode}",
+                     f"candidate-{mode}.crabc-link.json", mode, links[mode])
+    return record
 
 
 def collect(*, static_preparation: Path, static_product: Path, dynamic_product: Path,
@@ -426,11 +490,11 @@ def validate_report(report_path: Path, *, static_preparation: Path, static_produ
     startup = exact(report["startup"], {"command", "work", "observation"}, "startup report")
     startup_work = physical_directory(output / startup["work"], "startup retained work")
     _validate_capture(output, startup["command"], "startup", ["bash", str(ROOT / "compat/x86_64/run_owned_mimalloc_startup_errno.sh"), "--static-sysroot", str(Path(static_product).absolute()), str(Path(dynamic_product).absolute())])
-    require(same(startup["observation"], _startup_observations(startup_work, output, Path(static_product), Path(dynamic_product))), "startup observation does not reconstruct")
+    _replay_startup_observations(startup_work, output, Path(static_product), Path(dynamic_product), startup["observation"])
     interposition = exact(report["interposition"], {"command", "work", "observation"}, "interposition report")
     interposition_work = physical_directory(output / interposition["work"], "interposition retained work")
     _validate_capture(output, interposition["command"], "interposition", ["bash", str(ROOT / "compat/x86_64/run_owned_c_allocation_interposition.sh"), str(Path(dynamic_product).absolute())])
-    require(same(interposition["observation"], _interposition_observations(interposition_work, output, Path(dynamic_product))), "interposition observation does not reconstruct")
+    _replay_interposition_observations(interposition_work, output, Path(dynamic_product), interposition["observation"])
     return report
 
 
