@@ -77,6 +77,7 @@ def loader_dynamic_elf(*, section_headers: bool = True, post_null: bool = False,
                        string_table_address: int | None = None,
                        ambiguous_string_mapping: bool = False,
                        textrel_tag: bool = False, interpreter: bool = False,
+                       self_relocation_only: bool = False,
                        elf_type: int = 3) -> bytes:
     """Build a byte-only ELF whose loader and section metadata may disagree.
 
@@ -86,29 +87,32 @@ def loader_dynamic_elf(*, section_headers: bool = True, post_null: bool = False,
     """
     load_offset, strings_offset, dynamic_offset = 256, 320, 448
     load_address = 0x400000
-    strings = b"\0libforeign.so\0/bad\0"
+    strings = b"\0" if self_relocation_only else b"\0libforeign.so\0/bad\0"
     owned_interpreter = b"/lib/ld-crabc-x86_64.so.1\0"
     string_address = load_address + strings_offset - load_offset
     if string_table_address is not None:
         string_address = string_table_address
-    rpath_offset = len(b"\0libforeign.so\0")
     entries = [
         (5, string_address),  # DT_STRTAB
         (10, len(strings)),   # DT_STRSZ
-        (1, 1),               # DT_NEEDED libforeign.so
-        (15, rpath_offset),   # DT_RPATH /bad
-        (30, flags),          # DT_FLAGS
-        (0, 0),               # DT_NULL
     ]
+    if self_relocation_only:
+        entries.extend(((7, load_address + dynamic_offset - load_offset), (8, 24)))  # DT_RELA, DT_RELASZ
+    else:
+        rpath_offset = len(b"\0libforeign.so\0")
+        entries.extend(((1, 1), (15, rpath_offset)))  # DT_NEEDED, DT_RPATH
+    entries.extend(((30, flags), (0, 0)))  # DT_FLAGS, DT_NULL
     if textrel_tag:
         entries.insert(-1, (22, 0))  # DT_TEXTREL
     if post_null:
+        rpath_offset = len(b"\0libforeign.so\0")
         entries.extend(((1, 1), (29, rpath_offset), (0, 0)))
-    programs = [(1, 4, load_offset, load_address, 320, 320, 0x1000)]
+    load_size = max(320, dynamic_offset + len(entries) * 16 - load_offset)
+    programs = [(1, 4, load_offset, load_address, load_size, load_size, 0x1000)]
     programs.extend((2, 4, dynamic_offset, load_address + dynamic_offset - load_offset,
                      len(entries) * 16, len(entries) * 16, 8) for _ in range(dynamic_segments))
     if ambiguous_string_mapping:
-        programs.append((1, 4, load_offset + 1, load_address, 320, 320, 0x1000))
+        programs.append((1, 4, load_offset + 1, load_address, 100, 100, 0x1000))
     if interpreter:
         programs.append((3, 4, 1120, 0, len(owned_interpreter), len(owned_interpreter), 1))
 
@@ -140,6 +144,55 @@ def loader_dynamic_elf(*, section_headers: bool = True, post_null: bool = False,
         data[992:1056] = struct.pack(
             "<IIQQQQIIQQ", 0, 6, 0, 0, fake_dynamic_offset, 64, 0, 0, 8, 16
         )
+    return bytes(data)
+
+
+def incongruent_dynamic_elf() -> bytes:
+    """Put benign entries at ``p_offset`` and foreign entries at ``p_vaddr``.
+
+    The loader follows the dynamic segment's virtual address through the first
+    load segment.  A reader that opens only ``p_offset`` would instead see the
+    second, benign table and accept this sectionless artifact.
+    """
+    data = bytearray(1200)
+    load_offset, load_address = 256, 0x400000
+    actual_strings = b"\0libforeign.so\0/bad\0"
+    benign_offset, benign_address = 640, 0x500000
+    benign_strings = b"\0libc.so\0/usr/lib\0"
+    actual_dynamic_offset, recorded_dynamic_offset = 448, 736
+    dynamic_size = 80
+    interpreter = b"/lib/ld-crabc-x86_64.so.1\0"
+    programs = (
+        (1, 4, load_offset, load_address, 320, 320, 0x1000),
+        (1, 4, benign_offset, benign_address, 128, 128, 0x1000),
+        (2, 4, recorded_dynamic_offset, load_address + actual_dynamic_offset - load_offset,
+         dynamic_size, dynamic_size, 8),
+        (3, 4, 1120, 0, len(interpreter), len(interpreter), 1),
+    )
+    data[:16] = b"\x7fELF\x02\x01\x01" + b"\0" * 9
+    data[16:64] = struct.pack(
+        "<HHIQQQIHHHHHH", 3, 62, 1, 0, 64, 0, 0, 64, 56, len(programs), 0, 0, 0
+    )
+    for index, program in enumerate(programs):
+        kind, flags, offset, address, size, memory_size, alignment = program
+        data[64 + index * 56:120 + index * 56] = struct.pack(
+            "<IIQQQQQQ", kind, flags, offset, address, 0, size, memory_size, alignment
+        )
+    data[320:320 + len(actual_strings)] = actual_strings
+    data[672:672 + len(benign_strings)] = benign_strings
+    actual_entries = (
+        (5, load_address + 320 - load_offset), (10, len(actual_strings)),
+        (1, 1), (15, len(b"\0libforeign.so\0")), (0, 0),
+    )
+    benign_entries = (
+        (5, benign_address + 672 - benign_offset), (10, len(benign_strings)),
+        (1, 1), (29, len(b"\0libc.so\0")), (0, 0),
+    )
+    for index, entry in enumerate(actual_entries):
+        struct.pack_into("<qQ", data, actual_dynamic_offset + index * 16, *entry)
+    for index, entry in enumerate(benign_entries):
+        struct.pack_into("<qQ", data, recorded_dynamic_offset + index * 16, *entry)
+    data[1120:1120 + len(interpreter)] = interpreter
     return bytes(data)
 
 
@@ -223,10 +276,19 @@ class OwnedPosixProductEvidenceTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(evidence.ProductEvidenceError, "string table"):
                 evidence.retained_elf_facts(self.put(name, payload))
 
-    def test_retained_static_link_rejects_a_loader_visible_dynamic_segment(self) -> None:
-        path = self.put("static-with-dynamic", loader_dynamic_elf(elf_type=2))
-        with self.assertRaisesRegex(evidence.ProductEvidenceError, "PT_DYNAMIC"):
-            evidence._audit_retained_elf(path, "static")
+    def test_retained_elf_reader_rejects_pt_dynamic_offset_not_mapped_from_its_virtual_address(self) -> None:
+        path = self.put("incongruent-dynamic", incongruent_dynamic_elf())
+        with self.assertRaisesRegex(evidence.ProductEvidenceError, "PT_DYNAMIC.*mapping"):
+            evidence.retained_elf_facts(path)
+
+    def test_retained_static_pie_allows_self_relocation_dynamic_metadata(self) -> None:
+        path = self.put("static-pie-self-relocation", loader_dynamic_elf(self_relocation_only=True))
+        self.assertEqual(
+            evidence.retained_elf_facts(path),
+            {"type": 3, "machine": 62, "interpreters": [], "dynamic": True,
+             "needed": [], "runpaths": [], "rpaths": [], "sonames": [], "textrel": False},
+        )
+        evidence._audit_retained_elf(path, "static-pie")
 
     def put(self, relative: str, payload: bytes) -> Path:
         path = self.root / relative

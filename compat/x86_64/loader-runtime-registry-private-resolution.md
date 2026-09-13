@@ -54,9 +54,12 @@ after the workloads finish; replay verifies the copied bytes, original paths,
 and the complete finite preprocessing roster before opening a workload
 receipt. It parses rehashed retained ELF64 little-endian bytes for replayed
 fork, timer, and dlfcn links instead of executing a host `readelf`. It takes
-loader-visible dynamic facts only from `PT_DYNAMIC` and its uniquely mapped
-`DT_STRTAB`/`DT_STRSZ` `PT_LOAD` range; ELF section headers do not authorize
-replay metadata.
+loader-visible dynamic facts only from `PT_DYNAMIC` whose virtual bytes map
+back to its recorded file range through one `PT_LOAD`, and from its uniquely
+mapped `DT_STRTAB`/`DT_STRSZ` `PT_LOAD` range; ELF section headers do not
+authorize replay metadata. Static PIE keeps the native no-interpreter,
+no-`DT_NEEDED`, no-TEXTREL boundary while permitting its self-relocation
+dynamic table.
 
 The saved runner argv and `TMPDIR` keep their native `/workspace` spelling.
 On a host, the reader maps only that spelling through its one physical

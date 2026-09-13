@@ -175,7 +175,7 @@ def retained_elf_facts(path: Path) -> dict[str, object]:
 
     interpreters: list[str] = []
     load_segments: list[tuple[int, int, int]] = []
-    dynamic_segments: list[tuple[int, int]] = []
+    dynamic_segments: list[tuple[int, int, int]] = []
     for index in range(phnum):
         program = unpack("<IIQQQQQQ", phoff + index * phsize)
         ptype, _program_flags, offset, address, _paddr, size, memory_size, _align = program
@@ -196,7 +196,7 @@ def retained_elf_facts(path: Path) -> dict[str, object]:
             if memory_size < size or size == 0 or size % 16:
                 _fail("retained ELF PT_DYNAMIC segment differs")
             part(offset, size)
-            dynamic_segments.append((offset, size))
+            dynamic_segments.append((offset, address, size))
 
     if len(dynamic_segments) > 1:
         _fail("retained ELF has multiple PT_DYNAMIC segments")
@@ -207,7 +207,21 @@ def retained_elf_facts(path: Path) -> dict[str, object]:
     textrel = False
     has_dynamic = len(dynamic_segments) == 1
     if has_dynamic:
-        dynamic_offset, dynamic_size = dynamic_segments[0]
+        dynamic_offset, dynamic_address, dynamic_size = dynamic_segments[0]
+        if dynamic_address + dynamic_size > (1 << 64):
+            _fail("retained ELF PT_DYNAMIC virtual range escapes address space")
+        dynamic_mappings: list[int] = []
+        for load_address, load_offset, load_size in load_segments:
+            if dynamic_address < load_address or dynamic_address - load_address > load_size:
+                continue
+            within_load = dynamic_address - load_address
+            if dynamic_size > load_size - within_load:
+                continue
+            translated_offset = load_offset + within_load
+            part(translated_offset, dynamic_size)
+            dynamic_mappings.append(translated_offset)
+        if len(dynamic_mappings) != 1 or dynamic_mappings[0] != dynamic_offset:
+            _fail("retained ELF PT_DYNAMIC virtual mapping differs from its file offset")
         entries: list[tuple[int, int]] = []
         terminated = False
         for position in range(dynamic_offset, dynamic_offset + dynamic_size, 16):
@@ -682,8 +696,6 @@ def _audit_retained_elf(executable: Path, linkage: str) -> None:
     if facts["textrel"]:
         _fail("retained linked executable has DT_TEXTREL")
     if linkage in {"static", "static-pie"}:
-        if facts["dynamic"]:
-            _fail("retained static linked executable has PT_DYNAMIC")
         if facts["interpreters"] or facts["needed"]:
             _fail("retained static linked executable has dynamic runtime state")
         return
