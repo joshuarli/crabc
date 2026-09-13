@@ -1121,26 +1121,53 @@ def _header_tool_envelope(envelope: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def derive_callable_plan(header_report: Path) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
-    """Replay one header envelope and derive the ordinary-object plan.
+def _header_replay_envelope(
+    header_report: Path,
+    header_envelope: Mapping[str, Any] | None,
+) -> Mapping[str, Any]:
+    """Use one caller-authenticated header envelope or replay it locally.
 
-    The public header reader is called exactly once here.  This avoids a second
-    raw compiler replay while still refusing a malformed raw envelope before
-    source generation begins.
+    ``header_envelope`` is only for a composition that has just obtained the
+    exact return value from ``header_declaration_inventory.validate_report``.
+    It avoids rereading the complete retained raw header evidence.  The caller
+    still supplies the physical report path: report validation binds that path
+    to the declaration-ABI collector's retained input identity.
     """
     header_report = _physical_path(header_report, "header declaration report", directory=False)
-    try:
-        envelope = declaration_inventory.validate_report(header_report, project_include=ROOT / "include")
-    except (ValueError, OSError) as error:
-        raise NativeDeclarationAbiError(f"header declaration report rejected: {error}") from error
+    if header_envelope is None:
+        try:
+            envelope = declaration_inventory.validate_report(header_report, project_include=ROOT / "include")
+        except (ValueError, OSError) as error:
+            raise NativeDeclarationAbiError(f"header declaration report rejected: {error}") from error
+    else:
+        envelope = header_envelope
     require(isinstance(envelope, Mapping) and set(envelope) == {"current_selecting_source", "report"},
             "header declaration replay envelope fields differ")
     current = envelope["current_selecting_source"]
-    require(isinstance(current, Mapping), "header declaration replay source status is invalid")
-    require(_boolean(current.get("matches_retained"), "header declaration replay source match"),
+    require(isinstance(current, Mapping) and set(current) == {"matches_retained", "differences"},
+            "header declaration replay source status is invalid")
+    matches = _boolean(current["matches_retained"], "header declaration replay source match")
+    require(isinstance(current["differences"], list), "header declaration replay source differences are invalid")
+    require(matches is (not bool(current["differences"])), "header declaration replay source status differs")
+    require(matches,
             "header declaration report is historical source drift, not a fresh object input")
-    require(isinstance(current.get("differences"), list) and not current["differences"],
-            "header declaration replay source differences are not empty")
+    return envelope
+
+
+def derive_callable_plan(
+    header_report: Path,
+    *,
+    header_envelope: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    """Derive the finite plan from one replayed public-header envelope.
+
+    With no ``header_envelope``, this remains the standalone reader path and
+    replays the physical report.  Selection composition passes the envelope it
+    already authenticated, so the same full header report feeds data,
+    callable, and ordinary-object declaration evidence exactly once.
+    """
+    envelope = _header_replay_envelope(header_report, header_envelope)
+    current = envelope["current_selecting_source"]
     tool_envelope = _header_tool_envelope(envelope)
     providers, deferred, abi_only, partition_source = _callable_partition()
     matrix_projection, matrix_provenance = _matrix_projection()
@@ -2179,12 +2206,15 @@ def validate_report(
     report_path: Path,
     *,
     header_report: Path,
+    header_envelope: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Replay a declaration ABI report without invoking a native tool.
 
     ``header_report`` is an explicit host mapping for the one retained public
     header envelope.  Its bytes must match the immutable collector input; the
     host reader never treats the collector's `/inputs/...` path as authority.
+    A selection caller may pass the exact envelope it has already replayed to
+    ``header_envelope`` so this reader does not replay that raw receipt again.
     """
     report_path = _physical_path(report_path, "native declaration ABI report", directory=False)
     require(report_path.name == "report.json", "native declaration ABI report name differs")
@@ -2203,7 +2233,10 @@ def validate_report(
     source_snapshots = _validate_source_snapshots(output, inputs["source_snapshots"])
     supplied_header_report = _physical_path(header_report, "supplied header declaration report", directory=False)
     header_identity = _validate_collector_header_identity(report["header_declaration_report"], supplied_header_report)
-    _account, plans, callable_plan_source, header_tools = derive_callable_plan(supplied_header_report)
+    _account, plans, callable_plan_source, header_tools = derive_callable_plan(
+        supplied_header_report,
+        header_envelope=header_envelope,
+    )
     tools = _validate_tools(
         output, inputs["tools"], collector_output, execution["timeout_seconds"], header_tools=header_tools,
     )

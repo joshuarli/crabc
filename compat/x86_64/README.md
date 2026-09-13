@@ -155,7 +155,9 @@ with the bounded `_ns_flagdata` and `in6_addr` record-layout projection. It
 replays one public header envelope, binds clang to that retained compiler
 snapshot, and retains the missing compiler-resource and `readelf` bytes. It
 leaves `FILE`, array extent, `h_errno` storage semantics, provider selection,
-family completion, and promotion open.
+family completion, and promotion open. Native ABI selection may reuse that one
+current header replay for the declaration-object reader; it does not admit a
+historical declaration receipt or treat the finite observation as closure.
 
 [public-data-ordinary-link.md](public-data-ordinary-link.md) describes the
 ordinary-link matrix for the 32 data objects shared by the static and dynamic

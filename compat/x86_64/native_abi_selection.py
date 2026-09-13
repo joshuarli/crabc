@@ -38,6 +38,7 @@ import header_declaration_inventory as declaration_inventory
 import loader_debug_abi_evidence as loader_debug_evidence
 import public_data_ordinary_link_evidence as ordinary_link_evidence
 import native_callable_declarations as callable_declarations
+import native_declaration_abi as declaration_abi
 import compiler_helper_evidence as compiler_helpers
 import owned_mimalloc_producer_metadata as producer_metadata
 
@@ -91,6 +92,12 @@ FIXED_C_PRODUCER_PRODUCT_FILES = {
 COMPILER_HELPER_GROUP = 'owned-compiler-helper-archive'
 COMPILER_HELPER_SHARED_ARTIFACT = 'candidate-shared'
 COMPILER_HELPER_SHARED_METADATA_RULE = 'validated-compiler-helper-shared-local'
+DECLARATION_ABI_LIMITS = [
+    'The object witness records emitted ordinary references; it does not select an archive/shared provider.',
+    'The four retained C++ membarrier spelling mismatches remain observations, not a language-linkage pass.',
+    'Only _ns_flagdata element and in6_addr record facts are projected; FILE, table extent and h_errno storage semantics remain open.',
+    'Runtime semantics, family completion, promotion and public support remain false.',
+]
 
 
 class SelectionError(ValueError):
@@ -359,6 +366,31 @@ def metadata_differences(expected: Mapping[str, Any], row: Mapping[str, Any], se
     return differences
 
 
+def _metadata_difference_rows_are_empty(value: object, description: str) -> bool:
+    """Validate generic placement-difference rows without erasing matches.
+
+    ``account_placements`` retains one row for each observed definition, even
+    when that row has no differing fields.  Focused source-owner binders need
+    that physical occurrence record; only a nonempty ``fields`` list means the
+    generic metadata comparison found a mismatch.
+    """
+    require(isinstance(value, list), f'{description} metadata differences are invalid')
+    occurrences: set[int] = set()
+    for index, raw in enumerate(value):
+        item = exact(raw, {'occurrence_index', 'fields'}, f'{description} metadata difference {index}')
+        occurrence = item['occurrence_index']
+        require(type(occurrence) is int and occurrence >= 0 and occurrence not in occurrences,
+                f'{description} metadata difference occurrence differs')
+        occurrences.add(occurrence)
+        fields = item['fields']
+        require(isinstance(fields, list) and all(type(field) is str and field for field in fields)
+                and len(fields) == len(set(fields)),
+                f'{description} metadata difference fields differ')
+        if fields:
+            return False
+    return True
+
+
 def reference_static_metadata(occurrences: Sequence[Mapping[str, Any]], explicit: Mapping[str, Any]) -> dict[str, Any]:
     """Resolve metadata only after a separate source contract selected a name.
 
@@ -541,6 +573,15 @@ def load_source_inputs(contract: Mapping[str, Any], contract_path: Path) -> dict
         'builtins/x86_64-helper-contract.md',
     }
     files.update(path.as_posix() for path in compiler_helpers.SOURCE_FILES)
+    # The ordinary declaration companion replays its own finite source
+    # snapshots.  The selector also binds its reader, contract, explanatory
+    # boundary, and focused behavior source before it is allowed to attach the
+    # resulting object observations to this report.
+    files.update(declaration_abi.SOURCE_FILES)
+    files.update({
+        'compat/x86_64/native-declaration-abi.md',
+        'compat/x86_64/tests/test_native_declaration_abi.py',
+    })
     for field in ('owner_groups', 'structural_groups', 'object_contracts', 'private_protocols'):
         for row in contract[field]:
             files.update(row['sources'])
@@ -1276,7 +1317,8 @@ def bind_fixed_c_producer_metadata_joins(accounting: Mapping[str, Any], pending:
         joined = index.get(key)
         require(joined is not None and same(joined['expected_metadata'], pending_row['metadata']),
                 'fixed-C producer metadata placement join is absent or differs')
-        require(joined['placement_observed'] is True and not joined['metadata_differences'],
+        require(joined['placement_observed'] is True and _metadata_difference_rows_are_empty(
+                    joined.get('metadata_differences'), 'fixed-C producer metadata placement'),
                 'fixed-C producer metadata placement is not exact')
         result.append({
             **copy.deepcopy(pending_row),
@@ -1321,11 +1363,227 @@ def account_object_declarations(report: Mapping[str, Any], selected_objects: Seq
             'complete': not unresolved and not any(row['remaining'] for row in requirements)}
 
 
+def _ordinary_declaration_plan_joins(
+    replayed: Mapping[str, Any],
+    callable_account: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Join validated object observations to the selected declaration account.
+
+    The callable adapter owns raw AST type/linker-spelling pairs and their
+    header-job provenance.  This finite join only confirms that every emitted
+    object reference came from that same typed account; it does not infer a
+    provider or turn a C++ spelling mismatch into a success.
+    """
+    expected_plans = declaration_abi.linkage_jobs_from_callable_account(callable_account)
+    plans = replayed['callable_plan']
+    require(same(plans, expected_plans), 'ordinary declaration object plan differs from selected callable account')
+    report = replayed['report']
+    require(type(report) is dict and type(report.get('jobs')) is list, 'ordinary declaration report jobs differ')
+    jobs = report['jobs']
+    require(len(jobs) == len(plans), 'ordinary declaration job count differs from validated plan')
+    joins: list[dict[str, Any]] = []
+    mismatches: list[dict[str, Any]] = []
+    for ordinal, (plan, job) in enumerate(zip(plans, jobs, strict=True)):
+        require(type(plan) is dict and type(job) is dict and job.get('ordinal') == ordinal,
+                f'ordinary declaration job {ordinal} identity differs')
+        fields = {'tree', 'header', 'profile', 'language', 'names', 'references'}
+        require(same({field: job.get(field) for field in fields}, plan),
+                f'ordinary declaration job {ordinal} does not join the selected plan')
+        observations = job.get('observations')
+        references = plan['references']
+        require(type(observations) is list and len(observations) == len(references),
+                f'ordinary declaration job {ordinal} observation roster differs')
+        mismatch_indices: list[int] = []
+        for index, (reference, observation) in enumerate(zip(references, observations, strict=True)):
+            reference = exact(reference, {'category', 'expected_observation', 'holder', 'name', 'source_definition_observations'},
+                              f'ordinary declaration plan {ordinal}:{index}')
+            require(type(observation) is dict and observation.get('category') == reference['category'],
+                    f'ordinary declaration observation category differs: {ordinal}:{index}')
+            expected = reference['expected_observation']
+            if expected == 'ordinary-undefined-reference':
+                status = observation.get('status')
+                if status == 'ordinary-undefined-reference':
+                    exact(observation, {'category', 'name', 'status', 'symbol'}, f'ordinary declaration observation {ordinal}:{index}')
+                    require(observation['name'] == reference['name'] and observation['symbol'] == reference['name'],
+                            f'ordinary declaration symbol identity differs: {ordinal}:{index}')
+                elif status == 'ordinary-linkage-identity-mismatch':
+                    exact(observation, {'category', 'expected_symbol', 'holder', 'observed_symbol', 'relocation_type', 'status'},
+                          f'ordinary declaration mismatch {ordinal}:{index}')
+                    require(observation['expected_symbol'] == reference['name']
+                            and observation['holder'] == reference['holder']
+                            and observation['relocation_type'] == 'R_X86_64_64'
+                            and type(observation['observed_symbol']) is str
+                            and observation['observed_symbol'] != reference['name'],
+                            f'ordinary declaration linkage mismatch differs: {ordinal}:{index}')
+                    mismatch_indices.append(index)
+                    mismatches.append({
+                        'ordinal': ordinal,
+                        'tree': plan['tree'],
+                        'header': plan['header'],
+                        'profile': plan['profile'],
+                        **copy.deepcopy(observation),
+                    })
+                else:
+                    raise SelectionError(f'ordinary declaration observation status differs: {ordinal}:{index}')
+            elif expected == 'header-defined-or-inline':
+                exact(observation, {'category', 'name', 'source_definition_observation', 'status'},
+                      f'ordinary declaration inline observation {ordinal}:{index}')
+                require(observation['name'] == reference['name']
+                        and observation['status'] == 'header-defined-or-inline'
+                        and observation['source_definition_observation'] == 'function-body-present',
+                        f'ordinary declaration inline observation differs: {ordinal}:{index}')
+            else:
+                raise SelectionError(f'ordinary declaration expected observation differs: {ordinal}:{index}')
+        joins.append({
+            'ordinal': ordinal,
+            'tree': plan['tree'],
+            'header': plan['header'],
+            'profile': plan['profile'],
+            'language': plan['language'],
+            'names': copy.deepcopy(plan['names']),
+            'observation_count': len(observations),
+            'linkage_mismatch_indices': mismatch_indices,
+        })
+    return joins, mismatches
+
+
+def _ordinary_declaration_layout_joins(
+    projection: Mapping[str, Any],
+    selected_objects: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach only the component's two named layout facts to object contracts."""
+    component_contract = declaration_abi.load_contract()
+    exact(dict(projection), {'schema', 'record_layout_report_schema', 'records', 'limits'},
+          'ordinary declaration record-layout projection')
+    require(projection['schema'] == declaration_abi.RECORD_LAYOUT_PROJECTION_SCHEMA
+            and projection['record_layout_report_schema'] == declaration_abi.HEADER_RECORD_LAYOUT_REPORT_SCHEMA
+            and same(projection['limits'], component_contract['limits']),
+            'ordinary declaration record-layout projection identity differs')
+    records = projection['records']
+    require(type(records) is list and len(records) == len(component_contract['record_layout']),
+            'ordinary declaration record-layout roster differs')
+    objects = {row['name']: row for row in selected_objects}
+    require(len(objects) == len(selected_objects), 'selected object contracts repeat before layout attachment')
+    joins: list[dict[str, Any]] = []
+    for ordinal, (raw, fact) in enumerate(zip(records, component_contract['record_layout'], strict=True)):
+        raw = exact(raw, {'header', 'object_names', 'profiles', 'record'}, f'ordinary declaration layout record {ordinal}')
+        require(raw['header'] == fact['header'] and raw['record'] == fact['record']
+                and raw['object_names'] == fact['object_names'] and type(raw['profiles']) is list
+                and [row.get('profile') for row in raw['profiles']] == fact['profiles'],
+                f'ordinary declaration layout record {ordinal} differs from its reviewed scope')
+        for name in raw['object_names']:
+            object_contract = objects.get(name)
+            require(object_contract is not None
+                    and object_contract.get('id') == 'object:' + name
+                    and object_contract.get('declaration_kind') == 'installed-variable'
+                    and object_contract.get('type') == 'OBJECT'
+                    and 'include/' + raw['header'] in object_contract.get('sources', []),
+                    f'ordinary declaration layout object scope differs: {name}')
+            remaining = []
+            if name == '_ns_flagdata':
+                remaining.append(projection['limits']['_ns_flagdata_array_extent'])
+            joins.append({
+                'id': object_contract['id'],
+                'identity': identity(name),
+                'header': raw['header'],
+                'record': raw['record'],
+                'profile_count': len(raw['profiles']),
+                'remaining_layout_limitations': remaining,
+            })
+    return joins
+
+
+def ordinary_declaration_abi_adapter(
+    report_path: Path | None,
+    *,
+    header_report: Path,
+    header_envelope: Mapping[str, Any],
+    callable_account: Mapping[str, Any],
+    selected_objects: Sequence[Mapping[str, Any]],
+) -> dict[str, Any] | None:
+    """Attach ordinary declaration objects to one authenticated header replay.
+
+    This is intentionally a narrow companion.  It validates the component's
+    retained object report and joins it to the same typed callable account that
+    came from the one public header replay.  It never replays that 616MB header
+    report, chooses an ELF provider, or claims runtime/family closure.
+    """
+    if report_path is None:
+        return None
+    require(Path(declaration_abi.ROOT) == ROOT, 'ordinary declaration reader belongs to a different checkout')
+    report_path = physical_work_path(report_path, directory=False)
+    header_report = physical_work_path(header_report, directory=False)
+    before = {'ordinary_declaration_report': file_identity(report_path), 'header_report': file_identity(header_report)}
+    try:
+        replayed = declaration_abi.validate_report(
+            report_path,
+            header_report=header_report,
+            header_envelope=header_envelope,
+        )
+    except (ValueError, OSError) as error:
+        raise SelectionError(f'ordinary declaration ABI companion rejected: {error}') from error
+    after = {'ordinary_declaration_report': file_identity(report_path), 'header_report': file_identity(header_report)}
+    require(same(before, after), 'ordinary declaration ABI input changed during companion replay')
+    exact(replayed, {'callable_plan', 'execution', 'header_declaration_report', 'record_layout_projection', 'report', 'summary'},
+          'ordinary declaration ABI reader envelope')
+    execution = exact(replayed['execution'], {'collector_output', 'collector_source', 'image_id', 'native_context', 'source_mount', 'timeout_seconds', 'workers'},
+                      'ordinary declaration ABI execution')
+    require(same(execution['collector_source'], selection_source()),
+            'ordinary declaration ABI collector source differs from the selecting source')
+    report = replayed['report']
+    require(type(report) is dict and report.get('schema') == declaration_abi.SCHEMA
+            and report.get('target') == TARGET and report.get('oracle') == declaration_abi.ORACLE,
+            'ordinary declaration ABI report identity differs')
+    status = exact(report.get('status'), {
+        'callable_declaration_abi_complete', 'family_completion', 'object_linkage_observed', 'promotion_ready',
+        'public_support', 'record_layout_projection_observed', 'runtime_semantics',
+    }, 'ordinary declaration ABI status')
+    require(status == {
+        'callable_declaration_abi_complete': False,
+        'family_completion': False,
+        'object_linkage_observed': True,
+        'promotion_ready': False,
+        'public_support': False,
+        'record_layout_projection_observed': True,
+        'runtime_semantics': False,
+    }, 'ordinary declaration ABI status exceeds component scope')
+    joins, mismatches = _ordinary_declaration_plan_joins(replayed, callable_account)
+    summary = exact(replayed['summary'], {
+        'cxx_job_count', 'job_count', 'language_counts', 'observation_count', 'observation_status_counts',
+        'reference_category_counts', 'reference_count',
+    }, 'ordinary declaration ABI summary')
+    counts = summary['observation_status_counts']
+    require(type(counts) is dict and counts.get('ordinary-linkage-identity-mismatch', 0) == len(mismatches),
+            'ordinary declaration ABI mismatch summary differs')
+    layouts = _ordinary_declaration_layout_joins(replayed['record_layout_projection'], selected_objects)
+    callable_plan_source = report.get('callable_plan_source')
+    require(type(callable_plan_source) is dict, 'ordinary declaration ABI callable plan source differs')
+    return {
+        'status': 'ordinary-object-and-record-layout-observed-with-boundaries',
+        'reader': file_identity(Path(declaration_abi.__file__)),
+        'contract': file_identity(declaration_abi.CONTRACT_PATH),
+        'report': before['ordinary_declaration_report'],
+        'header_report': before['header_report'],
+        'header_collector_identity': copy.deepcopy(replayed['header_declaration_report']),
+        'execution': copy.deepcopy(execution),
+        'callable_plan_source': copy.deepcopy(callable_plan_source),
+        'status_flags': copy.deepcopy(status),
+        'summary': copy.deepcopy(summary),
+        'callable_joins': joins,
+        'linkage_mismatches': mismatches,
+        'record_layout_joins': layouts,
+        'limits': list(DECLARATION_ABI_LIMITS),
+    }
+
+
 def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[Mapping[str, Any]],
                         provider_names: Sequence[str], deferred: Mapping[str, Any],
                         abi_only_callables: Sequence[Mapping[str, Any]],
-                        callable_matrix_projection: Mapping[str, Any]) -> dict[str, Any] | None:
+                        callable_matrix_projection: Mapping[str, Any],
+                        ordinary_declaration_abi_report: Path | None = None) -> dict[str, Any] | None:
     if report_path is None:
+        require(ordinary_declaration_abi_report is None,
+                'ordinary declaration ABI report requires the public declaration report')
         return None
     module_path = Path(declaration_inventory.__file__)
     report_path = physical_work_path(report_path, directory=False)
@@ -1336,6 +1594,9 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
     exact(envelope, {'report', 'current_selecting_source'}, 'declaration reader envelope')
     source = exact(envelope['current_selecting_source'], {'matches_retained', 'differences'}, 'declaration source comparison')
     require(type(source['matches_retained']) is bool and type(source['differences']) is list, 'declaration source comparison types differ')
+    if ordinary_declaration_abi_report is not None:
+        require(source['matches_retained'] is True and not source['differences'],
+                'ordinary declaration ABI report requires a current public declaration envelope')
     report = envelope['report']
     account = account_object_declarations(report, selected_objects)
     # Reuse this one public replay for the finite data contract. Its type and
@@ -1372,6 +1633,13 @@ def declaration_adapter(report_path: Path | None, *, selected_objects: Sequence[
         'contract': file_identity(callable_declarations.CONTRACT_PATH),
         'account': typed_callables,
     }
+    account['ordinary_declaration_abi'] = ordinary_declaration_abi_adapter(
+        ordinary_declaration_abi_report,
+        header_report=report_path,
+        header_envelope=envelope,
+        callable_account=typed_callables,
+        selected_objects=selected_objects,
+    )
     account['complete'] = False
     return {'report': file_identity(report_path), 'reader': file_identity(module_path),
             'current_selecting_source': source, 'physical_status': report['status'], **account}
@@ -1812,7 +2080,8 @@ def bind_compiler_helper_shared_placement_joins(accounting: Mapping[str, Any], p
                            'compiler-helper pending shared projection')
         joined = placement_index.get((identity_key(identity_value), COMPILER_HELPER_SHARED_ARTIFACT))
         require(joined is not None and same(joined['expected_metadata'], pending_row['metadata'])
-                and joined['placement_observed'] is True and not joined['metadata_differences']
+                and joined['placement_observed'] is True and _metadata_difference_rows_are_empty(
+                    joined.get('metadata_differences'), 'compiler-helper private shared placement')
                 and joined['definition_count'] == 1 and len(joined['occurrence_indices']) == 1,
                 'compiler-helper private shared placement is absent, ambiguous or mismatched')
         occurrence = occurrences.get(joined['occurrence_indices'][0])
@@ -1882,6 +2151,7 @@ def attach_compiler_helper_import(accounting: Mapping[str, Any], companion: Mapp
 
 
 def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration_report: Path | None,
+                  ordinary_declaration_abi_report: Path | None = None,
                   ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                   compiler_helper_aggregate_report: Path | None = None) -> dict[str, Any]:
     source_before = selection_source()
@@ -1898,6 +2168,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
         deferred=inputs['deferred'],
         abi_only_callables=inputs['abi_only_callables'],
         callable_matrix_projection=inputs['callable_declaration_matrix'],
+        ordinary_declaration_abi_report=ordinary_declaration_abi_report,
     )
     public_data_linkage_companion = public_data_linkage_adapter(
         ordinary_link_report, loader_debug_report, contract=contract,
@@ -1947,6 +2218,7 @@ def _build_report(*, contract_path: Path, paths: Mapping[str, Path], declaration
 
 
 def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declaration_report: Path | None = None,
+                 ordinary_declaration_abi_report: Path | None = None,
                  ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                  compiler_helper_aggregate_report: Path | None = None,
                  **measurement_inputs: Path) -> dict[str, Any]:
@@ -1955,6 +2227,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
     contract_path = Path(os.path.abspath(contract_path))
     require(contract_path.is_relative_to(ROOT) and contract_path.resolve() == contract_path and contract_path.is_file(), 'contract must be a physical read-only checkout source')
     report = _build_report(contract_path=contract_path, paths=paths, declaration_report=declaration_report,
+                           ordinary_declaration_abi_report=ordinary_declaration_abi_report,
                            ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report,
                            compiler_helper_aggregate_report=compiler_helper_aggregate_report)
     output.mkdir()
@@ -1963,6 +2236,7 @@ def build_report(*, output: Path, contract_path: Path = CONTRACT_PATH, declarati
 
 
 def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, declaration_report: Path | None = None,
+                    ordinary_declaration_abi_report: Path | None = None,
                     ordinary_link_report: Path | None = None, loader_debug_report: Path | None = None,
                     compiler_helper_aggregate_report: Path | None = None,
                     **measurement_inputs: Path) -> dict[str, Any]:
@@ -1973,6 +2247,7 @@ def validate_report(report_path: Path, *, contract_path: Path = CONTRACT_PATH, d
     contract_path = Path(os.path.abspath(contract_path))
     require(contract_path.is_relative_to(ROOT) and contract_path.resolve() == contract_path and contract_path.is_file(), 'contract must be a physical read-only checkout source')
     expected = _build_report(contract_path=contract_path, paths=paths, declaration_report=declaration_report,
+                             ordinary_declaration_abi_report=ordinary_declaration_abi_report,
                              ordinary_link_report=ordinary_link_report, loader_debug_report=loader_debug_report,
                              compiler_helper_aggregate_report=compiler_helper_aggregate_report)
     require(same(report, expected), 'selection report does not reconstruct exactly from source inputs and public measurement replay')
@@ -1988,6 +2263,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument('--output', type=Path)
     parser.add_argument('--contract', type=Path, default=CONTRACT_PATH)
     parser.add_argument('--declaration-report', type=Path)
+    parser.add_argument('--ordinary-declaration-abi-report', type=Path)
     parser.add_argument('--public-data-ordinary-link-report', type=Path)
     parser.add_argument('--loader-debug-abi-report', type=Path)
     parser.add_argument('--compiler-helper-aggregate-report', type=Path)
@@ -1997,9 +2273,12 @@ def main(argv: Sequence[str]) -> int:
     args = parser.parse_args(argv)
     if (args.public_data_ordinary_link_report is None) != (args.loader_debug_abi_report is None):
         parser.error('--public-data-ordinary-link-report and --loader-debug-abi-report must be supplied together')
+    if args.ordinary_declaration_abi_report is not None and args.declaration_report is None:
+        parser.error('--ordinary-declaration-abi-report requires --declaration-report')
     kwargs = {key: getattr(args, key) for key in ('measurement_checkout', 'base_inventory', 'static_product', 'dynamic_product',
                                                 'static_preparation', 'declaration_report', 'public_data_ordinary_link_report',
-                                                'loader_debug_abi_report', 'compiler_helper_aggregate_report')}
+                                                'loader_debug_abi_report', 'compiler_helper_aggregate_report',
+                                                'ordinary_declaration_abi_report')}
     kwargs['ordinary_link_report'] = kwargs.pop('public_data_ordinary_link_report')
     kwargs['loader_debug_report'] = kwargs.pop('loader_debug_abi_report')
     kwargs.update(contract_path=args.contract, elf_report=args.elf_facts)

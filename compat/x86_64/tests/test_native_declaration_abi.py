@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -321,6 +322,67 @@ class NativeDeclarationAbiTests(unittest.TestCase):
                 }],
             }],
         )
+
+    def test_replayed_header_envelope_reuses_the_existing_public_replay(self) -> None:
+        """A selection caller can pass its one authenticated header envelope.
+
+        The declaration component still derives its finite plan from the full
+        envelope, but it must not reopen the 616MB raw header receipt after
+        the selection reader has already replayed it.
+        """
+        scratch = ROOT / ".work" / "x86_64" / "native-declaration-abi-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(temporary.cleanup)
+        header_report = Path(temporary.name) / "header-report.json"
+        header_report.write_text("{}\n", encoding="utf-8")
+        envelope = {
+            "current_selecting_source": {"matches_retained": True, "differences": []},
+            "report": {},
+        }
+        account = {
+            "selected_callable_declaration_status": "proved-with-explicit-boundaries",
+            "groups": [group(profile="c11-gnu")],
+        }
+        with mock.patch.object(ABI.declaration_inventory, "validate_report") as header_replay, \
+             mock.patch.object(ABI, "_header_tool_envelope", return_value={
+                 "clang": {"path": "/tools/clang", "sha256": "a" * 64, "size": 1},
+                 "resource_headers": [], "resource_include": "/tools/resource",
+             }), \
+             mock.patch.object(ABI, "_callable_partition", return_value=(
+                 ["foo"], {}, [], {"partition": "fixture"},
+             )), \
+             mock.patch.object(ABI, "_matrix_projection", return_value=(
+                 {"schema": "fixture"}, {"matrix": "fixture"},
+             )), \
+             mock.patch.object(ABI.callable_declarations, "account_declarations", return_value=account):
+            derived, plans, _source, tools = ABI.derive_callable_plan(
+                header_report,
+                header_envelope=envelope,
+            )
+        header_replay.assert_not_called()
+        self.assertEqual(derived, account)
+        self.assertEqual(plans[0]["names"], ["foo"])
+        self.assertEqual(tools["clang"]["path"], "/tools/clang")
+
+    def test_replayed_header_envelope_rejects_historical_source_drift(self) -> None:
+        scratch = ROOT / ".work" / "x86_64" / "native-declaration-abi-tests"
+        scratch.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=scratch)
+        self.addCleanup(temporary.cleanup)
+        header_report = Path(temporary.name) / "header-report.json"
+        header_report.write_text("{}\n", encoding="utf-8")
+        with self.assertRaisesRegex(ABI.NativeDeclarationAbiError, "historical source drift"):
+            ABI.derive_callable_plan(
+                header_report,
+                header_envelope={
+                    "current_selecting_source": {
+                        "matches_retained": False,
+                        "differences": [{"path": "include/demo.h"}],
+                    },
+                    "report": {},
+                },
+            )
 
     def test_checked_layout_projection_keeps_only_the_two_selected_record_facts(self) -> None:
         report = ABI.read_json_object(ROOT / "compat" / "x86_64" / "generated" / "header_record_layout_matrix" / "report.json", "layout report")

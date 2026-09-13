@@ -358,6 +358,62 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
                 self.assertEqual(row['projection']['row_index'], index)
                 self.assertEqual(row['projection']['section'], '.text.' + row['identity']['name'])
 
+    def test_metadata_binders_keep_the_generic_empty_field_differences(self):
+        """Generic placement accounting records one empty row per exact match.
+
+        ``account_placements`` retains a metadata-difference record for each
+        observed candidate definition.  An empty ``fields`` list is its exact
+        success representation; neither focused producer binder may mistake
+        that retained audit row for a mismatch.
+        """
+        fixed = copy.deepcopy(self.pending[:1])
+        fixed_accounting = {
+            'placement_joins': [{
+                'identity': fixed[0]['identity'], 'artifact_key': fixed[0]['artifact_key'],
+                'expected_metadata': fixed[0]['metadata'], 'placement_observed': True,
+                'metadata_differences': [{'occurrence_index': 11, 'fields': []}],
+                'definition_count': 1, 'occurrence_indices': [11],
+            }],
+        }
+        self.assertEqual(
+            selection.bind_fixed_c_producer_metadata_joins(fixed_accounting, fixed)[0]['occurrence_indices'],
+            [11],
+        )
+        changed_fixed = copy.deepcopy(fixed_accounting)
+        changed_fixed['placement_joins'][0]['metadata_differences'][0]['fields'] = ['visibility']
+        with self.assertRaisesRegex(selection.SelectionError, 'not exact'):
+            selection.bind_fixed_c_producer_metadata_joins(changed_fixed, fixed)
+
+        helper = copy.deepcopy(self.helper_pending[:1])
+        row = helper[0]
+        observed = {
+            'index': 17, 'artifact_key': 'candidate-shared', 'table': '.symtab',
+            'member_index': None, 'member_occurrence': None, 'role': 'local-definition',
+            'row': {
+                'name': row['identity']['name'], 'version': None, 'version_default': False,
+                'row_index': row['projection']['row_index'],
+                'section_index': str(row['projection']['section_index']),
+            },
+            'definition_section': {'name': row['projection']['section']},
+        }
+        helper_accounting = {
+            'placement_joins': [{
+                'identity': row['identity'], 'artifact_key': 'candidate-shared',
+                'expected_metadata': row['metadata'], 'placement_observed': True,
+                'metadata_differences': [{'occurrence_index': 17, 'fields': []}],
+                'definition_count': 1, 'occurrence_indices': [17],
+            }],
+            'occurrences': [observed],
+        }
+        self.assertEqual(
+            selection.bind_compiler_helper_shared_placement_joins(helper_accounting, helper)[0]['occurrence_indices'],
+            [17],
+        )
+        changed_helper = copy.deepcopy(helper_accounting)
+        changed_helper['placement_joins'][0]['metadata_differences'][0]['fields'] = ['visibility']
+        with self.assertRaisesRegex(selection.SelectionError, 'absent, ambiguous or mismatched'):
+            selection.bind_compiler_helper_shared_placement_joins(changed_helper, helper)
+
     def test_owned_helpers_bind_the_selected_symtab_row_and_reject_a_leak_or_row_swap(self):
         pending = copy.deepcopy(self.helper_pending[:1])
         row = pending[0]
@@ -375,7 +431,8 @@ class NativeAbiProducerMetadataTests(unittest.TestCase):
             'placement_joins': [{
                 'identity': row['identity'], 'artifact_key': 'candidate-shared',
                 'expected_metadata': row['metadata'], 'placement_observed': True,
-                'metadata_differences': [], 'definition_count': 1, 'occurrence_indices': [17],
+                'metadata_differences': [{'occurrence_index': 17, 'fields': []}],
+                'definition_count': 1, 'occurrence_indices': [17],
             }],
             'occurrences': [observed],
         }

@@ -106,6 +106,14 @@ python3 -B compat/x86_64/native_declaration_abi.py --validate-report \
   --header-report .work/x86_64/header-declaration-input/report.json
 ```
 
+`native_abi_selection.py` can consume this current receipt with the same
+`--declaration-report` header input. It authenticates that full header envelope
+once and passes its exact return value to `validate_report`; the declaration
+reader still validates the physical header-report identity, all of its own
+current source snapshots, and every retained raw object observation. This is a
+composition-only reuse boundary, not a historical-report mode or a second
+header authority.
+
 Both collection and replay report explicit `false` values for callable
 declaration ABI completion, runtime semantics, family completion, promotion,
 and public support.  This is a private finite observation component; it does

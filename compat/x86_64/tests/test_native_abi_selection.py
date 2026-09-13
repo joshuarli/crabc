@@ -435,6 +435,7 @@ class PathAndCommandTests(unittest.TestCase):
         for variant in (
             base + ['--output', 'first', '--public-data-ordinary-link-report', '.work/ordinary/report.json'],
             base + ['--output', 'first', '--loader-debug-abi-report', '.work/loader/report.json'],
+            base + ['--output', 'first', '--ordinary-declaration-abi-report', '.work/ordinary-declaration/report.json'],
         ):
             with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as result:
                 selection.main(variant)
@@ -454,6 +455,24 @@ class PathAndCommandTests(unittest.TestCase):
             self.assertEqual(selection.main(arguments), 0)
         self.assertEqual(build.call_args.kwargs['ordinary_link_report'], Path('.work/ordinary/report.json'))
         self.assertEqual(build.call_args.kwargs['loader_debug_report'], Path('.work/loader/report.json'))
+
+    def test_cli_threads_the_ordinary_declaration_receipt_only_with_its_header_envelope(self):
+        arguments = ['build-report']
+        for flag in ('measurement-checkout', 'elf-facts', 'base-inventory', 'static-product', 'dynamic-product', 'static-preparation'):
+            arguments += ['--' + flag, '.work/not-present']
+        arguments += [
+            '--output', '.work/output',
+            '--declaration-report', '.work/header/report.json',
+            '--ordinary-declaration-abi-report', '.work/ordinary-declaration/report.json',
+        ]
+        report = {'identities': [], 'occurrences': [], 'closure': {'complete': False, 'blockers': []}}
+        with mock.patch.object(selection, 'build_report', return_value=report) as build:
+            self.assertEqual(selection.main(arguments), 0)
+        self.assertEqual(build.call_args.kwargs['declaration_report'], Path('.work/header/report.json'))
+        self.assertEqual(
+            build.call_args.kwargs['ordinary_declaration_abi_report'],
+            Path('.work/ordinary-declaration/report.json'),
+        )
 
 
 
@@ -963,12 +982,188 @@ class SelectedCallableDeclarationIntegrationTests(unittest.TestCase):
         self.assertEqual(projection['provenance']['report']['path'], 'compat/x86_64/generated/header_abi_matrix/report.json')
         self.assertIn('tgkill', inputs['provider_names'])
         self.assertIn('compat/x86_64/native_data_declarations.py', inputs['bindings'])
+        self.assertIn('compat/x86_64/native_declaration_abi.py', inputs['bindings'])
+        self.assertIn('compat/x86_64/native_declaration_abi.toml', inputs['bindings'])
+        self.assertIn('compat/x86_64/native-declaration-abi.md', inputs['bindings'])
 
     def test_checked_matrix_failure_cannot_be_projected_as_callable_evidence(self):
         contract = selection.load_contract()
         with mock.patch.object(selection.header_matrix, 'validate_checked_report', side_effect=ValueError('forged checked matrix')):
             with self.assertRaisesRegex(selection.SelectionError, 'checked callable declaration matrix rejected'):
                 selection.load_source_inputs(contract, selection.CONTRACT_PATH)
+
+
+class OrdinaryDeclarationAbiAttachmentTests(unittest.TestCase):
+    """The finite object witness must stay below one public header replay."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.contract = selection.load_contract()
+        cls.objects = {
+            row['name']: row for row in cls.contract['object_contracts']
+            if row['name'] in {'_ns_flagdata', 'in6addr_any', 'in6addr_loopback'}
+        }
+
+    def setUp(self):
+        work = ROOT / '.work/x86_64/native-abi-selection-tests'
+        work.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=work)
+        self.addCleanup(temporary.cleanup)
+        directory = Path(temporary.name)
+        self.header_report = directory / 'header-report.json'
+        self.ordinary_report = directory / 'ordinary-declaration-report.json'
+        self.header_report.write_text('{}\n')
+        self.ordinary_report.write_text('{}\n')
+
+    @staticmethod
+    def _plan():
+        return [{
+            'tree': 'candidate', 'header': 'demo.h', 'profile': 'c11-gnu', 'language': 'c',
+            'names': ['foo'],
+            'references': [{
+                'category': 'reference-backed', 'name': 'foo',
+                'source_definition_observations': ['extern-declaration-without-initializer'],
+                'expected_observation': 'ordinary-undefined-reference',
+                'holder': 'crabc_native_declaration_abi_reference_0',
+            }],
+        }]
+
+    def _replayed(self, plans, *, mismatch=False):
+        contract = selection.declaration_abi.load_contract()
+        observation = (
+            {
+                'category': 'reference-backed', 'expected_symbol': 'foo',
+                'holder': 'crabc_native_declaration_abi_reference_0',
+                'observed_symbol': '_Z3foov', 'relocation_type': 'R_X86_64_64',
+                'status': 'ordinary-linkage-identity-mismatch',
+            }
+            if mismatch else
+            {
+                'category': 'reference-backed', 'name': 'foo',
+                'status': 'ordinary-undefined-reference', 'symbol': 'foo',
+            }
+        )
+        layout = {
+            'schema': selection.declaration_abi.RECORD_LAYOUT_PROJECTION_SCHEMA,
+            'record_layout_report_schema': selection.declaration_abi.HEADER_RECORD_LAYOUT_REPORT_SCHEMA,
+            'records': [
+                {
+                    'header': fact['header'], 'object_names': list(fact['object_names']),
+                    'profiles': [{'profile': profile} for profile in fact['profiles']],
+                    'record': fact['record'],
+                }
+                for fact in contract['record_layout']
+            ],
+            'limits': copy.deepcopy(contract['limits']),
+        }
+        statuses = {'ordinary-linkage-identity-mismatch': 1} if mismatch else {'ordinary-undefined-reference': 1}
+        report = {
+            'schema': selection.declaration_abi.SCHEMA,
+            'target': selection.TARGET,
+            'oracle': selection.declaration_abi.ORACLE,
+            'callable_plan_source': {'selected_partition': 'caller-authenticated-fixture'},
+            'status': {
+                'callable_declaration_abi_complete': False,
+                'family_completion': False,
+                'object_linkage_observed': True,
+                'promotion_ready': False,
+                'public_support': False,
+                'record_layout_projection_observed': True,
+                'runtime_semantics': False,
+            },
+            'jobs': [{
+                **copy.deepcopy(plans[0]), 'ordinal': 0,
+                'observations': [observation],
+            }],
+        }
+        return {
+            'callable_plan': copy.deepcopy(plans),
+            'execution': {
+                'collector_output': '/workspace/.work/x86_64/native-declaration-abi/clean/report.json',
+                'collector_source': selection.selection_source(),
+                'image_id': 'crabc-core-evidence@sha256:' + 'a' * 64,
+                'native_context': 'Linux/x86_64', 'source_mount': '/workspace',
+                'timeout_seconds': 30, 'workers': 1,
+            },
+            'header_declaration_report': {'path': 'header-report.json'},
+            'record_layout_projection': layout,
+            'report': report,
+            'summary': {
+                'cxx_job_count': 0, 'job_count': 1, 'language_counts': {'c': 1},
+                'observation_count': 1, 'observation_status_counts': statuses,
+                'reference_category_counts': {'reference-backed': 1}, 'reference_count': 1,
+            },
+        }
+
+    def test_attachment_reuses_the_authenticated_header_envelope_and_retains_a_linkage_mismatch(self):
+        plans = self._plan()
+        replayed = self._replayed(plans, mismatch=True)
+        envelope = {'current_selecting_source': {'matches_retained': True, 'differences': []}, 'report': {'fixture': True}}
+        with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+             mock.patch.object(selection.declaration_abi, 'linkage_jobs_from_callable_account', return_value=plans), \
+             mock.patch.object(selection.declaration_abi, 'validate_report', return_value=replayed) as replay:
+            result = selection.ordinary_declaration_abi_adapter(
+                self.ordinary_report,
+                header_report=self.header_report,
+                header_envelope=envelope,
+                callable_account={'groups': ['caller-authenticated']},
+                selected_objects=list(self.objects.values()),
+            )
+        replay.assert_called_once_with(
+            self.ordinary_report, header_report=self.header_report, header_envelope=envelope,
+        )
+        self.assertEqual(result['status'], 'ordinary-object-and-record-layout-observed-with-boundaries')
+        self.assertEqual(result['linkage_mismatches'][0]['observed_symbol'], '_Z3foov')
+        self.assertEqual({row['id'] for row in result['record_layout_joins']}, {
+            'object:_ns_flagdata', 'object:in6addr_any', 'object:in6addr_loopback',
+        })
+        ns = next(row for row in result['record_layout_joins'] if row['id'] == 'object:_ns_flagdata')
+        self.assertEqual(ns['remaining_layout_limitations'], ['not-proved-by-record-layout'])
+
+    def test_attachment_rejects_an_object_plan_that_is_not_the_typed_callable_account(self):
+        plans = self._plan()
+        replayed = self._replayed(plans)
+        changed = copy.deepcopy(plans)
+        changed[0]['names'] = ['different']
+        with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+             mock.patch.object(selection.declaration_abi, 'linkage_jobs_from_callable_account', return_value=changed), \
+             mock.patch.object(selection.declaration_abi, 'validate_report', return_value=replayed), \
+             self.assertRaisesRegex(selection.SelectionError, 'plan differs'):
+            selection.ordinary_declaration_abi_adapter(
+                self.ordinary_report,
+                header_report=self.header_report,
+                header_envelope={'current_selecting_source': {'matches_retained': True, 'differences': []}, 'report': {}},
+                callable_account={'groups': ['caller-authenticated']},
+                selected_objects=list(self.objects.values()),
+            )
+
+    def test_declaration_composition_passes_its_one_header_envelope_to_the_object_reader(self):
+        fixture_path = ROOT / 'compat/x86_64/tests/test_native_callable_declarations.py'
+        spec = importlib.util.spec_from_file_location('ordinary_declaration_attachment_fixture', fixture_path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        fixture = module.NativeCallableDeclarationsTests()
+        envelope = fixture.envelope()
+        partition = fixture.partition()
+        ordinary = {'status': 'ordinary-object-and-record-layout-observed-with-boundaries'}
+        with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+             mock.patch.object(selection.declaration_inventory, 'validate_report', return_value=envelope) as header_replay, \
+             mock.patch.object(data_declarations, 'account_declarations', return_value={'selected_data_declaration_status': 'fixture'}), \
+             mock.patch.object(selection.callable_declarations.data_declarations, '_report_envelope', side_effect=fixture.authenticated_envelope), \
+             mock.patch.object(selection, 'ordinary_declaration_abi_adapter', return_value=ordinary) as ordinary_replay:
+            result = selection.declaration_adapter(
+                self.header_report,
+                selected_objects=selection.load_contract()['object_contracts'],
+                callable_matrix_projection=fixture.matrix_projection(),
+                ordinary_declaration_abi_report=self.ordinary_report,
+                **partition,
+            )
+        header_replay.assert_called_once_with(self.header_report, project_include=ROOT / 'include')
+        ordinary_replay.assert_called_once()
+        self.assertIs(ordinary_replay.call_args.kwargs['header_envelope'], envelope)
+        self.assertEqual(ordinary_replay.call_args.kwargs['header_report'], self.header_report)
+        self.assertEqual(result['ordinary_declaration_abi'], ordinary)
 
 
 def empty_facts():

@@ -116,6 +116,20 @@ sole candidate-only native extension is the existing exact `tgkill` record.
 It does not infer language linkage, select a provider, use macro or GCC
 fallback records as declarations, prove runtime behavior, or close any family.
 
+When the current ordinary declaration-object receipt is available, supply it
+as `--ordinary-declaration-abi-report REPORT` together with
+`--declaration-report REPORT`. The selector replays the full public header
+envelope once, then passes that exact authenticated envelope to
+[`native_declaration_abi.py`](native-declaration-abi.md). The component still
+reconstructs and checks its own current source snapshots, raw compiler/object
+evidence, callable plan, and record-layout projection; the shared envelope
+only avoids rereading the retained header receipt. Its finite joins retain all
+ordinary C/C++ object observations, including the four `membarrier` C++
+spelling mismatches, and attach only `_ns_flagdata` element and `in6_addr`
+record facts. They do not select a provider, establish `h_errno` storage
+lifecycle, erase language-linkage differences, or change the aggregate
+completion, family, promotion, or public-support flags.
+
 ## Selection inputs and definition domains
 
 Keep the frozen AArch64 capability, header, and ABI inputs unchanged. Correlate
