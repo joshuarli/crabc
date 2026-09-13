@@ -135,8 +135,11 @@ digests, or projection cannot substitute for those bytes.
 command. It admits only the exact committed collector/source epoch: it reads
 the trusted local checkout HEAD without invoking Git, verifies each retained
 source blob and mode against both the captured tree and the trusted local
-checkout, and requires the static-preparation source revision to equal that
-same HEAD. It requires every command record's program to be the executable
+checkout. The collector epoch remains distinct from the selected static/dynamic
+product cohort: the static preparation's source revision and whole-source hash
+are retained with its before/after seals, and the dynamic materialization state
+must name that same whole-source hash. It requires every command record's
+program to be the executable
 named by its exact argv, and admits that program only when its retained bytes
 equal the trusted immutable-image manifest or its copied owned product bytes. It then
 rehashes product trees, manifests, materialization state, object/dependency

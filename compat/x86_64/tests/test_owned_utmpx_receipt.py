@@ -208,6 +208,24 @@ class OwnedUtmpxReceiptTests(unittest.TestCase):
             receipt.validate_image_tool(program, receipt.identity(self.workspace, forged),
                                         self.workspace, {}, manifest)
 
+    def test_selected_product_epoch_is_distinct_from_the_collector_epoch(self) -> None:
+        collector = receipt.local_git_head(ROOT)
+        selected = {"revision": "f" * 40, "content_sha256": "b" * 64}
+        self.assertNotEqual(selected["revision"], collector)
+        seals = {}
+        for name in receipt.PREPARATION_SOURCE_SEALS:
+            path = self.workspace / ".work/utmpx-receipt/inputs/static-preparation" / name
+            self.write(path, selected)
+            record = receipt.identity(self.workspace, path)
+            seals[name] = {key: record[key] for key in ("path", "sha256", "size")}
+            seals[name]["path"] = ".work/x86_64/frozen-product/" + name
+        preparation = {
+            "schema": receipt.STATIC_PREPARATION_SCHEMA, "status": "prepared-unqualified",
+            "work": ".work/x86_64/frozen-product", "source": selected, "source_seals": seals,
+            "pins": {}, "products": {}, "archives": {}, "steps": {},
+        }
+        self.assertEqual(receipt.selected_product_epoch(preparation, self.workspace), selected)
+
     def test_mixed_static_dynamic_source_cohorts_are_rejected(self) -> None:
         source = {"revision": "a" * 40, "content_sha256": "b" * 64}
         state = {

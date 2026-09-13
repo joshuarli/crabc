@@ -875,15 +875,19 @@ def _preparation_tree_identity(root: Path, product: Path) -> dict[str, Any]:
     return normalized
 
 
-def _validate_static_preparation(preparation: Mapping[str, Any], workspace: Path, static: Path) -> dict[str, str]:
-    """Join the copied static product to its own source-bound preparation."""
+def selected_product_epoch(preparation: Mapping[str, Any], workspace: Path) -> dict[str, str]:
+    """Read the retained static preparation's independently sealed product epoch."""
     require(set(preparation) == {"schema", "status", "work", "source", "source_seals", "pins", "products", "archives", "steps"}
             and preparation["schema"] == STATIC_PREPARATION_SCHEMA and preparation["status"] == "prepared-unqualified"
             and type(preparation["work"]) is str and preparation["work"].startswith(".work/")
             and ".." not in Path(preparation["work"]).parts,
             "static preparation contract differs")
+    # The static preparation names the selected product epoch.  It may be an
+    # earlier committed source cohort than this collector/reader; the receipt
+    # records those identities separately.  Do not replace this join with the
+    # collector HEAD: that would reject valid frozen product inputs and blur
+    # product provenance with the code that later reads it.
     source = _source_epoch(preparation["source"], "static preparation")
-    require(source["revision"] == local_git_head(ROOT), "static preparation is not from the trusted current source epoch")
     seals = preparation["source_seals"]
     require(type(seals) is dict and set(seals) == set(PREPARATION_SOURCE_SEALS), "static preparation source seals differ")
     for name in PREPARATION_SOURCE_SEALS:
@@ -896,6 +900,12 @@ def _validate_static_preparation(preparation: Mapping[str, Any], workspace: Path
                 "static preparation source seal differs: " + name)
         same(read_json(retained, "retained static preparation " + name), source,
              "static preparation source seal content differs: " + name)
+    return source
+
+
+def _validate_static_preparation(preparation: Mapping[str, Any], workspace: Path, static: Path) -> dict[str, str]:
+    """Join the copied static product to its own source-bound preparation."""
+    source = selected_product_epoch(preparation, workspace)
     products = preparation["products"]
     require(type(products) is dict and set(products) == {"primary", "reproduction", "extracted"},
             "static preparation product roster differs")
@@ -913,7 +923,6 @@ def _validate_static_preparation(preparation: Mapping[str, Any], workspace: Path
     same(primary["tree"], _preparation_tree_identity(workspace, static),
          "static preparation primary tree differs from the copied static product")
     return source
-
 
 def _validate_dynamic_source_epoch(state: Mapping[str, Any], source: Mapping[str, str]) -> None:
     """Reject a dynamic materialization whose whole-source hash names another cohort."""
