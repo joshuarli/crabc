@@ -63,8 +63,10 @@ static and static-PIE when a static product is available, and dynamic PIE and
 non-PIE through both kernel dispatch and the direct loader. Dynamic-only input
 therefore reports only its supplied dynamic modes. Every owned link carries a
 sealed receipt validated before execution, and raw stdout, stderr, and process
-status are retained alongside the exact symbol multiplicity checks for the
-archive, shared library, and final executables.
+status are retained alongside exact provider/alias checks for the archive,
+shared library, and static final executables. Dynamic final executables retain
+their complete ELF rows and must import all sixteen public names from the
+shared library; they do not define those providers themselves.
 
 The probe checks same-address identity for all nine weak aliases. It calls each
 strong and weak spelling with ordinary, null, and protected ignored inputs,
@@ -86,3 +88,87 @@ product replay paths. The `utmpx` case is mandatory in every dynamic product
 qualification. The owned-static callable roster accounts for all sixteen
 public names and the eight explicit same-address alias relationships;
 `utmpname` is itself the weak Rust provider for the shared name-rejection body.
+
+## Retained receipt boundary
+
+`compat/x86_64/owned_utmpx_receipt.py` adds a component-only receipt around the
+existing runner. It does not select aliases, change the runtime, or turn the
+historical RED into qualification. The collector has a deliberately narrow
+interface:
+
+```text
+python3 -B compat/x86_64/owned_utmpx_receipt.py collect \
+  --static-preparation /workspace/.work/.../static/preparation.json \
+  --static-product /workspace/.work/.../static \
+  --dynamic-product /workspace/.work/.../dynamic \
+  --output /workspace/.work/.../owned-utmpx-receipt
+```
+
+It is invoked only from the pinned native `/workspace` mount. The image is the
+fixed `crabc-core-evidence@sha256:5990e55b88db10c7dc82bb57b8087be74282ddb0c50f1dc88f05cec63ce95b8d`.
+`owned_utmpx_image_inputs.json` is a finite generated manifest of that image's
+runner commands, compiler support programs, musl oracle inputs, Rust compiler,
+and LLD. Collection regenerates the manifest inside that exact image before
+and after the runner; the collector refuses a mismatch. It also refuses a
+dirty source revision, same or symlinked product inputs, a static preparation
+outside the physical checkout work tree, a pre-existing private evidence leaf,
+or a runner that does not execute the full supplied static/static-PIE and
+dynamic PIE/non-PIE matrix. The ordinary
+`run_owned_utmpx.sh` lifecycle remains unchanged. Collection sets its private
+`CRABC_X86_64_RETAIN_UTMPX_COMMANDS=1` switch, which rejects every other value
+before evidence creation and uses a fixed private receipt leaf only for this
+mode. If that native runner fails, collection preserves only its raw stdout,
+stderr, and status as a `native-runner-failure` diagnostic below the fresh
+output; it does not create a receipt report or imply replayable evidence.
+
+The receipt copies the exact selected source and runner inputs; the static
+preparation plus its before/after whole-source seals; both complete product
+trees, manifests, and the dynamic materialization state; command programs and
+linker; installed-driver object/dependency record; sealed-link receipts and
+sidecars; raw archive/shared/final-executable ELF symbol streams (and the
+static-final provider renderings); retained C/C++
+header-witness objects and their source-hash input file; and every raw
+oracle/candidate process stream. The preparation primary tree must equal the
+copied static tree and its full source digest must equal the materialized
+dynamic state digest, so static and dynamic products form one exact current
+source cohort. Command roles are a closed roster, with reconstructed
+installed-driver, musl link, owned static/static-PIE, dynamic PIE/non-PIE,
+symbol, sealed-link, and runtime envelopes. In retained mode collection starts
+the runner with only its fixed image `PATH`, private `TMPDIR`, and retention
+switch; each command child then receives exactly the sealed `PATH`, `TMPDIR`,
+switch, `SHLVL=0`, and Bash-resolved program `_` entry. The command/v2 record
+contains that full environment, its complete argv, cwd, and resolved program.
+The twelve inline Python judges retain their stdin source as physical 0644
+files. Host replay admits those bytes only when they match the reader's fixed
+per-role digest and size, so repairing a receipt-side stdin identity cannot
+authorize a different judge. A report's status, counts, product digests, or
+projection cannot substitute for those bytes.
+
+`validate-report RECEIPT/report.json` is public host replay. It executes no
+command. It admits only the exact committed collector/source epoch: it reads
+the trusted local checkout HEAD without invoking Git, verifies each retained
+source blob and mode against both the captured tree and the trusted local
+checkout. The collector epoch remains distinct from the selected static/dynamic
+product cohort: the static preparation's source revision and whole-source hash
+are retained with its before/after seals, and the dynamic materialization state
+must name that same whole-source hash. It requires every command record's
+program to be the executable
+named by its exact argv, and admits that program only when its retained bytes
+equal the trusted immutable-image manifest or its copied owned product bytes. It then
+rehashes product trees, manifests, materialization state, object/dependency
+records, and raw streams; reconstructs every retained
+archive/shared/final `readelf` symbol row from the actual ELF or ar bytes;
+cross-checks every selected archive/static-final `nm` provider address,
+binding, and archive-member domain against those reconstructed rows; uses the
+existing bounded retained-link parser on all four copied links; and for the
+two static links re-derives every traced object/member from copied product
+bytes before joining `main`, `_start`, seven global providers, and nine weak
+providers to their fully relocated final ELF bytes. That last finite map and
+relocation proof is the byte-identical reviewed
+`compat/x86_64/owned_static_link_authority.py` extraction from commit
+`4847fff0284b515baac336f572edd1b1e1bf544d` (SHA-256
+`bbb8e460abfd44a50850f2fe4f5e7395db1a7ee8391f5be5f18d26a36a21d475`);
+the utmpx reader admits its exact source byte in the collector roster. It then
+derives the eight-alias component projection itself.
+The projection explicitly remains component complete only; family completion,
+runtime qualification, and public support remain false.
