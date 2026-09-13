@@ -16,7 +16,7 @@ input identity; this component neither expands nor relabels it.
 
 The reader seals the current collector source identity, the supplied selected
 product report, the exact supplied static and dynamic product bytes, pinned
-musl archive/shared inputs, exact command arguments, fixed runner environment
+musl archive/shared inputs, exact command arguments, a closed runner environment
 and /dev/null standard input, linker maps and receipts, actual ELF symbol
 tables, and the five executable modes: static,
 static PIE, musl dynamic PIE/non-PIE, and crabc dynamic PIE/non-PIE. A finite
@@ -28,7 +28,26 @@ contract, CRT, archive-member, and builtins inputs; the four public providers
 keep their `WEAK DEFAULT` forms and the four owned providers must change from
 `GLOBAL HIDDEN` inputs to `LOCAL HIDDEN` final definitions. Final dynamic
 outputs must import each public `FUNC GLOBAL DEFAULT` name and must not expose
-the private provider.
+the private provider. `owned_pthread_timed_dynamic_authority.py` additionally
+binds the complete finite contract probe implementation in each dynamic output:
+the eleven function bodies, local data and constant geometry, and their
+admitted PC-relative and PLT/GOT relocation forms.
+
+`owned_pthread_timed_feature_contract_reader.py --collect-native` is the sole
+receipt-producing entry point. Before Bash starts, it invokes the runner from
+a Python `subprocess.run` call with one literal allowlisted environment and
+`/dev/null` standard input. The sealed environment record includes the sole
+Git `safe.directory` configuration for `/workspace` and the four values Bash
+creates (`PWD`, `OLDPWD`, `SHLVL`, and `_` for the pinned Python interpreter).
+Toolchain-routing variables and exported shell functions from a caller cannot
+reach the runner. A direct shell invocation remains a diagnostic command; it
+does not establish a retained receipt.
+
+The static driver permits only relative receipt names. The runner changes into
+the receipt work directory only for that driver invocation, so each receipt
+records its map and trace as a sibling basename. The product validator resolves
+those names from the receipt's physical parent and rejects a checkout-relative
+path nested below that parent.
 
 `owned_pthread_timed_feature_contract_reader.py` also checks the source feature
 route: the `x86-owned-static-runtime` parity entry, `libc/Cargo.toml`, the
@@ -40,9 +59,17 @@ archives. `owned_posix_static_products.validate_receipt` replays that cohort
 against a physical selected source tree materialized solely from retained
 selected Git commit/tree/blob objects. This binds the selected archive to the
 actual successful `primary-build` outer invocation and source identity. The
-nested feature argument remains a source-derived builder contract rather than
-an independently recorded nested argv; this receipt does not broaden that
-distinction.
+replayed primary tree's static manifest, driver, two entry objects, prologue,
+epilogue, builtins archive, and `libc.a` must exactly match the supplied static
+inputs that the component then links. The nested feature argument remains a
+source-derived builder contract rather than an independently recorded nested
+argv; this receipt does not broaden that distinction.
+
+Public replay repeats the complete selected-product join: every captured static
+CRT/builtins/archive input and every captured dynamic CRT, attach, builtins,
+driver, loader, and shared-lib input must retain its exact original path below
+the selected product root and the digest named by that root's manifest. The
+compact selector-facing product paths do not reduce that reader obligation.
 
 The current native collection invokes
 `owned_posix_product_evidence.validate_link` for the two static and two
@@ -50,7 +77,16 @@ dynamic output receipts. Its source-owned link-input mode projection fixes all
 six static inputs to `0644`, and fixes six dynamic CRT/archive inputs to `0644` with
 `usr/lib/libc.so` at `0755`. Replay compares the retained role modes to that
 Git-bound projection; it never treats a copied product tree's own record as
-mode authority.
+mode authority. The component additionally fixes the two drivers and owned
+loader at `0755`, keeps `contract.o` at `0644`, and requires each final
+contract executable at `0755`. Before each chroot run, the runner materializes
+the root and every directory at `0755`; dynamic payload files are `0644` apart
+from its driver, loader, and `libc.so`, which are `0755`. The retained tree
+record replays those root, directory, file-byte, and file-mode facts.
+Replay also calls that owner's retained ELF audit for each owned final output:
+static outputs have no interpreter, `DT_NEEDED`, or `DT_TEXTREL`; dynamic
+outputs have the owned interpreter, exactly `libc.so`, `/usr/lib` RUNPATH, no
+RPATH, and no `DT_TEXTREL`.
 
 The installed-header probe checks only these ordinary outcomes:
 

@@ -122,6 +122,54 @@ class TimedFeatureReceiptBoundaryTests(unittest.TestCase):
             finally:
                 reader.IMAGE_MANIFEST_PATH = old_path
 
+    def test_every_collector_dependency_has_one_retained_authority_path(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        retained = [reader._collector_copy_path(name) for name in reader.COLLECTOR_PATHS]
+        self.assertEqual(len(retained), len(set(retained)))
+        self.assertEqual(
+            set(reader.COLLECTOR_PATHS),
+            {
+                "probe", "reader", "runner", "syscall_authority", "static_authority",
+                "elf_authority", "static_preparation_owner", "static_package_owner",
+                "product_validator", "dynamic_probe_authority", "image_manifest",
+            },
+        )
+
+    def test_native_collection_requires_its_complete_runner_boundary(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        parsed = reader._parse_args((
+            "--collect-native", "--root", "/workspace", "--receipt-dir", "/workspace/.work/receipt",
+            "--product-report", "/workspace/.work/products/report.json",
+            "--static-preparation", "/workspace/.work/products/preparation.json",
+            "--historical-inputs", "/workspace/.work/products/historical.json",
+            "--historical-source-commit", "0" * 40,
+            "--static-product", "/workspace/.work/products/static",
+            "--dynamic-product", "/workspace/.work/products/dynamic",
+        ))
+        self.assertTrue(parsed.collect_native)
+        with self.assertRaises(reader.ReceiptError):
+            reader._parse_args((
+                "--collect-native", "--root", "/workspace", "--receipt-dir", "/workspace/.work/receipt",
+                "--product-report", "/workspace/.work/products/report.json",
+                "--historical-inputs", "/workspace/.work/products/historical.json",
+                "--historical-source-commit", "0" * 40,
+                "--static-product", "/workspace/.work/products/static",
+                "--dynamic-product", "/workspace/.work/products/dynamic",
+            ))
+
+    def test_non_native_actions_reject_native_collection_options(self) -> None:
+        reader = importlib.import_module("owned_pthread_timed_feature_contract_reader")
+        with self.assertRaises(reader.ReceiptError):
+            reader._parse_args((
+                "--capture-source", "--root", "/workspace", "--output", "/workspace/source.json",
+                "--receipt-dir", "/workspace/.work/receipt",
+            ))
+        with self.assertRaises(reader.ReceiptError):
+            reader._parse_args((
+                "--validate-report", "/workspace/report.json",
+                "--dynamic-product", "/workspace/.work/products/dynamic",
+            ))
+
 
 if __name__ == "__main__":
     unittest.main()

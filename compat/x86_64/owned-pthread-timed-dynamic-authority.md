@@ -14,6 +14,15 @@ It calls this function separately for `dynamic-pie-contract` and
 contracts for all eleven probe functions as well as its CRT and provider
 roster. This module does not change the shared static proof.
 
+The physical-file API itself does not admit the source object. Before calling
+it, the caller must authenticate that exact `contract.o` as the output named
+by its admitted Git C source, actual compile argv, environment and tool
+provenance, then bind the same object identity to every dynamic link receipt.
+This is the established source/command/tool provenance boundary; it is not an
+offline C-to-object semantic proof or cryptographic execution attestation.
+Consistent changes to an independently admitted object and its correctly
+relocated final image can preserve the relation this module proves.
+
 The eleven definitions are `main` and ten local helpers: `deadline_after`,
 `wait_ready`, `mutex_holder`, `test_mutex_timedlock`,
 `first_spurious_timedwait`, `signaler`, `test_condition_timedwait`, `target`,
