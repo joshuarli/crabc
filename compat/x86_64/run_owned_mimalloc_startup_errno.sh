@@ -96,8 +96,8 @@ run_in_root() {
 run_static_mode() {
     local product="$1" mode="$2" candidate="$work/static-$mode" root="$work/static-$mode-root"
 
-    "$product/bin/crabc-cc" "-$mode" --link-receipt "$work/static-$mode.crabc-link.json" \
-        "$work/workload.o" -o "$candidate"
+    (cd "$work" && "$product/bin/crabc-cc" "-$mode" \
+        --link-receipt "static-$mode.crabc-link.json" "$work/workload.o" -o "$candidate")
     mkdir -p "$root/work"
     cp "$candidate" "$root/work/probe"
     run_in_root "$root" "static-$mode" /work/probe
@@ -106,8 +106,8 @@ run_static_mode() {
 run_dynamic_mode() {
     local product="$1" mode="$2" candidate="$work/dynamic-$mode" entry root
 
-    "$product/bin/crabc-cc-dynamic" "--dynamic-$mode" \
-        --link-receipt "$work/dynamic-$mode.crabc-link.json" "$work/workload.o" -o "$candidate"
+    (cd "$work" && "$product/bin/crabc-cc-dynamic" "--dynamic-$mode" \
+        --link-receipt "dynamic-$mode.crabc-link.json" "$work/workload.o" -o "$candidate")
     for entry in kernel direct; do
         root="$work/dynamic-$mode-$entry-root"
         mkdir -p "$root/lib" "$root/usr/lib" "$root/work"
