@@ -2906,7 +2906,12 @@ def validate_report(
             "family_completion": False,
             "promotion_ready": False,
             "public_support": False,
-        },
+        }
+        # JSON numbers are not measurement-status booleans, even though
+        # Python considers 0 == False. Preserve the exact v1 field types.
+        and all(report["status"][field] is False for field in (
+            "family_completion", "promotion_ready", "public_support",
+        )),
         "native ABI inventory status drifted",
     )
 

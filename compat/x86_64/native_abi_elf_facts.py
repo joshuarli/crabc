@@ -74,6 +74,41 @@ ARTIFACTS = (
     Artifact('dynamic-builtins', 'candidate-dynamic', 'usr/lib/libcrabc-builtins.a', 'archive', 'REL'),
 )
 
+# Every non-ELF product placement is explicit too. REQUIRED names are the
+# drivers/helpers in the imported product contracts; metadata names are the
+# remaining regular payloads installed by their builders/materializer. An
+# unknown name cannot be ignored because it lacks a familiar ELF suffix.
+NON_ELF_REQUIRED = {
+    'candidate-static': ('bin/crabc-cc',),
+    'candidate-dynamic': ('bin/crabc-cc-dynamic', 'share/crabc/crabc_cc_static.py',
+                          'share/crabc/owned_dynamic_receipt.py'),
+}
+NON_ELF_METADATA = {
+    'candidate-static': (
+        'share/crabc/build.commands.json', 'share/crabc/crt.commands.json',
+        'share/crabc/crt.provenance.json', 'share/crabc/headers.provenance.json',
+        'share/crabc/libc-static.provenance.json', 'share/crabc/libcrabc-builtins.provenance.json',
+    ),
+    'candidate-dynamic': (
+        'share/crabc/builtins.provenance.json', 'share/crabc/crt.commands.json',
+        'share/crabc/crt.provenance.json', 'share/crabc/dynamic-product-state.json',
+        'share/crabc/libc-shared.elf.json', 'share/crabc/libc-shared.provenance.json',
+        'share/crabc/loader.elf.json', 'share/crabc/loader.provenance.json',
+        'share/crabc/producer-tools.json',
+    ),
+}
+
+
+def _installed_header_placements() -> set[str]:
+    """Both product builders install exactly the current include/ file roster.
+
+    This reuses the physical regular-file tree reader, including its rejection
+    of symlinks. Source header *names* classify placements; v1 still binds each
+    product's actual header bytes and distinct product build provenance.
+    """
+    tree = inventory._header_tree_identity(ROOT / 'include')
+    return {'usr/' + row['path'] for row in tree['files']}
+
 
 def _command_specs(artifact: Artifact) -> tuple[tuple[str, str, str], ...]:
     prefix = (('members', 'ar', 't'),) if artifact.kind == 'archive' else ()
@@ -81,20 +116,25 @@ def _command_specs(artifact: Artifact) -> tuple[tuple[str, str, str], ...]:
 
 
 def _require_product_artifact_rosters(base: Mapping[str, Any]) -> None:
-    # These fixed sets are independently cross-checked against the imported
-    # product contracts and every relevant manifest payload; no prefix hiding.
+    # Review required contract changes before examining manifest membership.
+    # ELF additions require explicit observation and v1 correlation decisions;
+    # neither a suffix nor product-manifest presence makes that decision.
     for owner, contract in (
         ('candidate-static', inventory.product_evidence.STATIC_REQUIRED),
         ('candidate-dynamic', inventory.product_evidence.DYNAMIC_REQUIRED),
     ):
-        expected = {item.relative for item in ARTIFACTS if item.owner == owner}
-        def elf_placement(path: str) -> bool:
-            return path.endswith(('.a', '.o', '.so')) or path == 'lib/ld-crabc-x86_64.so.1'
-        require({path for path in contract if elf_placement(path)} == expected,
-                f'{owner} ELF artifact roster differs from product contract')
+        elf = [item.relative for item in ARTIFACTS if item.owner == owner]
+        expected = [*elf, *NON_ELF_REQUIRED[owner]]
+        require(len(expected) == len(set(expected)) and len(contract) == len(set(contract))
+                and set(contract) == set(expected), f'{owner} placement roster differs from product contract')
+    headers = _installed_header_placements()
+    for owner in ('candidate-static', 'candidate-dynamic'):
+        expected = [*(item.relative for item in ARTIFACTS if item.owner == owner),
+                    *NON_ELF_REQUIRED[owner], *NON_ELF_METADATA[owner], *headers]
+        require(len(expected) == len(set(expected)), f'{owner} placement classifications overlap')
         product = base['inputs']['static_product' if owner == 'candidate-static' else 'dynamic_product']
-        require({path for path in product['payload_files'] if elf_placement(path)} == expected,
-                f'{owner} ELF artifact roster differs from manifest')
+        require(set(product['payload_files']) == set(expected),
+                f'{owner} classified placement roster differs from manifest')
 
 
 def _artifact_records(base: Mapping[str, Any], static_product: Path, dynamic_product: Path) -> dict[str, Any]:

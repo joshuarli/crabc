@@ -52,6 +52,21 @@ The explicit `ARTIFACTS` roster has 17 placements. Its candidate membership must
 agree with both the imported static/dynamic product contracts and the relevant
 manifest payloads. Equal bytes never merge two placements.
 
+Placement classification is closed. `NON_ELF_REQUIRED` explicitly names each
+driver/helper required by the product contracts, and `NON_ELF_METADATA` names
+each other installed metadata payload. Those sets, the exact ELF placements,
+and the current source `include/` regular-file roster must account for every
+manifest payload exactly once. Header names classify placements; the validated
+v1 product receipts bind their actual bytes and build provenance. An older
+product with a different installed header roster therefore needs an explicit
+contract update before collection. The existing loader compatibility symlink
+remains an independently validated v1 alias rather than a regular payload.
+
+No filename extension admits or excludes a payload. A new versioned DSO,
+arbitrary ELF filename, driver, metadata file or header placement rejects until
+classified. An ELF addition also needs an explicit observation and correlation
+decision; adding it to a product manifest does not extend the v1 public view.
+
 | Owner | Artifact placements | Count |
 | --- | --- | ---: |
 | Pinned musl reference | `lib/libc.a`, `lib/libc.so` | 2 |
@@ -84,6 +99,11 @@ truncated or inconsistent projections reject. Failed tool observations retain
 raw bytes and `commands.json` for inspection but do not produce an accepted
 report. Hashes bind retained observations; they are not a signature of an
 untrusted collector.
+
+The underlying v1 reader also requires literal `false` for its three fixed
+measurement-status flags. Rebinding a base report with numeric `0` cannot turn
+Python equality into an accepted Boolean contract. This corrects the reader's
+type check without changing the v1 schema or its source/product revision rules.
 
 `native_abi_inventory.parse_elf_facts` joins the hardened complete header,
 section and symbol-table APIs for standalone `REL` or `DYN` ELF. Its archive

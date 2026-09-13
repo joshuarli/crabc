@@ -38,6 +38,24 @@ class CompleteElfFactTests(unittest.TestCase):
             owners = {row.owner for row in facts.ARTIFACTS if row.relative == relative}
             self.assertEqual(owners, {'candidate-static', 'candidate-dynamic'})
 
+    def test_versioned_dso_addition_to_product_contract_and_manifest_is_unclassified(self):
+        self.require_unclassified_contract_addition('usr/lib/libfuture.so.1')
+
+    def test_arbitrary_elf_filename_addition_to_product_contract_and_manifest_is_unclassified(self):
+        self.require_unclassified_contract_addition('usr/lib/runtime-image')
+
+    def require_unclassified_contract_addition(self, relative):
+        for owner, contract_name in (('static_product', 'STATIC_REQUIRED'), ('dynamic_product', 'DYNAMIC_REQUIRED')):
+            base = {'inputs': {
+                'static_product': {'payload_files': dict.fromkeys(facts.inventory.product_evidence.STATIC_REQUIRED, 'a' * 64)},
+                'dynamic_product': {'payload_files': dict.fromkeys(facts.inventory.product_evidence.DYNAMIC_REQUIRED, 'b' * 64)},
+            }}
+            base['inputs'][owner]['payload_files'][relative] = 'c' * 64
+            contract = getattr(facts.inventory.product_evidence, contract_name)
+            with self.subTest(owner=owner), mock.patch.object(facts.inventory.product_evidence, contract_name, (*contract, relative)):
+                with self.assertRaisesRegex(facts.inventory.InventoryError, 'product contract'):
+                    facts._require_product_artifact_rosters(base)
+
     def test_shared_dynsym_and_symtab_both_require_independent_section_rows(self):
         header = HEADER.replace('REL (Relocatable file)', 'DYN (Shared object file)')
         header = header.replace('Number of section headers:         5', 'Number of section headers:         6')
@@ -81,7 +99,8 @@ class ElfFactReceiptTests(unittest.TestCase):
             ('candidate-static', self.static, facts.inventory.STATIC_PRODUCT_PATH, 'static_product'),
             ('candidate-dynamic', self.dynamic, facts.inventory.DYNAMIC_PRODUCT_PATH, 'dynamic_product'),
         ):
-            payloads = {}
+            payloads = dict.fromkeys((*facts.NON_ELF_REQUIRED[owner], *facts.NON_ELF_METADATA[owner],
+                                      *facts._installed_header_placements()), 'a' * 64)
             for item in facts.ARTIFACTS:
                 if item.owner != owner:
                     continue
@@ -147,6 +166,7 @@ class ElfFactReceiptTests(unittest.TestCase):
         self.source_mock = mock.patch.object(facts.inventory, 'collector_source_seal', return_value=self.seal)
         self.source_mock.start()
         self.addCleanup(self.source_mock.stop)
+        self.real_base_reader = facts.inventory.validate_report
         self.base_mock = mock.patch.object(facts.inventory, 'validate_report', return_value=self.base)
         self.validated_base = self.base_mock.start()
         self.addCleanup(self.base_mock.stop)
@@ -166,6 +186,46 @@ class ElfFactReceiptTests(unittest.TestCase):
         self.assertTrue(any(row['section_index'] == 'UND' and row['name'] is not None for row in rows))
         self.validated_base.assert_called_once_with(self.base_path, static_product=self.static,
                                                      dynamic_product=self.dynamic, static_preparation=self.preparation)
+
+    def test_entire_manifest_requires_exact_elf_non_elf_metadata_and_header_placements(self):
+        for product in ('static_product', 'dynamic_product'):
+            original = dict(self.base['inputs'][product]['payload_files'])
+            for relative in ('usr/lib/libfuture.so.1', 'usr/lib/runtime-image',
+                             'share/crabc/unclassified.json', 'usr/include/unclassified.h', 'usr/lib/crt1.o',
+                             'usr/include/stdio.h', 'share/crabc/crt.provenance.json'):
+                payloads = dict(original)
+                if relative in payloads:
+                    del payloads[relative]
+                else:
+                    payloads[relative] = 'f' * 64
+                self.base['inputs'][product]['payload_files'] = payloads
+                with self.subTest(product=product, relative=relative), self.assertRaisesRegex(
+                        facts.inventory.InventoryError, 'classified placement roster differs from manifest'):
+                    self.replay()
+            self.base['inputs'][product]['payload_files'] = original
+
+    def test_duplicate_required_contract_placement_is_rejected(self):
+        contract = facts.inventory.product_evidence.DYNAMIC_REQUIRED
+        with mock.patch.object(facts.inventory.product_evidence, 'DYNAMIC_REQUIRED', (*contract, contract[0])):
+            with self.assertRaisesRegex(facts.inventory.InventoryError, 'product contract'):
+                self.replay()
+
+    def test_rebound_numeric_base_status_is_rejected_by_real_v1_reader(self):
+        base = copy.deepcopy(self.base)
+        base.update(schema=facts.inventory.SCHEMA, target=facts.inventory.TARGET,
+                    collector_sources={}, header_closure={}, commands={}, triage={})
+        base['status'] = {'classification': 'measurement-only-not-compatibility-or-promotion',
+                          'family_completion': False, 'promotion_ready': False, 'public_support': 0}
+        self.base_path.write_bytes(facts.inventory._stable_json(base))
+        retained = self.output / 'inputs/base-inventory-report.json'
+        retained.write_bytes(self.base_path.read_bytes())
+        snapshot = self.report['base_inventory']['report']
+        snapshot['original'] = facts.inventory.file_record(self.base_path, logical_path=str(facts.BASE_REPORT))
+        snapshot['retained'] = facts.inventory.file_record(retained, logical_path='inputs/base-inventory-report.json')
+        with mock.patch.object(facts.inventory, 'validate_report', self.real_base_reader), mock.patch.object(
+                facts.inventory, '_validate_collector_source_seal'):
+            with self.assertRaisesRegex(facts.inventory.InventoryError, 'inventory status drifted'):
+                self.replay()
 
     def test_json_boolean_and_numeric_substitutions_are_not_equivalent_receipts(self):
         for change in ('status', 'row-index', 'raw-size'):
