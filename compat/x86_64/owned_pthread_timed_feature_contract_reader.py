@@ -113,6 +113,21 @@ FINAL_STATIC_PROVIDER_SHAPES = {
     provider: ("FUNC", "LOCAL", "HIDDEN") for provider in ARCHIVE_HIDDEN
 }
 PTHREAD_STATIC_MEMBER = "c.c.9c0a881dcc98e279-cgu.0.rcgu.o"
+# These ten internal C helpers contain the actual bounded runtime observations;
+# main only dispatches them. Their source and final bytes are separate static
+# contracts so an unchanged main/provider map cannot discharge a replaced body.
+PROBE_HELPERS = (
+    "deadline_after",
+    "wait_ready",
+    "mutex_holder",
+    "test_mutex_timedlock",
+    "first_spurious_timedwait",
+    "signaler",
+    "test_condition_timedwait",
+    "target",
+    "cancelable_joiner",
+    "test_join_modes",
+)
 # The raw archive observation includes retained DWARF section relocations as
 # well as executable sections. This table only spells their readelf rendering;
 # it does not broaden the shared static linker authority's accepted relocation
@@ -1700,6 +1715,10 @@ def _static_function_contracts(
             StaticFunctionContract(public, provider_owner, "WEAK", "DEFAULT", "WEAK", "DEFAULT"),
             StaticFunctionContract(provider, provider_owner, "GLOBAL", "HIDDEN", "LOCAL", "HIDDEN"),
         ))
+    rows.extend(
+        StaticFunctionContract(name, f"{work_path}/contract.o", "LOCAL", "DEFAULT", "LOCAL", "DEFAULT")
+        for name in PROBE_HELPERS
+    )
     return tuple(rows)
 
 
