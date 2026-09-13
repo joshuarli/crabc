@@ -170,6 +170,14 @@ class PhysicalAccountingTests(unittest.TestCase):
         right['artifact_key'] = 'candidate-shared'
         self.assertFalse(selection.same_definition_domain(left, right))
 
+    def test_common_alignment_and_absolute_value_do_not_prove_a_defining_section_alias(self):
+        left = {'artifact_key': 'candidate-static', 'member_index': 0, 'member_occurrence': 0,
+                'table_section_index': 5, 'row': symbol('left', kind='OBJECT', section='COM', value='0000000000000008', size=8)}
+        right = copy.deepcopy(left); right['row']['name'] = 'right'
+        self.assertFalse(selection.same_definition_domain(left, right))
+        left['row']['section_index'] = right['row']['section_index'] = 'ABS'
+        self.assertFalse(selection.same_definition_domain(left, right))
+
     def test_guard_pointer_and_tls_metadata_remain_different_storage_contracts(self):
         contract = {'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT',
                     'size_bytes': 8, 'alignment_bytes': 8}

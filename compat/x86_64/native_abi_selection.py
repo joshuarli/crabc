@@ -296,10 +296,12 @@ def row_role(row: Mapping[str, Any]) -> str:
 def same_definition_domain(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
     # Table rows in dynsym and symtab may observe the same linked definition;
     # archive member and defining section equality are never inferred from nm.
+    # COMMON st_value is alignment; ABS has no defining section. Neither can
+    # establish this storage/code placement relationship from equal row values.
     keys = ('artifact_key', 'member_index', 'member_occurrence')
     return (all(left.get(key) == right.get(key) for key in keys)
             and (left.get('member_index') is None or left['table_section_index'] == right['table_section_index'])
-            and left['row']['section_index'] != 'UND'
+            and re.fullmatch(r'[1-9][0-9]*', left['row']['section_index']) is not None
             and all(left['row'][key] == right['row'][key] for key in ('section_index', 'value', 'type', 'size_bytes')))
 
 
