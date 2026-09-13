@@ -1,0 +1,43 @@
+schema = "crabc.x86_64-native-declaration-abi/v1"
+target = "x86_64-unknown-linux-musl"
+oracle = "Pinned musl 1.2.6"
+header_declaration_report_schema = "crabc.x86_64-header-declaration-inventory/v1"
+header_abi_matrix_report_schema = "crabc.x86_64-header-abi-matrix-report/v2"
+header_record_layout_matrix_report_schema = "crabc.x86_64-header-record-layout-matrix-report/v1"
+
+[profile_languages]
+c11-gnu = "c"
+cxx17-gnu = "cxx"
+c11-strict = "c"
+c11-posix-2008 = "c"
+c11-xopen-700 = "c"
+c11-bsd = "c"
+cxx17-strict = "cxx"
+
+[policy]
+actual_header_declarations_only = true
+archive_provider_selection = false
+c_and_cxx_object_emission = true
+header_replay_owned_elsewhere = true
+header_runtime_semantics = false
+mangled_name_is_not_linkage_proof = true
+record_layout_projection_only = true
+runtime_family_completion = false
+
+[[record_layout]]
+header = "arpa/nameser.h"
+object_names = ["_ns_flagdata"]
+profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+record = "_ns_flagdata"
+
+[[record_layout]]
+header = "netinet/in.h"
+object_names = ["in6addr_any", "in6addr_loopback"]
+profiles = ["c11-gnu", "cxx17-gnu", "c11-strict", "c11-posix-2008", "c11-xopen-700", "c11-bsd", "cxx17-strict"]
+record = "in6_addr"
+
+[limits]
+FILE = "opaque-or-incomplete-not-proved"
+_IO_FILE = "opaque-or-incomplete-not-proved"
+_ns_flagdata_array_extent = "not-proved-by-record-layout"
+h_errno_accessor_storage = "runtime-semantic-owner-required"
