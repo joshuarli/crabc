@@ -52,6 +52,7 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         self.assertEqual(len(contract["helpers"]), 23)
         self.assertEqual(EVIDENCE.helper_names(contract), tuple(sorted(EVIDENCE.helper_names(contract))))
         self.assertEqual(contract["archive"]["placements"], ["static-builtins", "dynamic-builtins"])
+        self.assertEqual(contract["shared_libc"], EVIDENCE.SHARED_LIBC_METADATA)
         self.assertTrue(all(row["metadata"] == EVIDENCE.HELPER_METADATA for row in contract["helpers"]))
 
     def test_source_and_contract_are_a_bijection(self) -> None:
@@ -75,6 +76,10 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         wrong = copy.deepcopy(contract)
         wrong["archive"]["placements"].append("candidate-shared")
         with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "placements"):
+            EVIDENCE.validate_contract(wrong)
+        wrong = copy.deepcopy(contract)
+        wrong["shared_libc"]["dynsym"] = 0
+        with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "shared-libc"):
             EVIDENCE.validate_contract(wrong)
 
 
@@ -108,6 +113,59 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         })
         with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "exported function roster"):
             EVIDENCE.archive_placements_from_elf_facts(malformed, contract)
+
+    def test_shared_libc_copy_requires_local_symtab_and_no_dynsym_rows(self) -> None:
+        contract = EVIDENCE.load_contract(ROOT)
+        full = []
+        for index, name in enumerate(EVIDENCE.helper_names(contract), start=1):
+            full.append({"name": name, "type": "FUNC", "binding": "LOCAL", "visibility": "DEFAULT",
+                         "version": None, "version_default": False, "row_index": index,
+                         "section_index": str(index)})
+        facts = {"target": EVIDENCE.TARGET, "facts": {"candidate-shared": {
+            "sections": [{"index": index, "name": ".text." + name, "flags": "AX"}
+                         for index, name in enumerate(EVIDENCE.helper_names(contract), start=1)],
+            "symbol_tables": [
+                {"name": ".dynsym", "rows": []}, {"name": ".symtab", "rows": full},
+            ],
+        }}}
+        placement = EVIDENCE.shared_libc_placement_from_elf_facts(facts, contract)
+        self.assertEqual(set(placement), set(EVIDENCE.helper_names(contract)))
+        self.assertEqual(placement["__popcountdi2"], {
+            "table": ".symtab", "row_index": EVIDENCE.helper_names(contract).index("__popcountdi2") + 1,
+            "section_index": EVIDENCE.helper_names(contract).index("__popcountdi2") + 1,
+            "section": ".text.__popcountdi2",
+            "metadata": {"type": "FUNC", "binding": "LOCAL", "visibility": "DEFAULT"},
+        })
+        leaked = copy.deepcopy(facts)
+        leaked["facts"]["candidate-shared"]["symbol_tables"][0]["rows"].append(copy.deepcopy(full[0]))
+        with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "leaked"):
+            EVIDENCE.shared_libc_placement_from_elf_facts(leaked, contract)
+        for invalid in ("COM", "0", "PRC[0xff00]"):
+            malformed = copy.deepcopy(facts)
+            malformed["facts"]["candidate-shared"]["symbol_tables"][1]["rows"][0]["section_index"] = invalid
+            with self.subTest(section_index=invalid), self.assertRaisesRegex(
+                    EVIDENCE.CompilerHelperEvidenceError, "metadata"):
+                EVIDENCE.shared_libc_placement_from_elf_facts(malformed, contract)
+
+    def test_shared_runner_requires_physical_work_and_keeps_the_product_sealed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "checkout"
+            allowed = root / ".work/x86_64"
+            allowed.mkdir(parents=True)
+            self.assertEqual(EVIDENCE.checkout_work_directory(root, allowed / "inside"), allowed / "inside")
+            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "physical checkout .work/x86_64"):
+                EVIDENCE.checkout_work_directory(root, allowed / "../outside")
+            outside = Path(temporary) / "outside"
+            outside.mkdir()
+            (allowed / "escape").symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(EVIDENCE.CompilerHelperEvidenceError, "physical checkout .work/x86_64"):
+                EVIDENCE.checkout_work_directory(root, allowed / "escape/output")
+        runner = (ROOT / "builtins/run_x86_64_compiler_helper_shared_placement.sh").read_text(encoding="utf-8")
+        self.assertIn("validate-work-dir", runner)
+        self.assertIn("product-admission-before", runner)
+        self.assertIn("product-admission-after", runner)
+        self.assertIn("EXECUTION_ROOT", runner)
+        self.assertNotIn('cp "$WORK_DIR/libhelper.so" "$LIBRARY/libhelper.so"', runner)
 
     def test_popcount_join_requires_the_unique_static_import_and_selected_member(self) -> None:
         contract = EVIDENCE.load_contract(ROOT)

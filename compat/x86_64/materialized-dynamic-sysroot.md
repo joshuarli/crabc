@@ -135,6 +135,10 @@ the loader, application DSOs, or static archives. It is deliberately not a
 blanket `-Bsymbolic` policy.
 The actual shared libc and loader must have no NEEDED, PT_INTERP, TEXTREL or
 absolute 32-bit dynamic relocations, and must have RELRO and an NX stack.
+The exact one-member `libcrabc-builtins.a` is also linked into libc only for
+private compiler-generated calls. Its 23 bounded helper definitions are made
+local with `--exclude-libs=libcrabc-builtins.a`; the separately installed
+archive remains the ordinary provider for applications and application DSOs.
 Every application link records hashed inputs, exact command and checked LLD
 input trace; undeclared target inputs fail. The driver disables Python bytecode
 publication itself, so importing its shared checks cannot dirty the install.

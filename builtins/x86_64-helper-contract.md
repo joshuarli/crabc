@@ -6,6 +6,17 @@ selects exactly 23 unversioned `FUNC GLOBAL DEFAULT` C entries in each distinct
 installed archive placement: `static-builtins` and `dynamic-builtins`. Equal
 archive bytes do not merge those placements.
 
+The owned dynamic builder also passes that exact archive to the one `libc.so`
+link because selected Rust libc leaves can need compiler-generated operations.
+`scripts/build_x86_64_owned_dynamic_sysroot.py` uses
+`--exclude-libs=libcrabc-builtins.a` only for that shared link. Consequently,
+the same 23 definitions remain `FUNC LOCAL DEFAULT` in libc's full `.symtab`
+and are absent from libc's `.dynsym`; they are not a shared-libc API. The
+archive builder rejects every extra external definition, so this archive-name
+rule cannot localize another owner. It does not change either installed archive
+or an application/DSO's ordinary dynamic-driver link, which still names the
+installed `usr/lib/libcrabc-builtins.a` after `libc.so`.
+
 The named definitions live in [`src/lib.rs`](src/lib.rs): `Uint128` is the
 `#[repr(C)]` low-word/high-word carrier for the native C `__int128` ABI;
 `ComplexDouble` is the two-`f64` C complex return carrier for `__muldc3`; and
@@ -44,14 +55,37 @@ source-only writer/reader fixture is a schema control, not product evidence.
 
 This component does not select the 23 same-named `candidate-shared` rows,
 complete a compiler-helper family, qualify a runtime, or promote native public
-support. The single observed static ordinary `__popcountdi2` import is attached
-only when fresh same-source static/dynamic products, complete ELF facts, and
-the existing public-data ordinary-link receipt are supplied. Historical `3e`
-products remain historical and must not be relabeled by this contract.
+support. The private shared placement is source-owned separately from public
+selection and needs a fresh installed-product proof. The single observed static
+ordinary `__popcountdi2` import is attached only when fresh same-source
+static/dynamic products, complete ELF facts, and the existing public-data
+ordinary-link receipt are supplied. Historical `3e` products remain historical
+and must not be relabeled by this contract.
 The ordinary report seals link receipts relative to the checkout; each driver
 receipt names its map and trace relative to its own directory. The helper
 reader uses the ordinary reader's identity resolver for the outer receipt,
 including its recorded hash and size, before reading the adjacent map and trace.
+
+Run the focused shared-placement proof inside the same pinned native Docker
+environment used by the dynamic components. It is directly callable there; it
+does not add a dispatcher command:
+
+```sh
+CRABC_X86_COMPILER_HELPER_IMAGE=crabc-core-evidence@sha256:<pinned-image-id> \
+CRABC_COMPILER_HELPER_SHARED_WORK_DIR=/workspace/.work/x86_64/compiler-helper-shared-placement \
+  bash /workspace/builtins/run_x86_64_compiler_helper_shared_placement.sh
+```
+
+It builds one private materialized product, validates its installed manifest
+before and after execution, validates the installed archive and producer/link
+provenance, then checks all 23 libc `.symtab` rows and `.dynsym` absence. The
+fixture executable and application DSO are copied only to a separate private
+execution root, so the observed installed product remains unchanged. A direct
+executable and a helper-using application DSO must each
+extract `crabc-builtins.o` from the installed archive under the existing owned
+driver. A strong exported `__popcountdi2` in a separate executable cannot
+preempt libc's direct allocator bitmap-helper transfer. This is focused product
+evidence only; it is not a dynamic qualification or a complete helper family.
 
 At that supplied-product boundary, an aggregate receipt is optional but
 meaningful only when present: the reader first replays it, then requires its

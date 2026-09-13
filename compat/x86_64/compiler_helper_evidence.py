@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Read finite native compiler-helper archive ownership evidence.
 
-This component owns the producer contract for the Rust-only x86 helper archive.
-It does not build a sysroot, choose a same-named shared-libc placement, or turn
-an archive definition into a public runtime export.  A later collector supplies
+This component owns the producer contract for the Rust-only x86 helper archive
+and its exact private copy linked into owned libc.so. It does not turn an
+archive definition into a public runtime export. A later collector supplies
 fresh, source-matched product and complete-ELF receipts to the helpers below.
 """
 from __future__ import annotations
@@ -23,15 +23,27 @@ ROOT = Path(__file__).resolve().parents[2]
 CONTRACT = Path("builtins/x86_64-helper-contract.toml")
 SOURCE = Path("builtins/src/lib.rs")
 BUILDER = Path("builtins/build_x86_64.py")
+DYNAMIC_BUILDER = Path("scripts/build_x86_64_owned_dynamic_sysroot.py")
+DYNAMIC_QUALIFICATION = Path("compat/x86_64/owned_dynamic_qualification.py")
 AGGREGATE_PROBE = Path("builtins/fixtures/x86_64_compiler_helper_aggregate_probe.c")
 AGGREGATE_START = Path("builtins/fixtures/x86_64_compiler_helper_aggregate_start.S")
 AGGREGATE_RUNNER = Path("builtins/run_x86_64_compiler_helper_aggregate.sh")
+SHARED_PLACEMENT_RUNNER = Path("builtins/run_x86_64_compiler_helper_shared_placement.sh")
+SHARED_PLACEMENT_FIXTURES = (
+    Path("builtins/fixtures/x86_64_compiler_helper_shared_direct.c"),
+    Path("builtins/fixtures/x86_64_compiler_helper_shared_dso.c"),
+    Path("builtins/fixtures/x86_64_compiler_helper_shared_dso_consumer.c"),
+    Path("builtins/fixtures/x86_64_compiler_helper_shared_interpose.c"),
+)
 SELECTION = Path("compat/x86_64/native-abi-selection.toml")
 READER = Path("compat/x86_64/compiler_helper_evidence.py")
 DOCUMENTATION = Path("builtins/x86_64-helper-contract.md")
+BUILTINS_DOCUMENTATION = Path("builtins/README.md")
+MATERIALIZED_DYNAMIC_DOCUMENTATION = Path("compat/x86_64/materialized-dynamic-sysroot.md")
 SELECTION_DOCUMENTATION = Path("compat/x86_64/native-abi-selection.md")
-SOURCE_FILES = (CONTRACT, SOURCE, BUILDER, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER, READER, SELECTION,
-                DOCUMENTATION, SELECTION_DOCUMENTATION)
+SOURCE_FILES = (CONTRACT, SOURCE, BUILDER, DYNAMIC_BUILDER, DYNAMIC_QUALIFICATION, AGGREGATE_PROBE, AGGREGATE_START, AGGREGATE_RUNNER,
+                SHARED_PLACEMENT_RUNNER, *SHARED_PLACEMENT_FIXTURES, READER, SELECTION, DOCUMENTATION,
+                BUILTINS_DOCUMENTATION, MATERIALIZED_DYNAMIC_DOCUMENTATION, SELECTION_DOCUMENTATION)
 SCHEMA = "crabc.x86_64-compiler-helper-owner/v1"
 AGGREGATE_SCHEMA = "crabc.x86_64-compiler-helper-aggregate/v1"
 SOURCE_SEAL_SCHEMA = "crabc.x86_64-compiler-helper-source-seal/v1"
@@ -41,6 +53,14 @@ ARCHIVE_MEMBER = "crabc-builtins.o"
 HELPER_METADATA = {
     "type": "FUNC", "binding": "GLOBAL", "visibility": "DEFAULT",
     "version": None, "version_default": False,
+}
+SHARED_LIBC_METADATA = {
+    "artifact": "candidate-shared",
+    "linker_option": "--exclude-libs=libcrabc-builtins.a",
+    "type": "FUNC",
+    "binding": "LOCAL",
+    "visibility": "DEFAULT",
+    "dynsym": False,
 }
 HELPER_ABIS = {
     "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
@@ -118,7 +138,7 @@ def validate_contract(value: object) -> dict[str, Any]:
     """Validate exact finite source ownership, never infer a prefix roster."""
 
     require(type(value) is dict and set(value) == {
-        "schema", "target", "owner_group", "source", "builder", "producer_scope", "archive", "helpers",
+        "schema", "target", "owner_group", "source", "builder", "producer_scope", "archive", "shared_libc", "helpers",
     }, "compiler-helper contract fields differ")
     require(type(value["schema"]) is int and value["schema"] == 1 and value["target"] == TARGET,
             "compiler-helper contract schema/target differs")
@@ -130,6 +150,8 @@ def validate_contract(value: object) -> dict[str, Any]:
             "compiler-helper archive fields differ")
     require(archive["name"] == "libcrabc-builtins.a" and archive["member"] == ARCHIVE_MEMBER
             and archive["placements"] == list(ARCHIVE_PLACEMENTS), "compiler-helper archive placements differ")
+    require(same(value["shared_libc"], SHARED_LIBC_METADATA),
+            "compiler-helper shared-libc placement differs")
     helpers = value["helpers"]
     require(type(helpers) is list and len(helpers) == 23, "compiler-helper helper roster differs")
     result: list[dict[str, Any]] = []
@@ -150,7 +172,7 @@ def validate_contract(value: object) -> dict[str, Any]:
     require(names == sorted(names) and len(names) == len(set(names)), "compiler-helper helper roster differs")
     return {"schema": 1, "target": TARGET, "owner_group": value["owner_group"], "source": value["source"],
             "builder": value["builder"], "producer_scope": value["producer_scope"], "archive": dict(archive),
-            "helpers": result}
+            "shared_libc": dict(SHARED_LIBC_METADATA), "helpers": result}
 
 
 def load_contract(root: Path = ROOT) -> dict[str, Any]:
@@ -238,6 +260,60 @@ def archive_placements_from_elf_facts(facts_report: Mapping[str, Any], contract:
     result = {placement: _archive_member_rows(facts, placement, contract) for placement in ARCHIVE_PLACEMENTS}
     require(set(result["static-builtins"]) == set(result["dynamic-builtins"]) == set(helper_names(contract)),
             "compiler-helper archive placements differ")
+    return result
+
+
+def shared_libc_placement_from_elf_facts(
+    facts_report: Mapping[str, Any], contract: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Project the exact private libc copy from complete-ELF artifact facts.
+
+    The complete-ELF reader represents an ELF artifact as one object containing
+    ``sections`` and ``symbol_tables``.  This is deliberately unlike archive
+    placements, which are lists of member objects.  Keeping the distinction
+    here prevents an equally named archive definition from standing in for the
+    local copy linked into libc.so.
+    """
+
+    require(isinstance(facts_report, Mapping) and facts_report.get("target") == TARGET,
+            "complete ELF facts target differs")
+    facts = facts_report.get("facts")
+    shared = facts.get("candidate-shared") if isinstance(facts, Mapping) else None
+    require(type(shared) is dict, "compiler-helper candidate-shared facts are absent")
+    tables = shared.get("symbol_tables")
+    sections = shared.get("sections")
+    require(type(tables) is list and type(sections) is list,
+            "compiler-helper candidate-shared artifact facts differ")
+    by_name = {table.get("name"): table for table in tables if isinstance(table, dict)}
+    require(len(tables) == 2 and set(by_name) == {".dynsym", ".symtab"},
+            "compiler-helper candidate-shared symbol tables differ")
+    section_by_index = {section.get("index"): section for section in sections if isinstance(section, dict)}
+    require(len(section_by_index) == len(sections), "compiler-helper candidate-shared sections differ")
+    expected = set(helper_names(contract))
+    dynamic = by_name[".dynsym"].get("rows")
+    full = by_name[".symtab"].get("rows")
+    require(type(dynamic) is list and type(full) is list, "compiler-helper candidate-shared symbols differ")
+    require(not any(isinstance(row, dict) and row.get("name") in expected for row in dynamic),
+            "compiler-helper private libc copy leaked into dynsym")
+    local = [row for row in full if isinstance(row, dict) and row.get("name") in expected]
+    require(len(local) == len(expected) and {row["name"] for row in local} == expected,
+            "compiler-helper private libc symtab roster differs")
+    metadata = {key: contract["shared_libc"][key] for key in ("type", "binding", "visibility")}
+    result: dict[str, Any] = {}
+    for row in local:
+        observed = {key: row.get(key) for key in metadata}
+        section_index = row.get("section_index")
+        section_number = int(section_index) if type(section_index) is str and re.fullmatch(r"[1-9][0-9]*", section_index) else None
+        section = section_by_index.get(section_number)
+        require(same(observed, metadata) and row.get("version") is None and row.get("version_default") is False
+                and type(row.get("row_index")) is int and row["row_index"] >= 0
+                and isinstance(section, dict) and section.get("index") == section_number
+                and type(section.get("name")) is str and section["name"]
+                and type(section.get("flags")) is str and "X" in section["flags"],
+                "compiler-helper private libc symtab metadata differs")
+        result[row["name"]] = {"table": ".symtab", "row_index": row["row_index"],
+                               "section_index": section_number, "section": section["name"],
+                               "metadata": dict(metadata)}
     return result
 
 
@@ -500,6 +576,7 @@ def validate_supplied_product_evidence(*, root: Path, base_inventory: Path, elf_
                                           static_product=Path(static_product), dynamic_product=Path(dynamic_product),
                                           static_preparation=Path(static_preparation))
         placements = archive_placements_from_elf_facts(facts, contract)
+        shared_projection = shared_libc_placement_from_elf_facts(facts, contract)
         installed_archives = _installed_archive_identities(facts)
     except CompilerHelperEvidenceError:
         raise
@@ -520,6 +597,7 @@ def validate_supplied_product_evidence(*, root: Path, base_inventory: Path, elf_
             raise CompilerHelperEvidenceError("supplied compiler-helper aggregate evidence is not current and valid") from error
     result = {"source": current_source, "archive_placements": placements,
               "installed_archive_identities": installed_archives, "aggregate_c_abi": aggregate_join,
+              "shared_libc_projection": shared_projection,
               "shared_placement_selected": False, "family_completion": False,
               "public_support": False}
     if ordinary_link_report is not None:
@@ -600,6 +678,41 @@ def _physical_file(path: Path, description: str) -> Path:
     require(path.is_file() and not path.is_symlink() and path.resolve() == path,
             f"{description} is not a physical regular file")
     return path
+
+
+def checkout_work_directory(root: Path, path: Path) -> Path:
+    """Resolve a not-yet-created runner directory beneath physical x86 work.
+
+    A runner accepts a caller path before it creates it, so a lexical prefix is
+    insufficient: ``..`` and an existing intermediate symlink can otherwise
+    carry its product and raw evidence outside the checkout.  Resolve the
+    prospective path first, then let the runner enforce freshness before it
+    creates anything.
+    """
+
+    root = _physical_directory(root, "compiler-helper checkout")
+    allowed = _physical_directory(root / ".work/x86_64", "compiler-helper checkout .work/x86_64")
+    resolved = Path(path).absolute().resolve(strict=False)
+    require(resolved != allowed and resolved.is_relative_to(allowed),
+            "compiler-helper work directory must be a physical checkout .work/x86_64 descendant")
+    return resolved
+
+
+def validate_materialized_dynamic_product(root: Path, product: Path) -> str:
+    """Use the owned product reader before and after private execution copies."""
+
+    root = _physical_directory(root, "compiler-helper checkout")
+    product = _physical_directory(product, "compiler-helper installed dynamic product")
+    require(product.is_relative_to(_physical_directory(root / ".work/x86_64", "compiler-helper checkout .work/x86_64")),
+            "compiler-helper installed dynamic product escapes checkout .work/x86_64")
+    module_dir = Path(__file__).resolve().parent
+    if str(module_dir) not in sys.path:
+        sys.path.insert(0, str(module_dir))
+    import owned_dynamic_qualification as qualification
+    try:
+        return qualification.product_identity(product)
+    except (qualification.QualificationError, OSError, ValueError) as error:
+        raise CompilerHelperEvidenceError("compiler-helper installed dynamic product is not admitted") from error
 
 
 def _work_identity(work: Path, path: Path, description: str) -> dict[str, Any]:
@@ -1100,6 +1213,12 @@ def validate_aggregate_report(report_path: Path, *, root: Path = ROOT) -> dict[s
     require(same(report, expected), "compiler-helper aggregate report does not reconstruct")
     return report
 
+
+def validate_source_seal(source_path: Path, *, root: Path = ROOT) -> dict[str, Any]:
+    """Replay a source-only seal before a separate product reader consumes it."""
+
+    return _source_seal(source_path, root=Path(root).absolute())
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.allow_abbrev = False
@@ -1129,6 +1248,14 @@ def main(argv: list[str] | None = None) -> int:
     write.add_argument("--oracle-record", required=True, type=Path)
     replay = commands.add_parser("validate-aggregate-report", allow_abbrev=False)
     replay.add_argument("report", type=Path)
+    source_replay = commands.add_parser("validate-source-seal", allow_abbrev=False)
+    source_replay.add_argument("source", type=Path)
+    work_directory = commands.add_parser("validate-work-dir", allow_abbrev=False)
+    work_directory.add_argument("--root", required=True, type=Path)
+    work_directory.add_argument("--work", required=True, type=Path)
+    product_admission = commands.add_parser("validate-materialized-product", allow_abbrev=False)
+    product_admission.add_argument("--root", required=True, type=Path)
+    product_admission.add_argument("--product", required=True, type=Path)
     fixture_write = commands.add_parser("write-fixture-report", allow_abbrev=False)
     fixture_write.add_argument("--output", required=True, type=Path)
     fixture_replay = commands.add_parser("validate-fixture-report", allow_abbrev=False)
@@ -1162,6 +1289,13 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "validate-aggregate-report":
             validate_aggregate_report(args.report)
             print("compiler-helper aggregate receipt valid; supplied-product placement proof remains separate")
+        elif args.command == "validate-source-seal":
+            validate_source_seal(args.source)
+            print("compiler-helper source seal valid")
+        elif args.command == "validate-work-dir":
+            print(checkout_work_directory(args.root, args.work))
+        elif args.command == "validate-materialized-product":
+            print(validate_materialized_dynamic_product(args.root, args.product))
         elif args.command == "write-fixture-report":
             contract = load_contract(ROOT)
             write_fixture_report(args.output, contract=contract, source=source_binding(ROOT, contract))

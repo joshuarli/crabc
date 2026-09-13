@@ -5,6 +5,7 @@ import copy
 import importlib.util
 from pathlib import Path
 import sys
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,7 @@ class NativeCompilerHelperContractTests(unittest.TestCase):
         self.assertEqual(set(names), BUILDER.REQUIRED_SYMBOLS)
         self.assertEqual(contract["archive"]["member"], "crabc-builtins.o")
         self.assertEqual(contract["archive"]["placements"], ["static-builtins", "dynamic-builtins"])
+        self.assertEqual(contract["shared_libc"], BUILDER.SHARED_LIBC_METADATA)
         self.assertTrue(all(helper["metadata"] == {
             "binding": "GLOBAL", "type": "FUNC", "version": None,
             "version_default": False, "visibility": "DEFAULT",
@@ -47,6 +49,12 @@ class NativeCompilerHelperContractTests(unittest.TestCase):
         malformed = copy.deepcopy(contract)
         malformed["helpers"][0]["metadata"]["version_default"] = 0
         with self.assertRaisesRegex(BUILDER.BuildError, "metadata types"):
+            BUILDER.load_native_contract_value(malformed)
+
+    def test_contract_rejects_a_public_shared_libc_copy(self) -> None:
+        malformed = tomllib.loads((ROOT / "x86_64-helper-contract.toml").read_text(encoding="utf-8"))
+        malformed["shared_libc"]["dynsym"] = 0
+        with self.assertRaisesRegex(BUILDER.BuildError, "shared-libc placement"):
             BUILDER.load_native_contract_value(malformed)
 
     def test_builder_provenance_records_the_contract_not_a_five_symbol_floor(self) -> None:

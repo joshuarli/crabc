@@ -73,5 +73,8 @@ complete x86 compiler-helper profile or public sysroot.
 
 The native [x86-64 compiler-helper archive contract](x86_64-helper-contract.md)
 now names all 23 Rust C-ABI entries, their two installed archive placements,
-and the bounded aggregate C consumer proof. It does not select the same-named
-shared-libc definitions or promote native support.
+and the bounded aggregate C consumer proof. When the dynamic builder consumes
+that exact archive for private libc compiler-generated calls, it localizes only
+that libc.so copy; the installed archive remains the ordinary provider for
+applications and application DSOs. The focused shared-placement runner in the
+same contract records that boundary. Neither proof promotes native support.

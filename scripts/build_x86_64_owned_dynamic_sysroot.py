@@ -15,6 +15,7 @@ import shlex
 import stat
 import sys
 import re
+import tomllib
 
 sys.dont_write_bytecode = True
 import build_x86_64_owned_sysroot as common
@@ -37,6 +38,17 @@ SHARED_LIBC_DYNAMIC_LIST = ROOT / "libc/src/c_abi/x86_64/owned_dynamic.list"
 # upstream `mimalloc.h` declarations and 252 non-header implementation names;
 # it is not a prefix rule and does not select a different object or backend.
 SHARED_LIBC_MIMALLOC_HIDDEN_LIST = ROOT / "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
+COMPILER_HELPER_CONTRACT = ROOT / "builtins/x86_64-helper-contract.toml"
+SHARED_LIBC_COMPILER_HELPER_ARCHIVE = "libcrabc-builtins.a"
+SHARED_LIBC_COMPILER_HELPER_MEMBER = "crabc-builtins.o"
+SHARED_LIBC_COMPILER_HELPER_POLICY = {
+    "artifact": "candidate-shared",
+    "linker_option": "--exclude-libs=libcrabc-builtins.a",
+    "type": "FUNC",
+    "binding": "LOCAL",
+    "visibility": "DEFAULT",
+    "dynsym": False,
+}
 MUSL_1_2_6_DYNAMIC_LIST_SHA256 = "264ae3bf630a7f6d894a51f91f9acae45b89a5f639537353d03af1a04e9da0f9"
 MIMALLOC_V3_HIDDEN_LIST_SHA256 = "cd537f6579018bbba79d831ee148a7b07f51a0f3bda538a27970724751d78873"
 MIMALLOC_V3_HIDDEN_LIST_COUNT = 424
@@ -176,6 +188,37 @@ def shared_libc_mimalloc_hidden_exports(stage: Path) -> dict[str, object]:
     }
 
 
+def shared_libc_compiler_helper_archive_policy() -> dict[str, object]:
+    """Bind libc.so's private copy to the archive's exact producer contract.
+
+    The installed static-builtins and dynamic-builtins roles remain ordinary
+    GLOBAL DEFAULT providers. This applies only to the same archive member
+    included while linking libc.so for internal compiler-generated calls. The
+    archive builder rejects any extra external definition, so LLD's exact
+    archive-name exclusion cannot capture another runtime owner as a wildcard.
+    """
+
+    identity = _source_file_identity(COMPILER_HELPER_CONTRACT, "native compiler-helper contract")
+    try:
+        value = tomllib.loads(COMPILER_HELPER_CONTRACT.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as error:
+        raise common.BuildError("native compiler-helper contract cannot be read") from error
+    if (type(value) is not dict
+            or value.get("archive") != {"name": SHARED_LIBC_COMPILER_HELPER_ARCHIVE,
+                                         "member": SHARED_LIBC_COMPILER_HELPER_MEMBER,
+                                         "placements": ["static-builtins", "dynamic-builtins"]}
+            or type(value.get("shared_libc")) is not dict
+            or type(value["shared_libc"].get("dynsym")) is not bool
+            or value.get("shared_libc") != SHARED_LIBC_COMPILER_HELPER_POLICY):
+        raise common.BuildError("native compiler-helper shared-libc placement differs from its producer contract")
+    return {
+        "source": identity,
+        "archive": SHARED_LIBC_COMPILER_HELPER_ARCHIVE,
+        "member": SHARED_LIBC_COMPILER_HELPER_MEMBER,
+        **SHARED_LIBC_COMPILER_HELPER_POLICY,
+    }
+
+
 def shared_libc_link_command(
     lld: Path,
     dynamic_list: Path,
@@ -187,9 +230,13 @@ def shared_libc_link_command(
 ) -> list[str]:
     """Return the one musl-shaped shared-libc link, with no global policy leak."""
 
+    if builtins.name != SHARED_LIBC_COMPILER_HELPER_ARCHIVE:
+        raise common.BuildError("shared libc must consume the exact compiler-helper archive name")
+
     return [
         str(lld), "-shared", "--hash-style=sysv", "-soname", "libc.so",
         f"--dynamic-list={dynamic_list}", f"--version-script={mimalloc_hidden_exports}",
+        "--exclude-libs=" + SHARED_LIBC_COMPILER_HELPER_ARCHIVE,
         "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
         *(str(objects / item) for item in selected), str(builtins), "-o", str(library / "libc.so"),
     ]
@@ -349,6 +396,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
     lld = rust_sysroot / "lib/rustlib" / common.TARGET / "bin/gcc-ld/ld.lld"
     shared_dynamic_list = shared_libc_dynamic_list()
     shared_mimalloc_hidden_exports = shared_libc_mimalloc_hidden_exports(stage)
+    shared_compiler_helper_policy = shared_libc_compiler_helper_archive_policy()
     run = common.run
     dependency_file = stage / "allocator.d"
     c_flags = ["-nostdinc", "-isystem", str(ROOT / "include"), "-fPIC",
@@ -470,6 +518,7 @@ def build_staged_payload(output: Path, stage: Path) -> None:
                   "libc_shared_link_command": [_normalized_loader_argument(arg, stage) for arg in libc_shared_link_command],
                   "shared_dynamic_list": shared_dynamic_list,
                   "shared_mimalloc_hidden_exports": shared_mimalloc_hidden_exports,
+                  "shared_compiler_helper_archive": shared_compiler_helper_policy,
                   "loader_imports": sorted(allowed)}
     common.write_json(metadata / "libc-shared.provenance.json", provenance)
     payload_files = {path.relative_to(output).as_posix(): common.sha256_file(path)

@@ -836,18 +836,41 @@ class InstalledDynamicDriverTests(unittest.TestCase):
         command = producer.shared_libc_link_command(
             Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
             Path("/private/mimalloc-hidden.exports"), Path("/private/objects"),
-            ("one.o", "two.o"), Path("/private/builtins.a"), Path("/private/usr/lib"),
+            ("one.o", "two.o"), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
         )
         self.assertEqual(command, [
             "/pinned/ld.lld", "-shared", "--hash-style=sysv", "-soname", "libc.so",
             "--dynamic-list=" + str(producer.SHARED_LIBC_DYNAMIC_LIST),
             "--version-script=/private/mimalloc-hidden.exports",
+            "--exclude-libs=libcrabc-builtins.a",
             "-z", "relro", "-z", "now", "-z", "noexecstack", "-z", "text",
-            "/private/objects/one.o", "/private/objects/two.o", "/private/builtins.a",
+            "/private/objects/one.o", "/private/objects/two.o", "/private/libcrabc-builtins.a",
             "-o", "/private/usr/lib/libc.so",
         ])
         self.assertNotIn("-Bsymbolic", command)
         self.assertNotIn("-Bsymbolic-functions", command)
+
+    def test_shared_libc_keeps_the_bounded_helper_archive_local(self):
+        """The installed archive remains public; only its libc.so copy is private."""
+
+        command = producer.shared_libc_link_command(
+            Path("/pinned/ld.lld"), producer.SHARED_LIBC_DYNAMIC_LIST,
+            Path("/private/mimalloc-hidden.exports"), Path("/private/objects"),
+            ("one.o",), Path("/private/libcrabc-builtins.a"), Path("/private/usr/lib"),
+        )
+        self.assertIn("--exclude-libs=libcrabc-builtins.a", command)
+
+    def test_shared_helper_policy_rejects_numeric_dynsym_boolean(self):
+        contract = Path(self.temporary.name) / "helper-contract.toml"
+        lines = producer.COMPILER_HELPER_CONTRACT.read_text(encoding="utf-8").replace(
+            "dynsym = false", "dynsym = 0"
+        )
+        contract.write_text(lines, encoding="utf-8")
+        with patch.object(producer, "COMPILER_HELPER_CONTRACT", contract), patch.object(
+            producer, "_source_file_identity", return_value={"path": "builtins/x86_64-helper-contract.toml", "sha256": "0" * 64, "mode": 0o644}
+        ):
+            with self.assertRaisesRegex(producer.common.BuildError, "shared-libc placement"):
+                producer.shared_libc_compiler_helper_archive_policy()
 
     def test_producer_final_validation_failure_and_competing_publication_preserve_destination(self):
         for failure in ("invalid-payload", "competing-publication"):

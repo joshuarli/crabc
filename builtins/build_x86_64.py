@@ -36,6 +36,14 @@ REQUIRED_SYMBOLS = frozenset({
     "__popcountti2", "__suboti4", "__udivmodti4", "__udivti3", "__umodti3",
 })
 HELPER_METADATA = {"type": "FUNC", "binding": "GLOBAL", "visibility": "DEFAULT", "version": None, "version_default": False}
+SHARED_LIBC_METADATA = {
+    "artifact": "candidate-shared",
+    "linker_option": "--exclude-libs=libcrabc-builtins.a",
+    "type": "FUNC",
+    "binding": "LOCAL",
+    "visibility": "DEFAULT",
+    "dynsym": False,
+}
 HELPER_ABIS = frozenset({
     "complex-double", "u128-binary", "u128-bit-count", "u128-byte-swap",
     "u128-divmod-slot", "u128-overflow-slot", "u128-shift", "u32-byte-swap",
@@ -72,7 +80,7 @@ def native_source_definitions(source: Path) -> dict[str, str]:
 
 def load_native_contract_value(value: object) -> dict[str, object]:
     """Validate the finite producer contract; no symbol prefix is an input."""
-    _require(type(value) is dict and set(value) == {"schema", "target", "owner_group", "source", "builder", "producer_scope", "archive", "helpers"},
+    _require(type(value) is dict and set(value) == {"schema", "target", "owner_group", "source", "builder", "producer_scope", "archive", "shared_libc", "helpers"},
              "native helper contract fields differ")
     _require(type(value["schema"]) is int and value["schema"] == 1 and value["target"] == TARGET,
              "native helper contract schema/target differs")
@@ -82,6 +90,10 @@ def load_native_contract_value(value: object) -> dict[str, object]:
     archive = value["archive"]
     _require(type(archive) is dict and archive == {"name": ARCHIVE_NAME, "member": MEMBER_NAME,
              "placements": ["static-builtins", "dynamic-builtins"]}, "native helper archive placements differ")
+    shared_libc = value["shared_libc"]
+    _require(type(shared_libc) is dict and type(shared_libc.get("dynsym")) is bool
+             and shared_libc == SHARED_LIBC_METADATA,
+             "native helper shared-libc placement differs")
     helpers = value["helpers"]
     _require(type(helpers) is list and len(helpers) == len(REQUIRED_SYMBOLS), "native helper roster differs")
     names: list[str] = []
@@ -108,7 +120,7 @@ def load_native_contract_value(value: object) -> dict[str, object]:
              "native helper roster differs")
     return {"schema": value["schema"], "target": value["target"], "owner_group": value["owner_group"],
             "source": value["source"], "builder": value["builder"], "producer_scope": value["producer_scope"],
-            "archive": archive, "helpers": normalized}
+            "archive": archive, "shared_libc": dict(SHARED_LIBC_METADATA), "helpers": normalized}
 
 
 def load_native_contract() -> dict[str, object]:

@@ -2,19 +2,29 @@
 #
 # These are unversioned C compiler-runtime entries from the reviewed
 # `#[unsafe(no_mangle)] pub extern "C"` definitions in `src/lib.rs`. They are
-# installed only as ordinary archive providers. A same-named libc/loader row is
-# outside this contract and remains an explicit later placement decision.
+# installed as ordinary archive providers. The owned shared-libc link also
+# consumes that exact one-member archive for its private compiler-generated
+# calls: that physical copy is LOCAL in libc.so and absent from .dynsym. This
+# does not alter either installed archive's GLOBAL DEFAULT provider contract.
 schema = 1
 target = "x86_64-unknown-linux-musl"
 owner_group = "owned-compiler-helper-archive"
 source = "builtins/src/lib.rs"
 builder = "builtins/build_x86_64.py"
-producer_scope = "bounded native compiler-helper archive; no shared-libc exposure selection, family completion, promotion, or public support"
+producer_scope = "bounded native compiler-helper archive plus private same-member shared-libc placement; no shared public exposure, family completion, promotion, or public support"
 
 [archive]
 name = "libcrabc-builtins.a"
 member = "crabc-builtins.o"
 placements = ["static-builtins", "dynamic-builtins"]
+
+[shared_libc]
+artifact = "candidate-shared"
+linker_option = "--exclude-libs=libcrabc-builtins.a"
+type = "FUNC"
+binding = "LOCAL"
+visibility = "DEFAULT"
+dynsym = false
 
 [[helpers]]
 name = "__addoti4"
