@@ -2,11 +2,24 @@
 import copy
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import installed_crt_startup_evidence as reader
 
 class InstalledCrtStartupTests(unittest.TestCase):
+    def test_oracle_crt_capture_survives_actual_readability_cleanup(self):
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            root=Path(directory);source=root/'original.o';source.write_bytes(b'retained CRT fixture')
+            source.chmod(0o644);work=root/'evidence';work.mkdir()
+            record=reader.retain_oracle_crt(work,source,'crt1.o')
+            reader.static_products.make_retained_evidence_readable(work)
+            reader.inventory._validate_snapshot(work,record,'oracle CRT fixture',
+                expected_original_path=str(source),expected_retained_path='inputs/oracle-crt/crt1.o')
+            self.assertEqual(record['retained']['mode'],0o644)
+            self.assertEqual(source.read_bytes(),b'retained CRT fixture')
+
     def test_contract_is_closed_and_flags_are_booleans(self):
         contract=reader.expected_contract()
         self.assertEqual(len(contract['identities']),12)

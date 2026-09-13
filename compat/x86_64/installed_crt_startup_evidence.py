@@ -407,12 +407,22 @@ def observations(root,work,inputs,tools):
                       'failed_first_bootstrap':'source contract retained; dedicated runtime rejection receipt not supplied',
                       'family_semantics':'incomplete'}}
 
+def retain_oracle_crt(work,source,name):
+    relative='inputs/oracle-crt/'+name
+    snapshot=inventory._snapshot_regular(work,source,relative,str(source))
+    path=work/relative
+    # Seal the eventual readable copy before recording its mode. Cleanup must
+    # not invalidate the original/retained identity pair during public replay.
+    path.chmod(path.stat().st_mode | 0o444)
+    snapshot['retained']=inventory.file_record(path,logical_path=relative)
+    return snapshot
+
 def oracle_crt(work,record=None):
     if record is None:
         record={}
         for name in ORACLE_CRT:
             path=Path('/opt/musl-1.2.6/lib')/name
-            record[name]=inventory._snapshot_regular(work,path,'inputs/oracle-crt/'+name,str(path))
+            record[name]=retain_oracle_crt(work,path,name)
     require(type(record) is dict and set(record)==set(ORACLE_CRT),'oracle CRT roster differs')
     for name in ORACLE_CRT:inventory._validate_snapshot(work,record[name],'oracle CRT '+name,
         expected_original_path='/opt/musl-1.2.6/lib/'+name,expected_retained_path='inputs/oracle-crt/'+name)
