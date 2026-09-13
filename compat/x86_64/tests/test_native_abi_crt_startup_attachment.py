@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import copy
+import hashlib
+import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -15,6 +18,22 @@ import native_abi_selection as selection
 
 
 class NativeCrtStartupAttachmentTests(unittest.TestCase):
+    _E8_RECEIPT = (
+        ROOT.parent / 'crt_startup_relocation_contract/.work/x86_64/crt-startup-evidence/'
+        'clean-e8b8f385/report.json'
+    )
+    _B525_FACTS = (
+        ROOT.parent / 'crt_startup_relocation_contract/.work/x86_64/crt-startup-inputs-b52538c5/'
+        'historical-facts/report.json'
+    )
+
+    @staticmethod
+    def _projection_cohort_inputs() -> dict[str, dict[str, object]]:
+        return {
+            name: {'path': name, 'sha256': '0' * 64, 'size': 0, 'mode': 0}
+            for name in ('static_manifest', 'dynamic_manifest', 'dynamic_state')
+        }
+
     @staticmethod
     def _row(name: str, *, section: str = 'UND', binding: str = 'GLOBAL',
              visibility: str = 'DEFAULT') -> dict[str, object]:
@@ -105,6 +124,7 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         companion = {
             'status': 'crt-startup-observed-with-boundaries', 'reader': {}, 'contract': {}, 'report': {},
             'source': {}, 'source_inputs': {}, 'products': {'candidate-static': {}, 'candidate-shared': {}},
+            'cohort_inputs': self._projection_cohort_inputs(),
             'measurement_reports': {},
             'account': {'identity_names': list(names), 'occurrences': observed, 'runtime_labels': []},
             'limits': list(selection.CRT_STARTUP_LIMITS),
@@ -125,9 +145,83 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
         with self.assertRaisesRegex(selection.SelectionError, 'candidate occurrences differ'):
             selection.attach_native_crt_startup(original_accounting, malformed)
 
+    def _actual_e8_accounting_and_companion(self):
+        """Project retained rows only; this does not admit the historical receipt."""
+        if not self._E8_RECEIPT.is_file() or not self._B525_FACTS.is_file():
+            self.skipTest('requires retained e8 CRT receipt and b525 complete ELF facts')
+        self.assertEqual(
+            hashlib.sha256(self._E8_RECEIPT.read_bytes()).hexdigest(),
+            '856537c748375a3c8d52f7fe2ab83b5a3347fe316a30153033e1614dd030aa2c',
+        )
+        self.assertEqual(
+            hashlib.sha256(self._B525_FACTS.read_bytes()).hexdigest(),
+            'bb51b8d667ffaee89a8b32ae9762e79b198e0b020f26c547b962bbcff8302f6f',
+        )
+        receipt = json.loads(self._E8_RECEIPT.read_text())
+        facts = json.loads(self._B525_FACTS.read_text())
+        self.assertEqual(
+            receipt['inputs_before']['historical_facts'],
+            {
+                'path': '.work/x86_64/crt-startup-inputs-b52538c5/historical-facts/report.json',
+                'sha256': 'bb51b8d667ffaee89a8b32ae9762e79b198e0b020f26c547b962bbcff8302f6f',
+                'size': 40347222,
+            },
+        )
+        reader = selection._crt_startup_reader()
+        names = selection._crt_startup_identity_names(reader)
+        products = {name: {} for name in receipt['inputs_before']['startup_artifacts']}
+        self.assertEqual(len(names), 12)
+        self.assertEqual(len(products), 9)
+        observed = selection._crt_startup_observed_rows(
+            receipt['observations']['product_placements']['all_named_rows'], names, products,
+        )
+        self.assertEqual(len(observed), 44)
+        self.assertEqual(
+            len([row for row in observed if row['row']['name'] == '_GLOBAL_OFFSET_TABLE_']), 2,
+        )
+        contract = selection.load_contract(selection.CONTRACT_PATH)
+        inputs = selection.load_source_inputs(contract, selection.CONTRACT_PATH)
+        accounting = selection.account_placements(selection.expand_obligations(contract, inputs), facts)
+        companion = {
+            'status': 'crt-startup-observed-with-boundaries', 'reader': {}, 'contract': {}, 'report': {},
+            'source': {},
+            'source_inputs': {
+                name: selection.file_identity(ROOT / name)
+                for name in selection._crt_startup_source_files()
+            },
+            'products': products,
+            'cohort_inputs': self._projection_cohort_inputs(),
+            'measurement_reports': {},
+            'account': {
+                'identity_names': list(names), 'occurrences': observed,
+                'runtime_labels': receipt['observations']['runtime_labels'],
+            },
+            'limits': list(selection.CRT_STARTUP_LIMITS),
+        }
+        return accounting, companion
+
+    def test_retained_e8_projection_joins_all_actual_startup_roles(self) -> None:
+        accounting, companion = self._actual_e8_accounting_and_companion()
+        joins = selection.attach_native_crt_startup(accounting, companion)
+        self.assertEqual(len(joins), 12)
+        self.assertEqual(sum(join['owner_observation_count'] for join in joins), 44)
+        records = {row['identity']['name']: row for row in accounting['identities']}
+        occurrences = {row['index']: row for row in accounting['occurrences']}
+        for join in joins:
+            name = join['identity']['name']
+            record = records[name]
+            rows = [occurrences[index] for index in join['occurrence_indices']]
+            self.assertNotIn(selection.CRT_STARTUP_RECEIPT_REQUIREMENT, record['unresolved'])
+            if any(row['role'] == 'import' for row in rows):
+                self.assertNotIn(selection.ORDINARY_IMPORT_REASON, record['unresolved'])
+            for artifact_key in {row['artifact_key'] for row in rows if row['role'] == 'definition'}:
+                self.assertNotIn(
+                    f'candidate definition placement is not selected: {artifact_key}', record['unresolved'],
+                )
+
     def test_adapter_rejects_a_historical_collector_before_any_occurrence_join(self) -> None:
         reader = selection._crt_startup_reader()
-        parent = selection._common_checkout(selection.ROOT) / '.work/x86_64/crt-startup-selector-tests'
+        parent = ROOT / '.work/x86_64/crt-startup-selector-tests'
         parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=parent) as temporary:
             report_path = Path(temporary) / 'report.json'
@@ -160,11 +254,103 @@ class NativeCrtStartupAttachmentTests(unittest.TestCase):
                     for name in ('elf_report', 'base_inventory', 'static_preparation')
                 },
             }
-            with mock.patch.object(reader, 'validate_report', return_value=report), \
+            with mock.patch.object(selection, '_common_checkout', return_value=ROOT), \
+                 mock.patch.object(reader, 'validate_report', return_value=report), \
                  self.assertRaisesRegex(selection.SelectionError, 'collector source differs'):
                 selection.native_crt_startup_adapter(
                     report_path, facts={}, measurement=measurement, paths={}, source=source,
                 )
+
+
+class NativeCrtStartupCohortRecheckTests(unittest.TestCase):
+    def setUp(self) -> None:
+        common_checkout = mock.patch.object(selection, '_common_checkout', return_value=ROOT)
+        common_checkout.start()
+        self.addCleanup(common_checkout.stop)
+        parent = ROOT / '.work/x86_64/crt-startup-selector-tests'
+        parent.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=parent)
+        self.addCleanup(temporary.cleanup)
+        self.work = Path(temporary.name)
+        self.static = self.work / 'static'
+        self.dynamic = self.work / 'dynamic'
+        for path, payload in (
+            (self.static / 'share/crabc/manifest.json', b'static manifest\n'),
+            (self.static / 'bin/crabc-cc', b'static driver\n'),
+            (self.static / 'usr/lib/libc.a', b'static libc\n'),
+            (self.static / 'usr/lib/crt1.o', b'static crt1\n'),
+            (self.static / 'usr/lib/Scrt1.o', b'static Scrt1\n'),
+            (self.static / 'usr/lib/rcrt1.o', b'static rcrt1\n'),
+            (self.dynamic / 'share/crabc/manifest.json', b'dynamic manifest\n'),
+            (self.dynamic / 'share/crabc/dynamic-product-state.json', b'dynamic state\n'),
+            (self.dynamic / 'share/crabc/libc-shared.provenance.json', b'dynamic provenance\n'),
+            (self.dynamic / 'bin/crabc-cc-dynamic', b'dynamic driver\n'),
+            (self.dynamic / 'usr/lib/libc.so', b'dynamic libc\n'),
+            (self.dynamic / 'usr/lib/crt1.o', b'dynamic crt1\n'),
+            (self.dynamic / 'usr/lib/Scrt1.o', b'dynamic Scrt1\n'),
+            (self.dynamic / 'usr/lib/crabc-dynamic-attach.o', b'dynamic attach\n'),
+            (self.dynamic / 'lib/ld-crabc-x86_64.so.1', b'dynamic loader\n'),
+        ):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+        self.base = self._write('base-inventory.json', b'base\n')
+        self.elf = self._write('elf-facts.json', b'elf\n')
+        self.preparation = self._write('preparation.json', b'preparation\n')
+        self.report = self._write('crt-startup-report.json', b'{}\n')
+        self.paths = {
+            'measurement_checkout': ROOT, 'base_inventory': self.base, 'elf_report': self.elf,
+            'static_preparation': self.preparation, 'static_product': self.static,
+            'dynamic_product': self.dynamic,
+        }
+        self.source = {'revision': 'a' * 40, 'content_sha256': 'b' * 64, 'clean': True}
+        self.measurement = {
+            'candidate_build': {
+                'revision': self.source['revision'], 'source_content_sha256': self.source['content_sha256'],
+            },
+            'reports': {
+                name: selection.file_identity(self.paths[name])
+                for name in ('elf_report', 'base_inventory', 'static_preparation')
+            },
+        }
+        products = selection._crt_startup_product_identities(self.paths)
+        self.facts = {'artifacts': {name: {'identity': value} for name, value in products.items()}}
+
+    def _write(self, name: str, payload: bytes) -> Path:
+        path = self.work / name
+        path.write_bytes(payload)
+        return path
+
+    def _companion(self) -> dict[str, object]:
+        return {
+            'products': selection._crt_startup_product_identities(self.paths),
+            'cohort_inputs': selection._crt_startup_cohort_inputs(self.paths),
+            'measurement_reports': copy.deepcopy(self.measurement['reports']),
+            'report': selection.file_identity(self.report),
+        }
+
+    def test_crt_recheck_seals_each_mode_bearing_metadata_input(self) -> None:
+        targets = {
+            'static_manifest': self.static / 'share/crabc/manifest.json',
+            'dynamic_manifest': self.dynamic / 'share/crabc/manifest.json',
+            'dynamic_state': self.dynamic / 'share/crabc/dynamic-product-state.json',
+        }
+        for name, path in targets.items():
+            with self.subTest(name=name):
+                companion = self._companion()
+                original_bytes = path.read_bytes()
+                original_mode = path.stat().st_mode
+                if name == 'dynamic_manifest':
+                    os.chmod(path, original_mode ^ 0o100)
+                else:
+                    path.write_bytes(original_bytes + b'changed after startup replay\n')
+                with mock.patch.object(selection, 'selection_source', return_value=self.source), \
+                     self.assertRaisesRegex(selection.SelectionError, f'CRT startup {name} changed'):
+                    selection._recheck_runtime_receipt_cohort(
+                        paths=self.paths, facts=self.facts, measurement=self.measurement, source=self.source,
+                        registry=None, pthread=None, crt_startup=companion,
+                    )
+                path.write_bytes(original_bytes)
+                os.chmod(path, original_mode)
 
 
 if __name__ == '__main__':
