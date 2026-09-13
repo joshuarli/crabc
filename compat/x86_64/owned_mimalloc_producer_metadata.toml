@@ -1,0 +1,132 @@
+# Fixed-C mimalloc producer metadata for the selected native x86 backend.
+#
+# This is deliberately a private producer contract.  The 424 identities come
+# only from the exact shared-localization list; public malloc interposition is
+# accounted separately.  The current source is libmimalloc-sys 0.1.49 carrying
+# mimalloc v3.3.2, not the fixed v3.5.0 Rust-port oracle.
+
+schema = "crabc.x86_64-owned-mimalloc-producer-metadata/v1"
+target = "x86_64-unknown-linux-musl"
+
+[backend]
+crate = "libmimalloc-sys"
+version = "0.1.49"
+checksum = "6a45a52f43e1c16f667ccfe4dd8c85b7f7c204fd5e3bf46c5b0db9a5c3c0b8e9"
+mimalloc_version = "3.3.2"
+version_macro = 30302
+
+[source_provenance]
+members_file = "libc/src/c_abi/x86_64/owned_mimalloc_hidden.list"
+members_sha256 = "cd537f6579018bbba79d831ee148a7b07f51a0f3bda538a27970724751d78873"
+members_count = 424
+upstream_prefix = "libmimalloc-sys/c_src/mimalloc/v3/"
+upstream_source_count = 32
+upstream_sources_sha256 = "cd5ba1e4b1c3d85d371a49998a4977c721a6660c3e30f2299f2012784e92e8fa"
+static_translation_unit = { path = "libmimalloc-sys/c_src/mimalloc/v3/src/static.c", sha256 = "4059be2a6676693be3433f5aedc711f56301772e65f3573654c236d6d1cfd074" }
+public_header = { path = "libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc.h", sha256 = "869161433ab2d807a75752d0762accf5b68b6b24ce67e417af46bf181b9b6c72" }
+weak_fallback_source = { path = "libmimalloc-sys/c_src/mimalloc/v3/src/alloc.c", sha256 = "a92d58e47220e5b6d138b83d92498771be4195ee59136a134e4461f6f726b9b8" }
+
+[source_provenance.upstream_sources]
+"libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc-stats.h" = "5260df227ea1612b8678a06b063cc8f48e739b551554541cdeb4d430a7e257b3"
+"libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc.h" = "869161433ab2d807a75752d0762accf5b68b6b24ce67e417af46bf181b9b6c72"
+"libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc/atomic.h" = "e9512b521a82cc0cbc262f6060dd70bb4243ac4a7d69d6ab8b1ef8e56f181a21"
+"libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc/bits.h" = "57a7297e18ae464a7bfd3fc25a46229008602385697305c69ed289b89ece7631"
+"libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc/internal.h" = "5aeeff21d667daf4aadcc66f634aa957ecd688d15b277828f367c8c2274251a8"
+"libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc/prim.h" = "555302d2fcd05e974441d0c9c9208c26e860db4b3f17b9025a08f42e0f4807ba"
+"libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc/track.h" = "1f378b4b6063c078d2aeb5d916c1d30b5db787a44ab9118e7daf673b086882c6"
+"libmimalloc-sys/c_src/mimalloc/v3/include/mimalloc/types.h" = "b54e760da2a8d9d8a9cb708e280268c2d194c99bc518b21f72db70100578ad6a"
+"libmimalloc-sys/c_src/mimalloc/v3/src/alloc-aligned.c" = "70420b4430da4bb6b5197fd27c6c0df485249c53a986bc9536c9fb643fc7613b"
+"libmimalloc-sys/c_src/mimalloc/v3/src/alloc-override.c" = "6c8e9b0d042481c55791edb7330daec64bedaf26f0e70c9ca40de3cc17a690fe"
+"libmimalloc-sys/c_src/mimalloc/v3/src/alloc-posix.c" = "98d0eb877d7b9cdf7e9f857aaf3c739b69f746b91221e0e427e82bdd7cec90b3"
+"libmimalloc-sys/c_src/mimalloc/v3/src/alloc.c" = "a92d58e47220e5b6d138b83d92498771be4195ee59136a134e4461f6f726b9b8"
+"libmimalloc-sys/c_src/mimalloc/v3/src/arena-meta.c" = "86fde644ede2e8d582e53499568a1713516a20326e0350eaa06a28029cece91b"
+"libmimalloc-sys/c_src/mimalloc/v3/src/arena.c" = "a1d6900d2b9a17461aa2a72a7791dfb22f6167b86f7ac6f15f981d9735aa2adb"
+"libmimalloc-sys/c_src/mimalloc/v3/src/bitmap.c" = "de16033e029488e9ade4152ea1274e1a5ecbdc2c8a8d8ee50b745fd037ee6f6c"
+"libmimalloc-sys/c_src/mimalloc/v3/src/bitmap.h" = "2e7a54ff44592a1fe8fe929e691322622f8aa1e0b1e80954781f332a88dd6cd1"
+"libmimalloc-sys/c_src/mimalloc/v3/src/free.c" = "c9a845dd7b9020f26d73761d235fb75e7bc4a3682576de750050ac4098211b43"
+"libmimalloc-sys/c_src/mimalloc/v3/src/heap.c" = "ae8e88737c9861e8e071fe5f1e7acc52093bcffd136a359a6b473101e968c14f"
+"libmimalloc-sys/c_src/mimalloc/v3/src/init.c" = "eca1fe77d72ab2aaccc447c8119056e9c4e8851bda9a95472b573539f76107ad"
+"libmimalloc-sys/c_src/mimalloc/v3/src/libc.c" = "ebd95b475f15d5387e6ef3c88a9cb47b88e64d7e55998ae1dc656614676a443b"
+"libmimalloc-sys/c_src/mimalloc/v3/src/options.c" = "96ef01e41f4b3043118e8c801e660b1d3f185d6fb824e5298a038aee89b6a392"
+"libmimalloc-sys/c_src/mimalloc/v3/src/os.c" = "011e965f28c0e2c885a6834d51bd756a458dd37ebfed6fd4d9ad6607ce0390ed"
+"libmimalloc-sys/c_src/mimalloc/v3/src/page-map.c" = "1be3a208c678fc34187c2a8ffb75f3fe1eecc674bbf8b2af4d1f329506b1fad5"
+"libmimalloc-sys/c_src/mimalloc/v3/src/page-queue.c" = "7ec275805c9f00eb66710ffa99817b3ed1dba9826435d08f4866f7935152f6ae"
+"libmimalloc-sys/c_src/mimalloc/v3/src/page.c" = "d3614a59f2407a32e75b051deb1aff31b233f587d325dcc5420ba508551b687e"
+"libmimalloc-sys/c_src/mimalloc/v3/src/prim/prim.c" = "cc771788e5ba591efb681829a8724f8662a1f50f3db39cf5ebe7738b8ed57e44"
+"libmimalloc-sys/c_src/mimalloc/v3/src/prim/unix/prim.c" = "c1ae32eaac7ccf18c10058cca99723892f8bd027318590151f5011c929c7e3be"
+"libmimalloc-sys/c_src/mimalloc/v3/src/random.c" = "a96a1acc75fd6595811b28420cf0495b87fac98c4dbc73aa0d742b6824f607c8"
+"libmimalloc-sys/c_src/mimalloc/v3/src/static.c" = "4059be2a6676693be3433f5aedc711f56301772e65f3573654c236d6d1cfd074"
+"libmimalloc-sys/c_src/mimalloc/v3/src/stats.c" = "16825bbc252de422982b5728df7eda181d952824f5e3ce958c7fc85feae64b8e"
+"libmimalloc-sys/c_src/mimalloc/v3/src/theap.c" = "7f76bcace4b0578f2063477752138adabd99f7b10a276998e296a312c47a7cfe"
+"libmimalloc-sys/c_src/mimalloc/v3/src/threadlocal.c" = "49be69a4b674e09690a63870830f3ffb05698ed4210949ef5add11957a08325b"
+
+[build]
+static_target_flags = ["-nostdinc", "-isystem", "$CRABC_SOURCE/include", "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-ffile-prefix-map=$CRABC_SOURCE=/crabc", "-MD", "-MF", "$CRABC_X86_BUILD/allocator.d"]
+shared_allocator_flags = ["-nostdinc", "-isystem", "$SOURCE/include", "-fPIC", "-ftls-model=initial-exec", "-fstack-protector-strong", "-DMI_PRIM_HAS_PROCESS_ATTACH=1", "-ffile-prefix-map=$SOURCE=/crabc", "-MD", "-MF", "$BUILD/allocator.d"]
+
+[build.lifecycle_profile]
+backend_implicit_attach_detach = "absent"
+c_define = "-DMI_PRIM_HAS_PROCESS_ATTACH=1"
+rust_cfg = "crabc_owned_mimalloc_lifecycle"
+same_image_entries = ["__crabc_x86_owned_mimalloc_process_initializer", "__crabc_x86_owned_mimalloc_process_finalizer"]
+
+[shared_localization]
+linker_policy = "exact-local-symbols"
+linker_script_sha256 = "6f105e15a0fcd5fbf2ede55e6071780d875b87f359cf44f305ef599277b58e90"
+version_script_argument = "--version-script=$BUILD/libc-mimalloc-hidden.exports"
+
+[metadata.strong_functions]
+static = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT" }
+shared = { type = "FUNC", binding = "LOCAL", visibility = "DEFAULT" }
+excluded_names = ["_ZSt15get_new_handlerv", "_mi_cpu_has_popcnt", "_mi_heap_default_key", "_mi_stats_main", "mi_thread_locals"]
+
+[metadata.weak_null_fallback]
+name = "_ZSt15get_new_handlerv"
+static = { type = "FUNC", binding = "WEAK", visibility = "DEFAULT" }
+shared = { type = "FUNC", binding = "LOCAL", visibility = "DEFAULT" }
+source_semantics = "defined-null-fallback"
+
+[[metadata.data_objects]]
+name = "_mi_cpu_has_popcnt"
+static = { type = "OBJECT", binding = "GLOBAL", visibility = "DEFAULT" }
+shared = { type = "OBJECT", binding = "LOCAL", visibility = "DEFAULT" }
+size_bytes = 1
+static_alignment = 64
+shared_minimum_alignment = 64
+
+[[metadata.data_objects]]
+name = "_mi_heap_default_key"
+static = { type = "OBJECT", binding = "GLOBAL", visibility = "DEFAULT" }
+shared = { type = "OBJECT", binding = "LOCAL", visibility = "DEFAULT" }
+size_bytes = 4
+static_alignment = 4
+shared_minimum_alignment = 4
+
+[[metadata.data_objects]]
+name = "_mi_stats_main"
+static = { type = "OBJECT", binding = "GLOBAL", visibility = "DEFAULT" }
+shared = { type = "OBJECT", binding = "LOCAL", visibility = "DEFAULT" }
+size_bytes = 4368
+static_alignment = 32
+shared_minimum_alignment = 32
+
+[metadata.tls_object]
+name = "mi_thread_locals"
+static = { type = "TLS", binding = "GLOBAL", visibility = "DEFAULT" }
+shared = { type = "TLS", binding = "LOCAL", visibility = "DEFAULT" }
+size_bytes = 8
+static_alignment = 8
+shared_minimum_alignment = 8
+
+[rust_root_imports]
+names = ["_mi_auto_process_done", "_mi_auto_process_init", "mi_free", "mi_malloc_aligned", "mi_realloc_aligned", "mi_usable_size", "mi_zalloc"]
+
+[status_flags]
+family_completion = false
+promotion_ready = false
+public_support = false
+
+[boundaries]
+public_malloc_interposition = "separate-component"
+fixed_c_backend = "selected-current-backend"
+qualified_rust_backend_promotion = "removes-this-private-c-producer-contract"
