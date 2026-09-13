@@ -963,10 +963,19 @@ def public_data_linkage_adapter(ordinary_report_path: Path | None, loader_report
     except (ValueError, OSError) as error:
         raise SelectionError(f'public-data linkage companion rejected: {error}') from error
     require(file_identity(ordinary_report_path) == ordinary_before and file_identity(loader_report_path) == loader_before,
-            'public-data linkage report changed during replay')
+            'public-data linkage report changed during reader replay')
     require(type(ordinary_replay) is dict and set(ordinary_replay) == {'report', 'links'},
             'ordinary-link reader envelope differs')
     require(type(loader_replay) is dict, 'loader-debug reader envelope differs')
+    ordinary_reader_report = exact(ordinary_replay['report'], {'path', 'sha256', 'size'},
+                                   'ordinary-link reader report identity')
+    ordinary_expected_report = {
+        'path': ordinary_report_path.relative_to(ROOT).as_posix(),
+        'sha256': ordinary_before['sha256'],
+        'size': ordinary_before['size'],
+    }
+    require(ordinary_reader_report == ordinary_expected_report,
+            'ordinary-link reader report identity differs')
 
     ordinary_report = read_json(ordinary_report_path)
     expected_inputs = ordinary_link_evidence.admit_inputs(
@@ -975,7 +984,47 @@ def public_data_linkage_adapter(ordinary_report_path: Path | None, loader_report
     require(ordinary_report.get('source_before') == expected_inputs
             and ordinary_report.get('source_after') == expected_inputs,
             'ordinary-link receipt does not use the selected static/dynamic products')
-    require(expected_inputs['source'] == source, 'ordinary-link receipt source differs from selection')
+    ordinary_source = exact(expected_inputs['source'], {'revision', 'content_sha256'},
+                            'ordinary-link receipt source')
+    require(ordinary_source == {key: source[key] for key in ('revision', 'content_sha256')},
+            'ordinary-link receipt source differs from selection')
+    ordinary_dynamic = exact(expected_inputs['dynamic_product'],
+                             {'path', 'manifest', 'state', 'manifest_sha256'},
+                             'ordinary-link dynamic product')
+    selected_dynamic = {
+        'candidate-libc': paths['dynamic_product'] / 'usr/lib/libc.so',
+        'candidate-loader': paths['dynamic_product'] / 'lib/ld-crabc-x86_64.so.1',
+        'dynamic-manifest': paths['dynamic_product'] / 'share/crabc/manifest.json',
+        'dynamic-state': paths['dynamic_product'] / 'share/crabc/dynamic-product-state.json',
+    }
+    selected_dynamic_records = {name: file_identity(path) for name, path in selected_dynamic.items()}
+    for name, ordinary_key in (('dynamic-manifest', 'manifest'), ('dynamic-state', 'state')):
+        ordinary_record = exact(ordinary_dynamic[ordinary_key], {'path', 'sha256', 'size'},
+                                f'ordinary-link {ordinary_key} identity')
+        selected_record = selected_dynamic_records[name]
+        require(ordinary_record == {
+            'path': selected_dynamic[name].relative_to(ROOT).as_posix(),
+            'sha256': selected_record['sha256'], 'size': selected_record['size'],
+        }, f'ordinary-link {ordinary_key} differs from selected dynamic product')
+
+    loader_artifacts = loader_replay.get('artifacts')
+    require(type(loader_artifacts) is dict, 'loader-debug receipt artifact roster differs')
+    loader_product_bindings = []
+    for name, selected_record in selected_dynamic_records.items():
+        loader_record = exact(loader_artifacts.get(name), {'path', 'sha256', 'size'},
+                              f'loader {name} identity')
+        require(type(loader_record['path']) is str and loader_record['path']
+                and not Path(loader_record['path']).is_absolute() and '..' not in Path(loader_record['path']).parts
+                and type(loader_record['sha256']) is str and re.fullmatch(r'[0-9a-f]{64}', loader_record['sha256']) is not None
+                and type(loader_record['size']) is int and loader_record['size'] >= 0,
+                f'loader {name} identity values differ')
+        require(loader_record['sha256'] == selected_record['sha256'] and loader_record['size'] == selected_record['size'],
+                f'loader {name} bytes differ from selected dynamic product')
+        loader_product_bindings.append({
+            'name': name,
+            'loader_receipt': copy.deepcopy(loader_record),
+            'selected_dynamic_product': selected_record,
+        })
 
     common = [dict(row) for row in selected_objects
               if set(row.get('artifacts', ())) == {'candidate-static', 'candidate-shared'}]
@@ -1005,6 +1054,8 @@ def public_data_linkage_adapter(ordinary_report_path: Path | None, loader_report
             and metadata.get('type') == 'OBJECT' and metadata.get('binding') == 'GLOBAL'
             and metadata.get('visibility') == 'DEFAULT' and metadata.get('size') == 8,
             'loader-debug receipt pointer metadata differs')
+    require(file_identity(ordinary_report_path) == ordinary_before and file_identity(loader_report_path) == loader_before,
+            'public-data linkage report changed during companion replay')
     return {
         'status': 'linkage-addressability-proved-with-boundaries',
         'selection_source': copy.deepcopy(source),
@@ -1022,6 +1073,7 @@ def public_data_linkage_adapter(ordinary_report_path: Path | None, loader_report
             'artifacts': copy.deepcopy(loader_object['artifacts']),
             'metadata': {'type': metadata['type'], 'binding': metadata['binding'],
                          'visibility': metadata['visibility'], 'size_bytes': metadata['size']},
+            'product_bindings': loader_product_bindings,
         },
         'limits': list(PUBLIC_DATA_LINKAGE_LIMITS),
     }

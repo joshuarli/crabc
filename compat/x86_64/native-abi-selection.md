@@ -66,8 +66,11 @@ other, or either repeated, is rejected. The first reader authenticates ordinary
 addressability for the exact 32 static/shared data objects and ten declared
 aliases against the same supplied static preparation and dynamic product. The
 second reader authenticates the shared-only eight-byte `_dl_debug_addr` loader
-pointer from its own same-source product cohort. The selection report records a
-`public_data_linkage_companion` and scoped physical import joins. It discharges
+pointer from its own same-source product cohort. Its retained `libc.so`, loader,
+dynamic manifest, and dynamic state must nevertheless have the same bytes as
+the selected dynamic product; the report retains both cohort paths. The
+selection report records a `public_data_linkage_companion` and scoped physical
+import joins. It discharges
 only a selected object import when every candidate import for that exact object
 is in the static product covered by the ordinary-link receipt. It does not set
 the aggregate semantic-receipt gate, `runtime_semantics_proven`, family

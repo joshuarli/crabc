@@ -532,16 +532,44 @@ class PublicDataLinkageAdapterTests(unittest.TestCase):
         self.paths['static_preparation'].write_text('{}\n')
         self.paths['static_product'].mkdir()
         self.paths['dynamic_product'].mkdir()
+        self.dynamic_files = {
+            'candidate-libc': self.paths['dynamic_product'] / 'usr/lib/libc.so',
+            'candidate-loader': self.paths['dynamic_product'] / 'lib/ld-crabc-x86_64.so.1',
+            'dynamic-manifest': self.paths['dynamic_product'] / 'share/crabc/manifest.json',
+            'dynamic-state': self.paths['dynamic_product'] / 'share/crabc/dynamic-product-state.json',
+        }
+        for key, path in self.dynamic_files.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            content = (json.dumps({'source_sha256': self.source['content_sha256']}) + '\n').encode() \
+                if key == 'dynamic-state' else (key + '\n').encode()
+            path.write_bytes(content)
+        loader_cohort = self.work / 'loader-product'
+        self.loader_artifacts = {}
+        for key, path in self.dynamic_files.items():
+            retained = loader_cohort / path.relative_to(self.paths['dynamic_product'])
+            retained.parent.mkdir(parents=True, exist_ok=True)
+            retained.write_bytes(path.read_bytes())
+            self.loader_artifacts[key] = selection.loader_debug_evidence.record(retained)
+        self.admitted_inputs = {
+            'source': {key: self.source[key] for key in ('revision', 'content_sha256')},
+            'static_preparation': {'receipt': 'exact static receipt'},
+            'dynamic_product': {
+                'path': self.paths['dynamic_product'].relative_to(ROOT).as_posix(),
+                'manifest': selection.ordinary_link_evidence.work_file_identity(
+                    ROOT, self.dynamic_files['dynamic-manifest'], 'test dynamic manifest',
+                ),
+                'state': selection.ordinary_link_evidence.work_file_identity(
+                    ROOT, self.dynamic_files['dynamic-state'], 'test dynamic state',
+                ),
+                'manifest_sha256': 'f' * 64,
+            },
+        }
         self.ordinary_report = self.work / 'ordinary-report.json'
         self.loader_report = self.work / 'loader-report.json'
 
     def linkage_companion(self, *, report_inputs=None, admitted_inputs=None, loader_metadata=None, loader_source=None,
-                          ordinary_selection=None):
-        admitted_inputs = {
-            'source': dict(self.source),
-            'static_preparation': {'receipt': 'exact static receipt'},
-            'dynamic_product': {'path': 'exact dynamic product'},
-        } if admitted_inputs is None else admitted_inputs
+                          loader_artifacts=None, ordinary_replay_identity=None, ordinary_selection=None):
+        admitted_inputs = copy.deepcopy(self.admitted_inputs) if admitted_inputs is None else admitted_inputs
         report_inputs = admitted_inputs if report_inputs is None else report_inputs
         loader_metadata = {
             'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size': 8,
@@ -553,9 +581,13 @@ class PublicDataLinkageAdapterTests(unittest.TestCase):
         loader = {
             'source_commit': loader_source['revision'], 'source_sha256': loader_source['content_sha256'],
             'public_metadata': {'_dl_debug_addr': loader_metadata},
+            'artifacts': self.loader_artifacts if loader_artifacts is None else loader_artifacts,
         }
         self.loader_report.write_text(json.dumps(loader) + '\n')
-        ordinary_replay = {'report': {'path': 'ordinary-report.json'}, 'links': {}}
+        ordinary_replay = {'report': (
+            selection.ordinary_link_evidence.work_file_identity(ROOT, self.ordinary_report, 'test ordinary report')
+            if ordinary_replay_identity is None else ordinary_replay_identity
+        ), 'links': {}}
         selection_replay = (
             contextlib.nullcontext()
             if ordinary_selection is None
@@ -601,13 +633,126 @@ class PublicDataLinkageAdapterTests(unittest.TestCase):
         self.assertEqual(result['loader_debug_addr']['id'], 'object:_dl_debug_addr')
         self.assertEqual(result['loader_debug_addr']['artifacts'], ['candidate-shared'])
         self.assertEqual(result['loader_debug_addr']['metadata']['size_bytes'], 8)
+        bindings = result['loader_debug_addr']['product_bindings']
+        self.assertEqual([binding['name'] for binding in bindings], [
+            'candidate-libc', 'candidate-loader', 'dynamic-manifest', 'dynamic-state',
+        ])
+        self.assertTrue(all(binding['loader_receipt']['path'] != binding['selected_dynamic_product']['path']
+                            for binding in bindings))
+
+    def test_linkage_accepts_the_real_ordinary_admission_source_projection(self):
+        """The ordinary reader owns a two-field product source identity."""
+        ordinary_source = {key: self.source[key] for key in ('revision', 'content_sha256')}
+        static_manifest = self.paths['static_product'] / 'share/crabc/manifest.json'
+        static_manifest.parent.mkdir(parents=True, exist_ok=True)
+        static_manifest.write_text(json.dumps({'static': True}) + '\n')
+        primary_manifest = selection.ordinary_link_evidence.work_file_identity(
+            ROOT, static_manifest, 'test static manifest',
+        )
+        preparation = {
+            'products': {'primary': {
+                'path': self.paths['static_product'].relative_to(ROOT).as_posix(),
+                'manifest': primary_manifest,
+            }},
+            'source': ordinary_source,
+        }
+        loader = {
+            'source_commit': self.source['revision'], 'source_sha256': self.source['content_sha256'],
+            'public_metadata': {'_dl_debug_addr': {
+                'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size': 8,
+            }},
+            'artifacts': self.loader_artifacts,
+        }
+        with (
+            mock.patch.object(selection.ordinary_link_evidence.static_products, 'validate_receipt', return_value=preparation),
+            mock.patch.object(selection.ordinary_link_evidence.static_products, 'source_identity', return_value=ordinary_source),
+            mock.patch.object(selection.ordinary_link_evidence.qualification, 'product_identity', return_value='f' * 64),
+        ):
+            admitted = selection.ordinary_link_evidence.admit_inputs(
+                ROOT, self.paths['static_preparation'], self.paths['static_product'], self.paths['dynamic_product'],
+            )
+            self.assertEqual(admitted['source'], ordinary_source)
+            self.ordinary_report.write_text(json.dumps({
+                'source_before': admitted, 'source_after': admitted,
+            }) + '\n')
+            self.loader_report.write_text(json.dumps(loader) + '\n')
+            with (
+                mock.patch.object(selection.ordinary_link_evidence, 'validate_report', return_value={
+                    'report': selection.ordinary_link_evidence.work_file_identity(
+                        ROOT, self.ordinary_report, 'test ordinary report',
+                    ), 'links': {},
+                }),
+                mock.patch.object(selection.loader_debug_evidence, 'validate_report', return_value=loader),
+            ):
+                result = selection.public_data_linkage_adapter(
+                    self.ordinary_report, self.loader_report, contract=self.contract,
+                    selected_objects=self.contract['object_contracts'], source=self.source, paths=self.paths,
+                )
+        self.assertEqual(result['selection_source'], self.source)
+
+    def test_linkage_rejects_ordinary_source_missing_or_extra_fields(self):
+        two_fields = {key: self.source[key] for key in ('revision', 'content_sha256')}
+        for ordinary_source in (
+            {'revision': self.source['revision']},
+            {**two_fields, 'clean': True},
+        ):
+            with self.subTest(ordinary_source=ordinary_source), self.assertRaisesRegex(
+                    selection.SelectionError, 'ordinary-link receipt source fields'):
+                self.linkage_companion(admitted_inputs={
+                    'source': ordinary_source,
+                    'static_preparation': {'receipt': 'exact static receipt'},
+                    'dynamic_product': {'path': 'exact dynamic product'},
+                })
+
+    def test_linkage_rejects_a_loader_cohort_with_different_selected_bytes(self):
+        artifacts = copy.deepcopy(self.loader_artifacts)
+        artifacts['candidate-libc']['sha256'] = '0' * 64
+        with self.assertRaisesRegex(selection.SelectionError, 'loader candidate-libc bytes differ'):
+            self.linkage_companion(loader_artifacts=artifacts)
+
+    def test_linkage_rejects_a_reader_envelope_with_another_report_identity(self):
+        wrong = selection.ordinary_link_evidence.work_file_identity(ROOT, self.ordinary_report, 'unwritten report') \
+            if self.ordinary_report.exists() else {'path': self.ordinary_report.relative_to(ROOT).as_posix(),
+                                                    'sha256': '0' * 64, 'size': 0}
+        wrong['sha256'] = '0' * 64
+        with self.assertRaisesRegex(selection.SelectionError, 'ordinary-link reader report identity differs'):
+            self.linkage_companion(ordinary_replay_identity=wrong)
+
+    def test_linkage_seals_receipts_after_the_last_ordinary_report_read(self):
+        admitted = copy.deepcopy(self.admitted_inputs)
+        self.ordinary_report.write_text(json.dumps({
+            'source_before': admitted, 'source_after': admitted,
+        }) + '\n')
+        loader = {
+            'source_commit': self.source['revision'], 'source_sha256': self.source['content_sha256'],
+            'public_metadata': {'_dl_debug_addr': {
+                'type': 'OBJECT', 'binding': 'GLOBAL', 'visibility': 'DEFAULT', 'size': 8,
+            }},
+            'artifacts': self.loader_artifacts,
+        }
+        self.loader_report.write_text(json.dumps(loader) + '\n')
+
+        def mutate_after_read(*_args):
+            self.ordinary_report.write_text('{"tampered":true}\n')
+            return admitted
+
+        with (
+            mock.patch.object(selection.ordinary_link_evidence, 'validate_report', return_value={
+                'report': selection.ordinary_link_evidence.work_file_identity(
+                    ROOT, self.ordinary_report, 'test ordinary report',
+                ), 'links': {},
+            }),
+            mock.patch.object(selection.ordinary_link_evidence, 'admit_inputs', side_effect=mutate_after_read),
+            mock.patch.object(selection.loader_debug_evidence, 'validate_report', return_value=loader),
+            self.assertRaisesRegex(selection.SelectionError, 'companion replay'),
+        ):
+            selection.public_data_linkage_adapter(
+                self.ordinary_report, self.loader_report, contract=self.contract,
+                selected_objects=self.contract['object_contracts'], source=self.source, paths=self.paths,
+            )
 
     def test_linkage_rejects_a_report_with_other_supplied_products(self):
-        admitted = {
-            'source': dict(self.source),
-            'static_preparation': {'receipt': 'selected static receipt'},
-            'dynamic_product': {'path': 'selected dynamic product'},
-        }
+        admitted = copy.deepcopy(self.admitted_inputs)
         report = copy.deepcopy(admitted)
         report['dynamic_product']['path'] = 'substituted dynamic product'
         with self.assertRaisesRegex(selection.SelectionError, 'selected static/dynamic products'):
