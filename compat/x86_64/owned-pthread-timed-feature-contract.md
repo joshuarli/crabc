@@ -1,0 +1,62 @@
+# Owned pthread timed-feature receipt
+
+`run_owned_pthread_timed_feature_contract.sh` collects one non-promoting native
+receipt for these four public/implementation pairs:
+
+- `pthread_cond_timedwait` → `__pthread_cond_timedwait`
+- `pthread_mutex_timedlock` → `__pthread_mutex_timedlock`
+- `pthread_timedjoin_np` → `__pthread_timedjoin_np`
+- `pthread_tryjoin_np` → `__pthread_tryjoin_np`
+
+The receipt is separate from `owned_pthread_alias_contract_reader.py`. That
+older 17-alias receipt remains the authority for its roster and its historical
+input identity; this component neither expands nor relabels it.
+
+## Evidence boundary
+
+The reader seals the current collector source identity, the supplied selected
+product report, the exact supplied static and dynamic product bytes, pinned
+musl archive/shared inputs, command arguments and environment, linker maps and
+receipts, actual ELF symbol tables, and the five executable modes: static,
+static PIE, musl dynamic PIE/non-PIE, and crabc dynamic PIE/non-PIE. Static
+link receipts bind the contract object, owned CRT objects, selected `libc.a`,
+builtins archive, linker output, and extraction trace. Final static outputs
+must retain each public/private same-definition pair. Final dynamic outputs
+must import each public `FUNC GLOBAL DEFAULT` name and must not expose the
+private provider.
+
+`owned_pthread_timed_feature_contract_reader.py` also checks the source feature
+route: the `x86-owned-static-runtime` parity entry, `libc/Cargo.toml`, the
+fixed builder argument pair `--features x86-owned-static-runtime`, and the four
+source `.hidden`/`.weak`/`.set` forms. This is source evidence for the build
+configuration. It is deliberately **not** an assertion that the supplied
+product was built by that invocation: product bytes have their own hash and
+anchor binding, and a future build-invocation receipt must prove that additional
+edge.
+
+The installed-header probe checks only these ordinary outcomes:
+
+- expired and successful `pthread_mutex_timedlock` calls;
+- expired and signalled successful `pthread_cond_timedwait` calls;
+- `pthread_tryjoin_np` busy result ownership;
+- timed-join timeout/result preservation, successful result delivery, and a
+  cancelled joining thread leaving its target joinable.
+
+The runner captures the collector source before and after collection. That
+identity names the code that performed this collection. Separately, the report
+keeps the supplied product anchor's selected fed source identity and copies the
+eight source leaves directly from that selected revision before evaluating the
+feature route. The two identities are intentionally distinct when a successor
+collector replays frozen fed products; neither is relabelled as the other. Its
+retained v1 historical-input record is explicitly marked
+`used_for_selected_products: false`; it supplies no current source or product
+qualification.
+
+## Limits
+
+The receipt has `public_support`, `family_complete`, and `promotion_ready` set
+to false. It does not qualify other pthread aliases, scheduler/fork/lifetime
+semantics, every cancellation path, a general pthread family, or a product
+build invocation. The artifact only supports a selector join after the selector
+independently binds its current source, product, mode, and all other required
+feature obligations.
