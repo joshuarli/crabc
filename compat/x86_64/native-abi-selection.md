@@ -141,14 +141,16 @@ size. The current shared object requirements include these distinct owners:
 | `h_errno`, `getdate_err` | Four-byte objects from `h_errno.rs` and `owned_getdate.rs`. A location-function header macro does not make the exported `h_errno` object TLS. |
 | `in6addr_any`, `in6addr_loopback` | Distinct immutable sixteen-byte, four-byte-aligned IPv6 records from their named leaves. |
 | `_ns_flagdata` | Immutable 128-byte table of sixteen two-integer records in `ns_flagdata.rs`. |
-| `__stack_chk_guard` | Eight-byte shared compiler-guard object in `dynamic_main_thread_runtime_v1_lifecycle.rs`, matching the initialized FS+40 guard. Static placement requires separate resolution below. |
+| `__stack_chk_guard` | Eight-byte compiler-guard object, owned separately by `static_tls.rs` in the owned static runtime and `dynamic_main_thread_runtime_v1_lifecycle.rs` in the owned shared runtime. Each bootstrap publishes its initialized FS+40 guard in the addressable object. |
 | `_dl_debug_addr` | Eight-byte shared-only debugger pointer; no static-libc placement is selected. |
 
-The static TLS bootstrap already initializes the x86 FS+40 compiler guard;
-the owned static archive currently lacks an addressable `__stack_chk_guard`
-while pinned musl's static archive supplies it. This is an explicit remaining
-static-object selection/provider question. Shared metadata equality and the
-working FS-relative compiler path do not resolve that distinct placement.
+The addressable `__stack_chk_guard` object is selected in both owned libc
+placements, preserving pinned musl's storage contract. The static bootstrap
+publishes its existing `AT_RANDOM`-derived value after successful FS-base
+installation and before preinit or worker entry. It does not introduce a
+second seed or a reseeding entry point. The standalone private TLS archive
+retains its narrower FS-relative guard contract. Static ordinary-link,
+startup, and worker evidence remains distinct from shared metadata evidence.
 
 Other static-only names likewise need exact owner accounting rather than
 automatic public promotion or silent exclusion. Private runtime imports need

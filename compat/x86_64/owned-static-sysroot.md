@@ -120,10 +120,14 @@ trace evidence.
 
 The static TLS owner explicitly reserves the x86 compiler guard at `%fs:40`,
 initializes it from `AT_RANDOM` before preinit, and copies it into each worker.
-The consumer checks the pinned musl guard transformation and executes real
-compiler-protected code in the initial thread and worker. A child corrupts
-only its own guard and must fault through the owned failure handler; core
-dumps are disabled for this negative test.
+It also publishes the same value in the addressable eight-byte
+`__stack_chk_guard` object, owned by `static_tls.rs` for the owned static
+runtime. The consumer checks both views against the pinned musl guard
+transformation before preinit completes and at worker entry, and executes
+real compiler-protected code in the initial thread and worker. A child
+corrupts only its own FS-relative guard and must fault through the owned
+failure handler; the parent's two guard views remain unchanged. Core dumps
+are disabled for this negative test.
 
 Each TLS job also links `libc_pthread_tls_aggregate_probe.c` through the installed
 CRT in both modes and the extracted package. Two workers compose errno isolation,

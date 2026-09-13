@@ -72,6 +72,7 @@ REQUIRED_LIBC_SYMBOLS = frozenset(
         "__crabc_x86_static_tls_bootstrap",
         "__errno_location",
         "__libc_start_main",
+        "__stack_chk_guard",
         "exit",
         "clone",
         "vfork",

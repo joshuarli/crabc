@@ -156,6 +156,17 @@ static STATIC_INITIAL_TLS_MAIN_THREAD_POINTER: AtomicUsize = AtomicUsize::new(0)
 static STATIC_INITIAL_TLS_MAIN_THREAD_ID: AtomicI32 = AtomicI32::new(0);
 static mut STATIC_INITIAL_TLS_PLAN: StaticInitialTlsPlan = StaticInitialTlsPlan::EMPTY;
 
+/// Addressable compiler-guard ABI for the owned static runtime.
+///
+/// Musl's `src/env/__stack_chk_fail.c` exposes this machine-word object as
+/// well as the x86 FS+40 guard. The successful initial bootstrap publishes
+/// the same already-derived AT_RANDOM value to both views before preinit or
+/// worker entry; this is not a second seed or a callable reseeding path.
+/// The smaller standalone TLS archive keeps its existing private guard scope.
+#[cfg(feature = "x86-owned-static-runtime")]
+#[no_mangle]
+pub static mut __stack_chk_guard: usize = 0;
+
 core::arch::global_asm!(
     ".hidden __crabc_x86_static_tls_bootstrap",
     ".section .note.GNU-stack,\"\",@progbits",
@@ -207,6 +218,8 @@ pub(super) unsafe fn bootstrap_initial_thread(initial_stack: *const usize) -> bo
     // following release store publishes every plan field to child allocators.
     unsafe {
         core::ptr::write_volatile(core::ptr::addr_of_mut!(STATIC_INITIAL_TLS_PLAN), plan);
+        #[cfg(feature = "x86-owned-static-runtime")]
+        core::ptr::write(core::ptr::addr_of_mut!(__stack_chk_guard), plan.stack_guard);
     }
     STATIC_INITIAL_TLS_MAIN_THREAD_POINTER.store(block.thread_pointer as usize, Ordering::Release);
     STATIC_INITIAL_TLS_MAIN_THREAD_ID.store(main_thread_id as c_int, Ordering::Release);

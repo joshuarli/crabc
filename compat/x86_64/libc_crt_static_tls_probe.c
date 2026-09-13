@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 extern int crabc_crt_guarded_call(int corrupt);
+extern uintptr_t __stack_chk_guard;
 static uintptr_t process_guard;
 
 static uintptr_t stack_guard(void)
@@ -44,7 +45,8 @@ static int initial_stack_guard_holds(void)
         if (index != 1)
             expected |= (uintptr_t)entropy[index] << (index * 8);
     process_guard = stack_guard();
-    return expected != 0 && process_guard == expected && crabc_crt_guarded_call(0) == 42;
+    return expected != 0 && process_guard == expected &&
+        __stack_chk_guard == expected && crabc_crt_guarded_call(0) == 42;
 }
 #endif
 
@@ -205,7 +207,8 @@ static void *observe_worker(void *opaque)
     struct worker_observation *observation = opaque;
 
 #ifdef CRABC_STATIC_STACK_GUARD
-    if (stack_guard() != process_guard || crabc_crt_guarded_call(0) != 42)
+    if (stack_guard() != process_guard || __stack_chk_guard != process_guard ||
+        crabc_crt_guarded_call(0) != 42)
         return (void *)(uintptr_t)1;
 #endif
 
@@ -368,7 +371,7 @@ int main(int argc, char **argv, char **envp)
     int child_status = 0;
     if (child < 0 || waitpid(child, &child_status, 0) != child ||
         !WIFSIGNALED(child_status) || WTERMSIG(child_status) != SIGSEGV ||
-        stack_guard() != process_guard)
+        stack_guard() != process_guard || __stack_chk_guard != process_guard)
         return 99;
 #endif
     if (worker_result != (void *)(uintptr_t)worker_value ||
