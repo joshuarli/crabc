@@ -46,8 +46,13 @@ __attribute__((used,noinline)) static void legacy_fini(void) {
     ) _Exit(97);
     emit('L'); emit('\n');
 }
+/* The wire-parser source fixture includes this translation unit to exercise a
+ * malformed in-memory main ELF. It deliberately omits only process-startup
+ * sections; installed probes never define this harness-only macro. */
+#ifndef CRABC_STARTUP_PROBE_WIRE_HARNESS
 __asm__(".pushsection .init,\"ax\",@progbits\ncall legacy_init\n.popsection\n"
         ".pushsection .fini,\"ax\",@progbits\ncall legacy_fini\n.popsection\n");
+#endif
 static void handler(void) { if (phase!=3) _Exit(98); phase=4; emit('A'); }
 
 /* This observation reads only the exact initial graph's public ELF metadata.
@@ -103,13 +108,17 @@ static int wires(struct dl_phdr_info *info,size_t size,void *opaque) {
         if (ELF64_R_TYPE(rela[n].r_info)!=R_X86_64_GLOB_DAT || rela[n].r_addend
             || syms[si].st_shndx!=SHN_UNDEF) _Exit(101);
         uintptr_t value=*(const uintptr_t *)(info->dlpi_addr+rela[n].r_offset);
-        if (h) { s->handoffs++; s->handoff=value; }
+        if (h) {
+            if (syms[si].st_info!=ELF64_ST_INFO(STB_WEAK,STT_OBJECT)
+                || ELF64_ST_VISIBILITY(syms[si].st_other)!=STV_DEFAULT) _Exit(102);
+            s->handoffs++; s->handoff=value;
+        }
         else if (c) {
-            if (syms[si].st_info!=ELF64_ST_INFO(STB_WEAK,STT_OBJECT)) _Exit(102);
+            if (syms[si].st_info!=ELF64_ST_INFO(STB_WEAK,STT_OBJECT)) _Exit(103);
             s->conventional++; s->snapshot=value;
         } else {
             if (syms[si].st_info!=ELF64_ST_INFO(STB_WEAK,STT_NOTYPE)
-                || ELF64_ST_VISIBILITY(syms[si].st_other)!=STV_DEFAULT) _Exit(103);
+                || ELF64_ST_VISIBILITY(syms[si].st_other)!=STV_DEFAULT) _Exit(104);
             s->descriptors++; s->descriptor=value;
         }
     }

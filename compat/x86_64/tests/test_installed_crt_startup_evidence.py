@@ -2,6 +2,7 @@
 import copy
 import hashlib
 import json
+import subprocess
 from unittest import mock
 from pathlib import Path
 import sys
@@ -50,6 +51,44 @@ class InstalledCrtStartupTests(unittest.TestCase):
                 with self.assertRaises(reader.StartupEvidenceError):
                     reader.descriptor_handoff(changed['observations']['product_relocations'],
                                               changed['observations']['executables'])
+
+    def test_probe_rejects_a_weak_handoff_with_the_wrong_symbol_type(self):
+        """The live main-image observer must not accept a weak non-OBJECT slot."""
+        parent=reader.ROOT/'.work/x86_64/crt-startup-development';parent.mkdir(parents=True,exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=parent) as directory:
+            work=Path(directory);source=work/'wrong-handoff-type.c';binary=work/'wrong-handoff-type'
+            source.write_text(r'''
+#define CRABC_STARTUP_PROBE_WIRE_HARNESS 1
+#define EMPTY_ARRAYS 1
+#define main installed_crt_startup_probe_main
+#include "compat/x86_64/installed_crt_startup_probe.c"
+#undef main
+#include <sys/wait.h>
+uintptr_t __stack_chk_guard;
+int main(void) {
+    static const char strings[]="\0__crabc_x86_64_owned_crt_handoff";
+    Elf64_Sym symbols[2]={0}; Elf64_Rela relocation={0}; Elf64_Dyn dynamic[5]={0};
+    Elf64_Phdr program={0}; struct dl_phdr_info info={0}; uintptr_t slot=0;
+    symbols[1].st_name=1;
+    symbols[1].st_info=ELF64_ST_INFO(STB_WEAK,STT_FUNC);
+    symbols[1].st_other=STV_DEFAULT; symbols[1].st_shndx=SHN_UNDEF;
+    relocation.r_offset=(Elf64_Addr)(uintptr_t)&slot;
+    relocation.r_info=ELF64_R_INFO(1,R_X86_64_GLOB_DAT);
+    dynamic[0]=(Elf64_Dyn){.d_tag=DT_SYMTAB,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)symbols};
+    dynamic[1]=(Elf64_Dyn){.d_tag=DT_STRTAB,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)strings};
+    dynamic[2]=(Elf64_Dyn){.d_tag=DT_RELA,.d_un.d_ptr=(Elf64_Addr)(uintptr_t)&relocation};
+    dynamic[3]=(Elf64_Dyn){.d_tag=DT_RELASZ,.d_un.d_val=sizeof relocation};
+    program.p_type=PT_DYNAMIC; program.p_vaddr=(Elf64_Addr)(uintptr_t)dynamic;
+    info.dlpi_phdr=&program; info.dlpi_phnum=1; info.dlpi_name="";
+    pid_t child=fork(); if (child<0) return 2;
+    if (!child) { struct wire_state state={0}; wires(&info,0,&state); _Exit(0); }
+    int status=0;
+    return waitpid(child,&status,0)!=child || !WIFEXITED(status) || WEXITSTATUS(status)!=102;
+}
+''',encoding='utf-8')
+            subprocess.run(['cc','-std=c11','-I',str(reader.ROOT),str(source),'-o',str(binary)],
+                           cwd=reader.ROOT,check=True,capture_output=True,text=True)
+            subprocess.run([str(binary)],cwd=reader.ROOT,check=True,capture_output=True,text=True)
 
     def test_duplicate_report_spellings_reject_before_replay(self):
         for options in (['--report=one','--report=two'],['--report','one','--report=two']):
