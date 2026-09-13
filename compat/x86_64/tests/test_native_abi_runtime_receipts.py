@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import stat
 import sys
 import tempfile
 import unittest
@@ -219,6 +220,12 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         }
 
     def prepared_worker_report(self, elf_account, source_account, relocations):
+        # The prepared-worker owner records supplied .work inputs with its
+        # root-relative path/hash/size form.  It intentionally does not
+        # invent host file modes for those retained reader bindings.
+        def work_identity(path):
+            return selection.ordinary_link_evidence.work_file_identity(ROOT, path, 'prepared worker test input')
+
         runtime = {
             'application_cells': {
                 row['label']: dict(row) for row in selection.prepared_worker_evidence.runtime_cells()
@@ -232,13 +239,18 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         products = {
             'source': {'revision': self.source['revision'], 'content_sha256': self.source['content_sha256']},
             'static_preparation': {
-                'receipt': copy.deepcopy(self.measurement['reports']['static_preparation']),
+                'receipt': work_identity(self.preparation),
                 'source': {'revision': self.source['revision'], 'content_sha256': self.source['content_sha256']},
-                'primary': {'path': '.work/static', 'manifest': copy.deepcopy(self.current['static_manifest'])},
+                'primary': {
+                    'path': self.static.relative_to(ROOT).as_posix(),
+                    'manifest': work_identity(self.static / 'share/crabc/manifest.json'),
+                },
             },
             'dynamic_product': {
-                'path': '.work/dynamic', 'manifest': copy.deepcopy(self.current['dynamic_manifest']),
-                'state': copy.deepcopy(self.current['dynamic_state']), 'manifest_sha256': 'f' * 64,
+                'path': self.dynamic.relative_to(ROOT).as_posix(),
+                'manifest': work_identity(self.dynamic / 'share/crabc/manifest.json'),
+                'state': work_identity(self.dynamic / 'share/crabc/dynamic-product-state.json'),
+                'manifest_sha256': self.current['dynamic_manifest']['sha256'],
             },
         }
         return {
@@ -252,16 +264,16 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             'inputs_before': {
                 'products': products,
                 'reports': {
-                    'base_inventory': copy.deepcopy(self.measurement['reports']['base_inventory']),
-                    'elf_report': copy.deepcopy(self.measurement['reports']['elf_report']),
+                    'base_inventory': work_identity(self.base),
+                    'elf_report': work_identity(self.elf),
                 },
                 'elf': copy.deepcopy(elf_account),
             },
             'inputs_after': {
                 'products': copy.deepcopy(products),
                 'reports': {
-                    'base_inventory': copy.deepcopy(self.measurement['reports']['base_inventory']),
-                    'elf_report': copy.deepcopy(self.measurement['reports']['elf_report']),
+                    'base_inventory': work_identity(self.base),
+                    'elf_report': work_identity(self.elf),
                 },
                 'elf': copy.deepcopy(elf_account),
             },
@@ -607,7 +619,8 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 paths=self.paths, source=self.source,
             )
 
-    def test_prepared_worker_adapter_replays_the_owner_and_binds_its_finite_product_roster(self):
+    def test_prepared_worker_adapter_accepts_the_owner_relative_path_hash_size_input_shape(self):
+        """The current owner receipt keeps its supplied-input identities relative."""
         elf_account = {
             'operations': {name: {'.dynsym': {}, '.symtab': {}}
                            for name in selection.prepared_worker_evidence.OPERATIONS},
@@ -617,6 +630,14 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         source_account = self._prepared_source_account()
         relocations = {name: {} for name in selection.prepared_worker_evidence.OPERATIONS}
         report = self.prepared_worker_report(elf_account, source_account, relocations)
+        self.assertEqual(
+            set(report['inputs_before']['products']['static_preparation']['receipt']),
+            {'path', 'sha256', 'size'},
+        )
+        self.assertEqual(
+            set(report['inputs_before']['reports']['base_inventory']),
+            {'path', 'sha256', 'size'},
+        )
         with (
             mock.patch.object(selection.prepared_worker_evidence, 'validate_report', return_value=report) as replay,
             mock.patch.object(selection.prepared_worker_evidence, 'account_elf', return_value=elf_account),
@@ -638,6 +659,113 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             set(result['products']),
             {'static_manifest', 'static_libc', 'dynamic_manifest', 'dynamic_state', 'dynamic_libc', 'dynamic_loader'},
         )
+
+    def test_prepared_worker_adapter_rejects_a_relative_owner_input_path_hash_or_size_change(self):
+        """Each field of the owner's three-field work record names this input."""
+        elf_account = {
+            'operations': {name: {'.dynsym': {}, '.symtab': {}}
+                           for name in selection.prepared_worker_evidence.OPERATIONS},
+            'descriptor_named_elf_observations': [], 'descriptor_installed_import_required': False,
+            'legacy_named_shared_loader_rows': [],
+        }
+        source_account = self._prepared_source_account()
+        relocations = {name: {} for name in selection.prepared_worker_evidence.OPERATIONS}
+
+        def replay(report):
+            with (
+                mock.patch.object(selection.prepared_worker_evidence, 'validate_report', return_value=report),
+                mock.patch.object(selection.prepared_worker_evidence, 'account_elf', return_value=elf_account),
+                mock.patch.object(selection.prepared_worker_evidence, 'account_source', return_value=source_account),
+                mock.patch.object(selection.prepared_worker_evidence, 'Elf'),
+                mock.patch.object(selection.prepared_worker_evidence, 'worker_relocations', return_value=relocations),
+            ):
+                return selection.prepared_worker_tls_adapter(
+                    self.prepared_worker_report_path, facts=self.facts, measurement=self.measurement,
+                    paths=self.paths, source=self.source,
+                )
+
+        for field, replacement in (
+            ('path', self.base.relative_to(ROOT).as_posix()),
+            ('sha256', '0' * 64),
+            ('size', selection.file_identity(self.preparation)['size'] + 1),
+        ):
+            with self.subTest(field=field):
+                report = self.prepared_worker_report(elf_account, source_account, relocations)
+                report['inputs_before']['products']['static_preparation']['receipt'][field] = replacement
+                report['inputs_after'] = copy.deepcopy(report['inputs_before'])
+                with self.assertRaisesRegex(selection.SelectionError,
+                                            'prepared worker TLS static preparation receipt differs from selected input'):
+                    replay(report)
+
+    def test_prepared_worker_adapter_rejects_product_root_and_manifest_digest_substitution(self):
+        elf_account = {
+            'operations': {name: {'.dynsym': {}, '.symtab': {}}
+                           for name in selection.prepared_worker_evidence.OPERATIONS},
+            'descriptor_named_elf_observations': [], 'descriptor_installed_import_required': False,
+            'legacy_named_shared_loader_rows': [],
+        }
+        source_account = self._prepared_source_account()
+        relocations = {name: {} for name in selection.prepared_worker_evidence.OPERATIONS}
+
+        def replay(report):
+            with (
+                mock.patch.object(selection.prepared_worker_evidence, 'validate_report', return_value=report),
+                mock.patch.object(selection.prepared_worker_evidence, 'account_elf', return_value=elf_account),
+                mock.patch.object(selection.prepared_worker_evidence, 'account_source', return_value=source_account),
+                mock.patch.object(selection.prepared_worker_evidence, 'Elf'),
+                mock.patch.object(selection.prepared_worker_evidence, 'worker_relocations', return_value=relocations),
+            ):
+                return selection.prepared_worker_tls_adapter(
+                    self.prepared_worker_report_path, facts=self.facts, measurement=self.measurement,
+                    paths=self.paths, source=self.source,
+        )
+
+        report = self.prepared_worker_report(elf_account, source_account, relocations)
+        report['inputs_before']['products']['static_preparation']['primary']['path'] = (
+            self.dynamic.relative_to(ROOT).as_posix()
+        )
+        report['inputs_after'] = copy.deepcopy(report['inputs_before'])
+        with self.assertRaisesRegex(selection.SelectionError,
+                                    'prepared worker TLS static primary root differs from selected product'):
+            replay(report)
+
+        report = self.prepared_worker_report(elf_account, source_account, relocations)
+        report['inputs_before']['products']['dynamic_product']['manifest_sha256'] = '0' * 64
+        report['inputs_after'] = copy.deepcopy(report['inputs_before'])
+        with self.assertRaisesRegex(selection.SelectionError,
+                                    'prepared worker TLS dynamic manifest digest differs'):
+            replay(report)
+
+    def test_prepared_worker_adapter_rechecks_the_mode_bearing_manifest_cohort(self):
+        """The owner's mode-free records do not weaken the returned cohort seal."""
+        elf_account = {
+            'operations': {name: {'.dynsym': {}, '.symtab': {}}
+                           for name in selection.prepared_worker_evidence.OPERATIONS},
+            'descriptor_named_elf_observations': [], 'descriptor_installed_import_required': False,
+            'legacy_named_shared_loader_rows': [],
+        }
+        source_account = self._prepared_source_account()
+        relocations = {name: {} for name in selection.prepared_worker_evidence.OPERATIONS}
+        report = self.prepared_worker_report(elf_account, source_account, relocations)
+        with (
+            mock.patch.object(selection.prepared_worker_evidence, 'validate_report', return_value=report),
+            mock.patch.object(selection.prepared_worker_evidence, 'account_elf', return_value=elf_account),
+            mock.patch.object(selection.prepared_worker_evidence, 'account_source', return_value=source_account),
+            mock.patch.object(selection.prepared_worker_evidence, 'Elf'),
+            mock.patch.object(selection.prepared_worker_evidence, 'worker_relocations', return_value=relocations),
+        ):
+            companion = selection.prepared_worker_tls_adapter(
+                self.prepared_worker_report_path, facts=self.facts, measurement=self.measurement,
+                paths=self.paths, source=self.source,
+            )
+        manifest = self.dynamic / 'share/crabc/manifest.json'
+        manifest.chmod(stat.S_IMODE(manifest.stat().st_mode) ^ stat.S_IXUSR)
+        with mock.patch.object(selection, 'selection_source', return_value=self.source), \
+             self.assertRaisesRegex(selection.SelectionError, 'dynamic_manifest.*bytes or mode differ'):
+            selection._recheck_runtime_receipt_cohort(
+                paths=self.paths, facts=self.facts, measurement=self.measurement, source=self.source,
+                registry=None, pthread=None, prepared_worker=companion,
+            )
 
     def test_errno_adapter_replays_the_owner_and_rejects_a_cross_cohort_library(self):
         report = self.errno_storage_report()

@@ -2664,6 +2664,35 @@ def _prepared_runtime_projection(value: object) -> dict[str, Any]:
     return copy.deepcopy(expected)
 
 
+def _prepared_worker_work_identity(value: object, expected_path: Path, description: str) -> dict[str, Any]:
+    """Join the owner's root-relative work record to one supplied input.
+
+    The prepared-worker reader deliberately records only its portable
+    path/hash/size work identity.  Selection binds all three fields to the
+    supplied path, while its returned product cohort retains mode-bearing
+    records for the post-attachment transaction recheck.
+    """
+    observed = exact(value, {'path', 'sha256', 'size'}, description)
+    expected_path = physical_work_path(expected_path, directory=False)
+    require(expected_path.is_relative_to(ROOT), f'{description} selected input is outside selector checkout')
+    current = file_identity(expected_path)
+    expected = {
+        'path': expected_path.relative_to(ROOT).as_posix(),
+        'sha256': current['sha256'],
+        'size': current['size'],
+    }
+    require(same(observed, expected), f'{description} differs from selected input')
+    return copy.deepcopy(expected)
+
+
+def _require_prepared_worker_product_root(value: object, expected_path: Path, description: str) -> None:
+    """Require the owner's exact root-relative spelling of a supplied product."""
+    expected_path = physical_work_path(expected_path, directory=True)
+    require(expected_path.is_relative_to(ROOT), f'{description} selected product is outside selector checkout')
+    require(value == expected_path.relative_to(ROOT).as_posix(),
+            f'{description} differs from selected product')
+
+
 def prepared_worker_tls_adapter(report_path: Path | None, *, facts: Mapping[str, Any],
                                 measurement: Mapping[str, Any], paths: Mapping[str, Path],
                                 source: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -2711,23 +2740,41 @@ def prepared_worker_tls_adapter(report_path: Path | None, *, facts: Mapping[str,
     require(same(products['source'], expected_source), 'prepared worker TLS product source differs')
     static_preparation = exact(products['static_preparation'], {'receipt', 'source', 'primary'},
                                'prepared worker TLS static preparation binding')
-    require(same(static_preparation['receipt'], measurement_reports['static_preparation'])
-            and same(static_preparation['source'], expected_source),
-            'prepared worker TLS static preparation differs from selection')
+    require(same(static_preparation['source'], expected_source),
+            'prepared worker TLS static preparation source differs from selection')
+    _prepared_worker_work_identity(static_preparation['receipt'], paths['static_preparation'],
+                                   'prepared worker TLS static preparation receipt')
     primary = exact(static_preparation['primary'], {'path', 'manifest'}, 'prepared worker TLS static primary')
     dynamic_product = exact(products['dynamic_product'], {'path', 'manifest', 'state', 'manifest_sha256'},
                             'prepared worker TLS dynamic product binding')
     reports = exact(inputs['reports'], {'base_inventory', 'elf_report'}, 'prepared worker TLS report binding')
-    require(same(reports['base_inventory'], measurement_reports['base_inventory'])
-            and same(reports['elf_report'], measurement_reports['elf_report']),
-            'prepared worker TLS public replay report differs')
     current = _runtime_attachment_identities(paths)
-    _require_same_identity_payload(primary['manifest'], current['static_manifest'],
+    for name, path_key in (
+        ('base_inventory', 'base_inventory'), ('elf_report', 'elf_report'),
+        ('static_preparation', 'static_preparation'),
+    ):
+        require(same(measurement_reports[name], file_identity(paths[path_key])),
+                f'prepared worker TLS selected {name} differs from public replay')
+    _prepared_worker_work_identity(reports['base_inventory'], paths['base_inventory'],
+                                   'prepared worker TLS base inventory report')
+    _prepared_worker_work_identity(reports['elf_report'], paths['elf_report'],
+                                   'prepared worker TLS ELF report')
+    _require_prepared_worker_product_root(primary['path'], paths['static_product'],
+                                          'prepared worker TLS static primary root')
+    _prepared_worker_work_identity(primary['manifest'],
+                                   paths['static_product'] / 'share/crabc/manifest.json',
                                    'prepared worker TLS static manifest')
-    _require_same_identity_payload(dynamic_product['manifest'], current['dynamic_manifest'],
-                                   'prepared worker TLS dynamic manifest')
-    _require_same_identity_payload(dynamic_product['state'], current['dynamic_state'],
+    _require_prepared_worker_product_root(dynamic_product['path'], paths['dynamic_product'],
+                                          'prepared worker TLS dynamic product root')
+    dynamic_manifest = _prepared_worker_work_identity(
+        dynamic_product['manifest'], paths['dynamic_product'] / 'share/crabc/manifest.json',
+        'prepared worker TLS dynamic manifest',
+    )
+    _prepared_worker_work_identity(dynamic_product['state'],
+                                   paths['dynamic_product'] / 'share/crabc/dynamic-product-state.json',
                                    'prepared worker TLS dynamic state')
+    require(dynamic_product['manifest_sha256'] == dynamic_manifest['sha256'],
+            'prepared worker TLS dynamic manifest digest differs')
     _runtime_facts_match_selected_products(
         facts, current, label='prepared worker TLS',
         artifacts=(('static_libc', 'candidate-static'), ('dynamic_libc', 'candidate-shared'),
