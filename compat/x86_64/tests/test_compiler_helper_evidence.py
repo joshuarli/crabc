@@ -242,20 +242,16 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
         finally:
             EVIDENCE.validate_aggregate_report = original_validate
 
-    def test_ordinary_popcount_attachment_rejects_different_cohort_and_toctou(self) -> None:
+    def test_ordinary_popcount_attachment_resolves_checkout_receipts_and_relative_maps(self) -> None:
         test_root = ROOT / ".work/x86_64/compiler-helper-evidence-tests"
         test_root.mkdir(parents=True, exist_ok=True)
         expected_inputs = {"source": {"revision": "same"}, "product": {"sha256": "same"}}
+        _facts, ordinary = EVIDENCE._load_companion_modules()
 
         class Ordinary:
-            class PublicDataEvidenceError(ValueError):
-                pass
-
-            @staticmethod
-            def work_file_identity(root: Path, path: Path, _description: str) -> dict[str, object]:
-                path = Path(path)
-                return {"path": path.relative_to(root).as_posix(), "sha256": EVIDENCE.digest(path),
-                        "size": path.stat().st_size}
+            PublicDataEvidenceError = ordinary.PublicDataEvidenceError
+            work_file_identity = staticmethod(ordinary.work_file_identity)
+            resolve_work_identity = staticmethod(ordinary.resolve_work_identity)
 
             @classmethod
             def validate_report(cls, root: Path, path: Path) -> dict[str, object]:
@@ -277,13 +273,24 @@ class CompilerHelperEvidenceTests(unittest.TestCase):
                         "map": {"path": map_path.name, "sha256": EVIDENCE.digest(map_path)},
                         "trace": {"path": trace_path.name, "sha256": EVIDENCE.digest(trace_path)},
                     }))
-                    links[mode] = {"receipt": {"path": receipt.name}}
+                    # The report owns checkout-relative identities; the driver
+                    # receipt separately owns its adjacent map/trace basenames.
+                    links[mode] = {"receipt": ordinary.work_file_identity(ROOT, receipt, "receipt")}
                 links.update({"dynamic-pie": {}, "dynamic-non-pie": {}})
                 report = work / "report.json"
                 report.write_text(EVIDENCE.canonical_json({"source_before": expected_inputs,
                                                           "source_after": expected_inputs, "links": links}))
                 joined = EVIDENCE._ordinary_popcount_maps(ROOT, report, expected_inputs)
                 self.assertEqual(set(joined["static_modes"]), {"static", "static-pie"})
+                for mode in ("static", "static-pie"):
+                    # Replay and attachment must still agree on receipt bytes.
+                    # Keep the report unchanged while replacing its sealed file.
+                    receipt = ROOT / links[mode]["receipt"]["path"]
+                    saved = receipt.read_bytes()
+                    receipt.write_bytes(saved + b"\n")
+                    with self.assertRaisesRegex(ordinary.PublicDataEvidenceError, "receipt bytes differ"):
+                        EVIDENCE._ordinary_popcount_maps(ROOT, report, expected_inputs)
+                    receipt.write_bytes(saved)
                 altered = json.loads(report.read_text(encoding="utf-8"))
                 altered["source_after"] = {"other": True}
                 report.write_text(EVIDENCE.canonical_json(altered), encoding="utf-8")

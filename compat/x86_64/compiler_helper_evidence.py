@@ -444,7 +444,11 @@ def _ordinary_popcount_maps(root: Path, ordinary_report: Path, expected_inputs: 
         record = links[mode]
         require(type(record) is dict and type(record.get("receipt")) is dict,
                 f"ordinary-link {mode} receipt differs")
-        receipt_path = work / record["receipt"].get("path", "")
+        # The ordinary report seals receipt paths relative to the checkout.
+        # Each driver receipt then names its adjacent map and trace relative
+        # to this report directory; these are distinct path contracts.
+        receipt_path = ordinary.resolve_work_identity(root, record["receipt"],
+                                                      f"ordinary-link {mode} receipt")
         receipt_identity_before = _work_identity(work, receipt_path, f"ordinary-link {mode} receipt")
         receipt = _read_json(_physical_file(receipt_path, f"ordinary-link {mode} receipt"),
                              f"ordinary-link {mode} receipt")

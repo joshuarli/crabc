@@ -48,6 +48,10 @@ support. The single observed static ordinary `__popcountdi2` import is attached
 only when fresh same-source static/dynamic products, complete ELF facts, and
 the existing public-data ordinary-link receipt are supplied. Historical `3e`
 products remain historical and must not be relabeled by this contract.
+The ordinary report seals link receipts relative to the checkout; each driver
+receipt names its map and trace relative to its own directory. The helper
+reader uses the ordinary reader's identity resolver for the outer receipt,
+including its recorded hash and size, before reading the adjacent map and trace.
 
 At that supplied-product boundary, an aggregate receipt is optional but
 meaningful only when present: the reader first replays it, then requires its
