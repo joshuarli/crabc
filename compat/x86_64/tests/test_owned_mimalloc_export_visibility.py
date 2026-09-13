@@ -118,6 +118,11 @@ class OwnedMimallocExportVisibilityTests(unittest.TestCase):
         self.assertEqual(extras, {"mimalloc_hidden", "tgkill"})
         with self.assertRaisesRegex(evidence.EvidenceError, "raw triage extra roster disagrees"):
             evidence.derived_baseline_extra_names(reference, candidate, [row("mimalloc_hidden")])
+        drifted_triage = [row("mimalloc_hidden"), {
+            **row("tgkill"), "binding": "WEAK", "visibility": "HIDDEN", "size": "17",
+        }]
+        with self.assertRaisesRegex(evidence.EvidenceError, "raw triage extra row differs"):
+            evidence.derived_baseline_extra_names(reference, candidate, drifted_triage)
 
         baseline = {item["name"]: item for item in candidate}
         current = {item["name"]: item for item in (row("portable_api"), row("tgkill"))}

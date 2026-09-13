@@ -22,8 +22,9 @@ builds fresh static and dynamic products, checks their source-bound metadata,
 and compares their dynsym against the retained pre-change product. The only
 allowed shared dynsym removal is the exact contract list. It derives the
 baseline's extras from the retained reference/candidate symbol identities and
-requires that calculation to agree with the report's raw triage roster; any
-independent extra present on both sides remains present. The ae0fcc22 pair
+requires every raw triage record to equal its candidate record, rather than
+only sharing its identity; any independent extra present on both sides remains
+present. The ae0fcc22 pair
 measured 475 extras before and 51 after this change, but those counts are a
 historical measurement rather than the 424-name visibility policy. The runner
 records the actual before/after counts for its supplied matched pair. It also
