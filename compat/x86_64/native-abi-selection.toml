@@ -82,13 +82,13 @@ disposition = "private-provider"
 owner = "builtins"
 family = "crt.static-pie"
 artifacts = ["static-builtins", "dynamic-builtins"]
-sources = ["builtins/src/lib.rs", "builtins/build_x86_64.py"]
+sources = ["builtins/src/lib.rs", "builtins/build_x86_64.py", "builtins/x86_64-helper-contract.toml"]
 members = ["__addoti4", "__ashlti3", "__ashrti3", "__bswapdi2", "__bswapsi2", "__bswapti2", "__clzti2", "__ctzti2", "__divmodti4", "__divti3", "__ffsti2", "__lshrti3", "__modti3", "__muldc3", "__muloti4", "__multi3", "__parityti2", "__popcountdi2", "__popcountti2", "__suboti4", "__udivmodti4", "__udivti3", "__umodti3"]
 members_file = ""
 expected_type = "FUNC"
 delegated_members = []
-placement_metadata = {}
-reason = "Named source compiler helpers have selected builtins archive placements. Any libc/interpreter exposure is a separate unresolved placement decision."
+placement_metadata = {"static-builtins" = {"binding" = "GLOBAL", "visibility" = "DEFAULT"}, "dynamic-builtins" = {"binding" = "GLOBAL", "visibility" = "DEFAULT"}}
+reason = "Exact Rust C-ABI compiler-helper definitions have selected static-builtins and dynamic-builtins archive placements with unversioned FUNC GLOBAL DEFAULT metadata. Same-named libc/interpreter exposure is a separate unresolved placement decision."
 static_metadata_rule = "explicit"
 
 [[owner_groups]]

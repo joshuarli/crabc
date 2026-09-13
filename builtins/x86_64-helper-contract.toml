@@ -1,0 +1,178 @@
+# Exact producer contract for the bounded native x86-64 compiler-helper archive.
+#
+# These are unversioned C compiler-runtime entries from the reviewed
+# `#[unsafe(no_mangle)] pub extern "C"` definitions in `src/lib.rs`. They are
+# installed only as ordinary archive providers. A same-named libc/loader row is
+# outside this contract and remains an explicit later placement decision.
+schema = 1
+target = "x86_64-unknown-linux-musl"
+owner_group = "owned-compiler-helper-archive"
+source = "builtins/src/lib.rs"
+builder = "builtins/build_x86_64.py"
+producer_scope = "bounded native compiler-helper archive; no shared-libc exposure selection, family completion, promotion, or public support"
+
+[archive]
+name = "libcrabc-builtins.a"
+member = "crabc-builtins.o"
+placements = ["static-builtins", "dynamic-builtins"]
+
+[[helpers]]
+name = "__addoti4"
+rust_signature = 'pub unsafe extern "C" fn __addoti4(left: Uint128, right: Uint128, overflow: *mut i32) -> Uint128'
+c_abi = "u128-overflow-slot"
+caller_obligation = "one non-null writable int overflow slot"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__ashlti3"
+rust_signature = 'pub extern "C" fn __ashlti3(value: Uint128, shift: i32) -> Uint128'
+c_abi = "u128-shift"
+caller_obligation = "scalar shift follows the source total branch for every i32 count"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__ashrti3"
+rust_signature = 'pub extern "C" fn __ashrti3(value: Uint128, shift: i32) -> Uint128'
+c_abi = "u128-shift"
+caller_obligation = "scalar shift follows the source total branch for every i32 count"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__bswapdi2"
+rust_signature = 'pub extern "C" fn __bswapdi2(value: u64) -> u64'
+c_abi = "u64-byte-swap"
+caller_obligation = "plain u64 scalar"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__bswapsi2"
+rust_signature = 'pub extern "C" fn __bswapsi2(value: u32) -> u32'
+c_abi = "u32-byte-swap"
+caller_obligation = "plain u32 scalar"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__bswapti2"
+rust_signature = 'pub extern "C" fn __bswapti2(value: Uint128) -> Uint128'
+c_abi = "u128-byte-swap"
+caller_obligation = "two-word Uint128 C ABI carrier"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__clzti2"
+rust_signature = 'pub extern "C" fn __clzti2(value: Uint128) -> i32'
+c_abi = "u128-bit-count"
+caller_obligation = "two-word Uint128 C ABI carrier; zero retains source count 128"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__ctzti2"
+rust_signature = 'pub extern "C" fn __ctzti2(value: Uint128) -> i32'
+c_abi = "u128-bit-count"
+caller_obligation = "two-word Uint128 C ABI carrier; zero retains source count 128"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__divmodti4"
+rust_signature = 'pub unsafe extern "C" fn __divmodti4( numerator: Uint128, denominator: Uint128, remainder: *mut Uint128, ) -> Uint128'
+c_abi = "u128-divmod-slot"
+caller_obligation = "defined signed divisor and one non-null writable Uint128 remainder slot"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__divti3"
+rust_signature = 'pub extern "C" fn __divti3(numerator: Uint128, denominator: Uint128) -> Uint128'
+c_abi = "u128-binary"
+caller_obligation = "defined signed division operands"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__ffsti2"
+rust_signature = 'pub extern "C" fn __ffsti2(value: Uint128) -> i32'
+c_abi = "u128-bit-count"
+caller_obligation = "two-word Uint128 C ABI carrier; zero returns zero"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__lshrti3"
+rust_signature = 'pub extern "C" fn __lshrti3(value: Uint128, shift: i32) -> Uint128'
+c_abi = "u128-shift"
+caller_obligation = "scalar shift follows the source total branch for every i32 count"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__modti3"
+rust_signature = 'pub extern "C" fn __modti3(numerator: Uint128, denominator: Uint128) -> Uint128'
+c_abi = "u128-binary"
+caller_obligation = "defined signed division operands"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__muldc3"
+rust_signature = 'pub extern "C" fn __muldc3(a: f64, b: f64, c: f64, d: f64) -> ComplexDouble'
+c_abi = "complex-double"
+caller_obligation = "four f64 inputs and the x86-64 double-complex return convention"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__muloti4"
+rust_signature = 'pub unsafe extern "C" fn __muloti4(left: Uint128, right: Uint128, overflow: *mut i32) -> Uint128'
+c_abi = "u128-overflow-slot"
+caller_obligation = "one non-null writable int overflow slot"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__multi3"
+rust_signature = 'pub extern "C" fn __multi3(left: Uint128, right: Uint128) -> Uint128'
+c_abi = "u128-binary"
+caller_obligation = "two-word Uint128 C ABI carrier"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__parityti2"
+rust_signature = 'pub extern "C" fn __parityti2(value: Uint128) -> i32'
+c_abi = "u128-bit-count"
+caller_obligation = "two-word Uint128 C ABI carrier"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__popcountdi2"
+rust_signature = 'pub extern "C" fn __popcountdi2(value: u64) -> i32'
+c_abi = "u64-bit-count"
+caller_obligation = "plain u64 scalar"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__popcountti2"
+rust_signature = 'pub extern "C" fn __popcountti2(value: Uint128) -> i32'
+c_abi = "u128-bit-count"
+caller_obligation = "two-word Uint128 C ABI carrier"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__suboti4"
+rust_signature = 'pub unsafe extern "C" fn __suboti4(left: Uint128, right: Uint128, overflow: *mut i32) -> Uint128'
+c_abi = "u128-overflow-slot"
+caller_obligation = "one non-null writable int overflow slot"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__udivmodti4"
+rust_signature = 'pub unsafe extern "C" fn __udivmodti4( numerator: Uint128, denominator: Uint128, remainder: *mut Uint128, ) -> Uint128'
+c_abi = "u128-divmod-slot"
+caller_obligation = "defined unsigned divisor and one non-null writable Uint128 remainder slot"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__udivti3"
+rust_signature = 'pub extern "C" fn __udivti3(numerator: Uint128, denominator: Uint128) -> Uint128'
+c_abi = "u128-binary"
+caller_obligation = "defined unsigned division operands"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }
+
+[[helpers]]
+name = "__umodti3"
+rust_signature = 'pub extern "C" fn __umodti3(numerator: Uint128, denominator: Uint128) -> Uint128'
+c_abi = "u128-binary"
+caller_obligation = "defined unsigned division operands"
+metadata = { type = "FUNC", binding = "GLOBAL", visibility = "DEFAULT", version = "unversioned", version_default = false }

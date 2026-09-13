@@ -266,6 +266,15 @@ contract even if a shared export is eventually removed. An implementation
 classification by itself neither approves a public export nor authorizes
 removal of a concrete consumer's provider.
 
+The finite `owned-compiler-helper-archive` group reads
+[`builtins/x86_64-helper-contract.toml`](../../builtins/x86_64-helper-contract.toml):
+its exact 23 Rust `extern "C"` definitions are unversioned `FUNC GLOBAL
+DEFAULT` in the distinct `static-builtins` and `dynamic-builtins` archive
+placements. The source contract and aggregate C consumer receipt prove only
+those archive providers. Same-named `candidate-shared` definitions remain an
+explicit unresolved visibility/provider decision, and the separate ordinary
+`__popcountdi2` join requires fresh product evidence.
+
 ## Data objects and remaining proof
 
 The public object manifest must retain exact native size, kind, binding,

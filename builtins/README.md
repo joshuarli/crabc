@@ -70,3 +70,8 @@ same bounded archive beside `crt1.o` and the reconstructed static libc. Both
 force `__udivti3` and reject ambient CRT or compiler-runtime inputs. This
 builder never reuses a prebuilt compiler runtime and does not establish a
 complete x86 compiler-helper profile or public sysroot.
+
+The native [x86-64 compiler-helper archive contract](x86_64-helper-contract.md)
+now names all 23 Rust C-ABI entries, their two installed archive placements,
+and the bounded aggregate C consumer proof. It does not select the same-named
+shared-libc definitions or promote native support.
