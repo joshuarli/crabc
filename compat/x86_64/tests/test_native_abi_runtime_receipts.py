@@ -820,8 +820,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         accounting = {
             'identities': [copy.deepcopy(row) for row in diagnostic['identities']
                            if row['identity']['name'] in names],
-            'occurrences': [copy.deepcopy(row) for row in diagnostic['occurrences']
-                            if row['row']['name'] in operations | {descriptor_name}],
+            'occurrences': copy.deepcopy(diagnostic['occurrences']),
             'placement_joins': [],
             'private_protocol_joins': [copy.deepcopy(row) for row in diagnostic['private_protocol_joins']
                                        if row['identity']['name'] in operations | {descriptor_name}],
@@ -915,7 +914,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 paths=self.paths, source=self.source,
             )
 
-    def test_prepared_worker_join_discharges_only_exact_tls_operations_and_legacy_names(self):
+    def test_prepared_worker_join_preserves_unnamed_rows_and_discharges_only_exact_operations(self):
         elf_account = {
             'operations': {name: {'.dynsym': {}, '.symtab': {}}
                            for name in selection.prepared_worker_evidence.OPERATIONS},
@@ -926,6 +925,16 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
         relocations = {name: {} for name in selection.prepared_worker_evidence.OPERATIONS}
         report = self.prepared_worker_report(elf_account, source_account, relocations)
         accounting = self.prepared_worker_accounting(elf_account)
+        # Complete ELF accounts retain null symbol-table entries. They are
+        # physical observations, not named identities or descriptor candidates.
+        unnamed = {
+            'index': len(accounting['occurrences']), 'artifact_key': 'candidate-loader',
+            'table': '.dynsym', 'role': 'unnamed',
+            'row': {'name': '', 'version': None, 'version_default': False, 'row_index': 0,
+                    **self._runtime_row(), 'binding': 'LOCAL'},
+            'accounting': {'disposition': 'unnamed-observation', 'owner': 'crabc-ldso'},
+        }
+        accounting['occurrences'].append(copy.deepcopy(unnamed))
         report['inputs_before']['elf'] = copy.deepcopy(elf_account)
         report['inputs_after']['elf'] = copy.deepcopy(elf_account)
         with (
@@ -940,6 +949,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 paths=self.paths, source=self.source,
             )
         joins = selection.attach_prepared_worker_tls(accounting, companion)
+        self.assertEqual(accounting['occurrences'][-1], unnamed)
         self.assertEqual(len(joins), 1)
         self.assertEqual(len(joins[0]['operations']), 3)
         self.assertEqual(len(joins[0]['legacy_replacements']), 7)
@@ -1147,7 +1157,7 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
             'blockers': blockers,
         }
 
-    def test_registry_join_discharges_only_its_nine_exact_protocol_requirements(self):
+    def test_registry_join_preserves_unnamed_rows_and_discharges_its_exact_protocol_requirements(self):
         report = self.registry_report()
         with mock.patch.object(selection.runtime_registry_evidence, 'validate_report', return_value=report):
             companion = selection.loader_runtime_registry_adapter(
@@ -1155,11 +1165,21 @@ class RuntimeReceiptAttachmentTests(unittest.TestCase):
                 paths=self.paths, source=self.source,
             )
         accounting = self.registry_accounting()
+        unnamed = {
+            'index': len(accounting['occurrences']), 'artifact_key': 'candidate-shared',
+            'table': '.dynsym', 'role': 'unnamed',
+            'row': {'name': '', 'version': None, 'version_default': False, 'row_index': 0,
+                    **self._runtime_row(), 'binding': 'LOCAL'},
+            'accounting': {'disposition': 'unnamed-observation', 'owner': 'crabc-libc'},
+        }
+        accounting['occurrences'].append(copy.deepcopy(unnamed))
         joins = selection.attach_loader_runtime_registry(accounting, companion)
+        self.assertEqual(accounting['occurrences'][-1], unnamed)
         self.assertEqual(len(joins), 9)
         self.assertFalse(accounting['blockers'])
         self.assertTrue(all(not row['unresolved'] for row in accounting['identities']))
-        self.assertTrue(all(row['accounting']['resolution_proven'] for row in accounting['occurrences']))
+        self.assertTrue(all(row['accounting']['resolution_proven'] for row in accounting['occurrences']
+                            if row['role'] == 'import'))
         self.assertTrue(all(row['relocation_lifecycle_proven'] for row in accounting['private_protocol_joins']))
 
     def test_registry_join_rejects_an_omitted_symtab_occurrence(self):

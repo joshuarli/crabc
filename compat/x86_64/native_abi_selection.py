@@ -2419,8 +2419,8 @@ def attach_loader_runtime_registry(accounting: Mapping[str, Any], companion: Map
         expected_tables = exact(imports[name], set(runtime_registry_evidence.SYMBOL_TABLES),
                                 f'runtime registry attachment import {name}')
         occurrences = [row for row in accounting['occurrences']
-                       if identity_key(row_identity(row['row'])) == key
-                       and row['artifact_key'] == 'candidate-shared' and row['role'] == 'import']
+                       if row['artifact_key'] == 'candidate-shared' and row['role'] == 'import'
+                       and identity_key(row_identity(row['row'])) == key]
         by_table = {row['table']: row for row in occurrences}
         require(len(by_table) == len(occurrences) == len(runtime_registry_evidence.SYMBOL_TABLES)
                 and set(by_table) == set(runtime_registry_evidence.SYMBOL_TABLES),
@@ -3983,7 +3983,10 @@ def attach_prepared_worker_tls(accounting: Mapping[str, Any], companion: Mapping
     # evidence or erase its remaining closure blockers.
     descriptor_occurrences = [
         row for row in occurrences.values()
-        if same(row_identity(row.get('row')), identity(descriptor_name))
+        # Complete ELF accounts also retain unnamed null and section rows.
+        # Only the named descriptor can enter logical identity validation.
+        if row['row']['name'] == descriptor_name
+        and same(row_identity(row['row']), identity(descriptor_name))
     ]
     require(len(descriptor_occurrences) == 1, 'prepared worker TLS uninstalled descriptor occurrence differs')
     descriptor_occurrence = descriptor_occurrences[0]
